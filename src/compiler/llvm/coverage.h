@@ -72,6 +72,7 @@ enum class Shape {
   StoredFieldPublication,
   NativeAtomicStorage,
   NativeAtomicOperation,
+  NativeAtomicWaitingOperation,
   AtomicInitialization,
   UnstagedConstructorFieldPublication,
   NativeCallableStorage,

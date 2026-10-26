@@ -1,10 +1,12 @@
 #include "../src/compiler/llvm/atomics.h"
 #include "../src/compiler/llvm/layout.h"
+#include "../src/compiler/llvm/runtime_abi.h"
 #include "cpp_backend_test_support.h"
 
 #include <array>
 #include <filesystem>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 
 #include <llvm/Object/ObjectFile.h>
@@ -372,18 +374,139 @@ void check(const std::filesystem::path &root) {
     }
   }
 }
+void checkWaiting(const std::filesystem::path &root,
+                  const std::filesystem::path &output = {}) {
+  FrontendOptions options;
+  options.target.executionProfile = ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  options.requireEntryPoint = true;
+  options.requireFunctionDefinitions = true;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      root / "tests/fixtures/llvm_atomic_wait_ready.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    throw std::runtime_error("wait fixture must reach verified MIR");
+  }
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, options.target),
+      issues);
+  if (!input)
+    throw std::runtime_error("wait fixture must seal before representation checks");
+  Session session(*input, {});
+  const auto &program = input->program().mir();
+  std::set<SemanticType::Kind> elements;
+  std::set<AtomicMemoryOrder> orders;
+  unsigned waits = 0, notifications = 0;
+  for (const auto &owner : program.functionInstances())
+    for (const auto &block : owner.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const bool wait = instruction.intrinsic == IntrinsicKind::AtomicWait;
+        if (!wait && instruction.intrinsic != IntrinsicKind::AtomicNotifyOne &&
+            instruction.intrinsic != IntrinsicKind::AtomicNotifyAll)
+          continue;
+        expect(nativeAtomicWaitingCall(program, owner.body, instruction),
+               "wait.exact-plan: source uses exact storage, operands and order");
+        expect(!nativeAtomicCall(program, owner.body, instruction),
+               "wait.admission: scalar atomic evidence never admits blocking");
+        const auto reject = [&](auto mutate) {
+          auto changed = instruction;
+          mutate(changed);
+          expect(!nativeAtomicWaitingCall(program, owner.body, changed),
+                 "wait.near-miss: malformed protocol is not representable");
+        };
+        reject([](auto &call) { call.operands[0].kind = MirOperandKind::Move; });
+        reject([](auto &call) { call.parameterTypes.clear(); });
+        reject([](auto &call) { call.result = 1; });
+        reject([](auto &call) { call.borrowAccess = AccessMode::Mutable; });
+        reject([](auto &call) { call.synchronization.kind = SynchronizationOperationKind::AtomicLoad; });
+        if (wait) {
+          ++waits;
+          orders.insert(*instruction.synchronization.order);
+          reject([](auto &call) { call.synchronization.order = AtomicMemoryOrder::Release; });
+          reject([](auto &call) { call.synchronization.order.reset(); });
+          reject([](auto &call) { call.operands[1].value = 0; });
+          reject([](auto &call) { call.operands[1].type = SemanticType::Float; });
+        } else {
+          ++notifications;
+          reject([](auto &call) { call.synchronization.order = AtomicMemoryOrder::Acquire; });
+        }
+        const auto layout = session.layouts().atomicStorage(
+            instruction.operands[0].type.arguments[0]);
+        elements.insert(layout.element.kind);
+        const auto domain = constantIntegerDomain(layout.element);
+        const std::string lane = layout.element == SemanticType::Bool
+                                     ? "bool"
+                                     : std::string(domain->signedValue ? "i" : "u") +
+                                           std::to_string(session.layouts().get(layout.element).storage->getIntegerBitWidth());
+        const std::string operation = wait
+            ? "wait_" + std::to_string(static_cast<unsigned>(*instruction.synchronization.order))
+            : instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ? "one" : "all";
+        const auto name = "gti_test_wait_" + lane + "_" + operation;
+        if (session.module().getFunction(name))
+          continue;
+        std::vector<llvm::Type *> parameters{session.layouts().pointer()};
+        if (wait)
+          parameters.push_back(llvm::Type::getInt64Ty(session.context()));
+        auto *signature = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(session.context()), parameters, false);
+        auto *function = llvm::Function::Create(
+            signature, llvm::GlobalValue::ExternalLinkage,
+            name, session.module());
+        llvm::IRBuilder<> ir(llvm::BasicBlock::Create(session.context(), "entry", function));
+        std::vector<llvm::Value *> inputs;
+        inputs.push_back(function->getArg(0));
+        if (wait)
+          inputs.push_back(ir.CreateTruncOrBitCast(
+              function->getArg(1), session.layouts().get(layout.element).value));
+        expect(Atomics(session, ir).emit(owner.body, instruction, inputs) == nullptr,
+               "wait.result: no result publication or invented failure channel");
+        ir.CreateRetVoid();
+      }
+  expect(elements.size() == 9 && orders.size() == 3 && waits >= 27 && notifications >= 18,
+         "wait.domain: bool and eight integers, all load orders and both notifications");
+  auto *wait = declareRuntimeService(session, RuntimeService::AtomicWait);
+  auto *notify = declareRuntimeService(session, RuntimeService::AtomicNotify);
+  expect(wait->arg_size() == 4 && wait->getReturnType()->isVoidTy() &&
+             wait->getArg(0)->getType()->isPointerTy() &&
+             wait->getArg(1)->getType()->isIntegerTy(64) &&
+             wait->getArg(2)->getType()->isIntegerTy(32) &&
+             wait->getArg(3)->getType()->isIntegerTy(32) &&
+             notify->arg_size() == 3 && notify->getReturnType()->isVoidTy(),
+         "wait.c-abi: exact versioned service signatures");
+  session.verify();
+  if (!output.empty()) {
+    std::error_code error;
+    llvm::raw_fd_ostream stream(output.string(), error);
+    if (error)
+      throw std::runtime_error(error.message());
+    session.module().print(stream, nullptr);
+    stream.close();
+    if (stream.has_error())
+      throw std::runtime_error("could not write test-only wait service IR");
+  }
+}
 } // namespace
 
 int main(int argc, char **argv) {
   if (argc != 2 &&
-      !(argc == 4 && std::string_view(argv[2]) == "--emit-wait-lanes"))
+      !(argc == 4 && (std::string_view(argv[2]) == "--emit-wait-lanes" ||
+                     std::string_view(argv[2]) == "--emit-wait-services")))
     return 2;
   try {
-    if (argc == 4)
+    if (argc == 4 && std::string_view(argv[2]) == "--emit-wait-services")
+      checkWaiting(std::filesystem::path(argv[1]), std::filesystem::path(argv[3]));
+    else if (argc == 4)
       emitWaitLanes(std::filesystem::path(argv[1]),
                     std::filesystem::path(argv[3]));
-    else
+    else {
       check(std::filesystem::path(argv[1]));
+      checkWaiting(std::filesystem::path(argv[1]));
+    }
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

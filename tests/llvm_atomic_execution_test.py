@@ -17,6 +17,7 @@ def cases() -> dict[str, str]:
         "scalar": "atomic_scalar.gti",
         "values": "llvm_atomic_values.gti",
         "orders": "llvm_atomic_orders.gti",
+        "wait-ready": "llvm_atomic_wait_ready.gti",
         "checked-fetch": "atomic_fetch.gti",
         "overflow-before-update": "llvm_atomic_overflow.gti",
         # Required whole-milestone cases, not optional passing skips when the
@@ -30,6 +31,7 @@ def cases() -> dict[str, str]:
 def profiles() -> dict[str, list[str]]:
     return {
         "atomic.scalar-core": ["scalar", "values", "orders"],
+        "atomic.wait-ready": ["wait-ready"],
         "atomic.checked-fetch": ["checked-fetch", "overflow-before-update"],
         "atomic.blocking-workers": ["worker-contention", "worker-publication", "wait-notify"],
     }
@@ -53,6 +55,7 @@ def evidence_manifest(root: Path) -> dict:
         {name: f"tests/fixtures/{fixture}" for name, fixture in cases().items()},
         execution_profiles={
             "atomic.scalar-core": "concurrent",
+            "atomic.wait-ready": "concurrent",
             "atomic.checked-fetch": "concurrent",
             "atomic.blocking-workers": "concurrent",
         })
@@ -71,6 +74,8 @@ def main() -> None:
         "enum-domain": "std::atomic<E> value{E::first};",
         "illegal-load": "std::atomic<int32_t> value{0}; [[discard]] value.load(std::memory_order_release());",
         "illegal-store": "std::atomic<int32_t> value{0}; value.store(1, std::memory_order_acquire());",
+        "illegal-wait-release": "std::atomic<int32_t> value{0}; value.wait(0, std::memory_order_release());",
+        "illegal-wait-acq-rel": "std::atomic<int32_t> value{0}; value.wait(0, std::memory_order_acq_rel());",
         "illegal-failure-order": "std::atomic<int32_t> value{0}; [[discard]] value.compare_exchange_strong(0, 1, std::memory_order_acq_rel(), std::memory_order_release());",
         "bool-fetch": "std::atomic<bool> value{false}; [[discard]] value.fetch_add(true);",
     }

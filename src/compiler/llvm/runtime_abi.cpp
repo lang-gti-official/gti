@@ -54,6 +54,16 @@ llvm::Function *declareRuntimeService(Session &session,
     parameters = {ptr, ptr, llvm::Type::getInt64Ty(context)};
     result = llvm::Type::getInt32Ty(context);
     break;
+  case RuntimeService::AtomicWait:
+    name = "gti_rt_atomic_wait_v1";
+    parameters = {ptr, llvm::Type::getInt64Ty(context),
+                  llvm::Type::getInt32Ty(context), llvm::Type::getInt32Ty(context)};
+    break;
+  case RuntimeService::AtomicNotify:
+    name = "gti_rt_atomic_notify_v1";
+    parameters = {ptr, llvm::Type::getInt32Ty(context),
+                  llvm::Type::getInt32Ty(context)};
+    break;
   }
   if (name.empty())
     throw std::logic_error("unknown LLVM runtime service identity");

@@ -689,6 +689,13 @@ add_library(
   "runtime/src/random.cpp"
   "runtime/src/thread.cpp"
 )
+if((APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$") OR
+   (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+  target_sources(gti_runtime PRIVATE runtime/src/atomic_wait.cpp runtime/src/mutex.cpp)
+  set_source_files_properties(runtime/src/atomic_wait.cpp
+                              PROPERTIES COMPILE_OPTIONS "-fno-strict-aliasing")
+  set(GTI_NATIVE_SYNCHRONIZATION_SERVICES ON)
+endif()
 target_include_directories(
   "gti_runtime"
   PUBLIC

@@ -1,6 +1,7 @@
 #include "atomics.h"
 
 #include "layout.h"
+#include "runtime_abi.h"
 
 #include <algorithm>
 #include <llvm/Support/Alignment.h>
@@ -37,6 +38,12 @@ bool referenceOperand(const MirBody &body, const MirOperand &operand,
          operand.place && !operand.value && !operand.loan && !operand.literal &&
          place && place->type == referent &&
          (access == AccessMode::ReadOnly || place->access == access);
+}
+
+bool waiting(IntrinsicKind intrinsic) {
+  return intrinsic == IntrinsicKind::AtomicWait ||
+         intrinsic == IntrinsicKind::AtomicNotifyOne ||
+         intrinsic == IntrinsicKind::AtomicNotifyAll;
 }
 
 llvm::AtomicOrdering ordering(AtomicMemoryOrder order) {
@@ -102,11 +109,13 @@ bool Atomics::handles(IntrinsicKind intrinsic) {
   return intrinsic == IntrinsicKind::AtomicLoad ||
          intrinsic == IntrinsicKind::AtomicStore ||
          intrinsic == IntrinsicKind::AtomicExchange ||
-         intrinsic == IntrinsicKind::AtomicCompareExchange;
+         intrinsic == IntrinsicKind::AtomicCompareExchange || waiting(intrinsic);
 }
 
-bool nativeAtomicCall(const MirProgram &program, const MirBody &body,
-                      const MirInstruction &instruction) {
+namespace {
+std::optional<SemanticType>
+atomicCallElement(const MirProgram &program, const MirBody &body,
+                  const MirInstruction &instruction) {
   if (program.target().executionProfile != ExecutionProfile::Concurrent ||
       !program.target().runtimeCapabilities.threads ||
       !Atomics::handles(instruction.intrinsic) ||
@@ -131,13 +140,24 @@ bool nativeAtomicCall(const MirProgram &program, const MirBody &body,
       instruction.parameterTypes.size() != instruction.operands.size() ||
       instruction.operands.empty() ||
       !validSynchronizationOperation(instruction.synchronization))
-    return false;
+    return {};
   const auto &storage = instruction.operands[0].type;
   if (storage.kind != SemanticType::Reference || storage.arguments.size() != 1)
-    return false;
+    return {};
   const auto element = nativeAtomicElement(program, storage.arguments[0]);
   if (!element || !referenceOperand(body, instruction.operands[0],
                                     storage.arguments[0], AccessMode::ReadOnly))
+    return {};
+  return element;
+}
+} // namespace
+
+bool nativeAtomicCall(const MirProgram &program, const MirBody &body,
+                      const MirInstruction &instruction) {
+  if (waiting(instruction.intrinsic))
+    return false;
+  const auto element = atomicCallElement(program, body, instruction);
+  if (!element)
     return false;
   const bool store = instruction.intrinsic == IntrinsicKind::AtomicStore;
   const bool compare =
@@ -171,6 +191,36 @@ bool nativeAtomicCall(const MirProgram &program, const MirBody &body,
     }
   }
   return true;
+}
+
+bool nativeAtomicWaitingCall(const MirProgram &program, const MirBody &body,
+                             const MirInstruction &instruction) {
+  if (!waiting(instruction.intrinsic))
+    return false;
+  const auto element = atomicCallElement(program, body, instruction);
+  const bool wait = instruction.intrinsic == IntrinsicKind::AtomicWait;
+  const auto &target = program.target();
+  if (!element || program.programKind() != ProgramKind::Executable ||
+      !((target.os == "macos" && target.arch == "arm64") ||
+        (target.os == "linux" && target.arch == "x86_64")) ||
+      instruction.info.type != SemanticType::Void || instruction.result ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      instruction.borrowArgument || instruction.borrowAccess != AccessMode::ReadOnly ||
+      instruction.operands.size() != (wait ? 2U : 1U) ||
+      instruction.synchronization.kind !=
+          (wait ? SynchronizationOperationKind::AtomicWait
+                : SynchronizationOperationKind::AtomicNotify))
+    return false;
+  for (std::size_t index = 0; index < instruction.operands.size(); ++index)
+    if (instruction.parameterTypes[index] != instruction.operands[index].type)
+      return false;
+  if (!wait)
+    return true;
+  const auto &old = instruction.operands[1];
+  const auto *value = body.findValue(old.value);
+  return old.kind == MirOperandKind::Value && old.value && !old.place &&
+         !old.loan && !old.literal && old.type == *element && value &&
+         value->info.type == *element;
 }
 
 std::optional<SemanticType>
@@ -226,7 +276,8 @@ llvm::Value *Atomics::value(llvm::Value *input, const SemanticType &element) {
 llvm::Value *Atomics::emit(const MirBody &body,
                            const MirInstruction &instruction,
                            std::span<llvm::Value *const> inputs) {
-  if (!nativeAtomicCall(session.program().mir(), body, instruction) ||
+  if ((!nativeAtomicCall(session.program().mir(), body, instruction) &&
+       !nativeAtomicWaitingCall(session.program().mir(), body, instruction)) ||
       inputs.size() != instruction.operands.size())
     throw BackendUnsupportedError(
         "LLVM atomic call lost its exact staged plan");
@@ -249,6 +300,24 @@ llvm::Value *Atomics::emit(const MirBody &body,
                                     layout.object.alignment))
     throw BackendUnsupportedError(
         "LLVM target atomic width/alignment requires an unavailable runtime");
+  if (waiting(instruction.intrinsic)) {
+    const auto width = ir.getInt32(layout.lane->getBitWidth() / 8);
+    if (instruction.intrinsic == IntrinsicKind::AtomicWait) {
+      const auto order = *instruction.synchronization.order;
+      const auto encoded = order == AtomicMemoryOrder::Relaxed ? 0U
+                         : order == AtomicMemoryOrder::Acquire ? 1U : 2U;
+      // Preserve the same-width bit pattern for signed lanes; bool first gains
+      // its canonical byte representation. Neither conversion is numeric.
+      auto *old = ir.CreateZExtOrTrunc(lane(inputs[1], layout.element), ir.getInt64Ty());
+      ir.CreateCall(declareRuntimeService(session, RuntimeService::AtomicWait),
+                    {inputs[0], old, width, ir.getInt32(encoded)});
+    } else {
+      ir.CreateCall(declareRuntimeService(session, RuntimeService::AtomicNotify),
+                    {inputs[0], width,
+                     ir.getInt32(instruction.intrinsic == IntrinsicKind::AtomicNotifyAll)});
+    }
+    return nullptr;
+  }
   const auto order = ordering(*instruction.synchronization.order);
   const llvm::Align alignment(layout.object.alignment);
   switch (instruction.intrinsic) {

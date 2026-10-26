@@ -1438,6 +1438,8 @@ public:
                   : std::nullopt);
         }
         const bool atomic = native_llvm::nativeAtomicCall(program, mir, stage);
+        const bool atomicWaiting =
+            native_llvm::nativeAtomicWaitingCall(program, mir, stage);
         if (stage.intrinsic != IntrinsicKind::None) {
           const bool textQuery =
               stage.receiver &&
@@ -1457,6 +1459,8 @@ public:
           }
           add(stage.intrinsic,
               atomic              ? std::optional(Shape::NativeAtomicOperation)
+              : atomicWaiting
+                  ? std::optional(Shape::NativeAtomicWaitingOperation)
               : callableIntrinsic ? callableIntrinsic
               : typedMemory       ? std::optional(Shape::NativeMemoryOperation)
               : erasedReference(stage) ? std::optional(Shape::ErasedReference)
@@ -1644,6 +1648,8 @@ public:
         if (stage.synchronization.kind != SynchronizationOperationKind::None) {
           const auto witness = atomic
                                    ? std::optional(Shape::NativeAtomicOperation)
+                               : atomicWaiting
+                                   ? std::optional(Shape::NativeAtomicWaitingOperation)
                                    : std::nullopt;
           add(stage.synchronization.kind, witness);
           if (stage.synchronization.order)

@@ -12,6 +12,9 @@ nativeAtomicElement(const MirProgram &program, const SemanticType &storage);
 [[nodiscard]] bool nativeAtomicCall(const MirProgram &program,
                                     const MirBody &body,
                                     const MirInstruction &instruction);
+[[nodiscard]] bool nativeAtomicWaitingCall(const MirProgram &program,
+                                           const MirBody &body,
+                                           const MirInstruction &instruction);
 [[nodiscard]] std::optional<SemanticType>
 nativeAtomicConstructor(const MirProgram &program,
                         const MirConstructorInstance &constructor);

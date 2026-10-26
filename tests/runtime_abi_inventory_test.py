@@ -26,6 +26,8 @@ POLICIES = {
     "random.h": ("call-bounded output buffers", "explicit status", "none"),
     "runtime.h": ("borrowed buffers and explicit descriptor/process/socket handles", "status/count or documented terminal contract", "none"),
     "runtime_execution.h": ("attached TLS lifetime; borrowed failure records", "contract violation terminates; cleanup uses failure ABI", "registered TLS cleanup; no unwind across C"),
+    "runtime_atomic_wait.h": ("call-bounded naturally aligned atomic lanes; one final-image parking provider", "invalid ABI or native errors terminate", "none; no unwind"),
+    "runtime_mutex.h": ("address-stable native slot; explicit initialize/destroy and same-thread lock ownership", "lock status; other native errors terminate", "none; no unwind"),
     "runtime_failure.h": ("call-bounded records and pinned descriptors", "report status or terminal exit/abort", "observer containment; no unwind"),
     "runtime_thread.h": ("explicit task/state/stop/synchronization authority", "status and copied failure records", "task callbacks with versioned failure protocol"),
 }
