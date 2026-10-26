@@ -10161,11 +10161,9 @@ callbacks remain outside this evaluation profile. Omitted/default profiles,
 mutated targets/symbols/signatures/stages/permissions and frontend unsafe
 violations reject. No production admission or backend selection is changed.
 
-This private-profile implementation checkpoint is not acceptance-ready: the
-separate C04 cleanup landingpad in `lifetimes.cpp` still needs the same exception
-argument forwarding as `body.cpp`. The harness rejects any remaining
-one-argument channel-transfer call before linking. The identity contract below
-must cover both sites atomically before either matrix is claimed verified.
+Both the body and cleanup landingpads forward the actual exception pointer.
+The harness rejects any one-argument channel-transfer call before linking,
+so neither path can silently retain a TLS-only transfer convention.
 
 Every experimental unwind landingpad must supply its actual exception pointer
 to the test-owned carrier transfer helper. Before reading a GTI channel, the
