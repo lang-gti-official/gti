@@ -48,6 +48,7 @@ SUCCESS_FILES = {
     "static-dispatch": "tests/fixtures/llvm_dispatch_execution.gti",
     "fresh-hierarchy-transfer": "tests/fixtures/llvm_dispatch_fresh_transfer.gti",
     "fresh-hierarchy-copy-view": "tests/fixtures/llvm_dispatch_fresh_copy_view.gti",
+    "inline-hierarchy-fields": "tests/fixtures/llvm_dispatch_inline_fields.gti",
     "dispatch-cost-correctness": "tests/fixtures/llvm_dispatch_execution_cost.gti",
     "shipped-example": "examples/llvm/inheritance-and-dispatch.gti",
 }
@@ -58,6 +59,9 @@ TRANSFER_ENDPOINTS = (
 )
 
 CPP_LIMITATIONS = {
+    "inline-hierarchy-fields": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
+    "inline-field-virtual-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
+    "inline-field-constructor-rollback": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "borrowed-mut-reference-chain": "outside the complete C++ text vocabulary",
     "fresh-hierarchy-copy-view": "generated copy/move construction lacks the complete generic destination and cleanup schedule",
 }
@@ -119,6 +123,7 @@ TRANSFER_SUCCESS_SOURCES = {
     "generated-copy-former-reject": (PLAIN + "int main() { Plain first{}; Plain second = first; return second.read(); }\n", 1),
     "generated-move-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second = std::move(first); return second.read(); }\n", 1),
     "fresh-copy-former-cli-control": ("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", 0),
+    "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain(); };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
 }
 
 REJECTIONS = {
@@ -131,7 +136,6 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     "reject-fresh-value-argument": PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n",
     "reject-fresh-return": PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n",
     "reject-array": PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n",
-    "reject-nested-object": PLAIN + "struct Wrapper { Plain value = Plain(); };\nint main() { Wrapper value{}; return value.value.read(); }\n",
     "reject-global": PLAIN + "Plain value{};\nint main() { return value.read(); }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
     "reject-pure-active-phase": """class Base {
@@ -1033,7 +1037,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name == "inline-hierarchy-fields" else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1060,6 +1064,36 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
         endpoints=TRANSFER_ENDPOINTS)
     add("constructor-rollback", lifecycle.split(marker, 1)[0] + ROLLBACK_MAIN,
         "defined-failure", expected_exit=70, failure_needle="quotient(12 / divisor)")
+    prefix = lifecycle.split(marker, 1)[0]
+    add("inline-field-virtual-failure", prefix + """
+struct Holder { mut Leaf leaf{7}; };
+int main() {
+  Guard guard{};
+  Holder holder{};
+  return invoke_failure(holder.leaf, 0);
+}
+""", "defined-failure", expected_exit=70, failure_needle="return 120 / divisor;",
+        endpoints=TRANSFER_ENDPOINTS, cpp_limitation=CPP_LIMITATIONS["inline-field-virtual-failure"])
+    add("inline-field-constructor-rollback", prefix + """
+struct Holder {
+  mut Leaf first{7};
+  mut Leaf second;
+  Holder() : second(Leaf(0)) {}
+  ~Holder() { record(9); }
+};
+int main() {
+  expected_cleanup = 1231221321;
+  Guard guard{};
+  Holder holder{};
+  return 0;
+}
+""", "defined-failure", expected_exit=70, failure_needle="quotient(12 / divisor)",
+        endpoints=TRANSFER_ENDPOINTS, cpp_limitation=CPP_LIMITATIONS["inline-field-constructor-rollback"])
+    add("inline-field-wrong-cleanup-trace",
+        cases["inline-field-constructor-rollback"].source_text.replace(
+            "expected_cleanup = 1231221321;", "expected_cleanup = 1231221322;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle="quotient(12 / divisor)",
+        endpoints=TRANSFER_ENDPOINTS[2:])
     anchor = "mut int expected_cleanup = 1234321;"
     if lifecycle.count(anchor) != 1:
         raise AssertionError("cleanup oracle mutation anchor is not unique")
@@ -1078,7 +1112,10 @@ def evidence_cases(root: Path) -> dict[str, str]:
 
 def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
     profiles = {
-        "base-interface-adjustments": ("static-dispatch", "shipped-example"),
+        "base-interface-adjustments": ("static-dispatch", "shipped-example",
+                                       "inline-hierarchy-fields", "nested-object-former-reject",
+                                       "inline-field-virtual-failure", "inline-field-constructor-rollback",
+                                       "inline-field-wrong-cleanup-trace"),
         "mut-borrow-scalar-bool": ("borrowed-dispatch", "borrowed-mut-reference-chain"),
         "scalar-virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
                                       "static-dispatch", "dispatch-cost-correctness"),
@@ -1120,7 +1157,9 @@ def main() -> None:
         print(json.dumps(evidence_manifest(Path(sys.argv[2]).resolve()), sort_keys=True))
         return
     names = (*SUCCESS_FILES, *SUCCESS_SOURCES, *TRANSFER_SUCCESS_SOURCES, "borrowed-dispatch", "borrowed-mut-reference-chain",
-             "virtual-failure-cleanup", "generated-move-virtual-failure", "constructor-rollback", "cleanup-oracle-wrong-trace", *REJECTIONS,
+             "virtual-failure-cleanup", "generated-move-virtual-failure", "constructor-rollback", "cleanup-oracle-wrong-trace",
+             "inline-field-virtual-failure", "inline-field-constructor-rollback",
+             "inline-field-wrong-cleanup-trace", *REJECTIONS,
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)
@@ -1185,7 +1224,7 @@ def main() -> None:
                 line = next(index for index, value in enumerate(specification.source_text.splitlines(), 1)
                             if specification.failure_needle in value)
                 for endpoint in specification.endpoints:
-                    case = work / f"wrong-trace-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard or 'native'}"
+                    case = work / f"{name}-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard or 'native'}"
                     result = execute(gti, root, case, source, endpoint, env)
                     if (result.error or result.returncode != 70 or result.stdout
                             or "GTI-R0014" not in result.stderr
@@ -1193,7 +1232,7 @@ def main() -> None:
                             or f"{source.name}:{line}" not in result.stderr
                             or expected_failure(result, source, line)):
                         raise AssertionError(f"controlled wrong trace failed to discriminate: {endpoint}: {result}")
-                print("cleanup-oracle-wrong-trace: secondary failure reproduced; positive oracle rejects the mutation", flush=True)
+                print(f"{name}: secondary failure reproduced; positive oracle rejects the mutation", flush=True)
             else:
                 execute_case(gti, root, work, name, source, env,
                              expected_exit=specification.expected_exit,

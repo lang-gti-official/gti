@@ -4617,8 +4617,9 @@ remain separate obligations.
 
 The bounded public hierarchy profile uses exact per-operation admission proofs,
 not a class-wide enable bit. `NativeStaticDispatchStorage` describes ordinary
-hierarchies with passive scalar fields and fresh whole-local final destinations,
-selected base initialization and static cleanup. "Static" describes the
+hierarchies with recursively ordinary class/scalar fields and fresh whole-local
+or constructor-field final destinations, selected base initialization and static
+cleanup. "Static" describes the
 representation, not permission for global or thread-local storage.
 `NativeBorrowedDispatchView` describes checked selected class/base/interface
 addresses with preserved access; `NativeVirtualInvocation` requires the exact
@@ -4631,6 +4632,15 @@ then independently preflights exact uses in an options/snapshot-bound temporary
 session without publishing functions, tables or IR. Successful and unsupported
 occurrences remain separate even within one body. Cleanup and generated-empty
 preflights are shared with emission, which retains its own validation.
+Ordinary construction uses one `freshConstructionDestination` query in admission
+and emission. It binds the program-owned body and result definition, one exact
+`Initialize` publication and the final place. A constructor field must match
+its verified initializer ordinal, symbol and target type; a default field
+initializer must match its exact declared-field binding, symbol, type and access.
+Declaration-only field placeholders use the existing MIR predicate and do not
+construct, transfer or initialize bytes. Field metadata itself grants no copy,
+move, replacement or return permission. Field-projected borrowed receivers retain
+the existing exact origin, access and loan checks.
 `NativeFreshHierarchyTransfer` admits a narrower generated-transfer profile:
 a scalar ordinary hierarchy, an exact Copy Load, targetless Copy Construct from
 a checked selected source, or whole-binding Move, and exactly one Initialize
@@ -4649,7 +4659,7 @@ The cost follows scalar payload, hierarchy headers and existing active flags;
 this structural model is not measured allocation or runtime-cost acceptance.
 
 `PolymorphicTransfer` still rejects unproved class-value copies/moves, assignment,
-replacement, by-value arguments/returns, captures, containing wrappers/arrays,
+replacement, by-value arguments/returns, captures, transfers of containing wrappers/arrays,
 nonlocal destinations and ownership/callback/native/thread combinations.
 The shared inline-storage exclusion follows exact fields/state bases and array
 elements, stops at references/raw pointers, and fails closed on unknown or cyclic

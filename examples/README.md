@@ -63,7 +63,8 @@ it is outside the numbered full-language census like the other LLVM profiles.
 [`llvm/inheritance-and-dispatch.gti`](llvm/inheritance-and-dispatch.gti)
 demonstrates fresh local objects, a multilevel state base, multiple interfaces,
 checked readonly/mutable borrowed calls, and generated copies/moves into fresh
-locals while preserving the complete object's interface views. Build with
+locals while preserving the complete object's interface views, and a fresh
+inline hierarchy-valued field with independent dispatch state. Build with
 `gti examples/llvm/inheritance-and-dispatch.gti --backend llvm -O3 -o dispatch`.
 `llvm_dispatch_execution` owns its native O0/O3 checks; dedicated transfer
 fixtures additionally run O1/O2. Owning polymorphism, general value transport,

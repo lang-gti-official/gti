@@ -2789,6 +2789,19 @@ int inspect(Value& value) { return value.read(); }
            "exact interface and state-base metadata has bounded public "
            "representation witnesses");
   }
+  const auto nestedHierarchy = planLlvmAdmission(lower(
+      R"(class Poly {public: virtual int read(){return 1;}}; class Outer {public: Poly value;}; void accept(Outer& value){})"));
+  expect(nestedHierarchy.admitted() &&
+             std::any_of(nestedHierarchy.requirements().begin(),
+                         nestedHierarchy.requirements().end(),
+                         [](const auto &use) {
+                           return use.required && use.implementedShape &&
+                                  use.entry->key() == "Shape.ClassFields" &&
+                                  use.implementedShape->name ==
+                                      "NativeStaticDispatchStorage";
+                         }),
+         "ordinary hierarchy field metadata and declaration-only placeholders "
+         "do not imply object transfer");
   struct NestedNegative {
     std::string_view source;
     std::string_view requirement;
@@ -2797,9 +2810,6 @@ int inspect(Value& value) { return value.read(); }
   for (
       const auto control :
       {NestedNegative{
-           R"(class Poly {public: virtual int read(){return 1;}}; class Outer {public: Poly value;}; void accept(Outer& value){})",
-           "Shape.PolymorphicTransfer", true},
-       NestedNegative{
            R"(enum class Choice { empty, held(int value) }; class Outer {public: Choice value=Choice::empty;}; void accept(Outer& value){})",
            "Shape.PayloadEnum"},
        NestedNegative{
@@ -2818,7 +2828,7 @@ int inspect(Value& value) { return value.read(); }
         });
     expect(!excluded.admitted() &&
                owningFailure != excluded.requirements().end(),
-           "nested polymorphic, payload and union storage retains its exact "
+           "nested payload and union storage retains its exact "
            "owning pending requirement and source identity");
   }
   const auto nestedForeign = planLlvmAdmission(lower(R"(
