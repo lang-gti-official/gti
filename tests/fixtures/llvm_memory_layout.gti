@@ -1,0 +1,20 @@
+#include <std/memory>
+
+class Unrelated {
+public:
+  int64_t wide;
+  bool flag;
+  Unrelated(int64_t wide, bool flag) : wide(wide), flag(flag) {}
+};
+
+int main() {
+  auto integer = std::layout_of<int64_t>();
+  auto boolean = std::layout_of<bool>();
+  auto address = std::layout_of<int*>();
+  auto object = std::layout_of<Unrelated>();
+  if (integer.bytes != uint64_t(8) || integer.alignment != uint64_t(8)) { return 1; }
+  if (boolean.bytes != uint64_t(1) || boolean.alignment != uint64_t(1)) { return 2; }
+  if (address.bytes != uint64_t(8) || address.alignment != uint64_t(8)) { return 3; }
+  if (object.bytes < uint64_t(9) || object.alignment != uint64_t(8)) { return 4; }
+  return 0;
+}

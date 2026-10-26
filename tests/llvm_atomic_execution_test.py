@@ -3,13 +3,13 @@
 
 from pathlib import Path
 import os
-import hashlib
 import json
 import subprocess
 import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from llvm_evidence_manifest import build_manifest
 
 
 def cases() -> dict[str, str]:
@@ -35,22 +35,27 @@ def profiles() -> dict[str, list[str]]:
     }
 
 
-def evidence(root: Path) -> dict:
+def evidence_cases(root: Path) -> dict[str, str]:
     return {
-        "schema": "gti.llvm.execution-evidence/v1",
-        "test": "llvm_atomic_execution",
-        "profiles": {name: {"sources": sources} for name, sources in profiles().items()},
-        "sources": {
-            name: {"origin": f"tests/fixtures/{fixture}",
-                   "sha256": hashlib.sha256((root / "tests/fixtures" / fixture).read_bytes()).hexdigest()}
-            for name, fixture in cases().items()
-        },
+        name: (root / "tests/fixtures" / fixture).read_text(encoding="utf-8")
+        for name, fixture in cases().items()
     }
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    del root
+    return {name: tuple(sources) for name, sources in profiles().items()}
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest(
+        "llvm_atomic_execution", evidence_cases(root), evidence_profiles(root),
+        {name: f"tests/fixtures/{fixture}" for name, fixture in cases().items()})
 
 
 def main() -> None:
     if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
-        print(json.dumps(evidence(Path(sys.argv[2]).resolve()), sort_keys=True))
+        print(json.dumps(evidence_manifest(Path(sys.argv[2]).resolve()), sort_keys=True))
         return
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else None

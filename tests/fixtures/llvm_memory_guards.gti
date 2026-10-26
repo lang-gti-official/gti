@@ -1,0 +1,8 @@
+#include <std/detail/iterator>
+
+int main() {
+  auto next = std::detail::checked_iterator_step(uint64_t(1), uint64_t(0), uint64_t(3));
+  auto previous = std::detail::checked_iterator_step<0, 1>(uint64_t(2), uint64_t(0), uint64_t(3));
+  auto selected = std::detail::checked_iterator_element(uint64_t(1), uint64_t(0), uint64_t(4), int64_t(1));
+  return next == uint64_t(2) && previous == uint64_t(1) && selected == uint64_t(2) ? 0 : 1;
+}

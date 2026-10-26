@@ -1,0 +1,22 @@
+#include <std/memory>
+
+mut int drops = 0;
+class Object {
+public:
+  int id;
+  Object(int id) : id(id) {}
+  ~Object() { drops = drops + this.id; }
+};
+
+int main() {
+  {
+    mut auto first = std::make_shared<Object>(7);
+    mut auto second = first.clone();
+    if (first.use_count() != uint64_t(2) || second->id != 7) { return 1; }
+    first.reset();
+    if (first || second.use_count() != uint64_t(1) || drops != 0) { return 2; }
+    mut auto moved = std::move(second);
+    if (moved->id != 7) { return 3; }
+  }
+  return drops == 7 ? 0 : 4;
+}

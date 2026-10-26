@@ -1,7 +1,13 @@
 #include "body.h"
 #include "atomics.h"
+#include "callables.h"
+#include "constructor_field_publication.h"
 #include "failure.h"
+#include "hosted.h"
 #include "lifetimes.h"
+#include "memory.h"
+#include "parameter_packs.h"
+#include "payloads.h"
 #include "placement.h"
 #include "places.h"
 #include "runtime_abi.h"
@@ -17,6 +23,44 @@
 namespace lang::native_llvm {
 namespace {
 
+ConcreteParameterPlan parameterPlan(const MirProgram &program,
+                                    MirBodyAddress address,
+                                    const MirBody &body) {
+  const std::vector<HirBindingId> *bindings = nullptr;
+  const std::vector<SemanticType> *types = nullptr;
+  if (address.kind == MirBodyKind::Function) {
+    const auto *owner = program.findFunctionInstance(address.owner);
+    if (owner && &owner->body == &body) {
+      bindings = &owner->parameterBindings;
+      types = &owner->parameterTypes;
+    }
+  } else if (address.kind == MirBodyKind::Constructor) {
+    const auto *owner = program.findConstructorInstance(address.owner);
+    if (owner && &owner->body == &body) {
+      bindings = &owner->parameterBindings;
+      types = &owner->parameterTypes;
+    }
+  } else if (address.kind == MirBodyKind::Lambda) {
+    const auto *owner = program.findLambda(address.owner);
+    if (owner && &owner->body == &body) {
+      bindings = &owner->parameterBindings;
+      types = &owner->parameterTypes;
+    }
+  } else {
+    static const std::vector<HirBindingId> emptyBindings;
+    static const std::vector<SemanticType> emptyTypes;
+    bindings = &emptyBindings;
+    types = &emptyTypes;
+  }
+  if (!bindings || !types)
+    throw std::logic_error("LLVM body lost its exact parameter facts");
+  auto result = planConcreteParameters(*types, *bindings, body);
+  if (!result)
+    throw BackendUnsupportedError(
+        "LLVM concrete parameters lost their exact verified ABI mapping");
+  return std::move(*result);
+}
+
 class Bodies final {
 public:
   explicit Bodies(Session &session)
@@ -26,6 +70,9 @@ public:
         threadLocals(
             session, failures, lifetimes,
             [&](MirBodyAddress address) { return function(address); },
+            [&](MirBodyAddress address) { return signature(address); }),
+        callables(
+            session, [&](MirBodyAddress address) { return function(address); },
             [&](MirBodyAddress address) { return signature(address); }) {}
   void lower(const LlvmAdmissionPlan &admission);
 
@@ -34,6 +81,7 @@ private:
   Failures failures;
   Lifetimes lifetimes;
   ThreadLocals threadLocals;
+  Callables callables;
   std::map<SymbolId, llvm::GlobalVariable *> globals;
   std::map<std::pair<MirBodyKind, std::size_t>, llvm::Function *> functions;
   [[nodiscard]] llvm::Function *function(MirBodyAddress address);
@@ -47,28 +95,45 @@ public:
   Body(Session &session, Failures &failures, Lifetimes &lifetimes,
        ThreadLocals &threadLocals, llvm::Function &function,
        MirBodyAddress address, const MirBody &body, FunctionAbi abi,
-       std::span<const HirBindingId> parameters,
+       std::span<const ParameterLane> parameters,
+       std::span<const ConcretePackParameter> packs,
        const std::map<SymbolId, llvm::GlobalVariable *> &globals,
+       Callables &callables,
        std::function<llvm::Function *(MirBodyAddress)> findFunction,
        std::function<FunctionAbi(MirBodyAddress)> bodyAbi,
-       const MirClassInstance *owner)
+       const MirClassInstance *owner, const MirLambdaInstance *lambda,
+       std::optional<SemanticType> receiverType)
       : session(session), failures(failures), function(function),
         address(address), input(body), abi(std::move(abi)), globals(globals),
         ir(session.context()), lifetimes(lifetimes), threadLocals(threadLocals),
         bodyAbi(std::move(bodyAbi)), owner(owner),
+        receiverType(std::move(receiverType)), callables(callables),
         scalars(session, ir,
                 [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
                   guard(condition, outcome);
                 }),
         atomics(session, ir), findFunction(std::move(findFunction)),
         values(body.values.size() + 1),
-        memory(session, ir, body, values,
-               [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
-                 guard(condition, outcome);
-               }),
+        memory(
+            session, ir, body, values,
+            [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
+              guard(condition, outcome);
+            },
+            lambda, packs),
+        objectMemory(
+            session, ir,
+            [this](const MirDropType &recipe) {
+              return this->lifetimes.cleanup(recipe);
+            },
+            [this](llvm::Value *address, const SemanticType &type) {
+              this->lifetimes.moved(ir, address, type);
+            },
+            [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
+              guard(condition, outcome);
+            }),
         channels(body.failureRecords.size() + 1),
         blocks(body.blocks.size() + 1), live(body.dropObligations.size() + 1),
-        placement(body) {
+        placement(session.program().mir(), body) {
     emit(parameters);
   }
 
@@ -85,11 +150,14 @@ private:
   ThreadLocals &threadLocals;
   std::function<FunctionAbi(MirBodyAddress)> bodyAbi;
   const MirClassInstance *owner;
+  std::optional<SemanticType> receiverType;
+  Callables &callables;
   Scalars scalars;
   Atomics atomics;
   std::function<llvm::Function *(MirBodyAddress)> findFunction;
   std::vector<llvm::Value *> values;
   Places memory;
+  Memory objectMemory;
   std::vector<llvm::Value *> channels;
   std::vector<llvm::BasicBlock *> blocks;
   std::vector<llvm::Value *> live;
@@ -101,20 +169,46 @@ private:
   const MirBlock *current = nullptr;
   const MirInstruction *stage = nullptr;
 
+  [[nodiscard]] StoredFieldPublicationPlan
+  fieldPublication(const MirLoan &loan) const {
+    if (address.kind != MirBodyKind::Constructor)
+      return {};
+    auto plan = storedFieldPublication(session.program().mir(), input,
+                                       address.owner, loan);
+    if (plan.matched() && !plan.exact)
+      throw BackendUnsupportedError(
+          "LLVM stored field publication lost its exact constructor facts");
+    return plan;
+  }
+
   void publishStoredField(const MirLoan &loan, llvm::Value *address) {
-    if (loan.kind != MirLoanKind::Stored || !loan.storedField)
+    const auto plan = fieldPublication(loan);
+    if (!plan.matched() ||
+        plan.kind == StoredFieldPublicationKind::ProvenanceOnly)
       return;
-    if (input.kind != MirBodyKind::Constructor || !owner)
+    if (plan.kind != StoredFieldPublicationKind::ReferenceAddress ||
+        !plan.field || !owner || !thisAddress)
       throw std::logic_error(
           "LLVM stored field publication lost its constructor");
     ir.CreateStore(
         address,
         ir.CreateStructGEP(
             session.layouts().get(owner->type).storage, thisAddress,
-            session.layouts().fieldIndex(owner->type, loan.storedField)));
+            session.layouts().fieldIndex(owner->type, plan.field->symbol)));
   }
 
   [[nodiscard]] llvm::Value *destination(MirValueId value) {
+    if (stage && stage->result && *stage->result == value)
+      if (const auto publication = recordPublication(*stage);
+          publication.matched()) {
+        if (publication.transport ==
+            UnstagedConstructorFieldPublicationTransport::ExactValue)
+          return publicationAddress(*publication.initializer);
+        if (publication.transport ==
+            UnstagedConstructorFieldPublicationTransport::NullUniqueOwner)
+          throw std::logic_error(
+              "LLVM null owner publication requested source placement");
+      }
     if (const auto *target = placement.target(value)) {
       if (target->place)
         return memory.address(target->place);
@@ -124,6 +218,10 @@ private:
         return returnDestination;
       }
       const auto &type = input.findValue(target->aggregate)->info.type;
+      if (target->variant)
+        return payloadFieldAddress(ir, session.layouts().payload(type),
+                                   destination(target->aggregate),
+                                   *target->variant, target->element);
       return ir.CreateGEP(session.layouts().get(type).storage,
                           destination(target->aggregate),
                           {ir.getInt64(0), ir.getInt64(target->element)});
@@ -142,7 +240,32 @@ private:
              const SemanticType &type) {
     memory.store(value, address, type);
   }
-  [[nodiscard]] llvm::Value *operand(const MirOperand &operand) {
+  [[nodiscard]] UnstagedConstructorFieldPublicationPlan
+  recordPublication(const MirInstruction &instruction) const {
+    if (address.kind != MirBodyKind::Constructor || !owner)
+      return {};
+    const auto &program = session.program().mir();
+    const auto plan = unstagedConstructorFieldPublication(
+        program, input, address.owner, instruction);
+    if (!plan.matched())
+      return {};
+    if (!plan.exact)
+      throw BackendUnsupportedError(
+          "LLVM constructor record publication has inconsistent sealed "
+          "field facts");
+    return plan;
+  }
+  [[nodiscard]] llvm::Value *
+  publicationAddress(const MirConstructorInitializer &initializer) {
+    if (!thisAddress || !owner)
+      throw std::logic_error(
+          "LLVM constructor field publication lost its receiver");
+    return ir.CreateStructGEP(
+        session.layouts().get(owner->type).storage, thisAddress,
+        session.layouts().fieldIndex(owner->type, initializer.field));
+  }
+  [[nodiscard]] llvm::Value *operand(const MirOperand &operand,
+                                     llvm::Value *target = nullptr) {
     if (operand.literal)
       return scalars.literal(*operand.literal, operand.type);
     if (operand.kind == MirOperandKind::Address ||
@@ -161,15 +284,17 @@ private:
                           operand.kind == MirOperandKind::Move)) {
       auto *source = memory.address(operand.place);
       auto *value = load(source, operand.type);
-      if (addressValue(operand.type)) {
-        auto *target = memory.temporary(operand.type);
+      if (addressValue(session.program().mir(), operand.type)) {
+        if (!target)
+          target = memory.temporary(operand.type);
         store(value, target, operand.type);
         if (operand.kind == MirOperandKind::Move)
           lifetimes.moved(ir, source, operand.type);
         return target;
       }
       if (operand.kind == MirOperandKind::Move &&
-          operand.type.kind == SemanticType::Array)
+          (operand.type.kind == SemanticType::Array ||
+           operand.type.kind == SemanticType::UniqueOwner))
         lifetimes.moved(ir, source, operand.type);
       return value;
     }
@@ -217,8 +342,10 @@ private:
     if (!authorized)
       return;
     const auto &term = current->terminator;
-    if (term.kind != MirTerminatorKind::Invoke ||
-        term.invokeInstruction != stage->id)
+    const bool terminalAllocation =
+        outcome.code == DefinedFailureCode::AllocationFailure;
+    if (!terminalAllocation && (term.kind != MirTerminatorKind::Invoke ||
+                                term.invokeInstruction != stage->id))
       throw std::logic_error("LLVM checked operation lost its Invoke");
     auto *failed =
         llvm::BasicBlock::Create(session.context(), "check.failed", &function);
@@ -226,28 +353,258 @@ private:
         llvm::BasicBlock::Create(session.context(), "check.success", &function);
     ir.CreateCondBr(condition, failed, normal);
     ir.SetInsertPoint(failed);
-    failures.originate(ir, channels.at(term.failureRecord), *stage, outcome,
-                       callerSite, callerArtifact);
-    jump(term.elseTarget, term.elseArguments);
+    if (terminalAllocation) {
+      llvm::IRBuilder<> entry(&function.getEntryBlock(),
+                              function.getEntryBlock().begin());
+      auto *channel = entry.CreateAlloca(session.abi().failureChannel());
+      failures.originate(ir, channel, *stage, outcome, callerSite,
+                         callerArtifact);
+      ir.CreateCall(
+          declareRuntimeService(session, RuntimeService::AbortAllocation),
+          {failures.record(ir, channel), failures.origin(ir, channel)});
+      ir.CreateUnreachable();
+    } else {
+      failures.originate(ir, channels.at(term.failureRecord), *stage, outcome,
+                         callerSite, callerArtifact);
+      jump(term.elseTarget, term.elseArguments);
+    }
     ir.SetInsertPoint(normal);
+  }
+  [[nodiscard]] llvm::Value *
+  formFunctionPointer(const MirInstruction &instruction) {
+    if (!instruction.result)
+      throw std::logic_error(
+          "LLVM function-pointer formation has no result storage");
+    auto *wrapper = destination(*instruction.result);
+    auto *target = callables.pointerAdapter(instruction);
+    ir.CreateStore(
+        target,
+        ir.CreateStructGEP(session.layouts().get(instruction.info.type).storage,
+                           wrapper, 0));
+    return wrapper;
+  }
+  [[nodiscard]] llvm::Value *
+  invokeFunctionPointer(const MirInstruction &instruction) {
+    if (instruction.operands.empty() || instruction.parameterTypes.empty())
+      throw std::logic_error(
+          "LLVM function-pointer invocation lost its receiver");
+    const auto &receiver = instruction.parameterTypes.front();
+    if (receiver.kind != SemanticType::Reference ||
+        receiver.arguments.size() != 1)
+      throw std::logic_error(
+          "LLVM function-pointer invocation lost its capability type");
+    const auto &pointerType = receiver.arguments.front();
+    const auto callable = callables.pointerSignature(pointerType);
+    const auto signature = callables.pointerAbi(pointerType);
+    auto *wrapper = memory.selected(instruction.operands.front());
+    auto *callee = ir.CreateLoad(
+        session.layouts().pointer(),
+        ir.CreateStructGEP(session.layouts().get(pointerType).storage, wrapper,
+                           0));
+
+    llvm::Value *resultSlot = nullptr;
+    if (signature.resultDestination) {
+      llvm::IRBuilder<> entry(&function.getEntryBlock(),
+                              function.getEntryBlock().begin());
+      resultSlot = instruction.result && addressValue(session.program().mir(),
+                                                      callable.result)
+                       ? destination(*instruction.result)
+                       : entry.CreateAlloca(
+                             session.layouts().get(callable.result).storage);
+    }
+    std::vector<llvm::Value *> arguments;
+    arguments.reserve(signature.parameters.size());
+    for (const auto &parameter : signature.parameters) {
+      switch (parameter.channel) {
+      case AbiChannel::ResultDestination:
+        arguments.push_back(resultSlot);
+        break;
+      case AbiChannel::FailureDestination:
+        arguments.push_back(channels.at(current->terminator.failureRecord));
+        break;
+      case AbiChannel::Argument: {
+        const auto index = parameter.sourceIndex + 1;
+        auto *value = operand(instruction.operands.at(index));
+        if (parameter.indirect &&
+            !addressValue(session.program().mir(),
+                          instruction.operands.at(index).type)) {
+          llvm::IRBuilder<> entry(&function.getEntryBlock(),
+                                  function.getEntryBlock().begin());
+          auto *slot = entry.CreateAlloca(value->getType());
+          ir.CreateStore(value, slot);
+          value = slot;
+        }
+        arguments.push_back(value);
+        break;
+      }
+      case AbiChannel::Receiver:
+      case AbiChannel::CallerSite:
+      case AbiChannel::CallerArtifact:
+        throw std::logic_error(
+            "LLVM function-pointer ABI acquired an invalid channel");
+      }
+    }
+    auto *status = ir.CreateCall(signature.type, callee, arguments);
+    signature.applyTo(*status);
+    auto *normal =
+        llvm::BasicBlock::Create(session.context(), "call.success", &function);
+    auto *failed =
+        llvm::BasicBlock::Create(session.context(), "call.failed", &function);
+    ir.CreateCondBr(status, normal, failed);
+    ir.SetInsertPoint(failed);
+    jump(current->terminator.elseTarget, current->terminator.elseArguments);
+    ir.SetInsertPoint(normal);
+    return resultSlot ? load(resultSlot, callable.result) : nullptr;
+  }
+  [[nodiscard]] llvm::Value *
+  constructClosure(const MirInstruction &instruction) {
+    if (!instruction.result || !instruction.lambdaTarget)
+      throw std::logic_error("LLVM closure construction lost its identity");
+    const auto &target = callables.lambda(*instruction.lambdaTarget);
+    if (target.type != instruction.info.type ||
+        target.captureTypes != instruction.closureCaptureTypes ||
+        target.captureModes != instruction.closureCaptureModes ||
+        target.captureTypes.size() != instruction.operands.size())
+      throw std::logic_error(
+          "LLVM closure construction disagrees with sealed capture facts");
+    auto *environment = destination(*instruction.result);
+    auto *storage = session.layouts().get(target.type).storage;
+    if (target.captureTypes.empty()) {
+      ir.CreateStore(ir.getInt8(0),
+                     ir.CreateStructGEP(storage, environment, 0));
+      return environment;
+    }
+    for (std::size_t index = 0; index < target.captureTypes.size(); ++index)
+      store(operand(instruction.operands[index]),
+            ir.CreateStructGEP(storage, environment,
+                               static_cast<unsigned>(index)),
+            target.captureTypes[index]);
+    return environment;
   }
   [[nodiscard]] llvm::Value *call(const MirInstruction &instruction,
                                   llvm::Value *constructed = nullptr) {
-    if (instruction.intrinsic == IntrinsicKind::Panic) {
+    if (const auto location = hostedSourceLiteral(instruction))
+      return scalars.literal(*location, instruction.info.type);
+    if (instruction.intrinsic == IntrinsicKind::Panic ||
+        instruction.intrinsic == IntrinsicKind::FailEmptyOwner ||
+        instruction.intrinsic == IntrinsicKind::FailInactiveValue ||
+        instruction.intrinsic == IntrinsicKind::FailInactiveError) {
       const auto &term = current->terminator;
-      failures.originate(
-          ir, channels.at(term.failureRecord), instruction,
-          {DefinedFailureCode::Panic, DefinedFailureDetail::ExplicitPanic},
-          callerSite, callerArtifact, operand(instruction.operands.at(0)));
+      if (instruction.definedFailure.localOrigins.size() != 1 ||
+          instruction.definedFailure.localOrigins[0].outcomes.size() != 1)
+        throw std::logic_error(
+            "LLVM terminal intrinsic lost its exact failure outcome");
+      failures.originate(ir, channels.at(term.failureRecord), instruction,
+                         instruction.definedFailure.localOrigins[0].outcomes[0],
+                         callerSite, callerArtifact,
+                         instruction.intrinsic == IntrinsicKind::Panic
+                             ? operand(instruction.operands.at(0))
+                             : nullptr);
       jump(term.elseTarget, term.elseArguments);
       return nullptr;
     }
-    if (instruction.intrinsic != IntrinsicKind::None) {
+    if (const auto outcome =
+            intrinsicBooleanFailureOutcome(instruction.intrinsic)) {
+      auto *condition = operand(instruction.operands.at(0));
+      if (!condition->getType()->isIntegerTy(1))
+        throw std::logic_error(
+            "LLVM checked condition lost its sealed Boolean type");
+      guard(ir.CreateNot(condition), *outcome);
+      return nullptr;
+    }
+    std::size_t argumentOffset = 0;
+    if (instruction.intrinsic == IntrinsicKind::ObjectConstruct) {
+      if (!nativeObjectConstructionShape(session.program().mir(), instruction))
+        throw BackendUnsupportedError("LLVM object construction requires its "
+                                      "exact selected/generated plan");
+      constructed = operand(instruction.operands[0]);
+      argumentOffset = 1;
+      if (!instruction.constructorTarget) {
+        const auto &type = instruction.parameterTypes[0].arguments[0];
+        if (instruction.operands.size() == 2) {
+          auto *value = operand(instruction.operands[1]);
+          store(value, constructed, type);
+          if (instruction.constructorKind == ConstructorKind::Move &&
+              addressValue(session.program().mir(), type))
+            lifetimes.moved(ir, value, type);
+        } else {
+          ir.CreateStore(
+              llvm::Constant::getNullValue(session.layouts().get(type).storage),
+              constructed);
+        }
+        lifetimes.active(ir, constructed, type, true);
+        return nullptr;
+      }
+      // Keep the original MIR instruction, stage and ownership events. Only
+      // source-argument indexing skips the already evaluated raw destination.
+    } else if (instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner) {
+      if (!nativeUniqueConstructionShape(session.program().mir(), instruction))
+        throw BackendUnsupportedError("LLVM unique construction requires its "
+                                      "exact selected/generated plan");
+      const auto &type = instruction.info.type.arguments[0];
+      if (type.kind == SemanticType::Class) {
+        const auto *allocation =
+            input.findDropObligation(instruction.objectAllocation);
+        if (!allocation ||
+            allocation->kind != MirDropObligationKind::ObjectAllocation ||
+            allocation->dropType.type != instruction.info.type)
+          throw std::logic_error(
+              "LLVM unique construction lost its allocation-only obligation");
+        constructed =
+            load(memory.address(allocation->place), instruction.info.type);
+      } else {
+        constructed = objectMemory.allocateObject(instruction);
+      }
+      if (!instruction.constructorTarget) {
+        if (instruction.operands.empty()) {
+          ir.CreateStore(
+              llvm::Constant::getNullValue(session.layouts().get(type).storage),
+              constructed);
+        } else {
+          auto *value = operand(instruction.operands[0]);
+          store(value, constructed, type);
+          if (instruction.constructorKind == ConstructorKind::Move &&
+              addressValue(session.program().mir(), type))
+            lifetimes.moved(ir, value, type);
+        }
+        lifetimes.active(ir, constructed, type, true);
+        return constructed;
+      }
+    } else if (instruction.intrinsic != IntrinsicKind::None) {
       if (Atomics::handles(instruction.intrinsic)) {
         std::vector<llvm::Value *> inputs;
         for (const auto &source : instruction.operands)
           inputs.push_back(operand(source));
         return atomics.emit(input, instruction, inputs);
+      }
+      if (instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem)
+        return formFunctionPointer(instruction);
+      if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke)
+        return invokeFunctionPointer(instruction);
+      if (Memory::handles(instruction.intrinsic)) {
+        std::vector<llvm::Value *> inputs;
+        for (const auto &value : instruction.operands)
+          inputs.push_back(operand(value));
+        const auto &term = current->terminator;
+        const bool checked = term.kind == MirTerminatorKind::Invoke &&
+                             term.invokeInstruction == instruction.id;
+        const auto emitted = objectMemory.emit(
+            instruction, inputs,
+            checked ? channels.at(term.failureRecord) : nullptr,
+            current->activeFailure != 0);
+        if (!emitted.handled)
+          throw std::logic_error("LLVM memory dispatch lost its operation");
+        if (emitted.status && checked) {
+          auto *normal = llvm::BasicBlock::Create(session.context(),
+                                                  "memory.success", &function);
+          auto *failed = llvm::BasicBlock::Create(session.context(),
+                                                  "memory.failed", &function);
+          ir.CreateCondBr(emitted.status, normal, failed);
+          ir.SetInsertPoint(failed);
+          jump(term.elseTarget, term.elseArguments);
+          ir.SetInsertPoint(normal);
+        }
+        return emitted.value;
       }
       switch (instruction.intrinsic) {
       case IntrinsicKind::StringViewSize:
@@ -289,9 +646,7 @@ private:
       }
       if (instruction.intrinsic ==
               IntrinsicKind::NumericTypeParameterConversion ||
-          instruction.intrinsic == IntrinsicKind::NumericAliasConversion ||
-          instruction.intrinsic ==
-              IntrinsicKind::ExactTypeParameterConstruction)
+          instruction.intrinsic == IntrinsicKind::NumericAliasConversion)
         return scalars.convert(operand(instruction.operands.at(0)),
                                instruction.operands[0].type,
                                instruction.info.type);
@@ -314,10 +669,21 @@ private:
             ? session.program().mir().findFunctionInstance(
                   *instruction.functionTarget)
             : nullptr;
+    const MirLambdaInstance *lambdaTarget =
+        instruction.lambdaTarget
+            ? session.program().mir().findLambda(*instruction.lambdaTarget)
+            : nullptr;
     const auto constructor = instruction.constructorTarget;
-    if (!target && !instruction.bodyTarget && !constructor)
+    if (!target && !lambdaTarget && !instruction.bodyTarget && !constructor)
       throw BackendUnsupportedError(
           "LLVM scalar call requires an exact direct target");
+    if (target &&
+        target->processMemoryOperation != ProcessMemoryRuntimeOperation::None) {
+      std::vector<llvm::Value *> inputs;
+      for (const auto &value : instruction.operands)
+        inputs.push_back(operand(value));
+      return objectMemory.processCall(*target, inputs);
+    }
     FunctionAbi signature;
     llvm::Function *callee = nullptr;
     if (target) {
@@ -333,18 +699,21 @@ private:
     } else {
       const auto address =
           constructor ? MirBodyAddress{MirBodyKind::Constructor, *constructor}
-                      : *instruction.bodyTarget;
+          : lambdaTarget ? MirBodyAddress{MirBodyKind::Lambda, lambdaTarget->id}
+                         : *instruction.bodyTarget;
       signature = bodyAbi(address);
       callee = findFunction(address);
     }
-    const auto &resultType =
-        target ? target->returnType : instruction.info.type;
+    const auto &resultType = target         ? target->returnType
+                             : lambdaTarget ? lambdaTarget->returnType
+                                            : instruction.info.type;
     llvm::Value *resultSlot = nullptr;
     if (signature.resultDestination) {
       llvm::IRBuilder<> entry(&function.getEntryBlock(),
                               function.getEntryBlock().begin());
       resultSlot =
-          instruction.result && addressValue(resultType)
+          instruction.result &&
+                  addressValue(session.program().mir(), resultType)
               ? destination(*instruction.result)
               : entry.CreateAlloca(session.layouts().get(resultType).storage);
     }
@@ -368,10 +737,11 @@ private:
                                 : failures.artifact());
         break;
       case AbiChannel::Argument: {
-        auto *value = operand(instruction.operands.at(parameter.sourceIndex));
+        const auto &source =
+            instruction.operands.at(parameter.sourceIndex + argumentOffset);
+        auto *value = operand(source);
         if (parameter.indirect &&
-            !addressValue(
-                instruction.operands.at(parameter.sourceIndex).type)) {
+            !addressValue(session.program().mir(), source.type)) {
           llvm::IRBuilder<> entry(&function.getEntryBlock(),
                                   function.getEntryBlock().begin());
           auto *slot = entry.CreateAlloca(value->getType());
@@ -456,6 +826,16 @@ private:
     }
     auto *address = memory.address(
         instruction.destination.value_or(obligation ? obligation->place : 0));
+    if (obligation &&
+        obligation->kind == MirDropObligationKind::ObjectAllocation) {
+      auto *allocation = load(address, recipe->type);
+      store(llvm::ConstantPointerNull::get(session.layouts().pointer()),
+            address, recipe->type);
+      objectMemory.releaseBytes(allocation);
+      ir.CreateBr(done);
+      ir.SetInsertPoint(done);
+      return;
+    }
     auto *status = ir.CreateCall(
         lifetimes.cleanup(*recipe),
         {address, channel, ir.getInt1(current->activeFailure != 0)});
@@ -474,9 +854,72 @@ private:
     stage = &instruction;
     if (instruction.tombstone)
       return;
+    const auto published = recordPublication(instruction);
+    llvm::Value *publishedAddress =
+        published.matched() ? publicationAddress(*published.initializer)
+                            : nullptr;
     llvm::Value *result = nullptr;
     switch (instruction.kind) {
     case MirInstructionKind::Compute: {
+      if (instruction.operation == MirOperation::FunctionItem) {
+        result = ir.getInt8(0);
+        break;
+      }
+      if (instruction.operation == MirOperation::Closure) {
+        result = constructClosure(instruction);
+        break;
+      }
+      if (instruction.operation == MirOperation::PayloadConstruct ||
+          (instruction.operation == MirOperation::EnumConstant &&
+           session.program().mir().findPayloadEnum(instruction.info.type))) {
+        const auto &type = instruction.info.type;
+        const auto &layout = session.layouts().payload(type);
+        const auto variant = instruction.enumVariant.value();
+        result = destination(*instruction.result);
+        ir.CreateStore(ir.getInt32(PayloadLayout::inactive),
+                       payloadTagAddress(ir, layout, result));
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          const auto &source = instruction.operands[index];
+          if (source.kind == MirOperandKind::Value)
+            if (const auto *target = placement.target(source.value);
+                target && target->aggregate == *instruction.result &&
+                target->variant == variant && target->element == index)
+              continue;
+          store(operand(instruction.operands[index]),
+                payloadFieldAddress(ir, layout, result, variant, index),
+                instruction.operands[index].type);
+        }
+        ir.CreateStore(ir.getInt32(variant),
+                       payloadTagAddress(ir, layout, result));
+        break;
+      }
+      if (instruction.operation == MirOperation::PayloadExtract) {
+        const auto type = mirInstructionEnumType(instruction);
+        const auto &layout = session.layouts().payload(type);
+        const auto &source = instruction.operands.at(0);
+        const auto &fieldType = session.program()
+                                    .mir()
+                                    .findPayloadEnum(type)
+                                    ->variants.at(*instruction.enumVariant)
+                                    .payloadTypes.at(*instruction.payloadIndex);
+        auto *field = payloadFieldAddress(
+            ir, layout,
+            source.place ? memory.address(source.place) : operand(source),
+            instruction.enumVariant.value(), instruction.payloadIndex.value());
+        const auto kind = instruction.payloadExtractionKind.value();
+        result = kind == PayloadExtractionKind::BorrowValue
+                     ? field
+                     : load(field, fieldType);
+        if (kind == PayloadExtractionKind::MoveValue &&
+            addressValue(session.program().mir(), instruction.info.type)) {
+          auto *target = destination(*instruction.result);
+          store(result, target, instruction.info.type);
+          result = target;
+          lifetimes.moved(ir, field, instruction.info.type);
+        }
+        break;
+      }
       if (instruction.destination && instruction.operands.size() == 1 &&
           instruction.operation >= MirOperation::AddAssign &&
           instruction.operation <= MirOperation::ShiftRightAssign) {
@@ -540,7 +983,7 @@ private:
         if (type.kind != SemanticType::Array)
           throw BackendUnsupportedError(
               "LLVM aggregate requires a fixed array");
-        if (addressValue(type)) {
+        if (addressValue(session.program().mir(), type)) {
           result = destination(*instruction.result);
           for (std::size_t index = 0; index < instruction.operands.size();
                ++index) {
@@ -601,7 +1044,7 @@ private:
     case MirInstructionKind::Load:
     case MirInstructionKind::CallInput:
     case MirInstructionKind::Move:
-      result = operand(instruction.operands.at(0));
+      result = operand(instruction.operands.at(0), publishedAddress);
       if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.info.type == SemanticType::CString &&
           instruction.operands[0].type == SemanticType::StringView) {
@@ -623,7 +1066,7 @@ private:
         // a later argument can fail before ownership reaches the callee.
         if (result != destination)
           store(result, destination, place.type);
-        if (addressValue(place.type))
+        if (addressValue(session.program().mir(), place.type))
           result = destination;
       }
       break;
@@ -658,8 +1101,26 @@ private:
       store(result, memory.address(place.id), place.type);
       break;
     }
+    case MirInstructionKind::AllocateObject:
+      store(objectMemory.allocateObject(instruction),
+            memory.address(*instruction.destination), instruction.info.type);
+      break;
     case MirInstructionKind::Construct: {
       auto *target = destination(*instruction.result);
+      if (instruction.info.type.kind == SemanticType::Class &&
+          uninitializedStorageRepresentation(
+              session.program().mir(),
+              session.layouts().instance(instruction.info.type))) {
+        const auto &object = session.layouts().instance(instruction.info.type);
+        if (instruction.constructorTarget || !instruction.operands.empty() ||
+            instruction.constructorKind != ConstructorKind::Ordinary ||
+            object.defaultConstructor != SpecialMemberStatus::Generated ||
+            object.generatedDefaultRequiresSchedule)
+          throw BackendUnsupportedError(
+              "LLVM vacant storage requires exact generated reservation");
+        result = target;
+        break; // No payload lifetime, zeroing, state byte or cleanup is begun.
+      }
       lifetimes.active(ir, target, instruction.info.type, false);
       if (instruction.constructorTarget) {
         result = call(instruction, target);
@@ -669,7 +1130,8 @@ private:
         const auto &object = session.layouts().instance(instruction.info.type);
         if (object.defaultConstructor != SpecialMemberStatus::Generated ||
             object.generatedDefaultRequiresSchedule ||
-            !object.declaredFields.empty() || !object.bases.empty())
+            (!object.declaredFields.empty() && !object.unionLayout) ||
+            !object.bases.empty())
           throw BackendUnsupportedError(
               "LLVM targetless default construction requires an exact empty "
               "generated object");
@@ -702,11 +1164,24 @@ private:
       if (instruction.loan && result && result->getType()->isPointerTy())
         memory.publish(*instruction.loan, result);
       break;
-    case MirInstructionKind::Borrow:
-      result = memory.selected(instruction.operands.at(0));
+    case MirInstructionKind::Borrow: {
+      const auto &loan = *input.findLoan(*instruction.loan);
+      const auto publication = fieldPublication(loan);
+      if (publication.matched() &&
+          publication.kind == StoredFieldPublicationKind::ProvenanceOnly)
+        break;
+      if (const auto &selection = loan.referenceSelection) {
+        result = values.at(selection->value);
+        if (!result)
+          throw std::logic_error(
+              "LLVM payload reference lost its dominating selected address");
+      } else {
+        result = memory.selected(instruction.operands.at(0));
+      }
       memory.publish(*instruction.loan, result);
-      publishStoredField(*input.findLoan(*instruction.loan), result);
+      publishStoredField(loan, result);
       break;
+    }
     case MirInstructionKind::Lifecycle:
     case MirInstructionKind::EndBorrow:
     case MirInstructionKind::ActivateBorrow:
@@ -752,6 +1227,28 @@ private:
     }
     if (instruction.result && result)
       values.at(*instruction.result) = result;
+    if (published.matched()) {
+      if (!result)
+        throw std::logic_error(
+            "LLVM constructor publication lost its source result");
+      if (published.transport ==
+          UnstagedConstructorFieldPublicationTransport::ExactValue) {
+        store(result, publishedAddress, published.targetType);
+      } else if (published.transport ==
+                 UnstagedConstructorFieldPublicationTransport::
+                     NullUniqueOwner) {
+        auto *storage = llvm::dyn_cast<llvm::PointerType>(
+            session.layouts().get(published.targetType).storage);
+        if (!storage)
+          throw std::logic_error(
+              "LLVM null owner publication lost its pointer storage");
+        store(llvm::ConstantPointerNull::get(storage), publishedAddress,
+              published.targetType);
+      } else {
+        throw std::logic_error(
+            "LLVM constructor publication lost its exact transport");
+      }
+    }
     lifecycle(instruction.lifecycle);
   }
 
@@ -783,6 +1280,14 @@ private:
     }
     case MirTerminatorKind::Switch: {
       auto *value = operand(*term.value);
+      const auto &type = term.value->type.kind == SemanticType::Reference
+                             ? term.value->type.arguments.at(0)
+                             : term.value->type;
+      if (session.program().mir().findPayloadEnum(type)) {
+        const auto &layout = session.layouts().payload(type);
+        value = ir.CreateLoad(ir.getInt32Ty(),
+                              payloadTagAddress(ir, layout, value));
+      }
       llvm::BasicBlock *fallback = nullptr;
       for (const auto &target : term.switchTargets)
         if (!target.value) {
@@ -810,6 +1315,15 @@ private:
       if (input.kind == MirBodyKind::Constructor && owner)
         lifetimes.active(ir, thisAddress, owner->type, true);
       auto *value = term.value ? operand(*term.value) : nullptr;
+      if (input.kind == MirBodyKind::HostedStartup) {
+        const auto &plan = session.program().mir().hostedStartupPlan();
+        const auto *operation =
+            plan ? plan->findOperation(term.hostedStartupOperation) : nullptr;
+        if (!operation || operation->block != block.id)
+          throw std::logic_error(
+              "LLVM hosted return lost its sealed startup operation");
+        value = hostedReturnStatus(ir, *operation, value);
+      }
       if (returnDestination && value &&
           !(term.value->kind == MirOperandKind::Value &&
             placement.target(term.value->value) &&
@@ -852,7 +1366,7 @@ private:
     }
   }
 
-  void emit(std::span<const HirBindingId> parameters) {
+  void emit(std::span<const ParameterLane> parameters) {
     auto *entry =
         llvm::BasicBlock::Create(session.context(), "entry", &function);
     ir.SetInsertPoint(entry);
@@ -865,6 +1379,14 @@ private:
             header.CreatePHI(session.layouts().get(parameter.type).value, 0);
     }
     memory.allocate(globals);
+    if (parameters.size() != static_cast<std::size_t>(std::count_if(
+                                 abi.parameters.begin(), abi.parameters.end(),
+                                 [](const auto &parameter) {
+                                   return parameter.channel ==
+                                          AbiChannel::Argument;
+                                 })))
+      throw std::logic_error(
+          "LLVM incoming ABI arguments differ from sealed parameter bindings");
     llvm::Value *atomicArgument = nullptr;
     for (std::size_t index = 0; index < abi.parameters.size(); ++index) {
       auto *argument = function.getArg(index);
@@ -883,16 +1405,19 @@ private:
         callerArtifact = argument;
         break;
       case AbiChannel::Argument:
+        if (parameter.sourceIndex >= parameters.size())
+          throw std::logic_error(
+              "LLVM ABI argument exceeds its exact parameter map");
         memory.parameter(parameters[parameter.sourceIndex], argument,
                          parameter.indirect);
         if (parameter.sourceIndex == 0 && !parameter.indirect)
           atomicArgument = argument;
         break;
       case AbiChannel::Receiver:
-        if (!owner)
-          throw std::logic_error("LLVM receiver has no sealed class instance");
+        if (!receiverType)
+          throw std::logic_error("LLVM receiver has no sealed object type");
         thisAddress = argument;
-        memory.receiver(argument, owner->type);
+        memory.receiver(argument, *receiverType);
         break;
       }
     }
@@ -902,7 +1427,13 @@ private:
       const auto *constructor =
           session.program().mir().findConstructorInstance(address.owner);
       if (address.kind != MirBodyKind::Constructor || !constructor ||
-          &constructor->body != &input || !thisAddress || !atomicArgument)
+          &constructor->body != &input || !thisAddress || !atomicArgument ||
+          parameters.size() != 1 || !parameters[0].materialized ||
+          parameters[0].packElement ||
+          constructor->parameterBindings.size() != 1 ||
+          constructor->parameterTypes.size() != 1 ||
+          parameters[0].binding != constructor->parameterBindings[0] ||
+          parameters[0].type != constructor->parameterTypes[0])
         throw BackendUnsupportedError(
             "LLVM atomic initialization lost its exact constructor ABI lane");
       atomics.initialize(*constructor, thisAddress, atomicArgument);
@@ -916,6 +1447,9 @@ private:
       for (const auto &loan : input.loans)
         if (loan.entry && loan.kind == MirLoanKind::Stored &&
             loan.storedField) {
+          const auto publication = fieldPublication(loan);
+          if (publication.kind == StoredFieldPublicationKind::ProvenanceOnly)
+            continue;
           const auto &source = *input.findPlace(loan.source);
           auto *address = memory.address(source.id);
           if (source.type.kind == SemanticType::Reference)
@@ -996,6 +1530,12 @@ FunctionAbi Bodies::signature(MirBodyAddress address) {
     return session.abi().gti(SemanticType::Void, {},
                              target.mayRaiseDefinedFailure, true);
   }
+  if (address.kind == MirBodyKind::Lambda) {
+    const auto &target = *program.findLambda(address.owner);
+    return session.abi().gti(target.returnType, target.parameterTypes,
+                             !target.body.failureRecords.empty(),
+                             !target.captureTypes.empty());
+  }
   const auto &body = *findMirBody(program, address);
   return session.abi().gti(body.returnType, {},
                            address.kind != MirBodyKind::HostedStartup &&
@@ -1021,6 +1561,7 @@ llvm::Function *Bodies::function(MirBodyAddress address) {
         llvm::GlobalValue::ExternalLinkage, "main", session.module());
     session.requireDefinition(*output);
   } else if (address.kind == MirBodyKind::Module ||
+             address.kind == MirBodyKind::Lambda ||
              address.kind == MirBodyKind::Constructor ||
              address.kind == MirBodyKind::Destructor ||
              address.kind == MirBodyKind::FieldInitializers ||
@@ -1043,23 +1584,29 @@ llvm::Function *Bodies::function(MirBodyAddress address) {
 void Bodies::body(MirBodyAddress address) {
   const auto &input = *findMirBody(session.program().mir(), address);
   const auto plan = signature(address);
-  std::span<const HirBindingId> parameters;
   if (address.kind == MirBodyKind::Function) {
     const auto &declaration =
         *session.program().mir().findFunctionInstance(address.owner);
     if (declaration.definitionKind != MirDefinitionKind::Source)
       return;
-    parameters = declaration.parameterBindings;
-  } else if (address.kind == MirBodyKind::Constructor)
-    parameters = session.program()
-                     .mir()
-                     .findConstructorInstance(address.owner)
-                     ->parameterBindings;
+  }
+  const auto parameters =
+      parameterPlan(session.program().mir(), address, input);
+  const auto *lambda = address.kind == MirBodyKind::Lambda
+                           ? session.program().mir().findLambda(address.owner)
+                           : nullptr;
+  const auto *classOwner = owner(address);
+  std::optional<SemanticType> receiverType;
+  if (classOwner)
+    receiverType = classOwner->type;
+  else if (lambda && !lambda->captureTypes.empty())
+    receiverType = lambda->type;
   Body emission(
       session, failures, lifetimes, threadLocals, *function(address), address,
-      input, plan, parameters, globals,
+      input, plan, parameters.lanes, parameters.packs, globals, callables,
       [&](MirBodyAddress target) { return function(target); },
-      [&](MirBodyAddress target) { return signature(target); }, owner(address));
+      [&](MirBodyAddress target) { return signature(target); }, classOwner,
+      lambda, std::move(receiverType));
 }
 void Bodies::lower(const LlvmAdmissionPlan &admission) {
   threadLocals.allocate(globals);
@@ -1078,11 +1625,17 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     llvm::Constant *initial = llvm::Constant::getNullValue(storage);
     if (step.dataConstant)
       initial = scalars.constant(*step.dataConstant, type);
-    globals.emplace(step.symbol,
-                    new llvm::GlobalVariable(
-                        session.module(), storage, false,
-                        llvm::GlobalValue::InternalLinkage, initial,
-                        "__gti_native_v1_g" + std::to_string(step.symbol)));
+    const auto layout = session.layouts().get(type);
+    if (session.dataLayout().getTypeAllocSize(initial->getType()) !=
+        layout.size)
+      throw std::logic_error(
+          "LLVM global initializer differs from its sealed extent");
+    auto *global = new llvm::GlobalVariable(
+        session.module(), initial->getType(), false,
+        llvm::GlobalValue::InternalLinkage, initial,
+        "__gti_native_v1_g" + std::to_string(step.symbol));
+    global->setAlignment(llvm::Align(layout.alignment));
+    globals.emplace(step.symbol, global);
   }
   for (auto address : admission.requiredBodies())
     static_cast<void>(function(address));

@@ -2,12 +2,14 @@
 """Native places/loans/array/text execution; C++ is a differential endpoint."""
 
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from llvm_evidence_manifest import build_manifest
 
 
 ARRAYS = r'''
@@ -280,20 +282,33 @@ int main() {
 '''
 
 
-def main() -> None:
-    gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
-    selection = sys.argv[3] if len(sys.argv) > 3 else None
-    env = dict(os.environ, GTI_STDLIB_DIR=str(root / 'stdlib'))
-    successes = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS, 'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES, 'references': REFERENCES,
-                 'pointers': POINTERS, 'primitive-pointers': PRIMITIVE_POINTERS, 'text': TEXT,
-                 'owner-addresses': OWNER_ADDRESSES, 'raw-claims': RAW_CLAIMS,
-                 'unsafe-wrapper': UNSAFE_WRAPPER, 'conditional-references': CONDITIONAL_REFERENCES}
-    successes['shipped-example'] = (root / 'examples/llvm/places-and-text.gti').read_text()
-    # The production C++ backend currently rejects this valid nested text
-    # transport in its representation vocabulary. The native expected result
-    # comes from the source byte/count contract, not that backend limitation.
-    native_only = {'nested-text-return': NESTED_TEXT_RETURN}
-    failures = {
+def successes(root: Path) -> dict[str, str]:
+    cases = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS,
+             'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES,
+             'references': REFERENCES, 'pointers': POINTERS,
+             'primitive-pointers': PRIMITIVE_POINTERS, 'text': TEXT,
+             'owner-addresses': OWNER_ADDRESSES, 'raw-claims': RAW_CLAIMS,
+             'unsafe-wrapper': UNSAFE_WRAPPER,
+             'conditional-references': CONDITIONAL_REFERENCES}
+    cases['shipped-example'] = (
+        root / 'examples/llvm/places-and-text.gti').read_text()
+    cases['enum-references'] = (
+        root / 'tests/fixtures/llvm_enum_references.gti').read_text()
+    cases['enum-payload-borrow'] = (
+        root / 'tests/fixtures/llvm_enum_payload_borrow.gti').read_text()
+    cases['enum-raw-borrow'] = (
+        root / 'tests/fixtures/llvm_enum_raw_borrow.gti').read_text()
+    return cases
+
+
+def native_only_cases() -> dict[str, str]:
+    # The C++ representation vocabulary cannot currently transport nested text.
+    # Native expectations come from GTI's byte/count contract.
+    return {'nested-text-return': NESTED_TEXT_RETURN}
+
+
+def failure_cases() -> dict[str, str]:
+    return {
         'array-high': 'int get(int data[2], uint64_t i) { return data[i]; } int main() { return get({1, 2}, uint64_t(2)); }',
         'array-negative': 'int get(int data[2], int i) { return data[i]; } int main() { return get({1, 2}, -1); }',
         'array-borrow': 'int main() { mut int data[2] = {1, 2}; mut int i = 2; mut int& value = data[i]; return value; }',
@@ -303,28 +318,77 @@ def main() -> None:
         'text-negative': '#include <std/string_view>\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("ab", -1); return 0; }',
         'reference-failure': 'mut int& get(mut int& v, int n) { v = v / n; return v; } int main() { mut int x = 2; get(x, 0) = 4; return 0; }',
     }
-    rejections = {
+
+
+def rejection_cases() -> dict[str, str]:
+    return {
         'unsafe-dereference': 'int main() { int value = 1; int* pointer = &value; return *pointer; }',
         'unsafe-index': 'int main() { int values[2] = {1, 2}; int* pointer = &values[0]; return pointer[1]; }',
         'expired-reference': 'int& expired() { int local = 1; return local; } int main() { return expired(); }',
         'overlapping-mutable': 'int main() { mut int value = 1; mut int& first = value; mut int& second = value; return first + second; }',
         'read-only-reference': 'void change(int& value) { value = 2; } int main() { return 0; }',
+        'enum-reference-escape': 'enum class E { first }; E& expired() { E value = E::first; return value; } int main() { return 0; }',
+        'enum-reference-mutation': 'enum class E { first, second }; void change(E& value) { value = E::second; } int main() { return 0; }',
     }
-    # Current semantics admits these despite the documented literal-only
-    # contract. Do not reproduce the production backend's unchecked data()
-    # conversion: native admission requires an exact NUL-free literal proof.
-    native_rejections = {
+
+
+def native_rejection_cases(root: Path) -> dict[str, str]:
+    return {
         'array-comparison': 'int main() { int left[2] = {1, 2}; int right[2] = {1, 2}; return left == right ? 0 : 1; }',
         'dynamic-c-string': '#include <std/string_view>\nvoid consume(c_string text) {} void relay(std::string_view text) { consume(text); } int main() { relay("hello"); return 0; }',
         'nul-c-string': 'void consume(c_string text) {} int main() { consume("a\\0b"); return 0; }',
     }
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    return {**successes(root), **native_only_cases(), **failure_cases()}
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    cases = evidence_cases(root)
+    profiles = {name: (name,) for name in cases}
+    assert all(case in cases for profile in profiles.values() for case in profile)
+    return profiles
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest(
+        'llvm_place_execution', evidence_cases(root), evidence_profiles(root),
+        {'shipped-example': 'examples/llvm/places-and-text.gti',
+         'enum-references': 'tests/fixtures/llvm_enum_references.gti',
+         'enum-payload-borrow': 'tests/fixtures/llvm_enum_payload_borrow.gti',
+         'enum-raw-borrow': 'tests/fixtures/llvm_enum_raw_borrow.gti'})
+
+
+def list_evidence(root: Path) -> None:
+    print(json.dumps(evidence_manifest(root), sort_keys=True))
+
+
+def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == '--list-evidence':
+        list_evidence(Path(sys.argv[2]).resolve())
+        return
+    gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
+    selection = sys.argv[3] if len(sys.argv) > 3 else None
+    env = dict(os.environ, GTI_STDLIB_DIR=str(root / 'stdlib'))
+    success_cases = successes(root)
+    # The production C++ backend currently rejects this valid nested text
+    # transport in its representation vocabulary. The native expected result
+    # comes from the source byte/count contract, not that backend limitation.
+    native_only = native_only_cases()
+    failures = failure_cases()
+    rejections = rejection_cases()
+    # Current semantics admits these despite the documented literal-only
+    # contract. Do not reproduce the production backend's unchecked data()
+    # conversion: native admission requires an exact NUL-free literal proof.
+    native_rejections = native_rejection_cases(root)
     endpoints = (Endpoint('cpp', 'O3', 'c++20'), Endpoint('cpp', 'O3', 'c++23'),
                  *(Endpoint('llvm', mode) for mode in ('O0', 'O1', 'O2', 'O3')))
-    if selection and selection not in successes and selection not in failures and selection not in native_only and selection not in rejections and selection not in native_rejections:
+    if selection and selection not in success_cases and selection not in failures and selection not in native_only and selection not in rejections and selection not in native_rejections:
         raise ValueError(f'unknown execution case: {selection}')
     with tempfile.TemporaryDirectory(prefix='gti-llvm-places-') as directory:
         work = Path(directory)
-        for name, source_text in {**successes, **failures}.items():
+        for name, source_text in {**success_cases, **failures}.items():
             if selection and selection != name:
                 continue
             source = work / f'{name}.gti'

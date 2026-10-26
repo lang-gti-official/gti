@@ -1,0 +1,45 @@
+#include <std/memory>
+#include <std/panic>
+
+mut int rollback_trace = 0;
+
+class ObserveRollback {
+public:
+  ObserveRollback() {}
+  ~ObserveRollback() {
+    if (rollback_trace != 7)
+      std::panic("null owner rollback trace drift");
+  }
+};
+
+class Marker {
+public:
+  Marker() {}
+  ~Marker() { rollback_trace = rollback_trace * 10 + 7; }
+};
+
+class Later {
+public:
+  Later(int value) {}
+};
+
+int fail_later() {
+  std::panic("null owner later initializer failed");
+  return 0;
+}
+
+class NullOwnerThenFailure {
+  Marker marker;
+  std::unique_ptr<int> owner;
+  Later later;
+
+public:
+  NullOwnerThenFailure()
+      : marker(Marker()), owner(nullptr), later(Later(fail_later())) {}
+};
+
+int main() {
+  ObserveRollback observe{};
+  NullOwnerThenFailure value{};
+  return 0;
+}
