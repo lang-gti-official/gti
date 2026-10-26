@@ -2,6 +2,7 @@
 
 #include "dispatch.h"
 #include "failure.h"
+#include "placement.h"
 
 #include <functional>
 #include <map>
@@ -25,6 +26,13 @@ public:
                           const MirBody &body,
                           const MirInstruction &instruction,
                           const MirConstructorInstance *constructor = nullptr);
+  [[nodiscard]] static FreshHierarchyTransfer
+  preflightFreshTransfer(Session &session, Dispatch &dispatch,
+                         const MirBody &body,
+                         const MirInstruction &instruction);
+  void freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                     llvm::Value *source, const MirBody &body,
+                     const MirInstruction &instruction);
   void active(llvm::IRBuilder<> &ir, llvm::Value *address,
               const SemanticType &type, bool value);
   void moved(llvm::IRBuilder<> &ir, llvm::Value *address,

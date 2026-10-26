@@ -68,7 +68,7 @@ public:
                }),
         channels(body.failureRecords.size() + 1),
         blocks(body.blocks.size() + 1), live(body.dropObligations.size() + 1),
-        placement(body),
+        placement(session.program().mir(), body),
         parameterBindings(parameters.begin(), parameters.end()) {
     emit(parameters);
   }
@@ -124,6 +124,16 @@ private:
     if (const auto *target = placement.target(value)) {
       if (target->place) {
         if (hierarchy) {
+          bool exactProducer =
+              stage && stage->kind == MirInstructionKind::Construct &&
+              stage->constructorKind == ConstructorKind::Ordinary;
+          if (stage && isFreshHierarchyTransferProducer(*stage)) {
+            const auto transfer = planFreshHierarchyTransfer(
+                session.program().mir(), input, *stage);
+            exactProducer = transfer.destination == target->place &&
+                            transfer.publication &&
+                            transfer.publication->destination == target->place;
+          }
           const auto *place = input.findPlace(target->place);
           const bool localBody = input.kind == MirBodyKind::Function ||
                                  input.kind == MirBodyKind::Constructor ||
@@ -148,9 +158,7 @@ private:
               parameterBindings.contains(place->binding) ||
               !place->projections.empty() || place->foreignStorage ||
               place->capture || place->type != valueType || !publication ||
-              !stage || stage->kind != MirInstructionKind::Construct ||
-              stage->constructorKind != ConstructorKind::Ordinary ||
-              stage->result != value)
+              !stage || !exactProducer || stage->result != value)
             throw BackendUnsupportedError("LLVM hierarchy construction lost "
                                           "its exact fresh local publication");
         }
@@ -188,6 +196,21 @@ private:
   void store(llvm::Value *value, llvm::Value *address,
              const SemanticType &type) {
     memory.store(value, address, type);
+  }
+  [[nodiscard]] llvm::Value *freshTransfer(const MirInstruction &instruction) {
+    const auto transfer = Lifetimes::preflightFreshTransfer(session, dispatch,
+                                                            input, instruction);
+    const auto *target = placement.target(*instruction.result);
+    if (!target || target->place != transfer.destination || target->aggregate ||
+        target->returned || transfer.source != instruction.operands.front())
+      throw BackendUnsupportedError("LLVM hierarchy transfer lost its exact "
+                                    "source/publication placement");
+    auto *address = destination(*instruction.result);
+    // Selecting the sealed source view does not materialize an object snapshot
+    // or suppress its cleanup. The typed transfer commits source state last.
+    auto *source = memory.selected(transfer.source);
+    lifetimes.freshTransfer(ir, address, source, input, instruction);
+    return address;
   }
   [[nodiscard]] llvm::Value *operand(const MirOperand &operand) {
     if ((operand.kind == MirOperandKind::Copy ||
@@ -659,8 +682,15 @@ private:
       break;
     }
     case MirInstructionKind::Load:
-    case MirInstructionKind::CallInput:
     case MirInstructionKind::Move:
+      if (isFreshHierarchyTransferProducer(instruction) &&
+          containsHierarchyStorage(session.program().mir(),
+                                   instruction.info.type)) {
+        result = freshTransfer(instruction);
+        break;
+      }
+      [[fallthrough]];
+    case MirInstructionKind::CallInput:
       result = operand(instruction.operands.at(0));
       if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.info.type == SemanticType::CString &&
@@ -753,6 +783,12 @@ private:
       break;
     }
     case MirInstructionKind::Construct: {
+      if (isFreshHierarchyTransferProducer(instruction) &&
+          containsHierarchyStorage(session.program().mir(),
+                                   instruction.info.type)) {
+        result = freshTransfer(instruction);
+        break;
+      }
       auto *target = destination(*instruction.result);
       if (instruction.constructorTarget) {
         lifetimes.active(ir, target, instruction.info.type, false);

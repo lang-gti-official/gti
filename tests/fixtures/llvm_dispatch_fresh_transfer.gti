@@ -1,0 +1,83 @@
+// Generated transfers only, into fresh whole locals. Copying a selected Root
+// view must create Root dispatch state, not duplicate Derived's table pointer.
+// The move chain transfers the exact whole-binding cleanup obligations; no
+// borrowed base view is moved and no destructor observes virtual dispatch.
+mut int trace = 0;
+void record(int value) { trace = trace * 10 + value; }
+
+interface Front { int front(); };
+interface Reader { int read(int extra); };
+
+class Root {
+  int value;
+public:
+  Root(int input) : value(input) {}
+  virtual int kind() { return 1; }
+  int payload() { return this.value; }
+};
+
+// Both the state-bearing Root view and the separate Reader interface follow
+// Front in the sealed physical hierarchy, rather than sharing its address.
+class Derived : public Front, public Root, public Reader {
+  int bias;
+public:
+  Derived(int input) : Root(input), bias(3) {}
+  int front() override { return 41; }
+  int kind() override { return 2; }
+  int read(int extra) override { return this.payload() + this.bias + extra; }
+};
+
+class MoveRoot {
+  int value;
+public:
+  MoveRoot(int input) : value(input) {}
+  virtual int kind() { return 1; }
+  int payload() { return this.value; }
+  ~MoveRoot() { record(1); }
+};
+class MoveMiddle : public Reader, public MoveRoot {
+  int bias;
+public:
+  MoveMiddle(int input) : MoveRoot(input), bias(3) {}
+  int read(int extra) override { return this.payload() + this.bias + extra; }
+  ~MoveMiddle() { record(2); }
+};
+class MoveLeaf : public Front, public MoveMiddle {
+  int tag;
+public:
+  MoveLeaf(int input) : MoveMiddle(input), tag(5) {}
+  int front() override { return this.tag; }
+  int kind() override { return 3; }
+  ~MoveLeaf() { record(3); }
+};
+
+int via_root(Root& value) { return value.kind(); }
+int via_move_root(MoveRoot& value) { return value.kind(); }
+int via_reader(Reader& value, int extra) { return value.read(extra); }
+int via_front(Front& value) { return value.front(); }
+
+int main() {
+  Derived original{7};
+  Root& view = original;
+  Root explicit_copy{view};
+  Root implicit_copy = view;
+  Derived complete_copy{original};
+  if (via_root(view) != 2 || via_root(explicit_copy) != 1 ||
+      via_root(implicit_copy) != 1 || explicit_copy.payload() != 7 ||
+      implicit_copy.payload() != 7) { return 1; }
+  // Every source copy remains available, with its original dynamic state and
+  // payload; the complete copy also retains its distinct interface views.
+  if (via_root(original) != 2 || via_root(complete_copy) != 2 ||
+      via_reader(original, 1) != 11 || via_reader(complete_copy, 2) != 12 ||
+      via_front(complete_copy) != 41) { return 2; }
+  {
+    MoveLeaf first{9};
+    MoveLeaf second = std::move(first);
+    MoveLeaf last = std::move(second);
+    if (trace != 0 || via_move_root(last) != 3 || last.payload() != 9 ||
+        via_reader(last, 2) != 14 || via_front(last) != 5) { return 3; }
+  }
+  // Only the surviving Leaf/Middle/Root bodies run, in that order. Both moved
+  // source shells retain structural cleanup but all three own flags are clear.
+  return trace == 321 ? 0 : 4;
+}

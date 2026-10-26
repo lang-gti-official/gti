@@ -228,12 +228,14 @@ public:
             continue;
           auto &proof = operations[key(address, block.id, stage.id)];
           const bool fresh = freshLocal(address, body, placement, stage);
+          const bool transfer = freshTransfer(body, stage);
           const bool initialization =
               freshInitialization(address, body, placement, stage);
           if (contains(stage.info.type)) {
-            if ((stage.kind == MirInstructionKind::Construct && !fresh) ||
-                stage.kind == MirInstructionKind::Move ||
-                stage.kind == MirInstructionKind::Load ||
+            if ((stage.kind == MirInstructionKind::Construct && !fresh &&
+                 !transfer) ||
+                (stage.kind == MirInstructionKind::Move && !transfer) ||
+                (stage.kind == MirInstructionKind::Load && !transfer) ||
                 stage.kind == MirInstructionKind::Assign ||
                 (stage.kind == MirInstructionKind::CallInput &&
                  stage.callInputKind != HirCallInputKind::ReadBorrow &&
@@ -262,7 +264,7 @@ public:
                     operand.kind == MirOperandKind::Move);
           };
           for (const auto &operand : stage.operands)
-            proof.transfer |= transferred(operand);
+            proof.transfer |= transferred(operand) && !transfer;
           if (stage.receiver)
             proof.transfer |= transferred(*stage.receiver);
           if (stage.replacementCleanup &&
@@ -682,9 +684,44 @@ private:
            !place->foreignStorage && place->type == stage.info.type &&
            !formal(address, place->binding);
   }
+  bool freshTransfer(const MirBody &body, const MirInstruction &stage) const {
+    // Handoff checkpoint: the prototype remains available for private proof,
+    // but no generic opcode/storage witness may activate unvalidated transfer.
+    if (coverage(Shape::NativeFreshHierarchyTransfer).state !=
+        LlvmCoverageState::Implemented)
+      return false;
+    if (!native_llvm::isFreshHierarchyTransferProducer(stage) ||
+        !contains(stage.info.type))
+      return false;
+    try {
+      static_cast<void>(
+          native_llvm::planFreshHierarchyTransfer(program, body, stage));
+      return true;
+    } catch (const BackendUnsupportedError &) {
+      return false;
+    }
+  }
+  bool freshTransferInitialization(const MirBody &body,
+                                   const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Initialize || !stage.destination ||
+        stage.operands.size() != 1 ||
+        stage.operands.front().kind != MirOperandKind::Value)
+      return false;
+    for (const auto &block : body.blocks)
+      for (const auto &producer : block.instructions)
+        if (!producer.tombstone &&
+            producer.result == stage.operands.front().value &&
+            freshTransfer(body, producer))
+          return native_llvm::planFreshHierarchyTransfer(program, body,
+                                                         producer)
+                     .publication == &stage;
+    return false;
+  }
   bool freshInitialization(MirBodyAddress address, const MirBody &body,
                            const native_llvm::Placement &placement,
                            const MirInstruction &stage) const {
+    if (freshTransferInitialization(body, stage))
+      return true;
     if (stage.kind != MirInstructionKind::Initialize || !stage.destination ||
         stage.operands.size() != 1 ||
         stage.operands.front().kind != MirOperandKind::Value)
@@ -842,6 +879,16 @@ private:
                                       const native_llvm::Placement &placement,
                                       const MirInstruction &stage) {
     try {
+      if (freshTransfer(body, stage)) {
+        if (!metadata(stage.info.type))
+          return {};
+        static_cast<void>(native_llvm::Lifetimes::preflightFreshTransfer(
+            *session, *dispatch, body, stage));
+        return Shape::NativeFreshHierarchyTransfer;
+      }
+      if (freshTransferInitialization(body, stage) &&
+          metadata(stage.operands.front().type))
+        return Shape::NativeFreshHierarchyTransfer;
       if (stage.kind == MirInstructionKind::Construct &&
           contains(stage.info.type) &&
           freshLocal(address, body, placement, stage)) {

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <set>
+#include <stdexcept>
 
 namespace lang::native_llvm {
 
@@ -105,6 +106,515 @@ bool containsHierarchyStorage(const MirProgram &program,
   return visit(visit, type);
 }
 
+bool isFreshHierarchyTransferProducer(const MirInstruction &stage) {
+  if (stage.tombstone || !stage.result ||
+      stage.info.type.kind != SemanticType::Class ||
+      stage.operands.size() != 1 || stage.operation != MirOperation::None ||
+      (stage.intrinsic != IntrinsicKind::None &&
+       !(stage.kind == MirInstructionKind::Move &&
+         stage.intrinsic == IntrinsicKind::Move)) ||
+      stage.destination || stage.receiver || stage.loan ||
+      stage.functionTarget || stage.bodyTarget)
+    return false;
+  const auto &source = stage.operands.front();
+  if (source.value || source.literal)
+    return false;
+  return (stage.kind == MirInstructionKind::Construct &&
+          !stage.constructorTarget &&
+          stage.constructorKind == ConstructorKind::Copy &&
+          (source.kind == MirOperandKind::BorrowRead ||
+           source.kind == MirOperandKind::Loan)) ||
+         (stage.kind == MirInstructionKind::Load &&
+          source.kind == MirOperandKind::Copy && source.place && !source.loan &&
+          source.type == stage.info.type) ||
+         (stage.kind == MirInstructionKind::Move &&
+          source.kind == MirOperandKind::Move && source.place && !source.loan &&
+          source.type == stage.info.type);
+}
+
+namespace {
+
+MirBodyAddress transferBodyIdentity(const MirProgram &program,
+                                    const MirBody &body) {
+  std::optional<MirBodyAddress> identity;
+  for (const auto address : enumerateMirBodyAddresses(program))
+    if (findMirBody(program, address) == &body) {
+      if (identity)
+        throw std::logic_error("LLVM transfer body has repeated identity");
+      identity = address;
+    }
+  if (!identity)
+    throw std::invalid_argument("LLVM transfer uses a foreign MIR body");
+  if (body.kind != identity->kind)
+    throw std::logic_error(
+        "LLVM transfer body kind disagrees with its program identity");
+  return *identity;
+}
+
+const MirBody &ownedTransferBody(const MirProgram &program,
+                                 const MirBody &body) {
+  static_cast<void>(transferBodyIdentity(program, body));
+  return body;
+}
+
+class FreshTransferQuery final {
+public:
+  FreshTransferQuery(const MirProgram &program, const MirBody &body)
+      : program(program), body(body),
+        identity(transferBodyIdentity(program, body)) {}
+
+  FreshHierarchyTransfer plan(const MirInstruction &producer) {
+    const MirBlock *definition = nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (&stage == &producer)
+          definition = &block;
+    if (!definition)
+      throw std::invalid_argument("LLVM transfer uses a foreign MIR producer");
+    if (!isFreshHierarchyTransferProducer(producer))
+      unsupported("LLVM fresh hierarchy transfer requires an exact producer");
+    const auto *value = body.findValue(*producer.result);
+    if (!value || value->id != *producer.result ||
+        value->definition != producer.id ||
+        value->definitionBlock != definition->id ||
+        value->info.type != producer.info.type)
+      malformed("LLVM transfer lost its exact result definition");
+    if (value->borrowDependencies &&
+        (!value->borrowDependencies->dependencies.empty() ||
+         !value->borrowDependencies->possibleAlternatives.empty()))
+      unsupported("LLVM fresh hierarchy transfer excludes borrowed values");
+    if (identity.kind != MirBodyKind::Function &&
+        identity.kind != MirBodyKind::Constructor &&
+        identity.kind != MirBodyKind::Destructor)
+      unsupported("LLVM fresh hierarchy transfer requires a local body");
+    if (producer.destination || producer.receiver || producer.loan ||
+        producer.functionTarget || producer.bodyTarget ||
+        producer.functionPointerFunctionTarget ||
+        producer.functionPointerLambdaTarget || producer.nativeCalleeType ||
+        producer.nativeCallbackAdapter || producer.threadTaskAdapter ||
+        !producer.scopedThreadTasks.empty() || producer.lambdaTarget ||
+        producer.callableBoundary || producer.callableInvocation ||
+        !producer.callableArguments.empty() || producer.objectAllocation ||
+        producer.preparedParameterDrop || producer.retainedOwnerPlace ||
+        producer.successResultDrop || producer.successResultDestination ||
+        producer.elementCleanup || producer.replacementCleanup ||
+        producer.replacementPair || producer.literal ||
+        producer.operation != MirOperation::None ||
+        producer.unsafeOperation != UnsafeOperationKind::None ||
+        producer.rawMemoryAccess || !producer.definedFailure.empty() ||
+        producer.borrowOrigin != BorrowOriginKind::None ||
+        producer.borrowPlace || !producer.borrowArguments.empty() ||
+        !producer.borrowFields.empty() || !producer.closureCaptureTypes.empty())
+      unsupported("LLVM fresh hierarchy transfer excludes additional effects");
+
+    FreshHierarchyTransfer result{.source = producer.operands.front(),
+                                  .kind =
+                                      producer.kind == MirInstructionKind::Move
+                                          ? ConstructorKind::Move
+                                          : ConstructorKind::Copy};
+    const auto &owner = instance(producer.info.type);
+    if (owner.kind == ClassKind::Interface || owner.abstract)
+      unsupported(
+          "LLVM transfer destination must be a concrete ordinary class");
+    result.owner = owner.id;
+    std::set<HirClassInstanceId> path;
+    shape(owner, result.kind, true, path);
+    if (!containsHierarchyStorage(program, owner.type))
+      unsupported("LLVM hierarchy transfer requires hierarchy storage");
+    if (producer.kind == MirInstructionKind::Construct) {
+      if (producer.parameterTypes !=
+              std::vector<SemanticType>{
+                  SemanticType::referenceTo(owner.type)} ||
+          result.source.type != producer.parameterTypes.front() ||
+          (result.source.kind == MirOperandKind::BorrowRead &&
+           (!result.source.place || result.source.loan)) ||
+          (result.source.kind == MirOperandKind::Loan && !result.source.loan))
+        malformed("LLVM generated copy lost its exact reference formal");
+    } else if (!producer.parameterTypes.empty() || producer.constructorTarget ||
+               producer.constructorKind != ConstructorKind::Ordinary) {
+      malformed("LLVM class-value transfer has constructor metadata");
+    }
+
+    const auto &source = result.source;
+    if (source.value || source.literal || (!source.place && !source.loan) ||
+        unreference(source.type) != owner.type)
+      unsupported("LLVM transfer requires an exact static source view");
+    const auto *loan = source.loan ? body.findLoan(source.loan) : nullptr;
+    if (source.loan && (!loan || loan->id != source.loan || !simpleLoan(*loan)))
+      unsupported("LLVM transfer requires a simple checked source loan");
+    const auto *place =
+        body.findPlace(source.place ? source.place : loan->source);
+    if (!place)
+      malformed("LLVM transfer lost its source place");
+    if ((source.place && place->id != source.place) ||
+        (!source.place && place->id != loan->source))
+      malformed("LLVM transfer source place has repeated identity");
+    if (unreference(place->type) != owner.type || place->foreignStorage ||
+        place->capture ||
+        (place->root != MirPlaceRootKind::Binding &&
+         place->root != MirPlaceRootKind::This &&
+         place->root != MirPlaceRootKind::Loan) ||
+        std::any_of(place->projections.begin(), place->projections.end(),
+                    [](const auto &projection) {
+                      return projection.kind != MirProjectionKind::Base &&
+                             projection.kind != MirProjectionKind::Dereference;
+                    }))
+      unsupported("LLVM transfer source is not a selected ordinary class view");
+    if (place->root == MirPlaceRootKind::Loan) {
+      const auto *root = body.findLoan(place->loan);
+      if (!root || !simpleLoan(*root))
+        unsupported("LLVM transfer source has unsupported loan provenance");
+    }
+    if (loan) {
+      const auto *origin = body.findPlace(loan->source);
+      if (!origin)
+        malformed("LLVM transfer loan lost its exact origin");
+      path.clear();
+      const auto &originOwner = instance(unreference(origin->type));
+      shape(originOwner, result.kind, false, path);
+      path.clear();
+      if (baseOccurrences(originOwner, owner.id, path) != 1)
+        unsupported("LLVM copy loan does not protect its selected class view");
+    }
+
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone)
+          continue;
+        if (stage.result == producer.result && &stage != &producer)
+          malformed("LLVM transfer result has repeated producers");
+        for (const auto &operand : stage.operands)
+          if (operand.value == *producer.result) {
+            if (result.publication ||
+                stage.kind != MirInstructionKind::Initialize ||
+                !stage.destination || stage.operands.size() != 1 ||
+                operand.kind != MirOperandKind::Value || operand.place ||
+                operand.loan || operand.literal || operand.type != owner.type ||
+                stage.info.type != owner.type)
+              unsupported("LLVM transfer requires one direct Initialize use");
+            result.publication = &stage;
+            result.destination = *stage.destination;
+          }
+        if ((stage.receiver && stage.receiver->value == *producer.result) ||
+            stage.literalProvenance.sourceValue == *producer.result ||
+            std::find(stage.literalProvenance.sourceValues.begin(),
+                      stage.literalProvenance.sourceValues.end(),
+                      *producer.result) !=
+                stage.literalProvenance.sourceValues.end())
+          unsupported("LLVM transfer result has an alternate value consumer");
+      }
+    if (!result.publication)
+      unsupported("LLVM transfer has no fresh local publication");
+    const auto *destination = body.findPlace(result.destination);
+    if (!destination)
+      malformed("LLVM transfer publication lost its destination");
+    if (!wholeLocal(*destination) || destination->type != owner.type ||
+        destination->initiallyAvailable ||
+        destination->binding == place->binding)
+      unsupported("LLVM transfer destination is not a fresh whole local");
+    if (result.publication->result || result.publication->receiver ||
+        result.publication->loan ||
+        result.publication->constructorInitializer ||
+        result.publication->constructorTarget ||
+        result.publication->functionTarget || result.publication->bodyTarget ||
+        result.publication->intrinsic != IntrinsicKind::None ||
+        result.publication->operation != MirOperation::None ||
+        result.publication->preparedParameterDrop ||
+        result.publication->retainedOwnerPlace ||
+        result.publication->successResultDrop ||
+        result.publication->successResultDestination ||
+        result.publication->elementCleanup ||
+        result.publication->replacementCleanup ||
+        result.publication->replacementPair ||
+        !result.publication->definedFailure.empty())
+      unsupported("LLVM transfer publication has additional effects");
+
+    if (result.kind == ConstructorKind::Move) {
+      if (!wholeLocal(*place) || place->type != owner.type || source.loan ||
+          !place->key || !producer.ownership ||
+          producer.ownership->kind != OwnershipEventKind::Move ||
+          producer.ownership->place != *place->key ||
+          producer.ownership->before != OwnershipStateSet::Available ||
+          producer.ownership->after != OwnershipStateSet::Moved ||
+          !producer.ownership->reachable)
+        unsupported(
+            "LLVM move requires its exact whole-binding ownership event");
+      if (!producer.lifecycle.empty()) {
+        if (producer.lifecycle.size() != 1)
+          malformed("LLVM move has multiple lifecycle transitions");
+        const auto &event = producer.lifecycle.front();
+        if (event.kind != MirLifecycleEventKind::Move || !event.source ||
+            !event.target || event.conditional || event.failureCleanup)
+          malformed("LLVM move lost its source-to-value lifecycle transition");
+        result.sourceDrop = event.source;
+        result.valueDrop = event.target;
+        const auto &from = drop(result.sourceDrop, owner);
+        const auto &to = drop(result.valueDrop, owner);
+        const auto *temporary = body.findPlace(to.place);
+        if (from.kind != MirDropObligationKind::Binding ||
+            from.place != place->id || from.binding != place->binding ||
+            to.kind != MirDropObligationKind::Value || !temporary ||
+            temporary->root != MirPlaceRootKind::Value ||
+            temporary->value != *producer.result ||
+            !temporary->projections.empty() || to.dropType != from.dropType)
+          malformed("LLVM move drop identities do not match its exact storage");
+      } else if (owner.requiresActiveCleanup) {
+        malformed("LLVM active move has no source-to-value lifecycle transfer");
+      }
+    } else {
+      // This scalar-only generated-copy profile has no active cleanup: source
+      // destruction (including an active base) makes copying unavailable.
+      // A future active-copy profile must accept a NEW value Initialize and
+      // its Reparent publication, not mistake it for source mutation.
+      if (!producer.lifecycle.empty() ||
+          (producer.ownership &&
+           (producer.ownership->kind != OwnershipEventKind::Read ||
+            producer.ownership->before != OwnershipStateSet::Available ||
+            producer.ownership->after != OwnershipStateSet::Available)))
+        unsupported(
+            "LLVM copy must preserve its source ownership and lifetime");
+    }
+    const auto &events = result.publication->lifecycle;
+    if (events.size() != 1 || events.front().conditional ||
+        events.front().failureCleanup || !events.front().target ||
+        events.front().source != result.valueDrop ||
+        events.front().kind != (result.valueDrop
+                                    ? MirLifecycleEventKind::Reparent
+                                    : MirLifecycleEventKind::Initialize))
+      malformed(
+          "LLVM transfer lost its exact destination publication lifecycle");
+    const auto &published = drop(events.front().target, owner);
+    if (published.kind != MirDropObligationKind::Binding ||
+        published.place != destination->id ||
+        published.binding != destination->binding)
+      malformed("LLVM transfer publication drop names different storage");
+
+    const auto used = [&](const MirOperand &operand) {
+      return operand.value == *producer.result;
+    };
+    const auto resultPlace = [&](MirPlaceId id) {
+      const auto *selected = body.findPlace(id);
+      return selected && selected->root == MirPlaceRootKind::Value &&
+             selected->value == *producer.result;
+    };
+    for (const auto &block : body.blocks) {
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone)
+          continue;
+        for (const auto &operand : stage.operands)
+          if (resultPlace(operand.place))
+            unsupported(
+                "LLVM transfer result has an intermediate address consumer");
+        if (stage.receiver && resultPlace(stage.receiver->place))
+          unsupported("LLVM transfer result supplies a method receiver");
+        if (stage.destination && resultPlace(*stage.destination) &&
+            (stage.kind != MirInstructionKind::Drop || !result.valueDrop ||
+             std::none_of(stage.lifecycle.begin(), stage.lifecycle.end(),
+                          [&](const auto &event) {
+                            return event.kind == MirLifecycleEventKind::Drop &&
+                                   event.source == result.valueDrop;
+                          })))
+          unsupported("LLVM transfer result has an intermediate destination");
+      }
+      const auto &term = block.terminator;
+      if ((term.value && used(*term.value)) ||
+          std::any_of(term.targetArguments.begin(), term.targetArguments.end(),
+                      used) ||
+          std::any_of(term.elseArguments.begin(), term.elseArguments.end(),
+                      used))
+        unsupported("LLVM transfer result escapes through a terminator");
+      for (const auto &target : term.switchTargets)
+        if (std::any_of(target.arguments.begin(), target.arguments.end(), used))
+          unsupported("LLVM transfer result escapes through an edge");
+    }
+    for (const auto &candidate : body.places) {
+      if (candidate.root == MirPlaceRootKind::Value &&
+          candidate.value == *producer.result &&
+          (!result.valueDrop ||
+           body.findDropObligation(result.valueDrop)->place != candidate.id ||
+           !candidate.projections.empty() || candidate.type != owner.type))
+        unsupported("LLVM transfer result has an intermediate place use");
+      for (const auto &projection : candidate.projections)
+        if (projection.index == *producer.result)
+          unsupported("LLVM transfer result is used as a place index");
+    }
+    for (const auto &loan : body.loans)
+      if (resultPlace(loan.source) ||
+          (loan.referenceSelection &&
+           loan.referenceSelection->value == *producer.result))
+        unsupported("LLVM transfer result supplies a selected reference");
+    return result;
+  }
+
+private:
+  const MirProgram &program;
+  const MirBody &body;
+  MirBodyAddress identity;
+
+  [[noreturn]] static void unsupported(const char *message) {
+    throw BackendUnsupportedError(message);
+  }
+  [[noreturn]] static void malformed(const char *message) {
+    throw std::logic_error(message);
+  }
+  static const SemanticType &unreference(const SemanticType &type) {
+    if (type.kind != SemanticType::Reference)
+      return type;
+    if (type.arguments.size() != 1)
+      malformed("LLVM transfer has malformed reference metadata");
+    return type.arguments.front();
+  }
+  const MirClassInstance &instance(const SemanticType &type) const {
+    const MirClassInstance *result = nullptr;
+    for (const auto &owner : program.classInstances())
+      if (owner.type == type) {
+        if (result)
+          malformed("LLVM transfer has repeated class type identity");
+        result = &owner;
+      }
+    if (!result || program.findClassInstance(result->id) != result)
+      malformed("LLVM transfer lost its exact class instance");
+    return *result;
+  }
+  bool wholeLocal(const MirPlace &place) const {
+    if (place.root != MirPlaceRootKind::Binding || !place.binding ||
+        place.capture || place.foreignStorage || !place.projections.empty() ||
+        place.type.kind != SemanticType::Class)
+      return false;
+    if (identity.kind == MirBodyKind::Function) {
+      const auto &formal =
+          program.findFunctionInstance(identity.owner)->parameterBindings;
+      return std::find(formal.begin(), formal.end(), place.binding) ==
+             formal.end();
+    }
+    if (identity.kind == MirBodyKind::Constructor) {
+      const auto &formal =
+          program.findConstructorInstance(identity.owner)->parameterBindings;
+      return std::find(formal.begin(), formal.end(), place.binding) ==
+             formal.end();
+    }
+    return identity.kind == MirBodyKind::Destructor;
+  }
+  static bool simpleLoan(const MirLoan &loan) {
+    return !loan.referenceSelection && !loan.storedDependency &&
+           loan.additionalDependencies.empty() && loan.conditions.empty() &&
+           !loan.twoPhase && !loan.lifecycleBound && !loan.escapes &&
+           (loan.kind == MirLoanKind::Local ||
+            (loan.kind == MirLoanKind::Parameter && loan.entry));
+  }
+  void shape(const MirClassInstance &owner, ConstructorKind kind, bool special,
+             std::set<HirClassInstanceId> &path) const {
+    const bool interface = owner.kind == ClassKind::Interface;
+    if ((!interface && owner.kind != ClassKind::Class &&
+         owner.kind != ClassKind::Struct) ||
+        (!interface && owner.abstract) || owner.cAbiRecord ||
+        owner.cAbiLayout || owner.cOpaqueHandle || owner.unionLayout ||
+        owner.compilerCapability != CompilerCapabilityTypeKind::None ||
+        owner.traits.containsBorrowedState ||
+        std::any_of(owner.declaredFields.begin(), owner.declaredFields.end(),
+                    [](const auto &field) {
+                      return !isPassiveScalarValueType(field.type);
+                    }))
+      unsupported("LLVM transfer requires a scalar ordinary hierarchy");
+    if (!path.insert(owner.id).second)
+      malformed("LLVM transfer hierarchy has an inline base cycle");
+    if (special && kind == ConstructorKind::Copy && owner.requiresActiveCleanup)
+      unsupported("LLVM scalar hierarchy copy excludes active-copy lifetimes");
+    if (special && !interface &&
+        (kind == ConstructorKind::Copy
+             ? owner.copyConstructor != SpecialMemberStatus::Generated ||
+                   !owner.traits.copyable
+             : owner.moveConstructor != SpecialMemberStatus::Generated ||
+                   !owner.traits.movable))
+      unsupported("LLVM transfer requires its generated special-member policy");
+    if (interface &&
+        (!owner.declaredFields.empty() || owner.destructor ||
+         owner.requiresActiveDropState || owner.requiresActiveCleanup))
+      unsupported("LLVM transfer interface metadata carries object state");
+    if (owner.requiresActiveDropState != owner.destructor.has_value())
+      malformed("LLVM transfer own active flag has no exact destructor");
+    if (owner.destructor) {
+      const auto *destructor =
+          program.findDestructorInstance(*owner.destructor);
+      if (!destructor || destructor->owner != owner.id ||
+          destructor->definitionKind != MirDefinitionKind::Source)
+        malformed("LLVM transfer lost its exact source destructor");
+    }
+    if (!interface)
+      for (const auto &selection : owner.virtualDispatch) {
+        const auto *target = program.findFunctionInstance(selection.target);
+        if (!target)
+          malformed("LLVM transfer state lost its selected function");
+        if (target->pureVirtual)
+          unsupported("LLVM transfer excludes a pure executable state");
+      }
+    const auto base = [&](const HirBaseInstance &row) {
+      const auto *selected = program.findClassInstance(row.instance);
+      if (!selected || selected->type != row.type ||
+          row.interface != (selected->kind == ClassKind::Interface))
+        malformed("LLVM transfer lost an exact base identity");
+      shape(*selected, kind, special, path);
+    };
+    for (const auto &row : owner.bases)
+      base(row);
+    for (const auto &row : owner.structuralBases)
+      base(row);
+    path.erase(owner.id);
+  }
+  std::size_t baseOccurrences(const MirClassInstance &owner,
+                              HirClassInstanceId target,
+                              std::set<HirClassInstanceId> &path) const {
+    if (!path.insert(owner.id).second)
+      malformed("LLVM transfer loan has a cyclic base path");
+    std::size_t result = owner.id == target;
+    for (const auto &base : owner.bases)
+      result += baseOccurrences(instance(base.type), target, path);
+    path.erase(owner.id);
+    return result;
+  }
+  const MirDropObligation &drop(MirDropObligationId id,
+                                const MirClassInstance &owner) const {
+    const auto *result = body.findDropObligation(id);
+    if (!result || result->id != id || result->initiallyActive)
+      malformed("LLVM transfer lost its exact inactive drop obligation");
+    recipe(result->dropType, owner, false);
+    return *result;
+  }
+  void recipe(const MirDropType &selected, const MirClassInstance &owner,
+              bool base) const {
+    if (selected.type != owner.type || selected.classInstance != owner.id ||
+        selected.destructor != owner.destructor ||
+        selected.requiresActiveCleanup != owner.requiresActiveCleanup ||
+        selected.uniqueOwnerField || selected.uniquePointeeClass ||
+        selected.polymorphicCleanup || selected.recursiveCleanup ||
+        selected.lambdaInstance || selected.fixedArray ||
+        selected.captureIndex || selected.payloadVariant ||
+        selected.payloadField ||
+        selected.uniqueOwnerBase !=
+            (base ? std::optional(owner.id) : std::nullopt))
+      malformed("LLVM transfer drop recipe has different class state");
+    std::size_t child = 0;
+    for (auto row = owner.bases.rbegin(); row != owner.bases.rend(); ++row) {
+      const auto &target = instance(row->type);
+      if (!target.requiresActiveCleanup)
+        continue;
+      if (child == selected.aggregate.size())
+        malformed("LLVM transfer drop recipe omits an active base");
+      recipe(selected.aggregate[child++], target, true);
+    }
+    if (child != selected.aggregate.size())
+      malformed("LLVM transfer drop recipe contains an unsupported child");
+  }
+};
+
+} // namespace
+
+FreshHierarchyTransfer
+planFreshHierarchyTransfer(const MirProgram &program, const MirBody &body,
+                           const MirInstruction &producer) {
+  return FreshTransferQuery(program, body).plan(producer);
+}
+
 Placement::Placement(const MirBody &body) {
   for (const auto &block : body.blocks)
     for (const auto &stage : block.instructions)
@@ -138,10 +648,33 @@ Placement::Placement(const MirBody &body) {
   }
 }
 
+Placement::Placement(const MirProgram &program, const MirBody &body)
+    : Placement(ownedTransferBody(program, body)) {
+  for (const auto &block : body.blocks)
+    for (const auto &stage : block.instructions) {
+      if (!isFreshHierarchyTransferProducer(stage))
+        continue;
+      std::optional<FreshHierarchyTransfer> transfer;
+      try {
+        if (!containsHierarchyStorage(program, stage.info.type))
+          continue;
+        transfer = planFreshHierarchyTransfer(program, body, stage);
+      } catch (const BackendUnsupportedError &) {
+        continue; // An unsupported candidate gains no new placement authority.
+      }
+      hierarchyTransfers.insert(*stage.result);
+      // Bind only the exact proven publication. Do not replay the generic
+      // CallInput/aggregate/return scan after enabling hierarchy freshness.
+      bind(*stage.result, {.place = transfer->destination});
+    }
+}
+
 bool Placement::fresh(MirValueId value) const {
   const auto found = producers.find(value);
   if (found == producers.end())
     return false;
+  if (hierarchyTransfers.contains(value))
+    return true;
   const auto &stage = *found->second;
   if (stage.kind == MirInstructionKind::CallInput &&
       stage.operands.size() == 1 &&

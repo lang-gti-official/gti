@@ -1,6 +1,7 @@
 #include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/dispatch.h"
 #include "../src/compiler/llvm/lifetimes.h"
+#include "../src/compiler/llvm/placement.h"
 #include "../src/compiler/llvm/places.h"
 #include "cpp_backend_test_support.h"
 #include "gti/llvm_backend.h"
@@ -1467,6 +1468,441 @@ int main() {
   session.verify();
 }
 
+void testOrdinaryTransferPlacement() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend = Frontend().analyze(
+      root / "tests/fixtures/llvm_class_fresh_transfer_regression.gti",
+      std::nullopt, {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "ordinary copy/move placement regression remains valid source");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("ordinary transfer source failed its exact seal");
+  std::size_t copies = 0, moves = 0;
+  const auto &program = input->program().mir();
+  for (const auto &function : program.functionInstances()) {
+    if (function.entryKind == ProgramEntryKind::None)
+      continue;
+    const Placement placement(function.body);
+    const Placement hierarchyAware(program, function.body);
+    const auto foreignPlain = function.body;
+    rejects<std::invalid_argument>(
+        [&] { static_cast<void>(Placement(program, foreignPlain)); },
+        "program-aware placement rejects a foreign ordinary body before "
+        "filtering");
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone || !stage.result || stage.operands.size() != 1 ||
+            stage.info.type.kind != SemanticType::Class)
+          continue;
+        const bool copy = stage.kind == MirInstructionKind::Load &&
+                          stage.operands.front().kind == MirOperandKind::Copy;
+        const bool move = stage.kind == MirInstructionKind::Move &&
+                          stage.operands.front().kind == MirOperandKind::Move;
+        if (!copy && !move)
+          continue;
+        expect(!containsHierarchyStorage(program, stage.info.type) &&
+                   !placement.fresh(*stage.result) &&
+                   !placement.target(*stage.result) &&
+                   !hierarchyAware.fresh(*stage.result) &&
+                   !hierarchyAware.target(*stage.result),
+               "ordinary Load/Move snapshot remains unbound until Initialize "
+               "commits its value");
+        copies += copy;
+        moves += move;
+      }
+  }
+  expect(copies == 1 && moves == 3,
+         "ordinary regression retains one implicit Copy Load and three "
+         "whole-local Move producers");
+}
+
+void testFreshTransferPlanning() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend = Frontend().analyze(
+      root / "tests/fixtures/llvm_dispatch_fresh_transfer.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode())
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode(),
+         "fresh-transfer fixture verifies as source");
+  if (!frontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  if (!input)
+    throw std::runtime_error("fresh-transfer fixture failed its exact seal");
+  const auto admission = planLlvmAdmission(*input);
+  expect(admission.admitted(),
+         "the bounded fresh hierarchy fixture has exact public admission: " +
+             admission.limitation());
+  Session session(*input, {});
+  Dispatch dispatch(session, admission);
+  const auto &program = session.program().mir();
+  const auto main =
+      std::find_if(program.functionInstances().begin(),
+                   program.functionInstances().end(), [](const auto &function) {
+                     return function.entryKind != ProgramEntryKind::None;
+                   });
+  if (main == program.functionInstances().end())
+    throw std::runtime_error("fresh-transfer fixture lost its entry");
+  const auto &body = main->body;
+  const Placement placement(body);
+  const Placement hierarchyAware(program, body);
+  std::vector<std::pair<const MirInstruction *, FreshHierarchyTransfer>> plans;
+  std::size_t copyConstructs = 0, copyLoads = 0, moves = 0;
+  bool selectedRoot = false;
+  const auto cold = modulePublication(session);
+  for (const auto &block : body.blocks)
+    for (const auto &stage : block.instructions) {
+      const bool candidate = isFreshHierarchyTransferProducer(stage);
+      if (!stage.tombstone && stage.result &&
+          stage.info.type.kind == SemanticType::Class &&
+          (stage.kind == MirInstructionKind::Load ||
+           stage.kind == MirInstructionKind::Move ||
+           (stage.kind == MirInstructionKind::Construct &&
+            !stage.constructorTarget))) {
+        std::cout << "fresh-transfer-stage: bb" << block.id << ":i" << stage.id
+                  << " kind=" << static_cast<int>(stage.kind)
+                  << " intrinsic=" << static_cast<int>(stage.intrinsic)
+                  << " ctor=" << static_cast<int>(stage.constructorKind)
+                  << " result=" << *stage.result << " candidate=" << candidate;
+        if (!stage.operands.empty())
+          std::cout << " source-kind="
+                    << static_cast<int>(stage.operands.front().kind)
+                    << " source-place=" << stage.operands.front().place
+                    << " source-loan=" << stage.operands.front().loan;
+        std::cout << '\n';
+      }
+      if (!candidate)
+        continue;
+      const auto planned = planFreshHierarchyTransfer(program, body, stage);
+      const auto preflight =
+          Lifetimes::preflightFreshTransfer(session, dispatch, body, stage);
+      std::cout << "fresh-transfer-plan: i" << stage.id
+                << " owner=" << planned.owner
+                << " kind=" << static_cast<int>(planned.kind)
+                << " destination=" << planned.destination << " publication=i"
+                << planned.publication->id
+                << " source-drop=" << planned.sourceDrop
+                << " value-drop=" << planned.valueDrop << '\n';
+      expect(planned.source == stage.operands.front() &&
+                 preflight.source == planned.source &&
+                 preflight.publication == planned.publication &&
+                 preflight.owner == planned.owner && planned.publication &&
+                 planned.publication->destination == planned.destination &&
+                 planned.publication->operands.front().value == *stage.result,
+             "pure transfer plan binds the exact producer/publication");
+      expect(hierarchyAware.fresh(*stage.result) &&
+                 hierarchyAware.target(*stage.result) &&
+                 hierarchyAware.target(*stage.result)->place ==
+                     planned.destination,
+             "explicit program-aware placement binds only the proven hierarchy "
+             "local");
+      // The body-only API must retain generic snapshot placement. Hierarchy
+      // final-local transport requires the explicit program-aware opt-in and
+      // matching typed emission; candidate recognition alone is not permission.
+      if (stage.kind == MirInstructionKind::Construct)
+        expect(
+            placement.fresh(*stage.result) && placement.target(*stage.result) &&
+                placement.target(*stage.result)->place == planned.destination,
+            "existing Construct placement remains unchanged");
+      else
+        expect(!placement.fresh(*stage.result) &&
+                   !placement.target(*stage.result),
+               "body-only placement does not opt into hierarchy Load/Move "
+               "transport");
+      if (planned.kind == ConstructorKind::Move) {
+        ++moves;
+        expect(planned.sourceDrop && planned.valueDrop && stage.ownership &&
+                   stage.ownership->kind == OwnershipEventKind::Move &&
+                   stage.lifecycle.front().source == planned.sourceDrop &&
+                   stage.lifecycle.front().target == planned.valueDrop &&
+                   body.findDropObligation(planned.sourceDrop)->place ==
+                       planned.source.place &&
+                   planned.publication->lifecycle.front().source ==
+                       planned.valueDrop,
+               "whole-local movement retains exact source/value drop IDs");
+      } else {
+        copyConstructs += stage.kind == MirInstructionKind::Construct;
+        copyLoads += stage.kind == MirInstructionKind::Load;
+        expect(!planned.sourceDrop && !planned.valueDrop &&
+                   stage.lifecycle.empty(),
+               "scalar hierarchy copies leave source cleanup unchanged");
+        if (planned.source.loan && planned.source.place) {
+          const auto *loan = body.findLoan(planned.source.loan);
+          selectedRoot |= loan && loan->source != planned.source.place &&
+                          body.findPlace(planned.source.place)->type ==
+                              named(session.program(), "Root").type;
+        }
+      }
+      plans.emplace_back(&stage, planned);
+    }
+  std::cout << "fresh-transfer-counts: copy-construct=" << copyConstructs
+            << " copy-load=" << copyLoads << " move=" << moves
+            << " selected-root=" << selectedRoot << '\n';
+  expect(copyConstructs == 2 && copyLoads == 1 && moves == 2 && selectedRoot,
+         "real MIR covers generated Copy, implicit Copy Load, selected Root "
+         "presentation and both whole-local moves");
+  expect(modulePublication(session) == cold,
+         "cold transfer preflight publishes no functions/globals/IR/state");
+  auto *sentinel = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
+      llvm::GlobalValue::InternalLinkage, "transfer.preflight.sentinel",
+      session.module());
+  llvm::IRBuilder<> sentinelIr(
+      llvm::BasicBlock::Create(session.context(), "entry", sentinel));
+  auto *state = sentinelIr.CreateAlloca(sentinelIr.getInt8Ty());
+  auto *marker = sentinelIr.CreateStore(sentinelIr.getInt8(7), state);
+  const auto insertion = sentinelIr.GetInsertPoint();
+  const auto warm = modulePublication(session);
+  for (int attempt = 0; attempt != 2; ++attempt)
+    for (const auto &[stage, plan] : plans) {
+      (void)plan;
+      static_cast<void>(
+          Lifetimes::preflightFreshTransfer(session, dispatch, body, *stage));
+    }
+  expect(modulePublication(session) == warm &&
+             sentinelIr.GetInsertPoint() == insertion &&
+             marker->getValueOperand() == sentinelIr.getInt8(7) &&
+             marker->getPointerOperand() == state,
+         "warm preflight changes neither insertion point nor runtime state IR");
+  sentinelIr.CreateRetVoid();
+  if (plans.empty())
+    return;
+  const auto &[first, firstPlan] = plans.front();
+  auto foreignBody = body;
+  rejects<std::invalid_argument>(
+      [&] {
+        static_cast<void>(planFreshHierarchyTransfer(
+            program, foreignBody,
+            foreignBody.blocks.front().instructions.front()));
+      },
+      "equal copied MIR body is not the program-owned body");
+  rejects<std::invalid_argument>(
+      [&] { static_cast<void>(Placement(program, foreignBody)); },
+      "program-aware placement rejects a foreign hierarchy body upfront");
+  const auto foreignStage = *first;
+  rejects<std::invalid_argument>(
+      [&] {
+        static_cast<void>(
+            planFreshHierarchyTransfer(program, body, foreignStage));
+      },
+      "equal copied transfer stage is not its exact program-owned stage");
+  for (int mutation : {0, 1, 2}) {
+    auto changed = program;
+    auto &changedBody =
+        *findMirBody(changed, {MirBodyKind::Function, main->id});
+    const auto selected =
+        std::find_if(plans.begin(), plans.end(), [&](const auto &row) {
+          return mutation == 0 ? row.first->kind == MirInstructionKind::Load
+                               : row.second.kind == ConstructorKind::Move;
+        });
+    if (selected == plans.end())
+      throw std::runtime_error("negative transfer control lost its producer");
+    MirInstruction *stage = nullptr;
+    for (auto &block : changedBody.blocks)
+      for (auto &candidate : block.instructions)
+        if (candidate.id == selected->first->id)
+          stage = &candidate;
+    if (!stage)
+      throw std::runtime_error("negative transfer control lost its stage");
+    if (mutation == 0)
+      changedBody.blocks.front().terminator.value =
+          MirOperand{.kind = MirOperandKind::Value,
+                     .value = *stage->result,
+                     .type = stage->info.type};
+    if (mutation == 1)
+      changedBody.places.at(selected->second.destination - 1).root =
+          MirPlaceRootKind::Symbol;
+    if (mutation == 2)
+      changedBody.places.at(stage->operands.front().place - 1)
+          .projections.push_back(
+              {.kind = MirProjectionKind::Base,
+               .selection = named(session.program(), "MoveRoot").id});
+    rejects<BackendUnsupportedError>(
+        [&] {
+          static_cast<void>(
+              planFreshHierarchyTransfer(changed, changedBody, *stage));
+        },
+        "alternate/nonlocal/base-view move cannot acquire a fresh plan");
+    const Placement rejected(changed, changedBody);
+    expect(!rejected.fresh(*stage->result) && !rejected.target(*stage->result),
+           "failed hierarchy Load/Move proof remains unbound under explicit "
+           "opt-in");
+  }
+  const auto staged =
+      Frontend().analyze("llvm-staged-move-exclusion.gti", std::string(R"(
+mut int drops = 0;
+class Value {
+public:
+  Value() {}
+  virtual int read() { return 1; }
+  ~Value() { drops = 1; }
+};
+int main() {
+  Value first{};
+  Value second{std::move(first)};
+  return second.read() - 1;
+}
+)"),
+                         {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!staged.canGenerateCode())
+    for (const auto &diagnostic : staged.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(staged.canGenerateCode(),
+         "explicit staged move remains valid source outside the fresh profile");
+  if (staged.canGenerateCode()) {
+    const auto stagedInput = verifiedLoweredProgram(
+        gti_test::lowerProgram(staged, staged.mir, staged.mir), issues);
+    if (!stagedInput)
+      throw std::runtime_error(
+          "staged move exclusion lost its exact source seal");
+    bool found = false;
+    const auto &stagedMir = stagedInput->program().mir();
+    for (const auto address : enumerateMirBodyAddresses(stagedMir)) {
+      const auto &stagedBody = *findMirBody(stagedMir, address);
+      for (const auto &block : stagedBody.blocks)
+        for (const auto &stage : block.instructions)
+          if (!stage.tombstone && stage.kind == MirInstructionKind::Construct &&
+              !stage.constructorTarget &&
+              stage.constructorKind == ConstructorKind::Move &&
+              stage.operands.size() == 1 &&
+              stage.operands.front().kind == MirOperandKind::Value) {
+            found = true;
+            std::cout << "fresh-transfer-excluded-stage: i" << stage.id
+                      << " result=" << stage.result.value_or(0)
+                      << " source-value=" << stage.operands.front().value
+                      << '\n';
+            rejects<BackendUnsupportedError>(
+                [&] {
+                  static_cast<void>(
+                      planFreshHierarchyTransfer(stagedMir, stagedBody, stage));
+                },
+                "real Move-then-Move-Construct intermediate is not a fresh "
+                "producer");
+            const Placement rejected(stagedMir, stagedBody);
+            expect(!rejected.fresh(stage.operands.front().value) &&
+                       !rejected.target(stage.operands.front().value),
+                   "staged intermediate Move remains unbound under explicit "
+                   "opt-in");
+          }
+    }
+    expect(found,
+           "valid negative source retains its generated staged Move Construct");
+  }
+  // Emission below is isolated private representation IR. It defines no source
+  // body, does not lower the public source program and cannot publish an
+  // object.
+  Failures failures(session);
+  Lifetimes lifetimes(
+      session, failures, dispatch, [](MirBodyAddress) -> llvm::Function * {
+        throw std::runtime_error(
+            "private transfer unexpectedly requests a source body");
+      });
+  for (const auto &[stage, plan] : plans) {
+    const auto &owner = *program.findClassInstance(plan.owner);
+    auto *probe = llvm::Function::Create(
+        llvm::FunctionType::get(
+            llvm::Type::getVoidTy(session.context()),
+            {session.layouts().pointer(), session.layouts().pointer()}, false),
+        llvm::GlobalValue::InternalLinkage, "transfer.private.probe",
+        session.module());
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", probe));
+    auto *destination = probe->getArg(0);
+    auto *source = probe->getArg(1);
+    lifetimes.freshTransfer(ir, destination, source, body, *stage);
+    ir.CreateRetVoid();
+    std::set<std::uint64_t> fields, flags, headers, copiedFields, movedFlags,
+        installed;
+    const auto collect = [&](const auto &self, const MirClassInstance &object,
+                             std::uint64_t offset) -> void {
+      const auto &layout = session.layouts().get(object.type);
+      for (const auto &field : object.declaredFields)
+        fields.insert(
+            offset +
+            session.layouts().fieldSubobject(object.type, field.symbol).offset);
+      if (const auto flag = session.layouts().activeIndex(object.type))
+        flags.insert(offset + layout.fieldOffsets.at(*flag));
+      for (const auto &base : object.bases)
+        self(
+            self, *program.findClassInstance(base.instance),
+            offset +
+                session.layouts().baseSubobject(object.type, base.type).offset);
+    };
+    collect(collect, owner, 0);
+    for (const auto &view : dispatch.views(owner.id))
+      headers.insert(view.location.owner.offset +
+                     session.layouts()
+                         .get(view.location.owner.type)
+                         .fieldOffsets.at(view.location.index));
+    bool suppressed = false;
+    for (const auto &block : *probe)
+      for (const auto &operation : block) {
+        if (const auto *store = llvm::dyn_cast<llvm::StoreInst>(&operation)) {
+          expect(!suppressed,
+                 "all destination writes precede source suppression");
+          const auto offset =
+              offsetFrom(session, store->getPointerOperand(), destination);
+          if (const auto *load =
+                  llvm::dyn_cast<llvm::LoadInst>(store->getValueOperand())) {
+            expect(offsetFrom(session, load->getPointerOperand(), source) ==
+                       offset,
+                   "typed field/flag transfer uses equal sealed subobject "
+                   "offsets");
+            if (fields.contains(offset))
+              copiedFields.insert(offset);
+            else if (flags.contains(offset))
+              movedFlags.insert(offset);
+            else
+              expect(
+                  false,
+                  "transfer never copies source dispatch headers or padding");
+          } else if (const auto *table = llvm::dyn_cast<llvm::GlobalVariable>(
+                         store->getValueOperand())) {
+            installed.insert(offset);
+            expect(
+                table->getName().str().find("__gti_dispatch_table_" +
+                                            std::to_string(owner.id) + "_") ==
+                    0,
+                "destination headers select static destination class tables");
+          } else {
+            expect(flags.contains(offset) && plan.kind == ConstructorKind::Copy,
+                   "only a new copy-owned active flag may use constant arming");
+          }
+        }
+        if (const auto *call = llvm::dyn_cast<llvm::CallInst>(&operation)) {
+          const auto *callee = call->getCalledFunction();
+          expect(
+              callee &&
+                  callee->getName().str().find("__gti_native_move_state_") ==
+                      0 &&
+                  call->getArgOperand(0) == source && !suppressed,
+              "no memcpy/header-copy call replaces exact source suppression");
+          suppressed = true;
+        }
+      }
+    expect(
+        copiedFields == fields && installed == headers &&
+            (plan.kind == ConstructorKind::Move
+                 ? movedFlags == flags && suppressed
+                 : movedFlags.empty() && !suppressed),
+        "private transfer copies scalar payload, rebuilds metadata and moves "
+        "actual flags before suppressing the whole source");
+  }
+  session.verify();
+}
+
 void testGeneratedEmpty() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto frontend = Frontend().analyze(
@@ -2534,6 +2970,8 @@ int main() { return 0; }
   testStaticLifecycle();
   testDispatchAdmissionBinding();
   testReferencePublication();
+  testOrdinaryTransferPlacement();
+  testFreshTransferPlanning();
   testGeneratedEmpty();
   testDeclarationInitializers();
   testProvedDirectReceiver();

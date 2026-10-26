@@ -3,6 +3,7 @@
 #include "gti/mir.h"
 
 #include <map>
+#include <set>
 
 namespace lang::native_llvm {
 
@@ -20,6 +21,25 @@ namespace lang::native_llvm {
 [[nodiscard]] bool containsHierarchyStorage(const MirProgram &program,
                                             const SemanticType &type);
 
+// A candidate is not permission to transfer. The complete pure-MIR plan below
+// binds its exact source, generated policy, ownership and fresh publication.
+[[nodiscard]] bool
+isFreshHierarchyTransferProducer(const MirInstruction &instruction);
+
+struct FreshHierarchyTransfer {
+  MirOperand source;
+  MirPlaceId destination = 0;
+  const MirInstruction *publication = nullptr;
+  ConstructorKind kind = ConstructorKind::Copy;
+  HirClassInstanceId owner = 0;
+  MirDropObligationId sourceDrop = 0;
+  MirDropObligationId valueDrop = 0;
+};
+
+[[nodiscard]] FreshHierarchyTransfer
+planFreshHierarchyTransfer(const MirProgram &program, const MirBody &body,
+                           const MirInstruction &producer);
+
 // Fresh values have one physical destination. This plan follows only verified
 // value transport; it never elides a MIR Copy/Move or aliases a named local to
 // the caller's return storage.
@@ -33,12 +53,17 @@ public:
     friend bool operator==(const Target &, const Target &) = default;
   };
   explicit Placement(const MirBody &body);
+  // Explicit opt-in for typed hierarchy transfer emission. Ordinary Load/Move
+  // snapshots retain baseline placement; only exact successful MIR plans add
+  // hierarchy final-local destinations. Neither constructor grants admission.
+  Placement(const MirProgram &program, const MirBody &body);
   [[nodiscard]] const Target *target(MirValueId value) const;
   [[nodiscard]] bool fresh(MirValueId value) const;
 
 private:
   std::map<MirValueId, const MirInstruction *> producers;
   std::map<MirValueId, Target> targets;
+  std::set<MirValueId> hierarchyTransfers;
   void bind(MirValueId value, Target target);
 };
 

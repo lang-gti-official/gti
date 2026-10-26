@@ -70,6 +70,7 @@ enum class Shape {
   NativeStaticDispatchStorage,
   NativeBorrowedDispatchView,
   NativeVirtualInvocation,
+  NativeFreshHierarchyTransfer,
   PolymorphicTransfer,
   PureDispatchState,
   DestructorDispatchObservation,

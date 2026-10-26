@@ -332,6 +332,107 @@ void Lifetimes::generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
   active(ir, address, object.type, true);
 }
 
+FreshHierarchyTransfer
+Lifetimes::preflightFreshTransfer(Session &session, Dispatch &dispatch,
+                                  const MirBody &body,
+                                  const MirInstruction &instruction) {
+  if (!dispatch.boundTo(session))
+    throw std::invalid_argument(
+        "LLVM fresh transfer uses a foreign dispatch session");
+  auto transfer =
+      planFreshHierarchyTransfer(session.program().mir(), body, instruction);
+  const auto &owner =
+      *session.program().mir().findClassInstance(transfer.owner);
+  // This performs all dispatch/ABI checks without publishing a table/helper or
+  // touching either object's runtime state. A transfer never inherits source
+  // dispatch metadata, including when its source is a derived base view.
+  if (owner.polymorphic)
+    dispatch.preflightState(owner.id);
+  const auto preflight = [&](const auto &self,
+                             const MirClassInstance &object) -> void {
+    static_cast<void>(session.layouts().get(object.type));
+    if (object.requiresActiveDropState !=
+        session.layouts().activeIndex(object.type).has_value())
+      throw std::logic_error(
+          "LLVM transfer active state disagrees with its sealed class");
+    for (const auto &base : object.bases) {
+      const auto *child =
+          session.program().mir().findClassInstance(base.instance);
+      if (!child || child->type != base.type)
+        throw std::logic_error("LLVM transfer lost its exact base identity");
+      static_cast<void>(
+          session.layouts().baseIndex(object.type, base.instance));
+      self(self, *child);
+    }
+    for (const auto &field : object.declaredFields) {
+      static_cast<void>(
+          session.layouts().fieldIndex(object.type, field.symbol));
+      static_cast<void>(session.layouts().get(field.type));
+    }
+  };
+  preflight(preflight, owner);
+  for (const auto identity : {transfer.sourceDrop, transfer.valueDrop})
+    if (identity) {
+      const auto *drop = body.findDropObligation(identity);
+      if (!drop)
+        throw std::logic_error("LLVM fresh transfer lost its sealed cleanup");
+      preflightCleanup(session, dispatch, drop->dropType);
+    }
+  return transfer;
+}
+
+void Lifetimes::freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                              llvm::Value *source, const MirBody &body,
+                              const MirInstruction &instruction) {
+  if (!destination || !source || !destination->getType()->isPointerTy() ||
+      !source->getType()->isPointerTy() || destination == source)
+    throw std::invalid_argument(
+        "LLVM fresh transfer requires distinct object addresses");
+  const auto transfer =
+      preflightFreshTransfer(session, dispatch, body, instruction);
+  const auto &owner =
+      *session.program().mir().findClassInstance(transfer.owner);
+  // Generated scalar transfer has no source callback or runtime failure point.
+  // Copy logical fields only. Even a byte-identical static layout does not
+  // authorize transporting source vptrs, padding, or active-state bytes.
+  const auto copy = [&](const auto &self, const MirClassInstance &object,
+                        llvm::Value *from, llvm::Value *to) -> void {
+    const auto storage = session.layouts().get(object.type).storage;
+    for (const auto &base : object.bases) {
+      const auto index =
+          session.layouts().baseIndex(object.type, base.instance);
+      self(self, *session.program().mir().findClassInstance(base.instance),
+           ir.CreateStructGEP(storage, from, index),
+           ir.CreateStructGEP(storage, to, index));
+    }
+    for (const auto &field : object.declaredFields) {
+      const auto index =
+          session.layouts().fieldIndex(object.type, field.symbol);
+      auto *value = ir.CreateLoad(session.layouts().get(field.type).storage,
+                                  ir.CreateStructGEP(storage, from, index));
+      ir.CreateStore(value, ir.CreateStructGEP(storage, to, index));
+    }
+    if (const auto index = session.layouts().activeIndex(object.type)) {
+      // A copy constructs a new live subobject. A move transfers the actual
+      // own-destructor permission, including already-suppressed state; it must
+      // not unconditionally arm destination flags.
+      llvm::Value *active = ir.getInt8(1);
+      if (transfer.kind == ConstructorKind::Move)
+        active = ir.CreateLoad(ir.getInt8Ty(),
+                               ir.CreateStructGEP(storage, from, *index));
+      ir.CreateStore(active, ir.CreateStructGEP(storage, to, *index));
+    }
+  };
+  copy(copy, owner, source, destination);
+  if (owner.polymorphic)
+    dispatch.install(ir, destination, owner.id);
+  // Suppression belongs to this verified whole-source transfer commit, never
+  // operand materialization. All payload, destination flags and headers are
+  // ready first; no source failure or callback can observe an intermediate.
+  if (transfer.kind == ConstructorKind::Move)
+    moved(ir, source, owner.type);
+}
+
 llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
   auto *storage = session.layouts().get(type).storage;
   if (const auto found = moves.find(storage); found != moves.end())

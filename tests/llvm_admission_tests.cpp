@@ -141,9 +141,15 @@ void testPlacementPlan() {
   expect(rejected, "conflicting physical destinations fail closed");
 }
 
-lang::VerifiedLoweredProgram lower(std::string_view source) {
+lang::VerifiedLoweredProgram lower(std::string_view source,
+                                   bool withPrelude = false) {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto frontend =
-      lang::Frontend().analyze("llvm-admission.gti", std::string(source));
+      withPrelude
+          ? lang::Frontend().analyze("llvm-admission.gti", std::string(source),
+                                     {root / "stdlib/prelude.gti"}, {},
+                                     {root / "stdlib"})
+          : lang::Frontend().analyze("llvm-admission.gti", std::string(source));
   if (!frontend.canGenerateCode()) {
     throw std::runtime_error(frontend.diagnostics.empty()
                                  ? "fixture did not pass frontend"
@@ -291,7 +297,8 @@ void testLedger() {
                  (entry.family == "Shape" &&
                           (entry.name == "NativeStaticDispatchStorage" ||
                            entry.name == "NativeBorrowedDispatchView" ||
-                           entry.name == "NativeVirtualInvocation")
+                           entry.name == "NativeVirtualInvocation" ||
+                           entry.name == "NativeFreshHierarchyTransfer")
                       ? "llvm_dispatch_execution"
                   : entry.milestone == 6 ? "llvm_class_execution"
                   : entry.milestone == 5 ? "llvm_place_execution"
@@ -461,7 +468,7 @@ int main() { unsafe { return identity(0); } }
          "exact unsafe source calls keep ordinary body admission");
   const auto unsafeOwner = lang::planLlvmAdmission(lower(R"(
 class Owner { public: virtual int read() { return 0; } };
-unsafe int create() { Owner value{}; Owner copied = value; return 0; }
+unsafe int create() { mut Owner value{}; Owner other{}; value = other; return 0; }
 int main() { unsafe { return create(); } }
 )"));
   expect(!unsafeOwner.admitted() &&
@@ -833,17 +840,20 @@ void testDispatchPerUseWitnesses() {
       P() : value(1) {}
       virtual int read() { return this.value; }
     };
+    void take(P value) {}
     int main() {
       mut P first{};
       P second{};
       first.value = 5;
       P copied = P(first);
+      take(P());
       first = second;
       return copied.read();
     }
   )");
   const auto plan = planLlvmAdmission(input);
-  bool goodConstruct = false, badTransfer = false, badConstruct = false;
+  bool goodConstruct = false, goodFreshCopy = false, badTransfer = false,
+       badConstruct = false;
   for (const auto &use : plan.requirements()) {
     if (!use.required)
       continue;
@@ -851,14 +861,109 @@ void testDispatchPerUseWitnesses() {
       goodConstruct |=
           use.implementedShape &&
           use.implementedShape->name == "NativeStaticDispatchStorage";
+      goodFreshCopy |=
+          use.implementedShape &&
+          use.implementedShape->name == "NativeFreshHierarchyTransfer";
       badConstruct |= !use.implementedShape;
     }
     badTransfer |= use.entry->key() == "Shape.PolymorphicTransfer" &&
                    !use.implementedShape && use.instruction != 0;
   }
-  expect(!plan.admitted() && goodConstruct && badConstruct && badTransfer,
-         "fresh and copy constructions in one body retain separate witnesses "
-         "and explicit pending transfer requirements");
+  expect(!plan.admitted() && goodConstruct && goodFreshCopy && badConstruct &&
+             badTransfer,
+         "fresh-local copy and prepared by-value construction in one body keep "
+         "distinct witnesses and explicit pending transfer requirements");
+  const auto copyInput = lower(R"(
+    class P {
+    public:
+      int value;
+      P(int input) : value(input) {}
+      virtual int read() { return this.value; }
+    };
+    int main() {
+      P original{7};
+      P explicit_copy{original};
+      P implicit_copy = original;
+      return original.read() + explicit_copy.read() + implicit_copy.read() - 21;
+    }
+  )");
+  const auto copyPlan = planLlvmAdmission(copyInput);
+  bool explicitCopy = false, implicitCopy = false;
+  for (const auto &use : copyPlan.requirements())
+    if (use.required && use.implementedShape &&
+        use.implementedShape->name == "NativeFreshHierarchyTransfer") {
+      explicitCopy |= use.entry->key() == "MirInstructionKind.Construct";
+      implicitCopy |= use.entry->key() == "MirInstructionKind.Load";
+    }
+  expect(copyPlan.admitted() && explicitCopy && implicitCopy,
+         "exact generated Copy Construct and implicit Copy Load into fresh "
+         "whole locals have operation-specific admission: " +
+             copyPlan.limitation());
+  const auto moveInput = lower(R"(
+    mut int destroyed = 0;
+    class P {
+      int value;
+    public:
+      P(int input) : value(input) {}
+      virtual int read() { return this.value; }
+      ~P() { destroyed += 1; }
+    };
+    int main() {
+      {
+        P original{7};
+        P transferred = std::move(original);
+        if (transferred.read() != 7) { return 1; }
+      }
+      return destroyed == 1 ? 0 : 2;
+    }
+  )",
+                               true);
+  const auto movePlan = planLlvmAdmission(moveInput);
+  if (!movePlan.admitted()) {
+    std::size_t reported = 0;
+    for (const auto &use : movePlan.requirements()) {
+      if (!use.required || use.implementedShape ||
+          use.entry->key() != "SemanticType::Kind.Class" || reported >= 8)
+        continue;
+      ++reported;
+      std::cerr << "fresh-move-unwitnessed-class: body=";
+      if (use.body)
+        std::cerr << static_cast<int>(use.body->kind) << '/' << use.body->owner;
+      else
+        std::cerr << "inventory";
+      std::cerr << " block=" << use.block << " instruction=" << use.instruction
+                << " occurrences=" << use.occurrences << " source="
+                << use.source.source << ':' << use.source.line << '@'
+                << use.source.start << ".." << use.source.end << '\n';
+      for (const auto &owner : moveInput.program().mir().classInstances()) {
+        const auto *row = moveInput.program().findClassInstance(owner.id);
+        if (!row || row->source != use.source)
+          continue;
+        const auto *declaration =
+            moveInput.program().findClassDeclaration(owner.declaration);
+        std::cerr << "fresh-move-class-row: id=" << owner.id
+                  << " declaration=" << owner.declaration << " name="
+                  << (declaration ? declaration->qualifiedName : "<missing>")
+                  << " kind=" << static_cast<int>(owner.kind)
+                  << " fields=" << owner.declaredFields.size()
+                  << " bases=" << owner.bases.size()
+                  << " structural-bases=" << owner.structuralBases.size()
+                  << " borrowed=" << owner.traits.containsBorrowedState
+                  << " active=" << owner.requiresActiveCleanup
+                  << " own-flag=" << owner.requiresActiveDropState << '\n';
+      }
+    }
+  }
+  bool wholeMove = false;
+  for (const auto &use : movePlan.requirements())
+    wholeMove |= use.required &&
+                 use.entry->key() == "MirInstructionKind.Move" &&
+                 use.implementedShape &&
+                 use.implementedShape->name == "NativeFreshHierarchyTransfer";
+  expect(movePlan.admitted() && wholeMove,
+         "an exact whole-binding Move into its unique fresh local has bounded "
+         "admission without by-value or replacement support: " +
+             movePlan.limitation());
   const auto mutations = lower(R"(
     class P {
     public:

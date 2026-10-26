@@ -36,11 +36,13 @@ def main() -> int:
         run([sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)], 0)
         run([str(output)], 0)
         output.unlink()
-        source.write_text("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", encoding="utf-8")
+        source.write_text("class Owner { public: virtual int read() { return 0; } }; int main() { mut Owner value{}; Owner copied{}; value = copied; return value.read(); }\n", encoding="utf-8")
         transfer_mir = root / "unsupported.mir"
         run([sys.argv[1], str(source), "-O0", "--emit-mir", "-o", str(transfer_mir)], 0)
         if not re.search(r"^\s+i\d+ load\b", transfer_mir.read_text(encoding="utf-8"), re.MULTILINE):
-            raise AssertionError("the transfer control lost its verified class-copy load")
+            raise AssertionError("the replacement control lost its verified class-copy load")
+        if not re.search(r"^\s+i\d+ assign\b", transfer_mir.read_text(encoding="utf-8"), re.MULTILINE):
+            raise AssertionError("the replacement control lost its verified whole-object assignment")
         unsupported = run(
             [sys.argv[1], str(source), "-O0", "--backend", "llvm", "-o", str(output)],
             65,

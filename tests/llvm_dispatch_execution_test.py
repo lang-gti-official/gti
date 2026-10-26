@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Execute the bounded static-local dispatch slice and reject object transfers.
 
-The cost fixture is a correctness workload, not a timing/dispatch/allocation
-proof. Performance measurement belongs to the coordinated platform host plan.
+The default cost fixture is correctness-only. Opt-in --measure EVIDENCE prepares
+artifacts and stops; --measure-review REVIEW --measure-host-plan PLAN resumes
+only after independent artifact review and an approved platform host window.
+Neither path infers allocation counts from source shape or process RSS.
 The verified constructor-state plan and explicit destructor IDs establish the
 positive traces. Virtual observations during destruction/rollback remain
 rejections pending an explicit backend-neutral phase contract. No C++ result
@@ -12,11 +14,20 @@ both existing C++ text-vocabulary rejections are recorded, not counted as passes
 """
 
 import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+import math
 import os
 from pathlib import Path
+import platform
 import re
+import shutil
+import statistics
 import subprocess
+import sys
 import tempfile
+import time
 
 from backend_execution import Endpoint, execute
 
@@ -30,6 +41,7 @@ ENDPOINTS = (
 
 SUCCESS_FILES = {
     "static-dispatch": "tests/fixtures/llvm_dispatch_execution.gti",
+    "fresh-hierarchy-transfer": "tests/fixtures/llvm_dispatch_fresh_transfer.gti",
     "dispatch-cost-correctness": "tests/fixtures/llvm_dispatch_execution_cost.gti",
     "shipped-example": "examples/llvm/inheritance-and-dispatch.gti",
 }
@@ -85,9 +97,15 @@ public:
 };
 """
 
+TRANSFER_SUCCESS_SOURCES = {
+    # Verbatim former rejections. Their normal exit1 is successful execution of
+    # these source contracts, not a failed runtime check or a rewritten oracle.
+    "generated-copy-former-reject": (PLAIN + "int main() { Plain first{}; Plain second = first; return second.read(); }\n", 1),
+    "generated-move-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second = std::move(first); return second.read(); }\n", 1),
+    "fresh-copy-former-cli-control": ("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", 0),
+}
+
 REJECTIONS = {
-    "reject-copy": PLAIN + "int main() { Plain first{}; Plain second = first; return second.read(); }\n",
-    "reject-move": PLAIN + "int main() { mut Plain first{}; Plain second = std::move(first); return second.read(); }\n",
     "reject-move-construction": PLAIN + "int main() { mut Plain first{}; Plain second = Plain(std::move(first)); return second.read(); }\n",
     "reject-assignment": PLAIN + "int main() { mut Plain first{}; Plain second{}; first = second; return first.read(); }\n",
     "reject-base-assignment": PLAIN + """class Derived : public Plain {};
@@ -186,6 +204,15 @@ REJECTIONS["reject-cleanup-helper-cycle-observation"] = SUCCESS_SOURCES[
         "return value.payload();", "return value.read();")
 
 SOURCE_REJECTIONS = {
+    "reject-source-deleted-copy": """class NoCopy {
+public:
+  NoCopy() {}
+  NoCopy(NoCopy&) = delete;
+  virtual int read() { return 0; }
+};
+int main() { NoCopy first{}; NoCopy second{first}; return second.read(); }
+""",
+    "reject-source-use-after-move": PLAIN + "int main() { mut Plain first{}; Plain second = std::move(first); return first.read(); }\n",
     "reject-source-mutable-view-from-readonly": PLAIN + """int main() {
   Plain value{};
   mut Plain& invalid = value;
@@ -200,6 +227,11 @@ int main() { Wrong value{}; return 0; }
 class Missing : public Reader { public: int read() override; };
 int main() { Missing value{}; return value.read(); }
 """,
+}
+
+SOURCE_REJECTION_CODES = {
+    "reject-source-deleted-copy": "GTI-S2020",
+    "reject-source-use-after-move": "GTI-S2018",
 }
 
 
@@ -230,6 +262,7 @@ def expected_failure(result, source: Path, line: int) -> bool:
 def execute_case(gti: Path, root: Path, work: Path, name: str,
                  source: Path, env: dict[str, str], *,
                  failure_needle: str | None = None,
+                 expected_exit: int = 0,
                  cpp_vocabulary_limitation: bool = False) -> None:
     observables = []
     if cpp_vocabulary_limitation:
@@ -258,7 +291,7 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
         if result.error:
             raise AssertionError(f"{name} {endpoint}: {result}")
         if failure_needle is None:
-            if result.observable != (0, "", ""):
+            if result.observable != (expected_exit, "", ""):
                 raise AssertionError(f"{name} {endpoint}: {result}")
         elif not expected_failure(result, source, failure_line):
             raise AssertionError(f"{name} {endpoint}: {result}")
@@ -268,7 +301,7 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
     if cpp_vocabulary_limitation:
         print(f"{name}: verified source/MIR and native O0/O3 passed; C++ failures retained", flush=True)
     else:
-        print(f"{name}: C++20/23 O3 and native O0/O3 passed", flush=True)
+        print(f"{name}: C++20/23 O3 and native O0/O3 passed (normal exit {expected_exit if failure_needle is None else 70})", flush=True)
 
 
 def reject_case(gti: Path, root: Path, work: Path, name: str,
@@ -299,19 +332,639 @@ def reject_case(gti: Path, root: Path, work: Path, name: str,
     print(f"{name}: verified source, native O0/O3 rejection and artifact preservation passed", flush=True)
 
 
+# This opt-in path deliberately shares the source/execution harness, not the
+# default correctness gate. Preparation never authorizes runtime sampling.
+MEASURE_SCHEMA = 1
+MEASURE_ENDPOINTS = (Endpoint("llvm", "O3"), *ENDPOINTS[:2])
+MEASURE_VARIANTS = ("direct", "dynamic", "startup", "control")
+MEASURE_ENVIRONMENT = (
+    "PATH", "GTI_CXX", "CXX", "CC", "GTI_RUNTIME_LIBRARY", "GTI_RUNTIME_INCLUDE",
+    "GTI_STDLIB_PATH", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "CPATH",
+    "CPLUS_INCLUDE_PATH", "LIBRARY_PATH", "LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT",
+    "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "DYLD_FALLBACK_LIBRARY_PATH",
+    "DYLD_INSERT_LIBRARIES", "ASAN_OPTIONS", "UBSAN_OPTIONS", "NO_COLOR",
+)
+
+
+def measure_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def measure_json(path: Path, value) -> None:
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def measure_digest(value) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def measure_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def measure_endpoint(endpoint: Endpoint) -> str:
+    return f"{endpoint.backend}-{endpoint.optimization}-{endpoint.standard or 'native'}"
+
+
+def measure_options(arguments) -> dict:
+    return {"count_per_receiver": arguments.measure_count,
+            "sample_rounds": arguments.measure_samples,
+            "target_batch_seconds": arguments.measure_target_seconds,
+            "max_batch_repetitions": arguments.measure_max_batch}
+
+
+def measure_sources(count: int) -> tuple[dict[str, str], dict]:
+    def expected(amount: int) -> int:
+        cycles, remainder = divmod(count, 256)
+        return cycles * (32640 + 256 * amount) + remainder * (remainder - 1) // 2 + remainder * amount
+
+    # Each monotone subtotal (including the perturbed target) stays in int32.
+    if count < 256 or max(expected(amount) for amount in (3, 4, 7)) > 2147483647:
+        raise ValueError("measurement count must be >=256 with every subtotal in signed int32")
+    prefix = """// Generated matched successful-execution source contracts; no noinline/FFI escape.
+interface Step { int apply(int value); };
+class Offset : public Step {
+  int amount;
+public:
+  Offset(int amount) : amount(amount) {}
+  int exact(int value) { return value + this.amount; }
+  int apply(int value) override { return this.exact(value); }
+};
+class Seven : public Step {
+public:
+  int exact(int value) { return value + 7; }
+  int apply(int value) override { return this.exact(value); }
+};
+int direct_offset_sum(Offset& step, int count) {
+  mut int total = 0;
+  for (mut int index = 0; index < count; index++) { total += step.exact(index & 255); }
+  return total;
+}
+int direct_seven_sum(Seven& step, int count) {
+  mut int total = 0;
+  for (mut int index = 0; index < count; index++) { total += step.exact(index & 255); }
+  return total;
+}
+int dynamic_sum(Step& step, int count) {
+  mut int total = 0;
+  for (mut int index = 0; index < count; index++) { total += step.apply(index & 255); }
+  return total;
+}
+"""
+    sources = {}
+    for variant in MEASURE_VARIANTS:
+        if variant == "startup":
+            body = "return offset.exact(0) == 3 && seven.exact(0) == 7 ? 0 : 1;"
+        else:
+            first = "direct_offset_sum" if variant == "direct" else "dynamic_sum"
+            second = "direct_seven_sum" if variant == "direct" else "dynamic_sum"
+            body = (f"int first = {first}(offset, {count});\n"
+                    f"  int second = {second}(seven, {count});\n"
+                    f"  return first == {expected(3)} && second == {expected(7)} ? 0 : 1;")
+        selected = prefix
+        if variant == "control":
+            # Change the actual virtual result, NOT the expected checksum. The
+            # unchanged oracle must detect the extra one on every Offset call.
+            selected = selected.replace("return this.exact(value);", "return this.exact(value) + 1;", 1)
+        sources[variant] = selected + "int main() {\n  Offset offset{3};\n  Seven seven{};\n  " + body + "\n}\n"
+    return sources, {"count_per_receiver": count, "receiver_amounts": [3, 7],
+                     "expected_subtotals": [expected(3), expected(7)],
+                     "perturbed_first_subtotal": expected(4),
+                     "logical_virtual_calls_per_dynamic_execution": 2 * count,
+                     "runtime_arguments": [], "success_exit": 0, "control_exit": 1}
+
+
+def measure_capture(command: list[str], root: Path, env: dict[str, str], prefix: Path,
+                    *, resources: bool = False, timeout: int = 240) -> dict:
+    actual = list(command)
+    stats = prefix.with_suffix(".resources.txt")
+    if resources:
+        if sys.platform == "darwin":
+            actual = ["/usr/bin/time", "-l", "-o", str(stats), *command]
+        elif sys.platform.startswith("linux"):
+            actual = ["/usr/bin/time", "-v", "-o", str(stats), *command]
+        else:
+            raise RuntimeError("measurement resource accounting requires macOS or Linux /usr/bin/time")
+    command_log = prefix.with_suffix(".command.json")
+    measure_json(command_log, {"command": command, "invocation": actual, "phase": "started"})
+    started = time.perf_counter()
+    result = subprocess.run(actual, cwd=root, env=env, text=True, capture_output=True,
+                            check=False, timeout=timeout)
+    elapsed = time.perf_counter() - started
+    stdout, stderr = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
+    stdout.write_text(result.stdout, encoding="utf-8")
+    stderr.write_text(result.stderr, encoding="utf-8")
+    record = {"command": command, "invocation": actual, "returncode": result.returncode,
+              "stdout": str(stdout), "stderr": str(stderr)}
+    if resources:
+        raw = stats.read_text(encoding="utf-8")
+        match = (re.search(r"(\d+)\s+maximum resident set size", raw) if sys.platform == "darwin"
+                 else re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", raw))
+        if not match:
+            raise AssertionError(f"missing per-invocation maximum RSS: {stats}")
+        record.update(wall_seconds=elapsed, peak_rss_bytes=int(match[1]) * (1 if sys.platform == "darwin" else 1024),
+                      resources=str(stats), rss_scope="platform time per-invocation maximum; not simultaneous process-tree RSS")
+    measure_json(command_log, record)
+    return record
+
+
+def measure_tool(path: str, root: Path, env: dict[str, str], prefix: Path,
+                 version_arguments: tuple[str, ...] = ("--version",)) -> dict:
+    # Keep the invocation spelling: resolving clang++ to clang changes its link-driver mode.
+    executable = shutil.which(path)
+    if executable is None:
+        raise RuntimeError(f"measurement tool not found: {path}")
+    record = measure_capture([executable, *version_arguments], root, env, prefix)
+    return {"path": executable, "sha256": measure_hash(Path(executable)), "version": record}
+
+
+def measure_host(root: Path, env: dict[str, str], work: Path) -> dict:
+    work.mkdir(parents=True, exist_ok=True)
+    host = {"system": platform.system(), "release": platform.release(), "machine": platform.machine(),
+            "platform": platform.platform(), "python": sys.version}
+    if sys.platform == "darwin":
+        cpu = measure_capture(["/usr/sbin/sysctl", "-a"], root, env, work / "host-cpu")
+        host["cpu"] = "\n".join(line for line in Path(cpu["stdout"]).read_text(encoding="utf-8").splitlines()
+                                  if line.startswith(("hw.model:", "hw.ncpu:", "hw.physicalcpu:", "hw.memsize:",
+                                                      "hw.optional.", "machdep.cpu.brand_string:", "machdep.cpu.features:",
+                                                      "machdep.cpu.leaf7_features:")))
+        host["cpu_probe"] = cpu
+        host["power"] = [measure_capture(["/usr/bin/pmset", "-g", mode], root, env, work / f"power-{mode}")
+                         for mode in ("custom", "batt")]
+    elif sys.platform.startswith("linux"):
+        text = Path("/proc/cpuinfo").read_text(encoding="utf-8").split("\n\n", 1)[0]
+        host["cpu"] = "\n".join(line for line in text.splitlines()
+                                  if line.split(":", 1)[0].strip() in {"vendor_id", "cpu family", "model", "model name", "stepping", "flags"})
+        host["logical_cpus"] = os.cpu_count()
+        host["power"] = {str(path): path.read_text(encoding="utf-8").strip()
+                         for path in Path("/sys/devices/system/cpu").glob("cpu[0-9]*/cpufreq/scaling_governor")}
+    else:
+        raise RuntimeError("measurement supports only the coordinated macOS arm64/Linux x86_64 host ABIs")
+    host["fingerprint_sha256"] = measure_digest({key: value for key, value in host.items()
+                                                if key not in {"python", "power", "cpu_probe"}})
+    return host
+
+
+def measure_inspect(executable: Path, root: Path, env: dict[str, str], work: Path, tools: dict) -> dict:
+    disassembler = tools["disassembler"]["path"]
+    command = ([disassembler, "-tvV", str(executable)] if Path(disassembler).name == "otool"
+               else [disassembler, "-d", "--no-show-raw-insn", str(executable)])
+    disassembly = measure_capture(command, root, env, work / "disassembly")
+    if disassembly["returncode"] != 0:
+        raise AssertionError(f"disassembly failed: {disassembly}")
+    file_record = measure_capture([tools["file"]["path"], str(executable)], root, env, work / "binary-format")
+    size_command = [tools["size"]["path"], "-m" if sys.platform == "darwin" else "-A", str(executable)]
+    sizes = measure_capture(size_command, root, env, work / "sections")
+    sections = []
+    for line in Path(sizes["stdout"]).read_text(encoding="utf-8").splitlines():
+        match = (re.match(r"\s*Section\s+(\S+):\s*(\d+)", line) if sys.platform == "darwin"
+                 else re.match(r"\s*(\.\S+)\s+(\d+)\s+", line))
+        if match:
+            sections.append({"name": match[1], "bytes": int(match[2])})
+    symbols, tables, table_bytes = None, None, None
+    usable_symbol_sizes = False
+    table_size_reason = "no size-bearing symbol tool available"
+    if tools.get("nm"):
+        symbols = measure_capture([tools["nm"]["path"], "-S", "--defined-only", str(executable)],
+                                  root, env, work / "symbols")
+        table_size_reason = f"symbol inspection failed (exit {symbols['returncode']}); no table-size evidence"
+        if symbols["returncode"] == 0:
+            tables = []
+            for line in Path(symbols["stdout"]).read_text(encoding="utf-8").splitlines():
+                match = re.match(r"\s*[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+\S\s+(\S+)", line)
+                reported_size = int(match[1], 16) if match else None
+                usable_symbol_sizes |= reported_size is not None and reported_size > 0
+                fields = line.split()
+                name = fields[-1] if fields else ""
+                if "__gti_dispatch_table_" in name or name.lstrip("_").startswith("ZTV"):
+                    tables.append({"symbol": name, "reported_bytes": reported_size,
+                                   "bytes": reported_size if reported_size and reported_size > 0 else None})
+            if not usable_symbol_sizes:
+                table_size_reason = "symbol tool supplied no usable nonzero sizes (all-zero, empty or unavailable metadata); table bytes unknown"
+            elif any(row["bytes"] is None for row in tables):
+                table_size_reason = "recognized table symbols lack usable nonzero sizes; partial totals are not size evidence"
+            else:
+                table_bytes = sum(row["bytes"] for row in tables)
+                table_size_reason = ("sum of all recognized nonzero table sizes" if tables
+                                     else "no recognized table symbols; nonzero sizes elsewhere establish usable symbol-size metadata")
+    return {"disassembly": disassembly, "binary_format": file_record, "section_tool": sizes,
+            "sections": sections, "executable_bytes": executable.stat().st_size,
+            "text_bytes": sum(row["bytes"] for row in sections if row["name"] in {".text", "__text"}) if sections else None,
+            "unwind_bytes": sum(row["bytes"] for row in sections if row["name"] in {
+                ".eh_frame", ".eh_frame_hdr", ".gcc_except_table", "__eh_frame", "__unwind_info", "__gcc_except_tab"}) if sections else None,
+            "table_symbols": tables, "dispatch_table_bytes": table_bytes,
+            "dispatch_table_bytes_reason": table_size_reason, "symbol_size_metadata_usable": usable_symbol_sizes,
+            "symbol_tool": symbols,
+            "size_scope": "named text/unwind sections; all size-bearing GTI dispatch-table/C++ vtable symbols, including linked runtime; null means unavailable, not zero"}
+
+
+def measure_expect(record: dict, expected: int) -> None:
+    if (record["returncode"] != expected or Path(record["stdout"]).read_text(encoding="utf-8")
+            or Path(record["stderr"]).read_text(encoding="utf-8")):
+        raise AssertionError(f"measurement correctness/control failure: {record}")
+
+
+def measure_prepare(gti: Path, root: Path, work: Path, env: dict[str, str], arguments) -> None:
+    if work.exists() and any(work.iterdir()):
+        raise RuntimeError("preparation requires a new/empty evidence directory; existing artifacts are never overwritten")
+    work.mkdir(parents=True, exist_ok=True)
+    metadata = work / "metadata"
+    metadata.mkdir()
+    sources, inputs = measure_sources(arguments.measure_count)
+    measure_json(work / "inputs.json", inputs)
+    toolchain = {"gti": measure_tool(str(gti), root, env, metadata / "gti-version"),
+                 "cxx": measure_tool(env.get("GTI_CXX") or env.get("CXX") or "c++", root, env, metadata / "cxx-version")}
+    tools = {}
+    disassembler = shutil.which("llvm-objdump") or shutil.which("otool" if sys.platform == "darwin" else "objdump")
+    if not disassembler:
+        raise RuntimeError("preparation requires a native disassembler; no source-only proof fallback")
+    for name, selected in (("disassembler", disassembler), ("file", "file"), ("size", "size")):
+        tools[name] = measure_tool(selected, root, env, metadata / f"{name}-version")
+    tools["time"] = {"path": "/usr/bin/time", "sha256": measure_hash(Path("/usr/bin/time")),
+                     "version": "platform resource utility; identity bound by binary hash and OS"}
+    nm = shutil.which("llvm-nm") or (shutil.which("nm") if sys.platform.startswith("linux") else None)
+    if nm:
+        tools["nm"] = measure_tool(nm, root, env, metadata / "nm-version")
+    target = measure_capture([toolchain["cxx"]["path"], "-dumpmachine"], root, env, metadata / "native-target")
+    toolchain["native_target"] = target
+    toolchain["llvm_target_policy"] = "host target, generic CPU, empty feature string; no --target/CPU/features overrides"
+    policy = root / "src/compiler/llvm/session.cpp"
+    toolchain["llvm_target_policy_source"] = {"path": str(policy), "sha256": measure_hash(policy)}
+    runtime = Path(env.get("GTI_RUNTIME_LIBRARY", str(gti.parent / "libgti_runtime.a")))
+    if not runtime.is_file():
+        raise RuntimeError(f"measurement requires a hash-bound runtime archive: {runtime}")
+    toolchain["runtime_library"] = {"path": str(runtime.resolve()), "sha256": measure_hash(runtime)}
+    host = measure_host(root, env, metadata)
+    source_directory = work / "sources"
+    source_directory.mkdir()
+    programs = {}
+    mir_targets = set()
+    for variant, text in sources.items():
+        source = source_directory / f"{variant}.gti"
+        source.write_text(text, encoding="utf-8")
+        mir_work = source_directory / f"{variant}-mir"
+        mir_work.mkdir()
+        mir = mir_work / "source.mir"
+        emitted = measure_capture([str(gti), str(source), "--emit-mir", "-O0", "-o", str(mir)],
+                                  root, env, mir_work / "emit")
+        if emitted["returncode"] != 0 or not mir.is_file():
+            raise AssertionError(f"measurement source/MIR rejection: {emitted}")
+        with mir.open(encoding="utf-8") as stream:
+            header = stream.readline().strip()
+            target_line = stream.readline().strip()
+        if not header.startswith("mir-v") or "valid=1" not in header:
+            raise AssertionError(f"measurement source MIR is not verified: {mir}: {header}")
+        if not target_line.startswith("target "):
+            raise AssertionError(f"measurement source MIR lacks sealed target identity: {mir}")
+        mir_targets.add(target_line)
+    if len(mir_targets) != 1:
+        raise AssertionError("measurement sources disagree on sealed target identity")
+    toolchain["sealed_mir_target"] = next(iter(mir_targets))
+    for endpoint in MEASURE_ENDPOINTS:
+        label = measure_endpoint(endpoint)
+        programs[label] = {}
+        for variant in MEASURE_VARIANTS:
+            case = work / label / variant
+            case.mkdir(parents=True)
+            source = source_directory / f"{variant}.gti"
+            executable = case / "program"
+            command = [str(gti), str(source), "--backend", endpoint.backend, "-O3", "--verbose",
+                       "--cxx", toolchain["cxx"]["path"], "-o", str(executable)]
+            if endpoint.standard:
+                command += ["--std", endpoint.standard, "--keep-cpp"]
+            build = measure_capture(command, root, env, case / "build", resources=True)
+            if build["returncode"] != 0 or not executable.is_file():
+                raise AssertionError(f"measurement build failed: {build}")
+            correctness = measure_capture([str(executable)], root, env, case / "correctness")
+            measure_expect(correctness, 1 if variant == "control" else 0)
+            programs[label][variant] = {"source": str(source), "executable": str(executable),
+                                        "build": build, "correctness": correctness,
+                                        "inspection": measure_inspect(executable, root, env, case, tools)}
+            for identity in (*toolchain.values(), *tools.values()):
+                if isinstance(identity, dict) and "path" in identity and measure_hash(Path(identity["path"])) != identity["sha256"]:
+                    raise RuntimeError(f"toolchain changed during preparation: {identity['path']}")
+            for source_variant, text in sources.items():
+                if (source_directory / f"{source_variant}.gti").read_text(encoding="utf-8") != text:
+                    raise RuntimeError("measurement source changed during preparation")
+    snapshot = measure_capture(["git", "rev-parse", "HEAD"], root, env, metadata / "source-head")
+    dirty = measure_capture(["git", "diff", "--binary", "HEAD"], root, env, metadata / "source-diff")
+    bound_files = {path.resolve() for path in work.rglob("*") if path.is_file()}
+    bound_files.add(Path(__file__).resolve())
+    for identity in (*toolchain.values(), *tools.values()):
+        if isinstance(identity, dict) and "path" in identity:
+            bound_files.add(Path(identity["path"]).absolute())
+    request = {
+        "schema": MEASURE_SCHEMA, "phase": "prepared-no-runtime-timing", "prepared_at_utc": measure_now(),
+        "root": str(root), "options": measure_options(arguments), "inputs": inputs,
+        "inputs_sha256": measure_hash(work / "inputs.json"), "toolchain": toolchain, "tools": tools,
+        "host": host, "programs": programs,
+        "harness_workspace_snapshot": {"head": snapshot, "diff": dirty,
+                                       "scope": "current harness/workspace only; NOT the source/build identity of the compiler executable"},
+        "compiler_build_provenance": {"status": "unavailable-pending-independent-review",
+                                      "scope": "binary hash/version alone do not establish compiler source HEAD, build flags or host optimization; external build ledger required"},
+        "environment": {name: env.get(name) for name in MEASURE_ENVIRONMENT},
+        "environment_sha256": measure_digest(env),
+        "artifacts": [{"path": str(path), "sha256": measure_hash(path)} for path in sorted(bound_files)],
+        "contract": {
+            "matched_source": "same scalar arithmetic, two receiver amounts, iteration counts and checksum/status checks; direct calls exact(), virtual apply() forwards exact()",
+            "timing": "execution-only whole-process wall batches include launch, pipes/wait and harness checks, not loop-only/CPU time; startup is separate and never subtracted; RSS invocations are separate; no performance acceptance thresholds",
+            "build_resources": "per-build wall includes GTI and native compiler/linker through platform time; maximum RSS is per-invocation platform accounting, not summed children or simultaneous process-tree peak",
+            "environment": "full inherited environment is hash-bound, not sanitized; only selected toolchain/loader/sanitizer values are disclosed",
+            "abi": "same-backend source-cost comparison, not identical physical ABI; LLVM checked/status propagation and C++ exception/adaptation/failure contracts differ",
+            "allocation": "NOT MEASURED: no provider counter in this slice; source shape/RSS cannot establish zero allocations; scoped provider evidence remains an acceptance prerequisite",
+            "proof_boundary": "the reviewer, not a regex or symbol-presence check, establishes executed normal-path control/data flow; an unused generic indirect body is insufficient",
+            "fallback": "if LLVM O3 folds/devirtualizes the hosted normal workload, STOP: a separately approved same-planner test consumer is a prerequisite, not an unchecked fallback"},
+        "review_requirements": {
+            "schema": MEASURE_SCHEMA, "approval_scope": "artifact-control-flow-review",
+            "approval_requirement": "separate external review must explicitly set approved=true; this request is NOT approval",
+            "request_sha256": "SHA256 of this exact review-request.json", "reviewer": "independent human/coordinator identity",
+            "reviewed_at_utc": "ISO8601 UTC", "artifact_proofs": "one entry for every endpoint/direct and endpoint/dynamic",
+            "contract_acknowledgements": ["source_inputs_and_target_change_control", "same_backend_not_identical_failure_abi", "unavailable_allocations_not_zero"],
+            "compiler_build_evidence": {"source_head": "exact compiler build-source commit, independent of harness_workspace_snapshot",
+                                        "build_type": "Release, RelWithDebInfo or MinSizeRel",
+                                        "binary_sha256": "must match toolchain.gti.sha256",
+                                        "build_log": "{path: absolute retained external build/flags log or ledger, sha256: exact content hash}; reviewer establishes its binding to this source/build/binary"},
+            "classifications": ["retained-dispatch", "matched-direct", "optimized-source-contract"],
+            "references": "{line: one-based disassembly stdout line, text: that exact line}; mechanical validation checks only references, never approves semantics",
+            "each_proof": ["classification", "normal_path_description", "normal_path (nonempty list of references)", "status_success (reference)"],
+            "retained_dispatch_proof": ["loop_header", "backedge", "indirect_call", "result_publication", "result_read", "checksum_consumption", "indirect_result_flow_description", "logical_calls_per_execution"],
+            "result_read": "identify actual load or register use and explain exact result transport; do not claim a memory load when optimization kept the value in registers",
+            "native_requirement": "llvm-O3-native/dynamic MUST be retained-dispatch, reachable from hosted entry on the normal successful path, with consumed checksum and status-success control",
+            "cpp_requirement": "C++20/23 are required source comparators; optimized-source-contract explicitly makes NO retained dispatch-cost claim",
+            "host_plan": {"schema": MEASURE_SCHEMA, "approval_scope": "runtime-sampling",
+                          "approval_requirement": "separate external plan with approved=true",
+                          "required_fields": ["request_sha256", "review_sha256", "host_fingerprint_sha256", "approved_by",
+                                              "reservation", "uncontended=true", "power_policy", "valid_from_utc", "valid_until_utc"]}}}
+    measure_json(work / "review-request.json", request)
+    print(f"Prepared correctness/control, build resources and disassembly: {work / 'review-request.json'}", flush=True)
+    print("STOPPED before runtime timing. Independent artifact review and a separate approved host window are required.", flush=True)
+
+
+def measure_verify_artifacts(request: dict) -> None:
+    for artifact in request["artifacts"]:
+        path = Path(artifact["path"])
+        if not path.is_file() or measure_hash(path) != artifact["sha256"]:
+            raise RuntimeError(f"stale measurement artifact; new preparation/review required: {path}")
+
+
+def measure_reference(reference: dict, lines: list[str], label: str) -> None:
+    line = reference.get("line") if isinstance(reference, dict) else None
+    if type(line) is not int or line < 1 or line > len(lines) or reference.get("text") != lines[line - 1]:
+        raise RuntimeError(f"invalid disassembly reference: {label}")
+
+
+def measure_review(request: dict, request_hash: str, path: Path) -> dict:
+    review = json.loads(path.read_text(encoding="utf-8"))
+    if (review.get("schema") != MEASURE_SCHEMA or review.get("approved") is not True
+            or review.get("approval_scope") != "artifact-control-flow-review"
+            or review.get("request_sha256") != request_hash or not review.get("reviewer")
+            or not review.get("reviewed_at_utc")):
+        raise RuntimeError("missing/stale independent artifact review; no automatic approval or timing fallback")
+    reviewed = measure_utc(review["reviewed_at_utc"])
+    if not measure_utc(request["prepared_at_utc"]) <= reviewed <= datetime.now(timezone.utc):
+        raise RuntimeError("artifact review must follow exact preparation and may not be future-dated")
+    acknowledgements = review.get("contract_acknowledgements", {})
+    if any(acknowledgements.get(key) is not True for key in (
+            "source_inputs_and_target_change_control", "same_backend_not_identical_failure_abi", "unavailable_allocations_not_zero")):
+        raise RuntimeError("artifact reviewer has not acknowledged the source/control, failure-ABI and allocation boundaries")
+    compiler = review.get("compiler_build_evidence", {})
+    build_log = compiler.get("build_log", {})
+    if (compiler.get("binary_sha256") != request["toolchain"]["gti"]["sha256"]
+            or compiler.get("build_type") not in {"Release", "RelWithDebInfo", "MinSizeRel"}
+            or not isinstance(compiler.get("source_head"), str)
+            or not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", compiler["source_head"])
+            or not isinstance(build_log, dict) or not isinstance(build_log.get("path"), str)
+            or not Path(build_log["path"]).is_absolute() or not isinstance(build_log.get("sha256"), str)):
+        raise RuntimeError("missing exact external compiler source/optimized-build/binary/log provenance; workspace HEAD is not compiler build evidence")
+    measure_verify_artifacts({"artifacts": [build_log]})
+    proofs = review.get("artifact_proofs", {})
+    for label, variants in request["programs"].items():
+        for variant in ("direct", "dynamic"):
+            key = f"{label}/{variant}"
+            proof = proofs.get(key, {})
+            allowed = {"matched-direct", "optimized-source-contract"} if variant == "direct" else {"retained-dispatch", "optimized-source-contract"}
+            if (proof.get("classification") not in allowed or not proof.get("normal_path_description")
+                    or not isinstance(proof.get("normal_path"), list) or not proof["normal_path"]):
+                raise RuntimeError(f"missing explicit hosted-normal-path artifact review: {key}")
+            lines = Path(variants[variant]["inspection"]["disassembly"]["stdout"]).read_text(encoding="utf-8").splitlines()
+            for index, reference in enumerate(proof["normal_path"]):
+                measure_reference(reference, lines, f"{key}/normal_path/{index}")
+            measure_reference(proof.get("status_success"), lines, f"{key}/status_success")
+            if label == "llvm-O3-native" and variant == "dynamic" and proof["classification"] != "retained-dispatch":
+                raise RuntimeError("LLVM hosted workload has no reviewed retained indirect execution; same-planner consumer prerequisite remains open")
+            if proof["classification"] == "retained-dispatch":
+                for role in ("loop_header", "backedge", "indirect_call", "result_publication", "result_read", "checksum_consumption"):
+                    measure_reference(proof.get(role), lines, f"{key}/{role}")
+                if (not proof.get("indirect_result_flow_description") or proof.get("logical_calls_per_execution")
+                        != request["inputs"]["logical_virtual_calls_per_dynamic_execution"]):
+                    raise RuntimeError(f"missing reviewed result/checksum/call-count proof: {key}")
+    return review
+
+
+def measure_utc(value: str) -> datetime:
+    result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if result.tzinfo is None or result.utcoffset().total_seconds() != 0:
+        raise RuntimeError("approval times must carry an explicit UTC timezone")
+    return result
+
+
+def measure_host_plan(path: Path, request: dict, request_hash: str, review_hash: str) -> dict:
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    if (plan.get("schema") != MEASURE_SCHEMA or plan.get("approved") is not True
+            or plan.get("approval_scope") != "runtime-sampling" or plan.get("request_sha256") != request_hash
+            or plan.get("review_sha256") != review_hash or plan.get("uncontended") is not True
+            or plan.get("host_fingerprint_sha256") != request["host"]["fingerprint_sha256"]
+            or not all(plan.get(key) for key in ("approved_by", "reservation", "power_policy", "valid_from_utc", "valid_until_utc"))):
+        raise RuntimeError("missing/stale external uncontended-host approval; artifact review does not reserve a host")
+    now = datetime.now(timezone.utc)
+    if not measure_utc(plan["valid_from_utc"]) <= now <= measure_utc(plan["valid_until_utc"]):
+        raise RuntimeError("runtime sampling is outside the explicitly approved host window")
+    return plan
+
+
+def measure_dispersion(values: list[float]) -> dict:
+    middle = statistics.median(values)
+    quartiles = statistics.quantiles(values, n=4, method="inclusive")
+    return {"samples": len(values), "median_seconds": middle, "min_seconds": min(values),
+            "max_seconds": max(values), "mad_seconds": statistics.median(abs(value - middle) for value in values),
+            "iqr_seconds": quartiles[2] - quartiles[0]}
+
+
+def measure_sample(executable: str, root: Path, env: dict[str, str], repetitions: int,
+                   deadline: datetime) -> dict:
+    started = time.perf_counter_ns()
+    for _ in range(repetitions):
+        remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            raise RuntimeError("approved host window ended during runtime sampling")
+        result = subprocess.run([executable], cwd=root, env=env, capture_output=True, check=False, timeout=min(240, remaining))
+        if (result.returncode, result.stdout, result.stderr) != (0, b"", b""):
+            raise AssertionError(f"timed artifact changed observable: {executable}: {result}")
+    elapsed = (time.perf_counter_ns() - started) / 1e9
+    return {"command": [executable], "repetitions": repetitions, "batch_wall_seconds": elapsed,
+            "per_process_wall_seconds": elapsed / repetitions}
+
+
+def measure_run(gti: Path, root: Path, work: Path, env: dict[str, str], arguments) -> None:
+    request_path = work / "review-request.json"
+    request_hash = measure_hash(request_path)
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    if (request.get("schema") != MEASURE_SCHEMA or request.get("phase") != "prepared-no-runtime-timing"
+            or request.get("root") != str(root) or request.get("options") != measure_options(arguments)
+            or request["toolchain"]["gti"]["path"] != str(gti)
+            or request.get("environment") != {name: env.get(name) for name in MEASURE_ENVIRONMENT}
+            or request.get("environment_sha256") != measure_digest(env)):
+        raise RuntimeError("prepared source/options/compiler/environment identity changed; prepare and review again")
+    review_path, host_path = arguments.measure_review.resolve(), arguments.measure_host_plan.resolve()
+    review_hash, host_hash = measure_hash(review_path), measure_hash(host_path)
+    measure_verify_artifacts(request)
+    review = measure_review(request, request_hash, review_path)
+    host_plan = measure_host_plan(host_path, request, request_hash, review_hash)
+    deadline = measure_utc(host_plan["valid_until_utc"])
+    run = work / ("run-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
+    run.mkdir()
+    host = measure_host(root, env, run)
+    if host["fingerprint_sha256"] != request["host"]["fingerprint_sha256"]:
+        raise RuntimeError("measurement host changed; preparation and host approval must be repeated")
+    report = {"schema": MEASURE_SCHEMA, "started_at_utc": measure_now(), "status": "in-progress",
+              "request_sha256": request_hash, "review": {"path": str(review_path), "sha256": review_hash},
+              "host_plan": {"path": str(host_path), "sha256": host_hash, "reservation": host_plan["reservation"]},
+              "host": host, "options": request["options"], "pilots": [], "warmups": [], "samples": [],
+              "compiler_build_evidence": review["compiler_build_evidence"],
+              "runtime_rss": {}, "summaries": {}, "allocation": request["contract"]["allocation"],
+              "interpretation": request["contract"], "artifact_classifications": {
+                  key: proof["classification"] for key, proof in review["artifact_proofs"].items()}}
+
+    bound_artifacts = [*request["artifacts"], review["compiler_build_evidence"]["build_log"]]
+    artifact_stats = {artifact["path"]: (Path(artifact["path"]).stat().st_size,
+                                        Path(artifact["path"]).stat().st_mtime_ns,
+                                        Path(artifact["path"]).stat().st_ctime_ns) for artifact in bound_artifacts}
+
+    def validate(*, full: bool = False) -> None:
+        if (measure_hash(request_path) != request_hash or measure_hash(review_path) != review_hash
+                or measure_hash(host_path) != host_hash):
+            raise RuntimeError("review/request/host approval changed during sampling; measurements invalid")
+        # Do not heat the compiler/binary caches by rehashing the whole evidence
+        # set between samples. Full hashes bracket sampling; metadata changes
+        # invalidate the run immediately, even if a file is later restored.
+        for path, initial in artifact_stats.items():
+            current = Path(path).stat()
+            if (current.st_size, current.st_mtime_ns, current.st_ctime_ns) != initial:
+                raise RuntimeError(f"artifact changed during sampling: {path}")
+        if full:
+            measure_verify_artifacts({"artifacts": bound_artifacts})
+        measure_host_plan(host_path, request, request_hash, review_hash)
+
+    try:
+        labels = list(request["programs"])
+        batches = {}
+        validate(full=True)
+        for label in labels:
+            variants = request["programs"][label]
+            # Recheck exact prepared native observables, including the changed
+            # virtual-target control, before calibration. No compilation here.
+            for variant in MEASURE_VARIANTS:
+                result = measure_capture([variants[variant]["executable"]], root, env, run / f"check-{label}-{variant}")
+                measure_expect(result, 1 if variant == "control" else 0)
+            pilots = {}
+            for variant in ("direct", "dynamic", "startup"):
+                pilot = measure_sample(variants[variant]["executable"], root, env, 1, deadline)
+                report["pilots"].append({"endpoint": label, "variant": variant, **pilot})
+                pilots[variant] = pilot["per_process_wall_seconds"]
+            common = min(arguments.measure_max_batch,
+                         max(1, math.ceil(arguments.measure_target_seconds / min(pilots["direct"], pilots["dynamic"]))))
+            batches[label] = {"direct": common, "dynamic": common,
+                              "startup": min(arguments.measure_max_batch, max(1, math.ceil(arguments.measure_target_seconds / pilots["startup"])))}
+        report["batch_repetitions"] = batches
+        report["calibration_scope"] = "fixed source inputs/builds; shared direct/dynamic process repetitions, capped, duration target only (not a performance threshold)"
+        for warmup, rounds in ((True, 2), (False, arguments.measure_samples)):
+            for round_index in range(rounds):
+                validate()
+                endpoint_order = labels if round_index % 2 == 0 else list(reversed(labels))
+                for endpoint_index, label in enumerate(endpoint_order):
+                    order = ["direct", "dynamic", "startup"]
+                    if (round_index + endpoint_index) % 2:
+                        order.reverse()
+                    for variant in order:
+                        sample = measure_sample(request["programs"][label][variant]["executable"], root, env, batches[label][variant], deadline)
+                        report["warmups" if warmup else "samples"].append({"round": round_index,
+                            "endpoint": label, "variant": variant, "order_in_round": len(report["warmups" if warmup else "samples"]), **sample})
+                measure_json(run / "results.json", report)
+        for label in labels:
+            report["summaries"][label] = {}
+            for variant in ("direct", "dynamic", "startup"):
+                values = [sample["per_process_wall_seconds"] for sample in report["samples"]
+                          if sample["endpoint"] == label and sample["variant"] == variant]
+                report["summaries"][label][variant] = measure_dispersion(values)
+                validate()
+                rss = measure_capture([request["programs"][label][variant]["executable"]], root, env,
+                                      run / f"runtime-rss-{label}-{variant}", resources=True,
+                                      timeout=min(240, max(0.001, (deadline - datetime.now(timezone.utc)).total_seconds())))
+                measure_expect(rss, 0)
+                report["runtime_rss"][f"{label}/{variant}"] = rss
+            summary = report["summaries"][label]
+            summary["dynamic_to_direct_process_median_ratio"] = summary["dynamic"]["median_seconds"] / summary["direct"]["median_seconds"]
+        validate(full=True)
+        report["host_after_sampling"] = measure_host(root, env, run / "after-sampling")
+        if report["host_after_sampling"]["fingerprint_sha256"] != host["fingerprint_sha256"]:
+            raise RuntimeError("host CPU/OS identity changed during sampling")
+        report.update(status="measured-not-performance-acceptance", finished_at_utc=measure_now())
+    except BaseException as error:
+        report.update(status="invalid-or-incomplete", error=str(error), finished_at_utc=measure_now())
+        raise
+    finally:
+        measure_json(run / "results.json", report)
+    print(f"Execution-only samples and dispersion retained: {run / 'results.json'}", flush=True)
+    print("No speedup/parity/zero-allocation or acceptance claim is made; inspect contracts, review and missing provider evidence.", flush=True)
+
+
+def measure_main(gti: Path, root: Path, env: dict[str, str], arguments) -> None:
+    if arguments.cases:
+        raise ValueError("--measure and --case are separate opt-in workflows")
+    if arguments.measure_samples < 9 or arguments.measure_max_batch < 1 or arguments.measure_max_batch > 64:
+        raise ValueError("measurement requires >=9 sample rounds and 1..64 maximum process repetitions")
+    if not math.isfinite(arguments.measure_target_seconds) or not 0.1 <= arguments.measure_target_seconds <= 5.0:
+        raise ValueError("calibration batch target must be finite and in 0.1..5 seconds")
+    measure_sources(arguments.measure_count)
+    if bool(arguments.measure_review) != bool(arguments.measure_host_plan):
+        raise ValueError("runtime timing requires BOTH independent --measure-review and external --measure-host-plan")
+    work = arguments.measure.resolve()
+    if arguments.measure_review:
+        measure_run(gti, root, work, env, arguments)
+    else:
+        measure_prepare(gti, root, work, env, arguments)
+
+
 def main() -> None:
-    names = (*SUCCESS_FILES, *SUCCESS_SOURCES, "borrowed-dispatch", "borrowed-mut-reference-chain",
+    names = (*SUCCESS_FILES, *SUCCESS_SOURCES, *TRANSFER_SUCCESS_SOURCES, "borrowed-dispatch", "borrowed-mut-reference-chain",
              "virtual-failure-cleanup", "constructor-rollback", "cleanup-oracle-wrong-trace", *REJECTIONS,
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)
     parser.add_argument("root", type=Path)
     parser.add_argument("--case", action="append", choices=names, dest="cases")
+    parser.add_argument("--measure", type=Path, metavar="EVIDENCE_DIR",
+                        help="opt-in: prepare persistent artifacts and STOP; separate review+host approval unlock sampling")
+    parser.add_argument("--measure-review", type=Path, help="independent artifact-bound coordinator review JSON")
+    parser.add_argument("--measure-host-plan", type=Path, help="separate approved uncontended-host sampling window JSON")
+    parser.add_argument("--measure-count", type=int, default=8_000_000)
+    parser.add_argument("--measure-samples", type=int, default=9)
+    parser.add_argument("--measure-target-seconds", type=float, default=0.5)
+    parser.add_argument("--measure-max-batch", type=int, default=32)
     arguments = parser.parse_args()
     gti, root = arguments.gti.resolve(), arguments.root.resolve()
     selected = set(arguments.cases or names)
     env = os.environ.copy()
     env["NO_COLOR"] = "1"
+    if arguments.measure:
+        measure_main(gti, root, env, arguments)
+        return
+    if arguments.measure_review or arguments.measure_host_plan:
+        parser.error("--measure-review/--measure-host-plan require --measure")
     with tempfile.TemporaryDirectory(prefix="gti-llvm-dispatch-") as temporary:
         work = Path(temporary)
         for name, relative in SUCCESS_FILES.items():
@@ -322,6 +975,12 @@ def main() -> None:
                 source = work / f"{name}.gti"
                 source.write_text(text, encoding="utf-8")
                 execute_case(gti, root, work, name, source, env)
+        for name, (text, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
+            if name in selected:
+                source = work / f"{name}.gti"
+                source.write_text(text, encoding="utf-8")
+                execute_case(gti, root, work, name, source, env,
+                             expected_exit=expected_exit)
         if "borrowed-dispatch" in selected:
             text = (root / SUCCESS_FILES["static-dispatch"]).read_text(encoding="utf-8")
             if text.count(ALIAS_ANCHOR) != 1:
@@ -414,6 +1073,8 @@ def main() -> None:
                 result = invoke([str(gti), str(source), "--backend", "llvm",
                                  f"-{mode}", "-o", str(output)], root, env)
                 if (result.returncode != 65 or "GTI-S" not in result.stderr
+                        or (name in SOURCE_REJECTION_CODES and
+                            SOURCE_REJECTION_CODES[name] not in result.stderr)
                         or "GTI-B0003" in result.stderr
                         or output.read_bytes() != sentinel):
                     raise AssertionError(f"{name} {mode}: {result}")

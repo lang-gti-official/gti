@@ -118,6 +118,40 @@ Reachability reachableProgram(const LoweredProgram &program) {
                   *instruction.functionPointerFunctionTarget});
           if (instruction.constructorTarget)
             body({MirBodyKind::Constructor, *instruction.constructorTarget});
+          const bool generatedCopy =
+              (instruction.kind == MirInstructionKind::Load &&
+               instruction.operands.size() == 1 &&
+               instruction.operands.front().kind == MirOperandKind::Copy) ||
+              (instruction.kind == MirInstructionKind::Construct &&
+               !instruction.constructorTarget &&
+               instruction.constructorKind == ConstructorKind::Copy);
+          const bool generatedMove =
+              (instruction.kind == MirInstructionKind::Move &&
+               instruction.operands.size() == 1 &&
+               instruction.operands.front().kind == MirOperandKind::Move) ||
+              (instruction.kind == MirInstructionKind::Construct &&
+               !instruction.constructorTarget &&
+               instruction.constructorKind == ConstructorKind::Move);
+          if (instruction.info.type.kind == SemanticType::Class &&
+              (generatedCopy || generatedMove)) {
+            const MirClassInstance *object = nullptr;
+            for (const auto &candidate : mir.classInstances())
+              if (candidate.type == instruction.info.type) {
+                if (object)
+                  throw std::logic_error(
+                      "LLVM transfer demand has ambiguous class identity");
+                object = &candidate;
+              }
+            if (!object)
+              throw std::logic_error(
+                  "LLVM transfer demand has no sealed class");
+            const auto status = generatedCopy ? object->copyConstructor
+                                              : object->moveConstructor;
+            if (status == SpecialMemberStatus::Generated)
+              active(object->id);
+            // Demand is not admission: nested, by-value, replacement and
+            // uncertain source-obligation transfers retain their own gates.
+          }
           if (!instruction.constructorTarget &&
               instruction.constructorKind == ConstructorKind::Ordinary &&
               instruction.operands.empty() &&

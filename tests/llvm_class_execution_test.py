@@ -389,6 +389,7 @@ int main() { return local(32); }
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     CASES["shipped-example"] = (root / "examples/llvm/classes-and-lifetimes.gti").read_text(encoding="utf-8")
+    CASES["fresh-transfer-placement"] = (root / "tests/fixtures/llvm_class_fresh_transfer_regression.gti").read_text(encoding="utf-8")
     selected = sys.argv[3] if len(sys.argv) > 3 else None
     if selected and selected not in CASES and selected not in FAILURES and selected not in NATIVE_ONLY and selected not in NATIVE_FAILURES:
         raise ValueError(f"unknown class execution case: {selected}")
