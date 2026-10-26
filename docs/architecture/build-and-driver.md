@@ -2154,8 +2154,11 @@ requires the LLVM backend closure to be statically linked, so those bytes also
 identify the actual LLVM implementation, including dirty builds. Existing
 source/dependency, runtime-content, native-toolchain and debug/policy inputs
 remain part of the key. An unavailable required identity bypasses; no CPU,
-feature, relocation or ABI fact is guessed. Unsupported LLVM debug requests
-remain rejected until source-debug production is implemented by O-LLVM-15.
+feature, relocation or ABI fact is guessed. LLVM debug requests use the composed
+O-LLVM-15 source/parameter and instruction/terminator metadata hooks; ordinary
+local lexical scopes, receiver/pack bindings and optimized inline availability
+remain dependent on their owning verified producer facts. The driver does not
+infer those facts from the AST or emitted representation.
 
 Object identity schema `gti-llvm-object-identity-v2` additionally records the
 actual debug boolean and stable diagnostic instrumentation spelling. The
@@ -2168,6 +2171,24 @@ mapping. Non-None modes currently reject until coherent pipeline and matching
 native runtime support are wired; unknown values and C++ combinations reject.
 The default None policy retains current execution. No CLI or manifest selector
 is exposed by this typed API checkpoint, and binary cache payload v5 is unchanged.
+
+For a non-None request the driver resolves matching upstream Clang and compiler-rt
+before source loading, cache restoration or publication. It records the selected
+compiler and implementation files, reported flat default configuration, resource
+and runtime roots, exact runtime files, native link plan and SDK library/settings
+identity. It replays that identified configuration explicitly; a different Clang
+version, opaque configuration/dependency graph, or unavailable runtime rejects.
+Native preprocessing, C/C++ object compilation and final linking consume the same
+resolved arguments. Bounded UndefinedMemory compiles native providers with only
+null/alignment checks; `-fsanitize=undefined` selects its link runtime. None adds no
+runtime query or dependency. Thread still needs verified communicating-runtime
+provenance, and instrumented report replay/external native-link provenance remain
+prerequisites. The isolated compatibility probe is C ABI source, never generated C++ for a GTI
+body. Native runtime link/start controls do not establish generated GTI
+instrumentation acceptance; the producer guard remains until coherent wiring and
+its execution gates. The explicit `llvm_native_runtime_identity` fixture is enabled
+with `GTI_LLVM_RUNTIME_TEST_COMPILER` set to a matching Clang++; it fails on a
+mismatch rather than counting a missing runtime pair as passing coverage.
 
 Three narrowings hold by an exact-identity argument, stated here because each
 one moved an input out of the bypass list.
@@ -2341,7 +2362,14 @@ Project and direct LLVM selection share the currently admitted executable
 profile; they do not imply full-language backend promotion. Source-level native
 C calls, generated embedding wrappers, automatic test dispatchers and further
 families retain their owning backend admission gates. Debug companion production
-depends on O-LLVM-15; this driver change does not implement debug metadata.
+consumes O-LLVM-15 metadata. On Darwin a debug cache entry must contain its
+companion: metadata that suppresses it is corruption. Cold and cache-hit paths
+validate companion ownership and source/output containment before publication.
+They stage the executable and symbols, retain the previous GTI-owned companion
+until the executable rename commits, and restore that companion if executable
+publication fails. Each file/directory rename is atomic; the two artifacts are
+not a simultaneous atomic snapshot. Native C/C++ provider compilation and its
+dependency probes receive the same source-debug flag.
 LLVM cross-target admission remains host-only pending initialized target,
 runtime/sysroot and execution evidence. LLVM executable requests reject explicit
 native target/sysroot policies and, on Darwin, `MACOSX_DEPLOYMENT_TARGET`,

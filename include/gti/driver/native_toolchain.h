@@ -107,6 +107,27 @@ struct NativeTargetPolicy {
 void appendNativeTargetPolicy(std::vector<std::string> &command,
                               const NativeTargetPolicy &policy);
 
+// Resolved diagnostic native inputs. Only the driver resolver establishes this
+// record; NativeToolchain consumes its exact arguments without selecting
+// policy.
+struct NativeInstrumentationPlan {
+  std::string mode;
+  std::string llvmVersion;
+  std::string compilerCommand;
+  std::filesystem::path compilerExecutable;
+  std::string compilerVersion;
+  std::vector<std::filesystem::path> configurationFiles;
+  std::filesystem::path resourceDirectory;
+  std::filesystem::path runtimeDirectory;
+  std::vector<std::filesystem::path> sdkDirectories;
+  std::vector<std::filesystem::path> runtimeFiles;
+  std::vector<std::filesystem::path> implementationFiles;
+  std::vector<std::string> linkTrace;
+  std::vector<std::string> compileArguments;
+  std::vector<std::string> linkArguments;
+  std::string identity;
+};
+
 struct NativeInputs {
   std::vector<std::filesystem::path> includeDirectories;
   std::vector<std::string> compilerArguments;
@@ -134,6 +155,8 @@ struct NativeInputs {
   std::vector<NativeDependencyGroup> dependencyGroups;
   // Resolved cross-compilation policy. Empty for a host build.
   NativeTargetPolicy targetPolicy;
+  // Populated by buildExecutable after resolving the requested LLVM policy.
+  std::optional<NativeInstrumentationPlan> instrumentation;
 };
 
 // Native escape hatches may add ordinary compiler/linker policy, but they may

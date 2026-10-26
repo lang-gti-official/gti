@@ -4,6 +4,7 @@
 #include "gti/driver/process.h"
 #include "gti/llvm_backend.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -81,10 +82,115 @@ void checkBuild(const ExecutableBuildResult &result) {
   require(result.succeeded(), "real cache fixture build failed");
 }
 
+void runNativeRuntimeChecks(const std::string &compiler) {
+  std::string error;
+  const auto backend = queryLlvmBackendIdentity(TargetInfo::host(), {}, error);
+  require(backend.has_value(),
+          "runtime gate needs real producer toolchain facts");
+  std::set<std::string> identities;
+  for (const auto mode : {LlvmInstrumentationMode::Address,
+                          LlvmInstrumentationMode::UndefinedMemory,
+                          LlvmInstrumentationMode::AddressAndUndefinedMemory,
+                          LlvmInstrumentationMode::Thread}) {
+    const auto plan = resolveLlvmNativeRuntime(compiler, *backend, mode, error);
+    if (!plan)
+      throw std::runtime_error(error);
+    require(
+        plan->mode == llvmInstrumentationModeName(mode) &&
+            plan->compilerVersion == backend->llvmVersion &&
+            !plan->runtimeFiles.empty() && !plan->implementationFiles.empty() &&
+            plan->identity.size() == 64,
+        "runtime plan must bind actual compiler-rt files and producer version");
+    require(identities.insert(plan->identity).second,
+            "different selected diagnostic modes must not share native runtime "
+            "identity");
+    for (const auto &path : plan->runtimeFiles)
+      require(std::filesystem::is_regular_file(path),
+              "resolved compiler-rt must be a real selected file");
+    NativeInputs inputs;
+    inputs.instrumentation = *plan;
+    const NativeToolchain native;
+    const auto link = native.command(
+        NativeLinkRequest(compiler, "existing.o", "program", inputs));
+    bool combinedRejected = false;
+    try {
+      static_cast<void>(native.command(NativeCompileRequest(
+          compiler, "generated.cpp", "program", CppStandard::Cpp23,
+          OptimizationLevel::O3, inputs)));
+    } catch (const std::invalid_argument &) {
+      combinedRejected = true;
+    }
+    require(combinedRejected, "runtime-only link flags must not silently widen "
+                              "a combined source compile");
+    require(
+        std::search(link.begin(), link.end(), plan->linkArguments.begin(),
+                    plan->linkArguments.end()) != link.end(),
+        "native object link must preserve the exact ordered diagnostic plan");
+    if (mode == LlvmInstrumentationMode::Address) {
+      const auto repeated =
+          resolveLlvmNativeRuntime(compiler, *backend, mode, error);
+      require(repeated && repeated->identity == plan->identity,
+              "same native runtime facts must have stable identity across "
+              "fresh probes");
+    }
+    if (mode == LlvmInstrumentationMode::UndefinedMemory) {
+      require(
+          std::find(
+              plan->compileArguments.begin(), plan->compileArguments.end(),
+              "-fsanitize=null,alignment") != plan->compileArguments.end() &&
+              std::find(plan->linkArguments.begin(), plan->linkArguments.end(),
+                        "-fsanitize=undefined") != plan->linkArguments.end(),
+          "bounded generated-memory policy must remain distinct from runtime "
+          "linkage");
+    }
+    std::cout << "Native runtime identity mode=" << plan->mode
+              << " LLVM/Clang=" << plan->compilerVersion
+              << " files=" << plan->runtimeFiles.size()
+              << " identity=" << plan->identity << '\n';
+  }
+  std::cout
+      << "Real native runtime/tool identity controls passed; GTI Session mode "
+         "admission remains a separate gate\n";
+}
+
 void runChecks(const std::filesystem::path &self) {
   std::string identityError;
   const auto identity =
       queryLlvmBackendIdentity(TargetInfo::host(), {}, identityError);
+  require(identity.has_value(), "real backend toolchain identity is required");
+  std::string runtimeError;
+  const auto noneRuntime =
+      resolveLlvmNativeRuntime("/missing-unused-native-compiler", *identity,
+                               LlvmInstrumentationMode::None, runtimeError);
+  require(noneRuntime && noneRuntime->mode == "none" &&
+              noneRuntime->runtimeFiles.empty() &&
+              noneRuntime->compileArguments.empty() &&
+              noneRuntime->linkArguments.empty(),
+          "None mode must not add a native runtime/tool dependency");
+  require(!resolveLlvmNativeRuntime("/missing-instrumentation-compiler",
+                                    *identity, LlvmInstrumentationMode::Address,
+                                    runtimeError) &&
+              runtimeError.find("selected instrumentation compiler") !=
+                  std::string::npos,
+          "missing diagnostic compiler must fail during runtime identity "
+          "resolution");
+  for (const char *name :
+       {"LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "DYLD_IMAGE_SUFFIX"}) {
+    const char *old = std::getenv(name);
+    const std::optional<std::string> previous =
+        old ? std::optional<std::string>(old) : std::nullopt;
+    setenv(name, "unidentified-runtime-loader-input", 1);
+    const auto rejectedRuntime = resolveLlvmNativeRuntime(
+        "/missing-unused-native-compiler", *identity,
+        LlvmInstrumentationMode::Address, runtimeError);
+    if (previous)
+      setenv(name, previous->c_str(), 1);
+    else
+      unsetenv(name);
+    require(!rejectedRuntime &&
+                runtimeError.find("loader overrides") != std::string::npos,
+            "runtime loader injection must reject before any compiler probe");
+  }
   const auto optimizedIdentity = queryLlvmBackendIdentity(
       TargetInfo::host(), {.optimization = LlvmCodegenOptimization::Aggressive},
       identityError);
@@ -271,8 +377,12 @@ void runChecks(const std::filesystem::path &self) {
     unavailable.instrumentation = mode;
     const auto rejected = build(unavailable);
     require(
-        !rejected.succeeded() && !rejected.nativeProcess &&
-            !rejected.compilation.artifact &&
+        !rejected.succeeded() &&
+            rejected.status ==
+                ExecutableBuildStatus::ToolchainConfigurationFailure &&
+            !rejected.nativeProcess && !rejected.compilation.artifact &&
+            rejected.compilation.sources.names().empty() &&
+            rejected.driverDiagnostic.has_value() &&
             rejected.cache.status == BuildCacheStatus::Bypassed &&
             read(output) == executable && read(representation) == object,
         "unwired diagnostic policy must preserve published output and never "
@@ -519,14 +629,25 @@ void runChecks(const std::filesystem::path &self) {
   checkBuild(opaque);
   require(opaque.cache.status == BuildCacheStatus::Bypassed,
           "opaque native inputs must retain conservative cache bypass");
-  const auto beforeDebug = read(output);
   changed = {};
   changed.debug = true;
+  changed.keep = true;
   const auto debug = build(changed);
-  require(!debug.succeeded() &&
-              debug.cache.status == BuildCacheStatus::Bypassed &&
-              read(output) == beforeDebug,
-          "unsupported LLVM debug policy must bypass and preserve destination");
+  checkBuild(debug);
+  require(debug.cache.status == BuildCacheStatus::Miss &&
+              debug.cache.key != first.cache.key && debug.nativeProcess,
+          "debug policy must build a distinct real native object/cache entry");
+  execute(17);
+  const auto debugExecutable = read(output);
+  const auto debugObject = read(representation);
+  const auto debugHit = build(changed);
+  checkBuild(debugHit);
+  require(
+      debugHit.cache.status == BuildCacheStatus::Hit &&
+          !debugHit.nativeProcess && read(output) == debugExecutable &&
+          read(representation) == debugObject,
+      "debug object/executable must restore from their exact cache identity");
+  execute(17);
 
   const auto outside = temporary.root / "outside";
   write(outside, "preserve");
@@ -633,8 +754,12 @@ void runChecks(const std::filesystem::path &self) {
 
 int main(int argc, char **argv) {
   try {
-    require(argc == 1 || argc == 2,
-            "usage: llvm cache test [toolchain executable]");
+    if (argc == 3 && std::string_view(argv[1]) == "--runtime-probe") {
+      runNativeRuntimeChecks(argv[2]);
+      return 0;
+    }
+    require(argc == 1 || argc == 2, "usage: llvm cache test [toolchain "
+                                    "executable] | --runtime-probe clang++");
     runChecks(std::filesystem::absolute(argv[argc == 2 ? 1 : 0]));
     return 0;
   } catch (const std::exception &error) {
