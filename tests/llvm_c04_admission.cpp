@@ -72,7 +72,7 @@ void validateC04Evaluation(const Session &session,
         function->requiresUnsafe || function->neverReturns ||
         !scalar(function->returnType) ||
         !std::all_of(function->parameterTypes.begin(),
-                     function->parameterTypes.end(), scalarOrReference))
+                     function->parameterTypes.end(), localType))
       reject("function signature or definition");
   }
   for (const auto &constructor : program.constructorInstances())
@@ -128,26 +128,39 @@ void validateC04Evaluation(const Session &session,
         if (instruction.intrinsic != IntrinsicKind::None ||
             instruction.rawMemoryAccess || instruction.elementCleanup ||
             instruction.replacementCleanup ||
-            instruction.preparedParameterDrop ||
             (instruction.successResultDrop &&
              instruction.kind != MirInstructionKind::Construct) ||
             instruction.nativeCallbackAdapter || instruction.threadTaskAdapter)
           reject("non-scalar instruction facts");
+        if (instruction.preparedParameterDrop) {
+          const auto *prepared =
+              body.findDropObligation(*instruction.preparedParameterDrop);
+          if (instruction.kind != MirInstructionKind::CallInput || !prepared ||
+              prepared->kind != MirDropObligationKind::PreparedParameter ||
+              !knownClass(prepared->dropType.type))
+            reject("prepared parameter outside ordinary record profile");
+        }
+        for (const auto &event : instruction.lifecycle) {
+          const auto *source = body.findDropObligation(event.source);
+          const bool publication = event.target == 0 && !event.conditional &&
+                                   !event.failureCleanup && source;
+          const bool constructorPublication =
+              publication && address.kind == MirBodyKind::Constructor &&
+              term == MirTerminatorKind::Return &&
+              source->kind == MirDropObligationKind::ConstructionRollback;
+          const bool parameterTransfer =
+              publication && instruction.kind == MirInstructionKind::Call &&
+              instruction.functionTarget &&
+              selected.contains(*instruction.functionTarget) &&
+              instruction.dispatch == CallDispatch::Static &&
+              source->kind == MirDropObligationKind::PreparedParameter;
+          if (event.kind == MirLifecycleEventKind::Replace ||
+              (event.kind == MirLifecycleEventKind::TransferOut &&
+               !constructorPublication && !parameterTransfer))
+            reject("replacement or escaping owner lifecycle");
+        }
         switch (instruction.kind) {
         case MirInstructionKind::Lifecycle:
-          for (const auto &event : instruction.lifecycle) {
-            const auto *source = body.findDropObligation(event.source);
-            const bool constructorPublication =
-                address.kind == MirBodyKind::Constructor &&
-                term == MirTerminatorKind::Return && source &&
-                source->kind == MirDropObligationKind::ConstructionRollback &&
-                event.target == 0 && !event.conditional &&
-                !event.failureCleanup;
-            if (event.kind == MirLifecycleEventKind::Replace ||
-                (event.kind == MirLifecycleEventKind::TransferOut &&
-                 !constructorPublication))
-              reject("replacement or escaping owner lifecycle");
-          }
           break;
         case MirInstructionKind::Borrow:
         case MirInstructionKind::ActivateBorrow:

@@ -10148,7 +10148,9 @@ locations, and terminal stopping before later destructors. The last check uses
 a mapped parent-observable buffer rather than relying on normal process exit.
 Ordinary owned-record fields exercise constructor rollback, cleanup of remaining
 fields after either the containing destructor or one child fails, and terminal
-failure during that drain. Raw/array fields remain rejected before object
+failure during that drain. Owning parameters check exactly-once cleanup both
+before call entry (a later argument fails) and after transfer to the callee.
+Raw/array fields and owning return signatures remain rejected before object
 publication. These are not arbitrary ownership transfer, worker or performance
 acceptance and must not substitute for existing backend gates. Retained IR is
 the verified pre-object-emission module: target emission may rewrite `resume`

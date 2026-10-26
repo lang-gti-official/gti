@@ -10797,7 +10797,8 @@ and [LLVM exception-handling model](https://www.llvm.org/docs/ExceptionHandling.
 **MIR-derived evaluation staging (not production admission):** the opt-in
 `GTI_BUILD_LLVM_C04_EVALUATION` targets build separate status and native-unwind
 backend copies against the same frontend and sealed MIR. Their structural
-profile accepts a closed scalar static-call graph, scalar-reference parameters,
+profile accepts a closed static-call graph with scalar results, scalar-reference
+and ordinary-record parameters,
 and local ordinary classes with scalar/reference/ordinary-record fields,
 including fallible source constructors and destructors. Arrays, private owner
 representations, hierarchy, global initialization, native imports and adapters remain
@@ -10815,8 +10816,10 @@ verified child recipes. A cleanup landing pad records the original unwind
 token, enters the existing failure-cleanup context, and drains remaining child
 recipes before leaving that context and resuming the original token. A second
 failure terminates instead of continuing cleanup. Constructor return may publish
-its armed subobject obligations; unrelated escaping ownership and replacement
-remain outside this profile. No cleanup recipe is fabricated by the experiment.
+its armed subobject obligations. A staged ordinary-record argument retains its
+verified prepared-parameter drop until the exact static call transfers it to
+the callee. Owning results and replacement remain outside this profile. No
+cleanup recipe is fabricated by the experiment.
 
 This staging replaces hand-built traces for the first comparison, not the
 remaining C04 obligations. The harness checks identical sealed-program input,
@@ -10832,10 +10835,14 @@ or child destructor fails, and terminal failure while draining those fields.
 The evaluation exposed and repaired constructor entry-reference retirement
 before rollback when a later initializer publishes that reference; independent
 MIR mutation checks retain rejection of early dependency retirement.
-It does not validate owning parameter transfer, replacement, callbacks, user TLS, workers, foreign/forced
+Fresh ordinary-record arguments additionally check failure before call entry
+while evaluating a later argument, and after ownership reaches the callee.
+Both cases require exactly-once parameter cleanup alongside caller locals.
+Owning return signatures still reject before artifact publication.
+It does not validate owning result transfer, replacement, callbacks, user TLS, workers, foreign/forced
 unwind, carrier OOM, or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
 the generated LLVM object. No transport selection or production speedup follows
-from these checks. Next, extend real MIR cleanup to ownership transfer and
+from these checks. Next, extend real MIR cleanup to owning result transfer and
 worker containment before the representative
 platform/cost comparison and ADR decision.
 Remove or replace these opt-in evaluation hooks once that decision is implemented;

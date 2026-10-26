@@ -48,7 +48,8 @@ def main():
                 for fixture in ("scalar", "cleanup", "borrowed_cleanup",
                                 "fallible_cleanup", "fallible_constructor", "nested_failure",
                                 "owned_field", "owned_child_failure", "owned_rollback",
-                                "owned_nested_failure")
+                                "owned_nested_failure", "owned_parameter",
+                                "prepared_parameter")
                 for mode, emitter in (("status", args.status_emitter),
                                       ("unwind", args.unwind_emitter))
                 for level in ("O0", "O3")]
@@ -106,7 +107,8 @@ def main():
                         "fallible_cleanup": 11, "fallible_constructor": 13,
                         "nested_failure": 19, "owned_field": 21,
                         "owned_child_failure": 11, "owned_rollback": 16,
-                        "owned_nested_failure": 28}[fixture]
+                        "owned_nested_failure": 28, "owned_parameter": 11,
+                        "prepared_parameter": 16}[fixture]
                 expected_error = f"{fixture}.gti:{line}: runtime error[GTI-R0001]: integer_overflow in addition\n"
                 expected = ("1\n", "") if outcome == "success" else ("", expected_error)
                 if (result.stdout, result.stderr) != expected:
@@ -119,7 +121,7 @@ def main():
             if fixture not in ("nested_failure", "owned_nested_failure"):
                 run([executable, "mixed", dispatch, "64"], directory,
                     f"repeat-mixed-{dispatch}", timeout=15)
-        for negative in ("array_field", "raw_field", "native_call", "global"):
+        for negative in ("array_field", "raw_field", "native_call", "global", "owned_return"):
             destination = directory / negative
             marker = b"existing artifact must survive rejection\n"
             destination.with_suffix(".o").write_bytes(marker)
@@ -129,6 +131,8 @@ def main():
                 raise AssertionError("negative fixture failed before the structural evaluation boundary")
             if negative.endswith("_field") and "class outside ordinary scalar/reference/record-field cleanup profile" not in result.stderr:
                 raise AssertionError("field fixture did not reach its exact boundary")
+            if negative == "owned_return" and "function signature or definition" not in result.stderr:
+                raise AssertionError("owning return escaped the bounded parameter-transfer profile")
             if destination.with_suffix(".o").read_bytes() != marker:
                 raise AssertionError("rejected experimental shape overwrote an artifact")
         receipts.append({"fixture": fixture, "mode": mode, "level": level, "emitter_sha256": digest(emitter),
@@ -136,14 +140,14 @@ def main():
                          "object_sha256": digest(prefix.with_suffix(".o")),
                          "object_bytes": prefix.with_suffix(".o").stat().st_size,
                          "executable_sha256": digest(executable)})
-        print(f"{fixture}/{mode}/{level}: lifecycle outcomes, direct/indirect and 4 rejections passed", flush=True)
+        print(f"{fixture}/{mode}/{level}: lifecycle outcomes, direct/indirect and 5 rejections passed", flush=True)
     evidence = {
-        "scope": "scalar MIR and fallible scalar/reference/record-field lifecycle; fixed noinline boundaries; test-owned C++ carrier",
+        "scope": "scalar MIR, fallible scalar/reference/record-field lifecycle and owning parameters; fixed noinline boundaries; test-owned C++ carrier",
         "production_transport_selected": False,
         "runtime_sha256": digest(args.runtime),
         "sanitized_native_carrier": args.sanitized,
         "llvm_object_instrumented": False,
-        "limitations": ["no owning parameter transfer, replacement, callbacks, user TLS or workers",
+        "limitations": ["no owning return transfer, replacement, callbacks, user TLS or workers",
                         "no arrays, private owner representations or hierarchy",
                         "no OOM, foreign/forced unwind or artifact-unloading proof",
                         "no timing collected; not a production speedup claim"],
