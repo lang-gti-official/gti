@@ -604,6 +604,8 @@ add_library(
   "src/compiler/llvm/admission.cpp"
   "src/compiler/llvm/coverage.cpp"
   "src/compiler/llvm/session.cpp"
+  "src/compiler/llvm/debug_info.cpp"
+  "src/compiler/llvm/instrumentation.cpp"
   "src/compiler/llvm/layout.cpp"
   "src/compiler/llvm/abi.cpp"
   "src/compiler/llvm/runtime_abi.cpp"

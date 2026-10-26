@@ -4543,6 +4543,31 @@ the witness owns a different address. This does not prove pointer membership,
 extend the supported pointee layouts, or add runtime checks or alias promises;
 the unsafe caller retains its alignment, initialization and lifetime obligations.
 
+### LLVM Bounded SIMD Execution
+
+`simd.cpp` lowers the six verified floating-array capabilities for addition,
+subtraction, multiplication, division, ordered equality and ordered less-than.
+The MIR verifier owns their exact trusted intrinsic identity, float/double lane
+shape, 1–64 matching extents, read-only input loans and mutable output loan.
+The backend consumes those facts without recognizing public wrapper names.
+
+The emitter loads both complete inputs before writing an output lane, uses
+strict floating LLVM operations without fast-math/alias/alignment promises,
+and stores comparison results as canonical byte masks. The target pipeline can
+keep vector operations or scalarize them; lack of vector hardware does not
+change the accepted source profile. Source-defined SIMD construction, indexing,
+mask reductions and scalar reductions retain their ordinary MIR meaning.
+
+`llvm_simd_lowering` checks representation and malformed-contract controls;
+`llvm_simd_execution` checks strict native scalar oracles at O0–O3 and explicit
+scalarization. `llvm_simd_source` requires real GTI arithmetic/masks/reductions,
+lexically attributed lane and copy-range failures, semantic rejection and
+preservation of existing destinations. Both Darwin AArch64 and Linux x86_64
+are required. Copy-range helpers additionally require the O-LLVM-08
+`StorageBoundsCheck` implementation; admitting arithmetic does not bypass that
+independent pending capability. A core-only investigation profile is partial
+evidence and cannot satisfy the full source gate or complete O-LLVM-15.
+
 ### LLVM Places And Counted Text
 
 `places.cpp` owns body-local storage, selected loan addresses and evaluated

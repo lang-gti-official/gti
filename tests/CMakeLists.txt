@@ -1717,6 +1717,20 @@ endfunction()
 cmake_language(DEFER CALL gti_write_llvm_evidence_registry)
 
 
+# O15 helper checks remain component evidence; production debug/mode wiring is
+# separately gated and is not enabled by these private source registrations.
+add_executable(gti_llvm_debug_info_tests llvm_debug_info_tests.cpp)
+target_include_directories(gti_llvm_debug_info_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_debug_info_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_debug_info COMMAND gti_llvm_debug_info_tests)
+set_tests_properties(llvm_debug_info PROPERTIES TIMEOUT 120)
+
+add_executable(gti_llvm_instrumentation_tests llvm_instrumentation_tests.cpp)
+target_include_directories(gti_llvm_instrumentation_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_instrumentation_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_instrumentation COMMAND gti_llvm_instrumentation_tests)
+set_tests_properties(llvm_instrumentation PROPERTIES TIMEOUT 120)
+
 # O15 SIMD uses the same verified MIR capability and private static LLVM closure
 # as production Body emission. The SDK tools must match the configured LLVM.
 add_executable(gti_llvm_simd_lowering_tests llvm_simd_lowering_tests.cpp)
