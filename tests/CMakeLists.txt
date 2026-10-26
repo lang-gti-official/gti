@@ -1832,6 +1832,12 @@ if(Python3_Interpreter_FOUND)
       --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
       --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-callback-execution-evidence")
   set_tests_properties(llvm_native_c_callback_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_native_c_confined_execution
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_confined_execution_test.py"
+      "$<TARGET_FILE:gti>" --cc "${CMAKE_C_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-confined-evidence")
+  set_tests_properties(llvm_native_c_confined_execution PROPERTIES TIMEOUT 1200)
   gti_register_llvm_evidence_manifest(llvm_native_c_callback_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_callback_execution_test.py")
   add_test(NAME llvm_native_c_callback_cost
