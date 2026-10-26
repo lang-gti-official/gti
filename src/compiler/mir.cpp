@@ -1979,7 +1979,8 @@ struct MirPlaceObservationSink {
   std::map<MirBlockId, std::vector<Query>> borrowStops;
   std::vector<Query> stops;
 
-  MirPlaceObservationSink(const MirBody &body, std::span<const Query> requests)
+  MirPlaceObservationSink(const MirBody &body, std::span<const Query> requests,
+                          std::span<const MirPlaceId> entries = {})
       : body(body), requests(requests), covered(requests.size()),
         lifetimes(requests.size()), initialized(requests.size()),
         readable(requests.size()), borrowReadable(requests.size()) {
@@ -2031,7 +2032,13 @@ struct MirPlaceObservationSink {
                 supported = false;
     for (std::size_t i = 0; i < requests.size(); ++i) {
       const auto &request = requests[i];
-      covered[i] = coverage.at(request.place);
+      const auto *place = body.findPlace(request.place);
+      const bool entry = std::find(entries.begin(), entries.end(),
+                                   request.place) != entries.end();
+      covered[i] = coverage.at(request.place) ||
+                   (entry && place && place->key && place->key->valid());
+      if (entry)
+        initialized[i] = true;
       lifetimes[i] = lifetimeForPlace.at(request.place);
       byPoint[{request.point.block, request.point.instruction,
                request.point.after, request.point.blockEntry}]
@@ -16217,11 +16224,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   return verifyMirBodyImpl(body, owner, nullptr);
 }
 
-mir_detail::MirExistingPlaceQueryBatch
-mir_detail::verifyMirBodyWithPlaceQueries(
+static mir_detail::MirExistingPlaceQueryBatch verifyMirBodyWithPlaceQueriesImpl(
     const MirBody &body, std::size_t owner,
-    std::span<const MirExistingPlaceQuery> requests) {
-  MirExistingPlaceQueryBatch batch;
+    std::span<const mir_detail::MirExistingPlaceQuery> requests,
+    std::span<const MirPlaceId> entries = {}) {
+  mir_detail::MirExistingPlaceQueryBatch batch;
   if (requests.empty()) {
     batch.verification = verifyMirBody(body, owner);
     return batch;
@@ -16238,10 +16245,33 @@ mir_detail::verifyMirBodyWithPlaceQueries(
       return batch;
     }
   }
-  MirPlaceObservationSink observations(body, requests);
+  MirPlaceObservationSink observations(body, requests, entries);
   batch.verification = verifyMirBodyImpl(body, owner, &observations);
   observations.finish(batch);
   return batch;
+}
+
+mir_detail::MirExistingPlaceQueryBatch
+mir_detail::verifyMirBodyWithPlaceQueries(
+    const MirBody &body, std::size_t owner,
+    std::span<const MirExistingPlaceQuery> requests) {
+  return verifyMirBodyWithPlaceQueriesImpl(body, owner, requests);
+}
+
+mir_detail::MirExistingPlaceQueryBatch
+mir_detail::verifyMirBodyWithPlaceQueries(
+    const MirProgram &program, MirBodyAddress address,
+    std::span<const MirExistingPlaceQuery> requests) {
+  const auto entries = debugEntryPlaces(program, address);
+  if (!entries.verification.valid()) {
+    MirExistingPlaceQueryBatch batch{.verification = entries.verification};
+    for (const auto &request : requests)
+      batch.requested.push_back({request, MirDebugReadability::Unknown});
+    return batch;
+  }
+  const auto *body = findMirBody(program, address);
+  return verifyMirBodyWithPlaceQueriesImpl(*body, address.owner, requests,
+                                           entries.initialized);
 }
 
 MirDebugAvailabilityBatch queryMirDebugAvailability(

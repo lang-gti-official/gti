@@ -40,6 +40,18 @@ struct MirExistingPlaceQueryBatch {
 verifyMirBodyWithPlaceQueries(const MirBody &body, std::size_t owner,
                               std::span<const MirExistingPlaceQuery> requests);
 
+struct MirDebugEntryPlaces {
+  MirVerificationResult verification;
+  std::vector<MirPlaceId> initialized;
+};
+// Exact concrete formal/receiver entry facts, not a lifetime or borrow proof.
+// The program-aware query combines these fresh facts with canonical body flow.
+[[nodiscard]] MirDebugEntryPlaces debugEntryPlaces(const MirProgram &program,
+                                                   MirBodyAddress address);
+[[nodiscard]] MirExistingPlaceQueryBatch
+verifyMirBodyWithPlaceQueries(const MirProgram &program, MirBodyAddress address,
+                              std::span<const MirExistingPlaceQuery> requests);
+
 // Shape of one closed consuming-arm setup: cache every payload address, retire
 // one exact dependency group, then publish its successor bindings. This is not
 // authority by itself: body flow must observe the old group alive, and program

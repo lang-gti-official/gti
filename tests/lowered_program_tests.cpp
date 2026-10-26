@@ -999,6 +999,98 @@ int main() { lifetime(); return borrowing() - 5; }
   expect(sawLifetime && sawBorrow, "both canonical authorities are exercised");
 }
 
+void testDebugConcreteEntryAvailability() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-concrete-entry.gti", R"gti(
+class Receiver {
+public:
+  int value = 4;
+  int read() { return this.value; }
+};
+int packed<Args...>(int first, Args... rest) { return first; }
+int main() { Receiver value{}; return packed(value.read(), 9, 11) - 4; }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "concrete entry observation fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  using Query = lang::mir_detail::MirExistingPlaceQuery;
+  using State = lang::mir_detail::MirDebugReadability;
+  bool receiver = false;
+  bool pack = false;
+  for (const auto &hir : frontend.hir.functionInstances()) {
+    if (!hir.source || (hir.source->name().lexeme != "read" &&
+                        hir.source->name().lexeme != "packed"))
+      continue;
+    const bool member = hir.source->name().lexeme == "read";
+    const auto *function = frontend.mir.findFunctionInstance(hir.id);
+    const auto &body = function->body;
+    const auto place = std::find_if(
+        body.places.begin(), body.places.end(), [&](const auto &candidate) {
+          return candidate.projections.empty() &&
+                 (member ? candidate.root == lang::MirPlaceRootKind::This
+                         : candidate.type.kind == lang::SemanticType::TypePack);
+        });
+    expect(place != body.places.end(),
+           "query retains its exact receiver/pack root");
+    if (place == body.places.end())
+      continue;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                       function->id};
+    const std::vector<Query> requests{
+        {place->id, {body.entry, 0, false, true}}};
+    const auto withoutEntry = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+        body, function->id, requests);
+    expect(withoutEntry.verification.valid() &&
+               withoutEntry.requested.front().readability == State::Unknown,
+           "a body alone cannot invent a receiver or pack entry contract");
+    const auto exact = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+        frontend.mir, address, requests);
+    expect(
+        exact.verification.valid() &&
+            exact.requested.front().readability == State::DefinitelyReadable,
+        "exact concrete entry combines with canonical ownership/borrow flow");
+    for (int mutation = 0; mutation < 4; ++mutation) {
+      auto forged = frontend.mir;
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forged.functionInstances());
+      auto &target = functions.at(function->id - 1);
+      auto &storage = target.body.places.at(place->id - 1);
+      if (mutation == 0) {
+        if (member)
+          target.owner.reset();
+        else
+          target.parameterTypes.back() = lang::SemanticType::Int64;
+      } else if (mutation == 1) {
+        if (member)
+          target.staticMember = true;
+        else
+          storage.initiallyAvailable = false;
+      } else if (mutation == 2) {
+        storage.key.reset();
+      } else {
+        target.body.kind = lang::MirBodyKind::Module;
+      }
+      const auto rejected = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+          forged, address, requests);
+      expect(!rejected.verification.valid() && rejected.requiredStops.empty() &&
+                 rejected.requested.front().readability == State::Unknown,
+             "forged formal/receiver identities cannot publish entry "
+             "availability");
+    }
+    member ? receiver = true : pack = true;
+  }
+  expect(receiver && pack, "both concrete entry profiles were exercised");
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto entries = lang::mir_detail::debugEntryPlaces(
+        frontend.mir, {lang::MirBodyKind::Constructor, constructor.id});
+    expect(entries.initialized.empty(),
+           "constructor storage is not a fully initialized receiver at entry");
+  }
+}
+
 void testInitializerSourceDebugProducers() {
   const auto syntax =
       lang::Frontend({.stopAfter = lang::FrontendPhase::Parsing})
@@ -2916,6 +3008,7 @@ int main() {
   testMirSourceDebugTransport();
   testDebugPlaceAvailability();
   testDebugLifetimeAndBorrowAvailability();
+  testDebugConcreteEntryAvailability();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();

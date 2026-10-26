@@ -3737,6 +3737,17 @@ readability. Empty queries take the ordinary verifier path and allocate no
 observation tables. Block entry and the boundary before a terminator are
 distinct points, including in an empty block.
 
+A separate private program-aware entry query checks concrete formal binding
+identities and aliases against the canonical parameter-role comparison, and
+ordinary member receiver roots against their exact concrete owner and access.
+Its initial observation coverage is non-borrowed-state member receivers and
+trivial concrete trailing packs without overlapping drop obligations. It still
+requires the ordinary ownership and loan-flow observations; body-only queries
+cannot invent these entry facts. Constructors do not acquire an initialized
+whole receiver at entry. This query is currently tested independently: existing
+source-local range production remains on the body-only query until receiver and
+pack source identities and physical debug fragments are transported coherently.
+
 Opt-in lexical-debug transport carries the requested profile into MIR
 and deep-copies collected HIR scopes, concrete local declarations, and source
 membership into `MirBody::sourceDebug`. Initializer-region IDs are flattened
