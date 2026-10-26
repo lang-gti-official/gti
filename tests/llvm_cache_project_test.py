@@ -119,12 +119,17 @@ def main():
         assert "gti: cache hit " in hit.stderr, hit.stderr
         assert output.read_bytes() == first_bytes
         invoke("run", "app", "--cxx", wrapper)
+        explicit_run = invoke("run", "app", "--backend", "llvm", "--cxx", wrapper,
+                              "--verbose")
+        assert "gti: cache hit " in explicit_run.stderr, explicit_run.stderr
         invoke("run", "app", "--no-build")
         invoke("test", "smoke", "--backend", "llvm", "--cxx", wrapper)
         invoke("run", "app", "--no-build", "--backend", "llvm", expected=64)
         invoke("build", "app", "--backend", "llvm", "--std", "c++23", expected=65)
         invoke("build", "app", "--backend", "llvm", "--keep-cpp", expected=65)
         invoke("build", "app", "--backend", "unknown", expected=64)
+        invoke("run", "app", "--backend", "unknown", expected=64)
+        invoke("run", "app", "--backend", expected=64)
         invoke("build", "app", "--backend", "llvm", "--backend", "cpp", expected=64)
         invoke("check", "--backend", "llvm", expected=64)
         invoke("build", "app", "--backend", "llvm", "--emit-mir", expected=64)
@@ -161,6 +166,9 @@ def main():
         assert "gti: cache miss " in cpp.stderr, cpp.stderr
         cpp_hit = invoke("build", "app", "--backend", "cpp", "--verbose")
         assert "gti: cache hit " in cpp_hit.stderr, cpp_hit.stderr
+        explicit_run = invoke("run", "app", "--backend", "llvm", "--cxx", wrapper,
+                              "--verbose")
+        assert "gti: cache hit " in explicit_run.stderr, explicit_run.stderr
         restored = invoke("build", "app", "--backend", "llvm", "--cxx", wrapper,
                           "--verbose")
         assert "gti: cache hit " in restored.stderr, restored.stderr
