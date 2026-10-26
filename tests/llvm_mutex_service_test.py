@@ -38,15 +38,19 @@ def main():
     elif args.sanitize == "thread":
         environment["TSAN_OPTIONS"] = "halt_on_error=1"
 
-    def run(name, argv, death=False):
+    def run(name, argv, death=False, expected=0, failure_mode=None):
         start = time.monotonic()
+        execution_environment = dict(environment)
+        execution_environment.pop("GTI_O13_PROCESS_FAILURE", None)
+        if failure_mode:
+            execution_environment["GTI_O13_PROCESS_FAILURE"] = failure_mode
         result = subprocess.run([str(value) for value in argv], capture_output=True,
-                                text=True, timeout=60, env=environment)
+                                text=True, timeout=60, env=execution_environment)
         (evidence / f"{name}.log").write_text(result.stdout + result.stderr)
         records.append({"name": name, "argv": [str(value) for value in argv],
                         "exit": result.returncode, "seconds": time.monotonic() - start})
         (evidence / "results.json").write_text(json.dumps(records, indent=2) + "\n")
-        valid = result.returncode in (-signal.SIGILL, -signal.SIGTRAP) if death else result.returncode == 0
+        valid = result.returncode in (-signal.SIGILL, -signal.SIGTRAP) if death else result.returncode == expected
         if not valid:
             raise AssertionError(f"{name}: see {evidence / (name + '.log')}")
         print(f"{name}: PASS", flush=True)
@@ -69,6 +73,10 @@ def main():
     run("source-observer", [args.cc, "-std=c17", *flags, "-c",
                              root / "tests/fixtures/llvm_native_process_storage.c",
                              "-o", output / "source-observer.o"])
+    run("observed-failure-runtime", [args.cxx, "-std=c++20", *flags,
+                                      "-Dgti_rt_failure_terminate_v2=gti_test_real_failure_terminate_v2",
+                                      "-c", root / "runtime/src/failure.cpp",
+                                      "-o", output / "failure-runtime.o"])
     for mode in ("O0", "O1", "O2", "O3"):
         run(f"ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation, "-c", output / "mutex.ll",
                            "-o", output / f"mutex-{mode}.o"])
@@ -102,9 +110,13 @@ def main():
         source_program = output / f"source-{mode}"
         run(f"source-link-{mode}", [args.cxx, "-pthread", *instrumentation,
                                      output / "source-observer.o", output / "runtime.o",
+                                     output / "failure-runtime.o",
                                      output / f"source-{mode}.o", runtime_library,
                                      "-o", source_program])
         run(f"source-execute-{mode}", [source_program])
+        for failure_mode in ("before", "partial-first", "partial-last", "after", "entry"):
+            run(f"source-{failure_mode}-{mode}", [source_program], expected=70,
+                failure_mode=failure_mode)
         for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock"):
             run(f"{fault}-{mode}", [program, fault], death=True)
 

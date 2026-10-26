@@ -1068,6 +1068,16 @@ runtime containment evidence, not generated LLVM worker admission or a C04
 transport selection. The generated entry/cleanup/result adapters remain a
 separate integration prerequisite.
 
+The O13 mutex service oracle also lowers an unmodified sealed MIR program
+through the production body lowerer before public admission is opened. It
+executes source constructors, partial rollback, TLS and native process
+retirement at O0-O3, with failures before initialization, in either constructor,
+after publication and in the source entry. C observers count real native shell
+initialization/retirement, verify TLS still sees both live roots and inspect the
+original record at the real failure terminator. This is source-composition
+evidence, not a public mutex/worker profile or a C04 transport decision. Separate
+kernel cases check repeated teardown and unpublished-prefix handling.
+
 ### Scoped-worker execution
 
 `gti_rt_thread_scope_v1` adds a synchronous native group boundary over borrowed

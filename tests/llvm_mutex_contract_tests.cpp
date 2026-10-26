@@ -53,9 +53,13 @@ void checkProcessStorage(const std::filesystem::path &root,
   Session session(*input, {});
   const auto &program = input->program().mir();
   std::map<SymbolId, llvm::GlobalVariable *> globals;
-  require(program.programInitializationPlan().steps.size() == 2,
+  require(std::count_if(program.programInitializationPlan().steps.begin(),
+                         program.programInitializationPlan().steps.end(),
+                         [](const auto &step) { return step.nativeRetirement.has_value(); }) == 2,
           "global and static wrapper are exactly two process roots");
   for (const auto &step : program.programInitializationPlan().steps) {
+    if (!step.nativeRetirement)
+      continue;
     require(step.nativeRetirement &&
                 mirDropIsNativeRetirement(program, *step.nativeRetirement),
             "process root has its exact native-only cleanup recipe");
@@ -96,10 +100,13 @@ void checkProcessStorage(const std::filesystem::path &root,
       self(self, ir.CreateStructGEP(session.layouts().get(type).storage, address,
                                     field), owner.declaredFields[field].type);
   };
+  unsigned prefix = 0;
   for (const auto &step : program.programInitializationPlan().steps) {
+    if (!step.nativeRetirement)
+      continue;
     auto *run = llvm::BasicBlock::Create(session.context(), "initialize", initialize);
     auto *next = llvm::BasicBlock::Create(session.context(), "next", initialize);
-    ir.CreateCondBr(ir.CreateICmpUGE(initialize->getArg(0), ir.getInt32(step.id)),
+    ir.CreateCondBr(ir.CreateICmpUGE(initialize->getArg(0), ir.getInt32(++prefix)),
                     run, next);
     ir.SetInsertPoint(run);
     initializeShells(initializeShells, globals.at(step.symbol),

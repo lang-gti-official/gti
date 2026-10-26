@@ -1,8 +1,10 @@
 #include "gti/runtime_mutex.h"
+#include "gti/runtime_failure.h"
 
 #include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 
 extern void gti_test_mutex_real_initialize_v1(gti_mutex_slot_v1 *);
 extern void gti_test_mutex_real_destroy_v1(gti_mutex_slot_v1 *);
@@ -10,6 +12,8 @@ extern void gti_test_mutex_real_destroy_v1(gti_mutex_slot_v1 *);
 static gti_mutex_slot_v1 *live[16];
 static unsigned initialized, destroyed, live_count;
 static bool ready;
+static bool tls_drained;
+static unsigned constructors;
 
 void gti_rt_mutex_initialize_v1(gti_mutex_slot_v1 *slot) {
   assert(live_count < 16);
@@ -36,11 +40,48 @@ void gti_rt_mutex_destroy_v1(gti_mutex_slot_v1 *slot) {
 }
 
 static void after_hosted_retirement(void) {
-  assert(ready && live_count == 0 && initialized == destroyed);
+  assert(ready && tls_drained && live_count == 0 && initialized == destroyed);
+}
+
+void gti_test_program_tls_observe(void) {
+  assert(ready && !tls_drained && live_count == 2);
+  tls_drained = true;
 }
 
 void gti_test_program_ready(void) {
   assert(!ready && live_count == 2 && initialized >= 2);
   ready = true;
   assert(atexit(after_hosted_retirement) == 0);
+}
+
+int32_t gti_test_program_gate(int32_t stage) {
+  const char *mode = getenv("GTI_O13_PROCESS_FAILURE");
+  if (stage == 1)
+    ++constructors;
+  if (!mode)
+    return 1;
+  const bool fail =
+      (stage == 0 && strcmp(mode, "before") == 0) ||
+      (stage == 1 && constructors == 1 && strcmp(mode, "partial-first") == 0) ||
+      (stage == 1 && constructors == 2 && strcmp(mode, "partial-last") == 0) ||
+      (stage == 2 && strcmp(mode, "after") == 0) ||
+      (stage == 3 && strcmp(mode, "entry") == 0);
+  return fail ? 0 : 1;
+}
+
+_Noreturn void gti_test_real_failure_terminate_v2(
+    const gti_failure_record_v2 *, const gti_failure_artifact_descriptor_v1 *,
+    gti_failure_observer_v2, void *);
+
+_Noreturn void gti_rt_failure_terminate_v2(
+    const gti_failure_record_v2 *record,
+    const gti_failure_artifact_descriptor_v1 *artifact,
+    gti_failure_observer_v2 observer, void *context) {
+  assert(getenv("GTI_O13_PROCESS_FAILURE") && live_count == 0 &&
+         initialized == destroyed);
+  assert(!ready || tls_drained);
+  assert(record->abi_version == GTI_FAILURE_ABI_VERSION_V2 &&
+         record->code == GTI_FAILURE_CODE_DIVISION_BY_ZERO_V1 &&
+         record->detail == GTI_FAILURE_DETAIL_INTEGER_DIVISION_V1 && artifact);
+  gti_test_real_failure_terminate_v2(record, artifact, observer, context);
 }

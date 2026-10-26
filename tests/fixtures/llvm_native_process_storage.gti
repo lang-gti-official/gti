@@ -1,11 +1,26 @@
 #include <std/mutex>
 
-extern "C" { void gti_test_program_ready(); }
+extern "C" {
+  void gti_test_program_ready();
+  int32_t gti_test_program_gate(int32_t stage);
+  void gti_test_program_tls_observe();
+}
+
+class Local {
+public:
+  void touch() {}
+  ~Local() { gti_test_program_tls_observe(); }
+};
+thread_local Local local{};
+
+int32_t before = 12 / gti_test_program_gate(0);
 
 class Box {
   std::mutex<int32_t> value;
 public:
-  Box() : value(std::mutex<int32_t>(7)) {}
+  Box() : value(std::mutex<int32_t>(7)) {
+    int32_t checked = 12 / gti_test_program_gate(1);
+  }
 };
 
 Box first{};
@@ -14,4 +29,11 @@ public:
   static Box last{};
 };
 
-int main() { gti_test_program_ready(); return 0; }
+int32_t after = 12 / gti_test_program_gate(2);
+
+int main() {
+  gti_test_program_ready();
+  local.touch();
+  int32_t checked = 12 / gti_test_program_gate(3);
+  return 0;
+}

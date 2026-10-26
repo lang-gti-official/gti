@@ -6,7 +6,11 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstring>
+#include <iostream>
 #include <string_view>
 #include <thread>
 
@@ -255,6 +259,30 @@ void nestedCaller(void *) {
 
 void noop(void *) {}
 
+void costs() {
+  using Clock = std::chrono::steady_clock;
+  constexpr unsigned iterations = 500000;
+  std::array<double, 9> samples{};
+  auto active = sink();
+  Capture output;
+  for (auto &sample : samples) {
+    const auto start = Clock::now();
+    for (unsigned index = 0; index != iterations; ++index) {
+      gti_rt_thread_failure_sink_enter_v1(&active, capture, &output);
+      gti_rt_thread_failure_sink_leave_v1(&active);
+    }
+    sample = std::chrono::duration<double, std::nano>(Clock::now() - start).count() /
+             iterations;
+  }
+  assert(output.calls == 0 && active.owner == nullptr);
+  std::sort(samples.begin(), samples.end());
+  std::cout << "caller_sink_enter_leave median_ns=" << samples[4]
+            << " min_ns=" << samples.front() << " max_ns=" << samples.back()
+            << " iterations=" << iterations << " samples=" << samples.size()
+            << " descriptor_bytes=" << sizeof(active)
+            << " sink_owned_record_bytes=0\n";
+}
+
 void invalid(std::string_view mode) {
   if (mode == "successful-null-completion") {
     Task task;
@@ -299,6 +327,7 @@ void invalid(std::string_view mode) {
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "--cost") { costs(); return 0; }
   if (argc == 2) { invalid(argv[1]); return 99; }
   assert(gti_test_thread_outcome_c());
   callerScopes();

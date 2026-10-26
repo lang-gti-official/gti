@@ -320,6 +320,7 @@ auto SemanticVisitor::Impl::activeCleanupCause(const SemanticType &type) const
   }
   const GenericSubstitution substitution = classSubstitution(type);
   ActiveCleanupQuery query;
+  query.excludeNativeRetirement = true;
   if (const ClassBaseTypeInfo *base = concreteBase(owner); base != nullptr) {
     if (requiresActiveCleanup(substituteType(base->type, substitution),
                               query) &&

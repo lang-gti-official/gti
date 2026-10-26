@@ -411,11 +411,25 @@ int main() {
            "class Owned { public: ~Owned() {} }; Owned global{};",
            "class Owned { public: ~Owned() {} }; "
            "std::mutex<Owned> global{Owned()};"}) {
-    const auto denied = analyze("source-process-cleanup-rejected.gti",
-                                "#include <std/mutex>\n" + declaration +
-                                    "\nint main() { return 0; }\n");
+    const std::string source = "#include <std/mutex>\n" + declaration +
+                               "\nint main() { return 0; }\n";
+    const auto denied = analyze("source-process-cleanup-rejected.gti", source);
     expect(!denied.canGenerateCode() && hasCode(denied, "GTI-S2061"),
            "even infallible source destructors remain outside native retirement");
+    const auto diagnostic = std::find_if(
+        denied.diagnostics.begin(), denied.diagnostics.end(), [](const auto &d) {
+          return d.code == "GTI-S2061";
+        });
+    expect(diagnostic != denied.diagnostics.end() &&
+               diagnostic->primary.source ==
+                   std::filesystem::absolute("source-process-cleanup-rejected.gti").string() &&
+               diagnostic->primary.start == source.rfind("global") &&
+               diagnostic->primary.end == source.rfind("global") + 6 &&
+               diagnostic->message.find("source or owning cleanup") != std::string::npos &&
+               !diagnostic->related.empty() && !diagnostic->hints.empty() &&
+               diagnostic->fixes.empty(),
+           "process cleanup rejection retains an exact binding span, cause, "
+           "actionable hint and no mechanical fix");
   }
 }
 
