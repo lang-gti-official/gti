@@ -13,20 +13,30 @@ import time
 from llvm_evidence_manifest import build_manifest
 
 
-def evidence_manifest(root):
-    fixtures = {
+def source_fixtures():
+    return {
         "guard": "mutex_basic.gti",
         "guard-cleanup": "llvm_mutex_guard_lifecycle.gti",
         "array-cleanup": "llvm_mutex_array_lifecycle.gti",
         "process-retirement": "llvm_native_process_storage.gti",
         "payload-cleanup": "llvm_mutex_source_lifecycle.gti",
     }
+
+
+def evidence_cases(root):
+    return {key: (root / "tests/fixtures" / path).read_text(encoding="utf-8")
+            for key, path in source_fixtures().items()}
+
+
+def evidence_profiles(root):
+    del root
+    return {"mutex.public-lifecycle": tuple(source_fixtures())}
+
+
+def evidence_manifest(root):
     return build_manifest(
-        "llvm_mutex_service",
-        {key: (root / "tests/fixtures" / path).read_text(encoding="utf-8")
-         for key, path in fixtures.items()},
-        {"mutex.public-lifecycle": tuple(fixtures)},
-        {key: f"tests/fixtures/{path}" for key, path in fixtures.items()},
+        "llvm_mutex_service", evidence_cases(root), evidence_profiles(root),
+        {key: f"tests/fixtures/{path}" for key, path in source_fixtures().items()},
         execution_profiles={"mutex.public-lifecycle": "concurrent"})
 
 
@@ -57,6 +67,7 @@ def main():
     if args.public_gti and args.sanitize:
         parser.error("public driver checks need a separate unsanitized run")
     root, output = args.root.resolve(), args.output.resolve()
+    fixtures = source_fixtures()
     runtime_library = args.runtime_library or args.emitter.resolve().parent / "libgti_runtime.a"
     output.mkdir(parents=True, exist_ok=True)
     evidence = args.evidence_dir.resolve() if args.evidence_dir else output
@@ -277,12 +288,12 @@ def main():
 
         if args.public_gti:
             for family, fixture, observer, runtime, failure, faults in (
-                ("process", "llvm_native_process_storage.gti", "source-observer.o",
+                ("process", fixtures["process-retirement"], "source-observer.o",
                  "runtime.o", "failure-runtime.o", ("before", "partial-first", "partial-last",
                                        "after", "entry", "quarantine")),
-                ("payload", "llvm_mutex_source_lifecycle.gti", "active-source-observer.o",
+                ("payload", fixtures["payload-cleanup"], "active-source-observer.o",
                  "runtime.o", "active-failure-runtime.o", ("nested", "cell-last", "cell-first", "double")),
-                ("guard", "llvm_mutex_guard_lifecycle.gti", "guard-source-observer.o",
+                ("guard", fixtures["guard-cleanup"], "guard-source-observer.o",
                  "guard-runtime.o", "failure-runtime.o", ("guard-lock", "guard-body")),
             ):
                 public_program = output / f"public-{family}-{mode}"
@@ -298,12 +309,12 @@ def main():
             guard_program = output / f"public-basic-{mode}"
             run(f"public-basic-build-{mode}", [args.public_gti.resolve(),
                 "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
-                root / "tests/fixtures/mutex_basic.gti", "-o", guard_program])
+                root / "tests/fixtures" / fixtures["guard"], "-o", guard_program])
             run(f"public-basic-execute-{mode}", [guard_program])
             array_program = output / f"public-array-{mode}"
             run(f"public-array-build-{mode}", [args.public_gti.resolve(),
                 "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
-                root / "tests/fixtures/llvm_mutex_array_lifecycle.gti", "-o", array_program,
+                root / "tests/fixtures" / fixtures["array-cleanup"], "-o", array_program,
                 "--", output / "array-source-observer.o", output / "failure-runtime.o"])
             run(f"public-array-execute-{mode}", [array_program])
             run(f"public-array-bounds-{mode}", [array_program],
