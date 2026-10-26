@@ -2320,6 +2320,35 @@ int main() { Pinned value{}; return 0; }
 }
 
 void testRawFieldWitnesses() {
+  for (const auto qualifier : {"const ", "mut "}) {
+    const auto pointerInput = lang::planLlvmAdmission(lower(std::string(R"(
+struct Slot { mut int value = 7; };
+unsafe int consume(const Slot* pointer) { unsafe { return pointer->value; } }
+int main() {
+  mut Slot object{};
+  unsafe {
+)") + qualifier + R"(Slot* pointer = &object;
+    return consume(pointer + 0) - 7;
+  }
+}
+)"));
+    expect(
+        pointerInput.admitted(),
+        "native pointer arithmetic arguments transport their exact producer, "
+        "including mutable-to-readonly pointer coercion");
+  }
+  expect(!lang::Frontend()
+              .analyze("unsafe-pointer-input.gti", R"(
+struct Slot { mut int value = 7; };
+unsafe int consume(const Slot* pointer) { unsafe { return pointer->value; } }
+int main() {
+  mut Slot object{};
+  const Slot* pointer = &object;
+  return consume(pointer + 0);
+}
+)")
+              .canGenerateCode(),
+         "transport admission does not authorize arithmetic outside unsafe");
   const std::string source = R"(
 class Slot { public: mut int value = 0; int read() { return this.value; } };
 int main() {

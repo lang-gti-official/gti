@@ -10,7 +10,8 @@ namespace lang::native_llvm {
 class Memory final {
 public:
   using Cleanup = std::function<llvm::Function *(const MirDropType &)>;
-  using MoveState = std::function<void(llvm::Value *, const SemanticType &)>;
+  using Relocate =
+      std::function<void(llvm::Value *, llvm::Value *, const SemanticType &)>;
   struct Result {
     bool handled = false;
     llvm::Value *value = nullptr;
@@ -24,7 +25,7 @@ public:
   };
 
   Memory(Session &session, llvm::IRBuilder<> &ir, Cleanup cleanup,
-         MoveState moveState, Scalars::Guard guard);
+         Relocate relocateObject, Scalars::Guard guard);
   [[nodiscard]] static bool handles(IntrinsicKind intrinsic);
   [[nodiscard]] llvm::Value *processCall(const MirFunctionInstance &target,
                                          std::span<llvm::Value *const> inputs);
@@ -39,7 +40,7 @@ private:
   Session &session;
   llvm::IRBuilder<> &ir;
   Cleanup cleanup;
-  MoveState moveState;
+  Relocate relocateObject;
   Scalars::Guard guard;
   [[nodiscard]] llvm::Function *
   provider(ProcessMemoryRuntimeOperation operation);

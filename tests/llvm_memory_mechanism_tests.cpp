@@ -42,8 +42,10 @@ void emitProbe(Session &session, const LlvmAdmissionPlan &admission,
   Memory memory(
       session, ir,
       [&](const MirDropType &recipe) { return lifetimes.cleanup(recipe); },
-      [&](llvm::Value *address, const SemanticType &selected) {
-        lifetimes.moved(ir, address, selected);
+      [&](llvm::Value *destination, llvm::Value *source,
+          const SemanticType &selected) {
+        ir.CreateCall(lifetimes.generatedRelocation(selected),
+                      {destination, source});
       },
       [&](llvm::Value *bad, DefinedFailureOutcome outcome) {
         if (outcome.code != DefinedFailureCode::AllocationFailure)

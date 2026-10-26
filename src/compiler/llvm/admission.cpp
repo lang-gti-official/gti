@@ -1498,6 +1498,48 @@ public:
            constantIntegerDomain(stage.operands[reversed ? 0 : 1].type)
                .has_value();
   }
+  bool pointerArithmeticInput(const MirBlock &block,
+                              const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
+        stage.callInputRole != MirCallInputRole::Argument ||
+        stage.callInputKind != HirCallInputKind::Value || !stage.callSite ||
+        !stage.hirValue || stage.defaultArgument || stage.rawMemoryAccess ||
+        stage.unsafeOperation != UnsafeOperationKind::PointerArithmetic ||
+        stage.operation != MirOperation::None ||
+        stage.intrinsic != IntrinsicKind::None || stage.operands.size() != 1 ||
+        stage.info.type.kind != SemanticType::RawPointer ||
+        stage.info.category != ValueCategory::Value ||
+        stage.info.access != AccessMode::ReadOnly || stage.destination ||
+        stage.receiver || stage.functionTarget || stage.constructorTarget ||
+        stage.bodyTarget || stage.lambdaTarget || stage.nativeCalleeType ||
+        stage.ownership || !stage.lifecycle.empty() ||
+        !stage.definedFailure.empty() || !stage.localFailureSites.empty())
+      return false;
+    const auto &input = stage.operands.front();
+    if (input.kind != MirOperandKind::Value || !input.value || input.place ||
+        input.loan || input.literal ||
+        input.type.kind != SemanticType::RawPointer)
+      return false;
+    auto destination = stage.info.type;
+    destination.pointerAccess = input.type.pointerAccess;
+    if (destination != input.type ||
+        (input.type.pointerAccess == AccessMode::ReadOnly &&
+         stage.info.type.pointerAccess == AccessMode::Mutable))
+      return false;
+    // Call-input staging transports an already evaluated pointer; it does not
+    // perform another arithmetic operation or discharge another unsafe action.
+    for (const auto &producer : block.instructions) {
+      if (producer.id == stage.id)
+        break;
+      if (!producer.tombstone && producer.result == input.value &&
+          producer.kind == MirInstructionKind::Compute &&
+          producer.hirValue == stage.hirValue &&
+          producer.info.type == input.type &&
+          producer.unsafeOperation == UnsafeOperationKind::PointerArithmetic)
+        return nativePointerArithmetic(producer);
+    }
+    return false;
+  }
   bool nativeRawFieldStage(const MirBody &mir,
                            const MirInstruction &stage) const {
     if ((stage.kind != MirInstructionKind::Load &&
@@ -2945,7 +2987,8 @@ public:
                       stage.unsafeOperation == UnsafeOperationKind::RawMember &&
                       nativeRawFieldStage(mir, stage)
                   ? std::optional(Shape::NativeClassRawAccess)
-              : (rawClassStage || classArithmetic) &&
+              : (rawClassStage || classArithmetic ||
+                 pointerArithmeticInput(mirBlock, stage)) &&
                       (stage.unsafeOperation ==
                            UnsafeOperationKind::RawDereference ||
                        stage.unsafeOperation == UnsafeOperationKind::RawIndex ||

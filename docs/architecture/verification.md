@@ -10103,6 +10103,18 @@ ownership or entry-signature inference.
 
 ### Native LLVM Admission Gates
 
+`llvm_native_c_outbound_boundary` checks direct and function-pointer C calls
+through real source callbacks at LLVM O0-O3 with C++20/23 controls and native
+helpers at O0/O3. Normal and explicitly translated C results preserve reverse
+GTI cleanup; a translated zero followed by GTI division failure preserves
+cleanup, source attribution and callback terminal containment. A native shim
+that catches and terminates is a distinct negative control. A deliberately
+escaping C++ exception is labeled contract-violating fault injection: the test
+records observed GTI cleanup, but neither promises it nor credits this case to
+production coverage. No exception becomes a GTI failure record. These probes
+do not validate either private C04 transport, select a foreign firewall policy,
+or satisfy generated-code sanitizer gates.
+
 The registered evidence inventory reconciled through `d3585a07d` contains 217
 source cases. It retains every case identity from the prior 143-case inventory
 and adds two class cases, 21 hosted cases, 32 native-interop cases and 17
@@ -10305,6 +10317,23 @@ release after its drop; the shim also rejects double release. These aliases
 are test instrumentation, not production exports or arbitrary foreign-C call
 coverage. General foreign counter getters remain an O-LLVM-11 prerequisite.
 
+The dispatch-layout gate also checks the private active-object descriptor:
+signed target-width displacements use the physical pointer owner's offset;
+ordinary virtual invocation retains two loads; invalid non-class and
+non-dispatch-bearing recovery requests emit no instructions. Native O0/O3
+execution recovers every relocated interface/base view and distinguishes an
+installed base state at a nonzero offset from the complete allocation. These
+are representation checks, not proof of dynamic cleanup or legal downcasting.
+
+The same gate distinguishes static unique/shared owners of ordinary records
+containing hierarchy storage from genuinely polymorphic pointees. Exact static
+recipes emit and reuse their helpers; forged dynamic metadata and genuinely
+dynamic recipes reject before publication, including after cache warming.
+Native O0/O3 probes link the real runtime and exercise passive pointee release,
+shared two-to-one survival, last-owner release, null handles and repeated empty
+cleanup. These checks do not prove source destructor failure paths or dynamic
+deletion, and do not replace their independent execution gates.
+
 | Gate | Evidence |
 | --- | --- |
 | `llvm_admission` | Every typed ledger row has a milestone/predicate; unknown values and sentinels reject; snapshot/target/policy identity survives; sealed entry/dependency reachability separates dormant metadata from required execution, with conservative all-body fallbacks; scalar, array, borrow, cleanup, native and TLS shapes are inventoried; pending generation carries source provenance and emits no artifact. |
@@ -10317,7 +10346,8 @@ coverage. General foreign counter getters remain an O-LLVM-11 prerequisite.
 | `llvm_target_layout_abi` | O-LLVM-03 scalar/array/recursive-record/C-record/union layouts, target mismatch rejection, private result/status/failure signatures, exact C narrow extensions, versioned runtime-record layouts, recursive declaration/provenance, unresolved-definition and LLVM-verifier rejection, diagnostic isolation, and real binary object publication/linking with bidirectional C scalar oracles at O0/O1/O2/O3. Run on macOS arm64 and Linux x86_64. No GTI instruction lowering is claimed. |
 | `llvm_polymorphic_storage_layout` | Private inline-slot representation: real trusted capability instances at capacities 1/4096 and every alignment power 1 through 4096; exact extent, offsets, stride and containing-record alignment; malformed identity/footprint rejection; native C observer checks actual stack/payload addresses and first/last-byte access at O0/O3. Public operation admission must remain rejected until lifecycle support lands. Required on macOS arm64 and Linux x86_64; this is component representation evidence, not callable execution. |
 | `llvm_polymorphic_storage_mechanisms` | Private sealed-operation component: inert construction, occupancy/read/read-mut/reset, descriptor-driven relocation through nested records and empty fields, runtime-selected models with different interface offsets, and moved-from empty state. External C observes actual payload values and rebased addresses at O0/O3. Empty read, occupied construction, insufficient capacity/alignment and read-after-reset trap without a defined-failure channel; detached MIR instructions/constructors, ordinary non-capability constructors and identical relocation addresses reject before publication/writes. Default-constructor entry establishes empty state in nonzero storage. Required on macOS arm64 and Linux x86_64. Public admission remains rejected pending ordinary source lifecycle and boxed-cleanup integration; this is not full callable support. |
-| `llvm_dispatch_layout` | Dispatch/lifetime representation proofs, including inert generated relocation through records, fixed arrays and payload enums: non-publishing preflight, rejection of cleanup-bearing/borrowed inputs and foreign sessions, exact helper reuse, logical field transfer and destination header installation. The relocation component links an external C observer and executes at O0/O3, with distinct physical interface headers and unchanged source headers. Payload cases cover multiple fields, different variants, source-tag retirement, empty/inactive payload bytes and rejection of a cleanup-bearing variant even when inactive. Required on macOS arm64 and Linux x86_64 before component acceptance; it does not grant source copy/move or private slot operation admission. |
+| `llvm_dispatch_layout` | Dispatch/lifetime representation proofs, including inert generated relocation through records, fixed arrays and payload enums: non-publishing preflight, rejection of cleanup-bearing/borrowed inputs and foreign sessions, exact helper reuse, logical field transfer and destination header installation. The relocation component links an external C observer and executes at O0/O3, with distinct physical interface headers and unchanged source headers. Payload cases cover multiple fields, different variants, source-tag retirement, empty/inactive payload bytes and rejection of a cleanup-bearing variant even when inactive. General generated-relocation cases observe exclusive/shared handle transfer and null sources, unchanged reference counts, active/suppressed destructor-permission transfer in records and payloads, deleted-move rejection, and strict inert rejection even after caching a general helper. These component cases prove representation state, not source destructor execution. Required on macOS arm64 and Linux x86_64 before component acceptance; it does not grant source copy/move or private slot operation admission. |
+| `llvm_memory_execution` relocation cases | `typed-relocation` checks `object_relocation.gti`'s destination string, source reuse, and exact destructor trace; `structural-relocation` checks the existing storage/vector fixture's successful growth, relocation and destruction path. Both run C++20/23 O3 and LLVM O0-O3. Each structural binary also runs all six failure-argument cases: capacity, occupied destination, missing source, consumed-source read, and both late-preflight failures with untouched earlier owners and exact cleanup order. Diagnostics retain the owning storage method's source line. `relocation-composition` independently checks an owning-closure wrapper with function-pointer, uninitialized and union fields at LLVM O0-O3, including one final resource destruction. C++ rejects this valid fixture's closure forwarding into `construct_at` in its representation vocabulary; its omission is explicit and is not parity evidence. |
 | `runtime_execution_boundary`, `installed_runtime_execution_boundary` | The real C begin/drain hooks attach the runtime lifetime, preserve reverse registered cleanup and idempotent drain, and link from the installed runtime. |
 | `runtime_abi_inventory` | Clang parses every active runtime C declaration into a target-specific exact-signature/resource/failure/callback inventory retained in the build. Missing declarations and unclassified headers reject. C++ helper wrappers are not C services. |
 | `llvm_clang_coexistence`, `installed_llvm_clang_coexistence` | Both LLVM's private static backend closure and the real libclang C reader load, parse a header and shut down in the same build-tree/installed consumer. Linux ELF archive symbol isolation prevents registry interposition with libclang's shared LLVM. Tests have bounded deadlines. |

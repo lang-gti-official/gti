@@ -147,8 +147,10 @@ public:
             [this](const MirDropType &recipe) {
               return this->lifetimes.cleanup(recipe);
             },
-            [this](llvm::Value *address, const SemanticType &type) {
-              this->lifetimes.moved(ir, address, type);
+            [this](llvm::Value *destination, llvm::Value *source,
+                   const SemanticType &type) {
+              ir.CreateCall(this->lifetimes.generatedRelocation(type),
+                            {destination, source});
             },
             [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
               guard(condition, outcome);
