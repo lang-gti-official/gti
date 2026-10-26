@@ -91,8 +91,9 @@ def main():
                               ["nm", "-u", output / f"{family}-{mode}.o"])
                 # Fixed internal process roots need global redzones, not a
                 # surviving bounds check for statically proved field accesses.
-                instrumented = ("__asan_register_image_globals" in symbols and
-                                "__asan_unregister_image_globals" in symbols
+                global_family = "image" if sys.platform == "darwin" else "elf"
+                instrumented = (f"__asan_register_{global_family}_globals" in symbols and
+                                f"__asan_unregister_{global_family}_globals" in symbols
                                 if family == "mutex-process" and
                                 args.sanitize == "address,undefined"
                                 else marker in symbols)

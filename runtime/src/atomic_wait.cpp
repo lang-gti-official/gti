@@ -43,6 +43,26 @@ void ensureInitialized() noexcept {
     require(pthread_once(&initializeOnce, initialize) == 0);
 }
 
+#if defined(__GNUC__)
+[[gnu::cold]]
+#endif
+void notifyRegistered(Bucket &bucket) noexcept {
+#if !defined(__x86_64__)
+  ensureInitialized();
+#endif
+  require(pthread_mutex_lock(&bucket.mutex) == 0);
+  // Colliding lanes require broadcast even for source notify-one.
+  require(pthread_cond_broadcast(&bucket.condition) == 0);
+#if defined(__x86_64__)
+  // Rearm under the check-to-sleep mutex, retaining coalesced publications.
+  if (bucket.waiters.load(std::memory_order_relaxed) != 0)
+    bucket.wakeNeeded.fetch_or(1U, std::memory_order_acq_rel);
+  else
+    bucket.wakeNeeded.fetch_and(~1U, std::memory_order_acq_rel);
+#endif
+  require(pthread_mutex_unlock(&bucket.mutex) == 0);
+}
+
 template <typename T>
 void wait(const void *lane, std::uint64_t old, std::uint32_t order) noexcept {
   require(old <= std::numeric_limits<T>::max());
@@ -132,20 +152,6 @@ extern "C" void gti_rt_atomic_notify_v1(const void *lane,
   std::atomic_thread_fence(std::memory_order_seq_cst);
   if (bucket.waiters.load(std::memory_order_relaxed) == 0)
     return;
-  ensureInitialized();
 #endif
-  require(pthread_mutex_lock(&bucket.mutex) == 0);
-  // A single native wake could choose a different colliding lane and strand
-  // an eligible waiter. Broadcast preserves both source notification contracts.
-  require(pthread_cond_broadcast(&bucket.condition) == 0);
-#if defined(__x86_64__)
-  // Concurrent notifications can coalesce only while this notifier owns the
-  // check-to-sleep mutex. Rearm before a woken waiter can recheck and repark.
-  // RMW preserves the publication chain of notifications coalesced above.
-  if (bucket.waiters.load(std::memory_order_relaxed) != 0)
-    bucket.wakeNeeded.fetch_or(1U, std::memory_order_acq_rel);
-  else
-    bucket.wakeNeeded.fetch_and(~1U, std::memory_order_acq_rel);
-#endif
-  require(pthread_mutex_unlock(&bucket.mutex) == 0);
+  notifyRegistered(bucket);
 }
