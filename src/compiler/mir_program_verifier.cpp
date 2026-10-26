@@ -18484,14 +18484,20 @@ verifyMirProgramContracts(const MirProgram &program) {
           instance.traits.transferCapable == mayCrossThreads &&
           instance.traits.shareCapable == mayCrossThreads &&
           payloadRequiresActiveCleanup &&
-          instance.requiresActiveCleanup ==
-              (storageCapability && *payloadRequiresActiveCleanup);
+          instance.requiresActiveCleanup == storageCapability &&
+          (!storageCapability ||
+           (instance.traits.drop == DropKind::Lexical &&
+            instance.traits.relocation ==
+                (mirTypeRelocationKind(program, instance.type.arguments.front()) ==
+                         RelocationKind::Unavailable
+                     ? RelocationKind::Unavailable
+                     : RelocationKind::Structural)));
       if (!exactMutexCapability) {
         result.errors.push_back(
             {.bodyKind = MirBodyKind::FieldInitializers,
              .owner = instance.id,
              .message = "compiler-owned mutex capability class does not "
-                        "retain its exact passive native-storage shape"});
+                        "retain its exact native-storage lifecycle shape"});
       }
     }
     if (instance.compilerCapability ==
@@ -18841,10 +18847,10 @@ verifyMirProgramContracts(const MirProgram &program) {
         instance.destructor.has_value() ||
         instance.compilerCapability ==
             CompilerCapabilityTypeKind::SharedOwner ||
-        ((instance.compilerCapability ==
-              CompilerCapabilityTypeKind::MutexStorage ||
-          instance.compilerCapability ==
-              CompilerCapabilityTypeKind::OptionalStorage) &&
+        instance.compilerCapability ==
+            CompilerCapabilityTypeKind::MutexStorage ||
+        (instance.compilerCapability ==
+             CompilerCapabilityTypeKind::OptionalStorage &&
          instance.type.arguments.size() == 1 &&
          typeRequiresActiveCleanup(instance.type.arguments.front(),
                                    typeRequiresActiveCleanup)

@@ -3,6 +3,7 @@
 #include "atomic_lane.h"
 
 #include <array>
+#include <atomic>
 #include <pthread.h>
 
 namespace {
@@ -11,6 +12,7 @@ using gti::runtime::atomic_lane::require;
 struct Bucket {
   pthread_mutex_t mutex;
   pthread_cond_t condition;
+  std::atomic<unsigned> waiters{0};
 };
 
 // Trivial process-lifetime storage: late TLS/static cleanup may be its first
@@ -36,10 +38,33 @@ void wait(const void *lane, std::uint64_t old, std::uint32_t order) noexcept {
   require(old <= std::numeric_limits<T>::max());
   if (gti::runtime::atomic_lane::load<T>(lane, order) != static_cast<T>(old))
     return;
+  // Short handoffs often finish before entering the kernel. Bound this work:
+  // an unchanged lane always proceeds to the native parking protocol below.
+#if defined(__aarch64__)
+  constexpr unsigned probes = 8192;
+#else
+  constexpr unsigned probes = 256;
+#endif
+  for (unsigned probe = 0; probe != probes; ++probe) {
+#if defined(__aarch64__)
+    __asm__ __volatile__("yield");
+#elif defined(__x86_64__)
+    __builtin_ia32_pause();
+#endif
+    if (gti::runtime::atomic_lane::load<T>(lane, order) != static_cast<T>(old))
+      return;
+  }
   auto &bucket = bucketFor(lane, sizeof(T));
   require(pthread_mutex_lock(&bucket.mutex) == 0);
+  require(bucket.waiters.fetch_add(1, std::memory_order_relaxed) !=
+          std::numeric_limits<unsigned>::max());
+  // Together with notify's fence, registration and the publishing lane store
+  // cannot both be missed: whichever fence comes second observes the other's
+  // preceding atomic write. The mutex then closes the check-to-sleep window.
+  std::atomic_thread_fence(std::memory_order_seq_cst);
   while (gti::runtime::atomic_lane::load<T>(lane, order) == static_cast<T>(old))
     require(pthread_cond_wait(&bucket.condition, &bucket.mutex) == 0);
+  bucket.waiters.fetch_sub(1, std::memory_order_relaxed);
   require(pthread_mutex_unlock(&bucket.mutex) == 0);
 }
 } // namespace
@@ -73,6 +98,9 @@ extern "C" void gti_rt_atomic_notify_v1(const void *lane,
   gti::runtime::atomic_lane::validate(lane, width_bytes);
   require(all <= 1);
   auto &bucket = bucketFor(lane, width_bytes);
+  std::atomic_thread_fence(std::memory_order_seq_cst);
+  if (bucket.waiters.load(std::memory_order_relaxed) == 0)
+    return;
   require(pthread_mutex_lock(&bucket.mutex) == 0);
   // A single native wake could choose a different colliding lane and strand
   // an eligible waiter. Broadcast preserves both source notification contracts.

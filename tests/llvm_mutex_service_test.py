@@ -19,10 +19,12 @@ def main():
     parser.add_argument("--cc", default="cc")
     parser.add_argument("--cxx", default="c++")
     parser.add_argument("--llvm-cc", default="clang")
+    parser.add_argument("--runtime-library", type=Path)
     parser.add_argument("--sanitize", choices=("address,undefined", "thread"))
     parser.add_argument("--evidence-dir", type=Path)
     args = parser.parse_args()
     root, output = args.root.resolve(), args.output.resolve()
+    runtime_library = args.runtime_library or args.emitter.resolve().parent / "libgti_runtime.a"
     output.mkdir(parents=True, exist_ok=True)
     evidence = args.evidence_dir.resolve() if args.evidence_dir else output
     evidence.mkdir(parents=True, exist_ok=True)
@@ -57,6 +59,8 @@ def main():
     flags += instrumentation
     run("runtime", [args.cxx, "-std=c++20", *flags,
         "-Dgti_rt_mutex_lock_v1=gti_test_mutex_real_lock_v1", "-c", root / "runtime/src/mutex.cpp",
+        "-Dgti_rt_mutex_initialize_v1=gti_test_mutex_real_initialize_v1",
+        "-Dgti_rt_mutex_destroy_v1=gti_test_mutex_real_destroy_v1",
         "-o", output / "runtime.o"])
     run("fixture", [args.cc, "-std=c17", *flags, "-c", root / "tests/fixtures/llvm_mutex_service.c",
                     "-o", output / "fixture.o"])
@@ -70,9 +74,9 @@ def main():
                 raise AssertionError(f"generated {mode} mutex access lacks {args.sanitize} instrumentation")
         program = output / f"mutex-{mode}"
         run(f"link-{mode}", [args.cxx, "-pthread", *instrumentation, output / "fixture.o", output / "runtime.o",
-                             output / f"mutex-{mode}.o", "-o", program])
+                             output / f"mutex-{mode}.o", runtime_library, "-o", program])
         run(f"execute-{mode}", [program])
-        for fault in ("active-lock", "wrong-owner", "inactive-read"):
+        for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock"):
             run(f"{fault}-{mode}", [program, fault], death=True)
 
 

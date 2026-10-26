@@ -1999,15 +1999,50 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       if (selected.arguments.size() != 1 || !owner->requiresActiveCleanup)
         return std::nullopt;
       auto payload = self(self, selected.arguments.front());
-      if (!payload || !payload->requiresActiveCleanup)
+      const bool shell = owner->compilerCapability ==
+                         CompilerCapabilityTypeKind::MutexStorage;
+      if (!shell && (!payload || !payload->requiresActiveCleanup))
         return std::nullopt;
+      if (shell && !payload) {
+        const auto passive = [&](const auto &check,
+                                 const SemanticType &value) -> bool {
+          if (value.kind == SemanticType::Array)
+            return value.arguments.size() == 1 &&
+                   check(check, value.arguments.front());
+          if (value.kind == SemanticType::Class) {
+            const auto *instance = classFor(value);
+            return instance && !instance->requiresActiveCleanup;
+          }
+          if (value.kind == SemanticType::Enum) {
+            const auto *enumeration = program.findPayloadEnum(value);
+            return !enumeration || !enumeration->requiresActiveCleanup;
+          }
+          if (value.kind == SemanticType::Lambda)
+            return std::any_of(program.lambdaInstances().begin(),
+                               program.lambdaInstances().end(),
+                               [&](const auto &lambda) {
+                                 return lambda.type == value &&
+                                        std::none_of(
+                                            lambda.captureRequiresActiveCleanup.begin(),
+                                            lambda.captureRequiresActiveCleanup.end(),
+                                            [](bool active) { return active; });
+                               });
+          return value.kind != SemanticType::UniqueOwner &&
+                 value.kind != SemanticType::SharedPointer &&
+                 value != SemanticType::Unknown;
+        };
+        if (!passive(passive, selected.arguments.front()))
+          return std::nullopt;
+      }
       // These private inline capabilities own a conditionally live payload
       // rather than a source-visible field. Preserve that
       // ownership edge explicitly so an enclosing aggregate or shared owner
-      // can discharge the payload before leaving the native shell empty.
+      // can discharge the payload before retiring the native shell. A mutex
+      // shell has its own endpoint even when the payload needs no cleanup.
       return MirDropType{.type = selected,
                          .classInstance = owner->id,
-                         .aggregate = {*payload},
+                         .aggregate = payload ? std::vector<MirDropType>{*payload}
+                                              : std::vector<MirDropType>{},
                          .requiresActiveCleanup = true};
     }
     if (selected.kind == SemanticType::Enum) {
@@ -2259,7 +2294,9 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
       // generated move; it is never a byte copy of a polymorphic object.
       result = RelocationKind::Structural;
     } else if (owner->compilerCapability ==
-               CompilerCapabilityTypeKind::OptionalStorage) {
+                   CompilerCapabilityTypeKind::OptionalStorage ||
+               owner->compilerCapability ==
+                   CompilerCapabilityTypeKind::MutexStorage) {
       result = candidate.arguments.size() == 1
                    ? merge(RelocationKind::Structural,
                            self(self, candidate.arguments.front()))

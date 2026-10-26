@@ -11,6 +11,9 @@ namespace lang::native_llvm {
 [[nodiscard]] std::optional<SemanticType>
 nativeMutexElement(const MirProgram &program, const SemanticType &type,
                    CompilerCapabilityTypeKind kind);
+[[nodiscard]] std::optional<SemanticType>
+nativeMutexConstructor(const MirProgram &program,
+                       const MirConstructorInstance &constructor);
 [[nodiscard]] bool nativeMutexCall(const MirProgram &program,
                                    const MirBody &body,
                                    const MirInstruction &instruction);

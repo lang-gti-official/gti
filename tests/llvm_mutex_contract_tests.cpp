@@ -1,5 +1,7 @@
+#include "../src/compiler/llvm/lifetimes.h"
 #include "../src/compiler/llvm/mutexes.h"
 #include "cpp_backend_test_support.h"
+#include "gti/mir_effects.h"
 
 #include <iostream>
 #include <llvm/Support/raw_ostream.h>
@@ -46,6 +48,30 @@ void check(const std::filesystem::path &root,
   }
   require(storage != SemanticType::Void && token != SemanticType::Void,
           "exact source has both mutex capabilities");
+  bool constructorSeen = false;
+  for (const auto &constructor : program.constructorInstances()) {
+    const auto *owner = program.findClassInstance(constructor.owner);
+    if (!owner || owner->type != storage)
+      continue;
+    constructorSeen = true;
+    require(nativeMutexConstructor(program, constructor) == SemanticType::Int32,
+            "sealed private constructor selects its exact payload transport");
+    auto changed = constructor;
+    changed.parameterTypes.clear();
+    require(!nativeMutexConstructor(program, changed),
+            "constructor parameter mismatch rejected");
+    changed = constructor;
+    changed.body.places.clear();
+    require(!nativeMutexConstructor(program, changed),
+            "constructor binding mismatch rejected");
+    changed = constructor;
+    changed.body.blocks.front().instructions.push_back(
+        {.kind = MirInstructionKind::Call});
+    require(!nativeMutexConstructor(program, changed),
+            "constructor cannot hide a source call");
+  }
+  require(constructorSeen,
+          "source materializes the native payload constructor");
   const auto layout = session.layouts().mutexStorage(storage);
   require(layout.element == SemanticType::Int32 &&
               layout.object.alignment == 8 &&
@@ -155,9 +181,11 @@ void check(const std::filesystem::path &root,
                  ir.CreateStructGEP(layout.object.storage,
                                     initialize->getArg(0),
                                     layout.payloadIndex));
-  ir.CreateStore(ir.getInt8(1), ir.CreateStructGEP(layout.object.storage,
-                                                   initialize->getArg(0),
-                                                   layout.payloadActiveIndex));
+  ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive |
+                            MutexStorageLayout::payloadLive),
+                 ir.CreateStructGEP(layout.object.storage,
+                                    initialize->getArg(0),
+                                    layout.payloadActiveIndex));
   ir.CreateRetVoid();
   auto *destroy =
       function("gti_test_mutex_destroy", {session.layouts().pointer()});
@@ -177,11 +205,39 @@ void check(const std::filesystem::path &root,
   ir.SetInsertPoint(llvm::BasicBlock::Create(session.context(), "entry", move));
   mutexes.moveToken(move->getArg(0), move->getArg(1), token);
   ir.CreateRetVoid();
+  Failures failures(session);
+  Lifetimes lifetimes(
+      session, failures, [](MirBodyAddress) -> llvm::Function * {
+        throw std::logic_error("passive shell has no source cleanup body");
+      });
+  auto *transfer =
+      function("gti_test_mutex_transfer",
+               {session.layouts().pointer(), session.layouts().pointer()});
+  ir.SetInsertPoint(
+      llvm::BasicBlock::Create(session.context(), "entry", transfer));
+  require(lifetimes.transferMutexes(ir, transfer->getArg(0),
+                                    transfer->getArg(1), storage),
+          "sealed mutex storage uses native identity transfer");
+  ir.CreateRetVoid();
+  const auto recipe = mirUniqueCleanupType(program, storage);
+  require(recipe && recipe->requiresActiveCleanup && recipe->aggregate.empty(),
+          "source-derived passive shell cleanup needs no fabricated payload "
+          "recipe");
+  auto *cleanup =
+      function("gti_test_mutex_cleanup", {session.layouts().pointer()});
+  ir.SetInsertPoint(
+      llvm::BasicBlock::Create(session.context(), "entry", cleanup));
+  ir.CreateCall(lifetimes.cleanup(*recipe),
+                {cleanup->getArg(0),
+                 ir.CreateAlloca(session.abi().failureChannel()),
+                 ir.getFalse()});
+  ir.CreateRetVoid();
   if (!sanitizer.empty())
     for (auto &function : session.module())
       if (!function.isDeclaration())
-        function.addFnAttr(sanitizer == "thread" ? llvm::Attribute::SanitizeThread
-                                                 : llvm::Attribute::SanitizeAddress);
+        function.addFnAttr(sanitizer == "thread"
+                               ? llvm::Attribute::SanitizeThread
+                               : llvm::Attribute::SanitizeAddress);
   session.verify();
   if (!output.empty()) {
     std::error_code error;
@@ -199,7 +255,8 @@ int main(int argc, char **argv) {
   if (argc != 2 && argc != 3 && argc != 4)
     return 2;
   const std::string_view sanitizer = argc == 4 ? argv[3] : "";
-  if (!sanitizer.empty() && sanitizer != "thread" && sanitizer != "address,undefined")
+  if (!sanitizer.empty() && sanitizer != "thread" &&
+      sanitizer != "address,undefined")
     return 2;
   try {
     check(argv[1], argc >= 3 ? argv[2] : "", sanitizer);

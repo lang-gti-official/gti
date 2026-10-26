@@ -152,13 +152,12 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
   if (type.kind == SemanticType::Class) {
     const ClassInfo *owner = classInfo(type);
     if (owner != nullptr &&
-        owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
+        (owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner ||
+         owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage)) {
       return true;
     }
-    if (owner != nullptr && (owner->compilerCapability ==
-                                 CompilerCapabilityTypeKind::MutexStorage ||
-                             owner->compilerCapability ==
-                                 CompilerCapabilityTypeKind::OptionalStorage)) {
+    if (owner != nullptr && owner->compilerCapability ==
+                                CompilerCapabilityTypeKind::OptionalStorage) {
       return type.arguments.size() == 1 &&
              requiresActiveCleanup(type.arguments.front(), query);
     }
@@ -770,14 +769,18 @@ auto SemanticVisitor::Impl::typeTraits(
             : SemanticTypeTraits{};
     visiting.pop_back();
     return SemanticTypeTraits{.ownership = OwnershipKind::Value,
-                              .drop = element.drop,
+                              .drop = DropKind::Lexical,
                               .copyable = false,
                               .movable = true,
                               .copyAssignable = false,
                               .moveAssignable = false,
                               .containsBorrowedState = false,
                               .transferCapable = element.transferCapable,
-                              .shareCapable = element.transferCapable};
+                              .shareCapable = element.transferCapable,
+                              .relocation =
+                                  element.relocation != RelocationKind::Unavailable
+                                      ? RelocationKind::Structural
+                                      : RelocationKind::Unavailable};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::OptionalStorage) {
     const bool relocatable =

@@ -4381,10 +4381,24 @@ boundary receives the zero-extended same-width old representation (including
 signed lanes); booleans use their canonical byte lane. The private service
 uses same-width native atomic loads and a process-lifetime pthread parking
 domain. An already-changed lane returns before domain initialization or locking.
-Blocking checks and enrollment share the notification lock, and every wake
-rechecks the value. Hash collisions require broadcast even for notify-one;
-notifications carry neither saved credit nor a memory-order edge. No spin wait,
-GTI allocation, callback, or C++ exception transport implements this operation.
+An unchanged lane receives a finite pre-parking probe (8192 processor hints on
+reviewed arm64, 256 pauses on reviewed x86_64), then enters the native blocking
+protocol. Blocking checks and enrollment share the notification lock, and every
+wake rechecks the value. Hash collisions require broadcast even for notify-one;
+notifications carry neither saved credit nor a source memory-order edge. No
+unbounded polling, GTI allocation, callback, or C++ exception transport implements
+this operation. The probe is a latency/CPU tradeoff, not a progress substitute.
+
+Each bucket counts registered waiters. Registration precedes an SC fence and
+the under-lock lane check; notification places an SC fence after the caller's
+lane publication and before checking that count. The two fences cannot both
+precede the other's preceding atomic write in coherence order: that would
+require each fence to precede the other in the SC order. Thus notification may
+skip locking when it observes zero; either it sees registration, or the waiter
+sees the lane publication before sleeping. The mutex closes the remaining
+check-to-sleep window. This uses the reviewed raw-lane compiler profile and
+the fence/coherence rule in [the C++ memory model](https://eel.is/c++draft/atomics.order#4),
+not an inferred synchronization edge in GTI source. ABA remains allowed.
 
 All callers in an executable must share one final-image parking provider. This
 does not establish independently linked module attachment/unload support. The
@@ -4392,7 +4406,8 @@ does not establish independently linked module attachment/unload support. The
 O0-O3; `llvm_atomic_wait_service` joins actual source-verified emitter plans to
 the production service through test-only C-shaped adapters. Runtime controls
 separately cover enrollment races, spurious wakes, collisions, ABA/no credit,
-late first use and terminal native errors. Neither those adapters nor this
+late first use, terminal native errors and a real parked thread's CPU budget.
+Neither those adapters nor this
 witness admits managed/scoped workers. Generated boundary sanitizer, platform,
 installed-consumer and runtime-cost evidence remain separate acceptance duties;
 the whole O-LLVM-13 milestone is not complete.
@@ -4400,14 +4415,21 @@ the whole O-LLVM-13 milestone is not complete.
 The isolated mutex emitter consumes exact private storage/token capabilities
 and sealed lock, unlock, active and borrowed-read operations. Its reviewed
 native storage is a 64-byte, eight-aligned pthread slot followed by payload
-storage and a distinct payload-active byte; a lock token is one owner identity
+storage and a distinct state byte with separate shell/payload-live bits; a lock token is one owner identity
 pointer. Failed lock status leaves the token inert, transfer clears the old
 token, and unlock retires it. Defensive checks on malformed private token use
 trap in the test boundary; they do not define a new source failure convention.
 The production runtime explicitly initializes and destroys the native slot.
-No public mutex admission follows from that layout or emitter: construction,
-fresh-shell move, replacement and destruction still need the semantic/MIR
-native-shell cleanup endpoint even when the payload itself is passive.
+Semantic cleanup facts and MIR recipes now retain shell retirement even with a
+passive payload; active payload recipes remain explicit children. Isolated LLVM
+lifecycle helpers initialize a fresh shell, transfer only payloads and retire
+the consumed native identity. Sealed cleanup disarms payload and shell state
+separately. The native-service test counts initialization/retirement and repeats
+cleanup of both moved-from and retired storage. This is not public admission:
+source construction/rollback/replacement integration remains pending, and the
+new active-cleanup fact conflicts with the existing no-global-shutdown policy
+for previously valid passive-payload mutex globals. That policy/hosted endpoint
+must be reconciled before these lifecycle changes can be integrated.
 The component harness verifies that ordinary mutex source remains unadmitted,
 then exercises the isolated operations with real C runtime services, including
 contention and sanitizer-instrumented emitted accesses. The observational cost

@@ -703,6 +703,63 @@ int main() {
          "MIR should reject a mutex cleanup recipe with its payload removed");
 }
 
+void testPassiveMutexShellRecipe() {
+  const auto frontend = analyze("passive-mutex-shell.gti", R"gti(
+#include <std/mutex>
+class Cell {
+  std::mutex<int32_t> value;
+public:
+  Cell(int32_t value) : value(std::mutex<int32_t>(value)) {}
+};
+int main() {
+  Cell first{7};
+  Cell second = std::move(first);
+  return 0;
+}
+)gti");
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "a passive payload still owns a native shell retirement endpoint");
+  if (!frontend.canGenerateCode()) {
+    printDiagnostics(frontend);
+    return;
+  }
+  bool hirShell = false;
+  for (const auto &owner : frontend.hir.classInstances())
+    if (owner.compilerCapability ==
+        lang::CompilerCapabilityTypeKind::MutexStorage) {
+      hirShell = true;
+      expect(owner.requiresActiveCleanup &&
+                 owner.traits.drop == lang::DropKind::Lexical &&
+                 owner.traits.relocation == lang::RelocationKind::Structural,
+             "HIR preserves semantic shell cleanup and non-bitwise relocation");
+    }
+  expect(hirShell, "the source wrapper materializes its identity-bound shell");
+  for (unsigned mutation = 0; mutation != 3; ++mutation) {
+    lang::MirProgram malformed = frontend.mir;
+    bool found = false;
+    forEachDrop(malformed, [&](lang::MirDropObligation &obligation) {
+      if (found)
+        return;
+      if (auto *shell = findMutexDropRecipe(malformed, obligation.dropType)) {
+        found = true;
+        expect(shell->requiresActiveCleanup && shell->aggregate.empty(),
+               "sealed passive mutex cleanup names the shell, not a fake payload drop");
+        if (mutation == 0)
+          shell->requiresActiveCleanup = false;
+        if (mutation == 1)
+          shell->classInstance.reset();
+        if (mutation == 2)
+          shell->aggregate.push_back(
+              {.type = lang::SemanticType::Int32,
+               .requiresActiveCleanup = true});
+      }
+    });
+    expect(found && !lang::verifyMirProgram(malformed).valid(),
+           "MIR rejects erased shell authority and invented payload cleanup");
+  }
+}
+
 void testSemanticBoundaries() {
   const std::string use = R"(
 #include <std/mutex>
@@ -1481,6 +1538,7 @@ int main() {
   testPreparedMutexPayload();
   testPassiveClosureParameterStorage();
   testMutexCleanupRecipe();
+  testPassiveMutexShellRecipe();
   testSemanticBoundaries();
   testPayloadConcurrencyCapabilities();
   testVerifierMutations();

@@ -107,9 +107,13 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
                               : nullptr;
       owner != nullptr &&
       owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
-    if (type.type.arguments.size() != 1 || type.aggregate.size() != 1 ||
-        type.aggregate.front().type != type.type.arguments.front())
+    if (type.type.arguments.size() != 1 || type.aggregate.size() > 1 ||
+        (!type.aggregate.empty() &&
+         type.aggregate.front().type != type.type.arguments.front()))
       throw std::logic_error("MIR mutex cleanup lost its payload recipe");
+    if (type.aggregate.empty())
+      return receiver + ".destroy_value_with_failure(" + arguments +
+             ", [](auto &, ::gti_failure_record_v2 *, bool) { return true; })";
     return receiver + ".destroy_value_with_failure(" + arguments +
            ", [](auto &__gti_value, ::gti_failure_record_v2 *__gti_record, "
            "bool __gti_unwinding) { return " +

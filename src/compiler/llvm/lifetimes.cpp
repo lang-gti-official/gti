@@ -1,12 +1,225 @@
 #include "lifetimes.h"
 #include "closure_environment.h"
+#include "gti/mir_effects.h"
 #include "memory.h"
+#include "mutexes.h"
 #include "payloads.h"
 
 namespace lang::native_llvm {
 
 Lifetimes::Lifetimes(Session &session, Failures &failures, FindBody findBody)
     : session(session), failures(failures), findBody(std::move(findBody)) {}
+
+bool Lifetimes::containsMutex(const SemanticType &type) const {
+  if (type.kind == SemanticType::Array)
+    return containsMutex(type.arguments.at(0));
+  if (type.kind == SemanticType::Enum) {
+    const auto *enumeration = session.program().mir().findPayloadEnum(type);
+    if (enumeration)
+      for (const auto &variant : enumeration->variants)
+        for (const auto &payload : variant.payloadTypes)
+          if (containsMutex(payload))
+            return true;
+    return false;
+  }
+  if (type.kind == SemanticType::Lambda) {
+    const auto environment =
+        closureEnvironmentLayout(session.program().mir(), type);
+    if (!environment)
+      return false;
+    for (std::size_t index = 0; index < environment->captureTypes.size();
+         ++index)
+      if (!isBorrowingCapture(environment->captureModes[index]) &&
+          containsMutex(environment->captureTypes[index]))
+        return true;
+    return false;
+  }
+  if (type.kind != SemanticType::Class)
+    return false;
+  const auto &owner = session.layouts().instance(type);
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage)
+    return true;
+  // Pointer-owning and other private capabilities do not inline source fields.
+  if (owner.compilerCapability != CompilerCapabilityTypeKind::None)
+    return false;
+  for (const auto &field : owner.declaredFields)
+    if (containsMutex(field.type))
+      return true;
+  for (const auto &base : owner.bases)
+    if (!base.interface && containsMutex(base.type))
+      return true;
+  return false;
+}
+
+bool Lifetimes::transferMutexes(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                                llvm::Value *source, const SemanticType &type) {
+  if (!containsMutex(type))
+    return false;
+  if (destination != source)
+    ir.CreateCall(mutexTransfer(type), {destination, source});
+  return true;
+}
+
+llvm::Function *Lifetimes::mutexTransfer(const SemanticType &type) {
+  const auto layout = session.layouts().get(type);
+  if (const auto found = mutexTransfers.find(layout.storage);
+      found != mutexTransfers.end())
+    return found->second;
+  auto *function = llvm::Function::Create(
+      llvm::FunctionType::get(
+          llvm::Type::getVoidTy(session.context()),
+          {session.layouts().pointer(), session.layouts().pointer()}, false),
+      llvm::GlobalValue::InternalLinkage,
+      "__gti_native_mutex_transfer_" + std::to_string(mutexTransfers.size()),
+      session.module());
+  mutexTransfers.emplace(layout.storage, function);
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  auto *destination = function->getArg(0);
+  auto *source = function->getArg(1);
+  auto *done = llvm::BasicBlock::Create(session.context(), "done", function);
+  auto *run = llvm::BasicBlock::Create(session.context(), "transfer", function);
+  ir.CreateCondBr(ir.CreateICmpEQ(destination, source), done, run);
+  ir.SetInsertPoint(run);
+  const auto transfer = [&](const SemanticType &part, llvm::Value *to,
+                            llvm::Value *from) {
+    if (!transferMutexes(ir, to, from, part)) {
+      const auto child = session.layouts().get(part);
+      ir.CreateMemCpy(to, llvm::MaybeAlign(child.alignment), from,
+                      llvm::MaybeAlign(child.alignment), child.size);
+    }
+  };
+  if (nativeMutexElement(session.program().mir(), type,
+                         CompilerCapabilityTypeKind::MutexStorage)) {
+    const auto mutex = session.layouts().mutexStorage(type);
+    auto *state =
+        ir.CreateStructGEP(layout.storage, source, mutex.payloadActiveIndex);
+    auto *bits = ir.CreateLoad(ir.getInt8Ty(), state);
+    auto *toState = ir.CreateStructGEP(layout.storage, destination,
+                                       mutex.payloadActiveIndex);
+    ir.CreateStore(ir.getInt8(0), toState);
+    auto *live =
+        llvm::BasicBlock::Create(session.context(), "shell.live", function);
+    ir.CreateCondBr(
+        ir.CreateICmpNE(
+            ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::shellLive)),
+            ir.getInt8(0)),
+        live, done);
+    ir.SetInsertPoint(live);
+    Mutexes mutexes(session, ir);
+    mutexes.initializeShell(destination, type);
+    auto *payload =
+        llvm::BasicBlock::Create(session.context(), "payload.live", function);
+    auto *retire =
+        llvm::BasicBlock::Create(session.context(), "shell.retire", function);
+    ir.CreateCondBr(
+        ir.CreateICmpNE(
+            ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::payloadLive)),
+            ir.getInt8(0)),
+        payload, retire);
+    ir.SetInsertPoint(payload);
+    auto *fromPayload =
+        ir.CreateStructGEP(layout.storage, source, mutex.payloadIndex);
+    transfer(
+        mutex.element,
+        ir.CreateStructGEP(layout.storage, destination, mutex.payloadIndex),
+        fromPayload);
+    moved(ir, fromPayload, mutex.element);
+    ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive |
+                              MutexStorageLayout::payloadLive),
+                   toState);
+    ir.CreateBr(retire);
+    ir.SetInsertPoint(retire);
+    ir.CreateStore(ir.getInt8(0), state);
+    mutexes.destroyShell(source, type);
+  } else if (type.kind == SemanticType::Array && type.arrayLength) {
+    auto *entry = ir.GetInsertBlock();
+    auto *loop =
+        llvm::BasicBlock::Create(session.context(), "elements", function);
+    auto *end =
+        llvm::BasicBlock::Create(session.context(), "elements.done", function);
+    ir.CreateBr(loop);
+    ir.SetInsertPoint(loop);
+    auto *index = ir.CreatePHI(ir.getInt64Ty(), 2);
+    index->addIncoming(ir.getInt64(0), entry);
+    transfer(type.arguments.at(0),
+             ir.CreateGEP(layout.storage, destination, {ir.getInt64(0), index}),
+             ir.CreateGEP(layout.storage, source, {ir.getInt64(0), index}));
+    auto *next = ir.CreateAdd(index, ir.getInt64(1));
+    index->addIncoming(next, ir.GetInsertBlock());
+    ir.CreateCondBr(ir.CreateICmpULT(next, ir.getInt64(type.arrayLength)), loop,
+                    end);
+    ir.SetInsertPoint(end);
+  } else if (type.kind == SemanticType::Class) {
+    const auto &owner = session.layouts().instance(type);
+    if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+      // transferMutexes already retired the consumed native identity.
+      ir.CreateRetVoid();
+      return function;
+    }
+    for (const auto &base : owner.bases) {
+      if (base.interface)
+        continue;
+      const auto index = session.layouts().baseIndex(type, base.instance);
+      transfer(base.type,
+               ir.CreateStructGEP(layout.storage, destination, index),
+               ir.CreateStructGEP(layout.storage, source, index));
+    }
+    for (const auto &field : owner.declaredFields) {
+      const auto index = session.layouts().fieldIndex(type, field.symbol);
+      transfer(field.type,
+               ir.CreateStructGEP(layout.storage, destination, index),
+               ir.CreateStructGEP(layout.storage, source, index));
+    }
+    if (const auto index = session.layouts().activeIndex(type))
+      ir.CreateStore(
+          ir.CreateLoad(ir.getInt8Ty(),
+                        ir.CreateStructGEP(layout.storage, source, *index)),
+          ir.CreateStructGEP(layout.storage, destination, *index));
+  } else if (type.kind == SemanticType::Lambda) {
+    const auto environment =
+        closureEnvironmentLayout(session.program().mir(), type);
+    for (std::size_t index = 0; index < environment->captureTypes.size();
+         ++index) {
+      auto *to = ir.CreateStructGEP(layout.storage, destination, index);
+      auto *from = ir.CreateStructGEP(layout.storage, source, index);
+      if (isBorrowingCapture(environment->captureModes[index]))
+        ir.CreateStore(ir.CreateLoad(session.layouts().pointer(), from), to);
+      else
+        transfer(environment->captureTypes[index], to, from);
+    }
+  } else if (type.kind == SemanticType::Enum) {
+    const auto &payload = session.layouts().payload(type);
+    const auto *enumeration = session.program().mir().findPayloadEnum(type);
+    auto *tag =
+        ir.CreateLoad(ir.getInt32Ty(), payloadTagAddress(ir, payload, source));
+    ir.CreateStore(tag, payloadTagAddress(ir, payload, destination));
+    auto *dispatch = ir.CreateSwitch(tag, done);
+    for (const auto &variant : enumeration->variants) {
+      auto *block =
+          llvm::BasicBlock::Create(session.context(), "variant", function);
+      dispatch->addCase(ir.getInt32(variant.variantIndex), block);
+      ir.SetInsertPoint(block);
+      for (std::size_t index = 0; index < variant.payloadTypes.size(); ++index)
+        transfer(variant.payloadTypes[index],
+                 payloadFieldAddress(ir, payload, destination,
+                                     variant.variantIndex, index),
+                 payloadFieldAddress(ir, payload, source, variant.variantIndex,
+                                     index));
+      ir.CreateBr(done);
+    }
+    ir.SetInsertPoint(done);
+    ir.CreateRetVoid();
+    return function;
+  } else {
+    throw std::logic_error(
+        "LLVM native mutex transfer lost its structural owner");
+  }
+  ir.CreateBr(done);
+  ir.SetInsertPoint(done);
+  ir.CreateRetVoid();
+  return function;
+}
 
 void Lifetimes::active(llvm::IRBuilder<> &ir, llvm::Value *address,
                        const SemanticType &type, bool value) {
@@ -53,6 +266,13 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
     ir.SetInsertPoint(done);
   } else if (type.kind == SemanticType::Class) {
     const auto &owner = session.layouts().instance(type);
+    if (owner.compilerCapability ==
+        CompilerCapabilityTypeKind::MutexLockToken) {
+      ir.CreateStore(
+          llvm::ConstantPointerNull::get(session.layouts().pointer()), address);
+      ir.CreateRetVoid();
+      return function;
+    }
     if (sharedOwnerRepresentation(session.program().mir(), owner)) {
       ir.CreateStore(llvm::Constant::getNullValue(storage), address);
       ir.CreateRetVoid();
@@ -134,6 +354,9 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
   if (type.kind != SemanticType::Class)
     return false;
   const auto &owner = session.layouts().instance(type);
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexLockToken ||
+      owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage)
+    return true;
   if (sharedOwnerRepresentation(session.program().mir(), owner))
     return true;
   if (owner.requiresActiveDropState)
@@ -292,6 +515,52 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
     child(recipe.aggregate[0], sharedPointee);
     Memory memory(session, ir, {}, {}, {});
     memory.releaseBytes(sharedBlock);
+  } else if (nativeMutexElement(session.program().mir(), recipe.type,
+                                CompilerCapabilityTypeKind::MutexStorage)) {
+    const auto expected =
+        mirUniqueCleanupType(session.program().mir(), recipe.type);
+    if (!expected || !recipe.requiresActiveCleanup ||
+        recipe.classInstance != expected->classInstance ||
+        recipe.aggregate != expected->aggregate || recipe.destructor ||
+        recipe.fixedArray)
+      throw std::logic_error(
+          "LLVM mutex cleanup lost its sealed shell/payload recipe");
+    const auto layout = session.layouts().mutexStorage(recipe.type);
+    auto *state = ir.CreateStructGEP(layout.object.storage, address,
+                                     layout.payloadActiveIndex);
+    auto *bits = ir.CreateLoad(ir.getInt8Ty(), state);
+    auto *live =
+        llvm::BasicBlock::Create(session.context(), "mutex.live", function);
+    auto *done =
+        llvm::BasicBlock::Create(session.context(), "mutex.done", function);
+    ir.CreateCondBr(
+        ir.CreateICmpNE(
+            ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::shellLive)),
+            ir.getInt8(0)),
+        live, done);
+    ir.SetInsertPoint(live);
+    ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive), state);
+    if (!recipe.aggregate.empty()) {
+      auto *payload = llvm::BasicBlock::Create(session.context(),
+                                               "mutex.payload", function);
+      auto *retire =
+          llvm::BasicBlock::Create(session.context(), "mutex.retire", function);
+      ir.CreateCondBr(
+          ir.CreateICmpNE(
+              ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::payloadLive)),
+              ir.getInt8(0)),
+          payload, retire);
+      ir.SetInsertPoint(payload);
+      child(recipe.aggregate.front(),
+            ir.CreateStructGEP(layout.object.storage, address,
+                               layout.payloadIndex));
+      ir.CreateBr(retire);
+      ir.SetInsertPoint(retire);
+    }
+    ir.CreateStore(ir.getInt8(0), state);
+    Mutexes(session, ir).destroyShell(address, recipe.type);
+    ir.CreateBr(done);
+    ir.SetInsertPoint(done);
   } else if (recipe.type.kind == SemanticType::Enum &&
              session.program().mir().findPayloadEnum(recipe.type)) {
     const auto &layout = session.layouts().payload(recipe.type);
@@ -440,9 +709,9 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
   }
   auto *failedResult = ir.CreateLoad(ir.getInt1Ty(), failed);
   auto *leave = llvm::BasicBlock::Create(session.context(),
-                                        "cleanup.context.leave", function);
-  auto *result = llvm::BasicBlock::Create(session.context(),
-                                         "cleanup.result", function);
+                                         "cleanup.context.leave", function);
+  auto *result =
+      llvm::BasicBlock::Create(session.context(), "cleanup.result", function);
   ir.CreateCondBr(failedResult, leave, result);
   ir.SetInsertPoint(leave);
   failures.leaveCleanup(

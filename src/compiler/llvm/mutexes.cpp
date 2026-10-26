@@ -1,4 +1,5 @@
 #include "mutexes.h"
+#include "gti/mir_effects.h"
 #include "runtime_abi.h"
 
 #include <algorithm>
@@ -31,9 +32,65 @@ nativeMutexElement(const MirProgram &program, const SemanticType &type,
       owner->cAbiLayout || owner->unionLayout || owner->destructor ||
       owner->requiresActiveDropState || !owner->bases.empty() ||
       !owner->structuralBases.empty() || !owner->declaredFields.empty() ||
-      !owner->fields.empty() || !owner->fieldDropOrder.empty())
+      !owner->fields.empty() || !owner->fieldDropOrder.empty() ||
+      owner->requiresActiveCleanup !=
+          (kind == CompilerCapabilityTypeKind::MutexStorage))
     return {};
   return type.arguments[0];
+}
+
+std::optional<SemanticType>
+nativeMutexConstructor(const MirProgram &program,
+                       const MirConstructorInstance &constructor) {
+  const auto *owner = program.findClassInstance(constructor.owner);
+  const auto payload =
+      owner ? nativeMutexElement(program, owner->type,
+                                 CompilerCapabilityTypeKind::MutexStorage)
+            : std::nullopt;
+  const auto &body = constructor.body;
+  if (!payload ||
+      program.target().executionProfile != ExecutionProfile::Concurrent ||
+      !program.target().runtimeCapabilities.threads ||
+      mirTypeRelocationKind(program, *payload) == RelocationKind::Unavailable ||
+      constructor.definitionKind != MirDefinitionKind::Source ||
+      constructor.parameterTypes != std::vector<SemanticType>{*payload} ||
+      constructor.parameterBindings.size() != 1 ||
+      !constructor.parameterBindings[0] || !constructor.initializers.empty() ||
+      !constructor.typeArguments.empty() ||
+      !constructor.valueArguments.empty() || constructor.requiresUnsafe ||
+      constructor.borrowOrigin != BorrowOriginKind::None ||
+      constructor.effectSummary.receiverEscapes ||
+      std::any_of(constructor.effectSummary.argumentsEscape.begin(),
+                  constructor.effectSummary.argumentsEscape.end(),
+                  [](bool escapes) { return escapes; }) ||
+      !body.values.empty() || !body.loans.empty() ||
+      !body.fullExpressions.empty() || body.places.size() != 1)
+    return {};
+  const auto &parameter = body.places.front();
+  if (parameter.root != MirPlaceRootKind::Binding ||
+      parameter.binding != constructor.parameterBindings[0] ||
+      parameter.type != *payload || !parameter.initiallyAvailable ||
+      !parameter.projections.empty())
+    return {};
+  for (const auto &drop : body.dropObligations)
+    if (drop.kind != MirDropObligationKind::Binding ||
+        drop.place != parameter.id || drop.binding != parameter.binding ||
+        drop.dropType.type != *payload || !drop.initiallyActive)
+      return {};
+  for (const auto &block : body.blocks) {
+    if (!block.parameters.empty())
+      return {};
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind != MirInstructionKind::Drop &&
+          !(instruction.kind == MirInstructionKind::Lifecycle &&
+            instruction.cleanupBoundaryEnd && instruction.lifecycle.empty()))
+        return {};
+    if (block.terminator.kind != MirTerminatorKind::Return &&
+        block.terminator.kind != MirTerminatorKind::Invoke &&
+        block.terminator.kind != MirTerminatorKind::PropagateFailure)
+      return {};
+  }
+  return payload;
 }
 
 bool Mutexes::handles(IntrinsicKind intrinsic) {
@@ -163,7 +220,7 @@ void Mutexes::initializeShell(llvm::Value *address, const SemanticType &type) {
   ir.CreateCall(
       declareRuntimeService(session, RuntimeService::MutexInitialize),
       {ir.CreateStructGEP(layout.object.storage, address, layout.nativeIndex)});
-  ir.CreateStore(ir.getInt8(0),
+  ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive),
                  ir.CreateStructGEP(layout.object.storage, address,
                                     layout.payloadActiveIndex));
 }
@@ -215,6 +272,12 @@ llvm::Value *Mutexes::emit(const MirBody &body,
     return ir.CreateIsNotNull(token);
   const auto layout =
       session.layouts().mutexStorage(instruction.operands[0].type.arguments[0]);
+  require(ir.CreateICmpEQ(
+      ir.CreateLoad(ir.getInt8Ty(),
+                    ir.CreateStructGEP(layout.object.storage, inputs[0],
+                                       layout.payloadActiveIndex)),
+      ir.getInt8(MutexStorageLayout::shellLive |
+                 MutexStorageLayout::payloadLive)));
   auto *native =
       ir.CreateStructGEP(layout.object.storage, inputs[0], layout.nativeIndex);
   if (instruction.intrinsic == IntrinsicKind::MutexLock) {

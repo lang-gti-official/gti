@@ -33,6 +33,8 @@ struct MutexStorageLayout {
   unsigned nativeIndex = 0;
   unsigned payloadIndex = 1;
   unsigned payloadActiveIndex = 2;
+  static constexpr unsigned shellLive = 1;
+  static constexpr unsigned payloadLive = 2;
 };
 
 struct PayloadLayout {

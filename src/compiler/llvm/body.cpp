@@ -6,6 +6,7 @@
 #include "hosted.h"
 #include "lifetimes.h"
 #include "memory.h"
+#include "mutexes.h"
 #include "parameter_packs.h"
 #include "payloads.h"
 #include "placement.h"
@@ -240,7 +241,8 @@ private:
   }
   void store(llvm::Value *value, llvm::Value *address,
              const SemanticType &type) {
-    memory.store(value, address, type);
+    if (!lifetimes.transferMutexes(ir, address, value, type))
+      memory.store(value, address, type);
   }
   [[nodiscard]] UnstagedConstructorFieldPublicationPlan
   recordPublication(const MirInstruction &instruction) const {
@@ -505,7 +507,8 @@ private:
     if (instruction.intrinsic == IntrinsicKind::Panic ||
         instruction.intrinsic == IntrinsicKind::FailEmptyOwner ||
         instruction.intrinsic == IntrinsicKind::FailInactiveValue ||
-        instruction.intrinsic == IntrinsicKind::FailInactiveError) {
+        instruction.intrinsic == IntrinsicKind::FailInactiveError ||
+        instruction.intrinsic == IntrinsicKind::MutexLockFailure) {
       const auto &term = current->terminator;
       if (instruction.definedFailure.localOrigins.size() != 1 ||
           instruction.definedFailure.localOrigins[0].outcomes.size() != 1)
@@ -593,6 +596,12 @@ private:
         for (const auto &source : instruction.operands)
           inputs.push_back(operand(source));
         return atomics.emit(input, instruction, inputs);
+      }
+      if (Mutexes::handles(instruction.intrinsic)) {
+        std::vector<llvm::Value *> inputs;
+        for (const auto &source : instruction.operands)
+          inputs.push_back(operand(source));
+        return Mutexes(session, ir).emit(input, instruction, inputs);
       }
       if (instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem)
         return formFunctionPointer(instruction);
@@ -1475,6 +1484,24 @@ private:
         throw BackendUnsupportedError(
             "LLVM atomic initialization lost its exact constructor ABI lane");
       atomics.initialize(*constructor, thisAddress, atomicArgument);
+    }
+    if (input.kind == MirBodyKind::Constructor && owner &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+      const auto *constructor = session.program().mir().findConstructorInstance(address.owner);
+      const auto payload = constructor ? nativeMutexConstructor(session.program().mir(), *constructor)
+                                       : std::nullopt;
+      if (!payload || !thisAddress || parameters.size() != 1 ||
+          parameters[0].binding != constructor->parameterBindings[0] ||
+          parameters[0].type != *payload || !parameters[0].materialized)
+        throw BackendUnsupportedError("LLVM mutex initialization lost its sealed payload constructor");
+      const auto layout = session.layouts().mutexStorage(owner->type);
+      auto *source = memory.address(input.places.front().id);
+      Mutexes(session, ir).initializeShell(thisAddress, owner->type);
+      store(load(source, *payload),
+             ir.CreateStructGEP(layout.object.storage, thisAddress, layout.payloadIndex), *payload);
+      lifetimes.moved(ir, source, *payload);
+      ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive | MutexStorageLayout::payloadLive),
+                     ir.CreateStructGEP(layout.object.storage, thisAddress, layout.payloadActiveIndex));
     }
     for (const auto &record : input.failureRecords)
       channels.at(record.id) = ir.CreateAlloca(session.abi().failureChannel());

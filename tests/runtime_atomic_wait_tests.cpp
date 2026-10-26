@@ -111,10 +111,34 @@ void collisions() {
   workers[2].join();
   gti_rt_atomic_wait_v1(&lanes[0], 0, 8, 2);
 }
+
+void parkedCpuBudget() {
+  std::uint32_t lane = 0;
+  Probe state;
+  double cpu = 0;
+  std::thread worker([&] {
+    probe = &state;
+    timespec start{}, finish{};
+    require(clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start) == 0);
+    gti_rt_atomic_wait_v1(&lane, 0, 4, 1);
+    require(clock_gettime(CLOCK_THREAD_CPUTIME_ID, &finish) == 0);
+    cpu = static_cast<double>(finish.tv_sec - start.tv_sec) +
+          static_cast<double>(finish.tv_nsec - start.tv_nsec) / 1e9;
+  });
+  await(state, 1);
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  __atomic_store_n(&lane, 1U, __ATOMIC_RELEASE);
+  gti_rt_atomic_notify_v1(&lane, 4, 0);
+  worker.join();
+  require(cpu < 0.025);
+  std::cout << "parked_wait_thread_cpu_seconds=" << cpu
+            << " minimum_park_seconds=0.1\n";
+}
 } // namespace
 
 // Only the separately compiled service test object substitutes these pthread
-// calls. Production has no hook, callback, waiter allocation or polling loop.
+// calls. Production has no hook, callback or waiter allocation. Every unchanged
+// lane exhausts its bounded pre-parking probe and reaches this real sleep.
 extern "C" int gti_test_wait_init(pthread_mutex_t *mutex,
                                    const pthread_mutexattr_t *attributes) {
   const auto count = initializations.fetch_add(1);
@@ -194,6 +218,7 @@ int main(int argc, char **argv) {
   beforeEnrollment(false);
   beforeEnrollment(true);
   collisions();
+  parkedCpuBudget();
   std::cout << "runtime wait: lanes/orders, publication, enrollment, ABA, "
                "spurious wakes, collisions, one/all and once passed\n";
 }
