@@ -49,7 +49,6 @@ private:
   Dispatch &dispatch;
   FindBody findBody;
   std::vector<std::pair<MirDropType, llvm::Function *>> cleanups;
-  std::vector<std::pair<MirDropType, llvm::Function *>> buildingCleanups;
   std::map<llvm::Type *, llvm::Function *> moves;
   std::vector<std::pair<MirDropType, llvm::Function *>> observations;
   [[nodiscard]] llvm::Function *cleanupObservation(const MirDropType &recipe);

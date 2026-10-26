@@ -1,5 +1,6 @@
 #include "lifetimes.h"
 #include "closure_environment.h"
+#include "gti/mir_effects.h"
 #include "memory.h"
 #include "payloads.h"
 
@@ -580,298 +581,561 @@ void Lifetimes::moved(llvm::IRBuilder<> &ir, llvm::Value *address,
 
 llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
                                    bool replacement) {
-  preflightCleanup(session, dispatch, recipe, replacement);
-  for (const auto &[previous, function] : cleanups)
-    if (previous == recipe)
-      return function;
-  if (recipe.recursiveCleanup) {
-    for (auto entry = buildingCleanups.rbegin();
-         entry != buildingCleanups.rend(); ++entry)
-      if (!entry->first.recursiveCleanup && entry->first.type == recipe.type &&
-          entry->first.classInstance == recipe.classInstance)
-        return entry->second;
-    throw std::logic_error(
-        "LLVM recursive cleanup lost its exact enclosing recipe");
-  }
-  if (recipe.polymorphicCleanup)
-    throw BackendUnsupportedError(
-        "LLVM cleanup requires its later ownership/dispatch milestone");
-  auto *pointer = session.layouts().pointer();
-  auto *function = llvm::Function::Create(
-      llvm::FunctionType::get(
-          llvm::Type::getInt1Ty(session.context()),
-          {pointer, pointer, llvm::Type::getInt1Ty(session.context())}, false),
-      llvm::GlobalValue::InternalLinkage,
-      "__gti_native_cleanup_" + std::to_string(cleanups.size()),
-      session.module());
-  cleanups.emplace_back(recipe, function);
-  buildingCleanups.emplace_back(recipe, function);
-  llvm::IRBuilder<> ir(
-      llvm::BasicBlock::Create(session.context(), "entry", function));
-  llvm::Value *address = function->getArg(0);
-  auto *output = function->getArg(1);
-  auto *duringFailure = function->getArg(2);
-  auto *failed = ir.CreateAlloca(ir.getInt1Ty());
-  auto *scratch = ir.CreateAlloca(session.abi().failureChannel());
-  ir.CreateStore(ir.getFalse(), failed);
-  const bool unique = recipe.type.kind == SemanticType::UniqueOwner;
-  const bool shared =
-      recipe.type.kind == SemanticType::Class &&
-      sharedOwnerRepresentation(session.program().mir(),
-                                session.layouts().instance(recipe.type));
-  llvm::Value *sharedBlock = nullptr;
-  llvm::Value *sharedPointee = nullptr;
-  if (shared) {
-    if (!recipe.classInstance ||
-        *recipe.classInstance != session.layouts().instance(recipe.type).id ||
-        recipe.aggregate.size() != 1 ||
-        recipe.aggregate[0].type !=
-            SemanticType::uniqueOwnerOf(recipe.type.arguments[0]) ||
-        recipe.aggregate[0].uniqueOwnerField ||
-        recipe.aggregate[0].uniqueOwnerBase ||
-        recipe.aggregate[0].captureIndex || recipe.destructor ||
-        recipe.fixedArray)
-      throw std::logic_error(
-          "LLVM shared cleanup lost its exact unique pointee recipe");
-    Memory memory(session, ir, {}, {}, {});
-    const auto released = memory.releaseShared(address);
-    sharedBlock = released.block;
-    auto *last =
-        llvm::BasicBlock::Create(session.context(), "shared.last", function);
-    auto *done = llvm::BasicBlock::Create(session.context(), "shared.released",
-                                          function);
-    ir.CreateCondBr(released.last, last, done);
-    ir.SetInsertPoint(done);
-    ir.CreateRet(ir.getTrue());
-    ir.SetInsertPoint(last);
-    sharedPointee = ir.CreateAlloca(pointer);
-    ir.CreateStore(released.allocation, sharedPointee);
-  }
-  llvm::Value *allocation = nullptr;
-  if (unique) {
-    if (recipe.type.arguments.size() != 1 || recipe.fixedArray ||
-        (recipe.uniquePointeeClass &&
-         session.layouts().instance(recipe.type.arguments[0]).id !=
-             *recipe.uniquePointeeClass))
-      throw std::logic_error(
-          "LLVM unique cleanup lost its exact pointee recipe");
-    allocation = ir.CreateLoad(pointer, address);
-    ir.CreateStore(llvm::ConstantPointerNull::get(session.layouts().pointer()),
-                   address);
-    auto *live =
-        llvm::BasicBlock::Create(session.context(), "owner.live", function);
-    auto *empty =
-        llvm::BasicBlock::Create(session.context(), "owner.empty", function);
-    ir.CreateCondBr(ir.CreateIsNull(allocation), empty, live);
-    ir.SetInsertPoint(empty);
-    ir.CreateRet(ir.getTrue());
-    ir.SetInsertPoint(live);
-    address = allocation;
-  }
-  const auto &objectType = unique ? recipe.type.arguments[0] : recipe.type;
-
-  if (recipe.requiresActiveCleanup && recipe.classInstance &&
-      session.layouts().instance(recipe.type).polymorphic) {
-    auto *install = llvm::BasicBlock::Create(session.context(),
-                                             "dispatch.install", function);
-    auto *ready =
-        llvm::BasicBlock::Create(session.context(), "dispatch.ready", function);
-    ir.CreateCondBr(ir.CreateCall(cleanupObservation(recipe), {address}),
-                    install, ready);
-    ir.SetInsertPoint(install);
-    dispatch.install(ir, address, *recipe.classInstance);
-    ir.CreateBr(ready);
-    ir.SetInsertPoint(ready);
-  }
-
-  // Save the first normal-cleanup failure, drain remaining children, and stop
-  // immediately on a second failure. A caller already unwinding owns its first
-  // record, so return the first new failure without replacing that record.
-  const auto observe = [&](llvm::Value *status) {
-    auto *bad = llvm::BasicBlock::Create(session.context(), "failed", function);
-    auto *next = llvm::BasicBlock::Create(session.context(), "next", function);
-    ir.CreateCondBr(status, next, bad);
-    ir.SetInsertPoint(bad);
-    auto *secondary =
-        llvm::BasicBlock::Create(session.context(), "secondary", function);
-    auto *first =
-        llvm::BasicBlock::Create(session.context(), "first", function);
-    ir.CreateCondBr(ir.CreateLoad(ir.getInt1Ty(), failed), secondary, first);
-    ir.SetInsertPoint(secondary);
-    failures.terminateCleanup(ir, output, scratch);
-    ir.SetInsertPoint(first);
-    ir.CreateStore(ir.CreateLoad(session.abi().failureChannel(), scratch),
-                   output);
-    auto *resume =
-        llvm::BasicBlock::Create(session.context(), "resume", function);
-    auto *stop = llvm::BasicBlock::Create(session.context(), "stop", function);
-    ir.CreateCondBr(duringFailure, stop, resume);
-    ir.SetInsertPoint(stop);
-    ir.CreateRet(ir.getFalse());
-    ir.SetInsertPoint(resume);
-    ir.CreateStore(ir.getTrue(), failed);
-    ir.CreateBr(next);
-    ir.SetInsertPoint(next);
+  struct CleanupProof {
+    const MirDropType *recipe = nullptr;
+    std::vector<CleanupProof> aggregate;
+    std::optional<std::size_t> recursiveTarget;
   };
-  const auto child = [&](const MirDropType &selected, llvm::Value *where) {
-    observe(ir.CreateCall(
-        cleanup(selected),
-        {where, scratch,
-         ir.CreateOr(duringFailure, ir.CreateLoad(ir.getInt1Ty(), failed))}));
+  struct ProofAncestor {
+    const MirDropType *recipe = nullptr;
+    std::size_t ownerDepth = 0;
   };
-  if (shared) {
-    child(recipe.aggregate[0], sharedPointee);
-    Memory memory(session, ir, {}, {}, {});
-    memory.releaseBytes(sharedBlock);
-  } else if (recipe.type.kind == SemanticType::Enum &&
-             session.program().mir().findPayloadEnum(recipe.type)) {
-    const auto &layout = session.layouts().payload(recipe.type);
-    auto *tagAddress = payloadTagAddress(ir, layout, address);
-    auto *tag = ir.CreateLoad(ir.getInt32Ty(), tagAddress);
-    ir.CreateStore(ir.getInt32(PayloadLayout::inactive), tagAddress);
-    auto *done =
-        llvm::BasicBlock::Create(session.context(), "payload.done", function);
-    auto *dispatch = ir.CreateSwitch(tag, done);
-    for (std::size_t variant = 0; variant < layout.variants.size(); ++variant) {
-      auto *run =
-          llvm::BasicBlock::Create(session.context(), "payload", function);
-      dispatch->addCase(ir.getInt32(variant), run);
-      ir.SetInsertPoint(run);
-      for (const auto &selected : recipe.aggregate)
-        if (selected.payloadVariant == variant) {
-          if (!selected.payloadField)
-            throw std::logic_error("LLVM payload cleanup lost its exact field");
-          child(selected, payloadFieldAddress(ir, layout, address, variant,
-                                              *selected.payloadField));
+
+  const auto &program = session.program().mir();
+  const auto activeCleanup =
+      [&](const auto &self, const SemanticType &type) -> std::optional<bool> {
+    switch (type.kind) {
+    case SemanticType::UniqueOwner:
+    case SemanticType::SharedPointer:
+      return true;
+    case SemanticType::Array:
+      return type.arguments.size() == 1 ? self(self, type.arguments.front())
+                                        : std::nullopt;
+    case SemanticType::Class: {
+      const MirClassInstance *selected = nullptr;
+      for (const auto &candidate : program.classInstances())
+        if (candidate.type == type) {
+          if (selected)
+            return std::nullopt;
+          selected = &candidate;
         }
-      ir.CreateBr(done);
+      return selected ? std::optional<bool>{selected->requiresActiveCleanup}
+                      : std::nullopt;
     }
-    ir.SetInsertPoint(done);
-  } else if (recipe.fixedArray) {
-    if (recipe.type.kind != SemanticType::Array ||
-        recipe.aggregate.size() > 1 ||
-        (recipe.aggregate.empty() && recipe.requiresActiveCleanup))
-      throw std::logic_error(
-          "LLVM array cleanup lost its sealed element recipe");
-    const auto count = recipe.type.arrayLength;
-    if (count && !recipe.aggregate.empty()) {
-      auto *entry = ir.GetInsertBlock();
-      auto *loop =
-          llvm::BasicBlock::Create(session.context(), "elements", function);
-      auto *done =
-          llvm::BasicBlock::Create(session.context(), "done", function);
-      ir.CreateBr(loop);
-      ir.SetInsertPoint(loop);
-      auto *remaining = ir.CreatePHI(ir.getInt64Ty(), 2);
-      remaining->addIncoming(ir.getInt64(count), entry);
-      auto *index = ir.CreateSub(remaining, ir.getInt64(1));
-      child(recipe.aggregate.front(),
-            ir.CreateGEP(session.layouts().get(recipe.type).storage, address,
-                         {ir.getInt64(0), index}));
-      remaining->addIncoming(index, ir.GetInsertBlock());
-      ir.CreateCondBr(ir.CreateICmpNE(index, ir.getInt64(0)), loop, done);
-      ir.SetInsertPoint(done);
+    case SemanticType::Enum: {
+      const auto *enumeration = program.findPayloadEnum(type);
+      return enumeration
+                 ? std::optional<bool>{enumeration->requiresActiveCleanup}
+                 : std::optional<bool>{false};
     }
-  } else if (recipe.lambdaInstance) {
-    const auto *owner = closureCleanupInstance(session.program().mir(), recipe);
-    if (owner == nullptr ||
-        owner->captureTypes.size() != owner->captureModes.size() ||
-        owner->captureTypes.size() !=
-            owner->captureRequiresActiveCleanup.size())
-      throw std::logic_error(
-          "LLVM closure cleanup lost its sealed lambda identity");
-
-    std::vector<std::size_t> expected;
-    for (std::size_t index = owner->captureTypes.size(); index != 0; --index)
-      if (owner->captureRequiresActiveCleanup[index - 1])
-        expected.push_back(index - 1);
-    if (recipe.requiresActiveCleanup != !expected.empty() ||
-        recipe.aggregate.size() != expected.size())
-      throw std::logic_error(
-          "LLVM closure cleanup lost its sealed active-capture schedule");
-
-    for (std::size_t step = 0; step < recipe.aggregate.size(); ++step) {
-      const auto &selected = recipe.aggregate[step];
-      if (!selected.captureIndex || *selected.captureIndex != expected[step] ||
-          selected.type != owner->captureTypes[expected[step]] ||
-          isBorrowingCapture(owner->captureModes[expected[step]]) ||
-          selected.uniqueOwnerField != 0 || selected.uniqueOwnerBase ||
-          selected.payloadVariant || selected.payloadField)
-        throw std::logic_error(
-            "LLVM closure cleanup lost an exact owned capture projection");
-      child(selected,
-            ir.CreateStructGEP(session.layouts().get(recipe.type).storage,
-                               address, static_cast<unsigned>(expected[step])));
-    }
-  } else {
-    if (recipe.type.kind == SemanticType::Lambda)
-      throw std::logic_error(
-          "LLVM closure cleanup has no concrete lambda identity");
-    if (recipe.destructor) {
-      const auto *target =
-          session.program().mir().findDestructorInstance(*recipe.destructor);
-      if (!target || objectType.kind != SemanticType::Class)
-        throw std::logic_error("LLVM cleanup lost its selected destructor");
-      const auto index = session.layouts().activeIndex(objectType);
-      if (!index)
-        throw std::logic_error(
-            "LLVM source destructor has no active-state representation");
-      auto *state = ir.CreateStructGEP(
-          session.layouts().get(objectType).storage, address, *index);
-      auto *run = llvm::BasicBlock::Create(session.context(), "body", function);
-      auto *done =
-          llvm::BasicBlock::Create(session.context(), "body.done", function);
-      ir.CreateCondBr(
-          ir.CreateICmpNE(ir.CreateLoad(ir.getInt8Ty(), state), ir.getInt8(0)),
-          run, done);
-      ir.SetInsertPoint(run);
-      ir.CreateStore(ir.getInt8(0), state);
-      const auto abi = session.abi().gti(SemanticType::Void, {},
-                                         target->mayRaiseDefinedFailure, true);
-      std::vector<llvm::Value *> arguments;
-      if (abi.failureDestination)
-        arguments.push_back(scratch);
-      arguments.push_back(address);
-      auto *status = ir.CreateCall(
-          findBody({MirBodyKind::Destructor, target->id}), arguments);
-      abi.applyTo(*status);
-      if (abi.statusResult)
-        observe(status);
-      ir.CreateBr(done);
-      ir.SetInsertPoint(done);
-    }
-    for (const auto &selected : recipe.aggregate) {
-      if (unique) {
-        if (recipe.aggregate.size() != 1 || selected.type != objectType ||
-            selected.uniqueOwnerField || selected.uniqueOwnerBase ||
-            selected.captureIndex || selected.payloadVariant)
-          throw std::logic_error(
-              "LLVM unique cleanup lost its unprojected pointee child");
-        child(selected, address);
-        continue;
+    case SemanticType::Lambda: {
+      std::optional<bool> result;
+      for (const auto &instance : program.lambdaInstances()) {
+        if (instance.type != type)
+          continue;
+        if (instance.captureTypes.size() !=
+            instance.captureRequiresActiveCleanup.size())
+          return std::nullopt;
+        const bool current =
+            std::any_of(instance.captureRequiresActiveCleanup.begin(),
+                        instance.captureRequiresActiveCleanup.end(),
+                        [](bool value) { return value; });
+        if (result && *result != current)
+          return std::nullopt;
+        result = current;
       }
-      unsigned index;
-      if (selected.uniqueOwnerField)
-        index = session.layouts().fieldIndex(recipe.type,
-                                             selected.uniqueOwnerField);
-      else if (selected.uniqueOwnerBase)
-        index =
-            session.layouts().baseIndex(recipe.type, *selected.uniqueOwnerBase);
-      else
-        throw BackendUnsupportedError(
-            "LLVM cleanup subobject requires its later capability milestone");
-      child(selected,
-            ir.CreateStructGEP(session.layouts().get(recipe.type).storage,
-                               address, index));
+      return result;
     }
+    default:
+      return false;
+    }
+  };
+  std::vector<ProofAncestor> ancestors;
+  const auto prove = [&](const auto &self, const MirDropType &selected,
+                         const MirDropType &expected,
+                         std::size_t ownerDepth) -> CleanupProof {
+    if (selected.type != expected.type)
+      throw std::logic_error("LLVM cleanup lost its exact sealed type");
+    auto selectedHeader = selected;
+    auto expectedHeader = expected;
+    selectedHeader.aggregate.clear();
+    expectedHeader.aggregate.clear();
+    if (selected.type.kind == SemanticType::Lambda) {
+      const auto *instance = closureCleanupInstance(program, selected);
+      const auto environment = closureEnvironmentLayout(program, selected.type);
+      if (!instance || !environment ||
+          instance->captureTypes.size() != instance->captureModes.size() ||
+          instance->captureTypes.size() !=
+              instance->captureRequiresActiveCleanup.size() ||
+          *environment != closureEnvironmentLayout(*instance))
+        throw std::logic_error(
+            "LLVM closure cleanup lost its exact compatible identity");
+      // Physical agreement never selects a cleanup body. Keep the exact
+      // instance in `selected`; ignore only the canonical query's first-row ID
+      // while comparing the remaining sealed recipe shape.
+      selectedHeader.lambdaInstance.reset();
+      expectedHeader.lambdaInstance.reset();
+    }
+    if (selectedHeader != expectedHeader ||
+        selected.aggregate.size() != expected.aggregate.size())
+      throw std::logic_error("LLVM cleanup lost its exact sealed recipe graph");
+    if (selected.polymorphicCleanup)
+      throw BackendUnsupportedError(
+          "LLVM cleanup requires its later ownership/dispatch milestone");
+    if (selected.type.kind == SemanticType::UniqueOwner) {
+      if (selected.type.arguments.size() != 1)
+        throw std::logic_error(
+            "LLVM owner cleanup lost its exact pointee type");
+      if (containsHierarchyStorage(program, selected.type.arguments.front()))
+        throw BackendUnsupportedError(
+            "LLVM owner cleanup for hierarchy pointees requires dynamic "
+            "cleanup dispatch");
+    } else if (selected.type.kind == SemanticType::Class) {
+      const auto &owner = session.layouts().instance(selected.type);
+      if (sharedOwnerRepresentation(program, owner)) {
+        if (selected.type.arguments.size() != 1)
+          throw std::logic_error(
+              "LLVM shared cleanup lost its exact pointee type");
+        if (containsHierarchyStorage(program, selected.type.arguments.front()))
+          throw BackendUnsupportedError(
+              "LLVM shared cleanup for hierarchy pointees requires dynamic "
+              "cleanup dispatch");
+      }
+    }
+
+    CleanupProof result{.recipe = &selected};
+    if (selected.recursiveCleanup) {
+      for (std::size_t index = ancestors.size(); index != 0; --index) {
+        const auto &ancestor = ancestors[index - 1];
+        if (!ancestor.recipe->recursiveCleanup &&
+            ancestor.recipe->type == selected.type &&
+            ancestor.recipe->classInstance == selected.classInstance) {
+          if (ownerDepth <= ancestor.ownerDepth)
+            throw std::logic_error(
+                "LLVM recursive cleanup requires an owning pointee edge");
+          result.recursiveTarget = index - 1;
+          return result;
+        }
+      }
+      throw std::logic_error(
+          "LLVM recursive cleanup lost its exact enclosing recipe");
+    }
+
+    ancestors.push_back({&selected, ownerDepth});
+    const bool ownsChild = selected.type.kind == SemanticType::UniqueOwner;
+    result.aggregate.reserve(selected.aggregate.size());
+    for (std::size_t index = 0; index < selected.aggregate.size(); ++index)
+      result.aggregate.push_back(
+          self(self, selected.aggregate[index], expected.aggregate[index],
+               ownerDepth + static_cast<std::size_t>(ownsChild)));
+    ancestors.pop_back();
+    return result;
+  };
+  const auto mirror = [&](const auto &self,
+                          const MirDropType &selected) -> CleanupProof {
+    if (selected.recursiveCleanup || selected.polymorphicCleanup)
+      throw std::logic_error(
+          "LLVM static cleanup acquired dynamic cleanup metadata");
+    CleanupProof result{.recipe = &selected};
+    result.aggregate.reserve(selected.aggregate.size());
+    for (const auto &child : selected.aggregate)
+      result.aggregate.push_back(self(self, child));
+    return result;
+  };
+
+  // Inline hierarchy state retains O10's strict non-emitting preflight,
+  // including replacement and dispatch checks. Owner handles are indirect;
+  // `prove` checks each exact pointee separately before any helper/cache use.
+  const bool inlineHierarchy = containsHierarchyStorage(program, recipe.type);
+  const auto canonical = mirUniqueCleanupType(program, recipe.type);
+  CleanupProof proof;
+  if (canonical) {
+    if (inlineHierarchy)
+      preflightCleanup(session, dispatch, recipe, replacement);
+    proof = prove(prove, recipe, *canonical, 0);
+  } else {
+    const auto active = activeCleanup(activeCleanup, recipe.type);
+    if (!active || *active != recipe.requiresActiveCleanup)
+      throw std::logic_error(
+          "LLVM cleanup fallback lost its exact active-state fact");
+    if (*active)
+      throw BackendUnsupportedError(
+          "LLVM active cleanup requires an exact family recipe");
+    if (recipe.uniquePointeeClass || recipe.polymorphicCleanup ||
+        recipe.recursiveCleanup || !recipe.aggregate.empty() ||
+        recipe.uniqueOwnerField || recipe.uniqueOwnerBase ||
+        recipe.captureIndex || recipe.payloadVariant || recipe.payloadField)
+      throw std::logic_error(
+          "LLVM cleanup fallback retained unsupported family metadata");
+    if (recipe.type.kind == SemanticType::Array) {
+      const auto *schedule = recipe.fixedArray ? &*recipe.fixedArray : nullptr;
+      SemanticType leaf = recipe.type;
+      std::vector<std::size_t> extents;
+      while (leaf.kind == SemanticType::Array && leaf.arguments.size() == 1 &&
+             !leaf.arrayLengthParameterId && leaf.arrayLength) {
+        extents.push_back(leaf.arrayLength);
+        SemanticType element = leaf.arguments.front();
+        leaf = std::move(element);
+      }
+      const auto *leafClass =
+          schedule && schedule->leafClassInstance
+              ? program.findClassInstance(*schedule->leafClassInstance)
+              : nullptr;
+      const bool specialized = leaf.kind == SemanticType::Class && leafClass &&
+                               leafClass->type.kind == SemanticType::Class &&
+                               leafClass->type.classId == leaf.classId &&
+                               leafClass->type.arguments.empty() &&
+                               leafClass->type.valueArguments.empty();
+      const bool exactLeaf =
+          leaf.kind != SemanticType::Class
+              ? schedule && !schedule->leafClassInstance && !recipe.destructor
+              : leafClass && (leafClass->type == leaf || specialized) &&
+                    leafClass->destructor == recipe.destructor;
+      if (recipe.classInstance || recipe.lambdaInstance || !schedule ||
+          schedule->extents != extents || schedule->leafType != leaf ||
+          !exactLeaf)
+        throw std::logic_error(
+            "LLVM fixed-array cleanup lost its exact passive schedule");
+    } else if (recipe.type.kind == SemanticType::Class) {
+      const auto *owner = recipe.classInstance
+                              ? program.findClassInstance(*recipe.classInstance)
+                              : nullptr;
+      if (!owner || recipe.lambdaInstance || recipe.fixedArray ||
+          owner->type != recipe.type || owner->destructor != recipe.destructor)
+        throw std::logic_error(
+            "LLVM cleanup fallback lost its exact class identity");
+      if (recipe.destructor) {
+        const auto *target = program.findDestructorInstance(*recipe.destructor);
+        if (!target || target->owner != owner->id)
+          throw std::logic_error(
+              "LLVM cleanup fallback selected a foreign destructor");
+      }
+    } else if (recipe.classInstance || recipe.lambdaInstance ||
+               recipe.destructor || recipe.fixedArray) {
+      throw std::logic_error(
+          "LLVM cleanup fallback retained foreign type metadata");
+    }
+    preflightCleanup(session, dispatch, recipe, replacement);
+    proof = mirror(mirror, recipe);
   }
-  if (unique) {
-    Memory memory(session, ir, {}, {}, {});
-    memory.releaseBytes(allocation);
-  }
-  ir.CreateRet(ir.CreateNot(ir.CreateLoad(ir.getInt1Ty(), failed)));
-  buildingCleanups.pop_back();
-  return function;
+
+  struct EmissionEntry {
+    const CleanupProof *proof = nullptr;
+    llvm::Function *function = nullptr;
+  };
+  struct EmissionContext {
+    bool replacement = false;
+    std::vector<EmissionEntry> stack;
+  } context{.replacement = replacement};
+
+  const auto emit = [&](const auto &self,
+                        const CleanupProof &selectedProof) -> llvm::Function * {
+    const auto &recipe = *selectedProof.recipe;
+    if (selectedProof.recursiveTarget) {
+      if (*selectedProof.recursiveTarget >= context.stack.size())
+        throw std::logic_error(
+            "LLVM recursive cleanup lost its validated ancestor");
+      const auto &target = context.stack[*selectedProof.recursiveTarget];
+      if (!target.proof || !target.function ||
+          target.proof->recipe->recursiveCleanup ||
+          target.proof->recipe->type != recipe.type ||
+          target.proof->recipe->classInstance != recipe.classInstance)
+        throw std::logic_error(
+            "LLVM recursive cleanup changed its validated ancestor");
+      return target.function;
+    }
+    for (const auto &[previous, function] : cleanups)
+      if (previous == recipe)
+        return function;
+    auto *pointer = session.layouts().pointer();
+    auto *function = llvm::Function::Create(
+        llvm::FunctionType::get(
+            llvm::Type::getInt1Ty(session.context()),
+            {pointer, pointer, llvm::Type::getInt1Ty(session.context())},
+            false),
+        llvm::GlobalValue::InternalLinkage,
+        "__gti_native_cleanup_" + std::to_string(cleanups.size()),
+        session.module());
+    cleanups.emplace_back(recipe, function);
+    context.stack.push_back({&selectedProof, function});
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", function));
+    llvm::Value *address = function->getArg(0);
+    auto *output = function->getArg(1);
+    auto *duringFailure = function->getArg(2);
+    auto *failed = ir.CreateAlloca(ir.getInt1Ty());
+    auto *scratch = ir.CreateAlloca(session.abi().failureChannel());
+    ir.CreateStore(ir.getFalse(), failed);
+    const bool unique = recipe.type.kind == SemanticType::UniqueOwner;
+    const bool shared =
+        recipe.type.kind == SemanticType::Class &&
+        sharedOwnerRepresentation(session.program().mir(),
+                                  session.layouts().instance(recipe.type));
+    llvm::Value *sharedBlock = nullptr;
+    llvm::Value *sharedPointee = nullptr;
+    if (shared) {
+      if (!recipe.classInstance ||
+          *recipe.classInstance != session.layouts().instance(recipe.type).id ||
+          recipe.aggregate.size() != 1 ||
+          recipe.aggregate[0].type !=
+              SemanticType::uniqueOwnerOf(recipe.type.arguments[0]) ||
+          recipe.aggregate[0].uniqueOwnerField ||
+          recipe.aggregate[0].uniqueOwnerBase ||
+          recipe.aggregate[0].captureIndex || recipe.destructor ||
+          recipe.fixedArray)
+        throw std::logic_error(
+            "LLVM shared cleanup lost its exact unique pointee recipe");
+      Memory memory(session, ir, {}, {}, {});
+      const auto released = memory.releaseShared(address);
+      sharedBlock = released.block;
+      auto *last =
+          llvm::BasicBlock::Create(session.context(), "shared.last", function);
+      auto *done = llvm::BasicBlock::Create(session.context(),
+                                            "shared.released", function);
+      ir.CreateCondBr(released.last, last, done);
+      ir.SetInsertPoint(done);
+      ir.CreateRet(ir.getTrue());
+      ir.SetInsertPoint(last);
+      sharedPointee = ir.CreateAlloca(pointer);
+      ir.CreateStore(released.allocation, sharedPointee);
+    }
+    llvm::Value *allocation = nullptr;
+    if (unique) {
+      if (recipe.type.arguments.size() != 1 || recipe.fixedArray ||
+          (recipe.uniquePointeeClass &&
+           session.layouts().instance(recipe.type.arguments[0]).id !=
+               *recipe.uniquePointeeClass))
+        throw std::logic_error(
+            "LLVM unique cleanup lost its exact pointee recipe");
+      allocation = ir.CreateLoad(pointer, address);
+      ir.CreateStore(
+          llvm::ConstantPointerNull::get(session.layouts().pointer()), address);
+      auto *live =
+          llvm::BasicBlock::Create(session.context(), "owner.live", function);
+      auto *empty =
+          llvm::BasicBlock::Create(session.context(), "owner.empty", function);
+      ir.CreateCondBr(ir.CreateIsNull(allocation), empty, live);
+      ir.SetInsertPoint(empty);
+      ir.CreateRet(ir.getTrue());
+      ir.SetInsertPoint(live);
+      address = allocation;
+    }
+    const auto &objectType = unique ? recipe.type.arguments[0] : recipe.type;
+
+    if (recipe.requiresActiveCleanup && recipe.classInstance &&
+        session.layouts().instance(recipe.type).polymorphic) {
+      auto *install = llvm::BasicBlock::Create(session.context(),
+                                               "dispatch.install", function);
+      auto *ready = llvm::BasicBlock::Create(session.context(),
+                                             "dispatch.ready", function);
+      ir.CreateCondBr(ir.CreateCall(cleanupObservation(recipe), {address}),
+                      install, ready);
+      ir.SetInsertPoint(install);
+      dispatch.install(ir, address, *recipe.classInstance);
+      ir.CreateBr(ready);
+      ir.SetInsertPoint(ready);
+    }
+
+    // Save the first normal-cleanup failure, drain remaining children, and stop
+    // immediately on a second failure. A caller already unwinding owns its
+    // first record, so return the first new failure without replacing that
+    // record.
+    const auto observe = [&](llvm::Value *status) {
+      auto *bad =
+          llvm::BasicBlock::Create(session.context(), "failed", function);
+      auto *next =
+          llvm::BasicBlock::Create(session.context(), "next", function);
+      ir.CreateCondBr(status, next, bad);
+      ir.SetInsertPoint(bad);
+      auto *secondary =
+          llvm::BasicBlock::Create(session.context(), "secondary", function);
+      auto *first =
+          llvm::BasicBlock::Create(session.context(), "first", function);
+      ir.CreateCondBr(ir.CreateLoad(ir.getInt1Ty(), failed), secondary, first);
+      ir.SetInsertPoint(secondary);
+      failures.terminateCleanup(ir, output, scratch);
+      ir.SetInsertPoint(first);
+      ir.CreateStore(ir.CreateLoad(session.abi().failureChannel(), scratch),
+                     output);
+      auto *resume =
+          llvm::BasicBlock::Create(session.context(), "resume", function);
+      auto *stop =
+          llvm::BasicBlock::Create(session.context(), "stop", function);
+      ir.CreateCondBr(duringFailure, stop, resume);
+      ir.SetInsertPoint(stop);
+      ir.CreateRet(ir.getFalse());
+      ir.SetInsertPoint(resume);
+      ir.CreateStore(ir.getTrue(), failed);
+      ir.CreateBr(next);
+      ir.SetInsertPoint(next);
+    };
+    const auto child = [&](const MirDropType &selected, llvm::Value *where) {
+      const auto edge =
+          std::find_if(recipe.aggregate.begin(), recipe.aggregate.end(),
+                       [&](const MirDropType &candidate) {
+                         return &candidate == &selected;
+                       });
+      if (edge == recipe.aggregate.end() ||
+          selectedProof.aggregate.size() != recipe.aggregate.size())
+        throw std::logic_error(
+            "LLVM cleanup emission lost its validated child edge");
+      const auto index =
+          static_cast<std::size_t>(edge - recipe.aggregate.begin());
+      observe(ir.CreateCall(
+          self(self, selectedProof.aggregate[index]),
+          {where, scratch,
+           ir.CreateOr(duringFailure, ir.CreateLoad(ir.getInt1Ty(), failed))}));
+    };
+    if (shared) {
+      child(recipe.aggregate[0], sharedPointee);
+      Memory memory(session, ir, {}, {}, {});
+      memory.releaseBytes(sharedBlock);
+    } else if (recipe.type.kind == SemanticType::Enum &&
+               session.program().mir().findPayloadEnum(recipe.type)) {
+      const auto &layout = session.layouts().payload(recipe.type);
+      auto *tagAddress = payloadTagAddress(ir, layout, address);
+      auto *tag = ir.CreateLoad(ir.getInt32Ty(), tagAddress);
+      ir.CreateStore(ir.getInt32(PayloadLayout::inactive), tagAddress);
+      auto *done =
+          llvm::BasicBlock::Create(session.context(), "payload.done", function);
+      auto *dispatch = ir.CreateSwitch(tag, done);
+      for (std::size_t variant = 0; variant < layout.variants.size();
+           ++variant) {
+        auto *run =
+            llvm::BasicBlock::Create(session.context(), "payload", function);
+        dispatch->addCase(ir.getInt32(variant), run);
+        ir.SetInsertPoint(run);
+        for (const auto &selected : recipe.aggregate)
+          if (selected.payloadVariant == variant) {
+            if (!selected.payloadField)
+              throw std::logic_error(
+                  "LLVM payload cleanup lost its exact field");
+            child(selected, payloadFieldAddress(ir, layout, address, variant,
+                                                *selected.payloadField));
+          }
+        ir.CreateBr(done);
+      }
+      ir.SetInsertPoint(done);
+    } else if (recipe.fixedArray) {
+      if (recipe.type.kind != SemanticType::Array ||
+          recipe.aggregate.size() > 1 ||
+          (recipe.aggregate.empty() && recipe.requiresActiveCleanup))
+        throw std::logic_error(
+            "LLVM array cleanup lost its sealed element recipe");
+      const auto count = recipe.type.arrayLength;
+      if (count && !recipe.aggregate.empty()) {
+        auto *entry = ir.GetInsertBlock();
+        auto *loop =
+            llvm::BasicBlock::Create(session.context(), "elements", function);
+        auto *done =
+            llvm::BasicBlock::Create(session.context(), "done", function);
+        ir.CreateBr(loop);
+        ir.SetInsertPoint(loop);
+        auto *remaining = ir.CreatePHI(ir.getInt64Ty(), 2);
+        remaining->addIncoming(ir.getInt64(count), entry);
+        auto *index = ir.CreateSub(remaining, ir.getInt64(1));
+        child(recipe.aggregate.front(),
+              ir.CreateGEP(session.layouts().get(recipe.type).storage, address,
+                           {ir.getInt64(0), index}));
+        remaining->addIncoming(index, ir.GetInsertBlock());
+        ir.CreateCondBr(ir.CreateICmpNE(index, ir.getInt64(0)), loop, done);
+        ir.SetInsertPoint(done);
+      }
+    } else if (recipe.lambdaInstance) {
+      const auto *owner =
+          closureCleanupInstance(session.program().mir(), recipe);
+      if (owner == nullptr ||
+          owner->captureTypes.size() != owner->captureModes.size() ||
+          owner->captureTypes.size() !=
+              owner->captureRequiresActiveCleanup.size())
+        throw std::logic_error(
+            "LLVM closure cleanup lost its sealed lambda identity");
+
+      std::vector<std::size_t> expected;
+      for (std::size_t index = owner->captureTypes.size(); index != 0; --index)
+        if (owner->captureRequiresActiveCleanup[index - 1])
+          expected.push_back(index - 1);
+      if (recipe.requiresActiveCleanup != !expected.empty() ||
+          recipe.aggregate.size() != expected.size())
+        throw std::logic_error(
+            "LLVM closure cleanup lost its sealed active-capture schedule");
+
+      for (std::size_t step = 0; step < recipe.aggregate.size(); ++step) {
+        const auto &selected = recipe.aggregate[step];
+        if (!selected.captureIndex ||
+            *selected.captureIndex != expected[step] ||
+            selected.type != owner->captureTypes[expected[step]] ||
+            isBorrowingCapture(owner->captureModes[expected[step]]) ||
+            selected.uniqueOwnerField != 0 || selected.uniqueOwnerBase ||
+            selected.payloadVariant || selected.payloadField)
+          throw std::logic_error(
+              "LLVM closure cleanup lost an exact owned capture projection");
+        child(selected, ir.CreateStructGEP(
+                            session.layouts().get(recipe.type).storage, address,
+                            static_cast<unsigned>(expected[step])));
+      }
+    } else {
+      if (recipe.type.kind == SemanticType::Lambda)
+        throw std::logic_error(
+            "LLVM closure cleanup has no concrete lambda identity");
+      if (recipe.destructor) {
+        const auto *target =
+            session.program().mir().findDestructorInstance(*recipe.destructor);
+        if (!target || objectType.kind != SemanticType::Class)
+          throw std::logic_error("LLVM cleanup lost its selected destructor");
+        const auto index = session.layouts().activeIndex(objectType);
+        if (!index)
+          throw std::logic_error(
+              "LLVM source destructor has no active-state representation");
+        auto *state = ir.CreateStructGEP(
+            session.layouts().get(objectType).storage, address, *index);
+        auto *run =
+            llvm::BasicBlock::Create(session.context(), "body", function);
+        auto *done =
+            llvm::BasicBlock::Create(session.context(), "body.done", function);
+        ir.CreateCondBr(ir.CreateICmpNE(ir.CreateLoad(ir.getInt8Ty(), state),
+                                        ir.getInt8(0)),
+                        run, done);
+        ir.SetInsertPoint(run);
+        ir.CreateStore(ir.getInt8(0), state);
+        const auto abi = session.abi().gti(
+            SemanticType::Void, {}, target->mayRaiseDefinedFailure, true);
+        std::vector<llvm::Value *> arguments;
+        if (abi.failureDestination)
+          arguments.push_back(scratch);
+        arguments.push_back(address);
+        auto *status = ir.CreateCall(
+            findBody({MirBodyKind::Destructor, target->id}), arguments);
+        abi.applyTo(*status);
+        if (abi.statusResult)
+          observe(status);
+        ir.CreateBr(done);
+        ir.SetInsertPoint(done);
+      }
+      for (const auto &selected : recipe.aggregate) {
+        if (unique) {
+          if (recipe.aggregate.size() != 1 || selected.type != objectType ||
+              selected.uniqueOwnerField || selected.uniqueOwnerBase ||
+              selected.captureIndex || selected.payloadVariant)
+            throw std::logic_error(
+                "LLVM unique cleanup lost its unprojected pointee child");
+          child(selected, address);
+          continue;
+        }
+        unsigned index;
+        if (selected.uniqueOwnerField)
+          index = session.layouts().fieldIndex(recipe.type,
+                                               selected.uniqueOwnerField);
+        else if (selected.uniqueOwnerBase)
+          index = session.layouts().baseIndex(recipe.type,
+                                              *selected.uniqueOwnerBase);
+        else
+          throw BackendUnsupportedError(
+              "LLVM cleanup subobject requires its later capability milestone");
+        child(selected,
+              ir.CreateStructGEP(session.layouts().get(recipe.type).storage,
+                                 address, index));
+      }
+    }
+    if (unique) {
+      Memory memory(session, ir, {}, {}, {});
+      memory.releaseBytes(allocation);
+    }
+    ir.CreateRet(ir.CreateNot(ir.CreateLoad(ir.getInt1Ty(), failed)));
+    context.stack.pop_back();
+    return function;
+  };
+  return emit(emit, proof);
 }
 
 } // namespace lang::native_llvm

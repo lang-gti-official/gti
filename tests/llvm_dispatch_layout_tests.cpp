@@ -6,12 +6,15 @@
 #include "cpp_backend_test_support.h"
 #include "gti/llvm_backend.h"
 #include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <array>
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string_view>
@@ -1025,7 +1028,7 @@ int main() { return evaluate(2) - 2; }
              llvm::cast<llvm::CallInst>(entryBranch->getOperand(0))
                      ->getCalledFunction() == observation,
          "only the true cleanup-observation edge can write dispatch headers");
-  const auto functionsBeforeRejection = session.module().size();
+  const auto publicationBeforeRejection = modulePublication(session);
   rejects<BackendUnsupportedError>(
       [&] { static_cast<void>(lifetimes.cleanup(recipe, true)); },
       "polymorphic replacement cannot silently adopt destruction-phase "
@@ -1040,9 +1043,61 @@ int main() { return evaluate(2) - 2; }
   rejects<BackendUnsupportedError>(
       [&] { static_cast<void>(lifetimes.cleanup(excluded)); },
       "unknown recursive cleanup cannot become a false observation witness");
-  expect(session.module().size() == functionsBeforeRejection,
+  expect(modulePublication(session) == publicationBeforeRejection,
          "excluded recipes reject before creating cleanup helpers, including "
          "cached replacements");
+
+  const auto passiveArrayType =
+      SemanticType::arrayOf(SemanticType::arrayOf(SemanticType::Int32, 3), 2);
+  MirDropType passiveArray{
+      .type = passiveArrayType,
+      .fixedArray = MirFixedArrayDropSchedule{.extents = {2, 3},
+                                              .leafType = SemanticType::Int32}};
+  expect(!mirUniqueCleanupType(session.program().mir(), passiveArrayType),
+         "passive fixed arrays retain the canonical-null fallback contract");
+  const auto rejectPassiveMutations = [&](std::string_view phase) {
+    for (int mutation = 0; mutation != 10; ++mutation) {
+      auto malformed = passiveArray;
+      if (mutation == 0)
+        malformed.fixedArray->extents = {2, 4};
+      else if (mutation == 1)
+        malformed.fixedArray->leafType = SemanticType::UInt32;
+      else if (mutation == 2)
+        malformed.fixedArray->leafClassInstance = derived.id;
+      else if (mutation == 3)
+        malformed.fixedArray->leafClassInstance =
+            std::numeric_limits<HirClassInstanceId>::max();
+      else if (mutation == 4)
+        malformed.fixedArray->leafClassInstance = HirClassInstanceId{0};
+      else if (mutation == 5)
+        malformed.destructor = derived.destructor;
+      else if (mutation == 6)
+        malformed.classInstance = derived.id;
+      else if (mutation == 7)
+        malformed.lambdaInstance = 1;
+      else if (mutation == 8)
+        malformed.requiresActiveCleanup = true;
+      else
+        malformed.uniqueOwnerField = 1;
+      const auto publication = modulePublication(session);
+      rejects<std::logic_error>(
+          [&] { static_cast<void>(lifetimes.cleanup(malformed)); },
+          "a malformed passive fixed-array fallback rejects " +
+              std::string(phase));
+      expect(modulePublication(session) == publication,
+             "a rejected passive fixed-array fallback publishes no helper, "
+             "global, block or instruction " +
+                 std::string(phase));
+    }
+  };
+  rejectPassiveMutations("before cache warming");
+  auto *passiveCleanup = lifetimes.cleanup(passiveArray);
+  const auto passivePublication = modulePublication(session);
+  expect(passiveCleanup && lifetimes.cleanup(passiveArray) == passiveCleanup &&
+             modulePublication(session) == passivePublication,
+         "a real passive fixed-array fallback emits once and reuses its exact "
+         "helper");
+  rejectPassiveMutations("after cache warming");
   const auto &containerRecipe = recipeFor(container.id);
   auto *containerCleanup = lifetimes.cleanup(containerRecipe);
   llvm::Function *containerObservation = nullptr;
@@ -1182,6 +1237,511 @@ int main() { return evaluate(2) - 2; }
         "generated cleanup observation folds to the exact state truth table: " +
             name);
   }
+}
+
+void testCleanupCompositionProofs() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto recursiveFrontend = Frontend().analyze(
+      root / "tests/fixtures/recursive_cleanup_failure.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  expect(recursiveFrontend.canGenerateCode(),
+         "recursive cleanup composition source verifies");
+  if (!recursiveFrontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> recursiveIssues;
+  const auto recursiveInput = verifiedLoweredProgram(
+      gti_test::lowerProgram(recursiveFrontend, recursiveFrontend.mir,
+                             recursiveFrontend.mir),
+      recursiveIssues);
+  if (!recursiveInput)
+    throw std::runtime_error(
+        "recursive cleanup composition source seal failed");
+  Session recursiveSession(*recursiveInput, {});
+  auto recursiveDispatch =
+      DispatchStructuralTestAccess::inspect(recursiveSession);
+  Failures recursiveFailures(recursiveSession);
+  std::map<HirDestructorInstanceId, llvm::Function *> destructorBodies;
+  Lifetimes *activeLifetimes = nullptr;
+  std::optional<MirDropType> reentryRecipe;
+  bool reentryEnabled = false;
+  bool reentryChecked = false;
+  const auto findDestructorBody = [&](MirBodyAddress address) {
+    if (reentryEnabled && !reentryChecked && activeLifetimes && reentryRecipe) {
+      reentryChecked = true;
+      reentryEnabled = false;
+      const auto publication = modulePublication(recursiveSession);
+      rejects<std::logic_error>(
+          [&] {
+            static_cast<void>(activeLifetimes->cleanup(*reentryRecipe, true));
+          },
+          "a public callback reentry proves its malformed cleanup "
+          "independently");
+      expect(modulePublication(recursiveSession) == publication,
+             "a rejected public callback reentry publishes no nested artifact");
+    }
+    if (address.kind != MirBodyKind::Destructor)
+      throw std::runtime_error(
+          "cleanup composition requested a non-destructor body");
+    if (const auto found = destructorBodies.find(address.owner);
+        found != destructorBodies.end())
+      return found->second;
+    const auto *target =
+        recursiveSession.program().mir().findDestructorInstance(address.owner);
+    if (!target)
+      throw std::runtime_error(
+          "cleanup composition lost its destructor identity");
+    const auto abi = recursiveSession.abi().gti(
+        SemanticType::Void, {}, target->mayRaiseDefinedFailure, true);
+    auto *function = llvm::Function::Create(
+        abi.type, llvm::GlobalValue::InternalLinkage,
+        "cleanup.composition.destructor." + std::to_string(address.owner),
+        recursiveSession.module());
+    abi.applyTo(*function);
+    llvm::IRBuilder<> ir(llvm::BasicBlock::Create(recursiveSession.context(),
+                                                  "entry", function));
+    if (abi.statusResult)
+      ir.CreateRet(ir.getTrue());
+    else
+      ir.CreateRetVoid();
+    destructorBodies.emplace(address.owner, function);
+    return function;
+  };
+  Lifetimes recursiveLifetimes(recursiveSession, recursiveFailures,
+                               recursiveDispatch, findDestructorBody);
+  activeLifetimes = &recursiveLifetimes;
+  const auto &node = named(recursiveSession.program(), "Node");
+  const auto &left = named(recursiveSession.program(), "Left");
+  const auto nodeRecipe =
+      mirUniqueCleanupType(recursiveSession.program().mir(), node.type);
+  const auto leftRecipe =
+      mirUniqueCleanupType(recursiveSession.program().mir(), left.type);
+  expect(nodeRecipe && leftRecipe,
+         "recursive cleanup composition retains exact finite root recipes");
+  if (!nodeRecipe || !leftRecipe)
+    return;
+
+  std::vector<std::size_t> markerPath;
+  const auto findMarker = [&](const auto &self, const MirDropType &selected,
+                              std::vector<std::size_t> path) -> bool {
+    if (selected.recursiveCleanup) {
+      markerPath = std::move(path);
+      return true;
+    }
+    for (std::size_t index = 0; index < selected.aggregate.size(); ++index) {
+      auto child = path;
+      child.push_back(index);
+      if (self(self, selected.aggregate[index], std::move(child)))
+        return true;
+    }
+    return false;
+  };
+  expect(findMarker(findMarker, *nodeRecipe, {}) && markerPath.size() >= 2,
+         "recursive cleanup composition retains an owning-path back-edge");
+  if (markerPath.size() < 2)
+    return;
+  const auto marker = [&](MirDropType &selected) -> MirDropType & {
+    auto *current = &selected;
+    for (const auto index : markerPath)
+      current = &current->aggregate.at(index);
+    return *current;
+  };
+  auto markerSource = *nodeRecipe;
+  const MirDropType orphanMarker = marker(markerSource);
+  reentryRecipe = orphanMarker;
+  const auto rejectMalformed = [&](std::string_view phase) {
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto malformed = mutation == 0 ? orphanMarker : *nodeRecipe;
+      if (mutation == 0) {
+        // The exact marker is valid only while bound to its owning ancestor.
+      } else if (mutation == 1)
+        marker(malformed).classInstance = left.id;
+      else if (mutation == 2)
+        marker(malformed).uniqueOwnerField = 1;
+      else if (mutation == 3) {
+        const auto inlineMarker = marker(malformed);
+        malformed.aggregate.front() = inlineMarker;
+      } else
+        marker(malformed).type = left.type;
+      const auto publication = modulePublication(recursiveSession);
+      rejects<std::logic_error>(
+          [&] {
+            static_cast<void>(recursiveLifetimes.cleanup(malformed, true));
+          },
+          "an orphan, foreign or inline recursive back-edge rejects " +
+              std::string(phase));
+      expect(modulePublication(recursiveSession) == publication,
+             "a rejected recursive graph publishes no helper, global, block "
+             "or instruction " +
+                 std::string(phase));
+    }
+  };
+  rejectMalformed("before cache warming");
+  reentryEnabled = true;
+  auto *nodeCleanup = recursiveLifetimes.cleanup(*nodeRecipe);
+  auto *leftCleanup = recursiveLifetimes.cleanup(*leftRecipe);
+  const auto warmPublication = modulePublication(recursiveSession);
+  expect(reentryChecked && nodeCleanup && leftCleanup &&
+             nodeCleanup != leftCleanup &&
+             recursiveLifetimes.cleanup(*nodeRecipe, true) == nodeCleanup &&
+             recursiveLifetimes.cleanup(*leftRecipe, true) == leftCleanup &&
+             modulePublication(recursiveSession) == warmPublication,
+         "ordinary recursive caches transition to exact validated replacement "
+         "helpers after independently rejected callback reentry");
+  rejectMalformed("after cache warming");
+  bool failed = false, next = false, secondary = false;
+  for (const auto &block : *nodeCleanup) {
+    failed |= block.getName() == "failed";
+    next |= block.getName() == "next";
+    secondary |= block.getName() == "secondary";
+  }
+  expect(failed && next && secondary,
+         "recursive owner cleanup retains first-failure draining and "
+         "second-failure termination paths");
+  recursiveSession.verify();
+
+  const auto lambdaFrontend =
+      Frontend().analyze("llvm-cleanup-lambda-identity.gti", R"(
+#include <std/utility>
+class Token {
+public:
+  Token() {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() {}
+};
+int invoke<F>(F callable) { return callable(); }
+int owned() {
+  Token first{};
+  Token second{};
+  auto callback =
+      [first = std::move(first), second = std::move(second)]() -> int {
+    return 17;
+  };
+  return callback();
+}
+class Field {
+  int value = invoke([]() -> int { return 17; });
+public:
+  int read() { return this.value; }
+};
+int main() { Field value{}; return value.read() + owned() - 34; }
+)",
+                         {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  expect(lambdaFrontend.canGenerateCode(),
+         "cleanup lambda identity source verifies");
+  if (!lambdaFrontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> lambdaIssues;
+  const auto lambdaInput = verifiedLoweredProgram(
+      gti_test::lowerProgram(lambdaFrontend, lambdaFrontend.mir,
+                             lambdaFrontend.mir),
+      lambdaIssues);
+  if (!lambdaInput)
+    throw std::runtime_error("cleanup lambda identity source seal failed");
+  Session lambdaSession(*lambdaInput, {});
+  auto lambdaDispatch = DispatchStructuralTestAccess::inspect(lambdaSession);
+  Failures lambdaFailures(lambdaSession);
+  std::map<HirDestructorInstanceId, llvm::Function *> lambdaDestructorBodies;
+  const auto findLambdaDestructorBody = [&](MirBodyAddress address) {
+    if (address.kind != MirBodyKind::Destructor)
+      throw std::runtime_error(
+          "closure cleanup requested a non-destructor body");
+    if (const auto found = lambdaDestructorBodies.find(address.owner);
+        found != lambdaDestructorBodies.end())
+      return found->second;
+    const auto *target =
+        lambdaSession.program().mir().findDestructorInstance(address.owner);
+    if (!target)
+      throw std::runtime_error("closure cleanup lost its destructor identity");
+    const auto abi = lambdaSession.abi().gti(
+        SemanticType::Void, {}, target->mayRaiseDefinedFailure, true);
+    auto *function = llvm::Function::Create(
+        abi.type, llvm::GlobalValue::InternalLinkage,
+        "cleanup.capture.destructor." + std::to_string(address.owner),
+        lambdaSession.module());
+    abi.applyTo(*function);
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(lambdaSession.context(), "entry", function));
+    if (abi.statusResult)
+      ir.CreateRet(ir.getTrue());
+    else
+      ir.CreateRetVoid();
+    lambdaDestructorBodies.emplace(address.owner, function);
+    return function;
+  };
+  Lifetimes lambdaLifetimes(lambdaSession, lambdaFailures, lambdaDispatch,
+                            findLambdaDestructorBody);
+  const MirLambdaInstance *first = nullptr;
+  const MirLambdaInstance *second = nullptr;
+  const MirLambdaInstance *owned = nullptr;
+  for (const auto &candidate :
+       lambdaSession.program().mir().lambdaInstances()) {
+    if (!owned && candidate.captureTypes.size() == 2 &&
+        candidate.captureModes ==
+            std::vector<LambdaCaptureMode>{LambdaCaptureMode::Move,
+                                           LambdaCaptureMode::Move} &&
+        candidate.captureRequiresActiveCleanup == std::vector<bool>{true, true})
+      owned = &candidate;
+    if (!candidate.captureTypes.empty())
+      continue;
+    if (!first) {
+      first = &candidate;
+    } else if (candidate.type == first->type) {
+      second = &candidate;
+    }
+  }
+  expect(first && second && owned,
+         "cleanup lambda source retains compatible duplicate bodies and an "
+         "owned two-capture environment");
+  if (!first || !second || !owned)
+    return;
+  const auto ownedLambda =
+      mirUniqueCleanupType(lambdaSession.program().mir(), owned->type);
+  expect(ownedLambda && ownedLambda->lambdaInstance == owned->id &&
+             ownedLambda->aggregate.size() == 2 &&
+             ownedLambda->aggregate[0].captureIndex == 1 &&
+             ownedLambda->aggregate[1].captureIndex == 0,
+         "owned closure cleanup retains its exact reverse capture schedule");
+  if (!ownedLambda)
+    return;
+  const auto rejectOwnedLambda = [&](std::string_view phase) {
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto malformed = *ownedLambda;
+      if (mutation == 0)
+        malformed.aggregate.front().captureIndex.reset();
+      else if (mutation == 1)
+        malformed.aggregate.front().captureIndex = 0;
+      else if (mutation == 2)
+        std::swap(malformed.aggregate[0], malformed.aggregate[1]);
+      else if (mutation == 3)
+        malformed.aggregate.front().uniqueOwnerField = 1;
+      else
+        malformed.aggregate.pop_back();
+      const auto publication = modulePublication(lambdaSession);
+      rejects<std::logic_error>(
+          [&] { static_cast<void>(lambdaLifetimes.cleanup(malformed)); },
+          "an incomplete, reordered or foreign capture schedule rejects " +
+              std::string(phase));
+      expect(modulePublication(lambdaSession) == publication,
+             "a rejected capture schedule publishes no helper, global, block "
+             "or instruction " +
+                 std::string(phase));
+    }
+  };
+  rejectOwnedLambda("before cache warming");
+  auto *ownedCleanup = lambdaLifetimes.cleanup(*ownedLambda);
+  const auto ownedPublication = modulePublication(lambdaSession);
+  expect(ownedCleanup &&
+             lambdaLifetimes.cleanup(*ownedLambda) == ownedCleanup &&
+             modulePublication(lambdaSession) == ownedPublication,
+         "an exact populated capture cleanup reuses its validated helper");
+  rejectOwnedLambda("after cache warming");
+  const auto canonicalLambda =
+      mirUniqueCleanupType(lambdaSession.program().mir(), first->type);
+  if (!canonicalLambda)
+    throw std::runtime_error(
+        "cleanup lambda identity lost its canonical recipe");
+  auto selectedLambda = *canonicalLambda;
+  selectedLambda.lambdaInstance = second->id;
+  auto *secondCleanup = lambdaLifetimes.cleanup(selectedLambda);
+  auto *firstCleanup = lambdaLifetimes.cleanup(*canonicalLambda);
+  const auto lambdaPublication = modulePublication(lambdaSession);
+  expect(secondCleanup && firstCleanup && secondCleanup != firstCleanup &&
+             lambdaLifetimes.cleanup(selectedLambda) == secondCleanup &&
+             modulePublication(lambdaSession) == lambdaPublication,
+         "a non-first compatible lambda retains its exact cleanup identity "
+         "through emission and cache reuse");
+  auto missingLambda = selectedLambda;
+  missingLambda.lambdaInstance =
+      lambdaSession.program().mir().lambdaInstances().size() + 1;
+  const auto beforeMissing = modulePublication(lambdaSession);
+  rejects<std::logic_error>(
+      [&] { static_cast<void>(lambdaLifetimes.cleanup(missingLambda)); },
+      "a missing exact lambda cleanup identity rejects after cache warming");
+  expect(modulePublication(lambdaSession) == beforeMissing,
+         "a rejected lambda cleanup identity publishes no artifact");
+  lambdaSession.verify();
+
+  const auto hierarchyOwnerFrontend =
+      Frontend().analyze("llvm-cleanup-hierarchy-owner.gti", R"(
+#include <std/memory>
+class Base {
+public:
+  Base() {}
+  virtual int read() { return 1; }
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+  int read() override { return 2; }
+};
+class HierarchyValue {
+  Derived value;
+public:
+  HierarchyValue() : value(Derived()) {}
+};
+class UniqueNest {
+  std::unique_ptr<HierarchyValue> value;
+public:
+  UniqueNest() : value(std::unique_ptr<HierarchyValue>()) {}
+};
+class SharedNest {
+  std::shared_ptr<HierarchyValue> value;
+public:
+  SharedNest() : value(std::shared_ptr<HierarchyValue>()) {}
+};
+int main() { UniqueNest unique{}; SharedNest shared{}; return 0; }
+)",
+                         {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  expect(hierarchyOwnerFrontend.canGenerateCode(),
+         "hierarchy owner cleanup source verifies");
+  if (!hierarchyOwnerFrontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> hierarchyOwnerIssues;
+  const auto hierarchyOwnerInput = verifiedLoweredProgram(
+      gti_test::lowerProgram(hierarchyOwnerFrontend, hierarchyOwnerFrontend.mir,
+                             hierarchyOwnerFrontend.mir),
+      hierarchyOwnerIssues);
+  if (!hierarchyOwnerInput)
+    throw std::runtime_error("hierarchy owner cleanup source seal failed");
+  Session hierarchyOwnerSession(*hierarchyOwnerInput, {});
+  auto hierarchyOwnerDispatch =
+      DispatchStructuralTestAccess::inspect(hierarchyOwnerSession);
+  Failures hierarchyOwnerFailures(hierarchyOwnerSession);
+  Lifetimes hierarchyOwnerLifetimes(
+      hierarchyOwnerSession, hierarchyOwnerFailures, hierarchyOwnerDispatch,
+      [](MirBodyAddress) -> llvm::Function * {
+        throw std::runtime_error(
+            "rejected hierarchy owner cleanup requested a source body");
+      });
+  const auto &hierarchyValue =
+      named(hierarchyOwnerSession.program(), "HierarchyValue");
+  const auto &uniqueNest = named(hierarchyOwnerSession.program(), "UniqueNest");
+  const auto &sharedNest = named(hierarchyOwnerSession.program(), "SharedNest");
+  expect(!hierarchyValue.polymorphic &&
+             containsHierarchyStorage(hierarchyOwnerSession.program().mir(),
+                                      hierarchyValue.type),
+         "a nonpolymorphic wrapper independently retains inline hierarchy "
+         "storage");
+  const MirClassInstance *sharedOwner = nullptr;
+  for (const auto &candidate :
+       hierarchyOwnerSession.program().mir().classInstances())
+    if (candidate.compilerCapability ==
+            CompilerCapabilityTypeKind::SharedOwner &&
+        candidate.type.arguments.size() == 1 &&
+        candidate.type.arguments.front() == hierarchyValue.type) {
+      sharedOwner = &candidate;
+      break;
+    }
+  const auto directUnique =
+      mirUniqueCleanupType(hierarchyOwnerSession.program().mir(),
+                           SemanticType::uniqueOwnerOf(hierarchyValue.type));
+  const auto directShared =
+      sharedOwner ? mirUniqueCleanupType(hierarchyOwnerSession.program().mir(),
+                                         sharedOwner->type)
+                  : std::nullopt;
+  const auto nestedUnique = mirUniqueCleanupType(
+      hierarchyOwnerSession.program().mir(), uniqueNest.type);
+  const auto nestedShared = mirUniqueCleanupType(
+      hierarchyOwnerSession.program().mir(), sharedNest.type);
+  expect(sharedOwner && directUnique && directShared && nestedUnique &&
+             nestedShared,
+         "direct and nested unique/shared hierarchy owners retain exact "
+         "cleanup recipes");
+  if (!sharedOwner || !directUnique || !directShared || !nestedUnique ||
+      !nestedShared)
+    return;
+  const std::array hierarchyRecipes{
+      std::pair<std::string_view, const MirDropType *>{"direct unique",
+                                                       &*directUnique},
+      std::pair<std::string_view, const MirDropType *>{"nested unique",
+                                                       &*nestedUnique},
+      std::pair<std::string_view, const MirDropType *>{"direct shared",
+                                                       &*directShared},
+      std::pair<std::string_view, const MirDropType *>{"nested shared",
+                                                       &*nestedShared}};
+  const auto containsDynamicCleanup = [&](const auto &self,
+                                          const MirDropType &recipe) -> bool {
+    return recipe.polymorphicCleanup ||
+           std::any_of(recipe.aggregate.begin(), recipe.aggregate.end(),
+                       [&](const auto &child) { return self(self, child); });
+  };
+  expect(std::none_of(hierarchyRecipes.begin(), hierarchyRecipes.end(),
+                      [&](const auto &entry) {
+                        return containsDynamicCleanup(containsDynamicCleanup,
+                                                      *entry.second);
+                      }),
+         "hierarchy owner rejection recipes contain no dynamic-cleanup marker");
+  for (const auto &[name, recipe] : hierarchyRecipes) {
+    const auto publication = modulePublication(hierarchyOwnerSession);
+    for (int attempt = 0; attempt != 2; ++attempt)
+      rejects<BackendUnsupportedError>(
+          [&] {
+            static_cast<void>(hierarchyOwnerLifetimes.cleanup(*recipe, true));
+          },
+          std::string(name) +
+              " hierarchy-pointee cleanup rejects before emission");
+    expect(modulePublication(hierarchyOwnerSession) == publication,
+           std::string(name) +
+               " hierarchy-pointee rejection publishes no artifact");
+  }
+  hierarchyOwnerSession.verify();
+
+  TargetInfo privateTarget = TargetInfo::host();
+  privateTarget.executionProfile = ExecutionProfile::Concurrent;
+  privateTarget.runtimeCapabilities.threads = true;
+  FrontendOptions privateOptions;
+  privateOptions.target = privateTarget;
+  const auto privateFrontend =
+      Frontend(std::move(privateOptions))
+          .analyze("llvm-private-cleanup-fallback.gti", R"(
+#include <std/mutex>
+int main() { std::mutex<int32_t> value{1}; return 0; }
+)",
+                   {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  expect(privateFrontend.canGenerateCode(),
+         "private cleanup fallback source verifies");
+  if (!privateFrontend.canGenerateCode())
+    return;
+  std::vector<LoweredProgramIssue> privateIssues;
+  const auto privateInput = verifiedLoweredProgram(
+      gti_test::lowerProgram(privateFrontend, privateFrontend.mir,
+                             privateFrontend.mir, privateTarget),
+      privateIssues);
+  if (!privateInput)
+    throw std::runtime_error("private cleanup fallback source seal failed");
+  Session privateSession(*privateInput, {});
+  auto privateDispatch = DispatchStructuralTestAccess::inspect(privateSession);
+  Failures privateFailures(privateSession);
+  Lifetimes privateLifetimes(
+      privateSession, privateFailures, privateDispatch,
+      [](MirBodyAddress) -> llvm::Function * {
+        throw std::runtime_error(
+            "rejected private cleanup unexpectedly requested a source body");
+      });
+  const MirClassInstance *privateOwner = nullptr;
+  for (const auto &candidate : privateSession.program().mir().classInstances())
+    if (candidate.compilerCapability ==
+        CompilerCapabilityTypeKind::MutexStorage) {
+      privateOwner = &candidate;
+      break;
+    }
+  expect(privateOwner && !mirUniqueCleanupType(privateSession.program().mir(),
+                                               privateOwner->type),
+         "private mutex storage retains an unavailable canonical cleanup "
+         "family");
+  if (!privateOwner)
+    return;
+  const MirDropType privateRecipe{.type = privateOwner->type,
+                                  .classInstance = privateOwner->id,
+                                  .requiresActiveCleanup = true};
+  const auto privatePublication = modulePublication(privateSession);
+  for (int attempt = 0; attempt != 2; ++attempt)
+    rejects<BackendUnsupportedError>(
+        [&] { static_cast<void>(privateLifetimes.cleanup(privateRecipe)); },
+        "an unsupported active private cleanup family rejects before emission");
+  expect(modulePublication(privateSession) == privatePublication,
+         "an unsupported active private cleanup family publishes no artifact");
 }
 
 void testDispatchAdmissionBinding() {
@@ -2969,6 +3529,7 @@ int main() { return 0; }
   testPureGates();
   testBodyCallHook();
   testStaticLifecycle();
+  testCleanupCompositionProofs();
   testDispatchAdmissionBinding();
   testReferencePublication();
   testOrdinaryTransferPlacement();
