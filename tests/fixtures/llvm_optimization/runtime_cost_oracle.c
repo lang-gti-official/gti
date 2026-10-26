@@ -26,6 +26,11 @@ static unsigned long long expected(int family, int count) {
     case 6:
       value = (value * 33 + (unsigned)(index % 31)) % 1000003;
       break;
+    case 7:
+      // Seven identical float lanes compute (input + 2) * 2 - input.
+      // Every intermediate and the reduction are exactly representable.
+      value = (value * 33 + 7 * (unsigned)(index % 31 + 5)) % 1000003;
+      break;
     default:
       exit(2);
     }
@@ -43,7 +48,7 @@ int main(int argc, char **argv) {
     return 2;
   int family = atoi(argv[1]);
   int iterations = atoi(argv[2]);
-  if (family < 0 || family > 6 || iterations < 1 || iterations > 1000000000)
+  if (family < 0 || family > 7 || iterations < 1 || iterations > 1000000000)
     return 2;
   unsigned long long wanted = expected(family, iterations);
   unsigned long long wanted_effects = family == 4   ? 1
