@@ -197,6 +197,72 @@ bool nativeCCountedInputContract(const MirProgram &program,
                      });
 }
 
+bool nativeCScalarFunctionValueContract(const MirProgram &program,
+                                        const TargetInfo &target,
+                                        const SemanticType &type) {
+  return type.kind == SemanticType::NativeFunction &&
+         type.hasNativeFunctionShape() &&
+         nativeCValueContract(program, target, type,
+                              NativeCValueRole::Argument) &&
+         scalarBoundaryType(*type.nativeFunctionReturnType()) &&
+         std::all_of(type.nativeFunctionParameterTypes().begin(),
+                     type.nativeFunctionParameterTypes().end(),
+                     scalarBoundaryType);
+}
+
+bool nativeCScalarFunctionImportContract(const MirProgram &program,
+                                         const TargetInfo &target,
+                                         const MirFunctionInstance &function) {
+  return nativeCDeclarationContract(program, target, function) &&
+         nativeCScalarFunctionValueContract(program, target,
+                                            function.returnType) &&
+         std::all_of(function.parameterTypes.begin(),
+                     function.parameterTypes.end(), scalarBoundaryType);
+}
+
+bool nativeCScalarIndirectCallContract(const MirProgram &program,
+                                       const TargetInfo &target,
+                                       const MirBody &body,
+                                       const MirInstruction &instruction) {
+  return nativeCIndirectCallContract(program, target, body, instruction) &&
+         nativeCScalarFunctionValueContract(program, target,
+                                            *instruction.nativeCalleeType);
+}
+
+bool nativeCScalarReceiverInputContract(const MirProgram &program,
+                                        const TargetInfo &target,
+                                        const MirBody &body,
+                                        const MirInstruction &instruction) {
+  if (instruction.tombstone ||
+      instruction.kind != MirInstructionKind::CallInput ||
+      !instruction.result ||
+      instruction.callInputRole != MirCallInputRole::Receiver ||
+      instruction.callInputKind != HirCallInputKind::Value ||
+      instruction.callInputIndex != 0 || instruction.callSite == 0 ||
+      !nativeCScalarFunctionValueContract(program, target,
+                                          instruction.info.type))
+    return false;
+  const auto *value = body.findValue(*instruction.result);
+  if (!value || value->definition != instruction.id)
+    return false;
+  const MirInstruction *canonical = nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &stage : block.instructions)
+      if (stage.id == instruction.id)
+        canonical = &stage;
+  if (!canonical || *canonical != instruction)
+    return false;
+  for (const auto &block : body.blocks)
+    for (const auto &call : block.instructions)
+      if (call.callSite == instruction.callSite && call.receiver &&
+          call.receiver->kind == MirOperandKind::Value &&
+          call.receiver->value == *instruction.result &&
+          call.receiver->type == instruction.info.type &&
+          nativeCScalarIndirectCallContract(program, target, body, call))
+        return true;
+  return false;
+}
+
 bool nativeCDirectCallContract(const MirProgram &program,
                                const TargetInfo &target, const MirBody &body,
                                const MirInstruction &instruction) {

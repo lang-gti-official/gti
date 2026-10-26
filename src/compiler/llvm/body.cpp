@@ -667,6 +667,19 @@ private:
             ? session.program().mir().findLambda(*instruction.lambdaTarget)
             : nullptr;
     const auto constructor = instruction.constructorTarget;
+    if (instruction.nativeCalleeType) {
+      if (!nativeCScalarIndirectCallContract(session.program().mir(),
+                                             session.program().target(), input,
+                                             instruction))
+        throw BackendUnsupportedError(
+            "LLVM indirect C call requires its exact staged scalar signature");
+      auto *callee = operand(*instruction.receiver);
+      std::vector<llvm::Value *> arguments;
+      for (const auto &argument : instruction.operands)
+        arguments.push_back(operand(argument));
+      return emitNativeCIndirectCall(session, ir, input, instruction, callee,
+                                     arguments);
+    }
     if (!target && !lambdaTarget && !instruction.bodyTarget && !constructor)
       throw BackendUnsupportedError(
           "LLVM scalar call requires an exact direct target");
@@ -681,7 +694,8 @@ private:
       const auto &program = session.program().mir();
       const auto &targetInfo = session.program().target();
       if (!nativeCScalarImportContract(program, targetInfo, *target) &&
-          !nativeCCountedInputContract(program, targetInfo, *target))
+          !nativeCCountedInputContract(program, targetInfo, *target) &&
+          !nativeCScalarFunctionImportContract(program, targetInfo, *target))
         throw BackendUnsupportedError(
             "LLVM direct C call requires its supported exact import profile");
       std::vector<llvm::Value *> arguments;

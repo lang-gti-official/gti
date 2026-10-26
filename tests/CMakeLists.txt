@@ -1776,6 +1776,21 @@ if(Python3_Interpreter_FOUND)
       --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-counted-evidence")
   set_tests_properties(llvm_native_c_contract_preflight
     llvm_native_c_scalar_execution llvm_native_c_counted_input PROPERTIES TIMEOUT 600)
+  add_test(NAME llvm_native_c_indirect_execution
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_indirect_oracle_test.py"
+      "$<TARGET_FILE:gti>" --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-indirect-evidence")
+  set_tests_properties(llvm_native_c_indirect_execution PROPERTIES TIMEOUT 600)
+  add_test(NAME llvm_native_c_indirect_cost
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_cost_test.py"
+      "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --indirect --cc "${CMAKE_C_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-indirect-cost")
+  set_tests_properties(llvm_native_c_indirect_cost PROPERTIES TIMEOUT 180)
+  gti_register_llvm_evidence_manifest(llvm_native_c_indirect_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_indirect_oracle_test.py")
   gti_register_llvm_evidence_manifest(llvm_native_c_scalar_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_contract_oracle_test.py")
   gti_register_llvm_evidence_manifest(llvm_native_c_counted_input

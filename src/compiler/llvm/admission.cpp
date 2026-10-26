@@ -1055,10 +1055,13 @@ public:
       add(type.kind,
           opaqueReferent(type) ? std::optional(Shape::ErasedReference)
           : address            ? std::optional(Shape::PassiveAddressValue)
-          : passiveArray       ? std::optional(Shape::PassiveArrayValue)
-          : reference          ? std::optional(Shape::PassiveReference)
-          : arrayAddress       ? std::optional(Shape::CheckedArrayProjection)
-                               : classShape(type));
+          : native_llvm::nativeCScalarFunctionValueContract(program,
+                                                            nativeTarget, type)
+              ? std::optional(Shape::NativeCFunctionValue)
+          : passiveArray ? std::optional(Shape::PassiveArrayValue)
+          : reference    ? std::optional(Shape::PassiveReference)
+          : arrayAddress ? std::optional(Shape::CheckedArrayProjection)
+                         : classShape(type));
       if (type.nativeCScalar != NativeCScalarKind::None) {
         const auto nativeScalar =
             native_llvm::nativeCScalarValueContract(nativeTarget, type)
@@ -1357,7 +1360,11 @@ public:
                 native_llvm::wholeCStringLiteral(mir, stage.operands[0])
                     ? std::optional(Shape::PassiveAddressValue)
                     : std::nullopt);
-          add(*stage.callInputRole, classShape(stage.info.type));
+          add(*stage.callInputRole,
+              native_llvm::nativeCScalarReceiverInputContract(
+                  program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCScalarIndirect)
+                  : classShape(stage.info.type));
           add(stage.callInputKind,
               passiveReference(stage.info.type) &&
                       (stage.callInputKind == HirCallInputKind::ReadBorrow ||
@@ -1480,8 +1487,13 @@ public:
           type(*stage.objectLayoutType);
         if (stage.nativeCalleeType) {
           type(*stage.nativeCalleeType);
-          add(Shape::NativeCall);
-          add(Shape::IndirectCall);
+          const auto nativeIndirect =
+              native_llvm::nativeCScalarIndirectCallContract(
+                  program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCScalarIndirect)
+                  : std::nullopt;
+          add(Shape::NativeCall, nativeIndirect);
+          add(Shape::IndirectCall, nativeIndirect);
         }
         if (stage.dispatch == CallDispatch::Virtual)
           add(Shape::VirtualCall);
@@ -1570,15 +1582,25 @@ public:
                   ? std::optional(Shape::NativeProcessMemory)
               : stage.unsafeOperation ==
                             UnsafeOperationKind::ForeignPointerCall &&
+                        native_llvm::nativeCScalarIndirectCallContract(
+                            program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCScalarIndirect)
+              : stage.unsafeOperation ==
+                            UnsafeOperationKind::ForeignPointerCall &&
                         callee &&
                         (native_llvm::nativeCScalarImportContract(
                              program, nativeTarget, *callee) ||
                          native_llvm::nativeCCountedInputContract(
+                             program, nativeTarget, *callee) ||
+                         native_llvm::nativeCScalarFunctionImportContract(
                              program, nativeTarget, *callee)) &&
                         native_llvm::nativeCDirectCallContract(
                             program, nativeTarget, mir, stage)
                   ? std::optional(
-                        native_llvm::nativeCCountedInputContract(
+                        native_llvm::nativeCScalarFunctionImportContract(
+                            program, nativeTarget, *callee)
+                            ? Shape::NativeCFunctionImport
+                        : native_llvm::nativeCCountedInputContract(
                             program, nativeTarget, *callee)
                             ? Shape::NativeCCountedInput
                             : Shape::NativeCScalarImport)
@@ -1827,14 +1849,18 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
         native_llvm::nativeProcessMemoryBinding(mir, function)
             ? std::optional(Shape::NativeProcessMemory)
             : std::nullopt;
-    const auto nativeImport = processMemory ? processMemory
-                              : native_llvm::nativeCScalarImportContract(
-                                    mir, input.target(), function)
-                                  ? std::optional(Shape::NativeCScalarImport)
-                              : native_llvm::nativeCCountedInputContract(
-                                    mir, input.target(), function)
-                                  ? std::optional(Shape::NativeCCountedInput)
-                                  : std::nullopt;
+    const auto nativeImport =
+        processMemory ? processMemory
+        : native_llvm::nativeCScalarImportContract(mir, input.target(),
+                                                   function)
+            ? std::optional(Shape::NativeCScalarImport)
+        : native_llvm::nativeCCountedInputContract(mir, input.target(),
+                                                   function)
+            ? std::optional(Shape::NativeCCountedInput)
+        : native_llvm::nativeCScalarFunctionImportContract(mir, input.target(),
+                                                           function)
+            ? std::optional(Shape::NativeCFunctionImport)
+            : std::nullopt;
     inventory.add(function.definitionKind, nativeImport);
     inventory.add(function.linkage, nativeImport);
     inventory.add(function.entryKind);

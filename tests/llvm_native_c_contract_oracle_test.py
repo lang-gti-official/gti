@@ -2,6 +2,7 @@
 """Exact declaration/call contracts and optional real GTI/C service execution."""
 
 import argparse
+from hashlib import sha256
 import json
 from pathlib import Path
 import platform
@@ -34,6 +35,76 @@ def evidence_manifest(root: Path) -> dict:
         evidence_profiles(root),
         {name: f"tests/fixtures/llvm_native_c_abi/{name}.gti"
          for name in SCALAR_SOURCES})
+
+
+def native_enum_imports(repo, compiler, cc, cxx, output, run):
+    """Exercise imported integer aliases without admitting dormant C shapes."""
+    work = output / "native-enum-imports"
+    work.mkdir(parents=True, exist_ok=True)
+    example = repo / "examples/native-enum-bindings/native"
+    fixture = repo / "tests/fixtures/llvm_native_c_abi"
+    bindings = work / "bindings.gti"
+    run([compiler, "bindgen", example / "flags.h", "--namespace", "native_flags",
+         "-o", bindings], "enum-bindgen")
+    source, rejected = work / "main.gti", work / "required-aggregate.gti"
+    source.write_bytes((fixture / "native_enum_imports.gti").read_bytes())
+    rejected.write_bytes((fixture / "native_enum_aggregate.gti").read_bytes())
+    header = work / "native.h"
+    run([compiler, source, "--emit-native-header", "-o", header], "enum-header")
+    executions = 0
+    for c_level in (0, 3):
+        obj = work / f"flags-O{c_level}.o"
+        run([cc, "-std=c17", f"-O{c_level}", "-Wall", "-Wextra", "-Werror",
+             "-c", example / "flags.c", "-o", obj], f"enum-host-O{c_level}")
+        for level in range(4):
+            tag = f"enum-llvm{level}-c{c_level}"
+            binary = work / tag
+            run([compiler, source, "--backend", "llvm", f"-O{level}", "-o", binary,
+                 "--", obj], "build-" + tag)
+            result = run([binary], "run-" + tag)
+            if result.stdout or result.stderr:
+                raise RuntimeError(f"imported enum output mismatch: {tag}")
+            executions += 1
+    for standard in ("c++20", "c++23"):
+        for isolated in (False, True):
+            probe = work / f"header-{standard}-{isolated}.cpp"
+            probe.write_text(
+                ("#define GTI_NATIVE_HEADER_NO_SOURCE_NAMES\n" if isolated else "") +
+                '#include "native.h"\n')
+            run([cxx, f"-std={standard}", "-Werror", "-fsyntax-only", "-I",
+                 repo / "runtime/include", probe], "enum-" + probe.stem)
+    probe = work / "header.c"
+    probe.write_text(
+        '#include "native.h"\n'
+        '_Static_assert(_Generic(&flags_echo, unsigned long (*)(unsigned long): 1, '
+        'default: 0), "wide enum signature");\n'
+        '_Static_assert(_Generic(&flags_offset, long (*)(long): 1, default: 0), '
+        '"signed enum signature");\n'
+        '_Static_assert(_Generic(&flags_write, void (*)(unsigned long *): 1, '
+        'default: 0), "enum output signature");\n')
+    run([cc, "-std=c17", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", "-I",
+         repo / "runtime/include", probe], "enum-c-header")
+    comparator = work / "cpp-aggregate"
+    run([compiler, rejected, "--std", "c++23", "-O3", "-o", comparator, "--",
+         work / "flags-O3.o"], "enum-build-cpp-aggregate")
+    result = run([comparator], "enum-run-cpp-aggregate")
+    if result.stdout or result.stderr:
+        raise RuntimeError("native enum C++ comparator output mismatch")
+    for level in (0, 3):
+        destination = work / f"unsupported-aggregate-O{level}"
+        sentinel = b"existing native artifact\n"
+        destination.write_bytes(sentinel)
+        result = run([compiler, rejected, "--backend", "llvm", f"-O{level}",
+                      "-o", destination], f"enum-reject-aggregate-O{level}", 65)
+        if "GTI-B0003" not in result.stderr or destination.read_bytes() != sentinel:
+            raise RuntimeError("unsupported imported aggregate published an artifact")
+    return {
+        "public_executions": executions, "header_compiles": 5,
+        "supported_cpp_comparators": 1, "artifact_negatives": 2,
+        "input_sha256": {str(path): sha256(path.read_bytes()).hexdigest()
+                         for path in (source, rejected, bindings, header,
+                                      example / "flags.h", example / "flags.c")},
+    }
 
 
 def main():
@@ -146,6 +217,11 @@ def main():
                       "native_failure.gti" not in result.stderr):
                     raise RuntimeError(f"native failure cleanup/attribution mismatch: {tag}")
                 executions += 1
+    if compiler:
+        imported = native_enum_imports(repo, compiler, args.cc, args.cxx, output, run)
+        executions += imported["public_executions"]
+        evidence["native_enum_imports"] = imported
+        (output / "evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
     scope = ("real GTI-body preflight, public admission unchanged" if args.preflight
              else f"production GTI/C ({args.profile} profile)")
     print(f"PASS: 16 declaration/storage helper executions plus {executions} {scope} getter/service/cleanup executions; {output}")

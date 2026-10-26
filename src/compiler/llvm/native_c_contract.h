@@ -27,6 +27,20 @@ nativeCScalarImportContract(const MirProgram &program, const TargetInfo &target,
 [[nodiscard]] bool
 nativeCCountedInputContract(const MirProgram &program, const TargetInfo &target,
                             const MirFunctionInstance &function);
+[[nodiscard]] bool nativeCScalarFunctionValueContract(const MirProgram &program,
+                                                      const TargetInfo &target,
+                                                      const SemanticType &type);
+[[nodiscard]] bool
+nativeCScalarFunctionImportContract(const MirProgram &program,
+                                    const TargetInfo &target,
+                                    const MirFunctionInstance &function);
+[[nodiscard]] bool
+nativeCScalarIndirectCallContract(const MirProgram &program,
+                                  const TargetInfo &target, const MirBody &body,
+                                  const MirInstruction &instruction);
+[[nodiscard]] bool nativeCScalarReceiverInputContract(
+    const MirProgram &program, const TargetInfo &target, const MirBody &body,
+    const MirInstruction &instruction);
 [[nodiscard]] bool nativeCDirectCallContract(const MirProgram &program,
                                              const TargetInfo &target,
                                              const MirBody &body,

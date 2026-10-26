@@ -13,6 +13,7 @@
 #include <llvm/TargetParser/Triple.h>
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -469,10 +470,34 @@ void emitContractProbes(Session &session) {
                                     NativeCValueRole::Argument),
           "a native C scalar spelling cannot override its canonical domain");
   unsigned direct = 0, indirect = 0;
+  const std::array<SemanticType, 2> scalarParameters{SemanticType::Int8,
+                                                     SemanticType::UInt16};
+  const auto scalarFunction =
+      SemanticType::nativeFunctionType(SemanticType::Int16, scalarParameters);
+  require(nativeCScalarFunctionValueContract(program, target, scalarFunction),
+          "scalar native signatures use the exact general value contract");
+  const std::array<SemanticType, 1> countedParameters{SemanticType::StringView};
+  const auto countedFunction =
+      SemanticType::nativeFunctionType(SemanticType::Int32, countedParameters);
+  require(
+      nativeCValueContract(program, target, countedFunction,
+                           NativeCValueRole::Argument) &&
+          !nativeCScalarFunctionValueContract(program, target, countedFunction),
+      "a representable counted signature does not open indirect admission");
+  const auto nestedFunction =
+      SemanticType::nativeFunctionType(scalarFunction, {});
+  require(
+      !nativeCScalarFunctionValueContract(program, target, nestedFunction) &&
+          !nativeCScalarFunctionValueContract(program, target,
+                                              SemanticType::NativeFunction),
+      "nested and incomplete native signatures remain closed");
   for (const auto &function : program.functionInstances()) {
     if (function.linkage == LanguageLinkage::C) {
       require(nativeCDeclarationContract(program, target, function),
               "ordinary unrelated C declarations need structural contracts");
+      require(nativeCScalarFunctionImportContract(program, target, function) ==
+                  (function.returnType.kind == SemanticType::NativeFunction),
+              "only the exact scalar-function getter receives its new witness");
       auto *imported = session.abi().declareFunction(function.id);
       const auto plan =
           session.abi().nativeC(function.returnType, function.parameterTypes);
@@ -498,6 +523,8 @@ void emitContractProbes(Session &session) {
           invalid.linkage = LanguageLinkage::Gti;
         require(!nativeCDeclarationContract(program, target, invalid),
                 "mutated C declaration cannot establish a native witness");
+        require(!nativeCScalarFunctionImportContract(program, target, invalid),
+                "a forged getter cannot establish scalar native admission");
       }
     }
     const auto *declaration =
@@ -511,11 +538,31 @@ void emitContractProbes(Session &session) {
           indirectCall = &instruction;
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions) {
+        if (instruction.callInputRole == MirCallInputRole::Receiver &&
+            instruction.info.type.kind == SemanticType::NativeFunction) {
+          require(nativeCScalarReceiverInputContract(
+                      program, target, function.body, instruction),
+                  "native receiver input requires its exact consuming call");
+          auto invalid = instruction;
+          invalid.callSite += 1000;
+          require(!nativeCScalarReceiverInputContract(program, target,
+                                                      function.body, invalid),
+                  "a mismatched staged receiver cannot gain a native witness");
+          invalid = instruction;
+          invalid.operands.clear();
+          require(
+              !nativeCScalarReceiverInputContract(program, target,
+                                                  function.body, invalid),
+              "a noncanonical staged receiver cannot gain a native witness");
+        }
         if (instruction.nativeCalleeType) {
           require(nativeCIndirectCallContract(program, target, function.body,
                                               instruction),
                   "verified native pointer call requires its exact native "
                   "signature");
+          require(nativeCScalarIndirectCallContract(program, target,
+                                                    function.body, instruction),
+                  "scalar indirect witness consumes the exact staged contract");
           for (unsigned mutation = 0; mutation < 5; ++mutation) {
             auto invalid = instruction;
             if (mutation == 0)
@@ -531,6 +578,9 @@ void emitContractProbes(Session &session) {
             require(!nativeCIndirectCallContract(program, target, function.body,
                                                  invalid),
                     "mutated native indirect call must reject");
+            require(!nativeCScalarIndirectCallContract(program, target,
+                                                       function.body, invalid),
+                    "a malformed indirect call cannot gain scalar admission");
           }
           ++indirect;
         }

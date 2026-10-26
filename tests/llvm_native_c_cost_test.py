@@ -18,15 +18,19 @@ def main():
     parser.add_argument("--cc", default="clang")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--measure", action="store_true")
+    parser.add_argument("--indirect", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     fixture = root / "tests/fixtures/llvm_native_c_abi"
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    stem = "indirect_cost" if args.indirect else "direct_cost"
     report = {"head": subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip(),
         "platform": platform.platform(), "cc": args.cc,
-        "calls_per_process": 40000001, "measured": args.measure,
+        "family": "scalar-indirect" if args.indirect else "direct",
+        "calls_per_process": 40000002 if args.indirect else 40000001,
+        "measured": args.measure,
         "measurement": "whole process including startup; same C oracle and checked additions",
         "records": {}, "steps": []}
 
@@ -66,13 +70,13 @@ def main():
     run([args.cc, "-std=c17", "-O3", "-Wall", "-Wextra", "-Werror",
          "-I", root / "runtime/include", "-c", fixture / "direct_cost.c", "-o", host], "host")
     native, baseline = output / "native", output / "baseline"
-    run([args.compiler.resolve(), fixture / "direct_cost.gti", "--backend", "llvm",
+    run([args.compiler.resolve(), fixture / (stem + ".gti"), "--backend", "llvm",
          "-O3", "-o", native, "--", host], "build-native", measured_build=True)
     run([args.cc, "-std=c17", "-O3", "-I", root / "runtime/include",
-         fixture / "direct_cost_baseline.c", host, "-o", baseline],
+         fixture / (stem + "_baseline.c"), host, "-o", baseline],
         "build-baseline", measured_build=True)
     obj, ir = output / "native.o", output / "native.ll"
-    run([args.emitter.resolve(), fixture / "direct_cost.gti", obj, ir, 3,
+    run([args.emitter.resolve(), fixture / (stem + ".gti"), obj, ir, 3,
          "--source-preflight"], "inspect-generated")
     allocation_calls = [line.strip() for line in ir.read_text().splitlines()
                         if re.search(r"\b(call|invoke)\b", line) and
@@ -110,7 +114,7 @@ def main():
         if ratio > 1.25:
             raise RuntimeError(f"material direct-call runtime cost requires investigation: {ratio:.3f}")
     save()
-    print(f"PASS: direct C cost {'measurement' if args.measure else 'correctness only'}; {output / 'cost.json'}")
+    print(f"PASS: {report['family']} C cost {'measurement' if args.measure else 'correctness only'}; {output / 'cost.json'}")
 
 
 if __name__ == "__main__":

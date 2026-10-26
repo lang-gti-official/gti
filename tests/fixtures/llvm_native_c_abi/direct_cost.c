@@ -8,6 +8,8 @@ uint64_t native_cost_scalar(uint64_t value) {
   ++scalar_calls;
   return value & UINT64_C(255);
 }
+typedef uint64_t (*NativeCostOperation)(uint64_t);
+NativeCostOperation native_cost_operation(void) { return native_cost_scalar; }
 
 uint64_t native_cost_text(gti_c_string_view value) {
   ++text_calls;
