@@ -10799,7 +10799,8 @@ and [LLVM exception-handling model](https://www.llvm.org/docs/ExceptionHandling.
 backend copies against the same frontend and sealed MIR. Their structural
 profile accepts a closed static-call graph with scalar or ordinary-record results,
 scalar-reference and ordinary-record parameters,
-and local ordinary classes with scalar/reference/ordinary-record fields,
+and local ordinary classes with scalar/reference/ordinary-record fields
+and explicit `int*` observation handles,
 including fallible source constructors and destructors. Arrays, private owner
 representations, hierarchy, global initialization, native imports and adapters remain
 outside this experiment. Both candidates use the central ABI planner, the same
@@ -10820,8 +10821,10 @@ its armed subobject obligations. A staged ordinary-record argument retains its
 verified prepared-parameter drop until the exact static call transfers it to
 the callee. Ordinary-record returns publish their verified Value or ReturnResult
 obligation only at the final return. A prepared result remains owned by that
-invocation while local cleanup can still fail. Replacement remains outside this
-profile. No cleanup recipe is fabricated by the experiment.
+invocation while local cleanup can still fail. Whole ordinary-record replacement
+uses the sealed CleanupBeforeAssign/Assign pair and its exact source/destination
+drop obligations. Projected replacement remains outside this profile. No cleanup
+recipe is fabricated by the experiment.
 
 This staging replaces hand-built traces for the first comparison, not the
 remaining C04 obligations. The harness checks identical sealed-program input,
@@ -10844,11 +10847,18 @@ Owning results check both a simple fresh return and destruction of the completed
 result when local cleanup fails before publication. This exposed and repaired
 missing LLVM result-loan publication for constructed borrowed carriers; ordinary
 production placement regressions separately check alias identity and return
-rollback. Replacement still rejects before artifact publication.
-It does not validate replacement, callbacks, user TLS, workers, foreign/forced
+rollback. Replacement checks old-value, prepared-RHS and surrounding cleanup
+with caller-owned observer slots, including failure in the old destructor,
+failed preparation before replacement starts, and terminal secondary failure
+while draining the prepared replacement.
+Explicit unsafe scalar dereferences provide those observations without changing
+stored-reference assignment semantics; pointer arithmetic and allocation remain
+excluded. Opaque-pointer fields and projected replacement reject before artifact
+publication.
+It does not validate projected replacement, callbacks, user TLS, workers, foreign/forced
 unwind, carrier OOM, or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
 the generated LLVM object. No transport selection or production speedup follows
-from these checks. Next, extend real MIR cleanup to replacement and worker
+from these checks. Next, extend real MIR cleanup to projected replacement and worker
 containment before the representative
 platform/cost comparison and ADR decision.
 Remove or replace these opt-in evaluation hooks once that decision is implemented;

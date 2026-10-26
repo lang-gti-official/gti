@@ -10155,8 +10155,16 @@ remaining local destructor fails. Production `llvm_placement_execution` also
 checks returned borrowed carriers, their referent identity and rollback order;
 its fresh-return chain has an explicit C++ vocabulary comparator gap, while
 the failure-cleanup case retains C++20/23 comparison.
-Raw/array fields and replacement remain rejected before object
-publication. These are not arbitrary ownership transfer, worker or performance
+Whole ordinary-record replacement exercises the paired cleanup/publication
+schedule. Its unsafe `int*` observers count destruction of the old value,
+prepared replacement and surrounding owner when the old destructor fails;
+preparation failure leaves the old owner live until ordinary cleanup, and a
+second failure while draining the prepared RHS terminates before outer cleanup.
+the observer storage belongs to the caller and outlives every generated call.
+The experiment permits only typed scalar raw dereferences, not pointer arithmetic
+or allocation. Opaque-pointer/array fields and projected replacement remain
+rejected before object publication. These are not arbitrary ownership transfer,
+worker or performance
 acceptance and must not substitute for existing backend gates. Retained IR is
 the verified pre-object-emission module: target emission may rewrite `resume`
 into platform unwind-runtime calls. Hash receipts are also printed into the step

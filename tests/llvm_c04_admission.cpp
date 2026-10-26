@@ -24,6 +24,13 @@ bool scalarOrReference(const SemanticType &type) {
          (type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
           scalar(type.arguments[0]));
 }
+bool observerPointer(const SemanticType &type) {
+  return type.kind == SemanticType::RawPointer && type.arguments.size() == 1 &&
+         type.arguments.front() == SemanticType::Int32;
+}
+bool scalarInput(const SemanticType &type) {
+  return scalarOrReference(type) || observerPointer(type);
+}
 } // namespace
 
 void validateC04Evaluation(const Session &session,
@@ -54,15 +61,16 @@ void validateC04Evaluation(const Session &session,
         !instance.virtualDispatch.empty() ||
         !std::all_of(instance.declaredFields.begin(),
                      instance.declaredFields.end(), [&](const auto &field) {
-                       return scalarOrReference(field.type) ||
-                              knownClass(field.type);
+                       return scalarInput(field.type) || knownClass(field.type);
                      }))
-      reject("class outside ordinary scalar/reference/record-field cleanup "
+      reject("class outside ordinary scalar/reference/observer/record-field "
+             "cleanup "
              "profile");
     classes.insert(instance.id);
   }
   const auto localType = [&](const SemanticType &type) {
-    return scalarOrReference(type) || knownClass(type);
+    return scalarInput(type) || type == SemanticType::NullPtr ||
+           knownClass(type);
   };
   for (auto id : selected) {
     const auto *function = session.program().mir().findFunctionInstance(id);
@@ -79,7 +87,7 @@ void validateC04Evaluation(const Session &session,
     if (!classes.contains(constructor.owner) || constructor.requiresUnsafe ||
         constructor.definitionKind != MirDefinitionKind::Source ||
         !std::all_of(constructor.parameterTypes.begin(),
-                     constructor.parameterTypes.end(), scalarOrReference))
+                     constructor.parameterTypes.end(), scalarInput))
       reject("constructor outside scalar/reference profile");
   for (const auto &destructor : program.destructorInstances())
     if (!classes.contains(destructor.owner) ||
@@ -106,7 +114,9 @@ void validateC04Evaluation(const Session &session,
                       [](const auto &projection) {
                         return projection.kind != MirProjectionKind::Field &&
                                projection.kind !=
-                                   MirProjectionKind::Dereference;
+                                   MirProjectionKind::Dereference &&
+                               projection.kind !=
+                                   MirProjectionKind::RawDereference;
                       }))
         reject("place outside scalar/reference/local class profile");
     for (const auto &value : body.values)
@@ -126,10 +136,28 @@ void validateC04Evaluation(const Session &session,
         if (instruction.tombstone)
           continue;
         if (instruction.intrinsic != IntrinsicKind::None ||
-            instruction.rawMemoryAccess || instruction.elementCleanup ||
-            instruction.replacementCleanup ||
-            instruction.nativeCallbackAdapter || instruction.threadTaskAdapter)
+            instruction.elementCleanup || instruction.nativeCallbackAdapter ||
+            instruction.threadTaskAdapter)
           reject("non-scalar instruction facts");
+        if (instruction.rawMemoryAccess &&
+            (instruction.unsafeOperation !=
+                 UnsafeOperationKind::RawDereference ||
+             !scalar(instruction.info.type) ||
+             (instruction.kind != MirInstructionKind::Load &&
+              instruction.kind != MirInstructionKind::Assign)))
+          reject("raw access outside explicit unsafe scalar observation");
+        if (instruction.replacementCleanup) {
+          const auto *destination =
+              instruction.destination ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+          if (instruction.kind != MirInstructionKind::CleanupBeforeAssign ||
+              !instruction.replacementPair || !destination ||
+              destination->root != MirPlaceRootKind::Binding ||
+              !destination->projections.empty() ||
+              !knownClass(destination->type) ||
+              destination->type != instruction.replacementCleanup->type)
+            reject("replacement outside whole ordinary record binding");
+        }
         if (instruction.successResultDrop &&
             instruction.kind != MirInstructionKind::Construct) {
           const auto *target =
@@ -170,10 +198,20 @@ void validateC04Evaluation(const Session &session,
               (source->kind == MirDropObligationKind::ReturnResult ||
                source->kind == MirDropObligationKind::Value) &&
               knownClass(source->dropType.type);
-          if (event.kind == MirLifecycleEventKind::Replace ||
-              (event.kind == MirLifecycleEventKind::TransferOut &&
-               !constructorPublication && !parameterTransfer &&
-               !resultPublication))
+          if (event.kind == MirLifecycleEventKind::Replace) {
+            const auto *target = body.findDropObligation(event.target);
+            if (instruction.kind != MirInstructionKind::Assign ||
+                !instruction.replacementPair || !source || !target ||
+                event.conditional || event.failureCleanup ||
+                target->kind != MirDropObligationKind::Binding ||
+                instruction.destination != target->place ||
+                !knownClass(source->dropType.type) ||
+                source->dropType.type != target->dropType.type)
+              reject("replacement outside exact ordinary record publication");
+          }
+          if (event.kind == MirLifecycleEventKind::TransferOut &&
+              !constructorPublication && !parameterTransfer &&
+              !resultPublication)
             reject("replacement or escaping owner lifecycle");
         }
         switch (instruction.kind) {
@@ -183,6 +221,7 @@ void validateC04Evaluation(const Session &session,
         case MirInstructionKind::ActivateBorrow:
         case MirInstructionKind::EndBorrow:
         case MirInstructionKind::Drop:
+        case MirInstructionKind::CleanupBeforeAssign:
         case MirInstructionKind::Load:
         case MirInstructionKind::Initialize:
         case MirInstructionKind::Assign:
@@ -227,6 +266,7 @@ void validateC04Evaluation(const Session &session,
           case MirOperation::Literal:
           case MirOperation::Identity:
           case MirOperation::Convert:
+          case MirOperation::AddressOf:
           case MirOperation::Add:
           case MirOperation::Subtract:
           case MirOperation::Multiply:
