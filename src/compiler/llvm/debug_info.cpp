@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <tuple>
 
@@ -271,6 +272,7 @@ public:
   struct Events {
     std::vector<SourceLocalId> ends;
     std::vector<SourceLocalId> begins;
+    std::vector<std::pair<SourceLocalId, MirValueId>> values;
   };
   std::map<Point, Events> events;
   bool finalized = false;
@@ -441,8 +443,15 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     parameterBindings = &program.mir()
                              .findConstructorInstance(address.owner)
                              ->parameterBindings;
+  std::set<SourceLocalId> valueLocals;
+  for (const auto &range : lowered->sourceDebug.tables->valueRanges)
+    if (impl->optimized() ||
+        lowered->sourceDebug.tables->locals.at(range.local - 1).policy ==
+            MirSourceLocalPolicy::OptimizedOut)
+      valueLocals.insert(range.local);
   for (const auto &local : lowered->sourceDebug.tables->locals) {
-    if (local.policy != MirSourceLocalPolicy::OptimizedOut)
+    if (local.policy != MirSourceLocalPolicy::OptimizedOut &&
+        !valueLocals.contains(local.declaration.id))
       continue;
     const auto &declaration = local.declaration;
     auto *scope = scopes.at(declaration.scope);
@@ -472,7 +481,15 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
                          point.blockEntry}];
   };
   for (const auto &range : lowered->sourceDebug.tables->ranges) {
+    if (valueLocals.contains(range.local))
+      continue;
     event(range.begin).begins.push_back(range.local);
+    event(range.end).ends.push_back(range.local);
+  }
+  for (const auto &range : lowered->sourceDebug.tables->valueRanges) {
+    if (!valueLocals.contains(range.local))
+      continue;
+    event(range.begin).values.emplace_back(range.local, range.value);
     event(range.end).ends.push_back(range.local);
   }
 }
@@ -542,8 +559,9 @@ void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
     auto [entry, inserted] =
         impl->locals.try_emplace({function, local.declaration.id});
     if (!inserted) {
-      if (entry->second.storage != storage)
+      if (entry->second.storage && entry->second.storage != storage)
         throw std::logic_error("LLVM debug local changed its existing storage");
+      entry->second.storage = storage;
       continue;
     }
     const auto &declaration = local.declaration;
@@ -562,7 +580,8 @@ void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
   }
 }
 
-void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point) {
+void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
+                      std::span<llvm::Value *const> values) {
   if (!ir.GetInsertBlock())
     return;
   auto *function = ir.GetInsertBlock()->getParent();
@@ -590,9 +609,36 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point) {
           impl->builder.createExpression(), location, ir.GetInsertBlock());
   };
   for (const auto id : event->second.ends)
-    emit(id, false);
+    if (std::none_of(event->second.values.begin(), event->second.values.end(),
+                     [&](const auto &value) { return value.first == id; }) &&
+        std::find(event->second.begins.begin(), event->second.begins.end(),
+                  id) == event->second.begins.end())
+      emit(id, false);
   for (const auto id : event->second.begins)
     emit(id, true);
+  for (const auto &[id, valueId] : event->second.values) {
+    const auto &local = impl->locals.at({function, id});
+    const auto address = impl->bodies.at(function);
+    const auto &declaration = impl->session.program()
+                                  .findBody(address)
+                                  ->sourceDebug.tables->locals.at(id - 1)
+                                  .declaration;
+    auto *value = valueId < values.size() ? values[valueId] : nullptr;
+    if (!value ||
+        value->getType() !=
+            impl->session.layouts().get(declaration.type).value ||
+        (llvm::isa<llvm::Instruction>(value) &&
+         llvm::cast<llvm::Instruction>(value)->getFunction() != function) ||
+        (llvm::isa<llvm::Argument>(value) &&
+         llvm::cast<llvm::Argument>(value)->getParent() != function))
+      throw std::logic_error(
+          "LLVM debug value is missing, mistyped or belongs to another body");
+    impl->builder.insertDbgValueIntrinsic(
+        value, local.variable, impl->builder.createExpression(),
+        llvm::DILocation::get(impl->session.context(), 0, 0,
+                              local.variable->getScope()),
+        ir.GetInsertBlock());
+  }
 }
 
 void DebugInfo::endLocal(llvm::IRBuilder<> &ir, const MirPlace &place) {

@@ -3750,17 +3750,33 @@ within known scope segments, and clips them at every required cut. A subsequent
 initialization or assignment can reopen a range only with a fresh readable fact.
 Independent lowered verification recomputes the range inventory, and its full
 serialization participates in the ordinary construction seal. Native emission
-boundary registration, full representation coverage and real debugger acceptance
-remain pending; this is not production-debug admission.
+consumes these registered boundaries; full representation coverage and the
+complete two-host debugger matrix remain required for production admission.
+
+`MirSourceValueEvent` binds a concrete local to an existing typed SSA value after
+a specific instruction. Original source-MIR verification reconstructs the event
+inventory from canonical scalar loads, initializations and assignments; ordinary
+SSA dominance/order verification also checks every event. The bounded profile
+requires unique direct scalar binding storage and excludes loans, address
+escape, ownership moves, receiver/drop obligations and place-bearing edge
+transport. It does not infer source readability from a value's type alone.
+Lowering independently derives and verifies block-local value intervals from
+these events, lexical membership and local ends. Indexed scope segments and
+per-local event lists avoid rescanning all events for every range. No range
+crosses an unknown lexical segment or merges values across control-flow edges.
 
 The canonical scalar-promotion, unreachable-block and in-place dead-instruction
 mutators share source-table repair. Promotion invalidates the affected existing
 place; deleting a lexical anchor invalidates that local's value location and
 removes the dangling cut. Declarations and scopes survive as `OptimizedOut`,
-without SSA recovery or new storage. The in-place mutator journals only changed
-local policies and removed cut rows and restores them on refusal. These are
-transport and repair controls, not native debugger acceptance or an alternate
-lifetime model.
+without new storage. Promotion retains eligible value events at the original
+instruction identities, including tombstoned storage operations. Removing a
+referenced value definition, event point or lexical endpoint invalidates that
+local's value events. Optimization provenance replay and independent lowering
+verification bind this repair to the actual transformation. The in-place
+mutator journals changed local policies, removed cuts and value events and
+restores them on refusal. These are transport and repair controls, not an
+alternate lifetime model or permission to fabricate optimized availability.
 
 The compiler-owned optimizer vocabulary gate is described in
 [Optimization](optimization.md#language-growth-conformance-gate). Body

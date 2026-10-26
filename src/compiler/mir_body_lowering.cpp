@@ -576,6 +576,8 @@ private:
         local.policy = MirSourceLocalPolicy::ExistingPlace;
       }
     }
+    output.sourceDebug.tables->valueEvents =
+        mir_detail::deriveMirSourceValueEvents(output);
   }
 
   struct TemporaryDrop {

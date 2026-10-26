@@ -802,6 +802,11 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                body.identity.address);
     const mir_detail::MirSourceAnchorIndex anchors(mirBody);
     if (debug.tables) {
+      if (!mirBody || debug.tables->valueRanges !=
+                          lowered_detail::deriveSourceValueRanges(*mirBody))
+        addIssue(issues, LoweredProgramIssueKind::InvalidBodyInventory,
+                 "source value ranges differ from verified MIR value events",
+                 body.identity.address);
       const auto ranges = lowered_detail::deriveSourceRanges(
           program.mir_, body.identity.address);
       if (!ranges || debug.tables->ranges != *ranges)

@@ -1134,6 +1134,14 @@ struct MirSourceLocalEnd {
                          const MirSourceLocalEnd &) = default;
 };
 
+struct MirSourceValueEvent {
+  SourceLocalId local = 0;
+  MirDebugPoint point;
+  MirValueId value = 0;
+  friend bool operator==(const MirSourceValueEvent &,
+                         const MirSourceValueEvent &) = default;
+};
+
 struct MirSourceDebugTables {
   PlaceDomain domain;
   std::vector<SourceDebugScope> scopes;
@@ -1143,6 +1151,7 @@ struct MirSourceDebugTables {
   // Descriptive exits from the actual lexical lowering walk, not Drop events
   // or evidence that any storage was initialized or readable.
   std::vector<MirSourceLocalEnd> localEnds;
+  std::vector<MirSourceValueEvent> valueEvents;
   friend bool operator==(const MirSourceDebugTables &,
                          const MirSourceDebugTables &) = default;
 };

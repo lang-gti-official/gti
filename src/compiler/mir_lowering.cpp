@@ -65,6 +65,8 @@ bool mir_detail::sourceDebugMatchesHir(const HirBody &source,
       actual.values != wanted.values ||
       actual.locals.size() != wanted.locals.size())
     return false;
+  if (actual.valueEvents != deriveMirSourceValueEvents(body))
+    return false;
   for (std::size_t i = 0; i < wanted.locals.size(); ++i)
     if (actual.locals[i].declaration != wanted.locals[i].declaration)
       return false;

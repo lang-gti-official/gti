@@ -1242,6 +1242,93 @@ private:
 }
 } // namespace
 
+std::vector<LoweredSourceValueRange>
+lowered_detail::deriveSourceValueRanges(const MirBody &body) {
+  std::vector<LoweredSourceValueRange> ranges;
+  if (!body.sourceDebug.tables)
+    return ranges;
+  const auto &tables = *body.sourceDebug.tables;
+  const mir_detail::MirSourceAnchorIndex anchors(body);
+  std::map<std::pair<MirBlockId, MirInstructionId>, std::size_t> positions;
+  using LocalBlock = std::pair<SourceLocalId, MirBlockId>;
+  std::map<LocalBlock, std::vector<std::pair<std::size_t, MirDebugPoint>>>
+      events;
+  std::map<LocalBlock, std::pair<std::size_t, MirDebugPoint>> ends;
+  using Segment = std::pair<std::size_t, std::size_t>;
+  std::map<std::pair<SourceScopeId, MirBlockId>, std::vector<Segment>>
+      visibility;
+  for (const auto &block : body.blocks) {
+    for (std::size_t i = 0; i < block.instructions.size(); ++i) {
+      positions[{block.id, block.instructions[i].id}] = 2 * i + 1;
+      const auto &instruction = block.instructions[i];
+      const auto *anchor =
+          anchors.find(instruction.hirStatement, instruction.hirValue);
+      for (auto scope = anchor ? anchor->scope : 0; scope;
+           scope = tables.scopes[scope - 1].parent) {
+        auto &segments = visibility[{scope, block.id}];
+        if (!segments.empty() && segments.back().second == i)
+          segments.back().second = i + 1;
+        else
+          segments.emplace_back(i, i + 1);
+      }
+    }
+    positions[{block.id, 0}] = 2 * block.instructions.size() + 1;
+  }
+  const auto position = [&](MirDebugPoint point) {
+    return point.blockEntry
+               ? std::size_t{0}
+               : positions.at({point.block, point.instruction}) + point.after;
+  };
+  for (const auto &event : tables.valueEvents)
+    events[{event.local, event.point.block}].emplace_back(position(event.point),
+                                                          event.point);
+  for (auto &[key, points] : events)
+    std::sort(points.begin(), points.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+  for (const auto &stop : tables.localEnds) {
+    const auto key = LocalBlock{stop.local, stop.point.block};
+    const auto at = position(stop.point);
+    if (const auto found = ends.find(key);
+        found == ends.end() || at < found->second.first)
+      ends[key] = {at, stop.point};
+  }
+  // Index contiguous scope membership once, then clip each event by its next
+  // value and lexical endpoint without rescanning the body or all declarations.
+  for (const auto &event : tables.valueEvents) {
+    const auto &block = *body.findBlock(event.point.block);
+    const auto &local = tables.locals[event.local - 1];
+    const auto index = (position(event.point) - 2) / 2;
+    const auto &segments = visibility[{local.declaration.scope, block.id}];
+    auto segment = std::upper_bound(segments.begin(), segments.end(), index,
+                                    [](std::size_t index, const auto &segment) {
+                                      return index < segment.first;
+                                    });
+    if (segment == segments.begin() || index >= std::prev(segment)->second)
+      continue;
+    const auto last = std::prev(segment)->second;
+    MirDebugPoint end{
+        block.id,
+        last == block.instructions.size() ? 0 : block.instructions[last].id,
+        false};
+    const auto key = LocalBlock{event.local, block.id};
+    if (const auto stop = ends.find(key); stop != ends.end()) {
+      if (stop->second.first <= position(event.point))
+        continue;
+      if (stop->second.first < position(end))
+        end = stop->second.second;
+    }
+    const auto &points = events.at(key);
+    const auto next = std::upper_bound(
+        points.begin(), points.end(), position(event.point),
+        [](std::size_t at, const auto &point) { return at < point.first; });
+    if (next != points.end() && next->first < position(end))
+      end = next->second;
+    if (position(event.point) < position(end))
+      ranges.push_back({event.local, event.value, event.point, end});
+  }
+  return ranges;
+}
+
 std::optional<std::vector<LoweredSourceRange>>
 lowered_detail::deriveSourceRanges(const MirProgram &program,
                                    MirBodyAddress address) {
@@ -1663,6 +1750,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
       debug.tables->scopes = mir.sourceDebug.tables->scopes;
       debug.tables->locals = mir.sourceDebug.tables->locals;
       debug.tables->locations = captureSourceLocations(mir);
+      debug.tables->valueRanges = lowered_detail::deriveSourceValueRanges(mir);
       if (auto ranges =
               lowered_detail::deriveSourceRanges(lowered.mir_, address))
         debug.tables->ranges = std::move(*ranges);

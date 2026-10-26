@@ -2149,6 +2149,11 @@ private:
                << " instruction=" << end.point.instruction
                << " after=" << end.point.after
                << " entry=" << end.point.blockEntry << '\n';
+      for (const auto &event : tables.valueEvents)
+        output << "  source-value-event=" << event.local
+               << " value=" << event.value << " block=" << event.point.block
+               << " instruction=" << event.point.instruction
+               << " after=" << event.point.after << '\n';
     }
     output << "end-body\n";
   }

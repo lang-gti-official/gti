@@ -6420,6 +6420,92 @@ bool rebuildMirValueUses(MirBody &body) {
   return valid;
 }
 
+std::vector<MirSourceValueEvent>
+mir_detail::deriveMirSourceValueEvents(const MirBody &body) {
+  std::vector<MirSourceValueEvent> events;
+  if (!body.sourceDebug.tables || !body.loans.empty())
+    return events;
+  std::unordered_map<MirPlaceId, SourceLocalId> locals;
+  std::unordered_map<HirBindingId, unsigned> bindings;
+  for (const auto &place : body.places)
+    if (place.binding)
+      ++bindings[place.binding];
+  for (const auto &local : body.sourceDebug.tables->locals) {
+    const auto *place = body.findPlace(local.place);
+    if (local.policy == MirSourceLocalPolicy::ExistingPlace && place &&
+        tracksScalarInitialization(*place) && bindings[place->binding] == 1)
+      locals.emplace(place->id, local.declaration.id);
+  }
+  std::unordered_set<SourceLocalId> excluded;
+  std::unordered_set<SymbolId> movedRoots;
+  const auto exclude = [&](MirPlaceId place) {
+    if (const auto it = locals.find(place); it != locals.end())
+      excluded.insert(it->second);
+  };
+  for (const auto &drop : body.dropObligations)
+    exclude(drop.place);
+  for (const auto &block : body.blocks) {
+    for (const auto &instruction : block.instructions) {
+      if (instruction.tombstone)
+        continue;
+      if (instruction.receiver)
+        exclude(instruction.receiver->place);
+      if (instruction.successResultDestination)
+        exclude(*instruction.successResultDestination);
+      if (instruction.ownership &&
+          (instruction.ownership->kind == OwnershipEventKind::Move ||
+           instruction.ownership->kind == OwnershipEventKind::ConsumeReceiver))
+        movedRoots.insert(instruction.ownership->place.root);
+      const bool load =
+          instruction.kind == MirInstructionKind::Load &&
+          instruction.operands.size() == 1 && instruction.result &&
+          instruction.operands.front().kind == MirOperandKind::Copy;
+      for (const auto &operand : instruction.operands)
+        if (!load)
+          exclude(operand.place);
+      if (instruction.destination) {
+        const auto found = locals.find(*instruction.destination);
+        if (found != locals.end()) {
+          if ((instruction.kind != MirInstructionKind::Initialize &&
+               !(instruction.kind == MirInstructionKind::Assign &&
+                 instruction.operation == MirOperation::Assign)) ||
+              instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != MirOperandKind::Value) {
+            excluded.insert(found->second);
+          } else {
+            events.push_back({found->second,
+                              {block.id, instruction.id, true},
+                              instruction.operands.front().value});
+          }
+        }
+      }
+      if (load)
+        if (const auto found = locals.find(instruction.operands.front().place);
+            found != locals.end())
+          events.push_back({found->second,
+                            {block.id, instruction.id, true},
+                            *instruction.result});
+    }
+    if (block.terminator.value)
+      exclude(block.terminator.value->place);
+    for (const auto &operand : block.terminator.targetArguments)
+      exclude(operand.place);
+    for (const auto &operand : block.terminator.elseArguments)
+      exclude(operand.place);
+    for (const auto &target : block.terminator.switchTargets)
+      for (const auto &operand : target.arguments)
+        exclude(operand.place);
+  }
+  for (const auto &[place, local] : locals)
+    if (const auto &key = body.findPlace(place)->key;
+        key && movedRoots.contains(key->root))
+      excluded.insert(local);
+  std::erase_if(events, [&](const auto &event) {
+    return excluded.contains(event.local);
+  });
+  return events;
+}
+
 mir_detail::MirDebugRepairUndo
 mir_detail::repairMirSourceDebug(const MirBody &before, MirBody &candidate,
                                  const MirDebugEditEffect &effect) {
@@ -6443,6 +6529,25 @@ mir_detail::repairMirSourceDebug(const MirBody &before, MirBody &candidate,
       undo.ends.emplace_back(i, tables.localEnds[i]);
     }
   const auto *promoted = before.findPlace(effect.promotedPlace);
+  std::unordered_set<SourceLocalId> invalidValues = affected;
+  for (const auto &event : tables.valueEvents) {
+    const auto *value = before.findValue(event.value);
+    const auto &local = tables.locals[event.local - 1];
+    const auto *place = before.findPlace(local.place);
+    const bool promotion =
+        promoted && place && sameScalarInitializationStorage(*promoted, *place);
+    if ((!promotion && removed({event.local, event.point})) || !value ||
+        std::find(effect.removedInstructions.begin(),
+                  effect.removedInstructions.end(),
+                  value->definition) != effect.removedInstructions.end())
+      invalidValues.insert(event.local);
+  }
+  for (std::size_t i = 0; i < tables.valueEvents.size(); ++i)
+    if (invalidValues.contains(tables.valueEvents[i].local))
+      undo.valueEvents.emplace_back(i, tables.valueEvents[i]);
+  std::erase_if(tables.valueEvents, [&](const auto &event) {
+    return invalidValues.contains(event.local);
+  });
   for (std::size_t i = 0; i < tables.locals.size(); ++i) {
     auto &local = tables.locals[i];
     const auto *place = before.findPlace(local.place);
@@ -6470,6 +6575,9 @@ void mir_detail::MirDebugRepairUndo::restore(MirBody &body) const {
   for (const auto &[index, end] : ends)
     tables.localEnds.insert(
         tables.localEnds.begin() + static_cast<std::ptrdiff_t>(index), end);
+  for (const auto &[index, event] : valueEvents)
+    tables.valueEvents.insert(
+        tables.valueEvents.begin() + static_cast<std::ptrdiff_t>(index), event);
 }
 
 std::optional<MirScalarPromotionRewrite>
@@ -10035,7 +10143,8 @@ const SemanticType *mirConcretePackElementType(const MirBody &body,
   return &element;
 }
 
-static bool validMirDebugPoint(const MirBody &body, MirDebugPoint point) {
+static bool validMirDebugPoint(const MirBody &body, MirDebugPoint point,
+                               bool allowTombstone = false) {
   const auto *block = body.findBlock(point.block);
   if (!block || block->id != point.block)
     return false;
@@ -10046,7 +10155,7 @@ static bool validMirDebugPoint(const MirBody &body, MirDebugPoint point) {
   return std::any_of(block->instructions.begin(), block->instructions.end(),
                      [&](const auto &instruction) {
                        return instruction.id == point.instruction &&
-                              !instruction.tombstone;
+                              (allowTombstone || !instruction.tombstone);
                      });
 }
 
@@ -10115,6 +10224,21 @@ static MirVerificationResult verifyMirSourceDebugStructure(const MirBody &body,
         !validMirDebugPoint(body, end.point))
       return failure(body, owner,
                      "MIR source-local end has a foreign local or point");
+  std::set<std::tuple<SourceLocalId, MirBlockId, MirInstructionId>> valuePoints;
+  for (const auto &event : tables.valueEvents) {
+    const auto *value = body.findValue(event.value);
+    if (!event.local || event.local > tables.locals.size() || !value ||
+        value->info.type != tables.locals[event.local - 1].declaration.type ||
+        !event.point.instruction || !event.point.after ||
+        event.point.blockEntry ||
+        !validMirDebugPoint(body, event.point, true) ||
+        !valuePoints
+             .emplace(event.local, event.point.block, event.point.instruction)
+             .second)
+      return failure(
+          body, owner,
+          "MIR source value event has a foreign identity, type or point");
+  }
   return {};
 }
 
@@ -15941,6 +16065,17 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       }
     }
   }
+  if (body.sourceDebug.tables)
+    for (const auto &event : body.sourceDebug.tables->valueEvents) {
+      const auto order = instructionOrders.find(event.point.instruction);
+      if (order == instructionOrders.end())
+        return failure(body, owner,
+                       "source value event has no instruction order");
+      if (auto invalid =
+              verifyAvailable(event.value, event.point.block, order->second + 1,
+                              event.point.instruction))
+        return std::move(*invalid);
+    }
   if (MirVerificationResult bases = verifyBaseInitializations(body, owner);
       !bases.valid()) {
     return bases;

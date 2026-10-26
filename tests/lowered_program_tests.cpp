@@ -1452,6 +1452,142 @@ void testDetachedDebugLocations() {
          "debug stages must identify exact optimized MIR operations");
 }
 
+void testDebugValueEvents() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze(
+              "debug-values.gti",
+              "int probe(int input) { mut int local = input & 31; local = "
+              "local | 1; return local; } int main() { return probe(4); }");
+  expect(frontend.canGenerateCode(), "debug value fixture analyzes");
+  if (!frontend.canGenerateCode())
+    return;
+  unsigned controls = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    if (!body.sourceDebug.tables ||
+        body.sourceDebug.tables->valueEvents.empty())
+      continue;
+    const auto *hir = frontend.hir.findFunctionInstance(function.id);
+    auto forged = body;
+    forged.sourceDebug.tables->valueEvents.front().value = 0;
+    expect(!lang::verifyMirBody(forged).valid(),
+           "undefined debug SSA identity rejects");
+    forged = body;
+    forged.sourceDebug.tables->valueEvents.front().value =
+        body.values.back().id;
+    expect(!lang::verifyMirBody(forged).valid(),
+           "future debug SSA definition rejects by canonical dominance");
+    forged = body;
+    forged.sourceDebug.tables->valueEvents.front().local =
+        body.sourceDebug.tables->locals.back().declaration.id;
+    expect(hir && !lang::mir_detail::sourceDebugMatchesHir(hir->body, forged),
+           "a same-type source binding forgery fails canonical original-event "
+           "reconstruction");
+    const auto local = body.sourceDebug.tables->valueEvents.front().local;
+    const auto place = body.sourceDebug.tables->locals[local - 1].place;
+    const auto excluded = [&](const lang::MirBody &candidate) {
+      const auto events =
+          lang::mir_detail::deriveMirSourceValueEvents(candidate);
+      return std::none_of(events.begin(), events.end(), [&](const auto &event) {
+        return event.local == local;
+      });
+    };
+    forged = body;
+    const auto erased =
+        body.sourceDebug.tables->valueEvents.front().point.instruction;
+    auto undo = lang::mir_detail::repairMirSourceDebug(
+        body, forged, {.removedInstructions = std::span(&erased, 1)});
+    expect(
+        std::none_of(forged.sourceDebug.tables->valueEvents.begin(),
+                     forged.sourceDebug.tables->valueEvents.end(),
+                     [&](const auto &event) { return event.local == local; }),
+        "deleting a debug event anchor invalidates every value interval for "
+        "that local");
+    undo.restore(forged);
+    expect(
+        forged == body,
+        "refused optimization restores all debug value events in exact order");
+    forged = body;
+    forged.blocks.front().terminator.targetArguments.push_back(
+        {.kind = lang::MirOperandKind::Copy, .place = place});
+    expect(excluded(forged), "place-bearing edge transport cannot acquire "
+                             "scalar SSA debug authority");
+    for (const auto kind :
+         {lang::MirOperandKind::Move, lang::MirOperandKind::Address}) {
+      forged = body;
+      bool changed = false;
+      for (auto &block : forged.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::Load &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().place == place) {
+            instruction.operands.front().kind = kind;
+            changed = true;
+          }
+      expect(changed && excluded(forged), "moves and escaping addresses retire "
+                                          "all inferred scalar value events");
+    }
+    forged = body;
+    const auto *storage = body.findPlace(place);
+    expect(storage && storage->key.has_value(),
+           "source scalar has a verified ownership key");
+    if (storage && storage->key) {
+      forged.blocks.front().instructions.front().ownership =
+          lang::OwnershipEvent{.kind = lang::OwnershipEventKind::Move,
+                               .place = *storage->key};
+      expect(excluded(forged),
+             "ownership moves cannot be bypassed by stale scalar SSA values");
+    }
+    ++controls;
+  }
+  const auto optimized =
+      lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                        .mir = frontend.mir,
+                                        .level = lang::OptimizationLevel::O3,
+                                        .target = lang::TargetInfo::host()});
+  expect(optimized.valid(), "debug events preserve optimizer eligibility");
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, optimized.report.transformations,
+      lang::TargetInfo::host());
+  expect(built.valid(), "verified promotion seals debug value events");
+  if (!built.valid())
+    return;
+  unsigned promoted = 0;
+  for (const auto &body : built.program->bodies())
+    if (body.sourceDebug.tables)
+      for (const auto &local : body.sourceDebug.tables->locals)
+        if (local.declaration.name == "local" &&
+            local.policy == lang::MirSourceLocalPolicy::OptimizedOut) {
+          expect(std::any_of(body.sourceDebug.tables->valueRanges.begin(),
+                             body.sourceDebug.tables->valueRanges.end(),
+                             [&](const auto &range) {
+                               return range.local == local.declaration.id;
+                             }),
+                 "promoted-away storage retains a verified SSA value range");
+          ++promoted;
+        }
+  expect(controls && promoted,
+         "SSA event positive and rejection controls executed");
+  auto forged = *built.program;
+  for (auto &body : lang::LoweredProgramTestAccess::bodies(forged))
+    if (body.sourceDebug.tables &&
+        !body.sourceDebug.tables->valueRanges.empty()) {
+      body.sourceDebug.tables->valueRanges.front().value = 0;
+      const auto issues = lang::verifyLoweredProgram(forged);
+      expect(std::any_of(issues.begin(), issues.end(),
+                         [](const auto &issue) {
+                           return issue.detail.find(
+                                      "verified MIR value events") !=
+                                  std::string::npos;
+                         }),
+             "lowered debug value forgery rejects independently of the seal");
+      break;
+    }
+}
+
 void testDetachedDebugRanges() {
   const auto frontend =
       lang::Frontend(
@@ -2653,6 +2789,7 @@ int main() {
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();
   testDetachedDebugRanges();
+  testDebugValueEvents();
   testVerificationEvidenceOwnsItsProgram();
   testMutationRejection();
   testConcreteBranchSymbols();

@@ -4378,13 +4378,20 @@ destructors to the exact existing declaration/factory result, maps sealed MIR
 instruction and terminator locations, and excludes generated source scopes
 before planning their debug types. Lowered bodies now own one optional debug
 record containing lexical declarations, written locations and block-local
-existing-place ranges. Range construction queries the exact owned final MIR;
+existing-place ranges and verified scalar SSA value ranges. Storage range construction queries the exact owned final MIR;
 independent verification recomputes those queries and mandatory cuts. Unknown
 membership or untracked storage does not acquire positive availability. A move
 followed by reinitialization cannot be bridged by a single readable range.
 The LLVM debug consumer builds scopes from those identities and exposes boundary
-events for existing storage, without requesting a new execution slot. The body
-emitter registers existing storage and consumes the verified range boundaries.
+events for existing storage and values, without requesting a new execution slot.
+The body emitter registers existing storage and passes a read-only view of its
+already-emitted SSA values at verified boundaries. Debug value lookup validates
+the concrete type and owning LLVM function; it never resolves an operand,
+materializes a value, loads storage or adds execution instructions. A value
+profile is selected for optimized emission or already-promoted storage; O0
+retains proven existing storage across block boundaries. A value
+replacement at the same boundary supersedes its predecessor without an
+intervening unavailable record; genuine gaps and lexical exits still emit kills.
 Optimized-out locals retain named declarations without fabricated storage or
 value availability. Private execution symbols are not DWARF linkage names:
 source subprogram names remain visible in native backtraces without changing
@@ -4392,14 +4399,15 @@ execution ABI names. Native macOS O0 breakpoint, stepping, scalar-local and
 backtrace evidence exists. The exact hosted startup factory registers an
 artificial line-zero carrier, without a user source scope, to preserve inlined
 source locations in the executing native entry. Forged startup/body/location
-identities reject. Native O3 source breakpoints now reach the executing inline
-frame; the full gate still fails because locals can lose their concrete inline
-variable entries. Retained abstract declarations alone do not establish native
-variable availability. Promoted-value provenance and optimized location updates
-remain required; unavailable values must not acquire invented storage or values.
-Expanded pack elements,
-receivers and recovered optimized values still need their complete contracts
-and execution evidence.
+identities reject. The native macOS O3 scalar gate reaches the executing inline
+frame and exposes its parameter and promoted local through verified SSA events.
+Retained abstract declarations alone do not establish native variable
+availability. Recovery currently covers direct integer/bool/char scalars with
+unique binding storage, no loans, escaping addresses, ownership moves or
+place-bearing edge transport. Ranges are block-local and end at lexical or
+value replacement boundaries; there is no invented cross-block value merge.
+Expanded pack elements, receivers, broader optimized representations and the
+full two-host failure/callback debugger matrix remain open.
 
 The typed diagnostic pipeline places bounded load/store null/alignment checks
 before optimization, and stock Address or Thread instrumentation after it.

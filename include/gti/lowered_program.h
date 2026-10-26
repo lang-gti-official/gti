@@ -100,12 +100,22 @@ struct LoweredSourceRange {
                          const LoweredSourceRange &) = default;
 };
 
+struct LoweredSourceValueRange {
+  SourceLocalId local = 0;
+  MirValueId value = 0;
+  MirDebugPoint begin;
+  MirDebugPoint end;
+  friend bool operator==(const LoweredSourceValueRange &,
+                         const LoweredSourceValueRange &) = default;
+};
+
 struct LoweredSourceDebugTables {
   PlaceDomain domain;
   std::vector<SourceDebugScope> scopes;
   std::vector<MirSourceLocal> locals;
   std::vector<LoweredSourceLocation> locations;
   std::vector<LoweredSourceRange> ranges;
+  std::vector<LoweredSourceValueRange> valueRanges;
   friend bool operator==(const LoweredSourceDebugTables &,
                          const LoweredSourceDebugTables &) = default;
 };

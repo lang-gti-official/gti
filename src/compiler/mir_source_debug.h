@@ -59,6 +59,10 @@ struct MirDebugEditEffect {
   std::span<const MirBlockId> removedBlocks;
 };
 
+// Original-MIR events use actual reads/writes of unaliased scalar bindings.
+[[nodiscard]] std::vector<MirSourceValueEvent>
+deriveMirSourceValueEvents(const MirBody &body);
+
 struct MirDebugRepairUndo {
   struct Local {
     std::size_t index = 0;
@@ -67,11 +71,12 @@ struct MirDebugRepairUndo {
   };
   std::vector<Local> locals;
   std::vector<std::pair<std::size_t, MirSourceLocalEnd>> ends;
+  std::vector<std::pair<std::size_t, MirSourceValueEvent>> valueEvents;
   void restore(MirBody &body) const;
 };
 
-// No SSA recovery or allocation request: losing an exact anchor invalidates
-// affected value locations. The in-place dead mutator retains only this bounded
+// No allocation request: losing an exact anchor invalidates affected value
+// locations. The in-place dead mutator retains only this bounded
 // journal, not a copy of every declaration and scope for each instruction.
 [[nodiscard]] MirDebugRepairUndo repairMirSourceDebug(
     const MirBody &before, MirBody &candidate, const MirDebugEditEffect &effect);

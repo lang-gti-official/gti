@@ -1541,10 +1541,10 @@ private:
       current = input.findBlock(id);
       ir.SetInsertPoint(blocks.at(id));
       if (auto *debug = session.debugInfo())
-        debug->point(ir, {id, 0, false, true});
+        debug->point(ir, {id, 0, false, true}, values);
       for (const auto &row : current->instructions) {
         if (auto *debug = session.debugInfo()) {
-          debug->point(ir, {id, row.id, false});
+          debug->point(ir, {id, row.id, false}, values);
           debug->location(ir, address, id, row.id);
           // Selected move construction can consume a place without a Move
           // operand. End its value location, never its lexical scope.
@@ -1555,10 +1555,10 @@ private:
         }
         instruction(row);
         if (auto *debug = session.debugInfo())
-          debug->point(ir, {id, row.id, true});
+          debug->point(ir, {id, row.id, true}, values);
       }
       if (auto *debug = session.debugInfo()) {
-        debug->point(ir, {id, 0, false});
+        debug->point(ir, {id, 0, false}, values);
         debug->location(ir, address, id, 0);
       }
       terminator(*current);

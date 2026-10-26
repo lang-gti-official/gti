@@ -48,7 +48,8 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
   auto input = verifiedLoweredProgram(*lowered.program, issues);
   if (!input)
     throw std::runtime_error("unverified debug component source");
-  Session session(*input, {});
+  Session session(*input,
+                  {.optimization = LlvmCodegenOptimization::Aggressive});
   DebugInfo debug(session);
   const MirFunctionInstance *selected = nullptr;
   for (const auto &function : input->program().mir().functionInstances()) {
@@ -151,13 +152,47 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
     debug.endLocal(ir, place);
     ++locals;
   }
+  // This metadata-only unit supplies typed stand-ins; real values are checked
+  // separately through production lowering and native debugger execution.
+  std::vector<llvm::Value *> debugValues(body->values.size() + 1);
+  for (const auto &range :
+       input->program().findBody(address)->sourceDebug.tables->valueRanges)
+    debugValues.at(range.value) = llvm::Constant::getNullValue(
+        session.layouts().get(body->findValue(range.value)->info.type).value);
+  const auto &valueRanges =
+      input->program().findBody(address)->sourceDebug.tables->valueRanges;
+  if (!valueRanges.empty()) {
+    const auto &range = valueRanges.front();
+    const auto rejects = [&](std::span<llvm::Value *const> values) {
+      try {
+        debug.point(ir, range.begin, values);
+      } catch (const std::logic_error &) {
+        return;
+      }
+      throw std::runtime_error("forged LLVM debug value was accepted");
+    };
+    rejects({});
+    auto forged = debugValues;
+    forged.at(range.value) = llvm::ConstantFP::get(ir.getDoubleTy(), 0);
+    rejects(forged);
+    bool foreign = false;
+    for (auto &argument : wrong->args())
+      if (argument.getType() == debugValues.at(range.value)->getType()) {
+        forged.at(range.value) = &argument;
+        rejects(forged);
+        foreign = true;
+        break;
+      }
+    if (!foreign)
+      throw std::runtime_error("foreign-function SSA control did not execute");
+  }
   for (const auto &block : body->blocks) {
-    debug.point(ir, {block.id, 0, false, true});
+    debug.point(ir, {block.id, 0, false, true}, debugValues);
     for (const auto &instruction : block.instructions) {
-      debug.point(ir, {block.id, instruction.id, false});
-      debug.point(ir, {block.id, instruction.id, true});
+      debug.point(ir, {block.id, instruction.id, false}, debugValues);
+      debug.point(ir, {block.id, instruction.id, true}, debugValues);
     }
-    debug.point(ir, {block.id, 0, false});
+    debug.point(ir, {block.id, 0, false}, debugValues);
   }
   for (const auto &row :
        input->program().findBody(address)->sourceLocations()) {
@@ -222,7 +257,8 @@ int caller(int input) { return identity(input); }
   auto input = verifiedLoweredProgram(*lowered.program, issues);
   if (!input)
     throw std::runtime_error("unverified inline debug source");
-  Session session(*input, {});
+  Session session(*input,
+                  {.optimization = LlvmCodegenOptimization::Aggressive});
   DebugInfo debug(session);
   const MirFunctionInstance *calleeSource = nullptr, *callerSource = nullptr;
   for (const auto &source : input->program().mir().functionInstances()) {
@@ -275,11 +311,13 @@ int caller(int input) { return identity(input); }
   if (!parameter)
     throw std::runtime_error("inline control lost its sealed parameter place");
   const auto &calleeRanges =
-      input->program().findBody(calleeAddress)->sourceDebug.tables->ranges;
+      input->program().findBody(calleeAddress)->sourceDebug.tables->valueRanges;
   if (calleeRanges.empty())
     throw std::runtime_error(
         "inline parameter has no verified readable interval");
-  debug.point(ir, calleeRanges.front().begin);
+  std::vector<llvm::Value *> calleeValues(calleeSource->body.values.size() + 1);
+  calleeValues.at(calleeRanges.front().value) = callee->getArg(0);
+  debug.point(ir, calleeRanges.front().begin, calleeValues);
   ir.CreateRet(ir.CreateLoad(integer, storage));
   ir.SetInsertPoint(
       llvm::BasicBlock::Create(session.context(), "entry", caller));
@@ -512,7 +550,8 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
   auto input = verifiedLoweredProgram(*lowered.program, issues);
   if (!input)
     throw std::runtime_error("unverified parameter debug source");
-  Session session(*input, {});
+  Session session(*input,
+                  {.optimization = LlvmCodegenOptimization::Aggressive});
   DebugInfo debug(session);
   unsigned empty = 0, expanded = 0, unavailable = 0;
   for (const auto &source : input->program().mir().functionInstances()) {
@@ -549,15 +588,19 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
         ir.CreateAlloca(session.layouts().get(prefix->type).storage);
     ir.CreateStore(function->getArg(0), storage);
     debug.local(ir, *prefix, storage, 1);
-    const auto &ranges =
-        input->program().findBody(address)->sourceDebug.tables->ranges;
+    const auto &tables =
+        *input->program().findBody(address)->sourceDebug.tables;
+    const auto &ranges = tables.valueRanges;
     const auto range =
-        std::find_if(ranges.begin(), ranges.end(),
-                     [&](const auto &row) { return row.place == prefix->id; });
+        std::find_if(ranges.begin(), ranges.end(), [&](const auto &row) {
+          return tables.locals.at(row.local - 1).place == prefix->id;
+        });
     if (range == ranges.end())
       throw std::runtime_error(
           "prefix parameter has no fresh readable interval");
-    debug.point(ir, range->begin);
+    std::vector<llvm::Value *> prefixValues(source.body.values.size() + 1);
+    prefixValues.at(range->value) = function->getArg(0);
+    debug.point(ir, range->begin, prefixValues);
     debug.endLocal(ir, *prefix);
     ir.CreateRet(ir.getInt32(7));
     unsigned declarations = 0, ends = 0;
@@ -569,7 +612,8 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
               variable->getVariable()->getArg() != 1)
             throw std::runtime_error(
                 "pack or hidden lane acquired a source name");
-          if (variable->isDbgDeclare())
+          if (variable->isDbgDeclare() ||
+              (variable->isDbgValue() && !variable->isKillLocation()))
             ++declarations;
           else if (llvm::isa<llvm::PoisonValue>(variable->getValue()))
             ++ends;
@@ -730,7 +774,97 @@ void hostedArtificialCarrier() {
     throw std::runtime_error("artificial startup metadata failed verification");
 }
 
-int main() {
+void productionValueEmission(const std::string &dumpPath) {
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("value-emission.gti", R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+int32_t inspect(int32_t input) {
+  mut int32_t local = input & 31;
+  debug_checkpoint(local);
+  return local;
+}
+int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
+)gti");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid production value fixture");
+  const auto optimized =
+      OptimizationPipeline().run({.hir = frontend.hir,
+                                  .mir = frontend.mir,
+                                  .level = OptimizationLevel::O3,
+                                  .target = TargetInfo::host()});
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, optimized.report.transformations, TargetInfo::host());
+  if (!lowered.valid())
+    throw std::runtime_error("invalid production value lowering");
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
+  if (!input)
+    throw std::runtime_error("invalid production value snapshot");
+  Session session(*input, {.optimization = LlvmCodegenOptimization::Aggressive,
+                           .debugInfo = true});
+  Session plain(*input, {.optimization = LlvmCodegenOptimization::Aggressive});
+  lowerScalarProgram(session, planLlvmAdmission(*input));
+  lowerScalarProgram(plain, planLlvmAdmission(*input));
+  unsigned values = 0;
+  for (const auto &function : session.module()) {
+    const auto *other = plain.module().getFunction(function.getName());
+    if (!other || function.size() != other->size() ||
+        function.arg_size() != other->arg_size())
+      throw std::runtime_error(
+          "debug value events changed execution functions");
+    for (unsigned i = 0; i <= function.arg_size(); ++i)
+      if (function.getAttributes().getAsString(i) !=
+          other->getAttributes().getAsString(i))
+        throw std::runtime_error(
+            "debug value events changed execution parameter attributes");
+    if (function.getAttributes().getAsString(
+            llvm::AttributeList::FunctionIndex) !=
+        other->getAttributes().getAsString(llvm::AttributeList::FunctionIndex))
+      throw std::runtime_error(
+          "debug value events changed execution function attributes");
+    auto otherBlock = other->begin();
+    for (const auto &block : function) {
+      if (block.size() != otherBlock->size())
+        throw std::runtime_error(
+            "debug value events added execution instructions");
+      auto otherInstruction = otherBlock->begin();
+      for (const auto &instruction : block) {
+        if (instruction.getOpcode() != otherInstruction->getOpcode())
+          throw std::runtime_error(
+              "debug value events changed execution opcodes");
+        for (const auto &record : instruction.getDbgRecordRange())
+          if (const auto *variable =
+                  llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
+              variable && variable->isDbgValue() &&
+              !variable->isKillLocation() &&
+              variable->getVariable()->getName() == "local")
+            ++values;
+        ++otherInstruction;
+      }
+      ++otherBlock;
+    }
+  }
+  if (!values)
+    throw std::runtime_error(
+        "production local has no existing SSA value metadata");
+  session.debugInfo()->finalize();
+  const auto dump = [&](const std::string &path) {
+    if (path.empty())
+      return;
+    std::error_code error;
+    llvm::raw_fd_ostream output(path, error);
+    if (error)
+      throw std::runtime_error("cannot retain debug IR");
+    session.module().print(output, nullptr);
+  };
+  dump(dumpPath);
+  (void)session.emitObject();
+  dump(dumpPath.empty() ? "" : dumpPath + ".optimized.ll");
+}
+
+int main(int argc, char **argv) {
   if (metadata("/checkout-one/debug.gti") !=
       metadata("/other-checkout/debug.gti"))
     throw std::runtime_error(
@@ -741,6 +875,7 @@ int main() {
   generatedMetadataExclusion();
   optimizedOutDeclarations();
   hostedArtificialCarrier();
+  productionValueEmission(argc > 1 ? argv[1] : "");
   std::cout << "sealed debug identities, locations, locals, recursive layout, "
                "root relocation and inlined source/parameter chains passed\n";
 }

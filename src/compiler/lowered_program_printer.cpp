@@ -971,6 +971,14 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
         point(range.end);
         output << '\n';
       }
+      for (const auto &range : tables.valueRanges) {
+        output << "  debug-value-range=" << range.local
+               << " value=" << range.value << " begin=";
+        point(range.begin);
+        output << " end=";
+        point(range.end);
+        output << '\n';
+      }
     }
     for (const LoweredSourceLocation &location : body.sourceLocations()) {
       output << "  source-location bb" << location.block << ":i"

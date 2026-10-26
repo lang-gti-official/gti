@@ -2,6 +2,7 @@
 
 #include "session.h"
 #include <llvm/IR/IRBuilder.h>
+#include <span>
 
 namespace lang::native_llvm {
 
@@ -25,7 +26,8 @@ public:
   void local(llvm::IRBuilder<> &ir, const MirPlace &place, llvm::Value *storage,
              unsigned parameter = 0);
   // Consumes exact sealed half-open ranges at MIR emission boundaries.
-  void point(llvm::IRBuilder<> &ir, MirDebugPoint point);
+  void point(llvm::IRBuilder<> &ir, MirDebugPoint point,
+             std::span<llvm::Value *const> values = {});
   void endLocal(llvm::IRBuilder<> &ir, const MirPlace &place);
   void finalize();
 
