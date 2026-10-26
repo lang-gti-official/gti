@@ -10261,6 +10261,28 @@ Neither boundary mode's microbenchmarks establish whole-program speedups,
 allocation counts, worker/callback costs, contention isolation or final transport
 acceptance. Keep those missing obligations explicit in the C04 decision.
 
+`tests/llvm_c04_allocations.py` separately relinks validated unsanitized O3
+objects with an allocation observation library; pass `--root`, `--evidence`,
+`--runtime` and a fresh `--output`. It preserves the original object/runtime
+hashes and records the instrumented executable and observation-source identities.
+It is not a timing run. Positive controls require one successful replacement
+C++ `new`/`delete` and one actual `__cxa_allocate_exception` provider call;
+disabled-counter controls precede each measured execution. Direct and indirect
+success, failure and alternating entry retain the execution/cleanup oracle.
+`tests/llvm_c04_allocations_test.py` rejects forged or omitted control/count facts.
+
+Counts cover successful intercepted C++ allocation requests and requested bytes,
+delete calls, and primary exception-provider requests/payload bytes. They do
+not count direct malloc/calloc/realloc, all allocations inside dynamic libraries,
+allocator residency or exception ABI headers. A provider can use pooled storage,
+so an exception request is not evidence of a fresh system allocation. The
+initial Darwin control showed that libc++abi's internal exception-release call
+does not traverse the interposed public symbol; exception deallocation counts
+are therefore explicitly unavailable, not assumed zero. This probe does not
+establish OOM behavior, complete allocation freedom or worker allocation cost.
+Dynamic and worker source fixtures are retained for the next private-profile
+extension; their frontend acceptance alone is not comparative execution proof.
+
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves
 as a comparator for its existing supported behavior. Retain valid differential

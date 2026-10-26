@@ -11,6 +11,31 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#if defined(GTI_C04_ALLOCATIONS)
+#include "allocation_probe.h"
+
+bool allocationControls() {
+  c04_allocation_begin();
+  auto *(*volatile allocate)(std::size_t) = &::operator new;
+  void (*volatile release)(void *) noexcept = &::operator delete;
+  release(allocate(37));
+  try {
+    throw 7;
+  } catch (int value) {
+    if (value != 7)
+      return false;
+  }
+  const auto counted = c04_allocation_end();
+  release(allocate(41));
+  const auto disabled = c04_allocation_end();
+  return counted.newCalls == 1 && counted.newBytes == 37 &&
+         counted.deleteCalls == 1 && counted.exceptionCalls == 1 &&
+         counted.exceptionBytes == sizeof(int) &&
+         disabled.newCalls == counted.newCalls &&
+         disabled.deleteCalls == counted.deleteCalls;
+}
+#endif
+
 #if GTI_C04_NATIVE_BOUNDARY
 #include "native_boundary_driver.h"
 #endif
@@ -60,6 +85,10 @@ bool call(int32_t input, int32_t &value, Channel &failure, bool indirect,
 }
 
 int main(int argc, char **argv) {
+#if defined(GTI_C04_ALLOCATIONS)
+  if (!allocationControls())
+    return 9;
+#endif
   const bool failureCase = argc > 1 && argv[1][0] == 'f';
   const bool mixed = argc > 1 && argv[1][0] == 'm';
   const bool indirect = argc > 2 && argv[2][0] == 'i';
@@ -83,6 +112,9 @@ int main(int argc, char **argv) {
   Channel failure{};
   int32_t value = 0;
   std::uint64_t sum = 0;
+#if defined(GTI_C04_ALLOCATIONS)
+  c04_allocation_begin();
+#endif
   const auto started = std::chrono::steady_clock::now();
   for (unsigned long index = 0; index < iterations; ++index) {
     const bool failing = failureCase || (mixed && index % 2 != 0);
@@ -122,6 +154,23 @@ int main(int argc, char **argv) {
       sum += static_cast<std::uint32_t>(value);
     }
   }
+#if defined(GTI_C04_ALLOCATIONS)
+  const auto counted = c04_allocation_end();
+  const char *report = std::getenv("GTI_C04_ALLOCATION_REPORT");
+  FILE *file = report ? std::fopen(report, "w") : nullptr;
+  if (!file)
+    return 10;
+  std::fprintf(file,
+               "{\"controls\":true,\"new_calls\":%llu,\"new_bytes\":%llu,"
+               "\"delete_calls\":%llu,\"exception_calls\":%llu,"
+               "\"exception_bytes\":%llu}\n",
+               static_cast<unsigned long long>(counted.newCalls),
+               static_cast<unsigned long long>(counted.newBytes),
+               static_cast<unsigned long long>(counted.deleteCalls),
+               static_cast<unsigned long long>(counted.exceptionCalls),
+               static_cast<unsigned long long>(counted.exceptionBytes));
+  std::fclose(file);
+#endif
   const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
                            std::chrono::steady_clock::now() - started)
                            .count();
