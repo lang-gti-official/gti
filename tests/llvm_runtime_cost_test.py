@@ -80,6 +80,42 @@ def parse_build_resources(stderr, system):
             "source": "/usr/bin/time", "scope": RESOURCE_SCOPE}
 
 
+def validate_build_report(report, producer_digest, artifact):
+    """Bind observed outputs to GTI's recorded producer/native/runtime inputs."""
+    if report.get("schema") != 2:
+        raise ValueError("unsupported GTI build-report schema")
+    producer = report["producer"]
+    if producer["executable"]["sha256"] != producer_digest:
+        raise ValueError("build report belongs to another GTI executable")
+    if Path(report["artifact"]["canonical_path"]).resolve() != artifact.resolve():
+        raise ValueError("build report belongs to another output artifact")
+    materials = [report["artifact"], report["native"]["compiler_executable"],
+                 report["native"]["runtime"]["archive"]]
+    materials += [row["material"] for row in report["sources"]["units"]]
+    materials += [row["material"] for row in report["native"]["runtime"]["headers"]]
+    if not report["native"]["argv"]:
+        raise ValueError("build report has no actual native invocation")
+    for material in materials:
+        path = Path(material["canonical_path"])
+        if (not path.is_file() or path.stat().st_size != material["bytes"] or
+                hashlib.sha256(path.read_bytes()).hexdigest() != material["sha256"]):
+            raise ValueError(f"build report material changed: {path}")
+    build = producer["compiler_build"]
+    source_head = None
+    if build["state"] == "clean":
+        if not re.fullmatch(r"[0-9a-f]{40}", build.get("commit") or ""):
+            raise ValueError("clean compiler build has no exact source commit")
+        source_head = build["commit"]
+    elif build["state"] not in ("dirty", "unavailable"):
+        raise ValueError("unknown compiler source state")
+    return {"compiler_build": build, "gti_source_head": source_head,
+            "native_compiler": report["native"]["compiler_executable"],
+            "runtime_archive": report["native"]["runtime"]["archive"],
+            "runtime_materials_sha256": report["native"]["runtime"]["materials_sha256"],
+            "source_materials_sha256": report["sources"]["materials_sha256"],
+            "artifact": report["artifact"]}
+
+
 DECLARATIONS = '''int gti_cost_iterations() { return COUNT; }
 void gti_cost_begin() {}
 int gti_cost_end(c_ulonglong checksum, c_ulonglong effects) {
@@ -181,6 +217,8 @@ def main():
     parser.add_argument("--gti-build-cache", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--clang", default="clang")
+    parser.add_argument("--native-cxx", type=Path,
+                        help="explicit native compiler; actual invocation is retained per build")
     parser.add_argument("--case", choices=tuple(CASES), action="append")
     parser.add_argument("--measure", action="store_true")
     parser.add_argument("--build-resources", action="store_true",
@@ -203,14 +241,16 @@ def main():
     assert set(matrix["admitted"]) == set(CASES)
     selected = args.case or list(CASES)
     output.mkdir(parents=True)
-    manifest = {"schema": 2, "status": "running", "pending": matrix["pending"],
+    manifest = {"schema": 3, "status": "running", "pending": matrix["pending"],
                 "unmeasured_obligations": matrix["unmeasured_obligations"],
                 "slot": args.slot, "commands": [], "correctness": [], "timing": [],
+                "native_builds": [], "compiler_build": None,
+                "host": {"platform": platform.platform(), "machine": platform.machine()},
                 "measurement_contract": "process wall time includes startup, GTI initialization/cleanup and exit; no foreign timer hook",
                 "gti_sha256": hashlib.sha256(args.gti.read_bytes()).hexdigest(),
                 "gti_build_cache_sha256": hashlib.sha256(args.gti_build_cache.read_bytes()).hexdigest(),
                 "gti_source_head": None,
-                "compiler_source_binding": "executable and cache hashes retained; optimized CMake mode does not establish a source head",
+                "compiler_source_binding": "pending validated GTI build reports; CMake mode alone does not bind source",
                 "native_target_equivalence": "not established by this harness; no matched-target parity claim",
                 "build_resource_contract": RESOURCE_SCOPE,
                 "build_resources_requested": args.build_resources}
@@ -276,7 +316,26 @@ def main():
             path.write_text(declarations + source + "\n")
             for backend, optimization in [("cpp", "3"), *(('llvm', str(i)) for i in range(4))]:
                 binary = output / f"{name}-{backend}-O{optimization}"
-                run([args.gti, path, "--backend", backend, f"-O{optimization}", "-o", binary], build=True)
+                report_path = output / f"{name}-{backend}-O{optimization}-build.json"
+                native_options = ["--cxx", args.native_cxx] if args.native_cxx else []
+                run([args.gti, path, "--backend", backend, f"-O{optimization}",
+                     "--build-report", report_path, *native_options, "-o", binary], build=True)
+                report = json.loads(report_path.read_text())
+                facts = validate_build_report(report, manifest["gti_sha256"], binary)
+                if manifest["compiler_build"] is None:
+                    manifest["compiler_build"] = facts["compiler_build"]
+                    manifest["gti_source_head"] = facts["gti_source_head"]
+                assert manifest["compiler_build"] == facts["compiler_build"], "compiler source identity changed"
+                manifest["native_builds"].append({
+                    "case": name, "backend": backend, "optimization": optimization,
+                    "target_selection": "native host default; no target/CPU override",
+                    "debug_info": report["debug_info"], "instrumentation": "none",
+                    "report": report_path.name,
+                    "report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+                    **facts})
+                manifest["compiler_source_binding"] = (
+                    "validated per-build GTI producer digest and compiler-recorded source state/commit; "
+                    "native command, source inputs, runtime and output identities retained")
                 result = run([binary])
                 assert not result.stderr and not result.stdout
                 manifest["correctness"].append({"case": name, "backend": backend, "optimization": optimization,
@@ -304,6 +363,7 @@ def main():
                 manifest["timing"].append({"case": name, "iterations": args.iterations, "seconds": samples,
                                            "median_seconds": {b: statistics.median(s) for b, s in samples.items()}})
             manifest["load_after"] = os.getloadavg()
+        assert hashlib.sha256(args.gti.read_bytes()).hexdigest() == manifest["gti_sha256"], "GTI executable changed during the run"
         manifest["status"] = "passed-selected-admitted-families"
         print(f"PASS: {len(manifest['correctness'])} checked executions; pending families remain explicit")
     except BaseException as error:
