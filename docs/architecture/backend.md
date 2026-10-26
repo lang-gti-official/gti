@@ -4526,6 +4526,11 @@ open. The exact optimized lexical-shadowing probe now observes the inner value
 11 and then the outer value 9 in the macOS native debugger. An unavailable or
 outer-variable result is not accepted as the inner value. Current composed
 source still requires its Linux gate; older Linux evidence is kept separately.
+The debug consumer can bind an exact sealed native callback adapter to an
+artificial line-zero carrier, checking its session, native signature and
+parameter attributes and rejecting rebinding. Its native factory hook remains
+pending shared-owner integration; this consumer API alone does not fix or
+establish optimized callback debugger acceptance.
 Managed Linux debugger checks stage distribution LLDB22 and its missing
 dependencies under the run's build directory, retaining package and loaded-file
 hashes without installing host packages. LLDB21 reaches source breakpoints but

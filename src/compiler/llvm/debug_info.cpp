@@ -1,6 +1,8 @@
 #include "debug_info.h"
 #include "abi.h"
 #include "layout.h"
+#include "native_c_abi.h"
+#include "native_c_contract.h"
 #include "parameter_packs.h"
 
 #include <llvm/ADT/APSInt.h>
@@ -415,6 +417,7 @@ public:
       lifecycleDefinitions;
   llvm::Function *hostedStartupDefinition = nullptr;
   std::map<LoweredLambdaInstanceId, llvm::Function *> lambdaDefinitions;
+  std::map<MirNativeCallbackAdapterId, llvm::Function *> nativeCallbacks;
   struct Local {
     llvm::TypedTrackingMDRef<llvm::DILocalVariable> variable;
     llvm::Value *storage = nullptr;
@@ -506,6 +509,58 @@ void DebugInfo::registerLambdaBody(MirBodyAddress address,
     throw std::logic_error("LLVM debug lambda differs from its factory ABI");
   impl->lambdaDefinitions.emplace(address.owner, &function);
   impl->bodies.emplace(&function, address);
+}
+
+void DebugInfo::beginNativeCallback(MirNativeCallbackAdapterId identity,
+                                    llvm::IRBuilder<> &ir) {
+  auto *function =
+      ir.GetInsertBlock() ? ir.GetInsertBlock()->getParent() : nullptr;
+  const auto &program = impl->session.program();
+  const auto *adapter = program.mir().findNativeCallbackAdapter(identity);
+  if (impl->finalized || !function ||
+      function->getParent() != &impl->session.module() || !adapter ||
+      !nativeCCallbackContract(program.mir(), program.target(), *adapter) ||
+      program.mir().sourceDebugProfile() != SourceDebugProfile::LexicalV1 ||
+      impl->bodies.contains(function))
+    throw std::logic_error(
+        "LLVM debug callback is not an exact sealed session adapter");
+  const auto plan = planNativeCFunction(
+      impl->session, *adapter->type.nativeFunctionReturnType(),
+      adapter->type.nativeFunctionParameterTypes());
+  if (function->getFunctionType() != plan.signature.type ||
+      function->getCallingConv() != llvm::CallingConv::C ||
+      !function->hasInternalLinkage() || function->getAddressSpace())
+    throw std::logic_error("LLVM debug callback differs from its factory ABI");
+  const std::unique_ptr<llvm::Function> expected(llvm::Function::Create(
+      plan.signature.type, llvm::GlobalValue::InternalLinkage, ""));
+  plan.signature.applyTo(*expected);
+  for (unsigned index = 0; index <= function->arg_size(); ++index)
+    if (function->getAttributes().getAttributes(index) !=
+        expected->getAttributes().getAttributes(index))
+      throw std::logic_error(
+          "LLVM debug callback differs from its factory parameter attributes");
+  const auto previous = impl->nativeCallbacks.find(identity);
+  if (previous != impl->nativeCallbacks.end() && previous->second != function)
+    throw std::logic_error("LLVM debug callback changed its factory result");
+  for (const auto &[other, registered] : impl->nativeCallbacks)
+    if (other != identity && registered == function)
+      throw std::logic_error("LLVM debug callback is bound to another adapter");
+  if (previous == impl->nativeCallbacks.end()) {
+    if (function->getSubprogram())
+      throw std::logic_error("LLVM debug callback acquired a foreign scope");
+    auto flags = llvm::DISubprogram::SPFlagDefinition;
+    if (impl->optimized())
+      flags |= llvm::DISubprogram::SPFlagOptimized;
+    auto *file = impl->builder.createFile("<gti-generated>", ".");
+    function->setSubprogram(impl->builder.createFunction(
+        file, function->getName(), {}, file, 0,
+        impl->builder.createSubroutineType(
+            impl->builder.getOrCreateTypeArray({})),
+        0, llvm::DINode::FlagArtificial, flags));
+    impl->nativeCallbacks.emplace(identity, function);
+  }
+  ir.SetCurrentDebugLocation(llvm::DILocation::get(
+      impl->session.context(), 0, 0, function->getSubprogram()));
 }
 
 void DebugInfo::registerHostedStartupBody(MirBodyAddress address,

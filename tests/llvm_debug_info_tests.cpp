@@ -2,6 +2,7 @@
 #include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/debug_info.h"
 #include "../src/compiler/llvm/layout.h"
+#include "../src/compiler/llvm/native_c_abi.h"
 #include "../src/compiler/llvm/parameter_packs.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
@@ -563,6 +564,105 @@ int main() {
   if (definitions != 1 || controls != 7 ||
       llvm::verifyModule(session.module(), &llvm::errs()))
     throw std::runtime_error("lambda identity controls did not execute");
+}
+
+void callbackArtificialCarrier() {
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("callback-debug.gti", R"gti(
+using Operation = (int32_t) -> int32_t;
+extern "C" { int32_t invoke(Operation operation, int32_t value); }
+int32_t inspect(int32_t value) { return value; }
+int main() {
+  Operation callback = inspect;
+  unsafe { return invoke(callback, 4); }
+}
+)gti");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid callback debug fixture");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  std::vector<LoweredProgramIssue> issues;
+  if (!lowered.valid())
+    throw std::runtime_error("invalid callback debug lowering");
+  auto input = verifiedLoweredProgram(*lowered.program, issues);
+  if (!input || input->program().mir().nativeCallbackAdapters().size() != 1)
+    throw std::runtime_error("callback debug identity was not sealed");
+  Session session(*input, {.debugInfo = true}), foreign(*input, {});
+  auto &debug = *session.debugInfo();
+  const auto &adapter = input->program().mir().nativeCallbackAdapters().front();
+  const auto plan =
+      planNativeCFunction(session, *adapter.type.nativeFunctionReturnType(),
+                          adapter.type.nativeFunctionParameterTypes());
+  auto *function = llvm::Function::Create(plan.signature.type,
+                                          llvm::GlobalValue::InternalLinkage,
+                                          "callback_carrier", session.module());
+  plan.signature.applyTo(*function);
+  function->addFnAttr(llvm::Attribute::NoUnwind);
+  const auto attributes = function->getAttributes();
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  unsigned controls = 0;
+  const auto reject = [&](auto action) {
+    try {
+      action();
+    } catch (const std::logic_error &) {
+      ++controls;
+      return;
+    }
+    throw std::runtime_error("forged callback debug identity was accepted");
+  };
+  llvm::IRBuilder<> missing(session.context());
+  reject([&] { debug.beginNativeCallback(adapter.id, missing); });
+  reject([&] { debug.beginNativeCallback(adapter.id + 1000, ir); });
+  auto *wrong = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
+      llvm::GlobalValue::InternalLinkage, "wrong_callback", session.module());
+  llvm::IRBuilder<> wrongIr(
+      llvm::BasicBlock::Create(session.context(), "entry", wrong));
+  reject([&] { debug.beginNativeCallback(adapter.id, wrongIr); });
+  wrongIr.CreateRetVoid();
+  auto *outside = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(foreign.context()), false),
+      llvm::GlobalValue::InternalLinkage, "foreign_callback", foreign.module());
+  llvm::IRBuilder<> outsideIr(
+      llvm::BasicBlock::Create(foreign.context(), "entry", outside));
+  reject([&] { debug.beginNativeCallback(adapter.id, outsideIr); });
+  function->setCallingConv(llvm::CallingConv::Fast);
+  reject([&] { debug.beginNativeCallback(adapter.id, ir); });
+  function->setCallingConv(llvm::CallingConv::C);
+  function->addRetAttr(llvm::Attribute::ZExt);
+  reject([&] { debug.beginNativeCallback(adapter.id, ir); });
+  function->setAttributes(attributes);
+  if (function->getSubprogram() || ir.getCurrentDebugLocation())
+    throw std::runtime_error("rejected callback acquired debug metadata");
+  debug.beginNativeCallback(adapter.id, ir);
+  const auto *scope = function->getSubprogram();
+  debug.beginNativeCallback(adapter.id, ir);
+  if (!scope || function->getSubprogram() != scope || scope->getLine() ||
+      scope->getScopeLine() || !scope->isArtificial() ||
+      scope->getFile()->getFilename() != "<gti-generated>" ||
+      !ir.getCurrentDebugLocation() || ir.getCurrentDebugLocation().getLine() ||
+      ir.getCurrentDebugLocation()->getScope() != scope ||
+      ir.getCurrentDebugLocation()->getInlinedAt() ||
+      function->getAttributes() != attributes)
+    throw std::runtime_error("callback carrier invented source or changed ABI");
+  ir.CreateRet(function->getArg(0));
+  auto *other = llvm::Function::Create(plan.signature.type,
+                                       llvm::GlobalValue::InternalLinkage,
+                                       "rebound_callback", session.module());
+  plan.signature.applyTo(*other);
+  llvm::IRBuilder<> otherIr(
+      llvm::BasicBlock::Create(session.context(), "entry", other));
+  reject([&] { debug.beginNativeCallback(adapter.id, otherIr); });
+  otherIr.CreateRet(other->getArg(0));
+  debug.finalize();
+  reject([&] { debug.beginNativeCallback(adapter.id, ir); });
+  if (controls != 8 || scope->getRetainedNodes().size() ||
+      wrong->getSubprogram() || other->getSubprogram() ||
+      llvm::verifyModule(session.module(), &llvm::errs()))
+    throw std::runtime_error("callback identity controls did not execute");
 }
 
 void generatedMetadataExclusion() {
@@ -1238,6 +1338,7 @@ int main(int argc, char **argv) {
   inlinedLocations();
   lifecycleIdentities();
   lambdaIdentities();
+  callbackArtificialCarrier();
   concreteParameterMetadata();
   generatedMetadataExclusion();
   optimizedOutDeclarations();
