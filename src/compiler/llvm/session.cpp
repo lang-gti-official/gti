@@ -89,6 +89,11 @@ std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
         (target.os == "linux" && target.arch == "x86_64")))
     throw BackendUnsupportedError("LLVM native emission requires a supported "
                                   "macOS arm64 or Linux x86_64 host target");
+  static_cast<void>(llvmInstrumentationModeName(options.instrumentation));
+  if (options.instrumentation != LlvmInstrumentationMode::None)
+    throw BackendUnsupportedError(
+        "LLVM diagnostic instrumentation requires coherent pipeline and "
+        "matching native runtime support (O-LLVM-14/15)");
   if (options.debugInfo)
     throw BackendUnsupportedError(
         "LLVM debug metadata emission is not implemented yet (O-LLVM-14)");

@@ -1331,27 +1331,17 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
   if (nativeObjectCache(request)) {
-    LlvmBackendOptions options;
-    switch (request.compilation().optimization()) {
-    case OptimizationLevel::O0:
-      options.optimization = LlvmCodegenOptimization::None;
-      break;
-    case OptimizationLevel::O1:
-      options.optimization = LlvmCodegenOptimization::Less;
-      break;
-    case OptimizationLevel::O2:
-      options.optimization = LlvmCodegenOptimization::Default;
-      break;
-    case OptimizationLevel::O3:
-      options.optimization = LlvmCodegenOptimization::Aggressive;
-      break;
-    }
-    options.debugInfo = request.compilation().debugInfo();
+    const LlvmBackendOptions options =
+        llvmBackendOptions(request.compilation());
     const auto backend = queryLlvmBackendIdentity(
         request.compilation().target(), options, errorMessage);
     if (!backend || backend->schema.empty() || backend->llvmVersion.empty() ||
         backend->triple.empty() || backend->dataLayout.empty() ||
-        backend->cpu.empty() || backend->privateAbi == 0) {
+        backend->cpu.empty() || backend->privateAbi == 0 ||
+        backend->instrumentation.empty() ||
+        backend->debugInfo != options.debugInfo ||
+        backend->instrumentation !=
+            llvmInstrumentationModeName(options.instrumentation)) {
       if (errorMessage.empty())
         errorMessage = "incomplete LLVM backend identity";
       return std::nullopt;
@@ -1371,6 +1361,9 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
     identity.add("llvm.relocation", backend->relocation);
     identity.add("llvm.code-model", backend->codeModel);
     identity.add("llvm.codegen-optimization", backend->codegenOptimization);
+    identity.add("llvm.debug-info",
+                 static_cast<std::uint64_t>(backend->debugInfo));
+    identity.add("llvm.instrumentation", backend->instrumentation);
   }
   addNativeEnvironmentIdentity(identity);
   identity.add("backend.kind",

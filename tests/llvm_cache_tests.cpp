@@ -16,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 
 namespace {
 using namespace lang;
@@ -57,6 +58,7 @@ struct Policy {
   TargetInfo target = TargetInfo::host();
   RawPointerAuditMode audit = RawPointerAuditMode::Off;
   bool debug = false;
+  LlvmInstrumentationMode instrumentation = LlvmInstrumentationMode::None;
   bool keep = false;
   bool cache = true;
   NativeInputs native;
@@ -87,9 +89,10 @@ void runChecks(const std::filesystem::path &self) {
       TargetInfo::host(), {.optimization = LlvmCodegenOptimization::Aggressive},
       identityError);
   require(identity && optimizedIdentity && identity->privateAbi != 0 &&
-              !identity->schema.empty() && !identity->llvmVersion.empty() &&
-              !identity->triple.empty() && !identity->dataLayout.empty() &&
-              !identity->cpu.empty() &&
+              identity->schema == "gti-llvm-object-identity-v2" &&
+              !identity->debugInfo && identity->instrumentation == "none" &&
+              !identity->llvmVersion.empty() && !identity->triple.empty() &&
+              !identity->dataLayout.empty() && !identity->cpu.empty() &&
               std::filesystem::is_regular_file(identity->compilerExecutable) &&
               identity->triple == optimizedIdentity->triple &&
               identity->cpu == optimizedIdentity->cpu &&
@@ -103,6 +106,32 @@ void runChecks(const std::filesystem::path &self) {
               {.optimization = static_cast<LlvmCodegenOptimization>(999)},
               identityError),
           "an invalid producer policy must not yield a cache identity");
+  constexpr std::pair<LlvmInstrumentationMode, std::string_view> modes[] = {
+      {LlvmInstrumentationMode::None, "none"},
+      {LlvmInstrumentationMode::Address, "address"},
+      {LlvmInstrumentationMode::UndefinedMemory, "undefined-memory"},
+      {LlvmInstrumentationMode::AddressAndUndefinedMemory,
+       "address-and-undefined-memory"},
+      {LlvmInstrumentationMode::Thread, "thread"}};
+  for (const auto &[mode, spelling] : modes) {
+    require(llvmInstrumentationModeName(mode) == spelling,
+            "diagnostic policy must have an exact stable identity spelling");
+    if (mode == LlvmInstrumentationMode::None)
+      continue;
+    std::string unavailable;
+    require(
+        !queryLlvmBackendIdentity(TargetInfo::host(), {.instrumentation = mode},
+                                  unavailable) &&
+            unavailable.find("coherent pipeline") != std::string::npos,
+        "unwired diagnostic modes must not produce reusable object identity");
+  }
+  std::string invalidMode;
+  require(!queryLlvmBackendIdentity(
+              TargetInfo::host(),
+              {.instrumentation = static_cast<LlvmInstrumentationMode>(999)},
+              invalidMode) &&
+              invalidMode == "invalid LLVM instrumentation policy",
+          "unknown diagnostic mode must reject before machine/object creation");
   for (const char *name :
        {"CPATH", "CPLUS_INCLUDE_PATH", "C_INCLUDE_PATH", "OBJC_INCLUDE_PATH",
         "LIBRARY_PATH", "SDKROOT", "COMPILER_PATH", "GCC_EXEC_PREFIX",
@@ -142,8 +171,51 @@ void runChecks(const std::filesystem::path &self) {
                               policy.target, policy.optimization,
                               CppStandard::Cpp23, {}, {}, {}, {}, policy.debug,
                               {}, policy.audit)
-        .withBackend(policy.backend);
+        .withBackend(policy.backend)
+        .withLlvmInstrumentation(policy.instrumentation);
   };
+  const auto ordinaryRequest = compilation();
+  const auto addressRequest =
+      ordinaryRequest.withLlvmInstrumentation(LlvmInstrumentationMode::Address);
+  require(
+      ordinaryRequest.llvmInstrumentation() == LlvmInstrumentationMode::None &&
+          addressRequest.llvmInstrumentation() ==
+              LlvmInstrumentationMode::Address &&
+          addressRequest.forExecutable()
+                  .withDefinitionClosure()
+                  .llvmInstrumentation() == LlvmInstrumentationMode::Address,
+      "diagnostic request policy must be immutable and survive derived "
+      "requests");
+  const auto mapped = llvmBackendOptions(addressRequest);
+  require(mapped.optimization == LlvmCodegenOptimization::Aggressive &&
+              !mapped.debugInfo &&
+              mapped.instrumentation == LlvmInstrumentationMode::Address,
+          "emission and identity must share the exact driver options mapping");
+  const auto invalidRequest = [&](const auto &action) {
+    bool rejected = false;
+    try {
+      action();
+    } catch (const std::invalid_argument &) {
+      rejected = true;
+    }
+    require(rejected,
+            "invalid diagnostic request must reject before compilation");
+  };
+  invalidRequest(
+      [&] { static_cast<void>(addressRequest.withBackend(BackendKind::Cpp)); });
+  invalidRequest([&] {
+    static_cast<void>(
+        ordinaryRequest.withBackend(BackendKind::Cpp)
+            .withLlvmInstrumentation(LlvmInstrumentationMode::Thread));
+  });
+  invalidRequest([&] {
+    static_cast<void>(ordinaryRequest.withLlvmInstrumentation(
+        static_cast<LlvmInstrumentationMode>(999)));
+  });
+  invalidRequest([&] { static_cast<void>(compileToCpp(addressRequest)); });
+  invalidRequest([&] {
+    static_cast<void>(compileToCpp(addressRequest, CompilationInputs{}));
+  });
   const auto build = [&](const Policy &policy = Policy{}) {
     return buildExecutable(ExecutableBuildRequest(
         compilation(policy), toolchain,
@@ -183,6 +255,21 @@ void runChecks(const std::filesystem::path &self) {
   const auto executable = read(output);
   const auto executableMode = std::filesystem::status(output).permissions();
   execute(17);
+  for (const auto &[mode, spelling] : modes) {
+    static_cast<void>(spelling);
+    if (mode == LlvmInstrumentationMode::None)
+      continue;
+    auto unavailable = Policy{};
+    unavailable.instrumentation = mode;
+    const auto rejected = build(unavailable);
+    require(
+        !rejected.succeeded() && !rejected.nativeProcess &&
+            !rejected.compilation.artifact &&
+            rejected.cache.status == BuildCacheStatus::Bypassed &&
+            read(output) == executable && read(representation) == object,
+        "unwired diagnostic policy must preserve published output and never "
+        "restore a none-mode cache entry");
+  }
   for (const bool explicitTriple : {false, true}) {
     auto explicitTarget = Policy{};
     if (explicitTriple)
@@ -526,7 +613,9 @@ void runChecks(const std::filesystem::path &self) {
             << " LLVM=" << identity->llvmVersion
             << " private-ABI=" << identity->privateAbi
             << " triple=" << identity->triple << " CPU=" << identity->cpu
-            << " features=" << identity->features << '\n';
+            << " features=" << identity->features
+            << " debug=" << identity->debugInfo
+            << " instrumentation=" << identity->instrumentation << '\n';
   std::cout << "LLVM cache round trips, content/edge invalidation, failed "
                "admission, corruption, restoration, "
                "publication safety and C++ isolation passed\n";

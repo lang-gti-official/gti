@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <exception>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -341,6 +342,10 @@ BackendKind CompilationRequest::backend() const { return selectedBackend; }
 
 bool CompilationRequest::debugInfo() const { return sourceDebugInfo; }
 
+LlvmInstrumentationMode CompilationRequest::llvmInstrumentation() const {
+  return instrumentationMode;
+}
+
 RawPointerAuditMode CompilationRequest::rawPointerAudit() const {
   return rawPointerAuditMode;
 }
@@ -401,8 +406,24 @@ CompilationRequest CompilationRequest::withDefinitionClosure() const {
 }
 
 CompilationRequest CompilationRequest::withBackend(BackendKind backend) const {
+  if (backend != BackendKind::Llvm &&
+      instrumentationMode != LlvmInstrumentationMode::None)
+    throw std::invalid_argument(
+        "LLVM instrumentation requires the LLVM backend");
   CompilationRequest result = *this;
   result.selectedBackend = backend;
+  return result;
+}
+
+CompilationRequest CompilationRequest::withLlvmInstrumentation(
+    LlvmInstrumentationMode mode) const {
+  static_cast<void>(llvmInstrumentationModeName(mode));
+  if (mode != LlvmInstrumentationMode::None &&
+      selectedBackend != BackendKind::Llvm)
+    throw std::invalid_argument(
+        "LLVM instrumentation requires the LLVM backend");
+  CompilationRequest result = *this;
+  result.instrumentationMode = mode;
   return result;
 }
 
@@ -458,6 +479,9 @@ CheckResult checkCompilation(const CompilationRequest &request,
 
 CompilationResult compileToCpp(const CompilationRequest &request,
                                ProgressObserver *progress) {
+  if (request.llvmInstrumentation() != LlvmInstrumentationMode::None)
+    throw std::invalid_argument(
+        "LLVM instrumentation requires the LLVM backend");
   CppBackend backend(request.cppStandard(), request.debugInfo());
   return compileWithBackend(request.withDefinitionClosure(), backend, progress);
 }
@@ -479,16 +503,23 @@ llvmCodegenOptimization(OptimizationLevel optimization) {
   throw std::logic_error("unknown optimization level");
 }
 
+} // namespace
+
+LlvmBackendOptions llvmBackendOptions(const CompilationRequest &request) {
+  return {.optimization = llvmCodegenOptimization(request.optimization()),
+          .debugInfo = request.debugInfo(),
+          .instrumentation = request.llvmInstrumentation()};
+}
+
+namespace {
+
 std::unique_ptr<Backend> selectedBackend(const CompilationRequest &request) {
   switch (request.backend()) {
   case BackendKind::Cpp:
     return std::make_unique<CppBackend>(request.cppStandard(),
                                         request.debugInfo());
   case BackendKind::Llvm:
-    return std::make_unique<LlvmBackend>(LlvmBackendOptions{
-        .optimization = llvmCodegenOptimization(request.optimization()),
-        .debugInfo = request.debugInfo(),
-    });
+    return std::make_unique<LlvmBackend>(llvmBackendOptions(request));
   }
   throw std::logic_error("unknown executable backend selection");
 }
@@ -513,6 +544,9 @@ CompilationResult compileToSelectedBackend(const CompilationRequest &request,
 CompilationResult compileToCpp(const CompilationRequest &request,
                                CompilationInputs inputs,
                                ProgressObserver *progress) {
+  if (request.llvmInstrumentation() != LlvmInstrumentationMode::None)
+    throw std::invalid_argument(
+        "LLVM instrumentation requires the LLVM backend");
   CppBackend backend(request.cppStandard(), request.debugInfo());
   return compileWithLoadedInputs(request.withDefinitionClosure(),
                                  std::move(inputs), backend, progress);

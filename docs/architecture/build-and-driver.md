@@ -2157,6 +2157,18 @@ remain part of the key. An unavailable required identity bypasses; no CPU,
 feature, relocation or ABI fact is guessed. Unsupported LLVM debug requests
 remain rejected until source-debug production is implemented by O-LLVM-15.
 
+Object identity schema `gti-llvm-object-identity-v2` additionally records the
+actual debug boolean and stable diagnostic instrumentation spelling. The
+LLVM-free API exposes None, Address, UndefinedMemory,
+AddressAndUndefinedMemory and Thread; UndefinedMemory denotes only original
+generated load/store null/alignment checks, not complete UBSan. Immutable driver
+requests select these policies through `withLlvmInstrumentation`, after explicit
+LLVM backend selection. Object generation and cache identity use one options
+mapping. Non-None modes currently reject until coherent pipeline and matching
+native runtime support are wired; unknown values and C++ combinations reject.
+The default None policy retains current execution. No CLI or manifest selector
+is exposed by this typed API checkpoint, and binary cache payload v5 is unchanged.
+
 Three narrowings hold by an exact-identity argument, stated here because each
 one moved an input out of the bypass list.
 
