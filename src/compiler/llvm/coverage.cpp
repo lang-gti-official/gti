@@ -11,6 +11,7 @@ constexpr bool dispatchExecutionWitness(std::string_view family,
                                         std::string_view name) {
   return family == "Shape" && (name == "NativeStaticDispatchStorage" ||
                                name == "NativeBorrowedDispatchView" ||
+                               name == "NativeFreshHierarchyTransfer" ||
                                name == "NativeVirtualInvocation");
 }
 } // namespace

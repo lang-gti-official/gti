@@ -4496,7 +4496,24 @@ then independently preflights exact uses in an options/snapshot-bound temporary
 session without publishing functions, tables or IR. Successful and unsupported
 occurrences remain separate even within one body. Cleanup and generated-empty
 preflights are shared with emission, which retains its own validation.
-`PolymorphicTransfer` explicitly rejects class-value copies/moves, assignment,
+`NativeFreshHierarchyTransfer` admits a narrower generated-transfer profile:
+a scalar ordinary hierarchy, an exact Copy Load, targetless Copy Construct from
+a checked selected source, or whole-binding Move, and exactly one Initialize
+into a fresh whole local. The producer, publication, ownership event and source,
+value and destination drop identities must agree. Explicit staged Move Construct,
+source-defined special members, borrowed fields and active-copy lifetimes reject.
+
+The program-aware placement query binds only those proven hierarchy producers.
+Body-only placement and ordinary nonhierarchy Copy/Move retain their existing
+snapshot behavior. Typed transfer copies logical scalar fields, installs the
+static destination's dispatch tables and transfers actual move flags before
+suppressing the verified whole source. It does not copy headers or padding,
+invent failure edges, or arm moved destination flags unconditionally. Source
+copy state remains live; a copied base view gets the base's static dispatch state.
+The cost follows scalar payload, hierarchy headers and existing active flags;
+this structural model is not measured allocation or runtime-cost acceptance.
+
+`PolymorphicTransfer` still rejects unproved class-value copies/moves, assignment,
 replacement, by-value arguments/returns, captures, containing wrappers/arrays,
 nonlocal destinations and ownership/callback/native/thread combinations.
 The shared inline-storage exclusion follows exact fields/state bases and array
@@ -4504,6 +4521,14 @@ elements, stops at references/raw pointers, and fails closed on unknown or cycli
 storage. It grants no layout or borrow authority. Body and memory-store guards
 also reject byte transport before identity or memcpy shortcuts; copying a
 checked borrowed address is not copying its object.
+
+The isolated explicit copy through an evaluated base-reference Loan passes
+independent verified source/MIR and native O0-O3 checks. The existing C++20/23
+consumer rejects that exact operand with its incomplete generic destination/
+cleanup-schedule diagnostic; the gate reproduces both failures explicitly.
+Other generated hierarchy transfers keep their supported C++20/23 comparisons.
+Normal move-chain cleanup and virtual failure after a move require exact,
+exactly-once numeric destructor traces without observing destructor dispatch.
 
 `DestructorDispatchObservation` remains pending: cleanup order and a destructor
 owner do not establish a virtual active-class transition. Source cleanup and
