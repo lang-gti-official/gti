@@ -5005,9 +5005,15 @@ manufacturing evidence.
 `llvm_coverage_evidence` reconciles those claims with the configured CTest
 inventory and JSON evidence manifests derived from the execution tests' actual
 runnable case dictionaries. Manifest schema
-`gti.llvm.execution-evidence/v1` binds a test to named profiles, each profile to
-stable source IDs, and each source ID to its repository/inline origin and the
-SHA-256 of the exact UTF-8 text. Unknown fields, stale hashes and dangling
+`gti.llvm.execution-evidence/v2` binds a test to named profiles, each profile to
+stable source IDs and an explicit `execution-profile`, and each source ID to
+its repository/inline origin and the SHA-256 of the exact UTF-8 text. Producers
+default to `single-threaded`; concurrent profiles require an explicit
+`concurrent` override. The test-only probe models hosted execution, enabling
+thread capability only for a supported host target. It preserves that complete
+target and the selected execution profile through frontend analysis and
+lowering, and the audit checks the observed execution-profile key. Missing tags, unknown values (including `sequential`),
+unknown override keys, v1 manifests, unknown fields, stale hashes and dangling
 source IDs reject. Evidence producers register through the CMake-owned
 `gti_register_llvm_evidence_manifest` service. Its deferred writer emits one
 generated registry after the tests directory has declared every producer, so

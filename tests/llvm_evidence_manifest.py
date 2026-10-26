@@ -3,27 +3,34 @@
 from hashlib import sha256
 
 
-SCHEMA = "gti.llvm.execution-evidence/v1"
+SCHEMA = "gti.llvm.execution-evidence/v2"
+EXECUTION_PROFILES = frozenset({"single-threaded", "concurrent"})
 
 
 def build_manifest(test: str, cases: dict[str, str],
                    profiles: dict[str, tuple[str, ...]],
-                   origins: dict[str, str] | None = None) -> dict:
+                   origins: dict[str, str] | None = None, *,
+                   execution_profiles: dict[str, str] | None = None) -> dict:
     origins = origins or {}
+    execution_profiles = execution_profiles or {}
     if not test or not cases or not profiles:
         raise ValueError("evidence test, sources and profiles must be nonempty")
     if set(origins) - set(cases):
         raise ValueError("evidence origins contain an unknown source")
+    if set(execution_profiles) - set(profiles):
+        raise ValueError("execution-profile override names an unknown profile")
+    records = {}
     for profile, sources in profiles.items():
         if not profile or not sources or any(source not in cases for source in sources):
             raise ValueError(f"invalid evidence profile {profile}")
+        mode = execution_profiles.get(profile, "single-threaded")
+        if not isinstance(mode, str) or mode not in EXECUTION_PROFILES:
+            raise ValueError(f"invalid execution-profile for {profile}")
+        records[profile] = {"sources": list(sources), "execution-profile": mode}
     return {
         "schema": SCHEMA,
         "test": test,
-        "profiles": {
-            profile: {"sources": list(sources)}
-            for profile, sources in sorted(profiles.items())
-        },
+        "profiles": dict(sorted(records.items())),
         "sources": {
             name: {
                 "origin": origins.get(name, "inline"),
@@ -40,17 +47,28 @@ def validate_manifest(manifest: dict, test: str, cases: dict[str, str],
         raise ValueError("unknown or missing evidence-manifest top-level field")
     if manifest["schema"] != SCHEMA or manifest["test"] != test:
         raise ValueError("evidence-manifest schema or test identity mismatch")
+    if not isinstance(manifest["profiles"], dict) or set(manifest["profiles"]) != set(profiles):
+        raise ValueError("evidence-manifest profile inventory mismatch")
+    if not isinstance(manifest["sources"], dict) or set(manifest["sources"]) != set(cases):
+        raise ValueError("evidence-manifest source inventory mismatch")
+    modes = {}
+    for profile, record in manifest["profiles"].items():
+        if not isinstance(record, dict) or set(record) != {"sources", "execution-profile"}:
+            raise ValueError(f"invalid evidence profile record {profile}")
+        mode = record["execution-profile"]
+        if not isinstance(mode, str) or mode not in EXECUTION_PROFILES:
+            raise ValueError(f"invalid execution-profile for {profile}")
+        modes[profile] = mode
+    for name, record in manifest["sources"].items():
+        if (not isinstance(record, dict) or set(record) != {"origin", "sha256"}
+                or not isinstance(record["origin"], str)):
+            raise ValueError(f"invalid evidence source record {name}")
     expected = build_manifest(test, cases, profiles, {
         name: source["origin"] for name, source in manifest["sources"].items()
-        if isinstance(source, dict) and "origin" in source
-    })
-    if set(manifest["profiles"]) != set(profiles):
-        raise ValueError("evidence-manifest profile inventory mismatch")
-    if set(manifest["sources"]) != set(cases):
-        raise ValueError("evidence-manifest source inventory mismatch")
+    }, execution_profiles=modes)
     for profile, record in manifest["profiles"].items():
-        if set(record) != {"sources"} or record != expected["profiles"][profile]:
+        if record != expected["profiles"][profile]:
             raise ValueError(f"invalid evidence profile record {profile}")
     for name, record in manifest["sources"].items():
-        if set(record) != {"origin", "sha256"} or record != expected["sources"][name]:
+        if record != expected["sources"][name]:
             raise ValueError(f"invalid evidence source record {name}")

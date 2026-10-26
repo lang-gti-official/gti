@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 
-from llvm_evidence_manifest import validate_manifest
+from llvm_evidence_manifest import EXECUTION_PROFILES, build_manifest, validate_manifest
 
 
 def run(command: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:
@@ -96,7 +96,7 @@ def load_registry(registry: Path, root: Path,
     return modules
 
 
-def profile_sources(root: Path, modules: dict) -> dict[str, tuple[dict[str, str], dict[str, tuple[str, ...]]]]:
+def profile_sources(root: Path, modules: dict) -> dict:
     sources = {}
     for test, module in modules.items():
         cases = module.evidence_cases(root)
@@ -115,7 +115,7 @@ def profile_sources(root: Path, modules: dict) -> dict[str, tuple[dict[str, str]
             raise AssertionError(listed.stderr)
         if json.loads(listed.stdout) != declared:
             raise AssertionError(f"{test}: --list-evidence diverges from runnable cases")
-        sources[test] = (cases, profiles)
+        sources[test] = (cases, profiles, declared["profiles"])
     return sources
 
 
@@ -155,6 +155,45 @@ def manifest_mutation_controls(root: Path, modules: dict) -> None:
     try:
         validate_manifest(unknown, test, cases, profiles)
         raise AssertionError("unknown manifest field was accepted")
+    except ValueError:
+        pass
+
+
+    legacy = deepcopy(manifest)
+    legacy["schema"] = "gti.llvm.execution-evidence/v1"
+    for record in legacy["profiles"].values():
+        record.pop("execution-profile")
+    try:
+        validate_manifest(legacy, test, cases, profiles)
+        raise AssertionError("v1 execution metadata was silently reinterpreted")
+    except ValueError:
+        pass
+
+    for mode in ("sequential", "unknown", 0):
+        invalid = deepcopy(manifest)
+        invalid["profiles"]["scalars"]["execution-profile"] = mode
+        try:
+            validate_manifest(invalid, test, cases, profiles)
+            raise AssertionError("invalid provider execution profile was accepted")
+        except ValueError:
+            pass
+        try:
+            build_manifest(test, cases, profiles,
+                           execution_profiles={"scalars": mode})
+            raise AssertionError("invalid execution-profile override was accepted")
+        except ValueError:
+            pass
+    missing = deepcopy(manifest)
+    missing["profiles"]["scalars"].pop("execution-profile")
+    try:
+        validate_manifest(missing, test, cases, profiles)
+        raise AssertionError("missing execution-profile metadata was accepted")
+    except ValueError:
+        pass
+    try:
+        build_manifest(test, cases, profiles,
+                       execution_profiles={"unknown-profile": "concurrent"})
+        raise AssertionError("unknown execution-profile override was accepted")
     except ValueError:
         pass
 
@@ -202,38 +241,42 @@ def registry_mutation_controls(registry: Path, root: Path,
 
 
 def observed_profiles(report: dict, evidence: Path, root: Path,
-                      modules: dict) -> dict[tuple[str, str], set[str]]:
+                      modules: dict) -> dict[tuple[str, str], dict]:
     sources = profile_sources(root, modules)
     requested = {
         (row["acceptance"]["test"], row["acceptance"]["assertion"])
         for row in report["rows"]
         if row["state"] == "implemented" and row["acceptance"]["test"]
     }
-    observations: dict[tuple[str, str], set[str]] = {}
+    observations: dict[tuple[str, str], dict] = {}
     with tempfile.TemporaryDirectory(prefix="gti-llvm-evidence-") as raw:
         directory = Path(raw)
         for test, profile in sorted(requested):
             if test not in sources:
                 continue
-            cases, profiles = sources[test]
+            cases, profiles, metadata = sources[test]
             if profile not in profiles:
                 continue
+            mode = metadata[profile]["execution-profile"]
             keys: set[str] = set()
             for case in profiles[profile]:
                 source = directory / f"{test}-{profile}-{case}.gti"
                 source.write_text(cases[case], encoding="utf-8")
-                result = run([str(evidence), "--probe", str(root), str(source)])
+                result = run([str(evidence), "--probe", str(root), str(source),
+                              "--execution-profile", mode])
                 if result.returncode != 0:
                     raise AssertionError(
                         f"coverage probe failed for {test}:{profile}:{case}:\n"
                         f"{result.stderr}")
                 keys.update(line for line in result.stdout.splitlines() if line)
-            observations[(test, profile)] = keys
+            observations[(test, profile)] = {
+                "keys": keys, "execution-profile": mode,
+            }
     return observations
 
 
 def validate(report: dict, registered: set[str],
-             observations: dict[tuple[str, str], set[str]]) -> list[str]:
+             observations: dict[tuple[str, str], dict]) -> list[str]:
     errors: list[str] = []
     keys: set[str] = set()
     if report.get("schema") != 1:
@@ -273,7 +316,15 @@ def validate(report: dict, registered: set[str],
                 profile = observations.get((test, assertion))
                 if profile is None:
                     errors.append(f"{key}: acceptance assertion is unavailable: {test}:{assertion}")
-                elif key not in profile:
+                elif (set(profile) != {"keys", "execution-profile"}
+                      or not isinstance(profile["execution-profile"], str)
+                      or profile["execution-profile"] not in EXECUTION_PROFILES):
+                    errors.append(f"{key}: invalid execution-profile observation")
+                elif ("ExecutionProfile." +
+                      ("Concurrent" if profile["execution-profile"] == "concurrent"
+                       else "SingleThreaded")) not in profile["keys"]:
+                    errors.append(f"{key}: observed execution profile differs from its target")
+                elif key not in profile["keys"]:
                     errors.append(f"{key}: {test}:{assertion} does not exercise the ledger row")
         elif state == "pending":
             if acceptance.get("test") or acceptance.get("assertion") or acceptance.get("gap"):
@@ -292,7 +343,7 @@ def validate(report: dict, registered: set[str],
 
 
 def mutation_controls(report: dict, registered: set[str],
-                      observations: dict[tuple[str, str], set[str]]) -> None:
+                      observations: dict[tuple[str, str], dict]) -> None:
     implemented = next(row for row in report["rows"]
                        if row["state"] == "implemented" and row["acceptance"]["test"])
     stale_test = deepcopy(report)
@@ -317,6 +368,20 @@ def mutation_controls(report: dict, registered: set[str],
     unavailable.remove(implemented["acceptance"]["test"])
     assert any("acceptance test is unavailable" in error
                for error in validate(report, unavailable, observations))
+
+
+    forged = deepcopy(observations)
+    selected = (implemented["acceptance"]["test"],
+                implemented["acceptance"]["assertion"])
+    forged[selected]["execution-profile"] = "unknown"
+    assert any("invalid execution-profile observation" in error
+               for error in validate(report, registered, forged))
+    mismatched = deepcopy(observations)
+    mode = mismatched[selected]["execution-profile"]
+    mismatched[selected]["execution-profile"] = (
+        "single-threaded" if mode == "concurrent" else "concurrent")
+    assert any("observed execution profile differs from its target" in error
+               for error in validate(report, registered, mismatched))
 
 
 def readiness_summary(report: dict) -> dict:
@@ -398,6 +463,50 @@ def readiness_mutation_controls(report: dict) -> None:
         raise AssertionError("stale compiled source identity was accepted")
 
 
+def probe_option_controls(evidence: Path, root: Path, modules: dict) -> None:
+    with tempfile.TemporaryDirectory(prefix="gti-llvm-profile-options-") as raw:
+        work = Path(raw)
+        basic = work / "basic.gti"
+        basic.write_text("int main() { return 0; }\n", encoding="utf-8")
+        result = run([str(evidence), "--probe", str(root), str(basic)])
+        if result.returncode != 0 or "ExecutionProfile.SingleThreaded" not in result.stdout.splitlines():
+            raise AssertionError(f"default single-threaded probe failed: {result.stderr}")
+
+        atomic = modules["llvm_atomic_execution"]
+        cases = atomic.evidence_cases(root)
+        profiles = atomic.evidence_profiles(root)
+        manifest = atomic.evidence_manifest(root)
+        source = work / "atomic.gti"
+        source.write_text(cases["scalar"], encoding="utf-8")
+        for options in ([], ["--execution-profile", "single-threaded"]):
+            result = run([str(evidence), "--probe", str(root), str(source), *options])
+            if result.returncode != 1 or "GTI-S2084" not in result.stderr:
+                raise AssertionError("single-threaded atomic probe lost its source rejection")
+        result = run([str(evidence), "--probe", str(root), str(source),
+                      "--execution-profile", "concurrent"])
+        if result.returncode != 0 or not {
+                "ExecutionProfile.Concurrent", "Shape.NativeAtomicOperation"
+        }.issubset(set(result.stdout.splitlines())):
+            raise AssertionError(f"explicit concurrent atomic probe failed: {result.stderr}")
+
+        changed = deepcopy(manifest)
+        changed["profiles"]["atomic.scalar-core"]["execution-profile"] = "single-threaded"
+        validate_manifest(changed, "llvm_atomic_execution", cases, profiles)
+        mode = changed["profiles"]["atomic.scalar-core"]["execution-profile"]
+        result = run([str(evidence), "--probe", str(root), str(source),
+                      "--execution-profile", mode])
+        if result.returncode != 1 or "GTI-S2084" not in result.stderr:
+            raise AssertionError("atomic evidence inferred concurrency after metadata downgrade")
+
+        missing_source = work / "must-not-analyze.gti"
+        for options in (["--execution-profile"],
+                        ["--execution-profile", "unknown"],
+                        ["--execution-profile", "sequential"]):
+            result = run([str(evidence), "--probe", str(root), str(missing_source), *options])
+            if result.returncode != 2 or "GTI-" in result.stderr:
+                raise AssertionError("invalid profile option reached frontend analysis")
+
+
 def main() -> None:
     if len(sys.argv) != 6:
         raise SystemExit(
@@ -415,6 +524,7 @@ def main() -> None:
     modules = load_registry(registry, root, inventory)
     registry_mutation_controls(registry, root, inventory)
     manifest_mutation_controls(root, modules)
+    probe_option_controls(evidence, root, modules)
     observations = observed_profiles(report, evidence, root, modules)
     errors = (repository_source_errors(report, observed_source) +
               validate(report, registered, observations))

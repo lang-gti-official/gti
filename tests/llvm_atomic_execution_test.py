@@ -50,7 +50,12 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
 def evidence_manifest(root: Path) -> dict:
     return build_manifest(
         "llvm_atomic_execution", evidence_cases(root), evidence_profiles(root),
-        {name: f"tests/fixtures/{fixture}" for name, fixture in cases().items()})
+        {name: f"tests/fixtures/{fixture}" for name, fixture in cases().items()},
+        execution_profiles={
+            "atomic.scalar-core": "concurrent",
+            "atomic.checked-fetch": "concurrent",
+            "atomic.blocking-workers": "concurrent",
+        })
 
 
 def main() -> None:

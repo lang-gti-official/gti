@@ -153,9 +153,15 @@ void printDiagnostics(const lang::FrontendResult &frontend) {
 }
 
 int probeSource(const std::filesystem::path &root,
-                const std::filesystem::path &source) {
+                const std::filesystem::path &source,
+                lang::ExecutionProfile executionProfile) {
+  lang::TargetInfo target = lang::TargetInfo::host();
+  // This probe models the hosted driver capability policy for supported
+  // targets.
+  target.runtimeCapabilities.threads = target.supported();
+  target.executionProfile = executionProfile;
   lang::FrontendOptions options;
-  options.target = lang::TargetInfo::host();
+  options.target = target;
   options.lowerReachableOnly = true;
   const std::filesystem::path standardLibrary = root / "stdlib";
   const lang::FrontendResult frontend =
@@ -168,7 +174,7 @@ int probeSource(const std::filesystem::path &root,
   }
   lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, lang::TargetInfo::host(), true);
+      frontend.mir, {}, target, true);
   if (!lowered.valid()) {
     for (const lang::LoweredProgramIssue &issue : lowered.issues)
       std::cerr << issue.detail << '\n';
@@ -200,10 +206,22 @@ int probeSource(const std::filesystem::path &root,
 int main(int argc, char **argv) {
   if (argc == 2 && std::string_view(argv[1]) == "--ledger")
     return writeLedger();
-  if (argc == 4 && std::string_view(argv[1]) == "--probe")
+  if ((argc == 4 || argc == 6) && std::string_view(argv[1]) == "--probe") {
+    auto profile = lang::ExecutionProfile::SingleThreaded;
+    if (argc == 6) {
+      if (std::string_view(argv[4]) != "--execution-profile")
+        return 2;
+      const std::string_view name(argv[5]);
+      if (name == "concurrent")
+        profile = lang::ExecutionProfile::Concurrent;
+      else if (name != "single-threaded")
+        return 2;
+    }
     return probeSource(std::filesystem::weakly_canonical(argv[2]),
-                       std::filesystem::weakly_canonical(argv[3]));
+                       std::filesystem::weakly_canonical(argv[3]), profile);
+  }
   std::cerr << "usage: gti_llvm_coverage_evidence --ledger | --probe "
-               "<repo-root> <source>\n";
+               "<repo-root> <source> [--execution-profile "
+               "single-threaded|concurrent]\n";
   return 2;
 }
