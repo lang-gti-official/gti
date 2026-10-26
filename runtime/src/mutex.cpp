@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <memory>
+#include <new>
 #include <pthread.h>
 #include <type_traits>
 
