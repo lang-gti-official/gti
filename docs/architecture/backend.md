@@ -4520,12 +4520,14 @@ type members describe existing capture names, types and target-layout offsets.
 Capture member lines remain zero where no individual source span is transported;
 this is not yet a source-local availability proof for captures inside the body.
 Unregistered, foreign-session, wrong-signature and rebound lambda identities
-reject without changing execution signatures or capture storage. Broader optimized
-representations and the full two-host failure/callback debugger matrix remain
-open. The exact optimized lexical-shadowing probe now observes the inner value
-11 and then the outer value 9 in the macOS native debugger. An unavailable or
-outer-variable result is not accepted as the inner value. Current composed
-source still requires its Linux gate; older Linux evidence is kept separately.
+reject without changing execution signatures or capture storage. Focused
+source-defined failure and native callback debugger probes pass at O0/O3 on
+both hosts. Broader borrowed, capture-local and partial-aggregate availability
+remains unproven; these probes do not establish campaign-wide acceptance. The
+exact optimized lexical-shadowing probe observes the inner value 11 and then
+the outer value 9 in both native debuggers. An unavailable or outer-variable
+result is not accepted as the inner value. Each host retains source-bound
+debugger transcripts; older-source evidence is kept separately.
 The native callback factory binds an exact sealed adapter to an
 artificial line-zero carrier, checking its session, native signature and
 parameter attributes and rejecting rebinding. Its existing IRBuilder receives
