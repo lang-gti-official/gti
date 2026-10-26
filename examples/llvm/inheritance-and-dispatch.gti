@@ -31,7 +31,17 @@ int inspect(Reader& value) { return value.read(); }
 void update(mut Writer& value, int next) { value.write(next); }
 bool is_ready(Ready& value) { return value.ready(); }
 
+// A hierarchy-valued field also keeps its own final address and dispatch state.
+class InlineCounter {
+public:
+  InlineCounter() {}
+  virtual int read() { return 4; }
+};
+struct DeviceBox { InlineCounter device{}; };
+
 int main() {
+  DeviceBox boxed{};
+  if (boxed.device.read() != 4) { return 4; }
   // Generated transfers target fresh locals and retain all interface views.
   Device original{4};
   Device copied{original};

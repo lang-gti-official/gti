@@ -1,0 +1,47 @@
+// Inline hierarchy fields are constructed at their final address. Each field
+// owns its dispatch state and its own deterministic cleanup obligation.
+mut int events = 0;
+void record(int value) { events = events * 10 + value; }
+
+interface Reader { int read(); };
+interface Writer { void write(int value) mut; };
+class Root {
+public:
+  Root() { record(1); }
+  ~Root() { record(4); }
+  virtual int phase() { return 1; }
+};
+class Leaf : public Reader, public Root, public Writer {
+  mut int payload;
+public:
+  Leaf(int value) : Root(), payload(value) { record(2); }
+  ~Leaf() { record(3); }
+  int phase() override { return 2; }
+  int read() override { return this.payload; }
+  void write(int value) mut override { this.payload = value; }
+};
+struct Inner { mut Leaf leaf{7}; };
+struct Outer { mut Inner inner{}; };
+struct Explicit {
+  mut Leaf leaf;
+  Explicit(int value) : leaf(Leaf(value)) {}
+};
+int read(Reader& value) { return value.read(); }
+void write(mut Writer& value, int next) { value.write(next); }
+
+// INLINE_HIERARCHY_MAIN
+int main() {
+  {
+    mut Outer value{};
+    if (events != 12 || read(value.inner.leaf) != 7) { return 1; }
+    write(value.inner.leaf, 23);
+    if (read(value.inner.leaf) != 23 || value.inner.leaf.phase() != 2) { return 2; }
+  }
+  if (events != 1234) { return 3; }
+  events = 0;
+  {
+    Explicit value{19};
+    if (events != 12 || read(value.leaf) != 19) { return 4; }
+  }
+  return events == 1234 ? 0 : 5;
+}

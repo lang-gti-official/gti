@@ -62,22 +62,31 @@ def main():
                 raise AssertionError("cost source lost its exact compile-time operation selector")
             source.write_text(template.replace(marker, f"constexpr int32_t operation = {operation};"))
             iterations = 200000000
+        endpoints = []
         for backend, standard in (*(("cpp", standard) for standard in standards), ("llvm", None)):
             name = f"{label}-{backend}-{standard or 'native'}"
             program = output / name
             language = ["--std", standard] if standard else []
             run(f"build-{name}", [compiler, source, "--backend", backend, *language,
                                   "--execution-profile", "concurrent", "-O3", "-o", program], timed=True)
-            samples = []
-            for sample in range(9):
+            endpoints.append({"backend": backend, "standard": standard,
+                              "name": name, "program": program, "samples": []})
+        for sample in range(9):
+            order = endpoints if sample % 2 == 0 else list(reversed(endpoints))
+            for endpoint in order:
+                name, program = endpoint["name"], endpoint["program"]
                 if run(f"measure-{name}-{sample}", [program]):
                     raise AssertionError("cost program changed its no-output contract")
-                samples.append(commands[-1]["seconds"] * 1e9 / iterations)
+                endpoint["samples"].append(commands[-1]["seconds"] * 1e9 / iterations)
+        for endpoint in endpoints:
+            name, program, samples = endpoint["name"], endpoint["program"], endpoint["samples"]
             run(f"resources-{name}", [program], timed=True)
-            observations.append({"backend": backend, "standard": standard, "operation": label,
+            observations.append({"backend": endpoint["backend"], "standard": endpoint["standard"],
+                                 "operation": label,
                                  "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                                  "iterations": iterations,
                                  "executable_bytes": program.stat().st_size,
+                                 "samples_ns": samples,
                                  "median_ns": statistics.median(samples),
                                  "min_ns": min(samples), "max_ns": max(samples)})
     report = {"template_sha256": hashlib.sha256(template.encode()).hexdigest(),
@@ -87,6 +96,7 @@ def main():
                              200000000 if "mutex_uncontended" not in selected else None),
               "workloads": selected, "cpp_standards": standards,
               "samples": 9, "observations": observations,
+              "sample_order": "all endpoints built first; fresh processes alternate endpoint order each round",
               "timing_scope": "whole public program wall time including startup/exit, divided by iterations; no baseline subtraction",
               "allocation_scope": "source loop has no heap allocation; runtime native-domain and binary sizes are reported separately",
               "acceptance": "identical-source optimized public-backend observations; no whole-O13 acceptance"}
