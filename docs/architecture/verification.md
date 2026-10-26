@@ -10102,6 +10102,13 @@ ownership or entry-signature inference.
 
 ### Native LLVM Admission Gates
 
+The registered evidence inventory reconciled through `50974a99c` contains 215
+source cases. It retains every case identity from the prior 143-case inventory
+and adds two class cases, 21 hosted cases, 32 native-interop cases and 17
+dispatch cases. Its count and content fingerprint remain enforced. This
+inventory reconciliation does not mark those cases executed, remove frozen
+baseline obligations, or satisfy any target, sanitizer, cost or promotion gate.
+
 `llvm_cleanup_context_execution` compiles ordinary user classes through C++23 O3
 and LLVM O0-O3, checking normal cleanup, a first failure inside a destructor,
 an inherited secondary failure before callee-local destruction, and scope
