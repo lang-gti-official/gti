@@ -11630,18 +11630,22 @@ admit a wrapper merely because its slot has a layout. Required platform and
 composition evidence remains part of milestone acceptance.
 
 The inert model relocation component now handles generated borrow-free
-records/arrays, including nested complete-object dispatch state, without copying
-source headers or invoking source callbacks. Its native component oracle checks
+records/arrays and cleanup-inert payload enums, including nested complete-object
+dispatch state, without copying source headers or invoking source callbacks.
+Its native component oracle checks
 field transfer and distinct interface headers at O0/O3 through an external C
-observer. This is not public slot operation admission. The private operation
-component now wires exact construct/reset/read operations and descriptor-driven
+observer. Payload relocation dispatches on the active variant and retires the
+source tag; empty variants and inactive storage leave payload bytes untouched.
+Every variant is checked before publication, including variants not active in
+the tested value. This is not public slot operation admission. The private
+operation component now wires exact construct/reset/read operations and descriptor-driven
 slot relocation, including recomputed interface addresses and nested record
 fields. Its component execution checks empty/repeated operations, moved-from
 storage, multiple model offsets, and invariant traps. The exact private source
 default constructor now initializes its hidden empty state at entry without
 replacing the original MIR body. Ordinary empty constructors do not acquire
-that behavior. Next: complete body-local publication and transfer; extend structural
-payload/private-capability relocation where needed; complete boxed-owner dynamic
+that behavior. Next: complete body-local publication and transfer; extend
+cleanup-bearing payload/private-capability relocation where needed; complete boxed-owner dynamic
 cleanup and validate ordinary source wrappers end to end. Platform evidence is
 tracked per checkpoint, not inferred from these component checks.
 

@@ -38,7 +38,8 @@ public:
                      const MirInstruction &instruction);
   // Representation mechanism for an already-authorized generated relocation
   // into fresh storage. This is not source move/copy admission. Inert records
-  // and arrays rebuild destination dispatch state without source callbacks.
+  // and arrays rebuild destination dispatch state without source callbacks;
+  // payload enums relocate only their active variant and retire the source tag.
   static void preflightInertRelocation(Session &session, Dispatch &dispatch,
                                        const SemanticType &type);
   [[nodiscard]] llvm::FunctionType *inertRelocationType() const;

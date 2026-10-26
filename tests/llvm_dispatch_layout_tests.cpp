@@ -1,6 +1,7 @@
 #include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/dispatch.h"
 #include "../src/compiler/llvm/lifetimes.h"
+#include "../src/compiler/llvm/payloads.h"
 #include "../src/compiler/llvm/placement.h"
 #include "../src/compiler/llvm/places.h"
 #include "cpp_backend_test_support.h"
@@ -3578,7 +3579,13 @@ class Parent : public First { public: mut int number = 17; };
 class Item : public Parent, public Second { public: mut int extra = 25; };
 struct Items { mut Item values[2] = {}; };
 struct Active { ~Active() {} };
-int main() { Items items{}; Active active{}; return 0; }
+enum class Choice { both(Item item, int tail), number(int value), empty };
+enum class ActiveChoice { held(Active value), empty };
+struct Choices {
+  mut Choice choice = Choice::empty;
+  mut ActiveChoice active = ActiveChoice::empty;
+};
+int main() { Items items{}; Active active{}; Choices choices{}; return 0; }
 )"),
                          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
   if (!frontend.canGenerateCode()) {
@@ -3596,6 +3603,9 @@ int main() { Items items{}; Active active{}; return 0; }
   const auto &items = named(input->program(), "Items");
   const auto &parent = named(input->program(), "Parent");
   const auto &active = named(input->program(), "Active");
+  const auto &choices = named(input->program(), "Choices");
+  const auto choiceType = choices.declaredFields.at(0).type;
+  const auto activeChoiceType = choices.declaredFields.at(1).type;
   expect(item.polymorphic && !item.requiresActiveCleanup,
          "fixture contains inert polymorphic objects, not plain records");
   const auto temporary =
@@ -3628,6 +3638,13 @@ int gti_relocation_observe(void *source, void *destination, uint64_t first,
   return actual_number != number || actual_extra != extra ||
          actual_table != expected || source_table != 0;
 }
+int gti_relocation_tag_observe(void *source, void *destination,
+                              uint64_t offset, uint32_t expected) {
+  uint32_t original, relocated;
+  memcpy(&original, (char*)source + offset, sizeof(original));
+  memcpy(&relocated, (char*)destination + offset, sizeof(relocated));
+  return original != UINT32_MAX || relocated != expected;
+}
 int main(void) { return gti_relocation_probe(); }
 )") == driver::ArtifactWriteStatus::Success,
          "write relocation native consumer");
@@ -3650,11 +3667,15 @@ int main(void) { return gti_relocation_probe(); }
         });
     const auto before = modulePublication(session);
     Lifetimes::preflightInertRelocation(session, dispatch, items.type);
+    Lifetimes::preflightInertRelocation(session, dispatch, choiceType);
     expect(modulePublication(session) == before,
            "inert relocation preflight publishes no module state");
     rejects<BackendUnsupportedError>(
         [&] { static_cast<void>(lifetimes.inertRelocation(active.type)); },
         "active cleanup cannot use the inert relocation mechanism");
+    rejects<BackendUnsupportedError>(
+        [&] { static_cast<void>(lifetimes.inertRelocation(activeChoiceType)); },
+        "an inactive tag cannot bypass cleanup-bearing variant preflight");
     rejects<BackendUnsupportedError>(
         [&] {
           static_cast<void>(lifetimes.inertRelocation(
@@ -3700,6 +3721,14 @@ int main(void) { return gti_relocation_probe(); }
         observerPlan.type, llvm::GlobalValue::ExternalLinkage,
         "gti_relocation_observe", session.module());
     observerPlan.applyTo(*observer);
+    const std::vector<SemanticType> tagParameters{
+        pointer, pointer, SemanticType::UInt64, SemanticType::UInt32};
+    const auto tagPlan =
+        session.abi().nativeC(SemanticType::Int32, tagParameters);
+    auto *tagObserver =
+        llvm::Function::Create(tagPlan.type, llvm::GlobalValue::ExternalLinkage,
+                               "gti_relocation_tag_observe", session.module());
+    tagPlan.applyTo(*tagObserver);
     llvm::IRBuilder<> ir(
         llvm::BasicBlock::Create(session.context(), "entry", probe));
     const auto storage = session.layouts().get(items.type).storage;
@@ -3767,6 +3796,76 @@ int main(void) { return gti_relocation_probe(); }
              ir.getInt32(25 + index)});
         observerPlan.applyTo(*observed);
         bad = ir.CreateOr(bad, ir.CreateICmpNE(observed, ir.getInt32(0)));
+      }
+    }
+    const auto payload = session.layouts().payload(choiceType);
+    auto *relocateChoice = lifetimes.inertRelocation(choiceType);
+    const auto tagOffset = session.dataLayout()
+                               .getStructLayout(payload.storage)
+                               ->getElementOffset(payload.tagIndex);
+    const auto payloadOffset = session.dataLayout()
+                                   .getStructLayout(payload.storage)
+                                   ->getElementOffset(payload.payloadIndex);
+    for (const auto tag : {0u, 1u, 2u, PayloadLayout::inactive}) {
+      auto *from = ir.CreateAlloca(payload.storage);
+      auto *to = ir.CreateAlloca(payload.storage);
+      ir.CreateStore(llvm::Constant::getNullValue(payload.storage), from);
+      ir.CreateStore(llvm::Constant::getNullValue(payload.storage), to);
+      ir.CreateStore(ir.getInt32(tag), payloadTagAddress(ir, payload, from));
+      if (tag == 0) {
+        auto *value = payloadFieldAddress(ir, payload, from, 0, 0);
+        ir.CreateStore(ir.getInt32(43), at(value, numberOffset));
+        ir.CreateStore(ir.getInt32(59), at(value, extraOffset));
+        ir.CreateStore(ir.getInt32(71),
+                       payloadFieldAddress(ir, payload, from, 0, 1));
+      } else if (tag == 1) {
+        ir.CreateStore(ir.getInt32(83),
+                       payloadFieldAddress(ir, payload, from, 1, 0));
+      } else {
+        ir.CreateStore(ir.getInt8(0xA5), at(from, payloadOffset));
+        ir.CreateStore(ir.getInt8(0x5A), at(to, payloadOffset));
+      }
+      ir.CreateCall(relocateChoice, {to, from});
+      auto *observed = ir.CreateCall(
+          tagObserver, {from, to, ir.getInt64(tagOffset), ir.getInt32(tag)});
+      tagPlan.applyTo(*observed);
+      bad = ir.CreateOr(bad, ir.CreateICmpNE(observed, ir.getInt32(0)));
+      if (tag == 0) {
+        auto *value = payloadFieldAddress(ir, payload, to, 0, 0);
+        for (const auto &view : dispatch.views(item.id)) {
+          const auto header = view.location.owner.offset +
+                              session.layouts()
+                                  .get(view.location.owner.type)
+                                  .fieldOffsets.at(view.location.index);
+          auto *check = ir.CreateCall(
+              observer,
+              {payloadFieldAddress(ir, payload, from, 0, 0), value,
+               ir.getInt64(numberOffset), ir.getInt64(extraOffset),
+               ir.getInt64(header), dispatch.table(item.id, view.viewClass),
+               ir.getInt32(43), ir.getInt32(59)});
+          observerPlan.applyTo(*check);
+          bad = ir.CreateOr(bad, ir.CreateICmpNE(check, ir.getInt32(0)));
+        }
+        bad = ir.CreateOr(
+            bad, ir.CreateICmpNE(
+                     ir.CreateLoad(ir.getInt32Ty(),
+                                   payloadFieldAddress(ir, payload, to, 0, 1)),
+                     ir.getInt32(71)));
+      } else if (tag == 1) {
+        bad = ir.CreateOr(
+            bad, ir.CreateICmpNE(
+                     ir.CreateLoad(ir.getInt32Ty(),
+                                   payloadFieldAddress(ir, payload, to, 1, 0)),
+                     ir.getInt32(83)));
+      } else {
+        bad = ir.CreateOr(bad,
+                          ir.CreateICmpNE(ir.CreateLoad(ir.getInt8Ty(),
+                                                        at(to, payloadOffset)),
+                                          ir.getInt8(0x5A)));
+        bad = ir.CreateOr(
+            bad, ir.CreateICmpNE(
+                     ir.CreateLoad(ir.getInt8Ty(), at(from, payloadOffset)),
+                     ir.getInt8(0xA5)));
       }
     }
     ir.CreateRet(ir.CreateZExt(bad, ir.getInt32Ty()));

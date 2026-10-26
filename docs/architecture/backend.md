@@ -5306,15 +5306,20 @@ executes on LLVM.
 
 The next representation component, `Lifetimes::inertRelocation`, consumes exact
 sealed types and generated-relocation facts. Its non-emitting preflight proves a
-finite, borrow-free, inert record/array graph and checks all complete-object
+finite, borrow-free, inert record/array/payload graph and checks all complete-object
 dispatch states. Emission transfers logical fields, recursively handles array
 elements and nested records, and installs destination dispatch metadata from
 the selected concrete class. Base subobjects do not independently install their
 own complete-object state. Source headers and padding are not copied; no source
 constructor, destructor, allocation or defined-failure callback runs. Arrays
 use a counted loop rather than code expansion proportional to their extent.
-Borrowed/cleanup-bearing shapes and unimplemented structural capability,
-union or payload representations reject before helper publication. This is a
+Payload enums select the active variant, relocate its fields by their sealed
+types, publish the destination tag after those fields, and retire the source
+tag. Empty variants and inactive values access no payload bytes. An invalid
+internal tag traps rather than selecting an arbitrary variant. All variants
+are preflighted, so an inactive value cannot admit an unsupported payload type.
+Borrowed/cleanup-bearing shapes and unimplemented structural capability or
+union representations reject before helper publication. This is a
 mechanism for already-authorized relocation into fresh storage, not permission
 for a new source copy or move. The mechanism also handles private polymorphic
 slots nested in ordinary records, including empty fields; fixed arrays of the
@@ -5344,8 +5349,8 @@ checks empty-state behavior before constructing a payload.
 Public admission has not changed. The component oracle exercises actual native
 storage and externally observes addresses/values; it does not substitute for
 ordinary source construction, publication, transfer and cleanup integration.
-Structural payload relocation, boxed dynamic cleanup, and full callable execution
-remain prerequisites before admitting existing source wrappers.
+Cleanup-bearing structural relocation, boxed dynamic cleanup, and full callable
+execution remain prerequisites before admitting existing source wrappers.
 
 ### LLVM Function Values And Closure Environments
 
