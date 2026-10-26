@@ -467,8 +467,8 @@ struct HirInitializerSourceDebug {
   const VariableDecl *declaration = nullptr;
   std::vector<HirValueId> roots;
   std::vector<HirSourceLocal> locals;
-  std::vector<std::pair<HirStatementId, SourceScopeId>> statements;
-  std::vector<std::pair<HirValueId, SourceScopeId>> values;
+  std::vector<SourceDebugAnchor> statements;
+  std::vector<SourceDebugAnchor> values;
 
   [[nodiscard]] const SemanticSourceDebugTables &sourceFacts() const {
     return acceptedSource_;
@@ -482,8 +482,8 @@ private:
 struct HirSourceDebugTables {
   PlaceDomain domain;
   std::vector<HirSourceLocal> locals;
-  std::vector<std::pair<HirStatementId, SourceScopeId>> statements;
-  std::vector<std::pair<HirValueId, SourceScopeId>> values;
+  std::vector<SourceDebugAnchor> statements;
+  std::vector<SourceDebugAnchor> values;
   // Region-local IDs are qualified by the deterministic region ID. MIR
   // flattens them only after verifying the exact initializer roots.
   std::vector<HirInitializerSourceDebug> initializers;

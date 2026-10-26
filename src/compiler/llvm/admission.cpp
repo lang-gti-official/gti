@@ -1304,7 +1304,7 @@ public:
       add(record.kind);
 
     std::map<std::pair<MirBlockId, MirInstructionId>, const SourceSpan *> spans;
-    for (const auto &location : row.sourceLocations)
+    for (const auto &location : row.sourceLocations())
       spans.emplace(std::pair(location.block, location.instruction),
                     &location.source);
     for (const auto &mirBlock : mir.blocks) {

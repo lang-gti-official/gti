@@ -4,6 +4,8 @@
 #include "gti/failure_metadata.h"
 #include "gti/lowered_program_printer.h"
 #include "lowered_program_closure.h"
+#include "lowered_program_source_debug.h"
+#include "mir_source_debug.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -772,8 +774,44 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                "attached to a non-executable body",
                body.identity.address);
     }
+    const auto &debug = body.sourceDebug;
+    const bool generated = body.identity.definition ==
+                               LoweredBodyDefinitionKind::CompilerGenerated ||
+                           body.role != LoweredBodyRole::SourceExecutable;
+    if (!isValidSourceDebugRecord(debug) ||
+        !isValidSourceDebugProfile(program.sourceDebugProfile()) ||
+        (program.sourceDebugProfile() == SourceDebugProfile::None &&
+         debug.tables) ||
+        (program.sourceDebugProfile() == SourceDebugProfile::LexicalV1 &&
+         debug.collection == SourceDebugCollection::Uncollected) ||
+        (debug.collection == SourceDebugCollection::NotApplicable &&
+         !generated) ||
+        (mirBody && (debug.collection != mirBody->sourceDebug.collection ||
+                     static_cast<bool>(debug.tables) !=
+                         static_cast<bool>(mirBody->sourceDebug.tables))))
+      addIssue(
+          issues, LoweredProgramIssueKind::InvalidBodyInventory,
+          "lowered source-debug profile, role or collection state is invalid",
+          body.identity.address);
+    if (debug.tables && mirBody && mirBody->sourceDebug.tables &&
+        (debug.tables->domain != mirBody->placeDomain ||
+         debug.tables->scopes != mirBody->sourceDebug.tables->scopes ||
+         debug.tables->locals != mirBody->sourceDebug.tables->locals))
+      addIssue(issues, LoweredProgramIssueKind::InvalidBodyInventory,
+               "lowered source-debug declarations differ from current MIR",
+               body.identity.address);
+    const mir_detail::MirSourceAnchorIndex anchors(mirBody);
+    if (debug.tables) {
+      const auto ranges = lowered_detail::deriveSourceRanges(
+          program.mir_, body.identity.address);
+      if (!ranges || debug.tables->ranges != *ranges)
+        addIssue(
+            issues, LoweredProgramIssueKind::InvalidBodyInventory,
+            "source-local ranges differ from fresh current MIR availability",
+            body.identity.address);
+    }
     std::set<std::pair<MirBlockId, MirInstructionId>> debugStages;
-    for (const LoweredSourceLocation &location : body.sourceLocations) {
+    for (const LoweredSourceLocation &location : body.sourceLocations()) {
       const MirBlock *block =
           mirBody == nullptr ? nullptr : mirBody->findBlock(location.block);
       const bool instructionExists =
@@ -784,7 +822,23 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                          return instruction.id == location.instruction &&
                                 !instruction.tombstone;
                        }));
-      if (!instructionExists || location.source.source.empty() ||
+      const SourceDebugAnchor *anchor = nullptr;
+      if (block) {
+        if (!location.instruction)
+          anchor = anchors.find(block->terminator.hirStatement,
+                                block->terminator.hirValue, true);
+        else
+          for (const auto &instruction : block->instructions)
+            if (instruction.id == location.instruction)
+              anchor = anchors.find(instruction.hirStatement,
+                                    instruction.hirValue, true);
+      }
+      if (!instructionExists || !body.sourceDebug.tables ||
+          location.scope == 0 ||
+          location.scope > body.sourceDebug.tables->scopes.size() ||
+          location.source.source.empty() || !anchor ||
+          anchor->source != location.source ||
+          anchor->scope != location.scope ||
           location.source.start >= location.source.end ||
           location.source.line < 1 ||
           !debugStages.emplace(location.block, location.instruction).second) {

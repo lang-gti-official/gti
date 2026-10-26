@@ -502,8 +502,14 @@ private:
   struct Scope {
     std::vector<MirPlaceId> drops;
     std::vector<MirLoanId> loans;
-    std::vector<SourceLocalId> sourceLocals;
+    std::size_t sourceLocals = 0;
   };
+  struct SourceScopeLocal {
+    SourceLocalId local = 0;
+    std::size_t previous = 0;
+  };
+  // Scope snapshots retain immutable indices into one flat transient list.
+  std::vector<SourceScopeLocal> sourceScopeLocals;
 
   void captureSourceDebug() {
     if (!isValidSourceDebugRecord(source.sourceDebug)) {
@@ -518,10 +524,15 @@ private:
       return;
     for (const auto &local : output.sourceDebug.tables->locals)
       if (local.declaration.binding == binding) {
-        auto &ids = scopes.back().sourceLocals;
-        if (std::find(ids.begin(), ids.end(), local.declaration.id) ==
-            ids.end())
-          ids.push_back(local.declaration.id);
+        auto &head = scopes.back().sourceLocals;
+        bool present = false;
+        for (auto index = head; index;
+             index = sourceScopeLocals[index - 1].previous)
+          present |= sourceScopeLocals[index - 1].local == local.declaration.id;
+        if (!present) {
+          sourceScopeLocals.push_back({local.declaration.id, head});
+          head = sourceScopeLocals.size();
+        }
       }
   }
 
@@ -539,10 +550,13 @@ private:
         .blockEntry = block->instructions.empty()};
     auto &ends = output.sourceDebug.tables->localEnds;
     for (auto depth = scopes.size(); depth > keepScopes; --depth)
-      for (const auto local : scopes[depth - 1].sourceLocals)
+      for (auto index = scopes[depth - 1].sourceLocals; index;
+           index = sourceScopeLocals[index - 1].previous) {
+        const auto local = sourceScopeLocals[index - 1].local;
         if (std::find(ends.begin(), ends.end(),
                       MirSourceLocalEnd{local, point}) == ends.end())
           ends.push_back({local, point});
+      }
   }
 
   void finishSourceDebug() {

@@ -1138,8 +1138,8 @@ struct MirSourceDebugTables {
   PlaceDomain domain;
   std::vector<SourceDebugScope> scopes;
   std::vector<MirSourceLocal> locals;
-  std::vector<std::pair<HirStatementId, SourceScopeId>> statements;
-  std::vector<std::pair<HirValueId, SourceScopeId>> values;
+  std::vector<SourceDebugAnchor> statements;
+  std::vector<SourceDebugAnchor> values;
   // Descriptive exits from the actual lexical lowering walk, not Drop events
   // or evidence that any storage was initialized or readable.
   std::vector<MirSourceLocalEnd> localEnds;

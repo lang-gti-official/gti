@@ -21,6 +21,8 @@ public:
                 MirInstructionId instruction);
   void local(llvm::IRBuilder<> &ir, const MirPlace &place, llvm::Value *storage,
              unsigned parameter = 0);
+  // Consumes exact sealed half-open ranges at MIR emission boundaries.
+  void point(llvm::IRBuilder<> &ir, MirDebugPoint point);
   void endLocal(llvm::IRBuilder<> &ir, const MirPlace &place);
   void finalize();
 

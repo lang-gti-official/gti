@@ -165,6 +165,7 @@ public:
       }
       processPendingInstances();
     }
+    finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
                             lifecycleValid;
@@ -201,6 +202,7 @@ private:
   HirLoweringResult finishConstant() {
     ensurePlaceDomain(output.program.moduleBody);
     processPendingInstances();
+    finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
                             lifecycleValid && output.program.lambdas.empty();
@@ -2420,8 +2422,9 @@ private:
                  const HirCallableParameter &right) {
                 return left.parameterIndex < right.parameterIndex;
               });
-    captureSourceDebug(SourceDebugBodyKind::Function, bodyDeclaration, *model,
-                       body);
+    if (bodyDeclaration->body())
+      captureSourceDebug(SourceDebugBodyKind::Function, bodyDeclaration, *model,
+                         body);
     output.program.functions[index].body = std::move(body);
     output.program.functions[index].parameterBindings =
         std::move(parameterBindings);
@@ -2867,6 +2870,7 @@ private:
 
   void captureSourceDebug(SourceDebugBodyKind kind, const void *source,
                           const SemanticModel &model, HirBody &body) {
+    ensurePlaceDomain(body);
     if (output.program.sourceDebugProfile_ == SourceDebugProfile::None)
       return;
     const auto *accepted = model.findSourceDebugBody(kind, source);
@@ -2912,17 +2916,23 @@ private:
     for (const auto &statement : body.statements)
       if (const auto scope = facts.statements.find(statement.source);
           scope != facts.statements.end())
-        tables.statements.emplace_back(statement.id, scope->second);
+        tables.statements.push_back(
+            {statement.id, scope->second,
+             statement.source->extent().value_or(SourceSpan{})});
     for (const auto &value : body.values)
       if (const auto scope = facts.expressions.find(value.source);
           scope != facts.expressions.end())
-        tables.values.emplace_back(value.id, scope->second);
+        tables.values.push_back({value.id, scope->second,
+                                 value.source->writtenOrigin()
+                                     ? *value.source->writtenOrigin()
+                                     : SourceSpan{}});
   }
 
   void appendInitializerSourceDebug(const SemanticModel &model,
                                     const VariableDecl &declaration,
                                     HirBody &body,
                                     std::vector<HirValueId> roots) {
+    ensurePlaceDomain(body);
     if (output.program.sourceDebugProfile_ == SourceDebugProfile::None)
       return;
     const auto *accepted = model.findSourceDebugBody(
@@ -2949,6 +2959,7 @@ private:
   }
 
   void finishInitializerSourceDebug(HirBody &body) {
+    ensurePlaceDomain(body);
     if (!body.sourceDebug.tables)
       return;
     auto &regions = body.sourceDebug.tables->initializers;
@@ -2985,13 +2996,52 @@ private:
         if (reachable[i].statements.contains(statement.id))
           if (const auto scope = facts.statements.find(statement.source);
               scope != facts.statements.end())
-            region.statements.emplace_back(statement.id, scope->second);
+            region.statements.push_back(
+                {statement.id, scope->second,
+                 statement.source->extent().value_or(SourceSpan{})});
       for (const auto &value : body.values)
         if (reachable[i].values.contains(value.id))
           if (const auto scope = facts.expressions.find(value.source);
               scope != facts.expressions.end())
-            region.values.emplace_back(value.id, scope->second);
+            region.values.push_back({value.id, scope->second,
+                                     value.source->writtenOrigin()
+                                         ? *value.source->writtenOrigin()
+                                         : SourceSpan{}});
     }
+  }
+
+  void finishSourceDebugInventory() {
+    const bool collected =
+        output.program.sourceDebugProfile_ == SourceDebugProfile::LexicalV1;
+    const auto region = [&](HirBody &body) {
+      ensurePlaceDomain(body);
+      if (!collected || body.sourceDebug.tables)
+        return;
+      body.sourceDebug.collection = SourceDebugCollection::CollectedLexicalV1;
+      body.sourceDebug.tables = std::make_unique<HirSourceDebugTables>();
+      body.sourceDebug.tables->domain = body.placeDomain;
+    };
+    const auto generated = [&](HirBody &body, bool sourceBody) {
+      ensurePlaceDomain(body);
+      if (collected && !sourceBody && !body.sourceDebug.tables)
+        body.sourceDebug.collection = SourceDebugCollection::NotApplicable;
+    };
+    region(output.program.moduleBody);
+    for (auto &storage : output.program.threadLocalStorage_)
+      region(storage.initializer);
+    for (auto &instance : output.program.classes) {
+      region(instance.fieldInitializers);
+      region(instance.staticFieldInitializers);
+    }
+    for (auto &function : output.program.functions)
+      generated(function.body, function.source && function.source->body());
+    for (auto &constructor : output.program.constructors)
+      generated(constructor.body, !constructor.generatedDefault &&
+                                      constructor.source &&
+                                      constructor.source->body());
+    for (auto &destructor : output.program.destructors)
+      generated(destructor.body,
+                destructor.source && destructor.source->body());
   }
 
   void ensurePlaceDomain(HirBody &body) {

@@ -98,6 +98,18 @@ int main() {
 
 void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
   Session session(input, {});
+  const auto *executionAbi =
+      llvm::mdconst::dyn_extract_or_null<llvm::ConstantInt>(
+          session.module().getModuleFlag("gti.execution.abi"));
+  std::string identityError;
+  const auto identity =
+      queryLlvmBackendIdentity(input.program().target(), {}, identityError);
+  expect(executionAbi && executionAbi->getZExtValue() == executionAbiVersion,
+         "module flag must bind the selected execution ABI revision");
+  expect(identity && identity->privateAbi == executionAbiVersion &&
+             executionAbi &&
+             identity->privateAbi == executionAbi->getZExtValue(),
+         "llvm.private-abi cache producer must match the emitted module ABI");
   auto &layouts = session.layouts();
   auto &abi = session.abi();
   const auto boolean = layouts.get(SemanticType::Bool);

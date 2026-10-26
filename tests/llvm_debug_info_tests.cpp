@@ -21,7 +21,9 @@ using namespace lang::native_llvm;
 // Metadata component oracle only. These synthetic LLVM scopes are never
 // published as generated GTI bodies or counted as native debugger execution.
 std::string metadata(const std::string &path) {
-  const auto frontend = Frontend().analyze(path, R"(
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze(path, R"(
 struct Node { mut Node* next = nullptr; mut int value = 7; };
 enum class Mode : int64_t { Minus = -1, Plus = 7 };
 extern "C" { int foreign(int input); }
@@ -38,7 +40,7 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
   std::vector<LoweredProgramIssue> issues;
   auto lowered = LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, TargetInfo::host(), true);
+      frontend.mir, {}, TargetInfo::host());
   if (!lowered.valid())
     throw std::runtime_error("invalid debug lowered source");
   auto input = verifiedLoweredProgram(*lowered.program, issues);
@@ -141,7 +143,16 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
     debug.endLocal(ir, place);
     ++locals;
   }
-  for (const auto &row : input->program().findBody(address)->sourceLocations) {
+  for (const auto &block : body->blocks) {
+    debug.point(ir, {block.id, 0, false, true});
+    for (const auto &instruction : block.instructions) {
+      debug.point(ir, {block.id, instruction.id, false});
+      debug.point(ir, {block.id, instruction.id, true});
+    }
+    debug.point(ir, {block.id, 0, false});
+  }
+  for (const auto &row :
+       input->program().findBody(address)->sourceLocations()) {
     debug.location(ir, row.block, row.instruction);
     if (!ir.getCurrentDebugLocation() ||
         !std::cmp_equal(ir.getCurrentDebugLocation().getLine(),
@@ -186,7 +197,9 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
 }
 
 void inlinedLocations() {
-  const auto frontend = Frontend().analyze("inline-debug.gti", R"(
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("inline-debug.gti", R"(
 int identity(int input) { return input; }
 int caller(int input) { return identity(input); }
 )");
@@ -194,7 +207,7 @@ int caller(int input) { return identity(input); }
     throw std::runtime_error("invalid inline debug source");
   auto lowered = LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, TargetInfo::host(), true);
+      frontend.mir, {}, TargetInfo::host());
   std::vector<LoweredProgramIssue> issues;
   if (!lowered.valid())
     throw std::runtime_error("invalid inline debug lowered source");
@@ -232,9 +245,9 @@ int caller(int input) { return identity(input); }
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", callee));
   const auto &calleeLocations =
-      input->program().findBody(calleeAddress)->sourceLocations;
+      input->program().findBody(calleeAddress)->sourceLocations();
   const auto &callerLocations =
-      input->program().findBody(callerAddress)->sourceLocations;
+      input->program().findBody(callerAddress)->sourceLocations();
   if (calleeLocations.empty() || callerLocations.empty())
     throw std::runtime_error(
         "inline source has no sealed instruction locations");
@@ -253,6 +266,12 @@ int caller(int input) { return identity(input); }
     }
   if (!parameter)
     throw std::runtime_error("inline control lost its sealed parameter place");
+  const auto &calleeRanges =
+      input->program().findBody(calleeAddress)->sourceDebug.tables->ranges;
+  if (calleeRanges.empty())
+    throw std::runtime_error(
+        "inline parameter has no verified readable interval");
+  debug.point(ir, calleeRanges.front().begin);
   ir.CreateRet(ir.CreateLoad(integer, storage));
   ir.SetInsertPoint(
       llvm::BasicBlock::Create(session.context(), "entry", caller));
@@ -298,7 +317,9 @@ int caller(int input) { return identity(input); }
 }
 
 void lifecycleIdentities() {
-  const auto frontend = Frontend().analyze("/scope/lifecycle.gti", R"(
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("/scope/lifecycle.gti", R"(
 class Sample { public: Sample() {} ~Sample() {} };
 struct Generated { int value = 7; };
 int main() { Sample value{}; Generated generated{}; return generated.value == 7 ? 0 : 1; }
@@ -307,7 +328,7 @@ int main() { Sample value{}; Generated generated{}; return generated.value == 7 
     throw std::runtime_error("invalid lifecycle debug source");
   auto lowered = LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, TargetInfo::host(), true);
+      frontend.mir, {}, TargetInfo::host());
   if (!lowered.valid())
     throw std::runtime_error("invalid lifecycle debug lowering");
   std::vector<LoweredProgramIssue> issues;
@@ -415,7 +436,9 @@ int main() { Sample value{}; Generated generated{}; return generated.value == 7 
 }
 
 void generatedMetadataExclusion() {
-  const auto frontend = Frontend().analyze("generated-debug.gti", R"(
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("generated-debug.gti", R"(
 int main() {
   auto make = []() -> nullptr_t { return nullptr; };
   return make() == nullptr ? 0 : 1;
@@ -425,7 +448,7 @@ int main() {
     throw std::runtime_error("invalid generated debug source");
   auto lowered = LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, TargetInfo::host(), true);
+      frontend.mir, {}, TargetInfo::host());
   std::vector<LoweredProgramIssue> issues;
   if (!lowered.valid())
     throw std::runtime_error("invalid generated debug lowered source");
@@ -464,7 +487,9 @@ int main() {
 }
 
 void concreteParameterMetadata() {
-  const auto frontend = Frontend().analyze("pack-debug.gti", R"(
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("pack-debug.gti", R"(
 int first<Args...>(int input, Args... rest) { return input; }
 int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
 )");
@@ -472,7 +497,7 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
     throw std::runtime_error("invalid parameter debug source");
   auto lowered = LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, TargetInfo::host(), true);
+      frontend.mir, {}, TargetInfo::host());
   std::vector<LoweredProgramIssue> issues;
   if (!lowered.valid())
     throw std::runtime_error("invalid parameter debug lowered source");
@@ -516,6 +541,15 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
         ir.CreateAlloca(session.layouts().get(prefix->type).storage);
     ir.CreateStore(function->getArg(0), storage);
     debug.local(ir, *prefix, storage, 1);
+    const auto &ranges =
+        input->program().findBody(address)->sourceDebug.tables->ranges;
+    const auto range =
+        std::find_if(ranges.begin(), ranges.end(),
+                     [&](const auto &row) { return row.place == prefix->id; });
+    if (range == ranges.end())
+      throw std::runtime_error(
+          "prefix parameter has no fresh readable interval");
+    debug.point(ir, range->begin);
     debug.endLocal(ir, *prefix);
     ir.CreateRet(ir.getInt32(7));
     unsigned declarations = 0, ends = 0;

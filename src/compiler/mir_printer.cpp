@@ -2132,12 +2132,18 @@ private:
         output << " place=" << local.place << " policy=" << number(local.policy)
                << '\n';
       }
-      for (const auto &[statement, scope] : tables.statements)
-        output << "  source-statement=" << statement << " scope=" << scope
-               << '\n';
-      for (const auto &[sourceValue, scope] : tables.values)
-        output << "  source-value=" << sourceValue << " scope=" << scope
-               << '\n';
+      for (const auto &statement : tables.statements) {
+        output << "  source-statement=" << statement.id
+               << " scope=" << statement.scope << " span=";
+        span(statement.source);
+        output << '\n';
+      }
+      for (const auto &sourceValue : tables.values) {
+        output << "  source-value=" << sourceValue.id
+               << " scope=" << sourceValue.scope << " span=";
+        span(sourceValue.source);
+        output << '\n';
+      }
       for (const auto &end : tables.localEnds)
         output << "  source-end=" << end.local << " block=" << end.point.block
                << " instruction=" << end.point.instruction

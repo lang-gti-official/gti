@@ -8,6 +8,7 @@
 #include "gti/lowered_program_printer.h"
 #include "gti/semantic_model.h"
 #include "lowered_program_closure.h"
+#include "lowered_program_source_debug.h"
 #include "mir_source_debug.h"
 #include "mir_verification_support.h"
 
@@ -16,6 +17,7 @@
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -74,47 +76,14 @@ using lowered_detail::findDeclaration;
 }
 
 [[nodiscard]] std::vector<LoweredSourceLocation>
-captureSourceLocations(const HirBody *hir, const MirBody &mir) {
+captureSourceLocations(const MirBody &mir) {
   std::vector<LoweredSourceLocation> result;
-  if (hir == nullptr)
+  if (!mir.sourceDebug.tables)
     return result;
-  std::unordered_map<HirStatementId, SourceSpan> statements;
-  std::unordered_map<HirValueId, SourceSpan> values;
-  for (const HirStatement &statement : hir->statements) {
-    if (statement.source == nullptr || !statement.source->extent())
-      continue;
-    const SourceSpan &span = *statement.source->extent();
-    if (span.source.empty() || span.source.front() == '<' ||
-        span.start >= span.end || span.line < 1)
-      continue;
-    statements.emplace(statement.id, span);
-    std::vector<HirValueId> pending;
-    for (const auto root :
-         {statement.value, statement.condition, statement.increment}) {
-      if (root)
-        pending.push_back(*root);
-    }
-    while (!pending.empty()) {
-      const HirValueId id = pending.back();
-      pending.pop_back();
-      if (!values.emplace(id, span).second)
-        continue;
-      if (const HirValue *value = hir->findValue(id)) {
-        pending.insert(pending.end(), value->operands.begin(),
-                       value->operands.end());
-        pending.insert(pending.end(), value->sequencedInputs.begin(),
-                       value->sequencedInputs.end());
-      }
-    }
-  }
+  const mir_detail::MirSourceAnchorIndex anchors(mir);
   const auto source = [&](HirStatementId statement,
-                          HirValueId value) -> const SourceSpan * {
-    if (const auto found = statements.find(statement);
-        found != statements.end())
-      return &found->second;
-    if (const auto found = values.find(value); found != values.end())
-      return &found->second;
-    return nullptr;
+                          HirValueId value) -> const SourceDebugAnchor * {
+    return anchors.find(statement, value, true);
   };
   for (const MirBlock &block : mir.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
@@ -130,9 +99,10 @@ captureSourceLocations(const HirBody *hir, const MirBody &mir) {
       case MirInstructionKind::Modify:
       case MirInstructionKind::Call:
       case MirInstructionKind::Construct:
-        if (const SourceSpan *span =
+        if (const SourceDebugAnchor *anchor =
                 source(instruction.hirStatement, instruction.hirValue))
-          result.push_back({block.id, instruction.id, *span});
+          result.push_back(
+              {block.id, instruction.id, anchor->source, anchor->scope});
         break;
       default:
         break;
@@ -143,9 +113,9 @@ captureSourceLocations(const HirBody *hir, const MirBody &mir) {
         terminator.kind == MirTerminatorKind::Branch ||
         terminator.kind == MirTerminatorKind::Switch ||
         terminator.kind == MirTerminatorKind::Invoke) {
-      if (const SourceSpan *span =
+      if (const SourceDebugAnchor *anchor =
               source(terminator.hirStatement, terminator.hirValue))
-        result.push_back({block.id, 0, *span});
+        result.push_back({block.id, 0, anchor->source, anchor->scope});
     }
   }
   return result;
@@ -1271,13 +1241,150 @@ private:
   return true;
 }
 } // namespace
+
+std::optional<std::vector<LoweredSourceRange>>
+lowered_detail::deriveSourceRanges(const MirProgram &program,
+                                   MirBodyAddress address) {
+  const auto *body = findMirBody(program, address);
+  if (!body)
+    return std::nullopt;
+  std::vector<LoweredSourceRange> ranges;
+  if (!body->sourceDebug.tables)
+    return ranges;
+  const auto &tables = *body->sourceDebug.tables;
+  const mir_detail::MirSourceAnchorIndex anchors(*body);
+  struct Candidate {
+    SourceLocalId local;
+    MirDebugPoint begin;
+    MirDebugPoint end;
+  };
+  std::vector<Candidate> candidates;
+  std::vector<MirDebugAvailabilityRequest> requests;
+  std::map<std::pair<MirBlockId, MirInstructionId>, std::size_t> positions;
+  std::unordered_map<SourceScopeId, std::vector<const MirSourceLocal *>> locals;
+  for (const auto &local : tables.locals)
+    if (local.policy == MirSourceLocalPolicy::ExistingPlace)
+      locals[local.declaration.scope].push_back(&local);
+  for (const auto &block : body->blocks) {
+    const auto before = [&](std::size_t index) -> MirDebugPoint {
+      return {block.id, index < block.instructions.size()
+                            ? block.instructions[index].id
+                            : 0};
+    };
+    std::vector<SourceScopeId> scopes(block.instructions.size());
+    std::unordered_map<MirPlaceId, std::vector<std::size_t>> writes;
+    for (std::size_t i = 0; i < block.instructions.size(); ++i) {
+      const auto &instruction = block.instructions[i];
+      positions[{block.id, instruction.id}] = 2 * i + 1;
+      if (instruction.tombstone)
+        continue;
+      // Only source operations can extend a visible segment. Cleanup and
+      // transport glue may retain old provenance after a lexical exit.
+      switch (instruction.kind) {
+      case MirInstructionKind::Compute:
+      case MirInstructionKind::Load:
+      case MirInstructionKind::Initialize:
+      case MirInstructionKind::Assign:
+      case MirInstructionKind::Modify:
+      case MirInstructionKind::Call:
+      case MirInstructionKind::Construct:
+        if (const auto *anchor = anchors.find(
+                instruction.hirStatement, instruction.hirValue, true))
+          scopes[i] = anchor->scope;
+        break;
+      default:
+        break;
+      }
+      if (instruction.destination &&
+          (instruction.kind == MirInstructionKind::Initialize ||
+           instruction.kind == MirInstructionKind::Assign))
+        writes[*instruction.destination].push_back(i);
+    }
+    positions[{block.id, 0}] = 2 * block.instructions.size() + 1;
+    for (std::size_t first = 0; first < scopes.size();) {
+      std::size_t last = first + 1;
+      while (last < scopes.size() && scopes[last] == scopes[first])
+        ++last;
+      std::size_t ancestors = 0;
+      for (auto scope = scopes[first]; scope;) {
+        if (scope > tables.scopes.size() || ++ancestors > tables.scopes.size())
+          return std::nullopt;
+        if (const auto found = locals.find(scope); found != locals.end())
+          for (const auto *local : found->second) {
+            const auto add = [&](MirDebugPoint begin) {
+              candidates.push_back(
+                  {local->declaration.id, begin, before(last)});
+              requests.push_back({local->declaration.id, begin});
+            };
+            add(before(first));
+            if (const auto definitions = writes.find(local->place);
+                definitions != writes.end())
+              for (auto at = std::lower_bound(definitions->second.begin(),
+                                              definitions->second.end(), first);
+                   at != definitions->second.end() && *at < last; ++at) {
+                auto point = before(*at);
+                point.after = true;
+                add(point);
+              }
+          }
+        scope = tables.scopes[scope - 1].parent;
+      }
+      first = last;
+    }
+  }
+  const auto observed = queryMirDebugAvailability(program, address, requests);
+  if (!observed.verification.valid() ||
+      observed.requested.size() != candidates.size())
+    return std::nullopt;
+  const auto position = [&](MirDebugPoint point) {
+    if (point.blockEntry)
+      return std::size_t{0};
+    return positions.at({point.block, point.instruction}) +
+           static_cast<std::size_t>(point.after);
+  };
+  using LocalBlock = std::pair<SourceLocalId, MirBlockId>;
+  std::map<LocalBlock, std::vector<MirDebugPoint>> stops;
+  for (const auto &stop : observed.requiredStops)
+    stops[{stop.local, stop.point.block}].push_back(stop.point);
+  for (auto &[key, points] : stops)
+    std::sort(points.begin(), points.end(), [&](auto left, auto right) {
+      return position(left) < position(right);
+    });
+  std::map<LocalBlock, std::size_t> covered;
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const auto &fact = observed.requested[i];
+    if (fact.readability != MirDebugReadability::DefinitelyReadable)
+      continue;
+    const auto &candidate = candidates[i];
+    const LocalBlock key{candidate.local, candidate.begin.block};
+    const auto begin = position(candidate.begin);
+    if (const auto found = covered.find(key);
+        found != covered.end() && begin < found->second)
+      continue;
+    auto end = candidate.end;
+    if (const auto found = stops.find(key); found != stops.end()) {
+      const auto stop =
+          std::upper_bound(found->second.begin(), found->second.end(), begin,
+                           [&](std::size_t value, auto point) {
+                             return value < position(point);
+                           });
+      if (stop != found->second.end() && position(*stop) < position(end))
+        end = *stop;
+    }
+    if (begin < position(end)) {
+      ranges.push_back({candidate.local, fact.place, candidate.begin, end});
+      covered[key] = position(end);
+    }
+  }
+  return ranges;
+}
+
 LoweredProgramBuild LoweredProgramBuilder::build(
     const Program &program, const SemanticModel &semantics,
     const HirProgram &hir, const MirProgram &sourceMir,
     const MirProgram &optimizedMir,
     const std::vector<MirTransformRecord> &transformations,
-    const TargetInfo &target, bool captureDebugLocations,
-    LoweredProgramVerifiedInputs verified) const {
+    const TargetInfo &target, LoweredProgramVerifiedInputs verified) const {
   LoweredProgramBuild build;
   if (!target.supported()) {
     addIssue(build.issues, LoweredProgramIssueKind::UnsupportedTarget,
@@ -1346,7 +1453,8 @@ LoweredProgramBuild LoweredProgramBuilder::build(
                  : failureVerification.errors.front());
   }
   const MirVerificationResult optimization = [&] {
-    if (verified.optimizationCoherenceVerified)
+    if (verified.optimizationCoherenceVerified &&
+        sourceMir.sourceDebugProfile() == SourceDebugProfile::None)
       return MirVerificationResult{};
     const PhaseTimeScope timeScope("lowered-verify-optimization-coherence");
     return mir_detail::verifyVerifiedMirOptimizationCoherence(
@@ -1546,9 +1654,22 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     }
     lowered.bodies_.push_back(
         {.identity = *identity, .role = bodyRole(optimizedMir, *identity)});
-    if (captureDebugLocations) {
-      lowered.bodies_.back().sourceLocations = captureSourceLocations(
-          debugHirBody(hir, address), *findMirBody(optimizedMir, address));
+    auto &debug = lowered.bodies_.back().sourceDebug;
+    const auto &mir = *findMirBody(lowered.mir_, address);
+    debug.collection = mir.sourceDebug.collection;
+    if (mir.sourceDebug.tables) {
+      debug.tables = std::make_unique<LoweredSourceDebugTables>();
+      debug.tables->domain = mir.placeDomain;
+      debug.tables->scopes = mir.sourceDebug.tables->scopes;
+      debug.tables->locals = mir.sourceDebug.tables->locals;
+      debug.tables->locations = captureSourceLocations(mir);
+      if (auto ranges =
+              lowered_detail::deriveSourceRanges(lowered.mir_, address))
+        debug.tables->ranges = std::move(*ranges);
+      else
+        addIssue(build.issues, LoweredProgramIssueKind::InvalidBodyInventory,
+                 "source-local ranges require valid current MIR availability",
+                 address);
     }
   }
 

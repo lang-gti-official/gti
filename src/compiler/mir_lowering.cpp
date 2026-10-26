@@ -30,10 +30,14 @@ mir_detail::describeHirSourceDebug(const HirBody &body) {
       local.scope += scopeOffset;
       tables.locals.push_back({.declaration = std::move(local)});
     }
-    for (const auto &[statement, scope] : region.statements)
-      tables.statements.emplace_back(statement, scope + scopeOffset);
-    for (const auto &[value, scope] : region.values)
-      tables.values.emplace_back(value, scope + scopeOffset);
+    for (auto statement : region.statements) {
+      statement.scope += scopeOffset;
+      tables.statements.push_back(std::move(statement));
+    }
+    for (auto value : region.values) {
+      value.scope += scopeOffset;
+      tables.values.push_back(std::move(value));
+    }
   };
   append(input);
   for (const auto &region : input.initializers)
@@ -759,6 +763,10 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .scoped = adapter.scoped,
          .scopeArgument = adapter.scopeArgument});
   }
+  if (result.program.hostedStartupBody &&
+      result.program.sourceDebugProfile() == SourceDebugProfile::LexicalV1)
+    result.program.hostedStartupBody->sourceDebug.collection =
+        SourceDebugCollection::NotApplicable;
   result.program.valid_ = valid;
   const MirProgramEffectSummaries effectSummaries =
       deriveMirProgramEffectSummaries(result.program);

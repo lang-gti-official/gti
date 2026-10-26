@@ -859,6 +859,8 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
   output << "lowered-program-v26\n";
+  output << "source-debug-profile="
+         << sourceDebugProfileName(program.sourceDebugProfile()) << '\n';
   output << "target os=" << std::quoted(program.target().os)
          << " vendor=" << std::quoted(program.target().vendor)
          << " arch=" << std::quoted(program.target().arch) << " profile="
@@ -928,12 +930,54 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
       printGeneratedIdentity(output, required);
     }
     output << '\n';
-    for (const LoweredSourceLocation &location : body.sourceLocations) {
+    output << "  source-debug="
+           << sourceDebugCollectionName(body.sourceDebug.collection)
+           << " tables=" << static_cast<bool>(body.sourceDebug.tables) << '\n';
+    if (body.sourceDebug.tables) {
+      const auto &tables = *body.sourceDebug.tables;
+      DeclarationPayloadPrinter values(output);
+      output << "  debug-domain=" << (tables.domain.snapshot ? 1 : 0) << ':'
+             << tables.domain.body << ':' << tables.domain.revision << '\n';
+      for (const auto &scope : tables.scopes) {
+        output << "  debug-scope=" << scope.id << " parent=" << scope.parent
+               << " unit=" << scope.sourceUnit
+               << " expansion=" << scope.expansion << " source=";
+        values.sourceSpan(scope.source);
+        output << '\n';
+      }
+      for (const auto &local : tables.locals) {
+        const auto &declaration = local.declaration;
+        output << "  debug-local=" << declaration.id
+               << " scope=" << declaration.scope
+               << " binding=" << declaration.binding
+               << " symbol=" << declaration.symbol
+               << " name=" << std::quoted(declaration.name)
+               << " parameter=" << declaration.parameter << " type=";
+        values.semanticType(declaration.type);
+        output << " source=";
+        values.sourceSpan(declaration.declaration);
+        output << " place=" << local.place
+               << " policy=" << static_cast<unsigned>(local.policy) << '\n';
+      }
+      const auto point = [&](MirDebugPoint point) {
+        output << point.block << ':' << point.instruction << ':' << point.after
+               << ':' << point.blockEntry;
+      };
+      for (const auto &range : tables.ranges) {
+        output << "  debug-range=" << range.local << " place=" << range.place
+               << " begin=";
+        point(range.begin);
+        output << " end=";
+        point(range.end);
+        output << '\n';
+      }
+    }
+    for (const LoweredSourceLocation &location : body.sourceLocations()) {
       output << "  source-location bb" << location.block << ":i"
              << location.instruction << ' '
              << std::quoted(location.source.source) << ':'
              << location.source.start << ':' << location.source.end << ':'
-             << location.source.line << '\n';
+             << location.source.line << " scope=" << location.scope << '\n';
     }
   }
 

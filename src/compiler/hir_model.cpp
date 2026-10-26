@@ -342,7 +342,9 @@ verifyHirSourceDebug(const SemanticModel &semantics,
       return;
     }
     if (program.sourceDebugProfile() == SourceDebugProfile::None) {
-      if (record.tables)
+      if (record.tables ||
+          (sourceBody &&
+           record.collection == SourceDebugCollection::NotApplicable))
         reject("disabled HIR source-debug profile owns tables");
       return;
     }
@@ -350,6 +352,9 @@ verifyHirSourceDebug(const SemanticModel &semantics,
       if (record.tables && (record.tables->sourceFacts().source ||
                             record.tables->initializers.empty()))
         reject("source-free HIR body owns source-debug tables");
+      if (!record.tables &&
+          record.collection != SourceDebugCollection::NotApplicable)
+        reject("source-free HIR body lacks its verified not-applicable state");
       return;
     }
     if (record.collection != SourceDebugCollection::CollectedLexicalV1 ||
@@ -404,16 +409,21 @@ verifyHirSourceDebug(const SemanticModel &semantics,
             binding->info.type != local.type)))
         reject("HIR source local differs from its exact concrete binding/type");
     }
-    std::vector<std::pair<HirStatementId, SourceScopeId>> statements;
+    std::vector<SourceDebugAnchor> statements;
     for (const auto &statement : body.statements)
       if (const auto scope = accepted.statements.find(statement.source);
           scope != accepted.statements.end())
-        statements.emplace_back(statement.id, scope->second);
-    std::vector<std::pair<HirValueId, SourceScopeId>> values;
+        statements.push_back(
+            {statement.id, scope->second,
+             statement.source->extent().value_or(SourceSpan{})});
+    std::vector<SourceDebugAnchor> values;
     for (const auto &value : body.values)
       if (const auto scope = accepted.expressions.find(value.source);
           scope != accepted.expressions.end())
-        values.emplace_back(value.id, scope->second);
+        values.push_back({value.id, scope->second,
+                          value.source->writtenOrigin()
+                              ? *value.source->writtenOrigin()
+                              : SourceSpan{}});
     if (tables.statements != statements || tables.values != values)
       reject("HIR source anchors differ from accepted semantic membership");
   };
@@ -428,19 +438,22 @@ verifyHirSourceDebug(const SemanticModel &semantics,
       std::vector<std::pair<const VariableDecl *, std::vector<HirValueId>>>;
   const auto checkInitializers = [&](const HirBody &body,
                                      const InitializerRoots &expected,
-                                     const HirClassInstance *owner = nullptr) {
+                                     const HirClassInstance *owner = nullptr,
+                                     bool sourceRegionBody = false) {
     const auto &record = body.sourceDebug;
     if (!isValidSourceDebugRecord(record)) {
       reject("HIR initializer source collection/table state is invalid");
       return;
     }
     if (program.sourceDebugProfile() == SourceDebugProfile::None) {
-      if (record.tables)
+      if (record.tables ||
+          (sourceRegionBody &&
+           record.collection == SourceDebugCollection::NotApplicable))
         reject("disabled HIR initializer source profile owns tables");
       return;
     }
     if (!record.tables) {
-      if (!expected.empty())
+      if (!expected.empty() || sourceRegionBody)
         reject("HIR initializer source region is missing");
       return;
     }
@@ -507,18 +520,23 @@ verifyHirSourceDebug(const SemanticModel &semantics,
              .name = local.name,
              .declaration = local.declaration});
       }
-      std::vector<std::pair<HirStatementId, SourceScopeId>> statements;
+      std::vector<SourceDebugAnchor> statements;
       for (const auto &statement : body.statements)
         if (reachable[i].statements.contains(statement.id))
           if (const auto scope = facts.statements.find(statement.source);
               scope != facts.statements.end())
-            statements.emplace_back(statement.id, scope->second);
-      std::vector<std::pair<HirValueId, SourceScopeId>> expressions;
+            statements.push_back(
+                {statement.id, scope->second,
+                 statement.source->extent().value_or(SourceSpan{})});
+      std::vector<SourceDebugAnchor> expressions;
       for (const auto &value : body.values)
         if (reachable[i].values.contains(value.id))
           if (const auto scope = facts.expressions.find(value.source);
               scope != facts.expressions.end())
-            expressions.emplace_back(value.id, scope->second);
+            expressions.push_back({value.id, scope->second,
+                                   value.source->writtenOrigin()
+                                       ? *value.source->writtenOrigin()
+                                       : SourceSpan{}});
       if (region.locals != locals || region.statements != statements ||
           region.values != expressions)
         reject("HIR initializer source rows differ from exact reachable roots");
@@ -530,7 +548,7 @@ verifyHirSourceDebug(const SemanticModel &semantics,
         step.initializer)
       moduleRoots.emplace_back(step.source,
                                std::vector<HirValueId>{*step.initializer});
-  checkInitializers(program.module(), moduleRoots);
+  checkInitializers(program.module(), moduleRoots, nullptr, true);
   for (const auto &storage : program.threadLocalStorage()) {
     InitializerRoots roots;
     if (storage.source && storage.source->initializer())
@@ -539,7 +557,7 @@ verifyHirSourceDebug(const SemanticModel &semantics,
             statement && statement->value)
           roots.emplace_back(storage.source,
                              std::vector<HirValueId>{*statement->value});
-    checkInitializers(storage.initializer, roots);
+    checkInitializers(storage.initializer, roots, nullptr, true);
   }
   for (const auto &instance : program.classInstances()) {
     InitializerRoots fields;
@@ -547,14 +565,15 @@ verifyHirSourceDebug(const SemanticModel &semantics,
       if (field.declaration && field.initializer)
         fields.emplace_back(field.declaration,
                             std::vector<HirValueId>{*field.initializer});
-    checkInitializers(instance.fieldInitializers, fields, &instance);
+    checkInitializers(instance.fieldInitializers, fields, &instance, true);
     InitializerRoots statics;
     for (const auto &field : instance.staticFields)
       if (field.declaration && field.initializer &&
           instance.staticFieldInitializers.findValue(*field.initializer))
         statics.emplace_back(field.declaration,
                              std::vector<HirValueId>{*field.initializer});
-    checkInitializers(instance.staticFieldInitializers, statics, &instance);
+    checkInitializers(instance.staticFieldInitializers, statics, &instance,
+                      true);
   }
   for (const auto &function : program.functionInstances()) {
     checkInitializers(function.body, {});
@@ -644,7 +663,8 @@ verifyHirSourceDebug(const SemanticModel &semantics,
 HirProgramPlanVerificationResult
 verifyHirProgramPlans(const SemanticModel &semantics,
                       const HirProgram &program) {
-  HirProgramPlanVerificationResult result;
+  HirProgramPlanVerificationResult result =
+      verifyHirSourceDebug(semantics, program);
   for (const HirEnum &enumeration : program.enumDeclarations()) {
     if (!enumeration.payload)
       continue;

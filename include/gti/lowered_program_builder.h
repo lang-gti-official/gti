@@ -38,7 +38,7 @@ public:
         const HirProgram &hir, const MirProgram &sourceMir,
         const MirProgram &optimizedMir,
         const std::vector<MirTransformRecord> &transformations,
-        const TargetInfo &target, bool captureSourceLocations = false,
+        const TargetInfo &target,
         LoweredProgramVerifiedInputs verified = {}) const;
 };
 

@@ -39,6 +39,9 @@ FrontendResult analyze(const CompilationRequest &request,
   options.rawPointerAudit = request.rawPointerAudit();
   options.reportLibraryAuditFindings = request.rawPointerAuditLibraryFindings();
   options.program = request.program();
+  options.sourceDebugProfile = request.debugInfo()
+                                   ? SourceDebugProfile::LexicalV1
+                                   : SourceDebugProfile::None;
   // Artifacts contain only code the program roots reach.
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = artifact;
@@ -58,9 +61,12 @@ FrontendResult analyze(const CompilationRequest &request,
     // Auditing retains complete trusted-body coverage, including concrete
     // generic findings. Its model must not select artifact identities or code:
     // even macro isolation must be independent of optional audit policy.
-    FrontendResult audited = Frontend(options).analyzeLoaded(
-        request.entry(), inputs.sourceGraph, inputs.sources, inputs.diagnostics,
-        inputs.sourceValid);
+    auto auditOptions = options;
+    auditOptions.sourceDebugProfile = SourceDebugProfile::None;
+    FrontendResult audited =
+        Frontend(auditOptions)
+            .analyzeLoaded(request.entry(), inputs.sourceGraph, inputs.sources,
+                           inputs.diagnostics, inputs.sourceValid);
     if (!audited.canGenerateCode())
       return finish(std::move(audited));
     auditDiagnostics = std::move(audited.diagnostics);
@@ -193,8 +199,7 @@ CompilationResult compileWithLoadedInputs(const CompilationRequest &request,
     return LoweredProgramBuilder().build(
         frontend.program, frontend.semantics, frontend.hir,
         optimizedProgram.sourceMir, optimizedProgram.mir,
-        optimizedProgram.report.transformations, request.target(),
-        request.debugInfo(), verified);
+        optimizedProgram.report.transformations, request.target(), verified);
   }();
   if (!loweredBuild.valid()) {
     const std::string detail =

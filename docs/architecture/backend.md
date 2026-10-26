@@ -4376,11 +4376,18 @@ owns the optional source-debug consumer and finalizes it before initial module
 verification. Body lowering binds source functions and source constructors or
 destructors to the exact existing declaration/factory result, maps sealed MIR
 instruction and terminator locations, and excludes generated source scopes
-before planning their debug types. Only verified ordinary prefix parameters
-receive named value locations; expanded pack lanes, hidden ABI channels,
-receivers and ordinary locals remain unavailable. Move/drop transitions end
-value locations without inventing lexical-scope boundaries. Full local visibility
-requires sealed lexical-scope mappings that this snapshot does not yet provide.
+before planning their debug types. Lowered bodies now own one optional debug
+record containing lexical declarations, written locations and block-local
+existing-place ranges. Range construction queries the exact owned final MIR;
+independent verification recomputes those queries and mandatory cuts. Unknown
+membership or untracked storage does not acquire positive availability. A move
+followed by reinitialization cannot be bridged by a single readable range.
+The LLVM debug consumer builds scopes from those identities and exposes boundary
+events for existing storage, without requesting a new execution slot. Its shared
+body-emitter boundary registration is still pending integration; this component
+work is not activation or native-debugger acceptance. Expanded pack elements,
+receivers and recovered optimized values still need their complete contracts
+and execution evidence.
 
 The typed diagnostic pipeline places bounded load/store null/alignment checks
 before optimization, and stock Address or Thread instrumentation after it.

@@ -85,16 +85,42 @@ struct LoweredSourceLocation {
   MirBlockId block = 0;
   MirInstructionId instruction = 0;
   SourceSpan source;
+  SourceScopeId scope = 0;
 
   friend bool operator==(const LoweredSourceLocation &,
                          const LoweredSourceLocation &) = default;
+};
+
+struct LoweredSourceRange {
+  SourceLocalId local = 0;
+  MirPlaceId place = 0;
+  MirDebugPoint begin;
+  MirDebugPoint end;
+  friend bool operator==(const LoweredSourceRange &,
+                         const LoweredSourceRange &) = default;
+};
+
+struct LoweredSourceDebugTables {
+  PlaceDomain domain;
+  std::vector<SourceDebugScope> scopes;
+  std::vector<MirSourceLocal> locals;
+  std::vector<LoweredSourceLocation> locations;
+  std::vector<LoweredSourceRange> ranges;
+  friend bool operator==(const LoweredSourceDebugTables &,
+                         const LoweredSourceDebugTables &) = default;
 };
 
 struct LoweredBody {
   LoweredBodyIdentity identity;
   LoweredBodyRole role = LoweredBodyRole::SourceExecutable;
   std::vector<LoweredGeneratedItemIdentity> requiredGeneratedItems;
-  std::vector<LoweredSourceLocation> sourceLocations;
+  SourceDebugRecord<LoweredSourceDebugTables> sourceDebug;
+
+  [[nodiscard]] const std::vector<LoweredSourceLocation> &
+  sourceLocations() const {
+    static const std::vector<LoweredSourceLocation> empty;
+    return sourceDebug.tables ? sourceDebug.tables->locations : empty;
+  }
 
   friend bool operator==(const LoweredBody &, const LoweredBody &) = default;
 };
@@ -746,6 +772,9 @@ public:
 
   [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] const MirProgram &mir() const { return mir_; }
+  [[nodiscard]] SourceDebugProfile sourceDebugProfile() const {
+    return mir_.sourceDebugProfile();
+  }
   [[nodiscard]] ProgramKind programKind() const { return programKind_; }
   [[nodiscard]] const std::optional<LoweredEmbeddingPlan> &
   embeddingPlan() const {

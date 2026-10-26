@@ -259,6 +259,9 @@ public:
   [[nodiscard]] SemanticType expressionType() const;
 
   [[nodiscard]] const SemanticModel &model() const;
+  [[nodiscard]] SourceDebugProfile requestedSourceDebugProfile() const {
+    return sourceDebugProfile;
+  }
 
   // Moves the accumulated model out of the visitor. The visitor must not run
   // further analysis (including concrete instance reanalysis) afterwards.

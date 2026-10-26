@@ -3731,7 +3731,7 @@ readability. Empty queries take the ordinary verifier path and allocate no
 observation tables. Block entry and the boundary before a terminator are
 distinct points, including in an empty block.
 
-Inactive lexical-debug transport now carries the requested profile into MIR
+Opt-in lexical-debug transport carries the requested profile into MIR
 and deep-copies collected HIR scopes, concrete local declarations, and source
 membership into `MirBody::sourceDebug`. Initializer-region IDs are flattened
 deterministically within that body. `None` allocates no table. The actual normal
@@ -3743,10 +3743,15 @@ source MIR declarations and membership back to exact accepted HIR facts.
 before invoking the private canonical place query. It clips positive facts by
 known source membership and lexical ends, returns `Unproven` when membership
 cannot be established, and reports both execution and lexical required cuts.
-Neither this transient batch nor a collected table authorizes final debug
-ranges. Complete source-boundary provenance verification, final range
-construction/sealing, and native consumption remain unfinished; frontend
-activation is still off.
+Neither this transient batch nor a collected table is a reusable certificate.
+The frontend selects collection before cache lookup. Lowered-program range
+construction queries its owned final MIR, forms block-local half-open intervals
+within known scope segments, and clips them at every required cut. A subsequent
+initialization or assignment can reopen a range only with a fresh readable fact.
+Independent lowered verification recomputes the range inventory, and its full
+serialization participates in the ordinary construction seal. Native emission
+boundary registration, full representation coverage and real debugger acceptance
+remain pending; this is not production-debug admission.
 
 The canonical scalar-promotion, unreachable-block and in-place dead-instruction
 mutators share source-table repair. Promotion invalidates the affected existing

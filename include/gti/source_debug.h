@@ -36,6 +36,16 @@ struct SourceDebugScope {
 
 enum class SourceDebugProfile : std::uint8_t { None, LexicalV1 };
 
+// A phase-local statement or value identity, qualified by its owning table.
+// Missing written origin is represented by an empty span, not an invented line.
+struct SourceDebugAnchor {
+  std::size_t id = 0;
+  SourceScopeId scope = 0;
+  SourceSpan source;
+  friend bool operator==(const SourceDebugAnchor &,
+                         const SourceDebugAnchor &) = default;
+};
+
 enum class SourceDebugCollection : std::uint8_t {
   Uncollected,
   CollectedLexicalV1,

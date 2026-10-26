@@ -1214,10 +1214,16 @@ cleanup edges, or backend representation policy.
 
 ## Optional Source Regions
 
-The inactive `LexicalV1` source-debug profile preserves accepted semantic
+The opt-in `LexicalV1` source-debug profile preserves accepted semantic
 source bodies and initializer regions in deep-owned HIR tables. Collection is
 descriptive and does not establish execution availability. The frontend default
 remains `None`; these tables alone do not enable native local-variable debugging.
+The frontend selects the profile before preamble lookup and semantic analysis.
+Preamble and concrete-instance reuse must match the profile and retain valid
+collected facts. Declaration-only functions are explicitly not applicable;
+empty source-region inventories are collected, not inferred from missing rows.
+Written source spans travel with body-local statement/value membership and are
+independently compared with the accepted source before syntax is detached.
 
 Module and TLS initializers, class field/static initializer bodies, and field
 defaults selected by a constructor retain their exact accepted declaration,

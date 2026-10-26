@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <map>
 #include <stdexcept>
+#include <tuple>
 
 namespace lang::native_llvm {
 
@@ -42,6 +43,10 @@ public:
       remember(row.sourceUnit, row.source);
     for (const auto &row : program.classInstances())
       remember(row.sourceUnit, row.source);
+    for (const auto &body : program.bodies())
+      if (body.sourceDebug.tables)
+        for (const auto &scope : body.sourceDebug.tables->scopes)
+          remember(scope.sourceUnit, scope.source);
     auto *primary = builder.createFile("<gti>", ".");
     // GTI is not C++. Source expression evaluation needs a debugger language
     // plugin; field/local inspection and line stepping do not require one.
@@ -254,8 +259,19 @@ public:
   std::map<llvm::Function *, MirBodyAddress> bodies;
   std::map<std::pair<MirBodyKind, std::uint32_t>, llvm::Function *>
       lifecycleDefinitions;
-  std::map<std::pair<llvm::Function *, SymbolId>, llvm::DILocalVariable *>
-      locals;
+  struct Local {
+    llvm::DILocalVariable *variable = nullptr;
+    llvm::Value *storage = nullptr;
+  };
+  std::map<llvm::Function *, std::vector<llvm::DILocalScope *>> scopes;
+  std::map<std::pair<llvm::Function *, SourceLocalId>, Local> locals;
+  using Point =
+      std::tuple<llvm::Function *, MirBlockId, MirInstructionId, bool, bool>;
+  struct Events {
+    std::vector<SourceLocalId> ends;
+    std::vector<SourceLocalId> begins;
+  };
+  std::map<Point, Events> events;
   bool finalized = false;
 };
 
@@ -355,6 +371,31 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
           impl->builder.getOrCreateTypeArray(parameters)),
       source->line, llvm::DINode::FlagPrototyped, flags));
   impl->bodies.emplace(&function, address);
+  const auto *lowered = program.findBody(address);
+  if (!lowered || !lowered->sourceDebug.tables)
+    throw std::logic_error(
+        "LLVM source debug requires collected lowered facts");
+  auto &scopes = impl->scopes[&function];
+  scopes.push_back(function.getSubprogram());
+  for (const auto &scope : lowered->sourceDebug.tables->scopes) {
+    if (scope.id != scopes.size() || scope.parent >= scopes.size())
+      throw std::logic_error(
+          "LLVM lexical scope lost its sealed parent identity");
+    scopes.push_back(
+        scope.id == 1 && !scope.parent
+            ? static_cast<llvm::DILocalScope *>(function.getSubprogram())
+            : impl->builder.createLexicalBlock(scopes[scope.parent],
+                                               impl->file(scope.source),
+                                               scope.source.line, 0));
+  }
+  const auto event = [&](MirDebugPoint point) -> Impl::Events & {
+    return impl->events[{&function, point.block, point.instruction, point.after,
+                         point.blockEntry}];
+  };
+  for (const auto &range : lowered->sourceDebug.tables->ranges) {
+    event(range.begin).begins.push_back(range.local);
+    event(range.end).ends.push_back(range.local);
+  }
 }
 
 void DebugInfo::location(llvm::IRBuilder<> &ir, MirBodyAddress address,
@@ -369,13 +410,16 @@ void DebugInfo::location(llvm::IRBuilder<> &ir, MirBodyAddress address,
   // Line zero denotes compiler-generated routing, not a fabricated user line.
   ir.SetCurrentDebugLocation(
       llvm::DILocation::get(impl->session.context(), 0, 0, scope));
-  for (const auto &row : body->sourceLocations) {
+  for (const auto &row : body->sourceLocations()) {
     if (row.block != block || row.instruction != instruction)
       continue;
     auto *source = impl->file(row.source);
-    llvm::DILocalScope *selected = scope;
-    if (source != scope->getFile())
-      selected = impl->builder.createLexicalBlockFile(scope, source, 0);
+    const auto scopes = impl->scopes.find(ir.GetInsertBlock()->getParent());
+    if (scopes == impl->scopes.end() || row.scope >= scopes->second.size())
+      throw std::logic_error("LLVM location lost its sealed lexical scope");
+    llvm::DILocalScope *selected = scopes->second[row.scope];
+    if (source != selected->getFile())
+      selected = impl->builder.createLexicalBlockFile(selected, source, 0);
     ir.SetCurrentDebugLocation(llvm::DILocation::get(
         impl->session.context(), row.source.line, 0, selected));
     return;
@@ -400,45 +444,96 @@ void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
       place.root != MirPlaceRootKind::Binding || !place.projections.empty())
     return;
   auto *function = ir.GetInsertBlock()->getParent();
-  auto *scope = function->getSubprogram();
-  const auto *symbol = impl->session.program().findSymbol(place.symbol);
-  if (!scope || !symbol ||
-      (symbol->kind != SymbolKind::LocalVariable &&
-       symbol->kind != SymbolKind::Parameter))
+  const auto address = impl->bodies.find(function);
+  if (!function->getSubprogram() || address == impl->bodies.end())
     return;
-  auto [entry, inserted] =
-      impl->locals.try_emplace({function, place.symbol}, nullptr);
-  if (!inserted)
+  const auto *body = impl->session.program().findBody(address->second);
+  if (!body || !body->sourceDebug.tables)
     return;
-  const auto &source = symbol->declarationSource;
-  auto *file = impl->file(source);
-  entry->second =
-      parameter
-          ? impl->builder.createParameterVariable(scope, symbol->name,
-                                                  parameter, file, source.line,
-                                                  impl->type(place.type), true)
-          : impl->builder.createAutoVariable(scope, symbol->name, file,
-                                             source.line,
-                                             impl->type(place.type), true);
-  impl->builder.insertDeclare(
-      storage, entry->second, impl->builder.createExpression(),
-      llvm::DILocation::get(impl->session.context(), source.line, 0, scope),
-      ir.GetInsertBlock());
+  for (const auto &local : body->sourceDebug.tables->locals) {
+    if (local.place != place.id ||
+        local.policy != MirSourceLocalPolicy::ExistingPlace ||
+        local.declaration.type != place.type ||
+        local.declaration.symbol != place.symbol)
+      continue;
+    auto [entry, inserted] =
+        impl->locals.try_emplace({function, local.declaration.id});
+    if (!inserted) {
+      if (entry->second.storage != storage)
+        throw std::logic_error("LLVM debug local changed its existing storage");
+      continue;
+    }
+    const auto &declaration = local.declaration;
+    const auto &source = declaration.declaration;
+    auto *scope = impl->scopes.at(function).at(declaration.scope);
+    auto *file = impl->file(source);
+    entry->second.storage = storage;
+    entry->second.variable =
+        parameter && declaration.parameter
+            ? impl->builder.createParameterVariable(
+                  scope, declaration.name, parameter, file, source.line,
+                  impl->type(place.type), true)
+            : impl->builder.createAutoVariable(scope, declaration.name, file,
+                                               source.line,
+                                               impl->type(place.type), true);
+  }
+}
+
+void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point) {
+  if (!ir.GetInsertBlock())
+    return;
+  auto *function = ir.GetInsertBlock()->getParent();
+  const auto event =
+      impl->events.find({function, point.block, point.instruction, point.after,
+                         point.blockEntry});
+  if (event == impl->events.end())
+    return;
+  const auto emit = [&](SourceLocalId id, bool begin) {
+    const auto found = impl->locals.find({function, id});
+    if (found == impl->locals.end())
+      throw std::logic_error(
+          "LLVM debug range has no registered existing storage");
+    const auto &local = found->second;
+    const auto *location = llvm::DILocation::get(
+        impl->session.context(), begin ? local.variable->getLine() : 0, 0,
+        local.variable->getScope());
+    if (begin)
+      impl->builder.insertDeclare(local.storage, local.variable,
+                                  impl->builder.createExpression(), location,
+                                  ir.GetInsertBlock());
+    else
+      impl->builder.insertDbgValueIntrinsic(
+          llvm::PoisonValue::get(ir.getInt8Ty()), local.variable,
+          impl->builder.createExpression(), location, ir.GetInsertBlock());
+  };
+  for (const auto id : event->second.ends)
+    emit(id, false);
+  for (const auto id : event->second.begins)
+    emit(id, true);
 }
 
 void DebugInfo::endLocal(llvm::IRBuilder<> &ir, const MirPlace &place) {
   if (!ir.GetInsertBlock())
     return;
   auto *function = ir.GetInsertBlock()->getParent();
-  const auto found = impl->locals.find({function, place.symbol});
-  if (found == impl->locals.end())
+  const auto address = impl->bodies.find(function);
+  if (address == impl->bodies.end())
     return;
-  impl->builder.insertDbgValueIntrinsic(
-      llvm::PoisonValue::get(ir.getInt8Ty()), found->second,
-      impl->builder.createExpression(),
-      llvm::DILocation::get(impl->session.context(), 0, 0,
-                            function->getSubprogram()),
-      ir.GetInsertBlock());
+  const auto *body = impl->session.program().findBody(address->second);
+  if (!body || !body->sourceDebug.tables)
+    return;
+  for (const auto &local : body->sourceDebug.tables->locals) {
+    if (local.place != place.id)
+      continue;
+    const auto found = impl->locals.find({function, local.declaration.id});
+    if (found != impl->locals.end())
+      impl->builder.insertDbgValueIntrinsic(
+          llvm::PoisonValue::get(ir.getInt8Ty()), found->second.variable,
+          impl->builder.createExpression(),
+          llvm::DILocation::get(impl->session.context(), 0, 0,
+                                found->second.variable->getScope()),
+          ir.GetInsertBlock());
+  }
 }
 
 void DebugInfo::finalize() {

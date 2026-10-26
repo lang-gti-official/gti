@@ -1536,7 +1536,7 @@ relates the earlier borrow; there is no automatic operand-reordering fix.
 
 ## SemanticModel
 
-The optional, currently inactive `LexicalV1` source-debug profile records
+The optional `LexicalV1` source-debug profile records
 accepted source scopes and bindings independently of semantic identities.
 Program storage, thread-local storage and field initializers enter descriptive
 initializer regions at the existing declaration-analysis decision. Their guard

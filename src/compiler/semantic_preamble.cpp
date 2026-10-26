@@ -32,12 +32,26 @@ SemanticVisitor::buildPreamble(Program prefix) {
 void SemanticVisitor::adoptPreamble(
     std::shared_ptr<const SemanticPreamble> preamble,
     std::size_t prefixDeclarationCount) {
+  if (preamble && !semanticPreambleSupportsSourceDebug(
+                      *preamble, impl->requestedSourceDebugProfile())) {
+    impl->adoptedPreamble.reset();
+    impl->adoptedPrefixDeclarations = 0;
+    return;
+  }
   impl->adoptedPreamble = std::move(preamble);
   impl->adoptedPrefixDeclarations = prefixDeclarationCount;
 }
 
 std::uint64_t semanticPreambleIdentity(const SemanticPreamble &preamble) {
   return preamble.identity();
+}
+
+bool semanticPreambleSupportsSourceDebug(const SemanticPreamble &preamble,
+                                         SourceDebugProfile profile) {
+  return isValidSourceDebugProfile(profile) && preamble.state &&
+         preamble.state->requestedSourceDebugProfile() == profile &&
+         preamble.state->model().sourceDebugProfile() == profile &&
+         preamble.state->model().verifySourceDebug().empty();
 }
 
 std::uint64_t SemanticPreamble::nextIdentity() {

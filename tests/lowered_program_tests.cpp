@@ -15,6 +15,8 @@
 #include "lowered_program_contract_client.h"
 
 #include <algorithm>
+#include <chrono>
+#include <fstream>
 #include <iostream>
 #include <numeric>
 #include <optional>
@@ -350,6 +352,100 @@ int main() { return parent(4); }
   }
 }
 
+void testFrontendSourceDebugProfile() {
+  const auto root =
+      std::filesystem::temp_directory_path() /
+      ("gti-o15-profile-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()));
+  const auto library = root / "stdlib";
+  std::filesystem::create_directories(library);
+  struct FixtureCleanup {
+    std::filesystem::path root;
+    ~FixtureCleanup() {
+      std::error_code ignored;
+      std::filesystem::remove_all(root, ignored);
+    }
+  } cleanup{root};
+  const auto prelude = library / "prelude.gti";
+  const auto entry = root / "main.gti";
+  const std::unordered_map<std::string, std::string> overrides{
+      {prelude.string(),
+       "T cached<T>(T input) { T local = input; return local; }\n"}};
+  std::ofstream(prelude) << overrides.at(prelude.string());
+  lang::FrontendOptions options;
+  options.cache = std::make_shared<lang::FrontendCache>();
+  options.preambleCache = std::make_shared<lang::SemanticPreambleCache>();
+  options.instanceCache = std::make_shared<lang::InstanceAnalysisCache>();
+  options.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
+  const auto run = [&](lang::SourceDebugProfile profile, bool expectWarm) {
+    auto selected = options;
+    lang::FrontendWorkMetrics metrics;
+    selected.sourceDebugProfile = profile;
+    selected.workMetrics = &metrics;
+    auto result = lang::Frontend(selected).analyze(
+        entry, "int main() { int value = cached<int>(7); return value; }\n",
+        {prelude}, overrides, {library});
+    if (!result.canGenerateCode())
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << "frontend source profile: " << diagnostic.message << '\n';
+    expect(result.canGenerateCode() &&
+               result.semantics.sourceDebugProfile() == profile &&
+               result.hir.sourceDebugProfile() == profile &&
+               result.mir.sourceDebugProfile() == profile,
+           "frontend binds the requested profile before semantic and HIR/MIR "
+           "production");
+    expect(metrics.semanticPreambleAdoptions != 0 &&
+               (expectWarm ? metrics.semanticPreambleBuilds == 0
+                           : metrics.semanticPreambleBuilds != 0),
+           "preamble reuse is isolated by the exact source-debug capability");
+    if (!result.canGenerateCode())
+      return;
+    expect(lang::verifyHirSourceDebug(result.semantics, result.hir).valid(),
+           "cached source profile retains verified concrete source facts");
+    for (const auto address : lang::enumerateMirBodyAddresses(result.mir)) {
+      const auto *body = lang::findMirBody(result.mir, address);
+      if (profile == lang::SourceDebugProfile::None)
+        expect(!body->sourceDebug.tables,
+               "None cache reuse allocates no MIR source tables");
+    }
+    if (profile == lang::SourceDebugProfile::LexicalV1)
+      expect(result.mir.module().sourceDebug.tables &&
+                 result.mir.module().sourceDebug.tables->locals.empty(),
+             "the independently empty module inventory remains explicitly "
+             "collected");
+  };
+  run(lang::SourceDebugProfile::None, false);
+  run(lang::SourceDebugProfile::LexicalV1, false);
+  run(lang::SourceDebugProfile::LexicalV1, true);
+  run(lang::SourceDebugProfile::None, true);
+
+  const auto syntax =
+      lang::Frontend({.stopAfter = lang::FrontendPhase::Parsing})
+          .analyze("source-debug-preamble.gti",
+                   "int helper(int value) { return value; }");
+  lang::SemanticVisitor plain;
+  const auto uncollected =
+      plain.buildPreamble(lang::Program(syntax.program.declarations()));
+  expect(lang::semanticPreambleSupportsSourceDebug(
+             *uncollected, lang::SourceDebugProfile::None) &&
+             !lang::semanticPreambleSupportsSourceDebug(
+                 *uncollected, lang::SourceDebugProfile::LexicalV1),
+         "a matching cache key cannot grant missing preamble debug capability");
+  lang::SemanticVisitor collected(
+      lang::TargetInfo::host(), nullptr, true, nullptr, nullptr,
+      lang::RawPointerAuditMode::Off, false,
+      lang::TrustedBodyAnalysis::Complete, lang::SourceDebugProfile::LexicalV1);
+  collected.adoptPreamble(uncollected, syntax.program.declarations().size());
+  expect(collected.check(syntax.program) &&
+             collected.model().sourceDebugProfile() ==
+                 lang::SourceDebugProfile::LexicalV1 &&
+             !collected.model().sourceDebugBodies().empty() &&
+             collected.model().verifySourceDebug().empty(),
+         "an incompatible direct preamble adoption falls back to complete "
+         "analysis");
+}
+
 void testMirSourceDebugTransport() {
   const auto syntax =
       lang::Frontend({.stopAfter = lang::FrontendPhase::Parsing})
@@ -566,7 +662,9 @@ void testDebugPlaceAvailability() {
   const auto library =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto frontend =
-      lang::Frontend().analyze("debug-place-availability.gti", R"gti(
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-place-availability.gti", R"gti(
 #include <std/memory>
 int probe(mut int input, bool choose) {
   mut int local = input;
@@ -591,7 +689,7 @@ int repeated(mut int count) {
 }
 int main() { return probe(4, true); }
 )gti",
-                               {library / "prelude.gti"}, {}, {library});
+                   {library / "prelude.gti"}, {}, {library});
   expect(frontend.canGenerateCode(), "debug place query fixture lowers");
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
@@ -669,6 +767,38 @@ int main() { return probe(4, true); }
              std::find(result.requiredStops.begin(), result.requiredStops.end(),
                        *movedStop) != result.requiredStops.end(),
          "a moved interior cuts ranges even when reinitialization restores it");
+  auto lowered = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(lowered.valid(),
+         "move/reinitialize fixture constructs fresh source ranges");
+  if (lowered.valid() && movedStop) {
+    const auto *debug =
+        lowered.program->findBody({lang::MirBodyKind::Function, function->id});
+    const auto *block = body.findBlock(movedStop->point.block);
+    const auto position = [&](lang::MirDebugPoint point) {
+      if (point.blockEntry)
+        return std::size_t{0};
+      for (std::size_t i = 0; i < block->instructions.size(); ++i)
+        if (block->instructions[i].id == point.instruction)
+          return 2 * i + 1 + std::size_t(point.after);
+      return 2 * block->instructions.size() + 1;
+    };
+    bool before = false;
+    bool after = false;
+    for (const auto &range : debug->sourceDebug.tables->ranges) {
+      if (range.place != local || range.begin.block != block->id)
+        continue;
+      before |= position(range.end) <= position(movedStop->point);
+      after |= position(range.begin) > position(movedStop->point);
+      expect(!(position(range.begin) < position(movedStop->point) &&
+               position(range.end) > position(movedStop->point)),
+             "lowered ranges cannot bridge a moved interior with readable "
+             "endpoints");
+    }
+    expect(before && after, "readable storage has distinct ranges before move "
+                            "and after reinitialization");
+  }
   auto forged = queries;
   forged.front().place = 0;
   const auto invalid = lang::mir_detail::verifyMirBodyWithPlaceQueries(
@@ -859,7 +989,11 @@ template <typename Payload>
 [[nodiscard]] std::optional<lang::LoweredProgram>
 buildDetachedProgram(std::string_view sourceName = "lowered-program.gti",
                      bool debugInfo = false) {
-  lang::FrontendResult frontend = lang::Frontend().analyze(sourceName, R"(
+  lang::FrontendResult frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = debugInfo ? lang::SourceDebugProfile::LexicalV1
+                                           : lang::SourceDebugProfile::None})
+          .analyze(sourceName, R"(
 using Unary = (int32_t) -> int32_t;
 
 enum class Mode : int32_t { active = 1, idle = 2 };
@@ -964,8 +1098,8 @@ int main() {
   }
   lang::LoweredProgramBuild build = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
-      optimized.mir, optimized.report.transformations, lang::TargetInfo::host(),
-      debugInfo);
+      optimized.mir, optimized.report.transformations,
+      lang::TargetInfo::host());
   if (!build.valid()) {
     for (const lang::LoweredProgramIssue &issue : build.issues) {
       std::cerr << "lowered-program issue: " << issue.detail << '\n';
@@ -1285,30 +1419,118 @@ void testDetachedDebugLocations() {
          "debug capture should retain a valid detached program");
   if (!normal || !debug)
     return;
+  for (const auto &body : normal->bodies()) {
+    const auto *collected = debug->findBody(body.identity.address);
+    expect(collected && collected->identity.placeDomain.body ==
+                            body.identity.placeDomain.body,
+           "debug collection must not change executable body domain numbering");
+  }
   expect(std::all_of(
              normal->bodies().begin(), normal->bodies().end(),
-             [](const auto &body) { return body.sourceLocations.empty(); }),
+             [](const auto &body) { return body.sourceLocations().empty(); }),
          "debug provenance should be opt-in");
   auto &bodies = lang::LoweredProgramTestAccess::bodies(*debug);
   const auto body =
       std::find_if(bodies.begin(), bodies.end(), [](const auto &body) {
-        return !body.sourceLocations.empty();
+        return !body.sourceLocations().empty();
       });
   expect(body != bodies.end(),
          "debug provenance should survive frontend destruction");
   if (body == bodies.end())
     return;
-  expect(std::all_of(body->sourceLocations.begin(), body->sourceLocations.end(),
+  expect(std::all_of(body->sourceLocations().begin(),
+                     body->sourceLocations().end(),
                      [](const auto &row) {
                        return row.source.source.ends_with("debug-source.gti") &&
                               row.source.line > 0 &&
                               row.source.start < row.source.end;
                      }),
          "debug rows should own real source statement spans");
-  body->sourceLocations.front().block = 999999;
+  body->sourceDebug.tables->locations.front().block = 999999;
   expect(hasIssue(lang::verifyLoweredProgram(*debug),
                   lang::LoweredProgramIssueKind::InvalidBodyInventory),
          "debug stages must identify exact optimized MIR operations");
+}
+
+void testDetachedDebugRanges() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-ranges.gti", R"gti(
+int probe(int input) {
+  mut int result = input;
+  { int local = input + 1; result = local; }
+  { int local = input + 2; result = result + local; }
+  return result;
+}
+int main() { return probe(3); }
+)gti");
+  expect(frontend.canGenerateCode(), "lexical-range fixture must analyze");
+  if (!frontend.canGenerateCode())
+    return;
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(),
+         "fresh scalar availability must construct lowered ranges");
+  if (!built.valid())
+    return;
+  std::size_t ranges = 0;
+  std::size_t shadows = 0;
+  for (const auto &body : built.program->bodies()) {
+    if (!body.sourceDebug.tables)
+      continue;
+    const auto &tables = *body.sourceDebug.tables;
+    for (const auto &local : tables.locals)
+      if (local.declaration.name == "local") {
+        ++shadows;
+        expect(std::any_of(tables.ranges.begin(), tables.ranges.end(),
+                           [&](const auto &range) {
+                             return range.local == local.declaration.id &&
+                                    range.place == local.place;
+                           }),
+               "each shadowed declaration must retain its own existing-place "
+               "interval");
+      }
+    std::vector<lang::MirDebugAvailabilityRequest> requests;
+    for (const auto &range : tables.ranges) {
+      ++ranges;
+      expect(range.begin.block == range.end.block && range.begin != range.end,
+             "source ranges are nonempty and block-local");
+      requests.push_back({range.local, range.begin});
+    }
+    const auto observed = lang::queryMirDebugAvailability(
+        built.program->mir(), body.identity.address, requests);
+    expect(
+        observed.verification.valid() &&
+            std::all_of(observed.requested.begin(), observed.requested.end(),
+                        [](const auto &fact) {
+                          return fact.readability ==
+                                 lang::MirDebugReadability::DefinitelyReadable;
+                        }),
+        "every range begins with fresh definitely-readable existing storage");
+  }
+  expect(ranges != 0 && shadows == 2 &&
+             lang::verifyLoweredProgram(*built.program).empty(),
+         "sealed range inventory retains distinct lexical locals");
+  auto forged = *built.program;
+  for (auto &body : lang::LoweredProgramTestAccess::bodies(forged))
+    if (body.sourceDebug.tables && !body.sourceDebug.tables->ranges.empty()) {
+      body.sourceDebug.tables->ranges.front().end =
+          body.sourceDebug.tables->ranges.front().begin;
+      const auto issues = lang::verifyLoweredProgram(forged);
+      expect(std::any_of(issues.begin(), issues.end(),
+                         [](const auto &issue) {
+                           return issue.detail.find(
+                                      "fresh current MIR availability") !=
+                                  std::string::npos;
+                         }),
+             "range mutations must fail independent fresh recomputation, not "
+             "only the seal");
+      expect(lang::verifyLoweredProgram(*built.program).empty(),
+             "range table copies must not alias the accepted snapshot");
+      break;
+    }
 }
 
 void testVerificationEvidenceOwnsItsProgram() {
@@ -2424,11 +2646,13 @@ int main() {
   testSourceDebugRecordOwnership();
   testSemanticSourceDebugProducers();
   testInitializerSourceDebugProducers();
+  testFrontendSourceDebugProfile();
   testMirSourceDebugTransport();
   testDebugPlaceAvailability();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();
+  testDetachedDebugRanges();
   testVerificationEvidenceOwnsItsProgram();
   testMutationRejection();
   testConcreteBranchSymbols();

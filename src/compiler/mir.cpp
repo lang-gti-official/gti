@@ -10101,9 +10101,9 @@ static MirVerificationResult verifyMirSourceDebugStructure(const MirBody &body,
   }
   const auto validMembership = [&](const auto &rows) {
     std::unordered_set<std::size_t> seen;
-    for (const auto &[anchor, scope] : rows)
-      if (!anchor || !scope || scope > tables.scopes.size() ||
-          !seen.insert(anchor).second)
+    for (const auto &anchor : rows)
+      if (!anchor.id || !anchor.scope || anchor.scope > tables.scopes.size() ||
+          !seen.insert(anchor.id).second)
         return false;
     return true;
   };
@@ -16060,17 +16060,10 @@ MirDebugAvailabilityBatch queryMirDebugAvailability(
     result.readability = fact.readability;
     result.reason = fact.reason;
   }
-  const std::unordered_map<HirStatementId, SourceScopeId> statementScopes(
-      tables.statements.begin(), tables.statements.end());
-  const std::unordered_map<HirValueId, SourceScopeId> valueScopes(
-      tables.values.begin(), tables.values.end());
+  const mir_detail::MirSourceAnchorIndex anchors(*body);
   const auto scopeFor = [&](HirStatementId statement, HirValueId value) {
-    if (const auto found = statementScopes.find(statement);
-        found != statementScopes.end())
-      return found->second;
-    if (const auto found = valueScopes.find(value); found != valueScopes.end())
-      return found->second;
-    return SourceScopeId{0};
+    const auto *anchor = anchors.find(statement, value);
+    return anchor ? anchor->scope : SourceScopeId{0};
   };
   const auto position = [&](MirDebugPoint point) {
     const auto &block = *body->findBlock(point.block);
