@@ -2438,6 +2438,71 @@ bool mirDropHasPolymorphicCleanup(const MirDropType &type) {
                      mirDropHasPolymorphicCleanup);
 }
 
+std::optional<MirOwnedStoragePayloadInitialization>
+mirOwnedStoragePayloadInitialization(const MirProgram &program,
+                                     const MirConstructorInstance &constructor) {
+  const auto *owner = program.findClassInstance(constructor.owner);
+  const auto &body = constructor.body;
+  if (!owner || owner->compilerCapability != CompilerCapabilityTypeKind::MutexStorage ||
+      owner->type.kind != SemanticType::Class || owner->type.arguments.size() != 1 ||
+      owner->destructor || owner->abstract || owner->polymorphic || owner->unionLayout ||
+      owner->cAbiRecord || owner->cAbiLayout || owner->cOpaqueHandle ||
+      owner->requiresActiveDropState || !owner->requiresActiveCleanup ||
+      !owner->declaredFields.empty() || !owner->fields.empty() ||
+      !owner->fieldDropOrder.empty() || !owner->bases.empty() || !owner->structuralBases.empty() ||
+      constructor.definitionKind != MirDefinitionKind::Source ||
+      constructor.parameterTypes != owner->type.arguments ||
+      constructor.parameterBindings.size() != 1 || !constructor.parameterBindings[0] ||
+      !constructor.initializers.empty() || !constructor.typeArguments.empty() ||
+      !constructor.valueArguments.empty() || constructor.requiresUnsafe ||
+      constructor.borrowOrigin != BorrowOriginKind::None ||
+      body.kind != MirBodyKind::Constructor ||
+      body.returnType != SemanticType::Void || !body.values.empty() ||
+      !body.loans.empty() || !body.fullExpressions.empty() ||
+      !body.rangeIterations.empty() || !body.programConstantSubstitutions.empty() ||
+      body.places.size() != 1 || body.dropObligations.size() != 1 ||
+      !verifyMirBody(body, constructor.id).valid())
+    return std::nullopt;
+  const auto &parameter = body.places.front();
+  const auto &drop = body.dropObligations.front();
+  const auto &payload = owner->type.arguments.front();
+  const auto recipe = mirUniqueCleanupType(program, payload);
+  if (parameter.root != MirPlaceRootKind::Binding ||
+      parameter.binding != constructor.parameterBindings[0] || parameter.type != payload ||
+      !parameter.initiallyAvailable || !parameter.projections.empty() ||
+      parameter.traits.containsBorrowedState ||
+      mirTypeRelocationKind(program, payload) == RelocationKind::Unavailable ||
+      !recipe || !recipe->requiresActiveCleanup || drop.dropType != *recipe ||
+      drop.kind != MirDropObligationKind::Binding || drop.place != parameter.id ||
+      drop.binding != parameter.binding || !drop.initiallyActive)
+    return std::nullopt;
+  unsigned drops = 0;
+  for (const auto &block : body.blocks) {
+    if (!block.parameters.empty() ||
+        (block.terminator.kind != MirTerminatorKind::Return &&
+         block.terminator.kind != MirTerminatorKind::Invoke &&
+         block.terminator.kind != MirTerminatorKind::PropagateFailure))
+      return std::nullopt;
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind == MirInstructionKind::Drop) {
+        ++drops;
+        if (instruction.destination != parameter.id || instruction.lifecycle.size() != 1 ||
+            instruction.lifecycle.front().kind != MirLifecycleEventKind::Drop ||
+            instruction.lifecycle.front().source != drop.id ||
+            instruction.lifecycle.front().target || instruction.lifecycle.front().conditional ||
+            instruction.lifecycle.front().failureCleanup)
+          return std::nullopt;
+      } else if (instruction.kind != MirInstructionKind::Lifecycle ||
+                 !instruction.cleanupBoundaryEnd || !instruction.lifecycle.empty()) {
+        return std::nullopt;
+      }
+    }
+  }
+  if (drops != 1)
+    return std::nullopt;
+  return MirOwnedStoragePayloadInitialization{payload, parameter.id, drop.id};
+}
+
 bool mirDropIsNativeRetirement(const MirProgram &program,
                                const MirDropType &type) {
   const auto exact = mirUniqueCleanupType(program, type.type);

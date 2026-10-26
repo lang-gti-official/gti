@@ -22,7 +22,11 @@ def main():
     parser.add_argument("--runtime-library", type=Path)
     parser.add_argument("--sanitize", choices=("address,undefined", "thread"))
     parser.add_argument("--evidence-dir", type=Path)
+    parser.add_argument("--gti", type=Path,
+                        help="also run the existing C++ source-cleanup differential")
     args = parser.parse_args()
+    if args.gti and args.sanitize:
+        parser.error("run the C++ differential separately from native instrumentation")
     root, output = args.root.resolve(), args.output.resolve()
     runtime_library = args.runtime_library or args.emitter.resolve().parent / "libgti_runtime.a"
     output.mkdir(parents=True, exist_ok=True)
@@ -77,6 +81,16 @@ def main():
                                       "-Dgti_rt_failure_terminate_v2=gti_test_real_failure_terminate_v2",
                                       "-c", root / "runtime/src/failure.cpp",
                                       "-o", output / "failure-runtime.o"])
+    run("emit-active-source", [args.emitter.resolve(), root, "--active-source-composition",
+                                output / "active-source.ll", *sanitize])
+    run("active-source-observer", [args.cc, "-std=c17", *flags, "-c",
+                                    root / "tests/fixtures/llvm_mutex_source_lifecycle.c",
+                                    "-o", output / "active-source-observer.o"])
+    run("active-failure-runtime", [args.cxx, "-std=c++20", *flags,
+                                    "-Dgti_rt_failure_terminate_v2=gti_test_real_failure_terminate_v2",
+                                    "-Dgti_rt_failure_terminate_cleanup_v2=gti_test_real_failure_terminate_cleanup_v2",
+                                    "-c", root / "runtime/src/failure.cpp",
+                                    "-o", output / "active-failure-runtime.o"])
     for mode in ("O0", "O1", "O2", "O3"):
         run(f"ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation, "-c", output / "mutex.ll",
                            "-o", output / f"mutex-{mode}.o"])
@@ -118,8 +132,37 @@ def main():
         for failure_mode in ("before", "partial-first", "partial-last", "after", "entry"):
             run(f"source-{failure_mode}-{mode}", [source_program], expected=70,
                 failure_mode=failure_mode)
+        run(f"active-source-ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation,
+                                          "-c", output / "active-source.ll",
+                                          "-o", output / f"active-source-{mode}.o"])
+        active_program = output / f"active-source-{mode}"
+        run(f"active-source-link-{mode}", [args.cxx, "-pthread", *instrumentation,
+                                            output / "active-source-observer.o", output / "runtime.o",
+                                            output / "active-failure-runtime.o",
+                                            output / f"active-source-{mode}.o", runtime_library,
+                                            "-o", active_program])
+        run(f"active-source-execute-{mode}", [active_program])
+        for failure_mode in ("nested", "cell-last", "cell-first", "double"):
+            run(f"active-source-{failure_mode}-{mode}", [active_program], expected=70,
+                failure_mode=failure_mode)
         for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock"):
             run(f"{fault}-{mode}", [program, fault], death=True)
+
+    if args.gti:
+        run("cpp-source-observer", [args.cc, "-std=c17", *flags, "-DGTI_CPP_ORACLE", "-c",
+                                     root / "tests/fixtures/llvm_mutex_source_lifecycle.c",
+                                     "-o", output / "cpp-source-observer.o"])
+        for standard, mode in (("c++20", "O0"), ("c++23", "O3")):
+            program = output / f"cpp-active-{standard}"
+            run(f"cpp-source-build-{standard}", [args.gti.resolve(), "--execution-profile", "concurrent",
+                                                  "--std", standard, f"-{mode}",
+                                                  root / "tests/fixtures/llvm_mutex_source_lifecycle.gti",
+                                                  "-o", program, "--", output / "cpp-source-observer.o",
+                                                  output / "runtime.o", output / "active-failure-runtime.o"])
+            run(f"cpp-source-execute-{standard}", [program])
+            for failure_mode in ("nested", "cell-last", "cell-first", "double"):
+                run(f"cpp-source-{failure_mode}-{standard}", [program], expected=70,
+                    failure_mode=failure_mode)
 
 
 if __name__ == "__main__":

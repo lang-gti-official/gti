@@ -1078,6 +1078,24 @@ original record at the real failure terminator. This is source-composition
 evidence, not a public mutex/worker profile or a C04 transport decision. Separate
 kernel cases check repeated teardown and unpublished-prefix handling.
 
+An additional source-composition fixture uses the actual fallible GTI payload
+destructor, rather than the kernel's explicit C destructor double. A source
+record owns two mutexes; an unrelated owning sum carries another mutex inside
+an outer mutex payload. Normal and first-failure traces require three exact
+payload destructions in reverse order and one retirement per initialized native
+identity, including identities created by payload transfer. A second destructor
+failure requires the real emergency record and stops before retiring the final
+native shell, matching terminal cleanup abandonment. Native O0-O3 and sanitizer
+execution remain distinct from public admission.
+
+The optional `llvm_mutex_service_test.py --gti` differential checks those actual
+source destructor traces through C++20/O0 and C++23/O3. The current C++ backend
+rejects the public wrapper constructor's fallible moved-parameter cleanup as
+outside its complete text vocabulary. That failed comparator is a recorded
+backend gap, not a pass or a reason to weaken the native oracle; existing C++
+mutex regression families remain required. No C++ feature catch-up or failure
+transport change is supplied to make this new composition comparable.
+
 ### Scoped-worker execution
 
 `gti_rt_thread_scope_v1` adds a synchronous native group boundary over borrowed

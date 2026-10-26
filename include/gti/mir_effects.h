@@ -86,6 +86,19 @@ mirInvocationTargets(const MirProgram &program, const MirBody &body,
 [[nodiscard]] MirProgramEffectSummaries
 deriveMirProgramEffectSummaries(const MirProgram &program);
 
+struct MirOwnedStoragePayloadInitialization {
+  SemanticType payloadType;
+  MirPlaceId parameterPlace = 0;
+  MirDropObligationId parameterDrop = 0;
+};
+
+// A trusted opaque-storage constructor consumes this exact owned parameter
+// before its cleanup-only source body. The remaining Drop sees moved-from
+// state. This is not a failure-effect refinement or a source-destructor waiver.
+[[nodiscard]] std::optional<MirOwnedStoragePayloadInitialization>
+mirOwnedStoragePayloadInitialization(const MirProgram &program,
+                                     const MirConstructorInstance &constructor);
+
 struct MirDefinedFailureEffects {
   std::vector<bool> functions;
   std::vector<bool> constructors;

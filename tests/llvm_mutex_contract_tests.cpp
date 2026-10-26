@@ -139,7 +139,7 @@ void checkProcessStorage(const std::filesystem::path &root,
 
 void checkSourceComposition(const std::filesystem::path &root,
                              const std::filesystem::path &output,
-                             std::string_view sanitizer) {
+                             std::string_view sanitizer, bool activePayload) {
   FrontendOptions options;
   options.target.executionProfile = ExecutionProfile::Concurrent;
   options.target.runtimeCapabilities.threads = true;
@@ -147,7 +147,8 @@ void checkSourceComposition(const std::filesystem::path &root,
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
   const auto frontend = Frontend(options).analyze(
-      root / "tests/fixtures/llvm_native_process_storage.gti", std::nullopt,
+      root / (activePayload ? "tests/fixtures/llvm_mutex_source_lifecycle.gti"
+                            : "tests/fixtures/llvm_native_process_storage.gti"), std::nullopt,
       {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
   require(frontend.canGenerateCode(), "source composition reaches verified MIR");
   std::vector<LoweredProgramIssue> issues;
@@ -230,6 +231,38 @@ void checkActive(const std::filesystem::path &root,
   const auto *destructor = program.findDestructorInstance(*payload.destructor);
   require(destructor && destructor->mayRaiseDefinedFailure,
           "payload observer exercises the existing fallible destructor ABI");
+  bool activeConstructor = false;
+  for (const auto &constructor : program.constructorInstances()) {
+    const auto *owner = program.findClassInstance(constructor.owner);
+    if (!owner || owner->type != storage)
+      continue;
+    activeConstructor = true;
+    const auto initialization = mirOwnedStoragePayloadInitialization(program, constructor);
+    require(initialization && initialization->payloadType == payload.type &&
+                initialization->parameterPlace == constructor.body.places.front().id &&
+                initialization->parameterDrop == constructor.body.dropObligations.front().id,
+            "MIR proves the exact owned parameter and moved-from cleanup endpoint");
+    require(nativeMutexConstructor(program, constructor) == payload.type,
+            "active payload constructor has an exact cleanup-only parameter body");
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto changed = constructor;
+      if (mutation == 0)
+        changed.body.dropObligations.front().dropType.destructor.reset();
+      if (mutation == 1)
+        changed.body.dropObligations.front().initiallyActive = false;
+      if (mutation == 2)
+        changed.body.blocks.front().instructions.push_back(
+            {.id = changed.body.instructionCount() + 1,
+             .kind = MirInstructionKind::Call});
+      if (mutation == 3)
+        changed.body.places.front().traits.containsBorrowedState = true;
+      require(!nativeMutexConstructor(program, changed),
+              "active payload proof rejects wrong recipe/state/code/borrowed authority");
+      require(!mirOwnedStoragePayloadInitialization(program, changed),
+              "the backend-neutral owned-payload query independently rejects mutations");
+    }
+  }
+  require(activeConstructor, "active source materializes its native constructor");
   const auto layout = session.layouts().mutexStorage(storage);
   require(layout.object.size == 80 && layout.payloadIndex == 1 &&
               layout.object.fieldOffsets[1] == 64 &&
@@ -564,13 +597,15 @@ void check(const std::filesystem::path &root,
 
 int main(int argc, char **argv) {
   if ((argc == 4 || argc == 5) &&
-      std::string_view(argv[2]) == "--source-composition") {
+      (std::string_view(argv[2]) == "--source-composition" ||
+       std::string_view(argv[2]) == "--active-source-composition")) {
     try {
       const std::string_view sanitizer = argc == 5 ? argv[4] : "";
       if (!sanitizer.empty() && sanitizer != "thread" &&
           sanitizer != "address,undefined")
         return 2;
-      checkSourceComposition(argv[1], argv[3], sanitizer);
+      checkSourceComposition(argv[1], argv[3], sanitizer,
+                             std::string_view(argv[2]) == "--active-source-composition");
       return 0;
     } catch (const std::exception &error) {
       std::cerr << error.what() << '\n';

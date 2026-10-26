@@ -2807,6 +2807,18 @@ to be empty; unsafe hosts must independently ensure no foreign execution can
 access unloading storage. This does not enable general source global
 destructors or change embedding activation/context lifetime rules.
 
+`mirOwnedStoragePayloadInitialization` proves the existing compiler-private
+opaque-storage constructor mechanism: one exact owned parameter becomes its
+payload, followed only by that parameter's moved-from cleanup. It requires the
+trusted capability identity, concrete parameter/place, unique active cleanup
+recipe and independently valid cleanup-only body. Extra source code, borrowed
+state, wrong recipes or inactive input cleanup reject. The query does not
+weaken verification, change declared effects or select failure transport.
+Conservative destructor effects remain conservative even though this particular
+parameter cleanup observes moved-from representation state. LLVM consumes the
+witness and uses structural fresh-shell transfer when the payload itself
+contains native mutexes, including selected owning-sum alternatives.
+
 Ambient persistent-storage effects are independently derived from executable
 MIR, not trusted frontend summary claims. `mir_storage_effects.cpp` reuses the
 existing canonical-place/CFG loan verifier to collect direct typed storage

@@ -1,5 +1,6 @@
 #include "mutexes.h"
 #include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 #include "runtime_abi.h"
 
 #include <algorithm>
@@ -48,6 +49,10 @@ nativeMutexConstructor(const MirProgram &program,
                                  CompilerCapabilityTypeKind::MutexStorage)
             : std::nullopt;
   const auto &body = constructor.body;
+  if (payload && mirOwnedStoragePayloadInitialization(program, constructor) &&
+      program.target().executionProfile == ExecutionProfile::Concurrent &&
+      program.target().runtimeCapabilities.threads)
+    return payload;
   if (!payload ||
       program.target().executionProfile != ExecutionProfile::Concurrent ||
       !program.target().runtimeCapabilities.threads ||
@@ -64,7 +69,9 @@ nativeMutexConstructor(const MirProgram &program,
                   constructor.effectSummary.argumentsEscape.end(),
                   [](bool escapes) { return escapes; }) ||
       !body.values.empty() || !body.loans.empty() ||
-      !body.fullExpressions.empty() || body.places.size() != 1)
+      !body.fullExpressions.empty() || body.places.size() != 1 ||
+      body.dropObligations.size() > 1 ||
+      !verifyMirBody(body, constructor.id).valid())
     return {};
   const auto &parameter = body.places.front();
   if (parameter.root != MirPlaceRootKind::Binding ||
@@ -72,11 +79,14 @@ nativeMutexConstructor(const MirProgram &program,
       parameter.type != *payload || !parameter.initiallyAvailable ||
       !parameter.projections.empty())
     return {};
-  for (const auto &drop : body.dropObligations)
+  const auto parameterRecipe = mirUniqueCleanupType(program, *payload);
+  for (const auto &drop : body.dropObligations) {
     if (drop.kind != MirDropObligationKind::Binding ||
         drop.place != parameter.id || drop.binding != parameter.binding ||
-        drop.dropType.type != *payload || !drop.initiallyActive)
+        !parameterRecipe || drop.dropType != *parameterRecipe ||
+        !drop.initiallyActive)
       return {};
+  }
   for (const auto &block : body.blocks) {
     if (!block.parameters.empty())
       return {};

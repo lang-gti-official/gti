@@ -1502,8 +1502,10 @@ private:
       const auto layout = session.layouts().mutexStorage(owner->type);
       auto *source = memory.address(input.places.front().id);
       Mutexes(session, ir).initializeShell(thisAddress, owner->type);
-      store(load(source, *payload),
-             ir.CreateStructGEP(layout.object.storage, thisAddress, layout.payloadIndex), *payload);
+      auto *destination = ir.CreateStructGEP(layout.object.storage, thisAddress,
+                                             layout.payloadIndex);
+      if (!lifetimes.transferMutexes(ir, destination, source, *payload))
+        store(load(source, *payload), destination, *payload);
       lifetimes.moved(ir, source, *payload);
       ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive | MutexStorageLayout::payloadLive),
                      ir.CreateStructGEP(layout.object.storage, thisAddress, layout.payloadActiveIndex));
