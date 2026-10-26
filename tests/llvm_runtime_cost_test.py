@@ -11,6 +11,7 @@ from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -49,6 +50,34 @@ def measurement_window(root, args):
                 reservations.enter_context(window.acquire("suite", sys.argv, measurement_slot=args.slot))
         print(f"reserved idle host for {args.slot}; capacities unchanged", flush=True)
         yield
+
+
+RESOURCE_SCOPE = (
+    "maximum resident set reported by /usr/bin/time for this command; platform "
+    "accounting applies; not simultaneous process-tree RSS or a whole compiler build"
+)
+
+
+def build_resource_command(argv, system):
+    if system not in ("Darwin", "Linux"):
+        raise ValueError(f"unsupported build resource platform: {system}")
+    return ["/usr/bin/time", "-l" if system == "Darwin" else "-v", *map(str, argv)]
+
+
+def parse_build_resources(stderr, system):
+    if system == "Darwin":
+        matches = re.findall(r"^[ \t]*([0-9]+)[ \t]+maximum resident set size[ \t]*$", stderr, re.M)
+        unit, scale = "bytes", 1
+    elif system == "Linux":
+        matches = re.findall(r"^[ \t]*Maximum resident set size \(kbytes\):[ \t]+([0-9]+)[ \t]*$", stderr, re.M)
+        unit, scale = "KiB", 1024
+    else:
+        raise ValueError(f"unsupported build resource platform: {system}")
+    if len(matches) != 1 or int(matches[0]) <= 0:
+        raise ValueError("build resource output must contain one positive peak RSS value")
+    return {"peak_resident_bytes": int(matches[0]) * scale,
+            "reported_value": int(matches[0]), "reported_unit": unit,
+            "source": "/usr/bin/time", "scope": RESOURCE_SCOPE}
 
 
 DECLARATIONS = '''int gti_cost_iterations() { return COUNT; }
@@ -142,6 +171,8 @@ def main():
     parser.add_argument("--clang", default="clang")
     parser.add_argument("--case", choices=tuple(CASES), action="append")
     parser.add_argument("--measure", action="store_true")
+    parser.add_argument("--build-resources", action="store_true",
+                        help="retain per-build maximum resident size; no workload timing required")
     parser.add_argument("--slot")
     parser.add_argument("--parent-suite", action="store_true")
     parser.add_argument("--wait-seconds", type=int, default=1200)
@@ -160,26 +191,48 @@ def main():
     assert set(matrix["admitted"]) == set(CASES)
     selected = args.case or list(CASES)
     output.mkdir(parents=True)
-    manifest = {"schema": 1, "status": "running", "pending": matrix["pending"],
+    manifest = {"schema": 2, "status": "running", "pending": matrix["pending"],
                 "unmeasured_obligations": matrix["unmeasured_obligations"],
                 "slot": args.slot, "commands": [], "correctness": [], "timing": [],
                 "measurement_contract": "process wall time includes startup, GTI initialization/cleanup and exit; no foreign timer hook",
-                "gti_sha256": hashlib.sha256(args.gti.read_bytes()).hexdigest()}
+                "gti_sha256": hashlib.sha256(args.gti.read_bytes()).hexdigest(),
+                "gti_build_cache_sha256": hashlib.sha256(args.gti_build_cache.read_bytes()).hexdigest(),
+                "gti_source_head": None,
+                "compiler_source_binding": "executable and cache hashes retained; optimized CMake mode does not establish a source head",
+                "native_target_equivalence": "not established by this harness; no matched-target parity claim",
+                "build_resource_contract": RESOURCE_SCOPE,
+                "build_resources_requested": args.build_resources}
     env = dict(os.environ, NO_COLOR="1", GTI_COLOR="never")
 
-    def run(argv, extra_env=None):
+    def run(argv, extra_env=None, *, build=False):
+        command = [str(x) for x in argv]
+        measured_build = build and args.build_resources
+        if measured_build:
+            assert Path("/usr/bin/time").is_file(), "build resource tool is unavailable"
+            command = build_resource_command(command, platform.system())
         before = resource.getrusage(resource.RUSAGE_CHILDREN)
         started = time.perf_counter()
-        result = subprocess.run([str(x) for x in argv], cwd=root, env=extra_env or env,
+        command_env = extra_env or env
+        if measured_build:
+            command_env = dict(command_env, LC_ALL="C")
+        result = subprocess.run(command, cwd=root, env=command_env,
                                 text=True, capture_output=True, timeout=240)
         result.wall_seconds = time.perf_counter() - started
         after = resource.getrusage(resource.RUSAGE_CHILDREN)
         result.cpu_seconds = after.ru_utime + after.ru_stime - before.ru_utime - before.ru_stime
         name = f"command-{len(manifest['commands']):03}.log"
         (output / name).write_text(result.stdout + result.stderr)
-        manifest["commands"].append({"argv": [str(x) for x in argv], "exit": result.returncode, "log": name,
-                                     "wall_seconds": result.wall_seconds, "cpu_seconds": result.cpu_seconds})
+        entry = {"argv": [str(x) for x in argv], "exit": result.returncode, "log": name,
+                 "wall_seconds": result.wall_seconds, "cpu_seconds": result.cpu_seconds,
+                 "kind": "build" if build else "command"}
+        if measured_build:
+            entry["measurement_argv"] = command
+        if build:
+            entry["resources"] = {"status": "pending" if measured_build else "not-requested"}
+        manifest["commands"].append(entry)
         assert result.returncode == 0, str(output / name)
+        if measured_build:
+            entry["resources"] = {"status": "measured", **parse_build_resources(result.stderr, platform.system())}
         return result
 
     def quiet():
@@ -191,15 +244,15 @@ def main():
     reservation = ExitStack()
     try:
         reservation.enter_context(measurement_window(root, args))
-        manifest["head"] = run(["git", "rev-parse", "HEAD"]).stdout.strip()
-        manifest["dirty"] = run(["git", "status", "--short"]).stdout
+        manifest["harness_head"] = run(["git", "rev-parse", "HEAD"]).stdout.strip()
+        manifest["harness_dirty"] = run(["git", "status", "--short"]).stdout
         manifest["gti_version"] = run([args.gti, "--version"]).stdout.strip()
         clang = shutil.which(args.clang)
         assert clang
         host = output / "scalar-oracle"
         run([clang, "-std=c17", "-D_POSIX_C_SOURCE=200809L", "-O2", "-c",
-             root / "tests/fixtures/llvm_optimization/runtime_cost_oracle.c", "-o", output / "oracle.o"])
-        run([clang, output / "oracle.o", "-o", host])
+             root / "tests/fixtures/llvm_optimization/runtime_cost_oracle.c", "-o", output / "oracle.o"], build=True)
+        run([clang, output / "oracle.o", "-o", host], build=True)
         binaries = {}
         for name in selected:
             family, source = CASES[name]
@@ -211,7 +264,7 @@ def main():
             path.write_text(declarations + source + "\n")
             for backend, optimization in [("cpp", "3"), *(('llvm', str(i)) for i in range(4))]:
                 binary = output / f"{name}-{backend}-O{optimization}"
-                run([args.gti, path, "--backend", backend, f"-O{optimization}", "-o", binary])
+                run([args.gti, path, "--backend", backend, f"-O{optimization}", "-o", binary], build=True)
                 result = run([binary])
                 assert not result.stderr and not result.stdout
                 manifest["correctness"].append({"case": name, "backend": backend, "optimization": optimization,
