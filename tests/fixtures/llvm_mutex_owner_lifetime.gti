@@ -12,12 +12,13 @@ public:
   Payload(Payload&& other) = default;
   int32_t read() { return this.id; }
   ~Payload() {
-    drops.store(drops.load() + this.id);
+    drops.store(drops.load() * 10 + this.id);
   }
 };
 
 int main() {
   {
+    std::mutex<Payload> unrelated{Payload(3)};
     std::mutex<Payload> first{Payload(7)};
     {
       std::mutex_guard<Payload> guard = first.lock();
@@ -33,5 +34,6 @@ int main() {
     // Moving an owner or a guard must not execute payload cleanup.
     if (drops.load() != 0) { return 4; }
   }
-  return drops.load() == 7 ? 0 : 5;
+  // Destination payload first, then unrelated owner; moved-from payload never.
+  return drops.load() == 73 ? 0 : 5;
 }

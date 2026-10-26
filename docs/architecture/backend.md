@@ -4246,6 +4246,14 @@ that record. It never inspects a public `std::atomic` method, order-tag source
 expression, or native overload to reconstruct semantics. Strong CAS emits both
 verified success and failure orders, including the exact nine legal pairs.
 
+The retained C++ mutex representation distinguishes its engaged native lock
+shell from its optional owned payload. A move creates a fresh unlocked native
+lock and retires the source payload; the later source MIR drop still ends the
+native shell but performs no payload cleanup and does not modify an incoming
+failure record. Unconstructed outer lifetime-slot drops, empty payload access
+and move-from-empty remain rejected. This representation repair does not admit
+native LLVM mutex storage or change source ownership policy.
+
 ## Native Header Backend
 
 `NativeHeaderBackend` derives public records, opaque handles, callback aliases,

@@ -3705,6 +3705,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(mutex_cleanup_failure_runtime PROPERTIES TIMEOUT 600)
   add_test(
+    NAME mutex_move_cleanup_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/mutex_move_cleanup_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(mutex_move_cleanup_runtime PROPERTIES TIMEOUT 600)
+  add_test(
     NAME function_item_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/function_item_runtime_test.py"
