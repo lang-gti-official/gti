@@ -5,6 +5,8 @@
 #include "hosted.h"
 #include "lifetimes.h"
 #include "memory.h"
+#include "native_c_abi.h"
+#include "native_c_contract.h"
 #include "parameter_packs.h"
 #include "payloads.h"
 #include "placement.h"
@@ -674,6 +676,18 @@ private:
       for (const auto &value : instruction.operands)
         inputs.push_back(operand(value));
       return objectMemory.processCall(*target, inputs);
+    }
+    if (target && target->linkage == LanguageLinkage::C) {
+      const auto &program = session.program().mir();
+      const auto &targetInfo = session.program().target();
+      if (!nativeCScalarImportContract(program, targetInfo, *target) &&
+          !nativeCCountedInputContract(program, targetInfo, *target))
+        throw BackendUnsupportedError(
+            "LLVM direct C call requires its supported exact import profile");
+      std::vector<llvm::Value *> arguments;
+      for (const auto &argument : instruction.operands)
+        arguments.push_back(operand(argument));
+      return emitNativeCDirectCall(session, ir, input, instruction, arguments);
     }
     FunctionAbi signature;
     llvm::Function *callee = nullptr;
