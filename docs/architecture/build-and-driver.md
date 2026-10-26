@@ -2167,8 +2167,9 @@ AddressAndUndefinedMemory and Thread; UndefinedMemory denotes only original
 generated load/store null/alignment checks, not complete UBSan. Immutable driver
 requests select these policies through `withLlvmInstrumentation`, after explicit
 LLVM backend selection. Object generation and cache identity use one options
-mapping. Non-None modes currently reject until coherent pipeline and matching
-native runtime support are wired; unknown values and C++ combinations reject.
+mapping. Address, UndefinedMemory and their combination use the generated LLVM
+pipeline and matching native runtime plan; unknown values and C++ combinations
+reject. Thread remains gated on communicating-runtime provenance.
 The default None policy retains current execution. No CLI or manifest selector
 is exposed by this typed API checkpoint, and binary cache payload v5 is unchanged.
 
@@ -2185,8 +2186,11 @@ runtime query or dependency. Thread still needs verified communicating-runtime
 provenance, and instrumented report replay/external native-link provenance remain
 prerequisites. The isolated compatibility probe is C ABI source, never generated C++ for a GTI
 body. Native runtime link/start controls do not establish generated GTI
-instrumentation acceptance; the producer guard remains until coherent wiring and
-its execution gates. The explicit `llvm_native_runtime_identity` fixture is enabled
+instrumentation acceptance. The generated-memory probe separately exercises O0
+and O3 valid access/cleanup, native-runtime identity, cache separation/restoration,
+failed publication and invalid loads executed by GTI-generated instructions.
+It does not claim complete UBSan, foreign-library or Thread coverage.
+The explicit `llvm_native_runtime_identity` fixture is enabled
 with `GTI_LLVM_RUNTIME_TEST_COMPILER` set to a matching Clang++; it fails on a
 mismatch rather than counting a missing runtime pair as passing coverage.
 

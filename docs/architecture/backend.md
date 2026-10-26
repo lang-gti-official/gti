@@ -4370,8 +4370,9 @@ before and after optimization; LLVM error diagnostics prevent publication and
 warnings remain session-owned. Emission is single-use and returns binary
 `BackendArtifactKind::Object` bytes only after successful target emission.
 
-Source debug is selected by the driver's lexical debug profile; the target
-factory still rejects non-None instrumentation. `Session`
+Source debug is selected by the driver's lexical debug profile. The target
+factory admits Address and bounded UndefinedMemory instrumentation; Thread
+requires communicating-runtime provenance and remains rejected. `Session`
 owns the optional source-debug consumer and finalizes it before initial module
 verification. Body lowering binds source functions and source constructors or
 destructors to the exact existing declaration/factory result, maps sealed MIR
@@ -4411,10 +4412,12 @@ full two-host failure/callback debugger matrix remain open.
 
 The typed diagnostic pipeline places bounded load/store null/alignment checks
 before optimization, and stock Address or Thread instrumentation after it.
-Address and Thread are distinct modes. These guarded hooks and component tests
-do not establish generated-code sanitizer or native debugger acceptance; those
-require coherent factory/driver activation, matching native runtimes and
-end-to-end evidence on the exact activated candidate.
+Address and Thread are distinct modes. Address and bounded UndefinedMemory
+activation consume the existing typed driver resolver and matching native
+runtime. Component IR tests alone do not establish generated-code sanitizer or
+native debugger acceptance: each supported platform still needs exact-source
+execution evidence. Thread hooks remain inactive until communicating-runtime
+provenance is verified. No complete UBSan or foreign-library coverage is implied.
 
 `Layouts` allocates deterministic named opaque types for concrete class
 identities before completing record bodies. It is the shared authority for

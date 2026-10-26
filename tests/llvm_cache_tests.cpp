@@ -153,6 +153,174 @@ void runNativeRuntimeChecks(const std::string &compiler) {
          "admission remains a separate gate\n";
 }
 
+void runGeneratedMemoryChecks(const std::filesystem::path &self,
+                              const std::string &compiler,
+                              const std::string &cCompiler,
+                              const std::filesystem::path &root) {
+  require(!std::filesystem::exists(root),
+          "instrumented evidence directory must be new");
+  std::filesystem::create_directories(root);
+  const auto toolchain = discoverToolchainLayout(self.c_str());
+  const auto provider = root / "provider.c";
+  write(provider, R"c(
+#include <stdlib.h>
+#include <string.h>
+static int released;
+int *memory_probe(int mode) {
+  if (mode == 2) return 0;
+  if (mode == 3) {
+    unsigned char *bytes = malloc(sizeof(int) + 1);
+    int value = 17;
+    if (!bytes) abort();
+    memcpy(bytes + 1, &value, sizeof(value));
+    return (int *)(bytes + 1);
+  }
+  int *value = malloc(sizeof(int));
+  if (!value) abort();
+  *value = 17;
+  if (mode == 1) free(value);
+  return value;
+}
+void release_probe(int *value) { free(value); ++released; }
+int release_count(void) { return released; }
+)c");
+  const auto source = root / "main.gti";
+  const auto program = [&](unsigned mode, bool valid) {
+    return std::string("extern \"C\" { int* memory_probe(int mode); void "
+                       "release_probe(int* value); int release_count(); }\n") +
+           "int main() { unsafe { int* pointer = memory_probe(" +
+           std::to_string(mode) + "); int value = *pointer; " +
+           (valid ? "release_probe(pointer); return value == 17 && "
+                    "release_count() == 1 ? 0 : 1;"
+                  : "return value;") +
+           " } }\n";
+  };
+  NativeInputs native;
+  native.cSources = {provider};
+  native.cStandard = CStandard::C17;
+  const auto managedRoot = root / "build/gti";
+  std::filesystem::create_directories(managedRoot);
+  const auto output = managedRoot / "program";
+  const auto object = managedRoot / "program.o";
+  const ManagedOutputPolicy managed{.trustedRoot = root,
+                                    .outputRoot = managedRoot};
+  const BuildCachePolicy cache{.root = managedRoot / "cache",
+                               .sourceRoot = root,
+                               .compilerIdentity = "generated-memory-probe",
+                               .projectModelIdentity =
+                                   "typed-native-inputs-v1"};
+  std::ofstream ledger(root / "results.tsv");
+  unsigned serial = 0;
+  const auto build = [&](LlvmInstrumentationMode mode, OptimizationLevel level,
+                         const std::string &selectedCompiler) {
+    const auto compilation =
+        CompilationRequest(source, toolchain.standardLibrary,
+                           TargetInfo::host(), level, CppStandard::Cpp23)
+            .withBackend(BackendKind::Llvm)
+            .withLlvmInstrumentation(mode);
+    const auto start = std::chrono::steady_clock::now();
+    auto result = buildExecutable(ExecutableBuildRequest(
+        compilation, toolchain, object, output, selectedCompiler, native, true,
+        true, true, managed, cCompiler, cache));
+    const auto seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+            .count();
+    const auto name = "build-" + std::to_string(serial++) + ".log";
+    std::string log = result.driverDiagnostic.value_or("") + "\n";
+    if (result.nativeProcess)
+      log += result.nativeProcess->output;
+    for (const auto &diagnostic : result.compilation.diagnostics)
+      log += diagnostic.code + ": " + diagnostic.message + "\n";
+    write(root / name, log);
+    ledger << name << '\t' << llvmInstrumentationModeName(mode) << '\t'
+           << static_cast<int>(level) << '\t' << static_cast<int>(result.status)
+           << '\t' << static_cast<int>(result.cache.status) << '\t'
+           << result.cache.key << '\t' << seconds << '\n'
+           << std::flush;
+    return result;
+  };
+  const auto execute = [&](std::string_view expected) {
+    const auto result = invokeProcess({output.string()},
+                                      {.outputMode = ProcessOutputMode::Capture,
+                                       .captureSuccessfulOutput = true});
+    const auto name = "execute-" + std::to_string(serial++) + ".log";
+    write(root / name, result.output);
+    ledger << name << '\t' << result.exitCode << '\t' << expected << '\n'
+           << std::flush;
+    if (expected.empty())
+      require(result.exitCode == 0 && result.output.empty(),
+              "instrumented valid access/cleanup failed");
+    else
+      require(
+          result.exitCode != 0 &&
+              result.output.find(expected) != std::string::npos,
+          "generated GTI load did not report the expected memory violation");
+  };
+  std::set<std::string> keys;
+  for (const auto level : {OptimizationLevel::O0, OptimizationLevel::O3})
+    for (const auto mode :
+         {LlvmInstrumentationMode::None, LlvmInstrumentationMode::Address,
+          LlvmInstrumentationMode::UndefinedMemory,
+          LlvmInstrumentationMode::AddressAndUndefinedMemory}) {
+      write(source, program(0, true));
+      const auto first = build(mode, level, compiler);
+      checkBuild(first);
+      require(first.cache.status == BuildCacheStatus::Miss &&
+                  keys.insert(first.cache.key).second,
+              "optimization/instrumentation policies must have distinct cold "
+              "cache identities");
+      require(mode == LlvmInstrumentationMode::None ||
+                  (first.nativeInstrumentation &&
+                   !first.nativeInstrumentation->runtimeFiles.empty()),
+              "generated instrumented build must retain its resolved runtime "
+              "identity");
+      execute({});
+      const auto representation = read(object);
+      std::filesystem::remove(output);
+      std::filesystem::remove(object);
+      const auto restored = build(mode, level, compiler);
+      checkBuild(restored);
+      require(restored.cache.status == BuildCacheStatus::Hit &&
+                  read(object) == representation,
+              "instrumented cache must restore its exact object under matching "
+              "runtime policy");
+      execute({});
+      if (mode == LlvmInstrumentationMode::None)
+        continue;
+      const auto retained = read(output);
+      const auto rejected = build(mode, level, "/missing-diagnostic-compiler");
+      require(!rejected.succeeded() &&
+                  rejected.compilation.sources.names().empty() &&
+                  !rejected.compilation.artifact &&
+                  rejected.cache.status == BuildCacheStatus::Bypassed &&
+                  read(output) == retained && read(object) == representation,
+              "runtime-resolution failure must preserve published artifacts "
+              "before cache or source access");
+      write(source, "int main() { return missing_instrumented_name; }\n");
+      const auto invalid = build(mode, level, compiler);
+      require(!invalid.succeeded() && read(output) == retained &&
+                  read(object) == representation,
+              "invalid GTI source must not replace an instrumented published "
+              "artifact");
+      if (mode != LlvmInstrumentationMode::UndefinedMemory) {
+        write(source, program(1, false));
+        checkBuild(build(mode, level, compiler));
+        execute("heap-use-after-free");
+      }
+      if (mode != LlvmInstrumentationMode::Address) {
+        write(source, program(2, false));
+        checkBuild(build(mode, level, compiler));
+        execute("load of null pointer");
+        write(source, program(3, false));
+        checkBuild(build(mode, level, compiler));
+        execute("load of misaligned address");
+      }
+    }
+  std::cout << "Generated GTI O0/O3 memory instrumentation, runtime identity, "
+               "cache restoration, "
+               "cleanup and failed-publication controls passed\n";
+}
+
 void runChecks(const std::filesystem::path &self) {
   std::string identityError;
   const auto identity =
@@ -225,11 +393,16 @@ void runChecks(const std::filesystem::path &self) {
     if (mode == LlvmInstrumentationMode::None)
       continue;
     std::string unavailable;
-    require(
-        !queryLlvmBackendIdentity(TargetInfo::host(), {.instrumentation = mode},
-                                  unavailable) &&
-            unavailable.find("coherent pipeline") != std::string::npos,
-        "unwired diagnostic modes must not produce reusable object identity");
+    const auto selected = queryLlvmBackendIdentity(
+        TargetInfo::host(), {.instrumentation = mode}, unavailable);
+    if (mode == LlvmInstrumentationMode::Thread)
+      require(!selected && unavailable.find("communicating runtime") !=
+                               std::string::npos,
+              "Thread identity requires communicating-runtime provenance");
+    else
+      require(selected && selected->instrumentation == spelling,
+              "admitted memory instrumentation must bind its exact producer "
+              "identity");
   }
   std::string invalidMode;
   require(!queryLlvmBackendIdentity(
@@ -376,17 +549,17 @@ void runChecks(const std::filesystem::path &self) {
     auto unavailable = Policy{};
     unavailable.instrumentation = mode;
     const auto rejected = build(unavailable);
-    require(
-        !rejected.succeeded() &&
-            rejected.status ==
-                ExecutableBuildStatus::ToolchainConfigurationFailure &&
-            !rejected.nativeProcess && !rejected.compilation.artifact &&
-            rejected.compilation.sources.names().empty() &&
-            rejected.driverDiagnostic.has_value() &&
-            rejected.cache.status == BuildCacheStatus::Bypassed &&
-            read(output) == executable && read(representation) == object,
-        "unwired diagnostic policy must preserve published output and never "
-        "restore a none-mode cache entry");
+    require(!rejected.succeeded() &&
+                rejected.status ==
+                    ExecutableBuildStatus::ToolchainConfigurationFailure &&
+                !rejected.nativeProcess && !rejected.compilation.artifact &&
+                rejected.compilation.sources.names().empty() &&
+                rejected.driverDiagnostic.has_value() &&
+                rejected.cache.status == BuildCacheStatus::Bypassed &&
+                read(output) == executable && read(representation) == object,
+            "an unconfigured diagnostic toolchain must preserve published "
+            "output and never "
+            "restore a none-mode cache entry");
   }
   std::filesystem::remove(representation);
   for (const bool explicitTriple : {false, true}) {
@@ -754,6 +927,11 @@ void runChecks(const std::filesystem::path &self) {
 
 int main(int argc, char **argv) {
   try {
+    if (argc == 5 && std::string_view(argv[1]) == "--generated-memory-probe") {
+      runGeneratedMemoryChecks(std::filesystem::absolute(argv[0]), argv[2],
+                               argv[3], std::filesystem::absolute(argv[4]));
+      return 0;
+    }
     if (argc == 3 && std::string_view(argv[1]) == "--runtime-probe") {
       runNativeRuntimeChecks(argv[2]);
       return 0;
