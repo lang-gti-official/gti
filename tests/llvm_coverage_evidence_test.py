@@ -1107,7 +1107,7 @@ def readiness_mutation_controls(report: dict, probes: dict[str, dict]) -> None:
     rejected(lambda value: value["receipts"][0]["compiler"].__setitem__(
         "commit", "0" * 40))
     rejected(lambda value: value["receipts"][0]["target"].__setitem__(
-        "arch", "x86_64"))
+        "arch", "arm64" if callable_artifact["target"]["arch"] == "x86_64" else "x86_64"))
     rejected(lambda value: value["receipts"][0]["build"].__setitem__(
         "llvm", "stale"))
     rejected(lambda value: value["receipts"][0]["input"].__setitem__(

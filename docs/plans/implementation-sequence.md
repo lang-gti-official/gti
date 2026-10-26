@@ -10797,23 +10797,33 @@ and [LLVM exception-handling model](https://www.llvm.org/docs/ExceptionHandling.
 **MIR-derived evaluation staging (not production admission):** the opt-in
 `GTI_BUILD_LLVM_C04_EVALUATION` targets build separate status and native-unwind
 backend copies against the same frontend and sealed MIR. Their structural
-profile accepts only a closed scalar static-call graph with no cleanup, loans,
-global initialization, native imports or adapters. Empty full-expression
-lifecycle markers are permitted; actual lifecycle events are not. Both use
-the central ABI planner and fixed `noinline` call boundaries. A test-owned C++
-carrier copies the original failure channel and catches it outside GTI frames;
-this edge is explicitly unwind-permitted and is not a production runtime C
-service. Experimental symbols and module flags distinguish the artifacts.
+profile accepts a closed scalar static-call graph, scalar-reference parameters,
+and local ordinary classes with scalar/reference fields. Constructor and
+destructor bodies must have no executable MIR failure edge; their conservative
+declaration-level may-fail flag alone is not an infallibility proof. Owning
+fields, hierarchy, global initialization, native imports and adapters remain
+outside this experiment. Both candidates use the central ABI planner, the same
+verified MIR lifecycle/drop schedules and fixed `noinline` call boundaries.
+Native invokes enter cleanup-only landing pads, follow the MIR failure edge,
+then resume the original exception after cleanup. A test-owned C++ marker and
+thread-local failure channel retain the original record until the outer catch;
+the successful path does not consult that carrier. This edge is explicitly
+unwind-permitted and is not a production runtime C service. It uses the platform
+C++ personality/unwinder without reading a C++ exception object's layout.
+Experimental symbols and module flags distinguish the artifacts.
 
 This staging replaces hand-built traces for the first comparison, not the
 remaining C04 obligations. The harness checks identical sealed-program input,
-direct/indirect root calls at O0/O3, original failure reporting and structural
-rejections without overwriting existing objects. It does not validate cleanup,
-ownership transfer, callbacks, TLS, workers, foreign/forced unwind, carrier OOM,
-or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
+direct/indirect root calls at O0/O3, original failure reporting, exactly-once
+cleanup in three frames, repeated and alternating failure/success entry, and
+structural rejections without overwriting existing objects. It does not validate
+fallible lifecycle bodies, constructor rollback, nested destructor failures,
+owning-field/parameter transfer, callbacks, user TLS, workers, foreign/forced
+unwind, carrier OOM, or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
 the generated LLVM object. No transport selection or production speedup follows
-from these checks. Next, extend the experiment with real MIR cleanup and worker
-containment before the representative platform/cost comparison and ADR decision.
+from these checks. Next, extend real MIR cleanup to fallible lifecycle and
+ownership transfer, then worker containment before the representative
+platform/cost comparison and ADR decision.
 Remove or replace these opt-in evaluation hooks once that decision is implemented;
 they are not a permanent second production backend or CLI transport option.
 

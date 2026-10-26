@@ -73,9 +73,16 @@ int main(int argc, char **argv) {
     // Reject before writing an object, including before the test declaration
     // planner could accidentally make an unsupported return look compatible.
     validateC04Evaluation(session, admission, selected);
+    const auto reference =
+        SemanticType::referenceTo(SemanticType::Int32, AccessMode::Mutable);
+    const bool borrowedCleanup =
+        root && root->parameterTypes ==
+                    std::vector<SemanticType>{SemanticType::Int32, reference,
+                                              reference, reference};
     if (!root || root->returnType != SemanticType::Int32 ||
-        root->parameterTypes !=
-            std::vector<SemanticType>{SemanticType::Int32} ||
+        (!borrowedCleanup &&
+         root->parameterTypes !=
+             std::vector<SemanticType>{SemanticType::Int32}) ||
         !root->mayRaiseDefinedFailure || root->tracksCaller)
       throw BackendUnsupportedError(
           "C04 driver requires a fallible int32 -> int32 root");
@@ -85,7 +92,8 @@ int main(int argc, char **argv) {
     session.module().addModuleFlag(llvm::Module::Error, "gti.c04.transport",
                                    status ? 0u : 1u);
     if (abi.statusResult != status ||
-        abi.parameters.size() != (status ? 3 : 1) ||
+        abi.parameters.size() !=
+            root->parameterTypes.size() + (status ? 2 : 0) ||
         abi.resultDestination.has_value() != status ||
         abi.failureDestination.has_value() != status ||
         (status && (abi.resultDestination != 0 || abi.failureDestination != 1)))
@@ -101,20 +109,25 @@ int main(int argc, char **argv) {
     const auto name = session.abi().declareFunction(root->id)->getName().str();
     lowerC04Evaluation(session, admission, selected);
     session.verify();
-    const auto object = session.emitObject();
+    // Retain verified input IR: target emission may lower resume instructions
+    // to platform unwind-runtime calls in the in-memory module.
     std::string ir;
     llvm::raw_string_ostream irStream(ir);
     session.module().print(irStream, nullptr);
+    const auto object = session.emitObject();
     write(prefix + ".ll", ir);
-    write(prefix + ".h",
-          std::string("#pragma once\n#include <cstdint>\n") +
-              "#include <gti/runtime_failure.h>\n"
-              "struct Channel { gti_failure_record_v2 record; "
-              "const gti_failure_artifact_descriptor_v1* artifact; };\n" +
-              "#define GTI_C04_STATUS " + (status ? "1\n" : "0\n") +
-              "#define GTI_C04_ENTRY " + name + "\n" + "extern \"C\" " +
-              (status ? "bool " : "int32_t ") + name +
-              (status ? "(int32_t*, Channel*, int32_t);\n" : "(int32_t);\n"));
+    write(
+        prefix + ".h",
+        std::string("#pragma once\n#include <cstdint>\n") +
+            "#include <gti/runtime_failure.h>\n"
+            "struct Channel { gti_failure_record_v2 record; "
+            "const gti_failure_artifact_descriptor_v1* artifact; };\n" +
+            "#define GTI_C04_STATUS " + (status ? "1\n" : "0\n") +
+            "#define GTI_C04_BORROWED_CLEANUP " +
+            (borrowedCleanup ? "1\n" : "0\n") + "#define GTI_C04_ENTRY " +
+            name + "\n" + "extern \"C\" " + (status ? "bool " : "int32_t ") +
+            name + (status ? "(int32_t*, Channel*, int32_t" : "(int32_t") +
+            (borrowedCleanup ? ", int32_t*, int32_t*, int32_t*);\n" : ");\n"));
     write(prefix + ".o", object.contents);
     std::cout << GTI_C04_MODE << ' ' << level
               << " verified scalar closure emitted\n";

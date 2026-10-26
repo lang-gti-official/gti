@@ -10140,8 +10140,13 @@ sanitized runtime archive for runtime coverage. It does not instrument generated
 LLVM code and cannot satisfy production generated-code sanitizer gates.
 The narrow supported profile and remaining proof obligations are recorded in
 [C04](../plans/implementation-sequence.md#c04-failure-transport-evaluation).
-Do not use its fixed-boundary scalar checks as cleanup, worker or performance
-acceptance, or silently substitute it for existing backend gates.
+Its fixed-boundary checks cover scalar propagation and exactly-once infallible
+scalar/reference-field cleanup across three frames, including repeated and
+alternating failures. They reject fallible constructors/destructors before
+object publication. These are not full cleanup, worker or performance
+acceptance and must not substitute for existing backend gates. Retained IR is
+the verified pre-object-emission module: target emission may rewrite `resume`
+into platform unwind-runtime calls.
 
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves

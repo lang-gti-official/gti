@@ -84,7 +84,7 @@ public:
             [&](MirBodyAddress address) { return signature(address); }) {}
   void lower(const LlvmAdmissionPlan &admission);
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
-  void lowerEvaluation(std::span<const HirFunctionInstanceId> selected);
+  void lowerEvaluation(const LlvmAdmissionPlan &admission);
 #endif
 
 private:
@@ -202,6 +202,56 @@ private:
   const MirBlock *current = nullptr;
   const MirInstruction *stage = nullptr;
   llvm::Value *cleanupToken = nullptr;
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+  llvm::AllocaInst *unwindState = nullptr;
+
+  llvm::StructType *unwindType() {
+    return llvm::StructType::get(
+        session.context(), {session.layouts().pointer(), ir.getInt32Ty()});
+  }
+
+  llvm::AllocaInst *unwindSlot() {
+    if (!unwindState) {
+      auto personality = session.module().getOrInsertFunction(
+          "__gxx_personality_v0",
+          llvm::FunctionType::get(ir.getInt32Ty(), true));
+      function.setPersonalityFn(
+          llvm::cast<llvm::Constant>(personality.getCallee()));
+      llvm::IRBuilder<> entry(&function.getEntryBlock(),
+                              function.getEntryBlock().begin());
+      unwindState = entry.CreateAlloca(unwindType(), nullptr, "c04.unwind");
+      entry.CreateStore(llvm::Constant::getNullValue(unwindType()),
+                        unwindState);
+    }
+    return unwindState;
+  }
+
+  llvm::CallBase *evaluationCall(llvm::FunctionType *type, llvm::Value *callee,
+                                 llvm::ArrayRef<llvm::Value *> arguments) {
+    const auto &term = current->terminator;
+    if (term.kind != MirTerminatorKind::Invoke ||
+        term.invokeInstruction != stage->id)
+      return ir.CreateCall(type, callee, arguments);
+    auto *normal =
+        llvm::BasicBlock::Create(session.context(), "c04.success", &function);
+    auto *failed =
+        llvm::BasicBlock::Create(session.context(), "c04.unwind", &function);
+    auto *result = ir.CreateInvoke(type, callee, normal, failed, arguments);
+    ir.SetInsertPoint(failed);
+    auto *landing = ir.CreateLandingPad(unwindType(), 0);
+    landing->setCleanup(true);
+    ir.CreateStore(landing, unwindSlot());
+    auto transfer = session.module().getOrInsertFunction(
+        "__gti_c04_evaluate_current",
+        llvm::FunctionType::get(ir.getVoidTy(), {session.layouts().pointer()},
+                                false));
+    auto *copy = ir.CreateCall(transfer, {channels.at(term.failureRecord)});
+    copy->setDoesNotThrow();
+    failedOperation();
+    ir.SetInsertPoint(normal);
+    return result;
+  }
+#endif
 
   [[nodiscard]] StoredFieldPublicationPlan
   fieldPublication(const MirLoan &loan) const {
@@ -943,7 +993,11 @@ private:
         break;
       }
     }
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+    auto *result = evaluationCall(signature.type, callee, arguments);
+#else
     auto *result = ir.CreateCall(signature.type, callee, arguments);
+#endif
     signature.applyTo(*result);
     if (signature.statusResult) {
       auto *normal = llvm::BasicBlock::Create(session.context(), "call.success",
@@ -1640,10 +1694,21 @@ private:
     }
     case MirTerminatorKind::PropagateFailure:
 #if defined(GTI_LLVM_C04_NATIVE_UNWIND)
-      // The evaluator permits no cleanup in any traversed GTI frame. The
-      // test-owned shim copies the channel before unwinding to its outer catch.
-      // This is not an ordinary runtime C import or a production unwind edge.
       leaveFailureCleanup();
+      // Resume the original exception after the verified MIR cleanup path.
+      // Locally originated failures instead enter the isolated carrier once.
+      {
+        auto *state = ir.CreateLoad(unwindType(), unwindSlot());
+        auto *resume = llvm::BasicBlock::Create(session.context(), "c04.resume",
+                                                &function);
+        auto *raise =
+            llvm::BasicBlock::Create(session.context(), "c04.raise", &function);
+        ir.CreateCondBr(ir.CreateIsNotNull(ir.CreateExtractValue(state, 0)),
+                        resume, raise);
+        ir.SetInsertPoint(resume);
+        ir.CreateResume(state);
+        ir.SetInsertPoint(raise);
+      }
       ir.CreateCall(
           session.module().getOrInsertFunction(
               "__gti_c04_evaluate_raise",
@@ -1992,16 +2057,16 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     body(address);
 }
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
-void Bodies::lowerEvaluation(std::span<const HirFunctionInstanceId> selected) {
-  for (auto id : selected) {
-    auto *output = function({MirBodyKind::Function, id});
+void Bodies::lowerEvaluation(const LlvmAdmissionPlan &admission) {
+  for (auto address : admission.requiredBodies()) {
+    auto *output = function(address);
     // Equal, explicit call boundaries for the transport microbenchmark, not
     // a claim about normal whole-program inlining or production performance.
     output->addFnAttr(llvm::Attribute::NoInline);
     output->setUWTableKind(llvm::UWTableKind::Sync);
   }
-  for (auto id : selected)
-    body({MirBodyKind::Function, id});
+  for (auto address : admission.requiredBodies())
+    body(address);
 }
 #endif
 } // namespace
@@ -2014,7 +2079,7 @@ void lowerScalarProgram(Session &session, const LlvmAdmissionPlan &admission) {
 void lowerC04Evaluation(Session &session, const LlvmAdmissionPlan &admission,
                         std::span<const HirFunctionInstanceId> functions) {
   validateC04Evaluation(session, admission, functions);
-  Bodies(session, admission).lowerEvaluation(functions);
+  Bodies(session, admission).lowerEvaluation(admission);
 }
 #endif
 
