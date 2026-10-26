@@ -88,6 +88,8 @@ enum class Shape {
   NativeCFunctionValue,
   NativeCFunctionImport,
   NativeCScalarIndirect,
+  NativeCSignature,
+  NativeCCallback,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

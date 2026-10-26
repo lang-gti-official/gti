@@ -669,17 +669,22 @@ private:
             : nullptr;
     const auto constructor = instruction.constructorTarget;
     if (instruction.nativeCalleeType) {
-      if (!nativeCScalarIndirectCallContract(session.program().mir(),
+      if (!nativeCIndirectCallContract(session.program().mir(),
                                              session.program().target(), input,
                                              instruction))
         throw BackendUnsupportedError(
-            "LLVM indirect C call requires its exact staged scalar signature");
+            "LLVM indirect C call requires its exact staged native signature");
       auto *callee = operand(*instruction.receiver);
       std::vector<llvm::Value *> arguments;
       for (const auto &argument : instruction.operands)
         arguments.push_back(operand(argument));
+      auto *resultDestination =
+          instruction.result &&
+                  addressValue(session.program().mir(), instruction.info.type)
+              ? destination(*instruction.result)
+              : nullptr;
       return emitNativeCIndirectCall(session, ir, input, instruction, callee,
-                                     arguments);
+                                     arguments, resultDestination);
     }
     if (!target && !lambdaTarget && !instruction.bodyTarget && !constructor)
       throw BackendUnsupportedError(
@@ -694,10 +699,7 @@ private:
     if (target && target->linkage == LanguageLinkage::C) {
       const auto &program = session.program().mir();
       const auto &targetInfo = session.program().target();
-      if (!nativeCScalarImportContract(program, targetInfo, *target) &&
-          !nativeCCountedInputContract(program, targetInfo, *target) &&
-          !nativeCScalarFunctionImportContract(program, targetInfo, *target) &&
-          !nativeCAggregateImportContract(program, targetInfo, *target))
+      if (!nativeCDirectCallContract(program, targetInfo, input, instruction))
         throw BackendUnsupportedError(
             "LLVM direct C call requires its supported exact import profile");
       std::vector<llvm::Value *> arguments;
@@ -892,6 +894,15 @@ private:
             : nullptr;
     switch (instruction.kind) {
     case MirInstructionKind::Compute: {
+      if (instruction.operation == MirOperation::NativeCallback) {
+        if (!nativeCCallbackStageContract(session.program().mir(),
+                                         session.program().target(), input,
+                                         instruction))
+          throw std::logic_error("LLVM callback lost its exact conversion stage");
+        result = nativeCCallbackAddress(session, ir,
+                                        *instruction.nativeCallbackAdapter);
+        break;
+      }
       if (hosted) {
         auto *source = operand(instruction.operands.at(0));
         if (hosted->kind ==
@@ -1703,6 +1714,14 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   declareNativeCStorage(session, globals);
   for (auto address : admission.requiredBodies())
     static_cast<void>(function(address));
+  std::vector<MirNativeCallbackAdapterId> callbacks;
+  for (auto address : admission.requiredBodies())
+    for (const auto &block :
+         findMirBody(session.program().mir(), address)->blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.nativeCallbackAdapter)
+          callbacks.push_back(*stage.nativeCallbackAdapter);
+  emitNativeCCallbacks(session, failures, callbacks);
   for (auto address : admission.requiredBodies())
     body(address);
 }

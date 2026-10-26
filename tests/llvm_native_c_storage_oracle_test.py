@@ -189,13 +189,12 @@ def main():
                 controls += 1
             for level in range(4):
                 binary = output / f"{name}-O{level}"
-                sentinel = b"existing storage artifact\n"
-                binary.write_bytes(sentinel)
-                result = run([compiler, fixture / (name + ".gti"), "--backend", "llvm", f"-O{level}",
-                              "-o", binary], binary.name, 65)
-                if b"GTI-B0003" not in result.stderr or binary.read_bytes() != sentinel:
-                    raise RuntimeError("closed foreign storage shape published an artifact")
-                negatives += 1
+                run([compiler, fixture / (name + ".gti"), "--backend", "llvm", f"-O{level}",
+                     "-o", binary], "build-" + binary.name)
+                result = run([binary], "run-" + binary.name)
+                if result.stdout or result.stderr:
+                    raise RuntimeError("dormant native signature storage produced output")
+                executions += 1
         for backend in ("llvm", "cpp"):
             for level in (0, 3):
                 name = f"pointer-permission-{backend}-O{level}"

@@ -1,0 +1,5 @@
+using Unary = (int32_t) -> int32_t;
+int main() {
+  Unary callback = [](int32_t value) -> int32_t { return value; };
+  return 0;
+}

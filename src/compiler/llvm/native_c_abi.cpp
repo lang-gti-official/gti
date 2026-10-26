@@ -501,9 +501,7 @@ bool nativeCStorageContract(const MirProgram &program, const TargetInfo &target,
 bool nativeCStorageImportContract(const MirProgram &program,
                                   const TargetInfo &target,
                                   const ForeignStorageInfo &storage) {
-  return nativeCStorageContract(program, target, storage) &&
-         (nativeCScalarFunctionValueContract(program, target, storage.type) ||
-          passiveNativeCStorageType(program, storage.type));
+  return nativeCStorageContract(program, target, storage);
 }
 
 namespace {
@@ -683,9 +681,7 @@ bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
       return false;
     }
     if (!nativeCValueContract(program, target, operand.type,
-                              NativeCValueRole::Storage) ||
-        !(nativeCScalarFunctionValueContract(program, target, operand.type) ||
-          passiveNativeCStorageType(program, operand.type)))
+                              NativeCValueRole::Storage))
       return false;
   }
   return foreign &&
@@ -1388,8 +1384,21 @@ void callbackAttachment(Session &session, llvm::IRBuilder<> &ir,
 } // namespace
 
 void emitNativeCCallbacks(Session &session, Failures &failures) {
+  std::vector<MirNativeCallbackAdapterId> required;
+  for (const auto &adapter : session.program().mir().nativeCallbackAdapters())
+    required.push_back(adapter.id);
+  emitNativeCCallbacks(session, failures, required);
+}
+
+void emitNativeCCallbacks(
+    Session &session, Failures &failures,
+    std::span<const MirNativeCallbackAdapterId> required) {
+  if (required.empty())
+    return;
   static_cast<void>(darwinTarget(session));
   for (const auto &adapter : session.program().mir().nativeCallbackAdapters()) {
+    if (std::find(required.begin(), required.end(), adapter.id) == required.end())
+      continue;
     const auto *target =
         session.program().mir().findFunctionInstance(adapter.target);
     const auto *resultType = adapter.type.nativeFunctionReturnType();

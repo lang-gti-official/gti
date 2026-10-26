@@ -184,13 +184,12 @@ def main():
                 controls += 1
             for level in (0, 3):
                 destination = output / f"{name}-O{level}"
-                sentinel = b"existing native artifact\n"
-                destination.write_bytes(sentinel)
-                result = run([compiler, fixture / (name + ".gti"), "--backend", "llvm",
-                              f"-O{level}", "-o", destination], destination.name, 65)
-                if b"GTI-B0003" not in result.stderr or destination.read_bytes() != sentinel:
-                    raise RuntimeError("unsupported callback field/input replaced an artifact")
-                negatives += 1
+                run([compiler, fixture / (name + ".gti"), "--backend", "llvm",
+                     f"-O{level}", "-o", destination, "--", host], "build-" + destination.name)
+                result = run([destination], "run-" + destination.name)
+                if result.stdout or result.stderr:
+                    raise RuntimeError("native function field/input transport mismatch")
+                executions += 1
         for name, code, site in (
                 ("reject_native_record_mutable_view", b"GTI-S2054", b":3:80:"),
                 ("reject_native_record_view_return", b"GTI-S2054", b":2:19:"),

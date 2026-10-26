@@ -1018,6 +1018,50 @@ void checkAggregateImports(Session &session) {
       "aggregate fixture must exercise multiple result and argument families");
 }
 
+void checkNativeBoundaryReachability(Session &session) {
+  const auto roots = reachableProgram(session.program());
+  require(!roots.conservative,
+          "verified native signatures must retain exact roots");
+  unsigned checked = 0;
+  auto malformed = session.program();
+  auto &functions = const_cast<std::vector<MirFunctionInstance> &>(
+      malformed.mir().functionInstances());
+  for (auto &function : functions) {
+    if (!roots.contains(MirBodyAddress{MirBodyKind::Function, function.id}))
+      continue;
+    for (auto &block : function.body.blocks)
+      for (auto &stage : block.instructions) {
+        if (stage.tombstone)
+          continue;
+        if (stage.nativeCallbackAdapter) {
+          const auto id = *stage.nativeCallbackAdapter;
+          const auto *adapter = malformed.mir().findNativeCallbackAdapter(id);
+          require(adapter &&
+                      roots.contains(MirBodyAddress{MirBodyKind::Function,
+                                                    adapter->target}) &&
+                      roots.contains(LoweredGeneratedItemIdentity{
+                          .kind = LoweredGeneratedItemKind::NativeInteropAdapter,
+                          .owner = id}),
+                  "a callback must retain its exact adapter and target body");
+          stage.nativeCallbackAdapter = 0;
+          require(reachableProgram(malformed).conservative,
+                  "a forged callback conversion must restore conservative roots");
+          stage.nativeCallbackAdapter = id;
+          ++checked;
+        }
+        if (stage.nativeCalleeType) {
+          ++stage.callSite;
+          require(reachableProgram(malformed).conservative,
+                  "a forged native signature stage must restore conservative roots");
+          --stage.callSite;
+          ++checked;
+        }
+      }
+  }
+  require(checked != 0,
+          "native closure fixture must exercise a call or callback");
+}
+
 void checkNativeReachability(Session &session, bool conservative) {
   const auto roots = reachableProgram(session.program());
   require(roots.conservative == conservative,
@@ -1330,6 +1374,8 @@ int main(int argc, char **argv) {
         argc == 6 && std::string(argv[5]) == "--aggregate-contracts";
     const bool reachability =
         argc == 6 && std::string(argv[5]) == "--reachability";
+    const bool nativeReachability =
+        argc == 6 && std::string(argv[5]) == "--native-boundary-reachability";
     const bool conservative =
         argc == 6 && std::string(argv[5]) == "--conservative-reachability";
     const bool concurrent =
@@ -1338,7 +1384,8 @@ int main(int argc, char **argv) {
                 (argc == 6 &&
                  (std::string(argv[5]) == "--callbacks" || concurrent ||
                   contracts || preflight || storage || text || aggregates ||
-                  reachability || conservative || storageContracts)),
+                  reachability || nativeReachability || conservative ||
+                  storageContracts)),
             "usage: test fixture.gti output.o output.ll O[0-3] "
             "[--callbacks|--thread-callbacks]");
     const auto input = fixture(argv[1], concurrent, argc == 6);
@@ -1348,6 +1395,11 @@ int main(int argc, char **argv) {
         LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
         LlvmCodegenOptimization::Default, LlvmCodegenOptimization::Aggressive};
     Session session(input, {.optimization = levels[level]});
+    if (nativeReachability) {
+      checkNativeBoundaryReachability(session);
+      std::cout << "PASS: exact callback and native signature roots\n";
+      return 0;
+    }
     if (reachability || conservative) {
       checkNativeReachability(session, conservative);
       std::cout << "PASS: exact native call dependency roots\n";

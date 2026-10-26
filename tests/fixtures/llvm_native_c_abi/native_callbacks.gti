@@ -1,0 +1,66 @@
+[[c_abi]] struct CallbackPair { mut uint64_t a; mut uint64_t b; };
+[[c_abi]] struct CallbackLarge { mut uint64_t values[3]; };
+[[c_abi]] struct CallbackHfa { mut double values[4]; };
+using Scalar = (int32_t) -> int32_t;
+using PairOperation = (CallbackPair) -> CallbackPair;
+using LargeOperation = (CallbackLarge) -> CallbackLarge;
+using HfaOperation = (CallbackHfa) -> CallbackHfa;
+using ViewOperation = (std::string_view) -> uint64_t;
+using Selector = (Scalar) -> Scalar;
+[[c_abi]] struct CallbackTable { mut PairOperation pair; mut Scalar scalar; };
+extern "C" {
+  int32_t native_callback_unavailable(int32_t value);
+  mut CallbackTable native_callback_slots;
+  mut PairOperation native_callback_record_slot;
+  int32_t native_callback_scalar(Scalar operation, int32_t value);
+  int32_t native_callback_pair(PairOperation operation);
+  int32_t native_callback_large(LargeOperation operation);
+  int32_t native_callback_hfa(HfaOperation operation);
+  int32_t native_callback_view(ViewOperation operation);
+  PairOperation native_callback_pair_identity(PairOperation operation);
+  Selector native_callback_selector();
+  CallbackPair native_callback_pair_make();
+  CallbackTable native_callback_table(PairOperation pair, Scalar scalar);
+  int32_t native_callback_table_check(CallbackTable value);
+}
+int32_t increment(int32_t value) { return value + 7; }
+CallbackPair pair_identity(CallbackPair value) { return value; }
+CallbackLarge large_identity(CallbackLarge value) { return value; }
+CallbackHfa hfa_identity(CallbackHfa value) { return value; }
+uint64_t view_size(std::string_view value) { return uint64_t(value.size()); }
+int32_t dormant_callback(int32_t value) { return native_callback_unavailable(value); }
+void dormant_registration() { Scalar unused = dormant_callback; }
+int main() {
+  Scalar scalar = increment;
+  PairOperation pair = pair_identity;
+  LargeOperation large = large_identity;
+  HfaOperation hfa = hfa_identity;
+  ViewOperation view = view_size;
+  unsafe {
+    if (native_callback_scalar(scalar, 35) != 42) return 1;
+    if (scalar(35) != 42) return 2;
+    if (native_callback_pair(pair) != 1) return 3;
+    if (native_callback_large(large) != 1) return 4;
+    if (native_callback_hfa(hfa) != 1) return 5;
+    if (native_callback_view(view) != 1) return 6;
+    auto selected = native_callback_selector()(scalar);
+    if (selected(35) != 42) return 7;
+    auto result = native_callback_pair_identity(pair)(native_callback_pair_make());
+    if (result.a != uint64_t(17) || result.b != uint64_t(31)) return 8;
+    auto table = native_callback_table(pair, scalar);
+    if (table.scalar(35) != 42 || native_callback_table_check(table) != 1) return 9;
+    auto from_field = table.pair(native_callback_pair_make());
+    if (from_field.a != uint64_t(17)) return 10;
+    native_callback_slots = table;
+    native_callback_slots.scalar = scalar;
+    native_callback_record_slot = pair;
+    if (native_callback_slots.scalar(35) != 42) return 11;
+    auto global_result = native_callback_record_slot(native_callback_pair_make());
+    if (global_result.b != uint64_t(31)) return 12;
+    auto global_table = native_callback_slots;
+    if (native_callback_table_check(global_table) != 1) return 13;
+    native_callback_record_slot = nullptr;
+    if (native_callback_record_slot != nullptr) return 14;
+  }
+  return 0;
+}

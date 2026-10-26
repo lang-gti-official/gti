@@ -145,9 +145,9 @@ Accessor macros such as `errno` still need a native adapter.
 
 LLVM admits external objects through an exact canonical declaration, symbol,
 root place and storage-access witness. Supported shapes are scalars and native
-integer aliases, raw pointers, scalar native function pointers, and passive C
-records/unions with recursively passive scalar, pointer, record and fixed-array
-fields. The foreign declaration stays external, nonconstant and aligned even
+integer aliases, raw pointers, exact native function pointers, and passive C
+records/unions with recursively passive scalar, pointer, native-function, record
+and fixed-array fields. The foreign declaration stays external, nonconstant and aligned even
 when source access is read-only; it acquires no GTI initializer or cleanup.
 Loaded function pointers are selected before later call arguments execute.
 The runnable [native storage example](../../examples/llvm/native-c-storage.gti)
@@ -161,8 +161,9 @@ foreign-union member reads and writes use the canonical field/index path and
 the source union-member unsafe permission. This includes a union inside a
 foreign record or fixed-array field. The backend establishes no active-member
 guarantee for untagged C unions. Whole union snapshots retain the same unsafe
-member-access obligations. Callback fields, aggregate native-function storage,
-views, owners, TLS and exports remain outside this bounded storage profile.
+member-access obligations. Aggregate and recursively nested native-function
+signatures retain the same staged receiver and argument rules as scalar calls.
+Views, owners, TLS and exports remain outside this foreign-object profile.
 
 The C++ comparison backend currently rejects valid foreign checked updates,
 projected record snapshots and record-array element assignments in its text
@@ -449,6 +450,14 @@ address. It captures no GTI state and provides no implicit userdata lifetime.
 If the GTI target reports a defined failure, the thunk completes the target's
 verified cleanup and terminates through the runtime failure boundary; a native
 exception is caught and terminates rather than crossing C.
+
+LLVM lowers these source-selected adapters with the same target C classifier
+used for imports and indirect calls. Passive record results, HFA values,
+immutable counted-text inputs and nested native function signatures do not use
+casts from private GTI function pointers. Only adapters required by the sealed
+entry closure are emitted; each retains its exact source target. The wrapper
+consumes the central GTI call/failure plan and adds no C-visible failure channel.
+Ordinary callback failure remains terminal, not a recoverable worker result.
 
 Unannotated general callbacks remain single-threaded. In the concurrent profile, GTI
 adapters support the exact `(void*) -> int32_t` C-thread entry and `() -> void`

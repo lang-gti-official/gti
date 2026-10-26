@@ -150,6 +150,9 @@ public:
         return selected.hasFunctionItemShape();
       if (selected.kind == SemanticType::FunctionSignature)
         return true;
+      if (selected.kind == SemanticType::NativeFunction)
+        return native_llvm::nativeCFunctionValueContract(program, nativeTarget,
+                                                        selected);
       if (selected.kind == SemanticType::Lambda) {
         const auto environment =
             native_llvm::closureEnvironmentLayout(program, selected);
@@ -1245,6 +1248,8 @@ public:
           : native_llvm::nativeCScalarFunctionValueContract(program,
                                                             nativeTarget, type)
               ? std::optional(Shape::NativeCFunctionValue)
+          : native_llvm::nativeCFunctionValueContract(program, nativeTarget, type)
+              ? std::optional(Shape::NativeCSignature)
           : passiveArray ? std::optional(Shape::PassiveArrayValue)
           : reference    ? std::optional(Shape::PassiveReference)
           : arrayAddress ? std::optional(Shape::CheckedArrayProjection)
@@ -1565,6 +1570,9 @@ public:
               native_llvm::nativeCScalarReceiverInputContract(
                   program, nativeTarget, mir, stage)
                   ? std::optional(Shape::NativeCScalarIndirect)
+              : native_llvm::nativeCReceiverInputContract(
+                    program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCSignature)
                   : classShape(stage.info.type));
           add(stage.callInputKind,
               passiveReference(stage.info.type) &&
@@ -1611,7 +1619,10 @@ public:
               stage.operands[0].type.kind == SemanticType::StringView &&
               stage.info.type == SemanticType::Char;
           add(stage.operation,
-              stage.operation == MirOperation::PayloadConstruct ||
+              native_llvm::nativeCCallbackStageContract(program, nativeTarget,
+                                                       mir, stage)
+                  ? std::optional(Shape::NativeCCallback)
+              : stage.operation == MirOperation::PayloadConstruct ||
                       stage.operation == MirOperation::PayloadExtract
                   ? classShape(mirInstructionEnumType(stage))
               : nativeAddressConversion(stage) && validRaw
@@ -1694,6 +1705,9 @@ public:
               native_llvm::nativeCScalarIndirectCallContract(
                   program, nativeTarget, mir, stage)
                   ? std::optional(Shape::NativeCScalarIndirect)
+              : native_llvm::nativeCIndirectCallContract(program, nativeTarget,
+                                                        mir, stage)
+                  ? std::optional(Shape::NativeCSignature)
                   : std::nullopt;
           add(Shape::NativeCall, nativeIndirect);
           add(Shape::IndirectCall, nativeIndirect);
@@ -1710,7 +1724,11 @@ public:
             stage.functionPointerLambdaTarget)
           add(Shape::IndirectCall);
         if (stage.nativeCallbackAdapter)
-          add(Shape::NativeCallback);
+          add(Shape::NativeCallback,
+              native_llvm::nativeCCallbackStageContract(program, nativeTarget,
+                                                       mir, stage)
+                  ? std::optional(Shape::NativeCCallback)
+                  : std::nullopt);
         if (stage.threadTaskAdapter)
           add(Shape::ThreadTask);
         if (!stage.scopedThreadTasks.empty())
@@ -1818,6 +1836,13 @@ public:
                             program, nativeTarget, *callee)
                             ? Shape::NativeCCountedInput
                             : Shape::NativeCScalarImport)
+              : stage.unsafeOperation ==
+                            UnsafeOperationKind::ForeignPointerCall &&
+                      (native_llvm::nativeCIndirectCallContract(
+                           program, nativeTarget, mir, stage) ||
+                       native_llvm::nativeCDirectCallContract(
+                           program, nativeTarget, mir, stage))
+                  ? std::optional(Shape::NativeCSignature)
               : rawReference && stage.unsafeOperation ==
                                     UnsafeOperationKind::RawDereference
                   ? rawReferenceShape
@@ -2081,6 +2106,8 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
         : native_llvm::nativeCAggregateImportContract(mir, input.target(),
                                                       function)
             ? std::optional(Shape::NativeCAggregateImport)
+        : native_llvm::nativeCDeclarationContract(mir, input.target(), function)
+            ? std::optional(Shape::NativeCSignature)
             : std::nullopt;
     inventory.add(function.definitionKind, nativeImport);
     inventory.add(function.linkage, nativeImport);
@@ -2181,13 +2208,30 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   if (input.embeddingPlan())
     inventory.add(Shape::EmbeddingExports);
   for (const auto &callback : mir.nativeCallbackAdapters()) {
-    inventory.required = closure.conservative;
-    inventory.add(Shape::NativeCallback);
-    inventory.add(callback.cThreadCallback);
+    inventory.required = closure.contains(LoweredGeneratedItemIdentity{
+        .kind = LoweredGeneratedItemKind::NativeInteropAdapter,
+        .owner = callback.id});
+    const auto shape =
+        native_llvm::nativeCCallbackContract(mir, input.target(), callback)
+            ? std::optional(Shape::NativeCCallback)
+            : std::nullopt;
+    inventory.add(Shape::NativeCallback, shape);
+    inventory.add(callback.cThreadCallback, shape);
+    inventory.add(callback.failurePolicy, shape);
+    inventory.type(callback.type);
   }
   for (const auto &item : input.generatedItems()) {
     inventory.required = closure.contains(item.identity);
     std::optional<Shape> shape;
+    if (const auto *callback =
+            std::get_if<LoweredNativeCallbackItem>(&item.payload))
+      if (item.identity.kind == LoweredGeneratedItemKind::NativeInteropAdapter &&
+          item.identity.owner == callback->adapter.id &&
+          item.sourceBody ==
+              MirBodyAddress{MirBodyKind::Function, callback->adapter.target} &&
+          native_llvm::nativeCCallbackContract(mir, input.target(),
+                                             callback->adapter))
+        shape = Shape::NativeCCallback;
     if (item.identity.kind == LoweredGeneratedItemKind::ThreadLocalStorage)
       if (const auto *storage = mir.findThreadLocalStorage(item.identity.owner))
         if (inventory.nativeValue(storage->type))

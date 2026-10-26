@@ -1,0 +1,7 @@
+using Operation = (uint64_t) -> uint64_t;
+extern "C" { int32_t native_callback_cost(Operation operation); }
+uint64_t transform(uint64_t value) { return value ^ uint64_t(17); }
+int main() {
+  Operation operation = transform;
+  unsafe { return native_callback_cost(operation); }
+}
