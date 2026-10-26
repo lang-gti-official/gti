@@ -15,8 +15,8 @@ import xml.etree.ElementTree as ET
 TESTS = {"mir_cutover_corpus_oracle", "practical_examples",
          "project_cli_workflow", "scoped_configuration_defines", "native_enum_bindgen",
          "native_typedef_bindgen", "native_union_bindgen", "native_variable_bindgen",
-         "process_resource_policy"}
-NESTED = {"allocator-support", "libc-region-provider", "native-callback-slots",
+         "process_resource_policy", "llvm_embedding_project"}
+NESTED = {"allocator-support", "infallible-embedding", "libc-region-provider", "native-callback-slots",
           "native-enum-bindings", "native-union-bindings", "native-variable-bindings",
           "objective-cpp-bridge", "scoped-configuration",
           "toy-3d-engine", "transit-planner"}

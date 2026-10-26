@@ -240,6 +240,7 @@ struct BuildProvenance {
   // link and publication, so it describes the exact bytes this invocation
   // produced.
   BuildFileProvenance artifact;
+  std::optional<BuildFileProvenance> embeddingHeader;
 };
 
 struct BuildReportRequest {

@@ -1874,6 +1874,11 @@ if(Python3_Interpreter_FOUND)
       --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-embedding-evidence")
   gti_register_llvm_evidence_manifest(llvm_embedding_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_embedding_execution_test.py")
+  add_test(NAME llvm_embedding_project
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_embedding_project_test.py"
+      "$<TARGET_FILE:gti>" --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-embedding-project-evidence")
+  set_tests_properties(llvm_embedding_project PROPERTIES TIMEOUT 1200)
   add_test(NAME llvm_embedding_cost
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_embedding_cost_test.py"
       "$<TARGET_FILE:gti_llvm_embedding_emitter>" --runtime "$<TARGET_FILE:gti_runtime>"

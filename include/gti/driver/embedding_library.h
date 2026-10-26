@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gti/driver/artifact.h"
+#include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
 #include "gti/llvm_embedding.h"
 
@@ -12,6 +14,8 @@ struct EmbeddingLibraryRequest {
   // replaced: hosts may keep one loaded while building another.
   std::filesystem::path generationDirectory;
   std::string name;
+  NativeInputs nativeInputs;
+  bool debugInfo = false;
 };
 
 struct EmbeddingLibraryResult {
@@ -30,4 +34,9 @@ struct EmbeddingLibraryResult {
 [[nodiscard]] EmbeddingLibraryResult
 publishEmbeddingLibrary(const LlvmEmbeddingArtifacts &artifacts,
                         const EmbeddingLibraryRequest &request);
+
+// Commits a privately staged complete generation without replacing any path.
+[[nodiscard]] ArtifactPublishResult
+publishEmbeddingGeneration(const std::filesystem::path &staged,
+                           const std::filesystem::path &destination);
 } // namespace lang::driver

@@ -4286,9 +4286,11 @@ schema-2 evidence manifest and its case-context setup. The coverage probe uses
 that request when producing admission witnesses; executable defaults or changed
 export lists are not interchangeable evidence. Mutation controls reject omitted
 and changed requests while preserving execution-profile and source identities.
-This does not activate the dormant project-library manifest gate or claim the
-installed project workflow. Driver publication integration and fallible
-embedding remain separate prerequisites. In particular, the public ABI-v1
+The ordinary project workflow carries an optional matched header/export
+companion on the backend artifact; it does not re-run frontend analysis or
+choose another backend. See [project publication](build-and-driver.md).
+Installed-toolchain acceptance and fallible embedding remain separate
+prerequisites. In particular, the public ABI-v1
 failure record, observer ordering, cleanup completion and retained-state poison
 decision require the coordinator's C04 contract, including how newer failure
 records project into that public ABI. No adapter signature or private worker

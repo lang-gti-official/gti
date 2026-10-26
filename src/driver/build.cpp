@@ -1,4 +1,5 @@
 #include "gti/driver/build.h"
+#include "gti/driver/embedding_library.h"
 
 #include "build_source_identity.h"
 #include "gti/build_identity_config.h"
@@ -220,6 +221,20 @@ debugBundleSourceCollision(const std::filesystem::path &symbols,
 
 constexpr std::string_view cacheSchema = "gti-build-cache-v4";
 constexpr std::string_view objectCacheSchema = "gti-build-cache-v5";
+constexpr std::string_view embeddingCacheSchema = "gti-embedding-cache-v1";
+
+bool embeddingBuild(const ExecutableBuildRequest &request) {
+  return request.compilation().program().kind == ProgramKind::Library;
+}
+
+std::string embeddingName(const ExecutableBuildRequest &request) {
+  const auto stem = request.output().stem().string();
+  return stem.starts_with("lib") ? stem.substr(3) : stem;
+}
+
+std::filesystem::path embeddingHeader(const ExecutableBuildRequest &request) {
+  return request.output().parent_path() / (embeddingName(request) + ".h");
+}
 
 bool nativeObjectCache(const ExecutableBuildRequest &request) {
   return request.compilation().backend() == BackendKind::Llvm;
@@ -259,6 +274,8 @@ bool darwinDeploymentArgument(std::string_view argument) {
 }
 
 std::string_view buildCacheSchema(const ExecutableBuildRequest &request) {
+  if (embeddingBuild(request))
+    return embeddingCacheSchema;
   return nativeObjectCache(request) ? objectCacheSchema : cacheSchema;
 }
 
@@ -1458,6 +1475,18 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
   identity.add("cache.schema", buildCacheSchema(request));
   identity.add("compiler.identity", policy.compilerIdentity);
   identity.add("project-model.identity", policy.projectModelIdentity);
+  if (embeddingBuild(request)) {
+    identity.add("embedding.abi", static_cast<std::uint64_t>(1));
+    identity.add("embedding.linkage", "shared");
+    std::vector<std::pair<std::string, std::string>> exports;
+    for (const auto &item : request.compilation().program().exports)
+      exports.emplace_back(item.symbol, item.function);
+    std::sort(exports.begin(), exports.end());
+    for (const auto &[symbol, function] : exports) {
+      identity.add("embedding.export.symbol", symbol);
+      identity.add("embedding.export.function", function);
+    }
+  }
   if (request.nativeInputs().instrumentation) {
     identity.add("native.instrumentation.identity",
                  request.nativeInputs().instrumentation->identity);
@@ -1872,6 +1901,9 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
 struct CacheMetadata {
   std::string key;
   bool object = false;
+  bool embedding = false;
+  std::optional<FileDigest> header;
+  std::vector<std::string> publicSymbols;
   FileDigest generated;
   FileDigest executable;
   std::uint32_t executablePermissions = 0;
@@ -1973,7 +2005,7 @@ bool validDigest(std::string_view digest) {
 
 std::optional<CacheMetadata>
 readCacheMetadata(const std::filesystem::path &path, bool object,
-                  std::string &errorMessage) {
+                  bool embedding, std::string &errorMessage) {
   std::ifstream input(path, std::ios::binary);
   if (!input) {
     errorMessage = "metadata is missing or unreadable";
@@ -1983,11 +2015,12 @@ readCacheMetadata(const std::filesystem::path &path, bool object,
   std::string schema;
   CacheMetadata metadata;
   metadata.object = object;
+  metadata.embedding = embedding;
   if (object) {
     std::string label, kind, extension;
     if (!(input >> schema >> metadata.key >> label >> kind >> extension) ||
-        schema != objectCacheSchema || label != "artifact" ||
-        kind != "object" || extension != ".o") {
+        schema != (embedding ? embeddingCacheSchema : objectCacheSchema) ||
+        label != "artifact" || kind != "object" || extension != ".o") {
       errorMessage = "metadata has an invalid native artifact schema";
       return std::nullopt;
     }
@@ -2019,6 +2052,28 @@ readCacheMetadata(const std::filesystem::path &path, bool object,
     metadata.symbols = FileDigest{.hash = symbolsHash, .size = symbolsSize};
   }
   std::string testsLabel;
+  if (embedding) {
+    std::string label;
+    FileDigest header;
+    std::size_t count = 0;
+    if (!(input >> label >> header.hash >> header.size >> count) ||
+        label != "embedding" || !validDigest(header.hash) || count < 4 ||
+        count > 100000) {
+      errorMessage = "invalid embedding companion metadata";
+      return std::nullopt;
+    }
+    metadata.header = header;
+    for (std::size_t i = 0; i < count; ++i) {
+      std::string symbol;
+      if (!(input >> std::quoted(symbol)) || symbol.empty() ||
+          (!metadata.publicSymbols.empty() &&
+           symbol <= metadata.publicSymbols.back())) {
+        errorMessage = "invalid embedding symbol metadata";
+        return std::nullopt;
+      }
+      metadata.publicSymbols.push_back(std::move(symbol));
+    }
+  }
   std::size_t testCount = 0;
   std::string testDigest;
   if (!(input >> testsLabel >> testCount >> testDigest) ||
@@ -2056,8 +2111,10 @@ readCacheMetadata(const std::filesystem::path &path, bool object,
 
 std::string renderCacheMetadata(const CacheMetadata &metadata) {
   std::string text =
-      std::string(metadata.object ? objectCacheSchema : cacheSchema) + "\n" +
-      metadata.key + "\n" +
+      std::string(metadata.embedding ? embeddingCacheSchema
+                  : metadata.object  ? objectCacheSchema
+                                     : cacheSchema) +
+      "\n" + metadata.key + "\n" +
       (metadata.object ? "artifact object .o\nrepresentation " : "generated ") +
       metadata.generated.hash + " " + std::to_string(metadata.generated.size) +
       "\n" + "executable " + metadata.executable.hash + " " +
@@ -2067,6 +2124,15 @@ std::string renderCacheMetadata(const CacheMetadata &metadata) {
                               std::to_string(metadata.symbols->size)
                         : std::string("none")) +
       "\n";
+  if (metadata.embedding) {
+    text += "embedding " + metadata.header->hash + " " +
+            std::to_string(metadata.header->size) + " " +
+            std::to_string(metadata.publicSymbols.size()) + "\n";
+    std::ostringstream symbols;
+    for (const auto &name : metadata.publicSymbols)
+      symbols << std::quoted(name) << '\n';
+    text += symbols.str();
+  }
   text += "tests " + std::to_string(metadata.testCases.size()) + " " +
           digestText(testCatalogText(metadata.testCases)) + "\n";
   for (const std::string &name : metadata.testCases)
@@ -2083,6 +2149,7 @@ enum class CacheLookupStatus {
 struct CacheLookupResult {
   CacheLookupStatus status = CacheLookupStatus::Miss;
   std::string generated;
+  std::optional<EmbeddingCompanion> embedding;
   FileDigest executableDigest;
   std::filesystem::perms executablePermissions = std::filesystem::perms::none;
   // The verified debug symbol bundle inside the entry, when it holds one.
@@ -2113,7 +2180,8 @@ std::optional<std::string> readTextFile(const std::filesystem::path &path,
 
 CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
                                    std::string_view expectedKey, bool object,
-                                   bool requiresSymbols) {
+                                   bool requiresSymbols,
+                                   bool embedding = false) {
   const std::filesystem::path metadataPath = entry / "metadata";
   const std::filesystem::path generatedPath =
       entry / cacheRepresentationFile(object);
@@ -2142,7 +2210,7 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
     }
   }
   const std::optional<CacheMetadata> metadata =
-      readCacheMetadata(metadataPath, object, detail);
+      readCacheMetadata(metadataPath, object, embedding, detail);
   if (!metadata) {
     return {.status = CacheLookupStatus::Corrupt, .detail = std::move(detail)};
   }
@@ -2204,8 +2272,23 @@ CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
       symbols ? "verified backend representation, executable and debug "
                 "symbol digests"
               : "verified backend representation and executable digests";
+  std::optional<EmbeddingCompanion> companion;
+  if (embedding) {
+    const auto path = entry / "embedding.h";
+    const auto status = std::filesystem::symlink_status(path, error);
+    if (error || !std::filesystem::is_regular_file(status))
+      return {.status = CacheLookupStatus::Corrupt,
+              .detail = "embedding header file kind differs"};
+    const auto header = readTextFile(path, detail);
+    if (!header || FileDigest{.hash = digestText(*header),
+                              .size = header->size()} != metadata->header)
+      return {.status = CacheLookupStatus::Corrupt,
+              .detail = "embedding header digest or file kind differs"};
+    companion = EmbeddingCompanion{*header, metadata->publicSymbols};
+  }
   return {.status = CacheLookupStatus::Hit,
           .generated = std::move(*generated),
+          .embedding = std::move(companion),
           .executableDigest = *executableDigest,
           .executablePermissions = executablePermissions,
           .symbols = std::move(symbols),
@@ -2350,11 +2433,26 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
 
   CacheMetadata metadata{.key = std::string(key),
                          .object = object,
+                         .embedding = embeddingBuild(request),
                          .generated = generatedDigest,
                          .executable = *executableDigest,
                          .executablePermissions =
                              static_cast<std::uint32_t>(executablePermissions),
                          .testCases = testCases};
+  if (metadata.embedding) {
+    if (!artifact.embedding) {
+      errorMessage = "embedding cache publication lost its companion";
+      return false;
+    }
+    const auto &companion = *artifact.embedding;
+    if (!publishTextAtomically(entry / "embedding.h", companion.header,
+                               errorMessage))
+      return false;
+    metadata.header = FileDigest{.hash = digestText(companion.header),
+                                 .size = companion.header.size()};
+    metadata.publicSymbols = companion.publicSymbols;
+    std::sort(metadata.publicSymbols.begin(), metadata.publicSymbols.end());
+  }
   // A source-level debug build on Darwin published its symbol bundle beside
   // the executable; the entry keeps a copy so a hit can restore both.
   const std::filesystem::path symbolsPath = entry / cacheSymbolsDirectory;
@@ -3732,6 +3830,13 @@ ExecutableBuildResult
 buildResolvedExecutable(const ExecutableBuildRequest &request,
                         ProgressObserver *progress) {
   ExecutableBuildResult result;
+  const bool library = embeddingBuild(request);
+  if (library && request.compilation().backend() != BackendKind::Llvm) {
+    result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+    result.driverDiagnostic =
+        "gti: shared-library generation requires the LLVM backend";
+    return result;
+  }
   result.generatedSource = request.generatedSource();
   result.nativeInstrumentation = request.nativeInputs().instrumentation;
   const auto hasObjectiveCpp = [](const auto &sources) {
@@ -3758,6 +3863,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
       return artifactPathsAlias(report, path);
     };
     if (conflictsWith(request.output()) ||
+        (library && conflictsWith(embeddingHeader(request))) ||
         conflictsWith(request.generatedSource()) ||
         conflictsWith(request.buildReport()->producerExecutable)) {
       result.status = ExecutableBuildStatus::ArtifactPathConflict;
@@ -3921,11 +4027,12 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
       result.driverDiagnostic = generatedDiagnostic;
       return false;
     }
+    const auto outputPath =
+        library ? request.output().parent_path() : request.output();
     const std::optional<std::string> outputDiagnostic =
         request.managedOutput()
-            ? managedPathDiagnostic(*request.managedOutput(), request.output(),
-                                    true)
-            : createParent(request.output());
+            ? managedPathDiagnostic(*request.managedOutput(), outputPath, true)
+            : createParent(outputPath);
     if (outputDiagnostic) {
       result.status = ExecutableBuildStatus::OutputDirectoryFailure;
       result.driverDiagnostic = outputDiagnostic;
@@ -3959,7 +4066,9 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     } else {
       const bool object = nativeObjectCache(request);
       const std::filesystem::path versionRoot =
-          request.cache()->root / (object ? "v5" : "v4");
+          request.cache()->root / (library  ? "embedding-v1"
+                                   : object ? "v5"
+                                            : "v4");
       const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
       if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
               *request.managedOutput(), cacheProbe, false)) {
@@ -3993,7 +4102,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         const CacheLookupResult lookup =
             lookupCacheEntry(*cacheEntry, *key, object,
                              request.compilation().debugInfo() &&
-                                 request.compilation().target().os == "macos");
+                                 request.compilation().target().os == "macos",
+                             library);
         if (lookup.status == CacheLookupStatus::Hit) {
           cacheProgress.update("hit; restoring executable");
           result.cache.status = BuildCacheStatus::Hit;
@@ -4017,7 +4127,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
               BackendArtifact{.kind = object ? BackendArtifactKind::Object
                                              : BackendArtifactKind::Source,
                               .contents = lookup.generated,
-                              .extension = object ? ".o" : ".cpp"};
+                              .extension = object ? ".o" : ".cpp",
+                              .embedding = lookup.embedding};
           if (request.keepGeneratedSource()) {
             std::string writeError;
             if (!publishTextAtomically(request.generatedSource(),
@@ -4044,7 +4155,48 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
           }
 
           std::string restoreError;
-          if (lookup.symbols) {
+          if (library) {
+            const auto staging =
+                stagedArtifactPath(request.output().parent_path());
+            std::error_code error;
+            if (!std::filesystem::create_directory(staging, error) || error) {
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              result.driverDiagnostic =
+                  "gti: cannot stage cached library generation: " +
+                  error.message();
+              return result;
+            }
+            TemporaryArtifact directoryCleanup(staging, true);
+            const auto binary = staging / request.output().filename();
+            const auto header = staging / embeddingHeader(request).filename();
+            TemporaryArtifact binaryCleanup(binary, true),
+                headerCleanup(header, true);
+            const auto symbols =
+                std::filesystem::path(binary.string() + ".dSYM");
+            StagedDebugBundleCleanup symbolsCleanup{symbols};
+            const auto copied = copyFileAtomically(
+                *cacheEntry / "executable", binary, restoreError,
+                lookup.executableDigest, lookup.executablePermissions);
+            if (!copied.succeeded() ||
+                !writeBinaryFile(header, lookup.embedding->header,
+                                 restoreError) ||
+                (lookup.symbols &&
+                 !copyTree(*lookup.symbols, symbols, restoreError))) {
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              result.driverDiagnostic =
+                  "gti: cannot restore embedding generation: " + restoreError;
+              return result;
+            }
+            result.artifactPublishResult = publishEmbeddingGeneration(
+                staging, request.output().parent_path());
+            if (!result.artifactPublishResult->succeeded()) {
+              result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+              result.driverDiagnostic =
+                  "gti: cannot publish cached embedding generation: " +
+                  result.artifactPublishResult->error.message();
+              return result;
+            }
+          } else if (lookup.symbols) {
             const std::filesystem::path symbols(request.output().string() +
                                                 ".dSYM");
             if (const auto collision = debugBundleSourceCollision(
@@ -4133,6 +4285,12 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
 
   const BackendArtifactKind backendArtifactKind =
       result.compilation.artifact->kind;
+  if (library && !result.compilation.artifact->embedding) {
+    result.status = ExecutableBuildStatus::CompilationFailure;
+    result.driverDiagnostic =
+        "gti: selected backend did not produce the embedding companion";
+    return result;
+  }
 
   std::string generatedWriteError;
   if (!publishTextAtomically(request.generatedSource(),
@@ -4311,8 +4469,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   // the staged link output keeps the final filename inside a unique staging
   // directory. Staging under a uniquely named file would make otherwise
   // identical builds produce different bytes.
-  const std::filesystem::path stagedOutputDirectory =
-      stagedArtifactPath(request.output());
+  const std::filesystem::path stagedOutputDirectory = stagedArtifactPath(
+      library ? request.output().parent_path() : request.output());
   std::error_code stagedDirectoryError;
   std::filesystem::create_directory(stagedOutputDirectory,
                                     stagedDirectoryError);
@@ -4326,9 +4484,14 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     return result;
   }
   TemporaryArtifact stagedDirectoryCleanup(stagedOutputDirectory, true);
+  const auto stagedGeneration = stagedOutputDirectory / "generation";
+  TemporaryArtifact generationCleanup(stagedGeneration, library);
   const std::filesystem::path stagedOutput =
-      stagedOutputDirectory / request.output().filename();
+      (library ? stagedGeneration : stagedOutputDirectory) /
+      request.output().filename();
   TemporaryArtifact stagedArtifact(stagedOutput, true);
+  TemporaryArtifact headerCleanup(
+      stagedGeneration / embeddingHeader(request).filename(), library);
   const StagedDebugBundleCleanup stagedSymbolsCleanup{
       std::filesystem::path(stagedOutput.string() + ".dSYM")};
   const std::filesystem::path nativeDependencyFile =
@@ -4344,7 +4507,31 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
       request.toolchain(), request.nativeInputs(), nativeObjects);
   ProgressScope nativeProgress(progress, ProgressPhase::NativeLink,
                                request.nativeCompiler());
-  if (backendArtifactKind == BackendArtifactKind::Source) {
+  if (library) {
+    const auto &artifact = *result.compilation.artifact;
+    const auto &companion = *artifact.embedding;
+    const LlvmEmbeddingArtifacts bundle{
+        .object = artifact,
+        .header = {BackendArtifactKind::Source, companion.header, ".h"},
+        .target = request.compilation().target(),
+        .publicSymbols = companion.publicSymbols};
+    const auto published = publishEmbeddingLibrary(
+        bundle, {.compiler = request.nativeCompiler(),
+                 .runtimeArchive = request.toolchain().runtimeLibrary,
+                 .generationDirectory = stagedGeneration,
+                 .name = embeddingName(request),
+                 .nativeInputs = effectiveInputs,
+                 .debugInfo = request.compilation().debugInfo()});
+    result.nativeCommand = published.command;
+    result.nativeProcess = published.process;
+    if (!published.succeeded()) {
+      result.status = ExecutableBuildStatus::NativeCompilerFailure;
+      result.driverDiagnostic = "gti: " + published.error;
+      result.backendDiagnosticLog =
+          writeDiagnosticLog(published.error + "\n" + published.process.output);
+      return result;
+    }
+  } else if (backendArtifactKind == BackendArtifactKind::Source) {
     const NativeCompileRequest nativeRequest(
         request.nativeCompiler(), request.generatedSource(), stagedOutput,
         request.compilation().cppStandard(),
@@ -4484,7 +4671,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
       }
     }
     if (const auto diagnostic =
-            debugPublication.publish(stagedSymbols, symbols)) {
+            library ? std::optional<std::string>{}
+                    : debugPublication.publish(stagedSymbols, symbols)) {
       generatedArtifact.keep();
       result.generatedSourceRetained = true;
       result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
@@ -4499,7 +4687,9 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
       cacheEntry && !result.cache.key.empty() ? "executable and build cache"
                                               : "executable");
   result.artifactPublishResult =
-      publishArtifact(stagedOutput, request.output());
+      library ? publishEmbeddingGeneration(stagedGeneration,
+                                           request.output().parent_path())
+              : publishArtifact(stagedOutput, request.output());
   if (!result.artifactPublishResult->succeeded()) {
     const auto restore = debugPublication.rollback();
     generatedArtifact.keep();
@@ -4529,6 +4719,16 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
       return result;
     }
     result.provenance->artifact = std::move(*artifact);
+    if (library) {
+      result.provenance->embeddingHeader =
+          captureFileProvenance(embeddingHeader(request), artifactError);
+      if (!result.provenance->embeddingHeader) {
+        result.status = ExecutableBuildStatus::BuildReportCaptureFailure;
+        result.driverDiagnostic =
+            "gti: cannot capture embedding header: " + artifactError;
+        return result;
+      }
+    }
   }
 
   if (cacheEntry && !result.cache.key.empty()) {

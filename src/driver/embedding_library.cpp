@@ -17,6 +17,14 @@
 
 namespace lang::driver {
 namespace {
+
+struct DebugBundleCleanup {
+  std::filesystem::path path;
+  ~DebugBundleCleanup() {
+    std::error_code error;
+    std::filesystem::remove_all(path, error);
+  }
+};
 bool identifier(std::string_view name) {
   const auto letter = [](char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
@@ -27,9 +35,11 @@ bool identifier(std::string_view name) {
          });
 }
 
+} // namespace
+
 ArtifactPublishResult
-publishNewGeneration(const std::filesystem::path &staged,
-                     const std::filesystem::path &destination) {
+publishEmbeddingGeneration(const std::filesystem::path &staged,
+                           const std::filesystem::path &destination) {
   // The pre-link absence check is diagnostic only. The publication operation
   // itself must refuse a generation created while the native linker ran.
 #if defined(__APPLE__)
@@ -44,8 +54,6 @@ publishNewGeneration(const std::filesystem::path &staged,
 #endif
   return {std::error_code(errno, std::generic_category())};
 }
-} // namespace
-
 EmbeddingLibraryResult
 publishEmbeddingLibrary(const LlvmEmbeddingArtifacts &artifacts,
                         const EmbeddingLibraryRequest &request) {
@@ -63,7 +71,9 @@ publishEmbeddingLibrary(const LlvmEmbeddingArtifacts &artifacts,
       artifacts.target.arch != host.arch)
     return reject(
         "embedding publication requires the supported native host target");
-  if (!identifier(request.name) || request.compiler.empty() ||
+  if (request.name.empty() || request.name == "." || request.name == ".." ||
+      std::filesystem::path(request.name).filename() != request.name ||
+      request.compiler.empty() ||
       artifacts.object.kind != BackendArtifactKind::Object ||
       artifacts.object.contents.empty() ||
       artifacts.header.kind != BackendArtifactKind::Source ||
@@ -110,6 +120,8 @@ publishEmbeddingLibrary(const LlvmEmbeddingArtifacts &artifacts,
   const auto library =
       staging / ("lib" + request.name + (darwin ? ".dylib" : ".so"));
   const auto exports = staging / "exports.txt";
+  const auto debugBundle = std::filesystem::path(library.string() + ".dSYM");
+  const DebugBundleCleanup debugCleanup{debugBundle};
   TemporaryArtifact objectCleanup(object, true), headerCleanup(header, true),
       libraryCleanup(library, true), exportsCleanup(exports, true);
   std::string visibility;
@@ -125,37 +137,58 @@ publishEmbeddingLibrary(const LlvmEmbeddingArtifacts &artifacts,
           ArtifactWriteStatus::Success ||
       writeArtifact(exports, visibility) != ArtifactWriteStatus::Success)
     return reject("cannot write staged embedding artifacts");
-  NativeInputs inputs;
-  inputs.finalLibraryFiles.push_back(
-      std::filesystem::absolute(request.runtimeArchive));
-  inputs.linkerArguments = {darwin ? "-dynamiclib" : "-shared",
-                            "-pthread",
-                            "-Xlinker",
-                            darwin ? "-exported_symbols_list"
-                                   : "--version-script",
-                            "-Xlinker",
-                            exports.string(),
-                            "-Xlinker",
-                            darwin ? "-undefined" : "-z",
-                            "-Xlinker",
-                            darwin ? "error" : "defs"};
+  NativeInputs inputs = request.nativeInputs;
+  const auto runtime = std::filesystem::absolute(request.runtimeArchive);
+  if (std::find(inputs.finalLibraryFiles.begin(),
+                inputs.finalLibraryFiles.end(),
+                runtime) == inputs.finalLibraryFiles.end())
+    inputs.finalLibraryFiles.push_back(runtime);
+  const std::vector<std::string> linkage = {darwin ? "-dynamiclib" : "-shared",
+                                            "-pthread",
+                                            "-Xlinker",
+                                            darwin ? "-exported_symbols_list"
+                                                   : "--version-script",
+                                            "-Xlinker",
+                                            exports.string(),
+                                            "-Xlinker",
+                                            darwin ? "-undefined" : "-z",
+                                            "-Xlinker",
+                                            darwin ? "error" : "defs"};
+  inputs.linkerArguments.insert(inputs.linkerArguments.end(), linkage.begin(),
+                                linkage.end());
   if (darwin) {
     inputs.linkerArguments.insert(inputs.linkerArguments.end(),
                                   {"-Xlinker", "-install_name", "-Xlinker",
                                    "@rpath/" + library.filename().string()});
   }
-  const NativeLinkRequest link(request.compiler, object, library, inputs);
+  const NativeLinkRequest link(request.compiler, object, library, inputs,
+                               request.debugInfo);
   result.command = NativeToolchain().command(link);
   result.process =
       invokeProcess(result.command, {.captureSuccessfulOutput = true,
                                      .description = "embedding shared link"});
   if (!result.process.succeeded())
     return reject("embedding native link failed");
+  if (darwin && request.debugInfo) {
+    // Complete the bundle while the link's object is still available. The
+    // outer driver publishes this directory with the library and header.
+    if (!std::filesystem::is_directory(debugBundle, error)) {
+      const auto symbols = invokeProcess(
+          {"dsymutil", library.string(), "-o", debugBundle.string()},
+          {.captureSuccessfulOutput = true});
+      if (!symbols.succeeded())
+        return reject("cannot collect embedding debug symbols: " +
+                      symbols.output);
+    }
+    if (writeArtifact(debugBundle / ".gti-debug-symbols",
+                      "gti-debug-symbols-v1\n") != ArtifactWriteStatus::Success)
+      return reject("cannot mark embedding debug symbols");
+  }
   if (!std::filesystem::remove(object, error) || error)
     return reject("cannot remove staged embedding object");
   if (!std::filesystem::remove(exports, error) || error)
     return reject("cannot remove staged embedding export map");
-  const auto published = publishNewGeneration(staging, destination);
+  const auto published = publishEmbeddingGeneration(staging, destination);
   if (!published.succeeded())
     return reject("embedding generation publication failed: " +
                   published.error.message());

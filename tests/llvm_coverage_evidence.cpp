@@ -224,7 +224,7 @@ lowerSource(const std::filesystem::path &root,
   }
   lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, target, true);
+      frontend.mir, {}, target);
   if (!lowered.valid()) {
     for (const lang::LoweredProgramIssue &issue : lowered.issues)
       std::cerr << issue.detail << '\n';

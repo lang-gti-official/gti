@@ -750,6 +750,12 @@ using the same general mechanism as source-defined iterator movement policy.
 
 ## Complete projects
 
+[`infallible-embedding/`](infallible-embedding/README.md) builds an LLVM shared
+library and its matching C header through `gti build`. Its C host creates a
+context, calls scalar and passive-record exports, destroys the context and
+unloads/reloads the immutable generation. The focused `llvm_embedding_project`
+gate owns this nested example; the numbered executable MIR census is unchanged.
+
 [`annotated-tests/`](annotated-tests/README.md) shows one manifest suite root
 with several `[[test]]` functions, automatic reporting, source-located checks
 and fresh process state for every test. Run `gti test` in that directory.
