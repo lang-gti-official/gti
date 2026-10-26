@@ -4449,13 +4449,33 @@ compares current status propagation with native unwinding before dependent
 callable/worker ABIs are extended. No transport change is implemented by that
 approval; definitions and calls continue to agree on the convention above.
 
-All GTI functions use deterministic `__gti_native_v1_f<instance-id>` names.
+All GTI functions use deterministic `__gti_native_v2_f<instance-id>` names.
 Declaration planning retains source spans as private metadata and records
 definition obligations before body emission, enabling recursion without name
 lookup or upstream access. Unlowered required definitions cannot be emitted as
-an object. ABI version 1 is an internal invalidation identity, not a stable
+an object. Execution ABI version 2 is an internal invalidation identity, not a stable
 public GTI binary ABI. No `nsw`, `nuw`, `inbounds`, `noalias`, `nonnull`,
 `noundef`, lifetime or dereferenceability promises follow from these plans.
+
+Version 2 adds the inherited-cleanup context runtime dependency without changing
+ordinary value argument/result channels. A function enters one thread-confined
+scope when its first defined failure begins a verified cleanup chain and leaves
+it when propagating or containing that failure. Failed-operation edges check the
+incoming primary before any callee-local cleanup; generated aggregate cleanup
+sequences retain the same scope after their first failure. Nested scopes cannot
+replace the earliest record/artifact, and a secondary failure takes the existing
+emergency protocol immediately. The runtime borrows the record only for that
+synchronous scope; no allocation, public type recognition or successful-call
+TLS lookup is required. Function names include the execution-ABI revision;
+private global/body helper names retain their independent `v1` spelling.
+The module execution-ABI identity owns whole-program invalidation.
+
+The hosted/source checks exercise this context through ordinary source classes
+and an explicitly transformed standard-library cleanup fixture. They do not
+authorize managed-worker transport: the existing legacy emergency endpoint can
+throw for a managed worker. O-LLVM-13/C04 must provide a contained native worker
+boundary before those runtime calls can execute with managed LLVM frames.
+The context mechanism does not select status returns versus native unwinding.
 
 Native C planning is separate: exact scalar/pointer signatures and required
 narrow signed/unsigned extension attributes are applied identically to calls

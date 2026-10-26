@@ -22,6 +22,10 @@ public:
   void terminate(llvm::IRBuilder<> &ir, llvm::Value *channel);
   void terminateCleanup(llvm::IRBuilder<> &ir, llvm::Value *primary,
                         llvm::Value *secondary);
+  [[nodiscard]] llvm::Value *enterCleanup(llvm::IRBuilder<> &ir,
+                                        llvm::Value *primary);
+  void leaveCleanup(llvm::IRBuilder<> &ir, llvm::Value *token);
+  void checkIncomingCleanup(llvm::IRBuilder<> &ir, llvm::Value *secondary);
 
 private:
   Session &session;

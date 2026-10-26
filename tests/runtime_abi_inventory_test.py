@@ -28,7 +28,7 @@ POLICIES = {
     "runtime_execution.h": ("attached TLS lifetime; borrowed failure records", "contract violation terminates; cleanup uses failure ABI", "registered TLS cleanup; no unwind across C"),
     "runtime_atomic_wait.h": ("call-bounded naturally aligned atomic lanes; one final-image parking provider", "invalid ABI or native errors terminate", "none; no unwind"),
     "runtime_mutex.h": ("address-stable native slot; explicit initialize/destroy and same-thread lock ownership", "lock status; other native errors terminate", "none; no unwind"),
-    "runtime_failure.h": ("call-bounded records and pinned descriptors", "report status or terminal exit/abort", "observer containment; no unwind"),
+    "runtime_failure.h": ("call/scope-bounded records and pinned descriptors", "report status or terminal exit/abort; legacy managed handoff may unwind", "observer containment; managed boundary required"),
     "runtime_thread.h": ("explicit task/state/stop/synchronization authority", "status and copied failure records", "task callbacks with versioned failure protocol"),
 }
 

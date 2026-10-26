@@ -192,6 +192,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
   auto *output = function->getArg(1);
   auto *duringFailure = function->getArg(2);
   auto *failed = ir.CreateAlloca(ir.getInt1Ty());
+  auto *cleanupToken = ir.CreateAlloca(session.layouts().pointer());
   auto *scratch = ir.CreateAlloca(session.abi().failureChannel());
   ir.CreateStore(ir.getFalse(), failed);
   const bool unique = recipe.type.kind == SemanticType::UniqueOwner;
@@ -258,6 +259,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
     auto *next = llvm::BasicBlock::Create(session.context(), "next", function);
     ir.CreateCondBr(status, next, bad);
     ir.SetInsertPoint(bad);
+    failures.checkIncomingCleanup(ir, scratch);
     auto *secondary =
         llvm::BasicBlock::Create(session.context(), "secondary", function);
     auto *first =
@@ -275,6 +277,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
     ir.SetInsertPoint(stop);
     ir.CreateRet(ir.getFalse());
     ir.SetInsertPoint(resume);
+    ir.CreateStore(failures.enterCleanup(ir, output), cleanupToken);
     ir.CreateStore(ir.getTrue(), failed);
     ir.CreateBr(next);
     ir.SetInsertPoint(next);
@@ -435,7 +438,18 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe) {
     Memory memory(session, ir, {}, {}, {});
     memory.releaseBytes(allocation);
   }
-  ir.CreateRet(ir.CreateNot(ir.CreateLoad(ir.getInt1Ty(), failed)));
+  auto *failedResult = ir.CreateLoad(ir.getInt1Ty(), failed);
+  auto *leave = llvm::BasicBlock::Create(session.context(),
+                                        "cleanup.context.leave", function);
+  auto *result = llvm::BasicBlock::Create(session.context(),
+                                         "cleanup.result", function);
+  ir.CreateCondBr(failedResult, leave, result);
+  ir.SetInsertPoint(leave);
+  failures.leaveCleanup(
+      ir, ir.CreateLoad(session.layouts().pointer(), cleanupToken));
+  ir.CreateBr(result);
+  ir.SetInsertPoint(result);
+  ir.CreateRet(ir.CreateNot(failedResult));
   buildingCleanups.pop_back();
   return function;
 }

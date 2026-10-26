@@ -21,6 +21,9 @@ enum class RuntimeService {
   MutexDestroy,
   MutexLock,
   MutexUnlock,
+  EnterFailureCleanup,
+  LeaveFailureCleanup,
+  CheckFailureCleanup,
 };
 
 // Only real C symbols with explicitly modeled signatures enter the module.

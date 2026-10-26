@@ -88,6 +88,19 @@ llvm::Function *declareRuntimeService(Session &session,
     name = "gti_rt_mutex_unlock_v1";
     parameters = {ptr};
     break;
+  case RuntimeService::EnterFailureCleanup:
+    name = "gti_rt_failure_cleanup_enter_v1";
+    parameters = {ptr, ptr};
+    result = ptr;
+    break;
+  case RuntimeService::LeaveFailureCleanup:
+    name = "gti_rt_failure_cleanup_leave_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::CheckFailureCleanup:
+    name = "gti_rt_failure_cleanup_check_v1";
+    parameters = {ptr, ptr};
+    break;
   }
   if (name.empty())
     throw std::logic_error("unknown LLVM runtime service identity");

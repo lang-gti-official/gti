@@ -1,0 +1,38 @@
+#include <std/vector>
+#include <std/string>
+
+class Marker {
+  char code;
+public:
+  Marker(char code) : code(code) {}
+  ~Marker() { std::print(this.code); }
+};
+
+void nested(int divisor) {
+  Marker local{'L'};
+  int secondary = 10 / divisor;
+}
+
+class Action {
+  int divisor;
+public:
+  Action(int divisor) : divisor(divisor) {}
+  ~Action() {
+    std::print('D');
+    nested(this.divisor);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Marker outer{'O'};
+  {
+    Action action{argc == 2 || argc == 3 ? 0 : 1};
+    if (argc == 3) {
+      int primary = 10 / (argc - 3);
+    }
+  }
+  if (argc == 4) {
+    int after_success = 10 / (argc - 4);
+  }
+  return 0;
+}
