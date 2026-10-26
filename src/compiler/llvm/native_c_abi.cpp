@@ -123,8 +123,8 @@ bool nativeCValueContract(const MirProgram &program, const TargetInfo &target,
 }
 
 bool nativeCOpaquePointerReferentContract(const MirProgram &program,
-                                         const TargetInfo &target,
-                                         const SemanticType &pointer) {
+                                          const TargetInfo &target,
+                                          const SemanticType &pointer) {
   if (pointer.kind != SemanticType::RawPointer ||
       pointer.arguments.size() != 1 ||
       pointer.arguments.front().kind != SemanticType::Class ||
@@ -284,6 +284,15 @@ bool nativeCScalarFunctionValueContract(const MirProgram &program,
                      scalarBoundaryType);
 }
 
+bool nativeCFunctionValueContract(const MirProgram &program,
+                                  const TargetInfo &target,
+                                  const SemanticType &type) {
+  return type.kind == SemanticType::NativeFunction &&
+         type.hasNativeFunctionShape() &&
+         nativeCValueContract(program, target, type,
+                              NativeCValueRole::Argument);
+}
+
 bool nativeCScalarFunctionImportContract(const MirProgram &program,
                                          const TargetInfo &target,
                                          const MirFunctionInstance &function) {
@@ -307,14 +316,21 @@ bool nativeCScalarReceiverInputContract(const MirProgram &program,
                                         const TargetInfo &target,
                                         const MirBody &body,
                                         const MirInstruction &instruction) {
+  return nativeCScalarFunctionValueContract(program, target,
+                                            instruction.info.type) &&
+         nativeCReceiverInputContract(program, target, body, instruction);
+}
+
+bool nativeCReceiverInputContract(const MirProgram &program,
+                                  const TargetInfo &target, const MirBody &body,
+                                  const MirInstruction &instruction) {
   if (instruction.tombstone ||
       instruction.kind != MirInstructionKind::CallInput ||
       !instruction.result ||
       instruction.callInputRole != MirCallInputRole::Receiver ||
       instruction.callInputKind != HirCallInputKind::Value ||
       instruction.callInputIndex != 0 || instruction.callSite == 0 ||
-      !nativeCScalarFunctionValueContract(program, target,
-                                          instruction.info.type))
+      !nativeCFunctionValueContract(program, target, instruction.info.type))
     return false;
   const auto *value = body.findValue(*instruction.result);
   if (!value || value->definition != instruction.id)
@@ -332,7 +348,7 @@ bool nativeCScalarReceiverInputContract(const MirProgram &program,
           call.receiver->kind == MirOperandKind::Value &&
           call.receiver->value == *instruction.result &&
           call.receiver->type == instruction.info.type &&
-          nativeCScalarIndirectCallContract(program, target, body, call))
+          nativeCIndirectCallContract(program, target, body, call))
         return true;
   return false;
 }
@@ -402,6 +418,75 @@ bool nativeCIndirectCallContract(const MirProgram &program,
                               NativeCValueRole::Argument);
 }
 
+bool nativeCCallbackContract(const MirProgram &program,
+                             const TargetInfo &target,
+                             const MirNativeCallbackAdapter &adapter) {
+  const auto *canonical = program.findNativeCallbackAdapter(adapter.id);
+  const auto *function = program.findFunctionInstance(adapter.target);
+  if (!canonical || *canonical != adapter || !function || function->owner ||
+      function->requiresUnsafe || function->tracksCaller ||
+      function->definitionKind != MirDefinitionKind::Source ||
+      function->linkage != LanguageLinkage::Gti ||
+      !function->typeArguments.empty() || !function->valueArguments.empty() ||
+      !nativeCFunctionValueContract(program, target, adapter.type) ||
+      adapter.targetMayRaiseDefinedFailure !=
+          function->mayRaiseDefinedFailure ||
+      adapter.failurePolicy !=
+          MirNativeCallbackFailurePolicy::TerminateInvocation ||
+      !adapter.catchesNativeExceptions)
+    return false;
+  const auto parameters = adapter.type.nativeFunctionParameterTypes();
+  if (function->returnType != *adapter.type.nativeFunctionReturnType() ||
+      !std::equal(function->parameterTypes.begin(),
+                  function->parameterTypes.end(), parameters.begin(),
+                  parameters.end()))
+    return false;
+  const auto attachment =
+      program.executionProfile() == ExecutionProfile::Concurrent
+          ? (function->threadConfinedCallback
+                 ? CThreadCallbackKind::ThreadConfined
+                 : adapter.type.cThreadCallbackKind())
+          : CThreadCallbackKind::None;
+  return adapter.cThreadCallback == attachment &&
+         (program.executionProfile() != ExecutionProfile::Concurrent ||
+          (attachment != CThreadCallbackKind::None &&
+           target.runtimeCapabilities.threads));
+}
+
+bool nativeCCallbackStageContract(const MirProgram &program,
+                                  const TargetInfo &target, const MirBody &body,
+                                  const MirInstruction &instruction) {
+  const auto *adapter = instruction.nativeCallbackAdapter
+                            ? program.findNativeCallbackAdapter(
+                                  *instruction.nativeCallbackAdapter)
+                            : nullptr;
+  if (!adapter || !nativeCCallbackContract(program, target, *adapter) ||
+      instruction.tombstone ||
+      instruction.kind != MirInstructionKind::Compute ||
+      instruction.operation != MirOperation::NativeCallback ||
+      !instruction.result || instruction.info.type != adapter->type ||
+      !instruction.operands.empty() || instruction.receiver ||
+      instruction.destination || instruction.rawMemoryAccess ||
+      instruction.unsafeOperation != UnsafeOperationKind::None ||
+      instruction.intrinsic != IntrinsicKind::None ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.nativeCalleeType || instruction.threadTaskAdapter ||
+      instruction.callableInvocation ||
+      instruction.functionPointerFunctionTarget ||
+      instruction.functionPointerLambdaTarget || instruction.tracksCaller)
+    return false;
+  const auto *value = body.findValue(*instruction.result);
+  if (!value || value->definition != instruction.id ||
+      value->info.type != adapter->type)
+    return false;
+  for (const auto &block : body.blocks)
+    for (const auto &candidate : block.instructions)
+      if (candidate.id == instruction.id)
+        return candidate == instruction;
+  return false;
+}
+
 bool nativeCStorageContract(const MirProgram &program, const TargetInfo &target,
                             const ForeignStorageInfo &storage) {
   const auto *canonical = program.findForeignStorage(storage.symbol);
@@ -426,15 +511,16 @@ namespace {
 // A representation query over verified places. Traversing an untagged union
 // does not prove native initialization or an active member; source unsafe
 // permission remains a separate requirement of the accessing instruction.
-std::optional<bool> nativeCStorageUnionProjection(
-    const MirProgram &program, const TargetInfo &target, const MirBody &body,
-    const MirPlace &place) {
+std::optional<bool> nativeCStorageUnionProjection(const MirProgram &program,
+                                                  const TargetInfo &target,
+                                                  const MirBody &body,
+                                                  const MirPlace &place) {
   const auto *selected = body.findPlace(place.id);
   const auto *storage = program.findForeignStorage(place.symbol);
   if (!selected || *selected != place || !place.foreignStorage ||
       place.root != MirPlaceRootKind::Symbol || place.capture != 0 ||
-      place.binding != 0 || !place.initiallyAvailable ||
-      !storage || !nativeCStorageImportContract(program, target, *storage))
+      place.binding != 0 || !place.initiallyAvailable || !storage ||
+      !nativeCStorageImportContract(program, target, *storage))
     return std::nullopt;
   const bool root = std::any_of(
       body.places.begin(), body.places.end(), [&](const auto &root) {
@@ -459,7 +545,8 @@ std::optional<bool> nativeCStorageUnionProjection(
       if (!record || !record->cAbiRecord || !record->cAbiLayout)
         return std::nullopt;
       const MirClassFieldInfo *field = nullptr;
-      for (std::size_t index = 0; index < record->declaredFields.size(); ++index)
+      for (std::size_t index = 0; index < record->declaredFields.size();
+           ++index)
         if (record->declaredFields[index].symbol == projection.field) {
           if (field || index >= record->cAbiLayout->fields.size())
             return std::nullopt;
@@ -500,14 +587,13 @@ std::optional<bool> nativeCStorageUnionProjection(
 }
 
 bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
-                           const MirBody &body,
-                           const MirInstruction &instruction,
-                           UnsafeOperationKind permission) {
+                          const MirBody &body,
+                          const MirInstruction &instruction,
+                          UnsafeOperationKind permission) {
   const bool address = instruction.kind == MirInstructionKind::Compute &&
                        instruction.operation == MirOperation::AddressOf &&
                        !instruction.rawMemoryAccess;
-  if (instruction.tombstone ||
-      instruction.unsafeOperation != permission ||
+  if (instruction.tombstone || instruction.unsafeOperation != permission ||
       (!instruction.rawMemoryAccess && !address) || instruction.receiver ||
       instruction.intrinsic != IntrinsicKind::None ||
       instruction.functionTarget || instruction.constructorTarget ||
@@ -530,7 +616,8 @@ bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
   if (instruction.kind == MirInstructionKind::Assign ||
       instruction.kind == MirInstructionKind::Modify) {
     const auto *destination = instruction.destination
-        ? body.findPlace(*instruction.destination) : nullptr;
+                                  ? body.findPlace(*instruction.destination)
+                                  : nullptr;
     if (!destination || destination->access != AccessMode::Mutable)
       return false;
   }
@@ -544,9 +631,9 @@ bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
     const auto &operand = instruction.operands.front();
     const auto *place = body.findPlace(operand.place);
     const auto *result = body.findValue(*instruction.result);
-    const auto projection = place
-        ? nativeCStorageUnionProjection(program, target, body, *place)
-        : std::nullopt;
+    const auto projection =
+        place ? nativeCStorageUnionProjection(program, target, body, *place)
+              : std::nullopt;
     return projection && result && result->definition == instruction.id &&
            result->info.type == instruction.info.type &&
            operand.type == place->type &&
@@ -587,7 +674,8 @@ bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
         instruction.operands.size() == 1 && instruction.destination) {
       const auto *destination = body.findPlace(*instruction.destination);
       const auto *value = operand.kind == MirOperandKind::Value
-          ? body.findValue(operand.value) : nullptr;
+                              ? body.findValue(operand.value)
+                              : nullptr;
       if (destination && value && value->info.type == operand.type &&
           (destination->type.kind == SemanticType::RawPointer ||
            destination->type.kind == SemanticType::NativeFunction))
@@ -609,7 +697,8 @@ bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
 bool nativeCStoragePlaceContract(const MirProgram &program,
                                  const TargetInfo &target, const MirBody &body,
                                  const MirPlace &place) {
-  return nativeCStorageUnionProjection(program, target, body, place).has_value();
+  return nativeCStorageUnionProjection(program, target, body, place)
+      .has_value();
 }
 
 bool nativeCStorageAccessContract(const MirProgram &program,
@@ -1305,18 +1394,8 @@ void emitNativeCCallbacks(Session &session, Failures &failures) {
         session.program().mir().findFunctionInstance(adapter.target);
     const auto *resultType = adapter.type.nativeFunctionReturnType();
     const auto parameters = adapter.type.nativeFunctionParameterTypes();
-    if (!target || !resultType || target->owner || target->tracksCaller ||
-        target->linkage == LanguageLinkage::C ||
-        target->definitionKind != MirDefinitionKind::Source ||
-        target->returnType != *resultType ||
-        !std::equal(target->parameterTypes.begin(),
-                    target->parameterTypes.end(), parameters.begin(),
-                    parameters.end()) ||
-        target->mayRaiseDefinedFailure !=
-            adapter.targetMayRaiseDefinedFailure ||
-        adapter.failurePolicy !=
-            MirNativeCallbackFailurePolicy::TerminateInvocation ||
-        !adapter.catchesNativeExceptions)
+    if (!nativeCCallbackContract(session.program().mir(),
+                                 session.program().target(), adapter))
       throw std::logic_error(
           "native callback lost its sealed exact target contract");
     const auto name = callbackName(adapter.id);

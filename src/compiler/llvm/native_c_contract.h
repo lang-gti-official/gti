@@ -18,9 +18,10 @@ enum class NativeCValueRole { Argument, Result, Storage };
                                         NativeCValueRole role);
 // Applies only to the immediate referent of this exact pointer. It does not
 // admit an opaque object value, its layout, or a dereference.
-[[nodiscard]] bool nativeCOpaquePointerReferentContract(
-    const MirProgram &program, const TargetInfo &target,
-    const SemanticType &pointer);
+[[nodiscard]] bool
+nativeCOpaquePointerReferentContract(const MirProgram &program,
+                                     const TargetInfo &target,
+                                     const SemanticType &pointer);
 [[nodiscard]] bool
 nativeCDeclarationContract(const MirProgram &program, const TargetInfo &target,
                            const MirFunctionInstance &function);
@@ -36,6 +37,9 @@ nativeCCountedInputContract(const MirProgram &program, const TargetInfo &target,
 nativeCAggregateImportContract(const MirProgram &program,
                                const TargetInfo &target,
                                const MirFunctionInstance &function);
+[[nodiscard]] bool nativeCFunctionValueContract(const MirProgram &program,
+                                                const TargetInfo &target,
+                                                const SemanticType &type);
 [[nodiscard]] bool nativeCScalarFunctionValueContract(const MirProgram &program,
                                                       const TargetInfo &target,
                                                       const SemanticType &type);
@@ -50,6 +54,10 @@ nativeCScalarIndirectCallContract(const MirProgram &program,
 [[nodiscard]] bool nativeCScalarReceiverInputContract(
     const MirProgram &program, const TargetInfo &target, const MirBody &body,
     const MirInstruction &instruction);
+[[nodiscard]] bool
+nativeCReceiverInputContract(const MirProgram &program,
+                             const TargetInfo &target, const MirBody &body,
+                             const MirInstruction &instruction);
 [[nodiscard]] bool nativeCDirectCallContract(const MirProgram &program,
                                              const TargetInfo &target,
                                              const MirBody &body,
@@ -58,6 +66,14 @@ nativeCScalarIndirectCallContract(const MirProgram &program,
 nativeCIndirectCallContract(const MirProgram &program, const TargetInfo &target,
                             const MirBody &body,
                             const MirInstruction &instruction);
+
+[[nodiscard]] bool
+nativeCCallbackContract(const MirProgram &program, const TargetInfo &target,
+                        const MirNativeCallbackAdapter &adapter);
+[[nodiscard]] bool
+nativeCCallbackStageContract(const MirProgram &program,
+                             const TargetInfo &target, const MirBody &body,
+                             const MirInstruction &instruction);
 
 [[nodiscard]] bool nativeCStorageContract(const MirProgram &program,
                                           const TargetInfo &target,
@@ -78,8 +94,9 @@ nativeCStorageImportContract(const MirProgram &program,
 nativeCStorageAccessContract(const MirProgram &program,
                              const TargetInfo &target, const MirBody &body,
                              const MirInstruction &instruction);
-[[nodiscard]] bool nativeCStorageUnionAccessContract(
-    const MirProgram &program, const TargetInfo &target, const MirBody &body,
-    const MirInstruction &instruction);
+[[nodiscard]] bool
+nativeCStorageUnionAccessContract(const MirProgram &program,
+                                  const TargetInfo &target, const MirBody &body,
+                                  const MirInstruction &instruction);
 
 } // namespace lang::native_llvm

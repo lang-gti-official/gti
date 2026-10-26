@@ -153,14 +153,16 @@ Loaded function pointers are selected before later call arguments execute.
 The runnable [native storage example](../../examples/llvm/native-c-storage.gti)
 shows mutation, function replacement and ordinary wrapper cleanup.
 
-The current LLVM storage integration still requires separate admission work
-for C-opaque pointer referent metadata and direct foreign-union member access.
-Whole union values can be copied through foreign storage and inspected through
-local snapshots under the ordinary unsafe union policy. These prerequisites
-remain required acceptance cases; they are not grants to treat incomplete
-objects as by-value classes or to bypass union-member obligations. Callback
-fields, aggregate native-function storage, views, owners, TLS and exports remain
-outside this bounded storage profile.
+Opaque pointer values retain their exact incomplete identity through native
+calls, out parameters, passive record fields and foreign pointer slots, including
+null replacement. Only the pointer referent metadata is admitted: incomplete
+objects still cannot be passed by value, laid out or dereferenced. Direct
+foreign-union member reads and writes use the canonical field/index path and
+the source union-member unsafe permission. This includes a union inside a
+foreign record or fixed-array field. The backend establishes no active-member
+guarantee for untagged C unions. Whole union snapshots retain the same unsafe
+member-access obligations. Callback fields, aggregate native-function storage,
+views, owners, TLS and exports remain outside this bounded storage profile.
 
 The C++ comparison backend currently rejects valid foreign checked updates,
 projected record snapshots and record-array element assignments in its text

@@ -169,6 +169,17 @@ def main():
                     raise RuntimeError("native storage execution differs from supported C++ control")
                 executions += 1
     if args.focus != "prerequisites":
+        for name in ("reject_native_storage_opaque_value", "reject_native_storage_opaque_dereference"):
+            for backend in ("llvm", "cpp"):
+                for level in (0, 3):
+                    binary = output / f"{name}-{backend}-O{level}"
+                    sentinel = b"existing opaque boundary artifact\n"
+                    binary.write_bytes(sentinel)
+                    result = run([compiler, fixture / (name + ".gti"), "--backend", backend,
+                                  f"-O{level}", "-o", binary], binary.name, 65)
+                    if b"GTI-S2065" not in result.stderr or binary.read_bytes() != sentinel:
+                        raise RuntimeError("pointer referent witness admitted an opaque object operation")
+                    negatives += 1
         for name in ("reject_native_storage_function_field", "reject_native_storage_aggregate_function"):
             for standard in ("c++20", "c++23"):
                 binary = output / f"{name}-{standard}"

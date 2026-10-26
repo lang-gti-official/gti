@@ -1263,8 +1263,15 @@ public:
                                    : classShape(type));
       if (!type.arguments.empty())
         add(Shape::TypeArguments);
-      for (const SemanticType &argument : type.arguments)
-        pending.push_back(&argument);
+      for (const SemanticType &argument : type.arguments) {
+        if (native_llvm::nativeCOpaquePointerReferentContract(
+                program, nativeTarget, type)) {
+          add(argument.kind, Shape::NativeCOpaquePointerReferent);
+          add(Shape::OpaqueNativeHandle, Shape::NativeCOpaquePointerReferent);
+        } else {
+          pending.push_back(&argument);
+        }
+      }
       const auto enclosing = [&](const SemanticType &argument) {
         if (argument.kind == SemanticType::TypePack && argument.concretePack)
           this->type(argument, true);
@@ -1726,7 +1733,9 @@ public:
             rawAccess |= primitiveRawAccess(mir, *place);
         const bool nativeStorage =
             native_llvm::nativeCStorageAccessContract(program, nativeTarget,
-                                                      mir, stage);
+                                                      mir, stage) ||
+            native_llvm::nativeCStorageUnionAccessContract(program, nativeTarget,
+                                                           mir, stage);
         if (stage.rawMemoryAccess)
           add(Shape::RawMemory,
               nativeStorage ? std::optional(Shape::NativeCStorage)
@@ -1762,7 +1771,8 @@ public:
               callee->requiresUnsafe &&
               stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
           add(stage.unsafeOperation,
-              stage.unsafeOperation == UnsafeOperationKind::ForeignStorage &&
+              (stage.unsafeOperation == UnsafeOperationKind::ForeignStorage ||
+               stage.unsafeOperation == UnsafeOperationKind::UnionMember) &&
                       nativeStorage
                   ? std::optional(Shape::NativeCStorage)
               : stage.unsafeOperation == UnsafeOperationKind::UnionMember
