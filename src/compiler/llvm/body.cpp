@@ -1512,8 +1512,6 @@ private:
     case MirInstructionKind::Call:
     case MirInstructionKind::CallBody:
       result = call(instruction);
-      if (instruction.loan && result && result->getType()->isPointerTy())
-        memory.publish(*instruction.loan, result);
       break;
     case MirInstructionKind::Borrow: {
       const auto &loan = *input.findLoan(*instruction.loan);
@@ -1576,6 +1574,13 @@ private:
       throw BackendUnsupportedError(
           "LLVM instruction shape is not implemented");
     }
+    // A constructed borrowed carrier publishes its own address, not the
+    // referent that provides the result's lifetime dependency.
+    if ((instruction.kind == MirInstructionKind::Call ||
+         instruction.kind == MirInstructionKind::CallBody ||
+         instruction.kind == MirInstructionKind::Construct) &&
+        instruction.loan && result && result->getType()->isPointerTy())
+      memory.publish(*instruction.loan, result);
     if (instruction.result && result)
       values.at(*instruction.result) = result;
     if (published.matched()) {

@@ -70,7 +70,7 @@ void validateC04Evaluation(const Session &session,
         function->linkage != LanguageLinkage::Gti || function->owner ||
         function->entryKind != ProgramEntryKind::None ||
         function->requiresUnsafe || function->neverReturns ||
-        !scalar(function->returnType) ||
+        (!scalar(function->returnType) && !knownClass(function->returnType)) ||
         !std::all_of(function->parameterTypes.begin(),
                      function->parameterTypes.end(), localType))
       reject("function signature or definition");
@@ -128,10 +128,20 @@ void validateC04Evaluation(const Session &session,
         if (instruction.intrinsic != IntrinsicKind::None ||
             instruction.rawMemoryAccess || instruction.elementCleanup ||
             instruction.replacementCleanup ||
-            (instruction.successResultDrop &&
-             instruction.kind != MirInstructionKind::Construct) ||
             instruction.nativeCallbackAdapter || instruction.threadTaskAdapter)
           reject("non-scalar instruction facts");
+        if (instruction.successResultDrop &&
+            instruction.kind != MirInstructionKind::Construct) {
+          const auto *target =
+              instruction.functionTarget
+                  ? program.findFunctionInstance(*instruction.functionTarget)
+                  : nullptr;
+          if (instruction.kind != MirInstructionKind::Call || !target ||
+              !selected.contains(target->id) ||
+              instruction.dispatch != CallDispatch::Static ||
+              !knownClass(target->returnType))
+            reject("success result outside ordinary record call profile");
+        }
         if (instruction.preparedParameterDrop) {
           const auto *prepared =
               body.findDropObligation(*instruction.preparedParameterDrop);
@@ -154,9 +164,16 @@ void validateC04Evaluation(const Session &session,
               selected.contains(*instruction.functionTarget) &&
               instruction.dispatch == CallDispatch::Static &&
               source->kind == MirDropObligationKind::PreparedParameter;
+          const bool resultPublication =
+              publication && address.kind == MirBodyKind::Function &&
+              term == MirTerminatorKind::Return &&
+              (source->kind == MirDropObligationKind::ReturnResult ||
+               source->kind == MirDropObligationKind::Value) &&
+              knownClass(source->dropType.type);
           if (event.kind == MirLifecycleEventKind::Replace ||
               (event.kind == MirLifecycleEventKind::TransferOut &&
-               !constructorPublication && !parameterTransfer))
+               !constructorPublication && !parameterTransfer &&
+               !resultPublication))
             reject("replacement or escaping owner lifecycle");
         }
         switch (instruction.kind) {

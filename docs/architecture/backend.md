@@ -4990,6 +4990,12 @@ initializer stage, including after a reference-return call's success edge.
 protected borrow origin is an enclosing object. Field publication stores that
 address, not a scalar load and not the enclosing origin's address. The backend
 does not change permission, escape or loan endpoints.
+Constructors and calls that produce a borrowed carrier publish the address and
+type of that completed result on the successful edge. The loan's originating
+referent still determines its lifetime, not its physical result representation.
+A subsequent return/reborrow selects the carrier address; it must not reinterpret
+the referent address as the record. This also preserves cleanup of an already
+constructed return value when a local destructor fails before return publication.
 
 Exact brace arrays now initialize fresh immovable elements without requiring
 movement. Both backends preserve final addresses and MIR's per-element cleanup.

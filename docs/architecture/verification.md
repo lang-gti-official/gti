@@ -10150,7 +10150,12 @@ Ordinary owned-record fields exercise constructor rollback, cleanup of remaining
 fields after either the containing destructor or one child fails, and terminal
 failure during that drain. Owning parameters check exactly-once cleanup both
 before call entry (a later argument fails) and after transfer to the callee.
-Raw/array fields and owning return signatures remain rejected before object
+Fresh owning results check both ordinary publication and rollback after a
+remaining local destructor fails. Production `llvm_placement_execution` also
+checks returned borrowed carriers, their referent identity and rollback order;
+its fresh-return chain has an explicit C++ vocabulary comparator gap, while
+the failure-cleanup case retains C++20/23 comparison.
+Raw/array fields and replacement remain rejected before object
 publication. These are not arbitrary ownership transfer, worker or performance
 acceptance and must not substitute for existing backend gates. Retained IR is
 the verified pre-object-emission module: target emission may rewrite `resume`

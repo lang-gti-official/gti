@@ -1,0 +1,11 @@
+struct Record {
+  int value;
+  Record(int input) : value(input) {}
+  ~Record() {}
+};
+
+int sample(int input) {
+  mut Record value{0};
+  value = Record(input);
+  return value.value + 1;
+}
