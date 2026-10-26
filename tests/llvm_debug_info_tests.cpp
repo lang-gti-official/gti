@@ -12,6 +12,7 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 using namespace lang;
 using namespace lang::native_llvm;
@@ -106,7 +107,8 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
   for (const auto &row : input->program().findBody(address)->sourceLocations) {
     debug.location(ir, row.block, row.instruction);
     if (!ir.getCurrentDebugLocation() ||
-        ir.getCurrentDebugLocation().getLine() != row.source.line)
+        !std::cmp_equal(ir.getCurrentDebugLocation().getLine(),
+                        row.source.line))
       throw std::runtime_error("sealed source location was lost");
     ++lines;
   }
