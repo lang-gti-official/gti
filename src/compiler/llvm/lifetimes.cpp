@@ -3,6 +3,7 @@
 #include "gti/mir_effects.h"
 #include "memory.h"
 #include "payloads.h"
+#include "polymorphic_storage.h"
 
 #include <algorithm>
 #include <set>
@@ -451,6 +452,12 @@ void Lifetimes::preflightInertRelocation(Session &session, Dispatch &dispatch,
     path.push_back(selected);
     if (selected.kind == SemanticType::Class) {
       const auto &owner = session.layouts().instance(selected);
+      if (owner.compilerCapability ==
+          CompilerCapabilityTypeKind::PolymorphicStorage) {
+        static_cast<void>(session.layouts().polymorphicStorage(selected));
+        path.pop_back();
+        return;
+      }
       if (owner.compilerCapability != CompilerCapabilityTypeKind::None ||
           owner.requiresActiveCleanup || owner.requiresActiveDropState ||
           owner.traits.containsBorrowedState ||
@@ -500,6 +507,12 @@ void Lifetimes::preflightInertRelocation(Session &session, Dispatch &dispatch,
   visit(visit, type, false);
 }
 
+llvm::FunctionType *Lifetimes::inertRelocationType() const {
+  return llvm::FunctionType::get(
+      llvm::Type::getVoidTy(session.context()),
+      {session.layouts().pointer(), session.layouts().pointer()}, false);
+}
+
 llvm::Function *Lifetimes::inertRelocation(const SemanticType &type) {
   // Validate the complete finite layout and dispatch graph before publishing
   // even a helper declaration. Failure cannot leave a partial cached helper.
@@ -508,10 +521,7 @@ llvm::Function *Lifetimes::inertRelocation(const SemanticType &type) {
     if (previous == type)
       return function;
   auto *function = llvm::Function::Create(
-      llvm::FunctionType::get(
-          llvm::Type::getVoidTy(session.context()),
-          {session.layouts().pointer(), session.layouts().pointer()}, false),
-      llvm::GlobalValue::InternalLinkage,
+      inertRelocationType(), llvm::GlobalValue::InternalLinkage,
       "__gti_inert_relocate_" + std::to_string(inertRelocations.size()),
       session.module());
   inertRelocations.emplace_back(type, function);
@@ -524,6 +534,12 @@ llvm::Function *Lifetimes::inertRelocation(const SemanticType &type) {
     const auto layout = session.layouts().get(selected);
     if (selected.kind == SemanticType::Class) {
       const auto &owner = session.layouts().instance(selected);
+      if (owner.compilerCapability ==
+          CompilerCapabilityTypeKind::PolymorphicStorage) {
+        PolymorphicStorage(session, *this, dispatch)
+            .relocate(ir, selected, destination, source);
+        return;
+      }
       for (const auto &entry : owner.bases) {
         const auto index =
             session.layouts().baseIndex(selected, entry.instance);

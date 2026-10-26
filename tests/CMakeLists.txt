@@ -1768,6 +1768,12 @@ target_link_libraries(gti_llvm_dispatch_layout_tests PRIVATE gti_llvm_backend gt
 add_test(NAME llvm_dispatch_layout COMMAND gti_llvm_dispatch_layout_tests)
 set_tests_properties(llvm_dispatch_layout PROPERTIES TIMEOUT 120)
 
+add_executable(gti_llvm_polymorphic_storage_tests llvm_polymorphic_storage_tests.cpp)
+target_include_directories(gti_llvm_polymorphic_storage_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_polymorphic_storage_tests PRIVATE gti_llvm_backend gti_driver)
+add_test(NAME llvm_polymorphic_storage_mechanisms COMMAND gti_llvm_polymorphic_storage_tests)
+set_tests_properties(llvm_polymorphic_storage_mechanisms PROPERTIES TIMEOUT 120)
+
 # Private component execution for cleanup composition only. This deliberately
 # does not enter the LLVM evidence manifest or public admission/coverage gates.
 add_library(gti_llvm_cleanup_release_oracle STATIC

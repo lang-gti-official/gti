@@ -13,6 +13,7 @@
 #include "payloads.h"
 #include "placement.h"
 #include "places.h"
+#include "polymorphic_storage.h"
 #include "runtime_abi.h"
 #include "scalar.h"
 #include "text.h"
@@ -145,6 +146,7 @@ public:
             [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
               guard(condition, outcome);
             }),
+        polymorphicStorage(session, lifetimes, dispatch),
         channels(body.failureRecords.size() + 1),
         blocks(body.blocks.size() + 1), live(body.dropObligations.size() + 1),
         placement(session.program().mir(), body),
@@ -189,6 +191,7 @@ private:
   std::vector<llvm::Value *> values;
   Places memory;
   Memory objectMemory;
+  PolymorphicStorage polymorphicStorage;
   std::vector<llvm::Value *> channels;
   std::vector<llvm::BasicBlock *> blocks;
   std::vector<llvm::Value *> live;
@@ -756,6 +759,12 @@ private:
         return formFunctionPointer(instruction);
       if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke)
         return invokeFunctionPointer(instruction);
+      if (PolymorphicStorage::handles(instruction.intrinsic)) {
+        std::vector<llvm::Value *> inputs;
+        for (const auto &value : instruction.operands)
+          inputs.push_back(operand(value));
+        return polymorphicStorage.emit(ir, input, instruction, inputs);
+      }
       if (Memory::handles(instruction.intrinsic)) {
         std::vector<llvm::Value *> inputs;
         for (const auto &value : instruction.operands)

@@ -5164,10 +5164,10 @@ select this representation, never a public wrapper name. A zero-length LLVM
 vector alignment anchor makes the requested alignment part of the storage type,
 so ordinary containing records preserve it without allocation-site overrides.
 Target DataLayout must agree with the requested power-of-two alignment. No heap
-allocation or payload lifetime begins during layout. Relocation must eventually
-recompute the interface address at the destination rather than copy the cache.
-Construction, relocation, reset, invariant-checked reads, dynamic dispatch and
-cleanup remain separately gated pending their exact operation proofs. The component
+allocation or payload lifetime begins during layout. Relocation recomputes the
+interface address at the destination rather than copying the cache. Public
+construction, relocation, dynamic dispatch and cleanup remain separately gated
+pending their complete body-local lifecycle integration. The component
 layout oracle is not evidence that `std::function` or `std::inline_polymorphic`
 executes on LLVM.
 
@@ -5183,11 +5183,28 @@ use a counted loop rather than code expansion proportional to their extent.
 Borrowed/cleanup-bearing shapes and unimplemented structural capability,
 union or payload representations reject before helper publication. This is a
 mechanism for already-authorized relocation into fresh storage, not permission
-for a new source copy or move. Public admission has not changed. Slot operations
-still need descriptor publication and cached-interface rebasing, and nested
-slot/payload relocation must extend the same mechanism before those shapes are
-admitted. Private slot invariant violations retain MIR's trap contract rather
-than acquiring a new defined-failure channel.
+for a new source copy or move. The mechanism also handles private polymorphic
+slots nested in ordinary records, including empty fields; fixed arrays of the
+private capability remain prohibited by the frontend.
+
+`PolymorphicStorage` now implements private construct, has-value, read/read-mut,
+reset and relocation operations using instructions owned by the sealed session.
+Non-emitting preflight checks concrete relocation eligibility and exact interface
+adjustments before publication. Each concrete model/interface descriptor contains
+an inert relocation helper and the interface offset, independent of slot capacity.
+Construction publishes the descriptor after payload initialization. Relocation
+branches on occupancy, uses that descriptor to relocate the payload, recomputes
+the destination interface cache, and empties the source. Empty relocation and
+repeated reset are valid; no payload allocation or source destructor is required
+for this cleanup-inert family. The helper signature is owned by `Lifetimes` and
+shared by direct and descriptor-indirect calls. Private slot invariant violations
+retain MIR's trap contract rather than acquiring a defined-failure channel.
+
+Public admission has not changed. The component oracle exercises actual native
+storage and externally observes addresses/values; it does not substitute for
+ordinary source construction, publication, transfer and cleanup integration.
+Structural payload relocation, boxed dynamic cleanup, and full callable execution
+remain prerequisites before admitting existing source wrappers.
 
 ### LLVM Function Values And Closure Environments
 
