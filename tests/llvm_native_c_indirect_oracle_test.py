@@ -11,7 +11,7 @@ import time
 from llvm_evidence_manifest import build_manifest
 
 SOURCES = ("contracts", "native_indirect", "native_indirect_order",
-           "native_indirect_failure")
+           "native_indirect_failure", "native_indirect_roots")
 
 
 def evidence_cases(root):
@@ -33,6 +33,7 @@ def main():
         return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
+    parser.add_argument("--emitter", type=Path, required=True)
     parser.add_argument("--cc", default="clang")
     parser.add_argument("--cxx", default="clang++")
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -74,11 +75,21 @@ def main():
             if (result.stdout != b"selected\nmark:1\nmark:99\n" or
                     b"division" not in result.stderr.lower() or site not in result.stderr):
                 raise RuntimeError("native later-argument failure/cleanup attribution mismatch")
+        elif source == "native_indirect_roots":
+            if result.stdout != b"mark:99\n" or result.stderr:
+                raise RuntimeError("native exact roots or typed cleanup mismatch")
         elif result.stdout or result.stderr:
             raise RuntimeError("unexpected native scalar indirect output")
 
     run([args.cc, "--version"], "c-version")
     run([args.cxx, "--version"], "cxx-version")
+    for source, mode in (
+            ("native_indirect_roots", "--reachability"),
+            ("reject_native_indirect", "--conservative-reachability"),
+            ("reject_native_indirect_callback", "--conservative-reachability")):
+        run([args.emitter.resolve(), fixture / (source + ".gti"),
+             output / (source + ".o"), output / (source + ".ll"), 0, mode],
+            "roots-" + source)
     executions = 0
     for c_level in (0, 3):
         objects = []
@@ -121,14 +132,16 @@ def main():
         result = run([binary], "run-" + binary.name)
         if result.stdout or result.stderr:
             raise RuntimeError("supported aggregate C++ comparator output mismatch")
-    for level in (0, 3):
-        destination = output / f"reject-aggregate-indirect-O{level}"
-        sentinel = b"existing native artifact\n"
-        destination.write_bytes(sentinel)
-        result = run([compiler, rejected, "--backend", "llvm", f"-O{level}",
-                      "-o", destination], destination.name, 65)
-        if b"GTI-B0003" not in result.stderr or destination.read_bytes() != sentinel:
-            raise RuntimeError("unsupported aggregate indirect call replaced an artifact")
+    for source in ("reject_native_indirect", "reject_native_indirect_required",
+                   "reject_native_indirect_callback"):
+        for level in (0, 3):
+            destination = output / f"{source}-O{level}"
+            sentinel = b"existing native artifact\n"
+            destination.write_bytes(sentinel)
+            result = run([compiler, fixture / (source + ".gti"), "--backend", "llvm",
+                          f"-O{level}", "-o", destination], destination.name, 65)
+            if b"GTI-B0003" not in result.stderr or destination.read_bytes() != sentinel:
+                raise RuntimeError("unsupported required native boundary replaced an artifact")
     rejections = (
         ("reject_native_indirect_unsafe", b"GTI-S2055", b":6:21:"),
         ("reject_native_indirect_signature", b"GTI-S2003", b":5:46:"),
@@ -145,7 +158,7 @@ def main():
                     b"GTI-B0003" in result.stderr or
                     destination.read_bytes() != sentinel):
                 raise RuntimeError("native source rejection or artifact preservation mismatch")
-    print(f"PASS: {executions} public LLVM native-function executions, 18 C++ controls and 6 artifact negatives; {output}")
+    print(f"PASS: {executions} public LLVM native-function executions, 22 C++ controls, 3 exact-root checks and 10 artifact negatives; {output}")
 
 
 if __name__ == "__main__":

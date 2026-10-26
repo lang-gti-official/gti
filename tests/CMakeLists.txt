@@ -1779,7 +1779,8 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME llvm_native_c_indirect_execution
     COMMAND "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_indirect_oracle_test.py"
-      "$<TARGET_FILE:gti>" --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+      "$<TARGET_FILE:gti>" --emitter "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
       --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-indirect-evidence")
   set_tests_properties(llvm_native_c_indirect_execution PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_native_c_indirect_cost

@@ -4,6 +4,7 @@
 #include "../src/compiler/llvm/failure.h"
 #include "../src/compiler/llvm/native_c_abi.h"
 #include "../src/compiler/llvm/native_c_contract.h"
+#include "../src/compiler/llvm/reachability.h"
 #include "cpp_backend_test_support.h"
 
 #include <llvm/Config/llvm-config.h>
@@ -891,6 +892,68 @@ void emitStorageProbes(Session &session) {
 
 } // namespace
 
+void checkNativeReachability(Session &session, bool conservative) {
+  const auto roots = reachableProgram(session.program());
+  require(roots.conservative == conservative,
+          "only exact supported foreign calls may avoid unknown GTI dispatch");
+  if (conservative)
+    return;
+  std::set<std::string> found;
+  bool destructor = false;
+  for (const auto &function : session.program().mir().functionInstances()) {
+    const auto *declaration =
+        session.program().findFunctionDeclaration(function.declaration);
+    if (!declaration)
+      continue;
+    const auto &name = declaration->qualifiedName;
+    if (name == "main" || name == "required_dependency" ||
+        name == "native_unary" || name == "native_mark" ||
+        name == "export_root_candidate" || name == "dormant_unsupported") {
+      const bool required =
+          roots.contains(MirBodyAddress{MirBodyKind::Function, function.id});
+      require(required == (name != "dormant_unsupported" &&
+                           name != "export_root_candidate"),
+              "foreign calls must retain exact GTI, import and cleanup roots");
+      found.insert(name);
+    }
+  }
+  for (auto address : roots.bodies)
+    destructor |= address.kind == MirBodyKind::Destructor;
+  require(
+      found.size() == 6 && destructor,
+      "sealed closure must exercise dormant, direct, export and cleanup roots");
+  // Public extern-C syntax is declaration-only. Exercise the pre-existing
+  // source-C root rule structurally without granting source exports or codegen
+  // authority to this altered test copy.
+  auto exported = session.program();
+  auto &functions = const_cast<std::vector<MirFunctionInstance> &>(
+      exported.mir().functionInstances());
+  bool checkedExport = false, checkedMalformed = false;
+  for (auto &function : functions) {
+    const auto *declaration =
+        exported.findFunctionDeclaration(function.declaration);
+    if (declaration && declaration->qualifiedName == "export_root_candidate") {
+      function.linkage = LanguageLinkage::C;
+      require(reachableProgram(exported).contains(
+                  MirBodyAddress{MirBodyKind::Function, function.id}),
+              "foreign calls must preserve every existing C source root");
+      function.linkage = LanguageLinkage::Gti;
+      checkedExport = true;
+    }
+    for (auto &block : function.body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.nativeCalleeType) {
+          ++instruction.callSite;
+          require(reachableProgram(exported).conservative,
+                  "malformed staged native calls retain conservative closure");
+          --instruction.callSite;
+          checkedMalformed = true;
+        }
+  }
+  require(checkedExport && checkedMalformed,
+          "root controls must exercise source-C and malformed call fallbacks");
+}
+
 int main(int argc, char **argv) {
   try {
     const bool contracts = argc == 6 && std::string(argv[5]) == "--contracts";
@@ -898,11 +961,16 @@ int main(int argc, char **argv) {
         argc == 6 && std::string(argv[5]) == "--source-preflight";
     const bool storage = argc == 6 && std::string(argv[5]) == "--storage";
     const bool text = argc == 6 && std::string(argv[5]) == "--text-contracts";
+    const bool reachability =
+        argc == 6 && std::string(argv[5]) == "--reachability";
+    const bool conservative =
+        argc == 6 && std::string(argv[5]) == "--conservative-reachability";
     const bool concurrent =
         argc == 6 && std::string(argv[5]) == "--thread-callbacks";
-    require(argc == 5 || (argc == 6 && (std::string(argv[5]) == "--callbacks" ||
-                                        concurrent || contracts || preflight ||
-                                        storage || text)),
+    require(argc == 5 || (argc == 6 &&
+                          (std::string(argv[5]) == "--callbacks" ||
+                           concurrent || contracts || preflight || storage ||
+                           text || reachability || conservative)),
             "usage: test fixture.gti output.o output.ll O[0-3] "
             "[--callbacks|--thread-callbacks]");
     const auto input = fixture(argv[1], concurrent, argc == 6);
@@ -912,6 +980,11 @@ int main(int argc, char **argv) {
         LlvmCodegenOptimization::None, LlvmCodegenOptimization::Less,
         LlvmCodegenOptimization::Default, LlvmCodegenOptimization::Aggressive};
     Session session(input, {.optimization = levels[level]});
+    if (reachability || conservative) {
+      checkNativeReachability(session, conservative);
+      std::cout << "PASS: exact native call dependency roots\n";
+      return 0;
+    }
     if (text) {
       emitCountedTextProbes(session);
     } else if (storage) {

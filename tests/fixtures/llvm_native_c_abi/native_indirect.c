@@ -45,6 +45,7 @@ int32_t native_zero(void) { return 0; }
 typedef struct NativeRecord {
   int32_t value;
 } NativeRecord;
+int32_t consume_record(NativeRecord value) { return value.value; }
 typedef NativeRecord (*RecordOperation)(NativeRecord);
 static NativeRecord record_operation(NativeRecord value) {
   value.value += 1;

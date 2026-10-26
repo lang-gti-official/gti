@@ -1,0 +1,26 @@
+using Unary = (int32_t) -> int32_t;
+[[c_abi]] struct DormantRecord { mut int32_t value; };
+extern "C" {
+  int32_t consume_record(DormantRecord value);
+  DormantRecord* obtain_record_pointer();
+}
+int32_t dormant_unsupported() {
+  unsafe { return consume_record(*obtain_record_pointer()); }
+}
+int32_t required_dependency(int32_t value) { return value + 1; }
+int32_t export_root_candidate(int32_t value) { return value + 3; }
+extern "C" {
+  Unary native_unary();
+  int32_t native_mark(int32_t value);
+}
+struct Guard {
+  ~Guard() { [[discard]] native_mark(99); }
+};
+int main() {
+  Guard guard{};
+  unsafe {
+    if (native_unary()(31) != 42) return 1;
+  }
+  if (required_dependency(8) != 9) return 3;
+  return 0;
+}
