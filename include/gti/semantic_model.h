@@ -2283,6 +2283,7 @@ struct SemanticSourceLocal {
   SemanticType type = SemanticType::Unknown;
   std::string name;
   SourceSpan declaration;
+  bool receiver = false;
 };
 
 struct SemanticSourceDebugInstance {
@@ -2321,6 +2322,8 @@ struct SemanticSourceDebugBody {
   SourceDebugBodyKind kind = SourceDebugBodyKind::Function;
   const void *source = nullptr;
   const void *creator = nullptr;
+  // Accepted implicit receiver state, independent of descriptive local rows.
+  std::optional<SemanticType> receiverType;
   SourceDebugRecord<SemanticSourceDebugTables> facts;
 };
 

@@ -2,11 +2,14 @@
 #include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/debug_info.h"
 #include "../src/compiler/llvm/layout.h"
+#include "../src/compiler/llvm/native_c_abi.h"
 #include "../src/compiler/llvm/parameter_packs.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
+#include "gti/mir_effects.h"
 #include "gti/optimizer.h"
 
+#include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/DebugProgramInstruction.h>
 #include <llvm/IR/Verifier.h>
@@ -481,6 +484,187 @@ int main() { Sample value{}; Generated generated{}; return generated.value == 7 
             << " identity controls passed\n";
 }
 
+void lambdaIdentities() {
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("lambda-debug.gti", R"gti(
+int main() {
+  int captured = 9;
+  auto apply = [captured](int input) -> int { return input + captured; };
+  return apply(4) == 13 ? 0 : 1;
+}
+)gti");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid lambda identity fixture");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  std::vector<LoweredProgramIssue> issues;
+  if (!lowered.valid())
+    throw std::runtime_error("invalid lambda identity lowering");
+  auto input = verifiedLoweredProgram(*lowered.program, issues);
+  if (!input)
+    throw std::runtime_error("unverified lambda identity lowering");
+  Session session(*input, {}), foreignSession(*input, {});
+  DebugInfo debug(session);
+  unsigned controls = 0, definitions = 0;
+  const auto reject = [&](auto action) {
+    try {
+      action();
+    } catch (const std::logic_error &) {
+      ++controls;
+      return;
+    }
+    throw std::runtime_error("forged lambda factory identity was accepted");
+  };
+  for (const auto &source : input->program().mir().lambdaInstances()) {
+    const MirBodyAddress address{MirBodyKind::Lambda, source.id};
+    const auto plan = session.abi().gti(
+        source.returnType, source.parameterTypes,
+        !source.body.failureRecords.empty(), !source.captureTypes.empty());
+    auto *function =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::InternalLinkage,
+                               "registered_lambda", session.module());
+    auto *other =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::ExternalLinkage,
+                               "other_lambda", session.module());
+    auto *wrong = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                                false),
+        llvm::GlobalValue::ExternalLinkage, "wrong_lambda", session.module());
+    auto *outside = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(foreignSession.context()),
+                                false),
+        llvm::GlobalValue::ExternalLinkage, "foreign_lambda",
+        foreignSession.module());
+    reject([&] { debug.begin(address, *function); });
+    reject([&] { debug.registerLambdaBody(address, *wrong); });
+    reject([&] { debug.registerLambdaBody(address, *outside); });
+    reject(
+        [&] { debug.registerLambdaBody({MirBodyKind::Module, 0}, *function); });
+    reject([&] {
+      debug.registerLambdaBody({MirBodyKind::Lambda, source.id + 1000},
+                               *function);
+    });
+    debug.registerLambdaBody(address, *function);
+    debug.registerLambdaBody(address, *function);
+    reject([&] { debug.registerLambdaBody(address, *other); });
+    reject([&] { debug.begin(address, *other); });
+    debug.begin(address, *function);
+    if (!function->getSubprogram() ||
+        function->getSubprogram()->getName() != "<lambda>" ||
+        !function->getSubprogram()->getLine() || other->getSubprogram())
+      throw std::runtime_error("lambda source identity was lost or forged");
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", function));
+    ir.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
+    ++definitions;
+  }
+  debug.finalize();
+  if (definitions != 1 || controls != 7 ||
+      llvm::verifyModule(session.module(), &llvm::errs()))
+    throw std::runtime_error("lambda identity controls did not execute");
+}
+
+void callbackArtificialCarrier() {
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("callback-debug.gti", R"gti(
+using Operation = (int32_t) -> int32_t;
+extern "C" { int32_t invoke(Operation operation, int32_t value); }
+int32_t inspect(int32_t value) { return value; }
+int main() {
+  Operation callback = inspect;
+  unsafe { return invoke(callback, 4); }
+}
+)gti");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid callback debug fixture");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  std::vector<LoweredProgramIssue> issues;
+  if (!lowered.valid())
+    throw std::runtime_error("invalid callback debug lowering");
+  auto input = verifiedLoweredProgram(*lowered.program, issues);
+  if (!input || input->program().mir().nativeCallbackAdapters().size() != 1)
+    throw std::runtime_error("callback debug identity was not sealed");
+  Session session(*input, {.debugInfo = true}), foreign(*input, {});
+  auto &debug = *session.debugInfo();
+  const auto &adapter = input->program().mir().nativeCallbackAdapters().front();
+  const auto plan =
+      planNativeCFunction(session, *adapter.type.nativeFunctionReturnType(),
+                          adapter.type.nativeFunctionParameterTypes());
+  auto *function = llvm::Function::Create(plan.signature.type,
+                                          llvm::GlobalValue::InternalLinkage,
+                                          "callback_carrier", session.module());
+  plan.signature.applyTo(*function);
+  function->addFnAttr(llvm::Attribute::NoUnwind);
+  const auto attributes = function->getAttributes();
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  unsigned controls = 0;
+  const auto reject = [&](auto action) {
+    try {
+      action();
+    } catch (const std::logic_error &) {
+      ++controls;
+      return;
+    }
+    throw std::runtime_error("forged callback debug identity was accepted");
+  };
+  llvm::IRBuilder<> missing(session.context());
+  reject([&] { debug.beginNativeCallback(adapter.id, missing); });
+  reject([&] { debug.beginNativeCallback(adapter.id + 1000, ir); });
+  auto *wrong = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
+      llvm::GlobalValue::InternalLinkage, "wrong_callback", session.module());
+  llvm::IRBuilder<> wrongIr(
+      llvm::BasicBlock::Create(session.context(), "entry", wrong));
+  reject([&] { debug.beginNativeCallback(adapter.id, wrongIr); });
+  wrongIr.CreateRetVoid();
+  auto *outside = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(foreign.context()), false),
+      llvm::GlobalValue::InternalLinkage, "foreign_callback", foreign.module());
+  llvm::IRBuilder<> outsideIr(
+      llvm::BasicBlock::Create(foreign.context(), "entry", outside));
+  reject([&] { debug.beginNativeCallback(adapter.id, outsideIr); });
+  function->setCallingConv(llvm::CallingConv::Fast);
+  reject([&] { debug.beginNativeCallback(adapter.id, ir); });
+  function->setCallingConv(llvm::CallingConv::C);
+  function->addRetAttr(llvm::Attribute::ZExt);
+  reject([&] { debug.beginNativeCallback(adapter.id, ir); });
+  function->setAttributes(attributes);
+  if (function->getSubprogram() || ir.getCurrentDebugLocation())
+    throw std::runtime_error("rejected callback acquired debug metadata");
+  debug.beginNativeCallback(adapter.id, ir);
+  const auto *scope = function->getSubprogram();
+  debug.beginNativeCallback(adapter.id, ir);
+  if (!scope || function->getSubprogram() != scope || scope->getLine() ||
+      scope->getScopeLine() || !scope->isArtificial() ||
+      scope->getFile()->getFilename() != "<gti-generated>" ||
+      !ir.getCurrentDebugLocation() || ir.getCurrentDebugLocation().getLine() ||
+      ir.getCurrentDebugLocation()->getScope() != scope ||
+      ir.getCurrentDebugLocation()->getInlinedAt() ||
+      function->getAttributes() != attributes)
+    throw std::runtime_error("callback carrier invented source or changed ABI");
+  ir.CreateRet(function->getArg(0));
+  auto *other = llvm::Function::Create(plan.signature.type,
+                                       llvm::GlobalValue::InternalLinkage,
+                                       "rebound_callback", session.module());
+  plan.signature.applyTo(*other);
+  llvm::IRBuilder<> otherIr(
+      llvm::BasicBlock::Create(session.context(), "entry", other));
+  reject([&] { debug.beginNativeCallback(adapter.id, otherIr); });
+  otherIr.CreateRet(other->getArg(0));
+  debug.finalize();
+  reject([&] { debug.beginNativeCallback(adapter.id, ir); });
+  if (controls != 8 || scope->getRetainedNodes().size() ||
+      wrong->getSubprogram() || other->getSubprogram() ||
+      llvm::verifyModule(session.module(), &llvm::errs()))
+    throw std::runtime_error("callback identity controls did not execute");
+}
+
 void generatedMetadataExclusion() {
   const auto frontend =
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
@@ -512,7 +696,16 @@ int main() {
         llvm::GlobalValue::InternalLinkage,
         "generated_debug_control_" + std::to_string(source.id),
         session.module());
-    debug.begin(address, *function);
+    bool rejected = false;
+    try {
+      debug.begin(address, *function);
+    } catch (const std::logic_error &) {
+      rejected = true;
+    }
+    if (!rejected)
+      throw std::runtime_error(
+          "unregistered source lambda acquired a source scope");
+    debug.begin({MirBodyKind::Module, 0}, *function);
     if (function->getSubprogram())
       throw std::runtime_error(
           "generated body acquired a fabricated source scope");
@@ -568,7 +761,7 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
     auto *function = session.abi().declareFunction(source.id);
     debug.begin(address, *function);
     const auto types = function->getSubprogram()->getType()->getTypeArray();
-    if (types.size() != plan->lanes.size() + 1)
+    if (types.size() != source.parameterBindings.size() + 1)
       throw std::runtime_error("debug signature lost concrete parameter types");
     llvm::IRBuilder<> ir(
         llvm::BasicBlock::Create(session.context(), "entry", function));
@@ -590,6 +783,34 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
     debug.local(ir, *prefix, storage, 1);
     const auto &tables =
         *input->program().findBody(address)->sourceDebug.tables;
+    auto *foreign = llvm::Function::Create(
+        function->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
+        "foreign.pack.parameter", session.module());
+    bool rejectedForeign = false;
+    try {
+      debug.parameter(ir, *foreign->getArg(0));
+    } catch (const std::logic_error &) {
+      rejectedForeign = true;
+    }
+    if (!rejectedForeign)
+      throw std::runtime_error(
+          "foreign pack argument registration was accepted");
+    foreign->eraseFromParent();
+    if (!tables.parameterFragments.empty()) {
+      bool rejectedMissing = false;
+      try {
+        debug.point(ir, tables.parameterFragments.front().begin);
+      } catch (const std::logic_error &) {
+        rejectedMissing = true;
+      }
+      if (!rejectedMissing)
+        throw std::runtime_error(
+            "pack value was invented without its ABI argument");
+    }
+    for (auto &argument : function->args())
+      debug.parameter(ir, argument);
+    for (const auto &fragment : tables.parameterFragments)
+      debug.point(ir, fragment.begin);
     const auto &ranges = tables.valueRanges;
     const auto range =
         std::find_if(ranges.begin(), ranges.end(), [&](const auto &row) {
@@ -603,15 +824,24 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
     debug.point(ir, range->begin, prefixValues);
     debug.endLocal(ir, *prefix);
     ir.CreateRet(ir.getInt32(7));
-    unsigned declarations = 0, ends = 0;
+    unsigned declarations = 0, ends = 0, packValues = 0;
     for (const auto &instruction : function->getEntryBlock())
       for (const auto &record : instruction.getDbgRecordRange())
         if (const auto *variable =
                 llvm::dyn_cast<llvm::DbgVariableRecord>(&record)) {
+          if (variable->getVariable()->getName() == "rest" &&
+              variable->getVariable()->getArg() == 2) {
+            if (!variable->getExpression()->isFragment())
+              throw std::runtime_error(
+                  "pack parameter lost its exact lane fragment");
+            if (!variable->isKillLocation())
+              ++packValues;
+            continue;
+          }
           if (variable->getVariable()->getName() != "input" ||
               variable->getVariable()->getArg() != 1)
             throw std::runtime_error(
-                "pack or hidden lane acquired a source name");
+                "hidden or physical lane acquired a source name");
           if (variable->isDbgDeclare() ||
               (variable->isDbgValue() && !variable->isKillLocation()))
             ++declarations;
@@ -621,6 +851,8 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
     if (declarations != 1 || ends != 1)
       throw std::runtime_error(
           "parameter value-unavailable control did not execute");
+    if (plan->lanes.size() == 3 && packValues == 0)
+      throw std::runtime_error("pack parameters lost their physical values");
     unavailable += ends;
     (plan->lanes.size() == 1 ? empty : expanded)++;
   }
@@ -629,7 +861,7 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
       llvm::verifyModule(session.module(), &llvm::errs()))
     throw std::runtime_error("parameter metadata controls did not verify");
   std::cout << empty << " empty and " << expanded
-            << " expanded trailing packs preserve prefix-only named metadata; "
+            << " expanded trailing packs preserve source-grouped metadata; "
             << unavailable << " parameter unavailable controls passed\n";
 }
 
@@ -731,7 +963,7 @@ void hostedArtificialCarrier() {
     throw std::runtime_error("forged startup identity was accepted");
   };
   rejects([&] { debug.begin(address, *alien); });
-  lowerScalarProgram(session, planLlvmAdmission(*input));
+  lowerScalarProgram(session, planLlvmAdmission(*input, session.options()));
   auto *entry = session.module().getFunction("main");
   if (!entry || !entry->getSubprogram())
     throw std::runtime_error("registered startup lost its artificial carrier");
@@ -774,10 +1006,101 @@ void hostedArtificialCarrier() {
     throw std::runtime_error("artificial startup metadata failed verification");
 }
 
-void productionValueEmission(const std::string &dumpPath) {
+enum class ProductionDebugCase {
+  Scalar,
+  Receiver,
+  OwnedPack,
+  ScalarPack,
+  Lambda,
+  Callback,
+  Lexical
+};
+
+void productionValueEmission(
+    const std::string &dumpPath,
+    ProductionDebugCase selected = ProductionDebugCase::Scalar) {
+  const bool receiver = selected == ProductionDebugCase::Receiver;
+  const bool ownedPack = selected == ProductionDebugCase::OwnedPack;
+  const bool scalarPack = selected == ProductionDebugCase::ScalarPack;
+  const bool lambda = selected == ProductionDebugCase::Lambda;
+  const bool callback = selected == ProductionDebugCase::Callback;
+  const bool lexical = selected == ProductionDebugCase::Lexical;
   const auto frontend =
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
-          .analyze("value-emission.gti", R"gti(
+          .analyze("value-emission.gti", callback     ? R"gti(
+using Operation = (int32_t) -> int32_t;
+extern "C" {
+  int32_t debug_input(); void debug_checkpoint(int32_t value);
+  int32_t debug_invoke(Operation operation, int32_t value);
+}
+int32_t inspect(int32_t input) {
+  int32_t local = input & 31;
+  debug_checkpoint(local);
+  return local;
+}
+int main() {
+  Operation callback = inspect;
+  unsafe { return debug_invoke(callback, debug_input()) == 5 ? 0 : 1; }
+}
+)gti"
+                                         : lambda     ? R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+int main() {
+  int32_t captured = 9;
+  auto apply = [captured](int32_t input) -> int32_t {
+    mut int32_t local = input & 31;
+    debug_checkpoint(local);
+    return local + captured;
+  };
+  return apply(debug_input()) == 13 ? 0 : 1;
+}
+)gti"
+                                         : lexical    ? R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+int32_t inspect(int32_t input) {
+  int32_t local = input ^ 13;
+  {
+    int32_t local = input ^ 15;
+    debug_checkpoint(local);
+  }
+  debug_checkpoint(local);
+  return local;
+}
+int main() { return inspect(debug_input()) == 9 ? 0 : 1; }
+)gti"
+                                         : ownedPack  ? R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+class Owner { public: int32_t value = 9; ~Owner() { debug_checkpoint(this.value); } };
+int32_t inspect<Args...>(int32_t input, Args... rest) {
+  mut int32_t local = input & 31;
+  debug_checkpoint(local);
+  return local;
+}
+int main() { return inspect(debug_input(), Owner(), Owner()) == 4 ? 0 : 1; }
+)gti"
+                                         : scalarPack ? R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+int32_t inspect<Args...>(int32_t input, Args... rest) {
+  mut int32_t local = input & 31;
+  debug_checkpoint(local);
+  return local;
+}
+int main() { return inspect(debug_input(), 9, 11) == 4 ? 0 : 1; }
+)gti"
+                                         : receiver   ? R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+class Receiver {
+public:
+  int32_t value = 4;
+  int32_t inspect(int32_t input) {
+    mut int32_t local = this.value & input;
+    debug_checkpoint(local);
+    return local;
+  }
+};
+int main() { Receiver owner{}; return owner.inspect(debug_input()) == 4 ? 0 : 1; }
+)gti"
+                                                      : R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 int32_t inspect(int32_t input) {
   mut int32_t local = input & 31;
@@ -802,12 +1125,47 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
   if (!input)
     throw std::runtime_error("invalid production value snapshot");
+  if (ownedPack && !dumpPath.empty())
+    for (const auto &body : input->program().bodies())
+      if (body.sourceDebug.tables)
+        for (const auto &fragment : body.sourceDebug.tables->parameterFragments)
+          std::cout << "pack range " << body.identity.address.owner << ' '
+                    << fragment.begin.block << ':' << fragment.begin.instruction
+                    << ':' << fragment.begin.after << ':'
+                    << fragment.begin.blockEntry << " -> " << fragment.end.block
+                    << ':' << fragment.end.instruction << ':'
+                    << fragment.end.after << ':' << fragment.end.blockEntry
+                    << '\n';
+  if (receiver && !dumpPath.empty())
+    for (const auto &body : input->program().bodies()) {
+      if (!body.sourceDebug.tables ||
+          body.sourceDebug.tables->fragments.empty())
+        continue;
+      const auto *mir =
+          findMirBody(input->program().mir(), body.identity.address);
+      for (const auto &block : mir->blocks)
+        for (const auto &instruction : block.instructions) {
+          const auto effect =
+              effects(input->program().mir(), *mir, instruction);
+          std::cout << "fragment effect " << instruction.id << ' '
+                    << name(instruction.kind) << ' '
+                    << name(instruction.operation)
+                    << " writes=" << effect.writesPlace
+                    << " unknown=" << effect.writesUnknownMemory
+                    << " moves=" << effect.movesValue
+                    << " drops=" << effect.dropsValue
+                    << " loans=" << effect.startsLoan << effect.endsLoan
+                    << " user=" << effect.invokesUserCode
+                    << " sync=" << effect.maySynchronize << '\n';
+        }
+    }
   Session session(*input, {.optimization = LlvmCodegenOptimization::Aggressive,
                            .debugInfo = true});
   Session plain(*input, {.optimization = LlvmCodegenOptimization::Aggressive});
-  lowerScalarProgram(session, planLlvmAdmission(*input));
-  lowerScalarProgram(plain, planLlvmAdmission(*input));
-  unsigned values = 0;
+  lowerScalarProgram(session, planLlvmAdmission(*input, session.options()));
+  lowerScalarProgram(plain, planLlvmAdmission(*input, plain.options()));
+  unsigned values = 0, receivers = 0, expressions = 0, fragments = 0;
+  unsigned packValues = 0, packEnds = 0, entryPacks = 0;
   for (const auto &function : session.module()) {
     const auto *other = plain.module().getFunction(function.getName());
     if (!other || function.size() != other->size() ||
@@ -834,13 +1192,46 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
         if (instruction.getOpcode() != otherInstruction->getOpcode())
           throw std::runtime_error(
               "debug value events changed execution opcodes");
-        for (const auto &record : instruction.getDbgRecordRange())
+        std::vector<const llvm::DIExpression *> packKills;
+        for (const auto &record : instruction.getDbgRecordRange()) {
+          if (const auto *variable =
+                  llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
+              variable && variable->getVariable()->getName() == "rest") {
+            if (variable->isKillLocation()) {
+              ++packEnds;
+              packKills.push_back(variable->getExpression());
+            } else {
+              ++packValues;
+              entryPacks += &block == &function.getEntryBlock();
+              if (std::find(packKills.begin(), packKills.end(),
+                            variable->getExpression()) != packKills.end())
+                throw std::runtime_error("pack restoration kept an obsolete "
+                                         "end at the same native position");
+            }
+          }
           if (const auto *variable =
                   llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
               variable && variable->isDbgValue() &&
               !variable->isKillLocation() &&
-              variable->getVariable()->getName() == "local")
+              variable->getVariable()->getName() == "local") {
             ++values;
+            for (const auto &operation : variable->getExpression()->expr_ops())
+              if (operation.getOp() == llvm::dwarf::DW_OP_and ||
+                  (lexical && operation.getOp() == llvm::dwarf::DW_OP_xor))
+                ++expressions;
+          }
+          if (const auto *variable =
+                  llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
+              variable && !variable->isKillLocation() &&
+              variable->getVariable()->getName() == "this") {
+            if (variable->getVariable()->getLine() != 0 ||
+                !variable->getVariable()->isArtificial())
+              throw std::runtime_error(
+                  "implicit receiver forged a source declaration");
+            ++receivers;
+            fragments += variable->getExpression()->isFragment();
+          }
+        }
         ++otherInstruction;
       }
       ++otherBlock;
@@ -849,6 +1240,62 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   if (!values)
     throw std::runtime_error(
         "production local has no existing SSA value metadata");
+  if ((ownedPack || scalarPack) && (!packValues || !packEnds || !entryPacks))
+    throw std::runtime_error(
+        "pack lost its entry location or genuine availability cuts: values=" +
+        std::to_string(packValues) + " ends=" + std::to_string(packEnds) +
+        " entry=" + std::to_string(entryPacks));
+  if (receiver && !receivers)
+    throw std::runtime_error(
+        "production receiver has no existing address metadata");
+  if (receiver && !fragments)
+    throw std::runtime_error(
+        "eliminated receiver has no verified field fragments");
+  if (!expressions)
+    throw std::runtime_error(
+        "scalar computation has no existing-operand expression");
+  if (receiver) {
+    unsigned controls = 0;
+    for (const auto &body : input->program().bodies()) {
+      if (!body.sourceDebug.tables ||
+          body.sourceDebug.tables->fragments.empty())
+        continue;
+      const auto &fragment = body.sourceDebug.tables->fragments.front();
+      const auto *mir =
+          findMirBody(input->program().mir(), body.identity.address);
+      Session probe(*input,
+                    {.optimization = LlvmCodegenOptimization::Aggressive,
+                     .debugInfo = true});
+      auto *function = probe.abi().declareFunction(body.identity.address.owner);
+      auto *debug = probe.debugInfo();
+      debug->begin(body.identity.address, *function);
+      llvm::IRBuilder<> ir(
+          llvm::BasicBlock::Create(probe.context(), "entry", function));
+      std::vector<llvm::Value *> provided(mir->values.size() + 1);
+      const auto rejects = [&] {
+        try {
+          debug->point(ir, fragment.begin, provided);
+        } catch (const std::logic_error &) {
+          ++controls;
+          return;
+        }
+        throw std::runtime_error(
+            "forged receiver fragment SSA value was accepted");
+      };
+      rejects();
+      provided.at(fragment.value) = llvm::ConstantFP::get(ir.getDoubleTy(), 4);
+      rejects();
+      auto *foreign = llvm::Function::Create(
+          function->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
+          "foreign_fragment", probe.module());
+      provided.at(fragment.value) = foreign->getArg(1);
+      rejects();
+      ir.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
+      debug->finalize();
+    }
+    if (controls != 3)
+      throw std::runtime_error("receiver SSA forgery controls did not execute");
+  }
   session.debugInfo()->finalize();
   const auto dump = [&](const std::string &path) {
     if (path.empty())
@@ -861,6 +1308,43 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   };
   dump(dumpPath);
   (void)session.emitObject();
+  (void)plain.emitObject();
+  std::set<const llvm::DILocalVariable *> recoveredLexicalLocals;
+  for (const auto &function : session.module()) {
+    const auto *other = plain.module().getFunction(function.getName());
+    if (!other || function.size() != other->size())
+      throw std::runtime_error(
+          "debug metadata changed optimized execution blocks");
+    auto otherBlock = other->begin();
+    for (const auto &block : function) {
+      if (block.size() != otherBlock->size())
+        throw std::runtime_error(
+            "debug metadata changed optimized execution work");
+      auto otherInstruction = otherBlock->begin();
+      for (const auto &instruction : block) {
+        if (instruction.getOpcode() != (otherInstruction++)->getOpcode())
+          throw std::runtime_error(
+              "debug metadata changed optimized execution opcodes");
+        if (lexical)
+          for (const auto &record : instruction.getDbgRecordRange())
+            if (const auto *variable =
+                    llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
+                variable && variable->getVariable()->getName() == "local") {
+              if (variable->isKillLocation())
+                throw std::runtime_error(
+                    "final scalar lexical exit retained a premature kill");
+              for (const auto &operation :
+                   variable->getExpression()->expr_ops())
+                if (operation.getOp() == llvm::dwarf::DW_OP_xor)
+                  recoveredLexicalLocals.insert(variable->getVariable());
+            }
+      }
+      ++otherBlock;
+    }
+  }
+  if (lexical && recoveredLexicalLocals.size() != 2)
+    throw std::runtime_error(
+        "optimized lexical shadows lost their independent expressions");
   dump(dumpPath.empty() ? "" : dumpPath + ".optimized.ll");
 }
 
@@ -871,11 +1355,26 @@ int main(int argc, char **argv) {
         "debug metadata depends on an absolute checkout root");
   inlinedLocations();
   lifecycleIdentities();
+  lambdaIdentities();
+  callbackArtificialCarrier();
   concreteParameterMetadata();
   generatedMetadataExclusion();
   optimizedOutDeclarations();
   hostedArtificialCarrier();
   productionValueEmission(argc > 1 ? argv[1] : "");
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".receiver.ll" : "",
+                          ProductionDebugCase::Receiver);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".pack.ll" : "",
+                          ProductionDebugCase::OwnedPack);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".lexical.ll" : "",
+                          ProductionDebugCase::Lexical);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".scalar-pack.ll"
+                                   : "",
+                          ProductionDebugCase::ScalarPack);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".lambda.ll" : "",
+                          ProductionDebugCase::Lambda);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".callback.ll" : "",
+                          ProductionDebugCase::Callback);
   std::cout << "sealed debug identities, locations, locals, recursive layout, "
                "root relocation and inlined source/parameter chains passed\n";
 }

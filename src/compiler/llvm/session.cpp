@@ -108,10 +108,10 @@ std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
     throw BackendUnsupportedError("LLVM native emission requires a supported "
                                   "macOS arm64 or Linux x86_64 host target");
   static_cast<void>(llvmInstrumentationModeName(options.instrumentation));
-  if (options.instrumentation != LlvmInstrumentationMode::None)
+  if (options.instrumentation == LlvmInstrumentationMode::Thread)
     throw BackendUnsupportedError(
-        "LLVM diagnostic instrumentation requires coherent pipeline and "
-        "matching native runtime support (O-LLVM-14/15)");
+        "LLVM Thread instrumentation requires verified communicating runtime "
+        "and native-provider instrumentation provenance");
   initializeTarget();
   const llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
 #if LLVM_VERSION_MAJOR >= 21
@@ -321,6 +321,8 @@ BackendArtifact Session::emitObject() {
     instrumentAddress(module_, modules);
   if (instrumentsThread(mode))
     instrumentThread(module_, modules);
+  if (debugInfo_)
+    debugInfo_->prepareCodegen();
   verify();
   llvm::SmallVector<char, 0> bytes;
   llvm::raw_svector_ostream stream(bytes);

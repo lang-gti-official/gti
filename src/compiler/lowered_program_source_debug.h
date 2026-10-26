@@ -11,5 +11,12 @@ namespace lang::lowered_detail {
 deriveSourceRanges(const MirProgram &program, MirBodyAddress address);
 [[nodiscard]] std::vector<LoweredSourceValueRange>
 deriveSourceValueRanges(const MirBody &body);
+// Intersect exact existing field loads with freshly derived readable ranges.
+[[nodiscard]] std::vector<LoweredSourceFragmentRange>
+deriveSourceFragments(const MirProgram &program, MirBodyAddress address,
+                      std::span<const LoweredSourceRange> readable);
+[[nodiscard]] std::vector<LoweredSourceParameterFragment>
+deriveSourceParameterFragments(const MirProgram &program,
+                               MirBodyAddress address);
 
 } // namespace lang::lowered_detail

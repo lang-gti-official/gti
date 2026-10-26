@@ -869,6 +869,273 @@ int main() { return probe(4, true); }
   }
 }
 
+void testDebugLifetimeAndBorrowAvailability() {
+  const auto library =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-lifetime-availability.gti", R"gti(
+#include <std/memory>
+class Owned {
+public:
+  mut int value = 3;
+  ~Owned() { this.value = 0; }
+};
+void lifetime() {
+  Owned first{};
+  Owned second = std::move(first);
+}
+int borrowing() {
+  mut int local = 4;
+  { mut int& alias = local; alias += 1; }
+  return local;
+}
+int main() { lifetime(); return borrowing() - 5; }
+)gti",
+                   {library / "prelude.gti"}, {}, {library});
+  expect(frontend.canGenerateCode(),
+         "lifetime/borrow observation fixture lowers");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  using Query = lang::mir_detail::MirExistingPlaceQuery;
+  using State = lang::mir_detail::MirDebugReadability;
+  bool sawLifetime = false;
+  bool sawBorrow = false;
+  for (const auto &hir : frontend.hir.functionInstances()) {
+    if (!hir.source || (hir.source->name().lexeme != "lifetime" &&
+                        hir.source->name().lexeme != "borrowing"))
+      continue;
+    const bool lifetime = hir.source->name().lexeme == "lifetime";
+    const auto *function = frontend.mir.findFunctionInstance(hir.id);
+    const auto &body = function->body;
+    lang::MirPlaceId selected = 0;
+    for (const auto &place : body.places) {
+      const auto *symbol =
+          frontend.semantics.database().findSymbol(place.symbol);
+      if (place.root == lang::MirPlaceRootKind::Binding &&
+          place.projections.empty() && symbol &&
+          symbol->name == (lifetime ? "first" : "local"))
+        selected = place.id;
+    }
+    expect(selected != 0, "availability selects the exact source binding");
+    if (!selected)
+      continue;
+    std::vector<Query> requests;
+    std::vector<State> expected;
+    std::vector<Query> cuts;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto append = [&](bool after, State state) {
+          requests.push_back({selected, {block.id, instruction.id, after}});
+          expected.push_back(state);
+        };
+        if (lifetime) {
+          for (const auto &event : instruction.lifecycle) {
+            const auto *source = body.findDropObligation(event.source);
+            const auto *target = body.findDropObligation(event.target);
+            if ((event.kind == lang::MirLifecycleEventKind::Initialize ||
+                 event.kind == lang::MirLifecycleEventKind::Reparent) &&
+                target && target->place == selected) {
+              append(false, State::Unavailable);
+              append(true, State::DefinitelyReadable);
+              sawLifetime = true;
+            }
+            if (event.kind == lang::MirLifecycleEventKind::Move && source &&
+                source->place == selected) {
+              append(false, State::DefinitelyReadable);
+              append(true, State::Unavailable);
+              cuts.push_back(requests.back());
+            }
+          }
+        } else if (instruction.loan) {
+          const auto *loan = body.findLoan(*instruction.loan);
+          const auto *origin = loan ? body.findPlace(loan->source) : nullptr;
+          if (!loan || loan->access != lang::AccessMode::Mutable || !origin ||
+              origin->key != body.findPlace(selected)->key)
+            continue;
+          if (instruction.kind == lang::MirInstructionKind::Borrow) {
+            append(false, State::DefinitelyReadable);
+            append(true, State::Unavailable);
+            cuts.push_back(requests.back());
+            sawBorrow = true;
+          } else if (instruction.kind == lang::MirInstructionKind::EndBorrow) {
+            append(false, State::Unavailable);
+            append(true, State::DefinitelyReadable);
+          }
+        }
+      }
+    expect(requests.size() >= 4 && !cuts.empty(),
+           "queries cover both availability transitions and interior cuts");
+    const auto result = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+        body, function->id, requests);
+    expect(result.verification.valid() &&
+               result.requested.size() == expected.size(),
+           "observations preserve the ordinary verifier result");
+    for (std::size_t i = 0; i < result.requested.size(); ++i)
+      expect(result.requested[i].readability == expected[i],
+             "canonical lifecycle and loan states determine availability");
+    for (const auto &cut : cuts)
+      expect(std::find(result.requiredStops.begin(), result.requiredStops.end(),
+                       cut) != result.requiredStops.end(),
+             "inactive lifetime or exclusive borrowing cuts a source range");
+    auto forged = body;
+    if (lifetime && !forged.dropObligations.empty())
+      forged.dropObligations.front().place = 0;
+    else if (!forged.loans.empty())
+      forged.loans.front().source = 0;
+    const auto rejected = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+        forged, function->id, requests);
+    expect(!rejected.verification.valid() && rejected.requiredStops.empty() &&
+               std::all_of(rejected.requested.begin(), rejected.requested.end(),
+                           [](const auto &fact) {
+                             return fact.readability == State::Unknown;
+                           }),
+           "forged lifecycle/borrow identities cannot mint availability");
+  }
+  expect(sawLifetime && sawBorrow, "both canonical authorities are exercised");
+}
+
+void testDebugConcreteEntryAvailability() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-concrete-entry.gti", R"gti(
+class Receiver {
+public:
+  int value = 4;
+  int read() { return this.value; }
+};
+int packed<Args...>(int first, Args... rest) { return first; }
+int main() { Receiver value{}; return packed(value.read(), 9, 11) - 4; }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "concrete entry observation fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  using Query = lang::mir_detail::MirExistingPlaceQuery;
+  using State = lang::mir_detail::MirDebugReadability;
+  bool receiver = false;
+  bool pack = false;
+  for (const auto &hir : frontend.hir.functionInstances()) {
+    if (!hir.source || (hir.source->name().lexeme != "read" &&
+                        hir.source->name().lexeme != "packed"))
+      continue;
+    const bool member = hir.source->name().lexeme == "read";
+    const auto *function = frontend.mir.findFunctionInstance(hir.id);
+    const auto &body = function->body;
+    const auto place = std::find_if(
+        body.places.begin(), body.places.end(), [&](const auto &candidate) {
+          return candidate.projections.empty() &&
+                 (member ? candidate.root == lang::MirPlaceRootKind::This
+                         : candidate.type.kind == lang::SemanticType::TypePack);
+        });
+    expect(place != body.places.end(),
+           "query retains its exact receiver/pack root");
+    if (place == body.places.end())
+      continue;
+    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                       function->id};
+    const std::vector<Query> requests{
+        {place->id, {body.entry, 0, false, true}}};
+    const auto withoutEntry = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+        body, function->id, requests);
+    expect(withoutEntry.verification.valid() &&
+               withoutEntry.requested.front().readability == State::Unknown,
+           "a body alone cannot invent a receiver or pack entry contract");
+    const auto exact = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+        frontend.mir, address, requests);
+    expect(
+        exact.verification.valid() &&
+            exact.requested.front().readability == State::DefinitelyReadable,
+        "exact concrete entry combines with canonical ownership/borrow flow");
+    if (member) {
+      const auto &locals = body.sourceDebug.tables->locals;
+      const auto local =
+          std::find_if(locals.begin(), locals.end(), [](const auto &row) {
+            return row.declaration.receiver;
+          });
+      expect(local != locals.end() && local->place == place->id &&
+                 local->declaration.name == "this" &&
+                 local->declaration.declaration == lang::SourceSpan{.line = 0} &&
+                 !local->declaration.binding && !local->declaration.symbol,
+             "implicit receiver keeps accepted identity without a fake source "
+             "token");
+      if (local != locals.end()) {
+        const std::vector<lang::MirDebugAvailabilityRequest> sourceRequests{
+            {local->declaration.id, {body.entry, 0, false, true}}};
+        const auto source = lang::queryMirDebugAvailability(
+            frontend.mir, address, sourceRequests);
+        expect(source.verification.valid() &&
+                   source.requested.front().readability ==
+                       State::DefinitelyReadable,
+               "receiver source ranges use the canonical concrete entry "
+               "observation");
+        auto forged = body;
+        forged.sourceDebug.tables->locals.at(local->declaration.id - 1)
+            .declaration.receiver = false;
+        expect(!lang::verifyMirBody(forged, function->id).valid(),
+               "a receiver cannot forge an ordinary binding origin");
+      }
+      auto forged = frontend.hir;
+      auto &rows = const_cast<std::vector<lang::HirFunctionInstance> &>(
+          forged.functionInstances());
+      for (auto &row : rows.at(hir.id - 1).body.sourceDebug.tables->locals)
+        if (row.receiver)
+          row.receiver = false;
+      expect(!lang::verifyHirSourceDebug(frontend.semantics, forged).valid(),
+             "HIR receiver origin must match the accepted semantic producer");
+      auto semantic = frontend.semantics;
+      auto &bodies = const_cast<std::vector<lang::SemanticSourceDebugBody> &>(
+          semantic.sourceDebugBodies());
+      for (auto &row : bodies)
+        if (row.receiverType)
+          row.receiverType = lang::SemanticType::Int32;
+      expect(!semantic.verifySourceDebug().empty(),
+             "semantic receiver cannot forge a different accepted owner type");
+    }
+    for (int mutation = 0; mutation < 4; ++mutation) {
+      auto forged = frontend.mir;
+      auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+          forged.functionInstances());
+      auto &target = functions.at(function->id - 1);
+      auto &storage = target.body.places.at(place->id - 1);
+      if (mutation == 0) {
+        if (member)
+          target.owner.reset();
+        else
+          target.parameterTypes.back() = lang::SemanticType::Int64;
+      } else if (mutation == 1) {
+        if (member)
+          target.staticMember = true;
+        else
+          storage.initiallyAvailable = false;
+      } else if (mutation == 2) {
+        storage.key.reset();
+      } else {
+        target.body.kind = lang::MirBodyKind::Module;
+      }
+      const auto rejected = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+          forged, address, requests);
+      expect(!rejected.verification.valid() && rejected.requiredStops.empty() &&
+                 rejected.requested.front().readability == State::Unknown,
+             "forged formal/receiver identities cannot publish entry "
+             "availability");
+    }
+    member ? receiver = true : pack = true;
+  }
+  expect(receiver && pack, "both concrete entry profiles were exercised");
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    const auto entries = lang::mir_detail::debugEntryPlaces(
+        frontend.mir, {lang::MirBodyKind::Constructor, constructor.id});
+    expect(entries.initialized.empty(),
+           "constructor storage is not a fully initialized receiver at entry");
+  }
+}
+
 void testInitializerSourceDebugProducers() {
   const auto syntax =
       lang::Frontend({.stopAfter = lang::FrontendPhase::Parsing})
@@ -1452,6 +1719,285 @@ void testDetachedDebugLocations() {
          "debug stages must identify exact optimized MIR operations");
 }
 
+void testDebugReceiverFragments() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("receiver-fragments.gti", R"gti(
+extern "C" { void checkpoint(); }
+class Receiver {
+public:
+  int value = 4;
+  int read() {
+    int before = this.value;
+    checkpoint();
+    return this.value & before;
+  }
+};
+int main() { Receiver owner{}; return owner.read(); }
+)gti");
+  expect(frontend.canGenerateCode(), "receiver fragment fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "verified field loads produce lowered debug fragments");
+  if (!built.valid())
+    return;
+  unsigned fragments = 0, beforeCall = 0, afterCall = 0, atCall = 0;
+  for (const auto &body : built.program->bodies()) {
+    if (!body.sourceDebug.tables)
+      continue;
+    const auto *mir =
+        lang::findMirBody(built.program->mir(), body.identity.address);
+    for (const auto &fragment : body.sourceDebug.tables->fragments) {
+      ++fragments;
+      const auto *place = mir->findPlace(fragment.place);
+      const auto *value = mir->findValue(fragment.value);
+      expect(place && value && value->info.type == place->type &&
+                 place->projections.size() == 1 &&
+                 place->projections.front().kind ==
+                     lang::MirProjectionKind::Field,
+             "fragment retains its exact typed field and existing load value");
+      const std::vector<lang::MirDebugAvailabilityRequest> request{
+          {fragment.local, fragment.begin}};
+      const auto observed = lang::queryMirDebugAvailability(
+          built.program->mir(), body.identity.address, request);
+      expect(observed.verification.valid() &&
+                 observed.requested.front().readability ==
+                     lang::MirDebugReadability::DefinitelyReadable,
+             "fragment begins inside canonical receiver availability");
+      const auto &block = *mir->findBlock(fragment.begin.block);
+      const auto position = [&](lang::MirDebugPoint point) {
+        if (point.blockEntry)
+          return std::size_t{0};
+        for (std::size_t i = 0; i < block.instructions.size(); ++i)
+          if (block.instructions[i].id == point.instruction)
+            return 2 * i + 1 + point.after;
+        return 2 * block.instructions.size() + 1;
+      };
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call) {
+          const lang::MirDebugPoint boundary{block.id, instruction.id, true};
+          if (position(fragment.begin) < position(boundary)) {
+            ++beforeCall;
+            const lang::MirDebugPoint call{block.id, instruction.id, false};
+            atCall += position(fragment.begin) <= position(call) &&
+                      position(call) < position(fragment.end);
+            expect(position(fragment.end) <= position(boundary),
+                   "field value does not survive an unknown memory writer");
+          } else {
+            ++afterCall;
+          }
+        }
+    }
+  }
+  expect(fragments && beforeCall && afterCall && atCall,
+         "field loads on both sides of the unknown writer were exercised");
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto forged = *built.program;
+    bool changed = false;
+    for (auto &body : lang::LoweredProgramTestAccess::bodies(forged))
+      if (body.sourceDebug.tables &&
+          !body.sourceDebug.tables->fragments.empty()) {
+        auto &fragment = body.sourceDebug.tables->fragments.front();
+        if (mutation == 0)
+          fragment.value = 0;
+        else if (mutation == 1)
+          fragment.place =
+              body.sourceDebug.tables->locals.at(fragment.local - 1).place;
+        else if (mutation == 2)
+          fragment.end = {fragment.begin.block, 0, false};
+        else
+          body.sourceDebug.tables->fragments.clear();
+        changed = true;
+        break;
+      }
+    const auto issues = lang::verifyLoweredProgram(forged);
+    expect(changed &&
+               std::any_of(issues.begin(), issues.end(),
+                           [](const auto &issue) {
+                             return issue.detail.find("source fragments") !=
+                                    std::string::npos;
+                           }),
+           "forged field, value, extent or missing fragments reject "
+           "independently");
+  }
+}
+
+void testDebugPackFragments() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-pack-fragments.gti", R"gti(
+int first<Args...>(int input, Args... rest) { return input; }
+int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
+)gti");
+  expect(frontend.canGenerateCode(), "pack fragment fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "pack parameter availability seals");
+  if (!built.valid())
+    return;
+  unsigned fragments = 0;
+  for (const auto &body : built.program->bodies())
+    if (body.sourceDebug.tables)
+      for (const auto &fragment : body.sourceDebug.tables->parameterFragments) {
+        ++fragments;
+        const auto &local =
+            body.sourceDebug.tables->locals.at(fragment.local - 1);
+        expect(
+            local.declaration.parameter && local.place == fragment.place &&
+                local.declaration.type.kind == lang::SemanticType::TypePack &&
+                fragment.element < local.declaration.type.arguments.size(),
+            "pack fragment binds exact source parameter and concrete element");
+      }
+  expect(fragments == 2,
+         "unused scalar pack has one continuous entry interval per lane");
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto forged = *built.program;
+    bool changed = false;
+    for (auto &body : lang::LoweredProgramTestAccess::bodies(forged))
+      if (body.sourceDebug.tables &&
+          !body.sourceDebug.tables->parameterFragments.empty()) {
+        auto &fragment = body.sourceDebug.tables->parameterFragments.front();
+        if (mutation == 0)
+          fragment.local = 0;
+        else if (mutation == 1)
+          fragment.place = 0;
+        else if (mutation == 2)
+          fragment.element = 99;
+        else if (mutation == 3)
+          fragment.end = fragment.begin;
+        else
+          body.sourceDebug.tables->parameterFragments.clear();
+        changed = true;
+        break;
+      }
+    const auto issues = lang::verifyLoweredProgram(forged);
+    expect(
+        changed && std::any_of(issues.begin(), issues.end(),
+                               [](const auto &issue) {
+                                 return issue.detail.find(
+                                            "source parameter fragments") !=
+                                        std::string::npos;
+                               }),
+        "forged pack origin, lane, extent and omission reject independently");
+  }
+}
+
+void testDebugOwnedPackLifetimes() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-owned-pack.gti", R"gti(
+class Owner { public: int value = 9; ~Owner() {} };
+int first<Args...>(int input, Args... rest) { return input; }
+int main() { return first(7, Owner(), Owner()) == 7 ? 0 : 1; }
+)gti");
+  expect(frontend.canGenerateCode(), "owned pack fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "owned pack availability seals");
+  if (!built.valid())
+    return;
+  unsigned fragments = 0, retired = 0;
+  for (const auto &body : built.program->bodies())
+    if (body.sourceDebug.tables)
+      fragments += body.sourceDebug.tables->parameterFragments.size();
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &place : body.places) {
+      if (place.type.kind != lang::SemanticType::TypePack ||
+          !place.projections.empty())
+        continue;
+      const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                         function.id};
+      using Query = lang::mir_detail::MirExistingPlaceQuery;
+      using State = lang::mir_detail::MirDebugReadability;
+      const std::vector<Query> entry{{place.id, {body.entry, 0, false, true}}};
+      const auto initial = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+          frontend.mir, address, entry);
+      expect(initial.verification.valid() &&
+                 initial.requested.front().readability ==
+                     State::DefinitelyReadable,
+             "owned pack entry observes all canonical element lifetimes");
+      unsigned forgedLifetimes = 0;
+      for (const auto &drop : body.dropObligations) {
+        const auto *storage = body.findPlace(drop.place);
+        if (!storage || storage->binding != place.binding ||
+            !drop.initiallyActive)
+          continue;
+        auto forged = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        changed->body.dropObligations.at(drop.id - 1).initiallyActive = false;
+        const auto unavailable =
+            lang::mir_detail::verifyMirBodyWithPlaceQueries(forged, address,
+                                                            entry);
+        expect(!unavailable.verification.valid() ||
+                   unavailable.requested.front().readability !=
+                       State::DefinitelyReadable,
+               "one absent entry lifetime cannot publish the owning pack");
+        ++forgedLifetimes;
+      }
+      expect(forgedLifetimes == 2,
+             "each owned pack lifetime has an independent negative control");
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions)
+          for (const auto &event : instruction.lifecycle) {
+            if (event.kind != lang::MirLifecycleEventKind::Drop ||
+                !event.source)
+              continue;
+            const auto &drop = body.dropObligations.at(event.source - 1);
+            const auto *storage = body.findPlace(drop.place);
+            if (!storage || storage->binding != place.binding)
+              continue;
+            const std::vector<Query> after{
+                {place.id, {block.id, instruction.id, true}}};
+            const auto unavailable =
+                lang::mir_detail::verifyMirBodyWithPlaceQueries(frontend.mir,
+                                                                address, after);
+            expect(unavailable.verification.valid() &&
+                       unavailable.requested.front().readability ==
+                           State::Unavailable,
+                   "retiring one pack element makes the grouped value "
+                   "unavailable");
+            const auto position = [&](lang::MirDebugPoint point) {
+              if (point.blockEntry)
+                return std::size_t{0};
+              for (std::size_t i = 0; i < block.instructions.size(); ++i)
+                if (block.instructions[i].id == point.instruction)
+                  return 2 * i + 1 + static_cast<std::size_t>(point.after);
+              return 2 * block.instructions.size() + 1;
+            };
+            const auto at = position(after.front().point);
+            for (const auto &lowered : built.program->bodies())
+              if (lowered.identity.address == address &&
+                  lowered.sourceDebug.tables)
+                for (const auto &fragment :
+                     lowered.sourceDebug.tables->parameterFragments)
+                  if (fragment.place == place.id &&
+                      fragment.begin.block == block.id)
+                    expect(!(position(fragment.begin) <= at &&
+                             at < position(fragment.end)),
+                           "continuous pack fragments never span a retired "
+                           "element");
+            ++retired;
+          }
+    }
+  }
+  expect(fragments && retired,
+         "owned pack fragments and lifetime cuts were exercised");
+}
+
 void testDebugValueEvents() {
   const auto frontend =
       lang::Frontend(
@@ -1586,6 +2132,72 @@ void testDebugValueEvents() {
              "lowered debug value forgery rejects independently of the seal");
       break;
     }
+}
+
+void testDebugLexicalScopeEnds() {
+  for (const bool loop : {false, true}) {
+    const auto frontend =
+        lang::Frontend(
+            {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+            .analyze("debug-lexical-ends.gti", loop ? R"gti(
+int probe(int input) {
+  mut int result = 0;
+  mut int index = 0;
+  while (index < input) { int local = index ^ 15; result = local; ++index; }
+  return result;
+}
+int main() { return probe(4); }
+)gti"
+                                                    : R"gti(
+int probe(int input) {
+  int local = input ^ 13;
+  { int local = input ^ 15; int used = local; }
+  return local;
+}
+int main() { return probe(4); }
+)gti");
+    expect(frontend.canGenerateCode(), "lexical-end control analyzes");
+    if (!frontend.canGenerateCode())
+      continue;
+    const auto optimized =
+        lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                          .mir = frontend.mir,
+                                          .level = lang::OptimizationLevel::O3,
+                                          .target = lang::TargetInfo::host()});
+    auto built = lang::LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+        optimized.mir, optimized.report.transformations,
+        lang::TargetInfo::host());
+    expect(built.valid(), "lexical-end controls seal");
+    if (!built.valid())
+      continue;
+    unsigned marked = 0, values = 0;
+    for (const auto &body : built.program->bodies())
+      if (body.sourceDebug.tables)
+        for (const auto &range : body.sourceDebug.tables->valueRanges) {
+          ++values;
+          marked += range.lexicalScopeEnd;
+        }
+    expect(values && (loop ? marked == 0 : marked != 0),
+           "only straight-line scalar exits use lexical scope bounds; re-entry "
+           "keeps cuts");
+    auto forged = *built.program;
+    for (auto &body : lang::LoweredProgramTestAccess::bodies(forged))
+      if (body.sourceDebug.tables &&
+          !body.sourceDebug.tables->valueRanges.empty()) {
+        auto &range = body.sourceDebug.tables->valueRanges.front();
+        range.lexicalScopeEnd = !range.lexicalScopeEnd;
+        const auto issues = lang::verifyLoweredProgram(forged);
+        expect(std::any_of(issues.begin(), issues.end(),
+                           [](const auto &issue) {
+                             return issue.detail.find(
+                                        "verified MIR value events") !=
+                                    std::string::npos;
+                           }),
+               "forged lexical-end qualification fails fresh reconstruction");
+        break;
+      }
+  }
 }
 
 void testDetachedDebugRanges() {
@@ -2785,11 +3397,17 @@ int main() {
   testFrontendSourceDebugProfile();
   testMirSourceDebugTransport();
   testDebugPlaceAvailability();
+  testDebugLifetimeAndBorrowAvailability();
+  testDebugConcreteEntryAvailability();
+  testDebugPackFragments();
+  testDebugOwnedPackLifetimes();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();
   testDetachedDebugRanges();
   testDebugValueEvents();
+  testDebugLexicalScopeEnds();
+  testDebugReceiverFragments();
   testVerificationEvidenceOwnsItsProgram();
   testMutationRejection();
   testConcreteBranchSymbols();

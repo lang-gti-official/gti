@@ -1,0 +1,7 @@
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+class Owner { public: int32_t value = 9; ~Owner() { debug_checkpoint(this.value); } };
+int inspect<Args...>(int32_t input, Args... rest) {
+  debug_checkpoint(input);
+  return input;
+}
+int main() { return inspect(debug_input(), Owner(), Owner()) == 4 ? 0 : 1; }

@@ -1,0 +1,14 @@
+using Operation = (int32_t) -> int32_t;
+extern "C" {
+  int32_t debug_input(); void debug_checkpoint(int32_t value);
+  int32_t debug_invoke(Operation operation, int32_t value);
+}
+int32_t inspect(int32_t input) {
+  int32_t local = input & 31;
+  debug_checkpoint(local);
+  return local;
+}
+int main() {
+  Operation callback = inspect;
+  unsafe { return debug_invoke(callback, debug_input()) == 5 ? 0 : 1; }
+}

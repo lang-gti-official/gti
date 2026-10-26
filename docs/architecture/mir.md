@@ -3794,20 +3794,57 @@ destruction is not a substitute for releasing checked ownership resources.
 
 The private `verifyMirBodyWithPlaceQueries` entry observes the same body verifier
 used by ordinary validation. It does not accept a cached proof or mutate MIR.
-Its first existing-storage profile covers direct integer/bool/char scalar roots
-whose initialization and ownership are both represented by the current
-canonical transfers. Unsupported storage and explicit scalar lifetime drops
-remain `Unknown`, with an `Unproven` reason.
+Its existing-storage profile covers direct integer/bool/char scalar roots and
+direct non-borrowed-state owned roots with one exact binding/value-drop obligation.
+The canonical scalar-initialization or lifecycle transfer supplies initialization;
+ownership and the ordinary loan verifier's read-access check supply the other
+required facts. Unsupported storage remains `Unknown`, with an `Unproven` reason.
 
 Scalar worklist solving and stable-state observation replay share one transfer
 implementation. Ownership observations run only during the existing stable
-validation replay. A requested readable point requires both proofs; an inactive
+validation replay. Lifecycle observations use its existing stable replay, never
+the path-refined exception used for a consuming operation. Borrow observations
+reuse the ordinary read-access check and replace a block's observations when its
+joined entry changes; cuts are reconsidered only after actual loan-state writes.
+Neither observation changes a transfer or grants a verifier exception.
+A requested readable point requires all applicable proofs; an inactive
 point does not pretend to distinguish a moved/dropped/never-initialized history
 that its current facts cannot establish. Required cuts retain consuming and
 ambiguous CFG-entry boundaries even when later reinitialization restores
 readability. Empty queries take the ordinary verifier path and allocate no
 observation tables. Block entry and the boundary before a terminator are
 distinct points, including in an empty block.
+
+A separate private program-aware entry query checks concrete formal binding
+identities and aliases against the canonical parameter-role comparison, and
+ordinary member receiver roots against their exact concrete owner and access.
+Its observation coverage includes non-borrowed-state member receivers and
+concrete trailing packs whose nontrivial elements each have an exact,
+entry-active Binding obligation. The read-only lifecycle replay requires every
+such obligation to remain available; retiring one element ends whole-pack
+readability. Unmatched overlapping obligations remain unproven. It still
+requires the ordinary ownership and loan-flow observations; body-only queries
+cannot invent these entry facts. Constructors do not acquire an initialized
+whole receiver at entry. Source-local range production consumes the exact
+receiver and concrete-pack entries alongside canonical body observations.
+Lowered parameter fragments preserve the source pack binding, existing root,
+concrete element index and freshly derived readable interval. Independent
+verification reconstructs their complete inventory; missing or forged entries
+cannot become positive debug availability. Borrowed packs without a complete
+canonical referent/dependency proof remain unproven. A separately queried entry
+boundary binds parameter metadata to the actual native entry block. Parameter
+fragments query every instruction boundary and retain continuous proven
+readability across source-inert glue, with explicit lexical, ownership and
+borrow stops. Root-scoped source pack parameters do not need a statement anchor
+to remain lexically visible; ordinary locals do. Generated operations receive
+no invented source statements. Boundary and lexical-end indexes avoid repeated
+body scans in the batched source-local query.
+The semantic receiver-state producer records its accepted concrete type and one
+implicit local with no binding, symbol or source token. HIR verifies that origin
+against its accepted producer; MIR joins it only to an existing, unprojected
+`This` root in the same place domain. A missing root stays unproven: debug
+collection does not create execution places. Constructor partial objects and
+borrowed-state receivers do not acquire blanket availability.
 
 Opt-in lexical-debug transport carries the requested profile into MIR
 and deep-copies collected HIR scopes, concrete local declarations, and source
@@ -3816,6 +3853,16 @@ deterministically within that body. `None` allocates no table. The actual normal
 scope-exit lowering records descriptive local ends even for trivial locals;
 it does not emit fake destruction or change cleanup planning. The builder joins
 source MIR declarations and membership back to exact accepted HIR facts.
+
+Lowered receiver field fragments derive from existing verified scalar `Load`
+results and their exact direct-field place identities. They are intersected
+with freshly queried source-local readability and lexical ranges; unknown
+availability cannot become a positive fragment. Canonical memory effects end a
+cached field value after a possible write, including during an unreadable gap.
+Lifetime and loan boundaries remain owned by canonical readability, not by a
+second debug transfer implementation. Unrelated direct scalar local stores do
+not invalidate caller-owned receiver fields. Fragments do not cross CFG edges,
+and independent lowered verification reconstructs their complete inventory.
 
 `queryMirDebugAvailability` validates local/binding/type/place-domain identity
 before invoking the private canonical place query. It clips positive facts by

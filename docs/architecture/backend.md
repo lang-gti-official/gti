@@ -4434,8 +4434,9 @@ before and after optimization; LLVM error diagnostics prevent publication and
 warnings remain session-owned. Emission is single-use and returns binary
 `BackendArtifactKind::Object` bytes only after successful target emission.
 
-Source debug is selected by the driver's lexical debug profile; the target
-factory still rejects non-None instrumentation. `Session`
+Source debug is selected by the driver's lexical debug profile. The target
+factory admits Address and bounded UndefinedMemory instrumentation; Thread
+requires communicating-runtime provenance and remains rejected. `Session`
 owns the optional source-debug consumer and finalizes it before initial module
 verification. Body lowering binds source functions and source constructors or
 destructors to the exact existing declaration/factory result, maps sealed MIR
@@ -4455,7 +4456,21 @@ materializes a value, loads storage or adds execution instructions. A value
 profile is selected for optimized emission or already-promoted storage; O0
 retains proven existing storage across block boundaries. A value
 replacement at the same boundary supersedes its predecessor without an
-intervening unavailable record; genuine gaps and lexical exits still emit kills.
+intervening unavailable record; genuine gaps still emit kills. A scalar range
+ending at its final lexical segment in a single-block returning body may use
+the actual DWARF scope bounds instead of a kill. The lowered builder seals this
+qualification against the explicit source-local endpoint, normalizing adjacent
+after/before instruction boundaries; independent verification reconstructs it.
+Earlier value replacements, lifetime cuts and scopes with possible re-entry
+keep explicit ends. This avoids machine scheduling a final scope-end kill
+before the last source instruction within that scope.
+Pure integer SSA computations may use LLVM's own debug-expression recovery to
+describe their value from existing operands before machine lowering eliminates
+the transient result. This does not create values, execution uses or memory
+reads, and does not extend the verified source availability interval. For
+locals with the sealed final-lexical-exit qualification, recovery also runs
+after optimization: scalar promotion can introduce fresh value records whose
+transient arithmetic results need the same expression recovery.
 Optimized-out locals retain named declarations without fabricated storage or
 value availability. Private execution symbols are not DWARF linkage names:
 source subprogram names remain visible in native backtraces without changing
@@ -4470,15 +4485,73 @@ availability. Recovery currently covers direct integer/bool/char scalars with
 unique binding storage, no loans, escaping addresses, ownership moves or
 place-bearing edge transport. Ranges are block-local and end at lexical or
 value replacement boundaries; there is no invented cross-block value merge.
-Expanded pack elements, receivers, broader optimized representations and the
-full two-host failure/callback debugger matrix remain open.
+Implicit receiver declarations come from the accepted semantic receiver state,
+preserved through HIR and matched to an existing verified MIR `This` root. Their
+declaration is artificial and line zero in the real owning lexical scope. The
+debug hook reads the already-selected receiver argument without loads, slots or
+signature changes; positive ranges require the canonical program-aware entry,
+ownership and borrow observations. Whole partial-constructor and borrowed-state
+receivers remain unproven. For optimized receivers, direct scalar field loads
+can supply value fragments even when LLVM removes the object storage. The
+lowered builder intersects their exact SSA identities with canonical readable
+ranges, stops cached contents at possible memory writes, and carries no value
+across a CFG edge. Independent verification recomputes every field, value and
+boundary. LLVM chooses the target layout offsets and reads only the existing
+SSA-value table; there is no backend field reload or inferred availability.
+Unloaded fields are not fabricated. A concrete trailing pack retains one named
+source parameter and a logical DWARF group with indexed, exactly typed members.
+This group is not a contiguous GTI object or a new ABI representation. Its
+fragments read existing physical arguments through the canonical parameter and
+ABI plans; direct lanes use values and indirect lanes use their existing
+addresses. Exact MIR entry intervals are emitted at the initialized native
+entry before its branch. Continuous canonical parameter intervals avoid
+discarding unused argument locations at source-inert instruction boundaries;
+they create no execution uses. Readability comes only from sealed canonical MIR
+intervals, including every lexical, ownership and borrow cut.
+Availability ends and restorations at one native insertion position coalesce;
+an intervening emitted instruction preserves the cut. This prevents static
+address declarations from losing a restored location during optimization.
+Owning packs require all exact element lifetimes to remain available. Empty
+packs retain a declaration without fabricated storage or values. Foreign
+arguments and missing physical registrations reject. Source lambdas likewise
+require the body factory's exact sealed lambda identity before acquiring a
+scope. Their source parameters exclude the hidden closure channel, and closure
+type members describe existing capture names, types and target-layout offsets.
+Capture member lines remain zero where no individual source span is transported;
+this is not yet a source-local availability proof for captures inside the body.
+Unregistered, foreign-session, wrong-signature and rebound lambda identities
+reject without changing execution signatures or capture storage. Focused
+source-defined failure and native callback debugger probes pass at O0/O3 on
+both hosts. Broader borrowed, capture-local and partial-aggregate availability
+remains unproven; these probes do not establish campaign-wide acceptance. The
+exact optimized lexical-shadowing probe observes the inner value 11 and then
+the outer value 9 in both native debuggers. An unavailable or outer-variable
+result is not accepted as the inner value. Each host retains source-bound
+debugger transcripts; older-source evidence is kept separately.
+The native callback factory binds an exact sealed adapter to an
+artificial line-zero carrier, checking its session, native signature and
+parameter attributes and rejecting rebinding. Its existing IRBuilder receives
+only a generated line-zero debug location; inlining retains the callee's real
+source locations and locals. Signatures, attributes, runtime attachment,
+allocation and failure control flow are unchanged. Source debugger acceptance
+is checked separately from the consumer's identity and execution-equivalence
+controls.
+Managed Linux debugger checks stage distribution LLDB22 and its missing
+dependencies under the run's build directory, retaining package and loaded-file
+hashes without installing host packages. LLDB21 reaches source breakpoints but
+does not resolve this private-language compilation unit's locals; the same
+unchanged binary exposes them with LLDB22. This compatibility check is distinct
+from the complete exact-source O0/O3 debugger gates. GTI does not relabel its
+DWARF language as C/C++ to accommodate an older debugger.
 
 The typed diagnostic pipeline places bounded load/store null/alignment checks
 before optimization, and stock Address or Thread instrumentation after it.
-Address and Thread are distinct modes. These guarded hooks and component tests
-do not establish generated-code sanitizer or native debugger acceptance; those
-require coherent factory/driver activation, matching native runtimes and
-end-to-end evidence on the exact activated candidate.
+Address and Thread are distinct modes. Address and bounded UndefinedMemory
+activation consume the existing typed driver resolver and matching native
+runtime. Component IR tests alone do not establish generated-code sanitizer or
+native debugger acceptance: each supported platform still needs exact-source
+execution evidence. Thread hooks remain inactive until communicating-runtime
+provenance is verified. No complete UBSan or foreign-library coverage is implied.
 
 `Layouts` allocates deterministic named opaque types for concrete class
 identities before completing record bodies. It is the shared authority for

@@ -1860,6 +1860,8 @@ private:
               "LLVM ABI argument exceeds its exact parameter map");
         const auto &lane = parameters[parameter.sourceIndex];
         memory.parameter(lane, argument, parameter.indirect);
+        if (auto *debug = session.debugInfo())
+          debug->parameter(ir, *argument);
         // Only ordinary prefix lanes have a one-to-one source parameter.
         // Expanded packs and hidden ABI channels do not acquire fake names.
         if (auto *debug = session.debugInfo();
@@ -1881,6 +1883,11 @@ private:
           throw std::logic_error("LLVM receiver has no sealed object type");
         thisAddress = argument;
         memory.receiver(argument, *receiverType);
+        if (auto *debug = session.debugInfo())
+          for (const auto &place : input.places)
+            if (place.root == MirPlaceRootKind::This &&
+                place.projections.empty() && place.type == *receiverType)
+              debug->local(ir, place, argument);
         break;
       }
     }
@@ -1895,7 +1902,7 @@ private:
           body && body->sourceDebug.tables)
         for (const auto &local : body->sourceDebug.tables->locals) {
           if (local.policy != MirSourceLocalPolicy::ExistingPlace ||
-              local.declaration.parameter)
+              local.declaration.parameter || local.declaration.receiver)
             continue;
           const auto &place = *input.findPlace(local.place);
           debug->local(ir, place, memory.address(place.id));
@@ -1934,6 +1941,8 @@ private:
       ir.CreateStore(ir.getInt1(obligation.initiallyActive),
                      live.at(obligation.id));
     }
+    if (auto *debug = session.debugInfo())
+      debug->point(ir, {input.entry, 0, false, true}, values);
     ir.CreateBr(blocks.at(input.entry));
 
     // RPO ensures ordinary SSA definitions precede their uses. Loop headers
@@ -1956,7 +1965,7 @@ private:
     for (auto id : order) {
       current = input.findBlock(id);
       ir.SetInsertPoint(blocks.at(id));
-      if (auto *debug = session.debugInfo())
+      if (auto *debug = session.debugInfo(); debug && id != input.entry)
         debug->point(ir, {id, 0, false, true}, values);
       for (const auto &row : current->instructions) {
         if (auto *debug = session.debugInfo()) {
@@ -2070,6 +2079,9 @@ llvm::Function *Bodies::function(MirBodyAddress address) {
   } else
     throw BackendUnsupportedError("LLVM body kind is not implemented");
   functions.emplace(key, output);
+  if (auto *debug = session.debugInfo();
+      debug && address.kind == MirBodyKind::Lambda)
+    debug->registerLambdaBody(address, *output);
   if (auto *debug = session.debugInfo();
       debug && (address.kind == MirBodyKind::Constructor ||
                 address.kind == MirBodyKind::Destructor))

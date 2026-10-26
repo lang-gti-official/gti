@@ -822,6 +822,20 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
             issues, LoweredProgramIssueKind::InvalidBodyInventory,
             "source-local ranges differ from fresh current MIR availability",
             body.identity.address);
+      if (!ranges || debug.tables->fragments !=
+                         lowered_detail::deriveSourceFragments(
+                             program.mir_, body.identity.address, *ranges))
+        addIssue(issues, LoweredProgramIssueKind::InvalidBodyInventory,
+                 "source fragments differ from verified field loads and "
+                 "availability",
+                 body.identity.address);
+      if (!ranges || debug.tables->parameterFragments !=
+                         lowered_detail::deriveSourceParameterFragments(
+                             program.mir_, body.identity.address))
+        addIssue(issues, LoweredProgramIssueKind::InvalidBodyInventory,
+                 "source parameter fragments differ from canonical pack "
+                 "availability",
+                 body.identity.address);
     }
     std::set<std::pair<MirBlockId, MirInstructionId>> debugStages;
     for (const LoweredSourceLocation &location : body.sourceLocations()) {

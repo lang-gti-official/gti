@@ -1,20 +1,47 @@
 #include "debug_info.h"
+#include "abi.h"
 #include "layout.h"
+#include "native_c_abi.h"
+#include "native_c_contract.h"
+#include "parameter_packs.h"
 
 #include <llvm/ADT/APSInt.h>
 #include <llvm/BinaryFormat/Dwarf.h>
+#include <llvm/Config/llvm-config.h>
 #include <llvm/IR/DIBuilder.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/DebugProgramInstruction.h>
 #include <llvm/IR/Metadata.h>
+#include <llvm/Transforms/Utils/Local.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <set>
 #include <stdexcept>
 #include <tuple>
 
 namespace lang::native_llvm {
+
+namespace {
+void salvageScalarDebugValue(llvm::DbgVariableRecord &record) {
+  if (!record.isDbgValue() || record.isKillLocation() || record.hasArgList())
+    return;
+  auto *operation = llvm::dyn_cast<llvm::BinaryOperator>(record.getValue());
+  if (!operation || !operation->getType()->isIntegerTy() ||
+      operation->getType()->getIntegerBitWidth() > 64)
+    return;
+  llvm::SmallVector<uint64_t, 8> operations;
+  llvm::SmallVector<llvm::Value *, 2> additional;
+  if (llvm::salvageDebugInfoImpl(*operation, 1, operations, additional))
+    llvm::salvageDebugInfoForDbgValues(*operation,
+#if LLVM_VERSION_MAJOR < 22
+                                       {},
+#endif
+                                       {&record});
+}
+} // namespace
 
 class DebugInfo::Impl {
 public:
@@ -102,6 +129,85 @@ public:
     return entry->second;
   }
 
+  std::vector<std::uint64_t> packOffsets(const SemanticType &pack) {
+    if (pack.kind != SemanticType::TypePack || !pack.concretePack)
+      throw std::logic_error("LLVM debug pack has no concrete source type");
+    std::vector<std::uint64_t> offsets{0};
+    for (const auto &element : pack.arguments) {
+      const auto bytes = session.layouts().get(element).size;
+      if (bytes >
+          (std::numeric_limits<std::uint64_t>::max() - offsets.back()) / 8)
+        throw BackendUnsupportedError(
+            "LLVM debug pack exceeds DWARF size limits");
+      offsets.push_back(offsets.back() + bytes * 8);
+    }
+    return offsets;
+  }
+
+  std::vector<SemanticType> sourceParameters(MirBodyAddress address,
+                                             llvm::Function &function) {
+    const auto &program = session.program().mir();
+    const std::vector<SemanticType> *types = nullptr;
+    const std::vector<HirBindingId> *bindings = nullptr;
+    SemanticType result = SemanticType::Void;
+    bool mayFail = false, receiver = false, tracksCaller = false;
+    if (address.kind == MirBodyKind::Function) {
+      const auto &instance = *program.findFunctionInstance(address.owner);
+      types = &instance.parameterTypes;
+      bindings = &instance.parameterBindings;
+      result = instance.returnType;
+      mayFail = instance.mayRaiseDefinedFailure;
+      receiver = instance.owner.has_value() && !instance.staticMember;
+      tracksCaller = instance.tracksCaller;
+    } else if (address.kind == MirBodyKind::Constructor) {
+      const auto &instance = *program.findConstructorInstance(address.owner);
+      types = &instance.parameterTypes;
+      bindings = &instance.parameterBindings;
+      mayFail = instance.mayRaiseDefinedFailure;
+      receiver = true;
+    } else if (address.kind == MirBodyKind::Lambda) {
+      const auto &instance = *program.findLambda(address.owner);
+      types = &instance.parameterTypes;
+      bindings = &instance.parameterBindings;
+      result = instance.returnType;
+      mayFail = !instance.body.failureRecords.empty();
+      receiver = !instance.captureTypes.empty();
+    } else {
+      return {};
+    }
+    auto concrete = planConcreteParameters(*types, *bindings,
+                                           *findMirBody(program, address));
+    if (!concrete)
+      throw std::logic_error(
+          "LLVM debug parameters lost their concrete source roles");
+    auto abi =
+        session.abi().gti(result, *types, mayFail, receiver, tracksCaller);
+    if (function.getFunctionType() != abi.type)
+      throw std::logic_error(
+          "LLVM debug parameters differ from their factory ABI");
+    std::vector<SemanticType> source;
+    for (const auto binding : *bindings) {
+      const auto pack =
+          std::find_if(concrete->packs.begin(), concrete->packs.end(),
+                       [&](const auto &row) { return row.binding == binding; });
+      if (pack != concrete->packs.end()) {
+        source.push_back(pack->type);
+        continue;
+      }
+      const auto lane = std::find_if(
+          concrete->lanes.begin(), concrete->lanes.end(), [&](const auto &row) {
+            return row.binding == binding && !row.packElement;
+          });
+      if (lane == concrete->lanes.end())
+        throw std::logic_error(
+            "LLVM debug source parameter has no exact physical role");
+      source.push_back(lane->type);
+    }
+    parameters.emplace(&function,
+                       ParameterPlan{std::move(*concrete), std::move(abi)});
+    return source;
+  }
+
   llvm::DIType *type(const SemanticType &value) {
     if (value == SemanticType::Void)
       return nullptr;
@@ -110,8 +216,22 @@ public:
         return metadata.get();
     llvm::DIType *result = nullptr;
     const auto pointerBits = session.dataLayout().getPointerSizeInBits();
-    if (value.kind == SemanticType::RawPointer ||
-        value.kind == SemanticType::Reference) {
+    if (value.kind == SemanticType::TypePack) {
+      // A logical debug grouping, not a contiguous GTI object or ABI layout.
+      const auto offsets = packOffsets(value);
+      std::vector<llvm::Metadata *> elements;
+      for (std::size_t i = 0; i < value.arguments.size(); ++i)
+        elements.push_back(builder.createMemberType(
+            unit, "[" + std::to_string(i) + "]", nullptr, 0,
+            offsets[i + 1] - offsets[i], 8, offsets[i], llvm::DINode::FlagZero,
+            type(value.arguments[i])));
+      result = builder.createStructType(
+          unit,
+          "parameter_pack<" + std::to_string(value.arguments.size()) + ">",
+          nullptr, 0, offsets.back(), 8, llvm::DINode::FlagArtificial, nullptr,
+          builder.getOrCreateArray(elements));
+    } else if (value.kind == SemanticType::RawPointer ||
+               value.kind == SemanticType::Reference) {
       llvm::DIType *pointee =
           value.arguments.empty() ? nullptr : type(value.arguments[0]);
       result =
@@ -182,6 +302,41 @@ public:
                                  complete);
         return types[index].second.get();
       }
+    } else if (value.kind == SemanticType::Lambda) {
+      const LoweredLambdaInstance *selected = nullptr;
+      for (const auto &lambda : session.program().lambdaInstances())
+        if (lambda.type == value) {
+          if (selected && selected->captures != lambda.captures)
+            throw std::logic_error(
+                "LLVM debug closure has incompatible capture identities");
+          selected = &lambda;
+        }
+      if (!selected)
+        throw std::logic_error("LLVM debug closure lost its sealed instance");
+      const auto layout = session.layouts().get(value);
+      auto *source = file(selected->source);
+      auto *temporary = builder.createReplaceableCompositeType(
+          llvm::dwarf::DW_TAG_structure_type, "<lambda>", unit, source,
+          selected->source.line, 0, layout.size * 8, layout.alignment * 8);
+      const auto index = types.size();
+      types.emplace_back(value,
+                         llvm::TypedTrackingMDRef<llvm::DIType>(temporary));
+      std::vector<llvm::Metadata *> members;
+      for (std::size_t i = 0; i < selected->captures.size(); ++i) {
+        const auto &capture = selected->captures[i];
+        const auto field = session.layouts().captureIndex(value, i + 1);
+        const auto captureLayout = session.layouts().get(capture.type);
+        members.push_back(builder.createMemberType(
+            temporary, capture.name, source, 0, captureLayout.size * 8,
+            captureLayout.alignment * 8, layout.fieldOffsets.at(field) * 8,
+            llvm::DINode::FlagZero, type(capture.type)));
+      }
+      auto *complete = builder.createStructType(
+          unit, "<lambda>", source, selected->source.line, layout.size * 8,
+          layout.alignment * 8, llvm::DINode::FlagZero, nullptr,
+          builder.getOrCreateArray(members));
+      builder.replaceTemporary(llvm::TempDICompositeType(temporary), complete);
+      return types[index].second.get();
     } else if (value.kind == SemanticType::Enum) {
       for (const auto &enumeration : session.program().mir().integralEnums()) {
         if (enumeration.type != value)
@@ -261,18 +416,46 @@ public:
   std::map<std::pair<MirBodyKind, std::uint32_t>, llvm::Function *>
       lifecycleDefinitions;
   llvm::Function *hostedStartupDefinition = nullptr;
+  std::map<LoweredLambdaInstanceId, llvm::Function *> lambdaDefinitions;
+  std::map<MirNativeCallbackAdapterId, llvm::Function *> nativeCallbacks;
   struct Local {
-    llvm::DILocalVariable *variable = nullptr;
+    llvm::TypedTrackingMDRef<llvm::DILocalVariable> variable;
     llvm::Value *storage = nullptr;
+    bool recoverAfterPromotion = false;
+    Local() = default;
+    Local(llvm::DILocalVariable *declaration, llvm::Value *address)
+        : variable(declaration), storage(address) {}
   };
   std::map<llvm::Function *, std::vector<llvm::DILocalScope *>> scopes;
   std::map<std::pair<llvm::Function *, SourceLocalId>, Local> locals;
+  struct ParameterPlan {
+    ConcreteParameterPlan concrete;
+    FunctionAbi abi;
+  };
+  std::map<llvm::Function *, ParameterPlan> parameters;
+  struct ParameterValue {
+    llvm::Value *value = nullptr;
+    bool address = false;
+    llvm::DbgVariableRecord *pendingEnd = nullptr;
+    llvm::BasicBlock *endBlock = nullptr;
+    std::size_t endInstructionCount = 0;
+    llvm::Instruction *endNextInstruction = nullptr;
+  };
+  std::map<std::tuple<llvm::Function *, SourceLocalId, std::size_t>,
+           ParameterValue>
+      parameterValues;
   using Point =
       std::tuple<llvm::Function *, MirBlockId, MirInstructionId, bool, bool>;
   struct Events {
     std::vector<SourceLocalId> ends;
     std::vector<SourceLocalId> begins;
     std::vector<std::pair<SourceLocalId, MirValueId>> values;
+    using Fragment = std::tuple<SourceLocalId, MirPlaceId, MirValueId>;
+    std::vector<Fragment> fragmentBegins;
+    std::vector<Fragment> fragmentEnds;
+    using Parameter = std::pair<SourceLocalId, std::size_t>;
+    std::vector<Parameter> parameterBegins;
+    std::vector<Parameter> parameterEnds;
   };
   std::map<Point, Events> events;
   bool finalized = false;
@@ -301,6 +484,85 @@ void DebugInfo::registerLifecycleBody(MirBodyAddress address,
   impl->bodies.emplace(&function, address);
 }
 
+void DebugInfo::registerLambdaBody(MirBodyAddress address,
+                                   llvm::Function &function) {
+  const auto &program = impl->session.program();
+  const auto *lambda = program.findLambdaInstance(address.owner);
+  const auto *mir = program.mir().findLambda(address.owner);
+  if (address.kind != MirBodyKind::Lambda ||
+      function.getParent() != &impl->session.module() || !lambda || !mir ||
+      lambda->declaration != mir->declaration || lambda->type != mir->type ||
+      !program.findBody(address))
+    throw std::logic_error(
+        "LLVM debug lambda is not an exact sealed session body");
+  const auto previous = impl->lambdaDefinitions.find(address.owner);
+  if (previous != impl->lambdaDefinitions.end() &&
+      previous->second != &function)
+    throw std::logic_error("LLVM debug lambda changed its factory result");
+  const auto other = impl->bodies.find(&function);
+  if (other != impl->bodies.end() && other->second != address)
+    throw std::logic_error("LLVM debug lambda is bound to another body");
+  const auto abi = impl->session.abi().gti(mir->returnType, mir->parameterTypes,
+                                           !mir->body.failureRecords.empty(),
+                                           !mir->captureTypes.empty());
+  if (function.getFunctionType() != abi.type)
+    throw std::logic_error("LLVM debug lambda differs from its factory ABI");
+  impl->lambdaDefinitions.emplace(address.owner, &function);
+  impl->bodies.emplace(&function, address);
+}
+
+void DebugInfo::beginNativeCallback(MirNativeCallbackAdapterId identity,
+                                    llvm::IRBuilder<> &ir) {
+  auto *function =
+      ir.GetInsertBlock() ? ir.GetInsertBlock()->getParent() : nullptr;
+  const auto &program = impl->session.program();
+  const auto *adapter = program.mir().findNativeCallbackAdapter(identity);
+  if (impl->finalized || !function ||
+      function->getParent() != &impl->session.module() || !adapter ||
+      !nativeCCallbackContract(program.mir(), program.target(), *adapter) ||
+      program.mir().sourceDebugProfile() != SourceDebugProfile::LexicalV1 ||
+      impl->bodies.contains(function))
+    throw std::logic_error(
+        "LLVM debug callback is not an exact sealed session adapter");
+  const auto plan = planNativeCFunction(
+      impl->session, *adapter->type.nativeFunctionReturnType(),
+      adapter->type.nativeFunctionParameterTypes());
+  if (function->getFunctionType() != plan.signature.type ||
+      function->getCallingConv() != llvm::CallingConv::C ||
+      !function->hasInternalLinkage() || function->getAddressSpace())
+    throw std::logic_error("LLVM debug callback differs from its factory ABI");
+  const std::unique_ptr<llvm::Function> expected(llvm::Function::Create(
+      plan.signature.type, llvm::GlobalValue::InternalLinkage, ""));
+  plan.signature.applyTo(*expected);
+  for (unsigned index = 0; index <= function->arg_size(); ++index)
+    if (function->getAttributes().getAttributes(index) !=
+        expected->getAttributes().getAttributes(index))
+      throw std::logic_error(
+          "LLVM debug callback differs from its factory parameter attributes");
+  const auto previous = impl->nativeCallbacks.find(identity);
+  if (previous != impl->nativeCallbacks.end() && previous->second != function)
+    throw std::logic_error("LLVM debug callback changed its factory result");
+  for (const auto &[other, registered] : impl->nativeCallbacks)
+    if (other != identity && registered == function)
+      throw std::logic_error("LLVM debug callback is bound to another adapter");
+  if (previous == impl->nativeCallbacks.end()) {
+    if (function->getSubprogram())
+      throw std::logic_error("LLVM debug callback acquired a foreign scope");
+    auto flags = llvm::DISubprogram::SPFlagDefinition;
+    if (impl->optimized())
+      flags |= llvm::DISubprogram::SPFlagOptimized;
+    auto *file = impl->builder.createFile("<gti-generated>", ".");
+    function->setSubprogram(impl->builder.createFunction(
+        file, function->getName(), {}, file, 0,
+        impl->builder.createSubroutineType(
+            impl->builder.getOrCreateTypeArray({})),
+        0, llvm::DINode::FlagArtificial, flags));
+    impl->nativeCallbacks.emplace(identity, function);
+  }
+  ir.SetCurrentDebugLocation(llvm::DILocation::get(
+      impl->session.context(), 0, 0, function->getSubprogram()));
+}
+
 void DebugInfo::registerHostedStartupBody(MirBodyAddress address,
                                           llvm::Function &function) {
   const auto &program = impl->session.program();
@@ -325,6 +587,12 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     throw std::logic_error(
         "LLVM debug function belongs to another emission session");
   const auto &program = impl->session.program();
+  if (address.kind == MirBodyKind::Lambda) {
+    const auto found = impl->lambdaDefinitions.find(address.owner);
+    if (found == impl->lambdaDefinitions.end() || found->second != &function)
+      throw std::logic_error(
+          "LLVM debug lambda does not match its factory identity");
+  }
   if (address.kind == MirBodyKind::Constructor ||
       address.kind == MirBodyKind::Destructor) {
     if (!impl->sourceLifecycle(address))
@@ -364,6 +632,7 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
   // Generated glue has no source scope, even when its result type has no
   // source debug representation. Exclude it before planning source types.
   if (address.kind != MirBodyKind::Function &&
+      address.kind != MirBodyKind::Lambda &&
       address.kind != MirBodyKind::Constructor &&
       address.kind != MirBodyKind::Destructor)
     return;
@@ -383,7 +652,16 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     source = &instance->source;
     name =
         program.findFunctionDeclaration(instance->declaration)->qualifiedName;
-    for (const auto &parameter : mir->parameterTypes)
+    for (const auto &parameter : impl->sourceParameters(address, function))
+      parameters.push_back(impl->type(parameter));
+  } else if (address.kind == MirBodyKind::Lambda) {
+    const auto *instance = program.findLambdaInstance(address.owner);
+    if (!instance)
+      throw std::logic_error(
+          "LLVM debug lambda lost its concrete source identity");
+    source = &instance->source;
+    name = "<lambda>";
+    for (const auto &parameter : impl->sourceParameters(address, function))
       parameters.push_back(impl->type(parameter));
   } else if (address.kind == MirBodyKind::Constructor) {
     const auto *instance = program.findConstructorInstance(address.owner);
@@ -393,7 +671,7 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     const auto *owner = program.findClassInstance(instance->owner);
     name = program.findClassDeclaration(owner->declaration)->qualifiedName +
            "::constructor";
-    for (const auto &parameter : instance->parameterTypes)
+    for (const auto &parameter : impl->sourceParameters(address, function))
       parameters.push_back(impl->type(parameter));
   } else if (address.kind == MirBodyKind::Destructor) {
     const auto *instance = program.findDestructorInstance(address.owner);
@@ -443,19 +721,32 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     parameterBindings = &program.mir()
                              .findConstructorInstance(address.owner)
                              ->parameterBindings;
+  else if (address.kind == MirBodyKind::Lambda)
+    parameterBindings =
+        &program.mir().findLambda(address.owner)->parameterBindings;
   std::set<SourceLocalId> valueLocals;
+  std::set<SourceLocalId> packLocals;
+  for (const auto &local : lowered->sourceDebug.tables->locals)
+    if (local.declaration.parameter &&
+        local.declaration.type.kind == SemanticType::TypePack)
+      packLocals.insert(local.declaration.id);
   for (const auto &range : lowered->sourceDebug.tables->valueRanges)
     if (impl->optimized() ||
         lowered->sourceDebug.tables->locals.at(range.local - 1).policy ==
             MirSourceLocalPolicy::OptimizedOut)
       valueLocals.insert(range.local);
+  if (impl->optimized())
+    for (const auto &fragment : lowered->sourceDebug.tables->fragments)
+      valueLocals.insert(fragment.local);
   for (const auto &local : lowered->sourceDebug.tables->locals) {
     if (local.policy != MirSourceLocalPolicy::OptimizedOut &&
-        !valueLocals.contains(local.declaration.id))
+        !valueLocals.contains(local.declaration.id) &&
+        !packLocals.contains(local.declaration.id))
       continue;
     const auto &declaration = local.declaration;
     auto *scope = scopes.at(declaration.scope);
-    auto *file = impl->file(declaration.declaration);
+    auto *file = declaration.receiver ? scope->getFile()
+                                      : impl->file(declaration.declaration);
     unsigned parameter = 0;
     if (declaration.parameter && parameterBindings) {
       const auto found =
@@ -465,14 +756,17 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
         parameter =
             static_cast<unsigned>(found - parameterBindings->begin() + 1);
     }
-    auto *variable = parameter ? impl->builder.createParameterVariable(
-                                     scope, declaration.name, parameter, file,
-                                     declaration.declaration.line,
-                                     impl->type(declaration.type), true)
-                               : impl->builder.createAutoVariable(
-                                     scope, declaration.name, file,
-                                     declaration.declaration.line,
-                                     impl->type(declaration.type), true);
+    auto *variable =
+        parameter
+            ? impl->builder.createParameterVariable(
+                  scope, declaration.name, parameter, file,
+                  declaration.declaration.line, impl->type(declaration.type),
+                  true)
+            : impl->builder.createAutoVariable(
+                  scope, declaration.name, file, declaration.declaration.line,
+                  impl->type(declaration.type), true,
+                  declaration.receiver ? llvm::DINode::FlagArtificial
+                                       : llvm::DINode::FlagZero);
     impl->locals.emplace(std::pair{&function, declaration.id},
                          Impl::Local{variable, nullptr});
   }
@@ -481,7 +775,7 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
                          point.blockEntry}];
   };
   for (const auto &range : lowered->sourceDebug.tables->ranges) {
-    if (valueLocals.contains(range.local))
+    if (valueLocals.contains(range.local) || packLocals.contains(range.local))
       continue;
     event(range.begin).begins.push_back(range.local);
     event(range.end).ends.push_back(range.local);
@@ -490,7 +784,22 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     if (!valueLocals.contains(range.local))
       continue;
     event(range.begin).values.emplace_back(range.local, range.value);
-    event(range.end).ends.push_back(range.local);
+    if (!range.lexicalScopeEnd)
+      event(range.end).ends.push_back(range.local);
+    else
+      impl->locals.at({&function, range.local}).recoverAfterPromotion = true;
+  }
+  if (impl->optimized())
+    for (const auto &fragment : lowered->sourceDebug.tables->fragments) {
+      const Impl::Events::Fragment value{fragment.local, fragment.place,
+                                         fragment.value};
+      event(fragment.begin).fragmentBegins.push_back(value);
+      event(fragment.end).fragmentEnds.push_back(value);
+    }
+  for (const auto &fragment : lowered->sourceDebug.tables->parameterFragments) {
+    const Impl::Events::Parameter value{fragment.local, fragment.element};
+    event(fragment.begin).parameterBegins.push_back(value);
+    event(fragment.end).parameterEnds.push_back(value);
   }
 }
 
@@ -541,7 +850,9 @@ void DebugInfo::location(llvm::IRBuilder<> &ir, MirBlockId block,
 void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
                       llvm::Value *storage, unsigned parameter) {
   if (!ir.GetInsertBlock() || !storage || !storage->getType()->isPointerTy() ||
-      place.root != MirPlaceRootKind::Binding || !place.projections.empty())
+      (place.root != MirPlaceRootKind::Binding &&
+       place.root != MirPlaceRootKind::This) ||
+      !place.projections.empty())
     return;
   auto *function = ir.GetInsertBlock()->getParent();
   const auto address = impl->bodies.find(function);
@@ -554,7 +865,8 @@ void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
     if (local.place != place.id ||
         local.policy != MirSourceLocalPolicy::ExistingPlace ||
         local.declaration.type != place.type ||
-        local.declaration.symbol != place.symbol)
+        local.declaration.symbol != place.symbol ||
+        local.declaration.receiver != (place.root == MirPlaceRootKind::This))
       continue;
     auto [entry, inserted] =
         impl->locals.try_emplace({function, local.declaration.id});
@@ -567,16 +879,52 @@ void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
     const auto &declaration = local.declaration;
     const auto &source = declaration.declaration;
     auto *scope = impl->scopes.at(function).at(declaration.scope);
-    auto *file = impl->file(source);
+    auto *file = declaration.receiver ? scope->getFile() : impl->file(source);
     entry->second.storage = storage;
-    entry->second.variable =
+    entry->second.variable.reset(
         parameter && declaration.parameter
             ? impl->builder.createParameterVariable(
                   scope, declaration.name, parameter, file, source.line,
                   impl->type(place.type), true)
-            : impl->builder.createAutoVariable(scope, declaration.name, file,
-                                               source.line,
-                                               impl->type(place.type), true);
+            : impl->builder.createAutoVariable(
+                  scope, declaration.name, file, source.line,
+                  impl->type(place.type), true,
+                  declaration.receiver ? llvm::DINode::FlagArtificial
+                                       : llvm::DINode::FlagZero));
+  }
+}
+
+void DebugInfo::parameter(llvm::IRBuilder<> &ir, llvm::Argument &argument) {
+  if (!ir.GetInsertBlock())
+    return;
+  auto *function = ir.GetInsertBlock()->getParent();
+  if (argument.getParent() != function)
+    throw std::logic_error("LLVM debug parameter belongs to another function");
+  const auto plan = impl->parameters.find(function);
+  if (plan == impl->parameters.end())
+    return;
+  const auto &physical = plan->second.abi.parameters.at(argument.getArgNo());
+  if (physical.channel != AbiChannel::Argument)
+    throw std::logic_error("LLVM debug parameter is a hidden ABI channel");
+  const auto &lane = plan->second.concrete.lanes.at(physical.sourceIndex);
+  if (!lane.packElement)
+    return;
+  const auto &body =
+      *impl->session.program().findBody(impl->bodies.at(function));
+  for (const auto &local : body.sourceDebug.tables->locals) {
+    const auto &declaration = local.declaration;
+    if (!declaration.parameter || declaration.binding != lane.binding ||
+        declaration.type.kind != SemanticType::TypePack)
+      continue;
+    if (*lane.packElement >= declaration.type.arguments.size() ||
+        declaration.type.arguments[*lane.packElement] != lane.type ||
+        argument.getType() !=
+            plan->second.abi.type->getParamType(argument.getArgNo()))
+      throw std::logic_error(
+          "LLVM debug pack parameter lost its exact ABI type");
+    impl->parameterValues.emplace(
+        std::tuple{function, declaration.id, *lane.packElement},
+        Impl::ParameterValue{&argument, physical.indirect});
   }
 }
 
@@ -616,6 +964,121 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
       emit(id, false);
   for (const auto id : event->second.begins)
     emit(id, true);
+  const auto emitParameter = [&](const Impl::Events::Parameter &parameter,
+                                 bool begin) {
+    const auto [id, element] = parameter;
+    const auto &local = impl->locals.at({function, id});
+    const auto &tables = *impl->session.program()
+                              .findBody(impl->bodies.at(function))
+                              ->sourceDebug.tables;
+    const auto offsets =
+        impl->packOffsets(tables.locals.at(id - 1).declaration.type);
+    const auto value = impl->parameterValues.find({function, id, element});
+    if (value == impl->parameterValues.end())
+      throw std::logic_error(
+          "LLVM debug pack has no registered physical parameter");
+    auto &physical = value->second;
+    // Distinct MIR points can lower to the same native position. Retain the
+    // latest availability there, without erasing a cut across any instruction.
+    if (begin && physical.pendingEnd &&
+        physical.endBlock == ir.GetInsertBlock() &&
+        physical.endInstructionCount == ir.GetInsertBlock()->size() &&
+        physical.endNextInstruction ==
+            (ir.GetInsertPoint() == ir.GetInsertBlock()->end()
+                 ? nullptr
+                 : &*ir.GetInsertPoint()))
+      physical.pendingEnd->eraseFromParent();
+    physical.pendingEnd = nullptr;
+    auto *expression = impl->builder.createExpression(
+        {llvm::dwarf::DW_OP_LLVM_fragment, offsets.at(element),
+         offsets.at(element + 1) - offsets.at(element)});
+    auto *location = llvm::DILocation::get(
+        impl->session.context(), begin ? local.variable->getLine() : 0, 0,
+        local.variable->getScope());
+    if (begin && physical.address)
+      impl->builder.insertDeclare(physical.value, local.variable, expression,
+                                  location, ir.GetInsertBlock());
+    else {
+      auto inserted = impl->builder.insertDbgValueIntrinsic(
+          begin ? physical.value
+                : llvm::PoisonValue::get(physical.value->getType()),
+          local.variable, expression, location, ir.GetInsertBlock());
+      if (!begin)
+        if (auto *record =
+                llvm::dyn_cast_if_present<llvm::DbgRecord *>(inserted)) {
+          physical.pendingEnd = llvm::cast<llvm::DbgVariableRecord>(record);
+          physical.endBlock = ir.GetInsertBlock();
+          physical.endInstructionCount = ir.GetInsertBlock()->size();
+          physical.endNextInstruction =
+              ir.GetInsertPoint() == ir.GetInsertBlock()->end()
+                  ? nullptr
+                  : &*ir.GetInsertPoint();
+        }
+    }
+  };
+  for (const auto &parameter : event->second.parameterEnds)
+    if (std::find(event->second.parameterBegins.begin(),
+                  event->second.parameterBegins.end(),
+                  parameter) == event->second.parameterBegins.end())
+      emitParameter(parameter, false);
+  for (const auto &parameter : event->second.parameterBegins)
+    emitParameter(parameter, true);
+  const auto fragmentField = [&](MirPlaceId id) {
+    const auto address = impl->bodies.at(function);
+    const auto *body = findMirBody(impl->session.program().mir(), address);
+    const auto *place = body->findPlace(id);
+    if (!place || place->root != MirPlaceRootKind::This ||
+        place->projections.size() != 1 ||
+        place->projections.front().kind != MirProjectionKind::Field)
+      throw std::logic_error("LLVM debug fragment lost its exact field place");
+    return place->projections.front().field;
+  };
+  const auto emitFragment = [&](const Impl::Events::Fragment &fragment,
+                                bool begin) {
+    const auto [id, placeId, valueId] = fragment;
+    const auto address = impl->bodies.at(function);
+    const auto &program = impl->session.program();
+    const auto *body = findMirBody(program.mir(), address);
+    const auto &place = *body->findPlace(placeId);
+    const auto &declaration = program.findBody(address)
+                                  ->sourceDebug.tables->locals.at(id - 1)
+                                  .declaration;
+    const auto field = fragmentField(placeId);
+    const auto layout = impl->session.layouts().get(declaration.type);
+    const auto leaf = impl->session.layouts().get(place.type);
+    const auto offset = layout.fieldOffsets.at(
+        impl->session.layouts().fieldIndex(declaration.type, field));
+    if (!leaf.size || offset > layout.size || leaf.size > layout.size - offset)
+      throw std::logic_error(
+          "LLVM debug fragment exceeds its exact object layout");
+    const auto &local = impl->locals.at({function, id});
+    auto *value = begin && valueId < values.size() ? values[valueId] : nullptr;
+    if (begin &&
+        (!value || value->getType() != leaf.value ||
+         (llvm::isa<llvm::Instruction>(value) &&
+          llvm::cast<llvm::Instruction>(value)->getFunction() != function) ||
+         (llvm::isa<llvm::Argument>(value) &&
+          llvm::cast<llvm::Argument>(value)->getParent() != function)))
+      throw std::logic_error(
+          "LLVM debug fragment has no exact existing SSA value");
+    impl->builder.insertDbgValueIntrinsic(
+        begin ? value : llvm::PoisonValue::get(leaf.value), local.variable,
+        impl->builder.createExpression(
+            {llvm::dwarf::DW_OP_LLVM_fragment, offset * 8, leaf.size * 8}),
+        llvm::DILocation::get(impl->session.context(), 0, 0,
+                              local.variable->getScope()),
+        ir.GetInsertBlock());
+  };
+  for (const auto &fragment : event->second.fragmentEnds)
+    if (std::none_of(event->second.fragmentBegins.begin(),
+                     event->second.fragmentBegins.end(), [&](const auto &next) {
+                       return std::get<0>(fragment) == std::get<0>(next) &&
+                              fragmentField(std::get<1>(fragment)) ==
+                                  fragmentField(std::get<1>(next));
+                     }))
+      emitFragment(fragment, false);
+  for (const auto &fragment : event->second.fragmentBegins)
+    emitFragment(fragment, true);
   for (const auto &[id, valueId] : event->second.values) {
     const auto &local = impl->locals.at({function, id});
     const auto address = impl->bodies.at(function);
@@ -633,11 +1096,16 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
          llvm::cast<llvm::Argument>(value)->getParent() != function))
       throw std::logic_error(
           "LLVM debug value is missing, mistyped or belongs to another body");
-    impl->builder.insertDbgValueIntrinsic(
+    auto inserted = impl->builder.insertDbgValueIntrinsic(
         value, local.variable, impl->builder.createExpression(),
         llvm::DILocation::get(impl->session.context(), 0, 0,
                               local.variable->getScope()),
         ir.GetInsertBlock());
+    // Preserve a pure scalar computation as a debugger expression before
+    // machine lowering can discard its transient result. LLVM owns the bit
+    // semantics; no load, call, new SSA value or execution use is introduced.
+    if (auto *record = llvm::dyn_cast_if_present<llvm::DbgRecord *>(inserted))
+      salvageScalarDebugValue(*llvm::cast<llvm::DbgVariableRecord>(record));
   }
 }
 
@@ -665,8 +1133,29 @@ void DebugInfo::endLocal(llvm::IRBuilder<> &ir, const MirPlace &place) {
   }
 }
 
+void DebugInfo::prepareCodegen() {
+  if (!impl->finalized)
+    throw std::logic_error(
+        "LLVM debug recovery precedes metadata finalization");
+  if (!impl->optimized())
+    return;
+  std::set<const llvm::DILocalVariable *> variables;
+  for (const auto &[identity, local] : impl->locals)
+    if (local.recoverAfterPromotion && local.variable)
+      variables.insert(local.variable.get());
+  for (auto &function : impl->session.module())
+    for (auto &block : function)
+      for (auto &instruction : block)
+        for (auto &record : instruction.getDbgRecordRange())
+          if (auto *variable = llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
+              variable && variables.contains(variable->getVariable()))
+            salvageScalarDebugValue(*variable);
+}
+
 void DebugInfo::finalize() {
   if (!impl->finalized) {
+    for (auto &[key, value] : impl->parameterValues)
+      value.pendingEnd = nullptr;
     impl->builder.finalize();
     impl->finalized = true;
   }

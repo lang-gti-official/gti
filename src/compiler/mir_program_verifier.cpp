@@ -8932,6 +8932,182 @@ private:
 
 } // namespace
 
+mir_detail::MirDebugEntryPlaces
+mir_detail::debugEntryPlaces(const MirProgram &program,
+                             MirBodyAddress address) {
+  MirDebugEntryPlaces result;
+  const auto *body = findMirBody(program, address);
+  if (!body) {
+    result.verification.errors.push_back(
+        {.bodyKind = address.kind,
+         .owner = address.owner,
+         .message = "debug entry query has a foreign body"});
+    return result;
+  }
+  const auto reject = [&](const char *message) {
+    result.verification = verificationFailure(*body, address.owner, message);
+    result.initialized.clear();
+  };
+  const auto *function = address.kind == MirBodyKind::Function
+                             ? program.findFunctionInstance(address.owner)
+                             : nullptr;
+  const auto *constructor = address.kind == MirBodyKind::Constructor
+                                ? program.findConstructorInstance(address.owner)
+                                : nullptr;
+  const auto *lambda = address.kind == MirBodyKind::Lambda
+                           ? program.findLambda(address.owner)
+                           : nullptr;
+  const auto *returnType = function ? &function->returnType
+                           : lambda ? &lambda->returnType
+                                    : nullptr;
+  if (body->kind != address.kind ||
+      (function && function->id != address.owner) ||
+      (constructor && constructor->id != address.owner) ||
+      (constructor && body->returnType != SemanticType::Void) ||
+      (lambda && lambda->id != address.owner) ||
+      (returnType && body->returnType != *returnType)) {
+    reject("debug entry body differs from its exact callable identity");
+    return result;
+  }
+  if ((function && function->definitionKind != MirDefinitionKind::Source) ||
+      (constructor && constructor->definitionKind != MirDefinitionKind::Source))
+    return result;
+  const auto *bindings = function      ? &function->parameterBindings
+                         : constructor ? &constructor->parameterBindings
+                         : lambda      ? &lambda->parameterBindings
+                                       : nullptr;
+  const auto *types = function      ? &function->parameterTypes
+                      : constructor ? &constructor->parameterTypes
+                      : lambda      ? &lambda->parameterTypes
+                                    : nullptr;
+  if (!bindings || !types)
+    return result;
+  std::unordered_set<HirBindingId> unique;
+  std::vector<SemanticType> bindingTypes;
+  for (const auto binding : *bindings) {
+    const MirPlace *identity = nullptr;
+    for (const auto &place : body->places) {
+      if (place.root != MirPlaceRootKind::Binding || place.binding != binding ||
+          !place.projections.empty())
+        continue;
+      if (identity &&
+          (place.type != identity->type || place.key != identity->key ||
+           place.symbol != identity->symbol ||
+           place.initiallyAvailable != identity->initiallyAvailable)) {
+        reject("debug entry formal aliases disagree on their exact identity");
+        return result;
+      }
+      identity = &place;
+    }
+    if (!binding || !unique.insert(binding).second || !identity) {
+      reject("debug entry formal has no unique binding identity");
+      return result;
+    }
+    bindingTypes.push_back(identity->type);
+    if (identity->type.kind == SemanticType::TypePack &&
+        (binding != bindings->back() || !identity->type.concretePack ||
+         !identity->initiallyAvailable || !identity->key ||
+         std::any_of(identity->type.arguments.begin(),
+                     identity->type.arguments.end(), [](const auto &type) {
+                       return type.kind == SemanticType::TypePack;
+                     }))) {
+      reject("debug entry pack is not one exact concrete trailing formal");
+      return result;
+    }
+  }
+  if (!exactParameterRoles(bindingTypes, *types)) {
+    reject("debug entry bindings do not match their concrete parameter roles");
+    return result;
+  }
+  const auto *owner = function && function->owner && !function->staticMember
+                          ? program.findClassInstance(*function->owner)
+                          : nullptr;
+  for (const auto &place : body->places) {
+    if (!place.projections.empty())
+      continue;
+    bool entry = false;
+    std::vector<MirDropObligationId> ownedElements;
+    if (place.root == MirPlaceRootKind::This && function) {
+      if (!owner || owner->id != *function->owner ||
+          place.type != owner->type || !place.key ||
+          place.key->domain != body->placeDomain || !place.key->receiver ||
+          place.key->root || !place.key->projections.empty() ||
+          place.foreignStorage ||
+          place.access != (receiverAllowsMutation(function->receiverMutability)
+                               ? AccessMode::Mutable
+                               : AccessMode::ReadOnly)) {
+        reject("debug receiver has no exact concrete member entry contract");
+        return result;
+      }
+      const auto traits = concreteMirTypeTraits(program, owner->type);
+      entry = traits && !traits->containsBorrowedState;
+    } else if (place.root == MirPlaceRootKind::Binding &&
+               place.type.kind == SemanticType::TypePack) {
+      if (!unique.contains(place.binding)) {
+        reject("debug pack root is not a concrete source formal");
+        return result;
+      }
+      entry = true;
+      for (std::size_t element = 0; element < place.type.arguments.size();
+           ++element) {
+        const auto &type = place.type.arguments[element];
+        const auto traits = concreteMirTypeTraits(program, type);
+        if (!traits || traits->containsBorrowedState) {
+          entry = false;
+          break;
+        }
+        if (traits->drop == DropKind::Trivial)
+          continue;
+        MirDropObligationId lifetime = 0;
+        for (const auto &drop : body->dropObligations) {
+          const auto *storage = body->findPlace(drop.place);
+          if (!storage || storage->root != MirPlaceRootKind::Binding ||
+              storage->binding != place.binding ||
+              storage->projections.size() != 1 ||
+              storage->projections.front().kind !=
+                  MirProjectionKind::PackElement ||
+              storage->projections.front().constantIndex != element ||
+              storage->type != type || !storage->initiallyAvailable ||
+              !storage->key || storage->key->domain != place.key->domain ||
+              storage->key->root != place.key->root ||
+              drop.kind != MirDropObligationKind::Binding ||
+              drop.binding != place.binding || drop.dropType.type != type ||
+              !drop.initiallyActive)
+            continue;
+          if (lifetime) {
+            entry = false;
+            break;
+          }
+          lifetime = drop.id;
+        }
+        if (!lifetime || !entry) {
+          entry = false;
+          break;
+        }
+        ownedElements.push_back(lifetime);
+      }
+    }
+    if (!entry)
+      continue;
+    // Any overlapping lifetime must be an exact owned element observed by the
+    // canonical lifecycle replay. Caller-owned receivers have no such lifetime.
+    for (const auto &drop : body->dropObligations) {
+      const auto *storage = body->findPlace(drop.place);
+      if (!storage || !storage->key || !place.key)
+        continue;
+      const auto relation = placeRelation(*storage->key, *place.key);
+      if (relation.compatibleDomain &&
+          relation.relation != PlaceRelation::Disjoint &&
+          std::find(ownedElements.begin(), ownedElements.end(), drop.id) ==
+              ownedElements.end())
+        entry = false;
+    }
+    if (entry)
+      result.initialized.push_back(place.id);
+  }
+  return result;
+}
+
 bool mir_detail::verifiedReferenceRestoreCall(
     const MirProgram &program, const MirBody &body,
     const MirInstruction &instruction) {

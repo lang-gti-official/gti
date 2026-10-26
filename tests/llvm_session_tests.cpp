@@ -317,11 +317,16 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
          "default sessions do not allocate a source debug consumer");
   for (const auto mode : {LlvmInstrumentationMode::Address,
                           LlvmInstrumentationMode::UndefinedMemory,
-                          LlvmInstrumentationMode::AddressAndUndefinedMemory,
-                          LlvmInstrumentationMode::Thread})
-    rejects<BackendUnsupportedError>(
-        [&] { Session invalid(input, {.instrumentation = mode}); },
-        "instrumentation stays gated until coherent runtime activation");
+                          LlvmInstrumentationMode::AddressAndUndefinedMemory}) {
+    Session diagnostic(input, {.instrumentation = mode});
+    diagnostic.verify();
+  }
+  rejects<BackendUnsupportedError>(
+      [&] {
+        Session invalid(input,
+                        {.instrumentation = LlvmInstrumentationMode::Thread});
+      },
+      "Thread instrumentation requires communicating-runtime provenance");
   rejects<std::invalid_argument>(
       [&] {
         Session invalid(input, {.instrumentation =

@@ -403,6 +403,7 @@ verifyHirSourceDebug(const SemanticModel &semantics,
           local.symbol != fact.symbol || local.type != fact.type ||
           local.name != fact.name || local.declaration != fact.declaration ||
           local.parameter != (fact.parameter != nullptr) ||
+          local.receiver != fact.receiver ||
           local.binding != (binding == body.bindings.end() ? 0 : binding->id) ||
           (binding != body.bindings.end() &&
            (binding->info.symbol != local.symbol ||

@@ -1,4 +1,5 @@
 #include "gti/lowered_program_builder.h"
+#include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 #include "gti/support.h"
 
@@ -18,6 +19,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <set>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -1436,6 +1438,7 @@ lowered_detail::deriveSourceValueRanges(const MirBody &body) {
         block.id,
         last == block.instructions.size() ? 0 : block.instructions[last].id,
         false};
+    const auto scopeEnd = end;
     const auto key = LocalBlock{event.local, block.id};
     if (const auto stop = ends.find(key); stop != ends.end()) {
       if (stop->second.first <= position(event.point))
@@ -1449,10 +1452,223 @@ lowered_detail::deriveSourceValueRanges(const MirBody &body) {
         [](std::size_t at, const auto &point) { return at < point.first; });
     if (next != points.end() && next->first < position(end))
       end = next->second;
-    if (position(event.point) < position(end))
-      ranges.push_back({event.local, event.value, event.point, end});
+    if (position(event.point) < position(end)) {
+      const auto &type = local.declaration.type;
+      const bool scalar =
+          constantIntegerDomain(type).has_value() ||
+          type == SemanticType::Bool || type == SemanticType::Char ||
+          type == SemanticType::Float || type == SemanticType::Double;
+      const auto stop = ends.find(key);
+      // An after-instruction end and the next before-instruction boundary
+      // denote the same execution position, including the return boundary.
+      const bool finalScopeBoundary =
+          end == scopeEnd ||
+          (end.after && position(end) + 1 == position(scopeEnd));
+      const bool lexicalScopeEnd =
+          scalar && body.blocks.size() == 1 &&
+          block.terminator.kind == MirTerminatorKind::Return &&
+          finalScopeBoundary && last == segments.back().second &&
+          stop != ends.end() && position(end) <= stop->second.first;
+      ranges.push_back(
+          {event.local, event.value, event.point, end, lexicalScopeEnd});
+    }
   }
   return ranges;
+}
+
+std::vector<LoweredSourceFragmentRange> lowered_detail::deriveSourceFragments(
+    const MirProgram &program, MirBodyAddress address,
+    std::span<const LoweredSourceRange> readable) {
+  std::vector<LoweredSourceFragmentRange> result;
+  const auto *body = findMirBody(program, address);
+  if (!body || !body->sourceDebug.tables || readable.empty())
+    return result;
+  const auto &tables = *body->sourceDebug.tables;
+  std::map<MirPlaceId, SourceLocalId> fields;
+  for (const auto &local : tables.locals) {
+    const auto *root = body->findPlace(local.place);
+    if (!local.declaration.receiver ||
+        local.policy != MirSourceLocalPolicy::ExistingPlace || !root ||
+        !root->key)
+      continue;
+    for (const auto &place : body->places) {
+      if (place.root != MirPlaceRootKind::This || !place.key ||
+          place.projections.size() != 1 ||
+          place.projections.front().kind != MirProjectionKind::Field ||
+          !isMirScalarValueType(&program, place.type))
+        continue;
+      const auto relation = placeRelation(*root->key, *place.key);
+      if (relation.compatibleDomain &&
+          relation.relation == PlaceRelation::LeftStrictPrefix)
+        fields.emplace(place.id, local.declaration.id);
+    }
+  }
+  if (fields.empty())
+    return result;
+  std::map<std::pair<MirBlockId, MirInstructionId>, std::size_t> positions;
+  std::map<std::pair<SourceLocalId, MirBlockId>,
+           std::vector<const LoweredSourceRange *>>
+      ranges;
+  for (const auto &range : readable)
+    ranges[{range.local, range.begin.block}].push_back(&range);
+  for (const auto &block : body->blocks) {
+    for (std::size_t i = 0; i < block.instructions.size(); ++i)
+      positions[{block.id, block.instructions[i].id}] = 2 * i + 1;
+    positions[{block.id, 0}] = 2 * block.instructions.size() + 1;
+  }
+  const auto position = [&](MirDebugPoint point) {
+    return point.blockEntry
+               ? std::size_t{0}
+               : positions.at({point.block, point.instruction}) + point.after;
+  };
+  const auto retain = [&](LoweredSourceFragmentRange candidate) {
+    for (const auto *range : ranges[{candidate.local, candidate.begin.block}]) {
+      auto fragment = candidate;
+      if (position(range->begin) > position(fragment.begin))
+        fragment.begin = range->begin;
+      if (position(range->end) < position(fragment.end))
+        fragment.end = range->end;
+      if (position(fragment.begin) < position(fragment.end))
+        result.push_back(fragment);
+    }
+  };
+  for (const auto &block : body->blocks) {
+    // No value is carried over a CFG edge. Readable ranges already enforce
+    // canonical lifetime/loan cuts; memory effects independently retire cached
+    // field contents, including across a temporarily unreadable interval.
+    std::map<std::pair<SourceLocalId, SymbolId>, LoweredSourceFragmentRange>
+        active;
+    const auto close = [&](MirDebugPoint end) {
+      for (auto &[key, fragment] : active) {
+        fragment.end = end;
+        retain(fragment);
+      }
+      active.clear();
+    };
+    for (const auto &instruction : block.instructions) {
+      if (instruction.tombstone)
+        continue;
+      const MirDebugPoint after{block.id, instruction.id, true};
+      const auto effect = effects(program, *body, instruction);
+      bool writes = effect.writesPlace;
+      // A direct scalar local store cannot change a caller-owned receiver.
+      // Reference, projected, user-code and unknown-memory writes stay cuts.
+      if (writes && instruction.destination &&
+          (instruction.kind == MirInstructionKind::Initialize ||
+           (instruction.kind == MirInstructionKind::Assign &&
+            instruction.operation == MirOperation::Assign))) {
+        const auto *destination = body->findPlace(*instruction.destination);
+        if (destination && destination->root == MirPlaceRootKind::Binding &&
+            destination->projections.empty() &&
+            !destination->initiallyAvailable &&
+            isMirScalarValueType(&program, destination->type))
+          writes = false;
+      }
+      if (writes || effect.writesUnknownMemory || effect.invokesUserCode ||
+          effect.maySynchronize)
+        close(after);
+      if (instruction.kind != MirInstructionKind::Load || !instruction.result ||
+          instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != MirOperandKind::Copy)
+        continue;
+      const auto found = fields.find(instruction.operands.front().place);
+      if (found == fields.end())
+        continue;
+      const auto *place = body->findPlace(found->first);
+      const auto *value = body->findValue(*instruction.result);
+      if (!value || value->definition != instruction.id ||
+          value->info.type != place->type)
+        continue;
+      const auto key =
+          std::pair{found->second, place->projections.front().field};
+      if (auto old = active.find(key); old != active.end()) {
+        old->second.end = after;
+        retain(old->second);
+      }
+      active[key] = {found->second, place->id, value->id, after, {}};
+    }
+    close({block.id, 0, false});
+  }
+  return result;
+}
+
+std::vector<LoweredSourceParameterFragment>
+lowered_detail::deriveSourceParameterFragments(const MirProgram &program,
+                                               MirBodyAddress address) {
+  std::vector<LoweredSourceParameterFragment> fragments;
+  const auto *body = findMirBody(program, address);
+  if (!body || !body->sourceDebug.tables)
+    return fragments;
+  const auto &locals = body->sourceDebug.tables->locals;
+  struct Candidate {
+    const MirSourceLocal *local;
+    std::size_t first;
+    std::size_t last;
+  };
+  std::vector<Candidate> candidates;
+  std::vector<MirDebugAvailabilityRequest> requests;
+  for (const auto &local : locals) {
+    const auto *place = body->findPlace(local.place);
+    if (!local.declaration.parameter || !place ||
+        place->root != MirPlaceRootKind::Binding ||
+        place->type.kind != SemanticType::TypePack || !place->type.concretePack)
+      continue;
+    for (const auto &block : body->blocks) {
+      const auto first = requests.size();
+      requests.push_back({local.declaration.id, {block.id, 0, false, true}});
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone)
+          continue;
+        requests.push_back(
+            {local.declaration.id, {block.id, instruction.id, false}});
+        requests.push_back(
+            {local.declaration.id, {block.id, instruction.id, true}});
+      }
+      requests.push_back({local.declaration.id, {block.id, 0, false}});
+      candidates.push_back({&local, first, requests.size()});
+    }
+  }
+  if (requests.empty())
+    return fragments;
+  const auto observed = queryMirDebugAvailability(program, address, requests);
+  if (!observed.verification.valid() ||
+      observed.requested.size() != requests.size())
+    return fragments;
+  const auto key = [](SourceLocalId local, MirDebugPoint point) {
+    return std::tuple{local, point.block, point.instruction, point.after,
+                      point.blockEntry};
+  };
+  std::set<decltype(key(0, {}))> stops;
+  for (const auto &stop : observed.requiredStops)
+    stops.insert(key(stop.local, stop.point));
+  // Formal packs have body-root lexical identity, independent of whether an
+  // instruction has a source anchor. Observe every boundary, preserving all
+  // lexical, ownership and borrow cuts rather than inferring continuity from
+  // nearby source statements or LLVM representation.
+  for (const auto &candidate : candidates) {
+    std::optional<MirDebugPoint> begin;
+    const auto &local = *candidate.local;
+    const auto emit = [&](MirDebugPoint end) {
+      for (std::size_t element = 0;
+           element < local.declaration.type.arguments.size(); ++element)
+        fragments.push_back(
+            {local.declaration.id, local.place, element, *begin, end});
+    };
+    for (auto i = candidate.first; i < candidate.last; ++i) {
+      const auto &fact = observed.requested[i];
+      const auto point = fact.request.point;
+      const bool readable =
+          fact.readability == MirDebugReadability::DefinitelyReadable &&
+          !stops.contains(key(local.declaration.id, point));
+      if (begin && (!readable || i + 1 == candidate.last)) {
+        emit(point);
+        begin.reset();
+      }
+      if (!begin && readable && i + 1 != candidate.last)
+        begin = point;
+    }
+  }
+  return fragments;
 }
 
 std::optional<std::vector<LoweredSourceRange>>
@@ -1883,9 +2099,14 @@ LoweredProgramBuild LoweredProgramBuilder::build(
       debug.tables->locations = captureSourceLocations(mir);
       debug.tables->valueRanges = lowered_detail::deriveSourceValueRanges(mir);
       if (auto ranges =
-              lowered_detail::deriveSourceRanges(lowered.mir_, address))
+              lowered_detail::deriveSourceRanges(lowered.mir_, address)) {
         debug.tables->ranges = std::move(*ranges);
-      else
+        debug.tables->fragments = lowered_detail::deriveSourceFragments(
+            lowered.mir_, address, debug.tables->ranges);
+        debug.tables->parameterFragments =
+            lowered_detail::deriveSourceParameterFragments(lowered.mir_,
+                                                           address);
+      } else
         addIssue(build.issues, LoweredProgramIssueKind::InvalidBodyInventory,
                  "source-local ranges require valid current MIR availability",
                  address);

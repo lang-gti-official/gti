@@ -1,0 +1,11 @@
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+int32_t inspect(int32_t input) {
+  int32_t local = input ^ 13;
+  {
+    int32_t local = input ^ 15;
+    debug_checkpoint(local);
+  }
+  debug_checkpoint(local);
+  return local;
+}
+int main() { return inspect(debug_input()) == 9 ? 0 : 1; }

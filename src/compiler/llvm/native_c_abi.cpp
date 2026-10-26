@@ -1,4 +1,5 @@
 #include "native_c_abi.h"
+#include "debug_info.h"
 #include "failure.h"
 #include "native_c_contract.h"
 
@@ -1536,6 +1537,8 @@ void emitNativeCCallbacks(
     wrapper->addFnAttr(llvm::Attribute::NoUnwind);
     llvm::IRBuilder<> ir(
         llvm::BasicBlock::Create(session.context(), "entry", wrapper));
+    if (auto *debug = session.debugInfo())
+      debug->beginNativeCallback(adapter.id, ir);
     callbackAttachment(session, ir, adapter, *wrapper, true);
     const auto inputs = decodeNativeCArguments(session, ir, native, *wrapper);
     llvm::Value *output = nullptr;

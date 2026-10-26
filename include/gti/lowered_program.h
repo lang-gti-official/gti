@@ -105,8 +105,31 @@ struct LoweredSourceValueRange {
   MirValueId value = 0;
   MirDebugPoint begin;
   MirDebugPoint end;
+  // A final scalar lexical exit in a single-block returning body; its actual
+  // DWARF scope bounds visibility. All other ends need an explicit value cut.
+  bool lexicalScopeEnd = false;
   friend bool operator==(const LoweredSourceValueRange &,
                          const LoweredSourceValueRange &) = default;
+};
+
+struct LoweredSourceFragmentRange {
+  SourceLocalId local = 0;
+  MirPlaceId place = 0;
+  MirValueId value = 0;
+  MirDebugPoint begin;
+  MirDebugPoint end;
+  friend bool operator==(const LoweredSourceFragmentRange &,
+                         const LoweredSourceFragmentRange &) = default;
+};
+
+struct LoweredSourceParameterFragment {
+  SourceLocalId local = 0;
+  MirPlaceId place = 0;
+  std::size_t element = 0;
+  MirDebugPoint begin;
+  MirDebugPoint end;
+  friend bool operator==(const LoweredSourceParameterFragment &,
+                         const LoweredSourceParameterFragment &) = default;
 };
 
 struct LoweredSourceDebugTables {
@@ -116,6 +139,8 @@ struct LoweredSourceDebugTables {
   std::vector<LoweredSourceLocation> locations;
   std::vector<LoweredSourceRange> ranges;
   std::vector<LoweredSourceValueRange> valueRanges;
+  std::vector<LoweredSourceFragmentRange> fragments;
+  std::vector<LoweredSourceParameterFragment> parameterFragments;
   friend bool operator==(const LoweredSourceDebugTables &,
                          const LoweredSourceDebugTables &) = default;
 };
