@@ -1038,6 +1038,19 @@ Canonical checked-place forwarding does not cross `RawDereference` or
 the pointer; a read-only carrier shell therefore does not make the raw pointee
 read-only. Ordinary pointer type/access and lexical unsafe obligations remain
 separate from checked loan ancestry.
+
+Program verification independently resolves Value-rooted raw class field
+projections through the exact MIR class catalog and checks their final type.
+It reuses the ordinary field/base/array/reference projection query; a missing
+root, invalid selected field, or contradictory final type rejects the owning
+body/place before lowered sealing. Native admission retains its independent
+supported-layout and final-type checks. This program-level check does not yet
+extend through Lambda capture-field selectors, whose exact environment identity
+requires a separate proof; it does not declare those paths universally valid.
+Class projection prefixes are still checked before that boundary, and each
+independently materialized prefix place retains its own final-type check. This
+is the current verification coverage, not a permanent source-language exception.
+
 Program v74/body v64 serialize signature receiver capability in semantic type
 metadata. Read-only, mutable, and consuming signatures cannot share a serialized
 identity. The lowered declaration seal includes the same field in

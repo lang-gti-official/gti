@@ -1,0 +1,12 @@
+#include <std/memory>
+
+int main() {
+  mut std::unique_ptr<int> first{nullptr};
+  mut std::unique_ptr<int> second{nullptr};
+  if (first || second || first != nullptr) { return 1; }
+  first.swap(second);
+  first.reset();
+  mut auto moved = std::move(second);
+  moved = nullptr;
+  return moved == nullptr && first == nullptr ? 0 : 2;
+}

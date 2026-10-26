@@ -1,5 +1,7 @@
 #include "scalar.h"
 
+#include <algorithm>
+#include <array>
 #include <llvm/ADT/APFloat.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/GlobalVariable.h>
@@ -41,6 +43,32 @@ MirOperation baseOperation(MirOperation operation) {
 Scalars::Scalars(Session &session, llvm::IRBuilder<> &ir, Guard guard)
     : session(session), ir(ir), guard(std::move(guard)) {}
 
+llvm::Constant *Scalars::constantStorage(
+    const TypeLayout &layout,
+    std::span<const std::pair<std::uint64_t, llvm::Constant *>> fragments) {
+  std::vector<llvm::Constant *> fields;
+  std::uint64_t end = 0;
+  const auto padding = [&](std::uint64_t size) {
+    if (size)
+      fields.push_back(llvm::Constant::getNullValue(
+          llvm::ArrayType::get(ir.getInt8Ty(), size)));
+  };
+  for (const auto &[offset, field] : fragments) {
+    const auto size =
+        session.dataLayout().getTypeAllocSize(field->getType()).getFixedValue();
+    if (offset < end || offset > layout.size || size > layout.size - offset)
+      throw std::logic_error(
+          "LLVM static fragments differ from their exact storage layout");
+    padding(offset - end);
+    fields.push_back(field);
+    end = offset + size;
+  }
+  padding(layout.size - end);
+  // Typed fragments preserve relocations. Opaque-pointer users still address
+  // this byte-congruent initializer through the one canonical layout plan.
+  return llvm::ConstantStruct::getAnon(session.context(), fields, true);
+}
+
 llvm::Constant *Scalars::constant(const ConstantValue &value,
                                   const SemanticType &type) {
   auto *storage = session.layouts().get(type).storage;
@@ -52,11 +80,23 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
     return llvm::ConstantInt::get(
         storage, integer->negative ? uint64_t(0) - integer->magnitude
                                    : integer->magnitude);
-  if (const auto *enumerator = std::get_if<ConstantEnum>(&value))
+  if (const auto *enumerator = std::get_if<ConstantEnum>(&value)) {
+    if (const auto *payload = session.program().mir().findPayloadEnum(type)) {
+      const auto variant = enumerator->value.magnitude;
+      if (enumerator->value.negative || variant >= payload->variants.size() ||
+          !payload->variants[variant].payloadTypes.empty())
+        throw std::logic_error(
+            "LLVM static enum constant is not an exact unit alternative");
+      const auto &layout = session.layouts().payload(type);
+      const std::array fragments{std::pair<std::uint64_t, llvm::Constant *>{
+          layout.type.fieldOffsets.at(layout.tagIndex), ir.getInt32(variant)}};
+      return constantStorage(layout.type, fragments);
+    }
     return llvm::ConstantInt::get(storage, enumerator->value.negative
                                                ? uint64_t(0) -
                                                      enumerator->value.magnitude
                                                : enumerator->value.magnitude);
+  }
   if (const auto *floating = std::get_if<BinaryFloat>(&value))
     return llvm::cast<llvm::Constant>(literal(*floating, type));
   if (const auto *character = std::get_if<CharacterLiteral>(&value))
@@ -71,6 +111,16 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
     std::vector<llvm::Constant *> elements;
     for (const auto &element : aggregate->value->elements)
       elements.push_back(constant(element, type.arguments.at(0)));
+    if (std::any_of(elements.begin(), elements.end(), [&](auto *element) {
+          return element->getType() !=
+                 session.layouts().get(type.arguments[0]).storage;
+        })) {
+      const auto layout = session.layouts().get(type);
+      std::vector<std::pair<std::uint64_t, llvm::Constant *>> fragments;
+      for (std::size_t index = 0; index < elements.size(); ++index)
+        fragments.emplace_back(index * layout.stride, elements[index]);
+      return constantStorage(layout, fragments);
+    }
     return llvm::ConstantArray::get(llvm::cast<llvm::ArrayType>(storage),
                                     elements);
   }
@@ -86,6 +136,18 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
         object.fields.size() != owner.declaredFields.size())
       throw BackendUnsupportedError("LLVM static object requires its complete "
                                     "passive concrete constant");
+    if (owner.unionLayout) {
+      for (const auto &field : owner.declaredFields) {
+        const auto selected = std::find_if(
+            object.fields.begin(), object.fields.end(),
+            [&](const auto &value) { return value.symbol == field.symbol; });
+        if (selected == object.fields.end() ||
+            !constant(selected->value, field.type)->isNullValue())
+          throw BackendUnsupportedError(
+              "LLVM union static datum requires exact zero initialization");
+      }
+      return llvm::Constant::getNullValue(storage);
+    }
     auto *record = llvm::cast<llvm::StructType>(storage);
     std::vector<llvm::Constant *> fields;
     for (auto *element : record->elements())
@@ -99,7 +161,43 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
       fields.at(session.layouts().fieldIndex(type, field.symbol)) =
           constant(selected->value, field.type);
     }
-    return llvm::ConstantStruct::get(record, fields);
+    bool canonical = true;
+    for (unsigned index = 0; index < fields.size(); ++index)
+      canonical &= fields[index]->getType() == record->getElementType(index);
+    if (canonical)
+      return llvm::ConstantStruct::get(record, fields);
+    const auto layout = session.layouts().get(type);
+    std::vector<std::pair<std::uint64_t, llvm::Constant *>> fragments;
+    for (std::size_t index = 0; index < fields.size(); ++index)
+      fragments.emplace_back(layout.fieldOffsets.at(index), fields[index]);
+    return constantStorage(layout, fragments);
+  }
+  if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
+      aggregate && aggregate->value &&
+      aggregate->value->kind == ConstantAggregateKind::PayloadEnum &&
+      type.kind == SemanticType::Enum) {
+    const auto &node = *aggregate->value;
+    const auto *payload = session.program().mir().findPayloadEnum(type);
+    if (!payload || !node.exactType || *node.exactType != type ||
+        node.identity != payload->declaration ||
+        node.variant >= payload->variants.size() ||
+        node.elements.size() !=
+            payload->variants[node.variant].payloadTypes.size())
+      throw std::logic_error(
+          "LLVM static payload lost its exact alternative fields");
+    const auto &layout = session.layouts().payload(type);
+    std::vector<std::pair<std::uint64_t, llvm::Constant *>> fragments{
+        {layout.type.fieldOffsets.at(layout.tagIndex),
+         ir.getInt32(node.variant)}};
+    const auto *variant =
+        session.dataLayout().getStructLayout(layout.variants[node.variant]);
+    for (std::size_t index = 0; index < node.elements.size(); ++index)
+      fragments.emplace_back(
+          layout.type.fieldOffsets.at(layout.payloadIndex) +
+              variant->getElementOffset(index),
+          constant(node.elements[index],
+                   payload->variants[node.variant].payloadTypes[index]));
+    return constantStorage(layout.type, fragments);
   }
   throw BackendUnsupportedError("LLVM static datum requires an admitted scalar "
                                 "or aggregate constant");

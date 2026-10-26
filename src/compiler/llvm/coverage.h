@@ -64,9 +64,21 @@ enum class Shape {
   CStringLiteralInput,
   ArrayValueComparison,
   NativeClassStorage,
+  NativePayloadStorage,
+  NativeUnionStorage,
+  NativeBorrowMetadata,
   NativeThreadStorage,
   InPlaceScalarMutation,
   StoredFieldPublication,
+  UnstagedConstructorFieldPublication,
+  NativeCallableStorage,
+  CallableMetadata,
+  NativeMemoryOperation,
+  NativeProcessMemory,
+  NativeUniqueOwnership,
+  NativeSharedOwnership,
+  NativeClassRawAccess,
+  NativeObjectAddress,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

@@ -1,0 +1,11 @@
+int main() {
+  mut uint64_t total = uint64_t(0);
+  mut auto accumulate = [mut &total](uint64_t value) -> void {
+    total += value;
+  };
+  for (mut uint64_t index = uint64_t(0); index < uint64_t(400000000);
+       index++) {
+    accumulate(index + uint64_t(1));
+  }
+  return total == uint64_t(80000000200000000) ? 0 : 1;
+}

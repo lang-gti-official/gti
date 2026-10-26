@@ -1,0 +1,18 @@
+#include <std/memory>
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Fixed {
+public:
+  Fixed() { constructed += 1; }
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+  ~Fixed() { destroyed += 1; }
+};
+
+int main() {
+  { std::uninitialized<Fixed> vacant{}; }
+  // Reserving correctly aligned bytes starts no Fixed lifetime, even when
+  // Fixed is immovable and has source-visible construction/destruction.
+  return constructed == 0 && destroyed == 0 ? 0 : 1;
+}

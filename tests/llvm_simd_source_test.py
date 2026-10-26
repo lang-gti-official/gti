@@ -8,10 +8,32 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import uuid
 
 
+from llvm_evidence_manifest import build_manifest
+
+NUMERIC_FIXTURE = "tests/fixtures/llvm_optimization/simd_lanes.gti"
+
+
+def evidence_cases(root):
+    return {"numeric-core": (root / NUMERIC_FIXTURE).read_text()}
+
+
+def evidence_profiles(root):
+    return {"numeric-core": ("numeric-core",)}
+
+
+def evidence_manifest(root):
+    return build_manifest("llvm_simd_source", evidence_cases(root), evidence_profiles(root),
+                          {"numeric-core": NUMERIC_FIXTURE})
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
+        print(json.dumps(evidence_manifest(Path(sys.argv[2]).resolve()), sort_keys=True))
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gti", required=True, type=Path)
     parser.add_argument("--gti-build-cache", required=True, type=Path)
@@ -30,7 +52,8 @@ def main():
     output.mkdir(parents=True)
     manifest = {"status": "running", "profile": args.profile, "commands": [], "cases": [],
                 "remaining_gate": "all profile required; copy-range depends on O-LLVM-08 StorageBoundsCheck",
-                "gti_sha256": hashlib.sha256(args.gti.read_bytes()).hexdigest()}
+                "gti_sha256": hashlib.sha256(args.gti.read_bytes()).hexdigest(),
+                "declared_evidence": evidence_manifest(root), "observed_profiles": []}
     env = dict(os.environ, GTI_STDLIB_PATH=str(root / "stdlib"), GTI_COLOR="never")
 
     def run(command, *, expected=0):
@@ -43,7 +66,7 @@ def main():
         return result
 
     try:
-        source = root / "tests/fixtures/llvm_optimization/simd_lanes.gti"
+        source = root / NUMERIC_FIXTURE
         modes = [("cpp", 3, standard) for standard in ("c++20", "c++23")]
         modes += [("llvm", level, None) for level in range(4)]
         for backend, level, standard in (modes if args.profile != "copy-range" else []):
@@ -53,6 +76,8 @@ def main():
             result = run([binary])
             assert not result.stdout and not result.stderr
             manifest["cases"].append({"backend": backend, "optimization": level, "standard": standard})
+        if args.profile != "copy-range":
+            manifest["observed_profiles"].append("numeric-core")
         failures = (
             ("lane", "std::simd<float, 7> value{}; return int(value[std::size_t(7)]);"),
             ("mask", "std::simd_mask<7> value{}; return value[std::size_t(7)] ? 1 : 0;"),
