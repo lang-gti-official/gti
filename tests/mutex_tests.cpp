@@ -1006,7 +1006,7 @@ int main() {
           return &instruction;
     return static_cast<lang::MirInstruction *>(nullptr);
   };
-  for (int mutation = 0; mutation != 18; ++mutation) {
+  for (int mutation = 0; mutation != 20; ++mutation) {
     auto malformed = frontend.mir;
     auto &changed = const_cast<lang::MirFunctionInstance &>(
         *malformed.findFunctionInstance(functionId));
@@ -1083,6 +1083,12 @@ int main() {
       call.borrowAccess = result.access = lang::AccessMode::ReadOnly;
       break;
     }
+    case 18:
+      call.loan.reset();
+      break;
+    case 19:
+      call.functionTarget = functionId;
+      break;
     }
     expect(!lang::verifyMirProgram(malformed).valid(),
            "stored publication rejects forged "
@@ -1113,6 +1119,42 @@ int main() {
                exactConflict,
            "readonly ancestor use/publication cannot bypass its live exclusive "
            "child");
+    auto forgedWrite = rejected.mir;
+    bool changedWrite = false;
+    for (auto &body : const_cast<std::vector<lang::MirFunctionInstance> &>(
+             forgedWrite.functionInstances())) {
+      const lang::MirLoan *activeChild = nullptr;
+      for (const auto &loan : body.body.loans)
+        if (loan.kind == lang::MirLoanKind::Stored && loan.lifecycleBound &&
+            loan.access == lang::AccessMode::Mutable && loan.parent != 0) {
+          activeChild = &loan;
+          break;
+        }
+      if (!activeChild)
+        continue;
+      lang::MirInstructionId firstPublication = 0;
+      for (const auto &block : body.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.kind == lang::MirInstructionKind::Call &&
+              instruction.loan == activeChild->id)
+            firstPublication = instruction.id;
+      for (auto &block : body.body.blocks)
+        for (auto &instruction : block.instructions)
+          if (firstPublication && instruction.id > firstPublication &&
+              instruction.kind == lang::MirInstructionKind::CallInput &&
+              instruction.operands.size() == 1 &&
+              instruction.operands.front().place == activeChild->source &&
+              instruction.operands.front().kind ==
+                  lang::MirOperandKind::BorrowRead) {
+            instruction.operands.front().kind =
+                lang::MirOperandKind::BorrowWrite;
+            instruction.callInputKind = lang::HirCallInputKind::MutableBorrow;
+            changedWrite = true;
+          }
+    }
+    expect(changedWrite && !lang::verifyMirProgram(forgedWrite).valid(),
+           "a forged write through the readonly ancestor after publication "
+           "rejects");
   }
   const auto nested = analyze("mutex-nested-receiver.gti", R"gti(
 #include <std/mutex>

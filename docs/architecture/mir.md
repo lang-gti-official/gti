@@ -693,6 +693,9 @@ is live remains invalid. Ordinary reborrows retain their existing permission
 rule. Every finite normal return and constructor publication is checked,
 including the structural trusted capability construction base; legal recursive
 relays require no termination proof or new certificate subsystem.
+Some invalid ancestor uses through stored readonly receivers still reach the
+MIR safety firewall instead of a semantic source diagnostic; that diagnostic
+frontier remains pending and is not satisfactory user-facing rejection.
 
 Checked references to primitive text views use the same two-dependency model.
 Their abstract `Stored` entry has no nominal field path: it represents the
