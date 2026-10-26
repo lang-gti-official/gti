@@ -611,6 +611,7 @@ add_library(
   "src/compiler/llvm/instrumentation.cpp"
   "src/compiler/llvm/layout.cpp"
   "src/compiler/llvm/abi.cpp"
+  "src/compiler/llvm/native_c_abi.cpp"
   "src/compiler/llvm/runtime_abi.cpp"
   "src/compiler/llvm/hosted.cpp"
   "src/compiler/llvm/reachability.cpp"

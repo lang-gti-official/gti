@@ -1,0 +1,8 @@
+#include "bindings.gti"
+
+int main() {
+  auto request = native_flags::flags_make(
+    native_flags::ACCESS_HIGH, native_flags::WIDE_ALL, native_flags::OFFSET_MIN
+  );
+  return native_flags::flags_validate(request) == 1 ? 0 : 1;
+}

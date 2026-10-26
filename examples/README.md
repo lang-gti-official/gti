@@ -1,5 +1,24 @@
 # GTI examples
 
+[`llvm/native-c-function-values.gti`](llvm/native-c-function-values.gti)
+demonstrates an exact scalar function pointer returned by C, its nullable check
+and copied value, native invocation after argument preparation changes C's next
+selection, and exactly-once scoped cleanup. Build and run from the repository
+root with an optimized GTI compiler:
+
+```sh
+cc -std=c17 -O3 -c examples/llvm/native-c-function-values-native/operation.c -o /tmp/native-operation.o
+gti examples/llvm/native-c-function-values.gti --backend llvm -O3 -o /tmp/native-function-values -- /tmp/native-operation.o
+/tmp/native-function-values
+```
+
+It prints `selected`, `argument:31`, `result:42`, and `cleanup`, one per line.
+The registered `llvm_native_c_indirect_execution` harness builds the actual
+example source at LLVM O0-O3 against C O0/O3, with C++20/23 controls. Like the
+other `examples/llvm/` profiles it is outside the numbered full-language census.
+The C host supplies a process-lifetime code address; invocation remains `unsafe`
+and requires the caller to establish its signature, lifetime and preconditions.
+
 [`llvm/payloads-and-unions.gti`](llvm/payloads-and-unions.gti) exercises native
 overlapping union storage, concrete generic alternatives and scoped payload
 borrows. `llvm_payload_execution` runs it at LLVM O0-O3 against C++20/23 O3;

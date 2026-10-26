@@ -1,0 +1,13 @@
+#include "bindings.gti"
+
+// Generated bindings also declare records and function pointers. Only the
+// required scalar and pointer calls belong to this production profile.
+int main() {
+  if (native_flags::flags_echo(native_flags::WIDE_HIGH) != native_flags::WIDE_HIGH) return 1;
+  if (native_flags::flags_echo(native_flags::WIDE_ALL) != native_flags::WIDE_ALL) return 2;
+  if (native_flags::flags_offset(native_flags::OFFSET_MIN) != native_flags::OFFSET_MIN) return 3;
+  if (native_flags::flags_offset(native_flags::OFFSET_MAX) != native_flags::OFFSET_MAX) return 4;
+  mut native_flags::WideFlags output = native_flags::WIDE_HIGH;
+  unsafe { native_flags::flags_write(&output); }
+  return output == native_flags::WIDE_ALL ? 0 : 5;
+}

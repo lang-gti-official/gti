@@ -1,0 +1,4 @@
+#include <std/cmath>
+int main() {
+  return std::sqrt(9.0) == 3.0 && std::floor(-1.25) == -2.0 ? 0 : 1;
+}

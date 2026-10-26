@@ -5,6 +5,7 @@
 #include "constructor_field_publication.h"
 #include "coverage.h"
 #include "memory_types.h"
+#include "native_c_contract.h"
 #include "parameter_packs.h"
 #include "reachability.h"
 #include "text.h"
@@ -174,8 +175,9 @@ bool arrayProjection(const MirBody &body, const MirPlace &place) {
 // scalar operations do not allocate a duplicate diagnostic record per use.
 class Inventory final {
 public:
-  Inventory(std::vector<LlvmCoverageUse> &uses, const MirProgram &program)
-      : uses(uses), program(program) {}
+  Inventory(std::vector<LlvmCoverageUse> &uses, const MirProgram &program,
+            const TargetInfo &nativeTarget)
+      : uses(uses), program(program), nativeTarget(nativeTarget) {}
 
   std::optional<MirBodyAddress> body;
   SourceSpan source;
@@ -1053,13 +1055,20 @@ public:
       add(type.kind,
           opaqueReferent(type) ? std::optional(Shape::ErasedReference)
           : address            ? std::optional(Shape::PassiveAddressValue)
-          : passiveArray       ? std::optional(Shape::PassiveArrayValue)
-          : reference          ? std::optional(Shape::PassiveReference)
-          : arrayAddress       ? std::optional(Shape::CheckedArrayProjection)
-                               : classShape(type));
+          : native_llvm::nativeCScalarFunctionValueContract(program,
+                                                            nativeTarget, type)
+              ? std::optional(Shape::NativeCFunctionValue)
+          : passiveArray ? std::optional(Shape::PassiveArrayValue)
+          : reference    ? std::optional(Shape::PassiveReference)
+          : arrayAddress ? std::optional(Shape::CheckedArrayProjection)
+                         : classShape(type));
       if (type.nativeCScalar != NativeCScalarKind::None) {
-        add(type.nativeCScalar);
-        add(Shape::NativeScalar);
+        const auto nativeScalar =
+            native_llvm::nativeCScalarValueContract(nativeTarget, type)
+                ? std::optional(Shape::NativeCScalarValue)
+                : std::nullopt;
+        add(type.nativeCScalar, nativeScalar);
+        add(Shape::NativeScalar, nativeScalar);
       }
       if (type.kind == SemanticType::Array)
         add(Shape::FixedArray, passiveArray
@@ -1351,7 +1360,11 @@ public:
                 native_llvm::wholeCStringLiteral(mir, stage.operands[0])
                     ? std::optional(Shape::PassiveAddressValue)
                     : std::nullopt);
-          add(*stage.callInputRole, classShape(stage.info.type));
+          add(*stage.callInputRole,
+              native_llvm::nativeCScalarReceiverInputContract(
+                  program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCScalarIndirect)
+                  : classShape(stage.info.type));
           add(stage.callInputKind,
               passiveReference(stage.info.type) &&
                       (stage.callInputKind == HirCallInputKind::ReadBorrow ||
@@ -1474,8 +1487,13 @@ public:
           type(*stage.objectLayoutType);
         if (stage.nativeCalleeType) {
           type(*stage.nativeCalleeType);
-          add(Shape::NativeCall);
-          add(Shape::IndirectCall);
+          const auto nativeIndirect =
+              native_llvm::nativeCScalarIndirectCallContract(
+                  program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCScalarIndirect)
+                  : std::nullopt;
+          add(Shape::NativeCall, nativeIndirect);
+          add(Shape::IndirectCall, nativeIndirect);
         }
         if (stage.dispatch == CallDispatch::Virtual)
           add(Shape::VirtualCall);
@@ -1562,6 +1580,30 @@ public:
                           UnsafeOperationKind::ForeignPointerCall &&
                       native_llvm::nativeProcessMemoryCall(program, stage)
                   ? std::optional(Shape::NativeProcessMemory)
+              : stage.unsafeOperation ==
+                            UnsafeOperationKind::ForeignPointerCall &&
+                        native_llvm::nativeCScalarIndirectCallContract(
+                            program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCScalarIndirect)
+              : stage.unsafeOperation ==
+                            UnsafeOperationKind::ForeignPointerCall &&
+                        callee &&
+                        (native_llvm::nativeCScalarImportContract(
+                             program, nativeTarget, *callee) ||
+                         native_llvm::nativeCCountedInputContract(
+                             program, nativeTarget, *callee) ||
+                         native_llvm::nativeCScalarFunctionImportContract(
+                             program, nativeTarget, *callee)) &&
+                        native_llvm::nativeCDirectCallContract(
+                            program, nativeTarget, mir, stage)
+                  ? std::optional(
+                        native_llvm::nativeCScalarFunctionImportContract(
+                            program, nativeTarget, *callee)
+                            ? Shape::NativeCFunctionImport
+                        : native_llvm::nativeCCountedInputContract(
+                            program, nativeTarget, *callee)
+                            ? Shape::NativeCCountedInput
+                            : Shape::NativeCScalarImport)
               : rawClassStage &&
                       stage.unsafeOperation == UnsafeOperationKind::RawMember &&
                       nativeRawFieldStage(mir, stage)
@@ -1687,6 +1729,7 @@ private:
                          std::size_t, bool, bool, const LlvmCoverageEntry *>;
   std::vector<LlvmCoverageUse> &uses;
   const MirProgram &program;
+  const TargetInfo &nativeTarget;
   std::map<Key, std::size_t> indices;
 };
 
@@ -1745,7 +1788,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   plan.closure_ = closure.conservative
                       ? LlvmAdmissionClosure::AllExecutableBodies
                       : LlvmAdmissionClosure::SealedEntryDependencies;
-  Inventory inventory(plan.uses, mir);
+  Inventory inventory(plan.uses, mir, input.target());
   inventory.add(Shape::ObjectArtifact);
   inventory.add(input.programKind());
   inventory.add(mir.executionProfile());
@@ -1806,8 +1849,20 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
         native_llvm::nativeProcessMemoryBinding(mir, function)
             ? std::optional(Shape::NativeProcessMemory)
             : std::nullopt;
-    inventory.add(function.definitionKind, processMemory);
-    inventory.add(function.linkage, processMemory);
+    const auto nativeImport =
+        processMemory ? processMemory
+        : native_llvm::nativeCScalarImportContract(mir, input.target(),
+                                                   function)
+            ? std::optional(Shape::NativeCScalarImport)
+        : native_llvm::nativeCCountedInputContract(mir, input.target(),
+                                                   function)
+            ? std::optional(Shape::NativeCCountedInput)
+        : native_llvm::nativeCScalarFunctionImportContract(mir, input.target(),
+                                                           function)
+            ? std::optional(Shape::NativeCFunctionImport)
+            : std::nullopt;
+    inventory.add(function.definitionKind, nativeImport);
+    inventory.add(function.linkage, nativeImport);
     inventory.add(function.entryKind);
     if (function.owner)
       inventory.add(
@@ -1836,9 +1891,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     if (function.definitionKind == MirDefinitionKind::RuntimeBinding)
       inventory.add(Shape::RuntimeBinding);
     if (function.definitionKind == MirDefinitionKind::Declaration)
-      inventory.add(Shape::LibraryDeclaration, processMemory);
+      inventory.add(Shape::LibraryDeclaration, nativeImport);
     if (function.linkage == LanguageLinkage::C)
-      inventory.add(Shape::NativeCall, processMemory);
+      inventory.add(Shape::NativeCall, nativeImport);
     if (function.mayRaiseDefinedFailure)
       inventory.add(Shape::FailureReturn);
     if (function.receiverMutability != ReceiverMutability::ReadOnly)

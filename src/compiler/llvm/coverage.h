@@ -79,6 +79,12 @@ enum class Shape {
   NativeSharedOwnership,
   NativeClassRawAccess,
   NativeObjectAddress,
+  NativeCScalarImport,
+  NativeCScalarValue,
+  NativeCCountedInput,
+  NativeCFunctionValue,
+  NativeCFunctionImport,
+  NativeCScalarIndirect,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \
