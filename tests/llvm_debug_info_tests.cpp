@@ -58,6 +58,42 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
   const MirBodyAddress address{MirBodyKind::Function, selected->id};
   const auto *body = findMirBody(input->program().mir(), address);
   auto *function = session.abi().declareFunction(selected->id);
+  if (!session.hasSourceDefinition(selected->id, *function))
+    throw std::runtime_error("new source declaration lost its exact identity");
+  {
+    Session reused(*input, {});
+    DebugInfo reusedDebug(reused);
+    const auto plan = reused.abi().gti(
+        selected->returnType, selected->parameterTypes,
+        selected->mayRaiseDefinedFailure, nullptr, selected->tracksCaller);
+    auto *existing =
+        llvm::Function::Create(plan.type, llvm::GlobalValue::ExternalLinkage,
+                               function->getName(), reused.module());
+    plan.applyTo(*existing);
+    bool forgeryRejected = false;
+    try {
+      reusedDebug.begin(address, *existing);
+    } catch (const std::logic_error &) {
+      forgeryRejected = true;
+    }
+    if (!forgeryRejected || existing->getSubprogram())
+      throw std::runtime_error(
+          "a matching source symbol forged debug identity");
+    if (reused.abi().declareFunction(selected->id) != existing ||
+        !reused.hasSourceDefinition(selected->id, *existing))
+      throw std::runtime_error("reused source declaration lost exact identity");
+    reusedDebug.begin(address, *existing);
+    llvm::IRBuilder<> body(
+        llvm::BasicBlock::Create(reused.context(), "entry", existing));
+    if (existing->getReturnType()->isVoidTy())
+      body.CreateRetVoid();
+    else
+      body.CreateRet(llvm::Constant::getNullValue(existing->getReturnType()));
+    reusedDebug.finalize();
+    if (!existing->getSubprogram() ||
+        llvm::verifyModule(reused.module(), &llvm::errs()))
+      throw std::runtime_error("reused source metadata did not verify");
+  }
   auto *wrong = llvm::Function::Create(
       function->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
       "wrong_debug_identity", session.module());
