@@ -10279,9 +10279,52 @@ so an exception request is not evidence of a fresh system allocation. The
 initial Darwin control showed that libc++abi's internal exception-release call
 does not traverse the interposed public symbol; exception deallocation counts
 are therefore explicitly unavailable, not assumed zero. This probe does not
-establish OOM behavior, complete allocation freedom or worker allocation cost.
-Dynamic and worker source fixtures are retained for the next private-profile
-extension; their frontend acceptance alone is not comparative execution proof.
+establish OOM behavior or complete allocation freedom.
+
+The explicit private `--profile dynamic-calls` selects a sealed source root and
+its verified dependency closure, including actual `function_ptr` formation and
+invocation. It does not change or fabricate the production admission plan.
+Both candidates use the central ABI planner; the unwind copy forwards its
+planned direct result instead of interpreting it as a Boolean status. A runtime
+choice between two source targets executes through the real generated adapters.
+Mutation controls reject missing/duplicate/forged roots, missing targets,
+signatures and staged inputs. Scalar-profile omission and the original scalar
+negative fixtures still reject before overwriting an existing object.
+
+The separate `--profile scoped-workers` consumes actual sealed scoped-task
+adapters from public `std::parallel_invoke`. The evaluation-only C envelope uses
+the existing runtime to start and join real workers, retain the first failed
+input's record/artifact, and then drain task-owned cleanup recipes in reverse
+order on the caller. A private entry catches the actual candidate carrier only
+after the GTI worker frames have finished cleanup; only then does it invoke the
+existing C++ managed-worker handoff. That runtime marker never substitutes for
+the primary GTI carrier. The task descriptor/query signature is test-owned,
+not a selected production worker convention.
+
+Worker fixtures cover disjoint borrowed referents, repeated calls, source-local
+cleanup, task-owned cleanup on success and worker failure, first caller-side
+cleanup failure and immediate terminal secondary failure with both original
+sites. Source-destructor task types retain their explicit `unsafe_transfer`
+obligation; omission rejects with GTI-S2084. Exact scope/adapter/target/catch facts
+have mutation controls. Deterministic runtime creation faults exercise zero and
+one started worker, join-all, cleanup of unstarted tasks and immediate reuse.
+Nested scopes and worker-local destructors with failure-capable MIR operations
+remain rejected pending the private emergency-handoff landingpad comparison.
+The ordinary lifetime guards are retained even for leaf destructor bodies.
+These profiles add no public admission, thread lowering, foreign-firewall policy
+or production failure ABI.
+
+Use `--fixtures dynamic_pointer` or `--fixtures scoped_worker` with the cost
+and allocation reporters on the matching profile's receipts. Worker timing
+includes actual host thread start/join, not just a synthetic status loop; choose
+bounded iteration counts and retain raw variation. Worker allocation runs also
+measure an independent empty-task baseline through the same runtime: at least
+two runtime state allocations plus any host thread-library allocations per
+two-worker scope, with balanced deletion. Generated worker execution must match
+that measured allocation/byte baseline. Ordinary failure uses two existing C++
+runtime handoff exceptions in either candidate; the unwind candidate additionally
+allocates two private GTI worker carriers and one caller carrier after join.
+Counts remain provider observations, not total heap or timing evidence.
 
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves

@@ -89,7 +89,7 @@ public:
             [&](MirBodyAddress address) { return signature(address); }) {}
   void lower(const LlvmAdmissionPlan &admission);
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
-  void lowerEvaluation(const LlvmAdmissionPlan &admission, bool fixedCallBoundaries);
+  void lowerEvaluation(std::span<const MirBodyAddress> bodies, bool fixedCallBoundaries);
 #endif
 
 private:
@@ -639,6 +639,12 @@ private:
             "LLVM function-pointer ABI acquired an invalid channel");
       }
     }
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+    auto *result = evaluationCall(signature.type, callee, arguments);
+    signature.applyTo(*result);
+    return resultSlot ? load(resultSlot, callable.result)
+           : result->getType()->isVoidTy() ? nullptr : result;
+#else
     auto *status = ir.CreateCall(signature.type, callee, arguments);
     signature.applyTo(*status);
     auto *normal =
@@ -650,6 +656,7 @@ private:
     failedOperation();
     ir.SetInsertPoint(normal);
     return resultSlot ? load(resultSlot, callable.result) : nullptr;
+#endif
   }
   [[nodiscard]] llvm::Value *
   constructClosure(const MirInstruction &instruction) {
@@ -766,6 +773,25 @@ private:
         return constructed;
       }
     } else if (instruction.intrinsic != IntrinsicKind::None) {
+#if defined(GTI_LLVM_C04_MIR_EVALUATION)
+      if (instruction.intrinsic == IntrinsicKind::ThreadScope) {
+        if (current->terminator.kind != MirTerminatorKind::Invoke ||
+            current->terminator.invokeInstruction != instruction.id)
+          throw BackendUnsupportedError("C04 worker scope lost its MIR failure edge");
+        std::vector<llvm::Value *> inputs;
+        for (const auto &value : instruction.operands)
+          inputs.push_back(operand(value));
+        auto *outcome = emitC04Scope(session, ir, address, instruction, inputs,
+                                    channels.at(current->terminator.failureRecord), lifetimes);
+        auto *normal = llvm::BasicBlock::Create(session.context(), "c04.joined", &function);
+        auto *failed = llvm::BasicBlock::Create(session.context(), "c04.worker.failed", &function);
+        ir.CreateCondBr(ir.CreateICmpSLT(outcome, ir.getInt32(0)), failed, normal);
+        ir.SetInsertPoint(failed);
+        failedOperation();
+        ir.SetInsertPoint(normal);
+        return outcome;
+      }
+#endif
       if (instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem)
         return formFunctionPointer(instruction);
       if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke)
@@ -2176,16 +2202,16 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     emitEmbedding(session, failures, *function({MirBodyKind::Module, 0}));
 }
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
-void Bodies::lowerEvaluation(const LlvmAdmissionPlan &admission,
+void Bodies::lowerEvaluation(std::span<const MirBodyAddress> bodies,
                              bool fixedCallBoundaries) {
-  for (auto address : admission.requiredBodies()) {
+  for (auto address : bodies) {
     auto *output = function(address);
     // Keep the controlled baseline separate from ordinary pipeline decisions.
     if (fixedCallBoundaries)
       output->addFnAttr(llvm::Attribute::NoInline);
     output->setUWTableKind(llvm::UWTableKind::Sync);
   }
-  for (auto address : admission.requiredBodies())
+  for (auto address : bodies)
     body(address);
 }
 #endif
@@ -2200,8 +2226,8 @@ void lowerC04Evaluation(Session &session, const LlvmAdmissionPlan &admission,
                         std::span<const HirFunctionInstanceId> functions,
                         bool fixedCallBoundaries,
                         C04EvaluationProfile profile) {
-  validateC04Evaluation(session, admission, functions, profile);
-  Bodies(session, admission).lowerEvaluation(admission, fixedCallBoundaries);
+  const auto bodies = validateC04Evaluation(session, admission, functions, profile);
+  Bodies(session, admission).lowerEvaluation(bodies, fixedCallBoundaries);
 }
 #endif
 

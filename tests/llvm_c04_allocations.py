@@ -12,11 +12,42 @@ from llvm_c04_cost import checksum, verify_artifacts
 from llvm_c04_mir_evaluation_test import digest, run
 
 
-def validate_counts(counts, mode, outcome, iterations):
+def verify_relink_sources(evidence, root):
+    sources = evidence.get("source_sha256", {})
+    required = {"tests/fixtures/llvm_c04_mir/driver.cpp", "tests/fixtures/llvm_c04_mir/carrier.h"}
+    if evidence.get("profile") == "scoped-workers":
+        required.add("tests/fixtures/llvm_c04_mir/worker_driver.h")
+    if not required.issubset(sources):
+        raise ValueError("allocation relink lacks validated driver/carrier sources")
+    for name, expected in sources.items():
+        if digest(root / name) != expected:
+            raise ValueError("allocation relink source differs from validated execution")
+
+
+def validate_counts(counts, mode, outcome, iterations, fixture="native_boundary"):
     failed = iterations if outcome == "failure" else iterations // 2 if outcome == "mixed" else 0
-    expected = failed if mode == "unwind" else 0
-    if (counts.get("controls") is not True or counts["new_calls"] != 0 or
-            counts["new_bytes"] != 0 or counts["delete_calls"] != 0 or
+    workers = fixture == "scoped_worker"
+    # At least two real runtime thread states per joined scope; the host thread
+    # library may allocate too. An independent empty-task run measures that
+    # baseline through the same runtime, without GTI frames or failures.
+    # Worker failure handoff
+    # uses the existing C++ runtime marker in both candidates; unwind also
+    # raises two GTI worker carriers and one caller carrier after join.
+    allocations = counts.get("runtime_new_calls", 0)
+    baseline_bytes = counts.get("runtime_new_bytes", 0)
+    if (workers and (allocations < 2 * iterations or baseline_bytes < allocations or
+                     counts.get("runtime_delete_calls") != allocations or
+                     counts.get("runtime_exception_calls") != 0 or
+                     counts.get("runtime_exception_bytes") != 0)):
+        raise ValueError("worker allocation observation lacks an independent balanced runtime baseline")
+    if not workers and any(counts.get(key, 0) != 0 for key in (
+            "runtime_new_calls", "runtime_new_bytes", "runtime_delete_calls",
+            "runtime_exception_calls", "runtime_exception_bytes")):
+        raise ValueError("non-worker allocation evidence acquired a worker baseline")
+    expected = failed * (5 if mode == "unwind" else 2) if workers else failed if mode == "unwind" else 0
+    if (counts.get("controls") is not True or counts["new_calls"] != allocations or
+            counts["new_bytes"] != baseline_bytes or
+            counts["delete_calls"] != allocations or
             counts["exception_calls"] != expected or
             (counts["exception_bytes"] < expected if expected else counts["exception_bytes"] != 0)):
         raise ValueError("allocation provider observation disagrees with the closed source workload")
@@ -36,6 +67,7 @@ def main():
     evidence_path = args.evidence.resolve()
     evidence = json.loads(evidence_path.read_text())
     artifacts = verify_artifacts(evidence, evidence_path.parent, args.fixtures)
+    verify_relink_sources(evidence, root)
     if digest(args.runtime) != evidence["runtime_sha256"]:
         raise ValueError("allocation link requires the original validated runtime")
     if platform.system() not in ("Darwin", "Linux"):
@@ -88,7 +120,7 @@ def main():
                         int(words[2]) != checksum(outcome, 64)):
                     raise ValueError("allocation probe lost its independent execution oracle")
                 counts = json.loads(counts_path.read_text())
-                validate_counts(counts, mode, outcome, 64)
+                validate_counts(counts, mode, outcome, 64, fixture)
                 report["observations"].append({"fixture": fixture, "mode": mode,
                                                "outcome": outcome, "dispatch": dispatch,
                                                "iterations": 64, "counts": counts,

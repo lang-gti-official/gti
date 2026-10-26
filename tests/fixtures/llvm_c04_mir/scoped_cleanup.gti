@@ -1,0 +1,23 @@
+#include <std/thread>
+
+struct Marker {
+  mut int& slot;
+  Marker(mut int& target) : slot(target) {}
+  ~Marker() { if (slot == 0) { slot = 1; } else { slot = 9; } }
+};
+// Cleanup touches only the scope-checked exclusive integer after join-all.
+[[unsafe_transfer]] struct Task {
+  int input;
+  mut int& slot;
+  Task(int value, mut int& target) : input(value), slot(target) {}
+  ~Task() { if (slot == 1) { slot = 2; } else { slot = 3; } }
+  void operator()() mut {
+    Marker marker{slot};
+    int result = input + 1;
+  }
+};
+int sample(int input, mut int& first, mut int& second, mut int& outer) {
+  Marker marker{outer};
+  [[discard]] std::parallel_invoke(Task(input, first), Task(input, second));
+  return input + 1;
+}

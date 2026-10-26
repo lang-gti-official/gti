@@ -95,6 +95,118 @@ void checkNativeControls(
                         C04EvaluationProfile::NativeBoundary);
   std::cout << "native mutation controls: " << checked << '\n';
 }
+
+void checkDynamicControls(lang::native_llvm::Session &session,
+                          const lang::LlvmAdmissionPlan &admission,
+                          const std::vector<lang::HirFunctionInstanceId> &roots) {
+  using namespace lang;
+  using namespace lang::native_llvm;
+  unsigned checked = 0;
+  for (const auto &selection : {std::vector<HirFunctionInstanceId>{},
+                              std::vector<HirFunctionInstanceId>{roots.front(), roots.front()},
+                              std::vector<HirFunctionInstanceId>{0}}) {
+    bool rejected = false;
+    try {
+      validateC04Evaluation(session, admission, selection, C04EvaluationProfile::DynamicCalls);
+    } catch (const BackendUnsupportedError &) {
+      rejected = true;
+    }
+    if (!rejected)
+      throw std::runtime_error("C04 dynamic root omission/forgery escaped admission");
+    ++checked;
+  }
+  const auto bodies = validateC04Evaluation(session, admission, roots, C04EvaluationProfile::DynamicCalls);
+  for (const auto address : bodies)
+    for (const auto &block : findMirBody(session.program().mir(), address)->blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.intrinsic != IntrinsicKind::FunctionPointerFromItem &&
+            stage.intrinsic != IntrinsicKind::FunctionPointerInvoke)
+          continue;
+        auto &changed = const_cast<MirInstruction &>(stage);
+        const auto saved = stage;
+        const auto rejects = [&](const auto &mutate) {
+          mutate(changed);
+          bool rejected = false;
+          try {
+            validateC04Evaluation(session, admission, roots, C04EvaluationProfile::DynamicCalls);
+          } catch (const BackendUnsupportedError &) {
+            rejected = true;
+          }
+          changed = saved;
+          if (!rejected)
+            throw std::runtime_error("C04 dynamic mutation escaped admission");
+          ++checked;
+        };
+        rejects([](auto &value) { value.parameterTypes.clear(); });
+        rejects([](auto &value) { value.operands.clear(); });
+        rejects([&](auto &value) { value.functionTarget = roots.front(); });
+        rejects([](auto &value) { value.intrinsic = IntrinsicKind::None; });
+        if (stage.intrinsic == IntrinsicKind::FunctionPointerFromItem) {
+          rejects([](auto &value) { value.functionPointerFunctionTarget.reset(); });
+          rejects([&](auto &value) { value.functionPointerFunctionTarget = roots.front(); });
+        } else {
+          rejects([](auto &value) { value.info.type = SemanticType::Bool; });
+        }
+      }
+  if (!checked)
+    throw std::runtime_error("C04 dynamic controls have no actual invocation");
+  std::cout << "dynamic mutation controls: " << checked << '\n';
+}
+
+void checkWorkerControls(lang::native_llvm::Session &session,
+                         const lang::LlvmAdmissionPlan &admission,
+                         const std::vector<lang::HirFunctionInstanceId> &roots) {
+  using namespace lang;
+  using namespace lang::native_llvm;
+  unsigned checked = 0;
+  const auto validate = [&] {
+    return validateC04Evaluation(session, admission, roots, C04EvaluationProfile::ScopedWorkers);
+  };
+  const auto rejects = [&](auto &changed, const auto &mutation) {
+    const auto saved = changed;
+    mutation(changed);
+    bool rejected = false;
+    try { (void)validate(); }
+    catch (const BackendUnsupportedError &) { rejected = true; }
+    changed = saved;
+    if (!rejected)
+      throw std::runtime_error("C04 worker mutation escaped admission");
+    ++checked;
+  };
+  for (auto address : validate())
+    for (const auto &block : findMirBody(session.program().mir(), address)->blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.intrinsic != IntrinsicKind::ThreadScope)
+          continue;
+        auto &instruction = const_cast<MirInstruction &>(stage);
+        rejects(instruction, [](auto &v) { v.scopedThreadTasks.clear(); });
+        rejects(instruction, [](auto &v) { v.operands.clear(); });
+        rejects(instruction, [](auto &v) { v.parameterTypes.clear(); });
+        rejects(instruction, [](auto &v) { v.synchronization.kind = SynchronizationOperationKind::None; });
+        rejects(instruction, [](auto &v) { v.definedFailure.propagation = FailurePropagationKind::None; });
+        rejects(instruction, [](auto &v) { v.info.type = SemanticType::Bool; });
+        rejects(instruction, [&](auto &v) { v.functionTarget = roots.front(); });
+        rejects(instruction, [](auto &v) { v.scopedThreadTasks[0].dependency = 0; });
+        for (const auto &task : stage.scopedThreadTasks) {
+          auto &adapter = const_cast<MirThreadTaskAdapter &>(*session.program().mir().findThreadTaskAdapter(task.adapter));
+          rejects(adapter, [](auto &v) { v.scoped = false; });
+          rejects(adapter, [](auto &v) { v.sourceBody.owner = 0; });
+          rejects(adapter, [](auto &v) { v.spawnInstruction = 0; });
+          rejects(adapter, [](auto &v) { v.spawnValue = 0; });
+          rejects(adapter, [](auto &v) { v.scopeArgument = 99; });
+          rejects(adapter, [](auto &v) { v.taskType = SemanticType::Int32; });
+          rejects(adapter, [](auto &v) { v.resultType = SemanticType::Int32; });
+          rejects(adapter, [](auto &v) { v.functionTarget.reset(); });
+          rejects(adapter, [&](auto &v) { v.functionTarget = roots.front(); });
+          rejects(adapter, [](auto &v) { v.catchesWorkerFailure = false; });
+          rejects(adapter, [](auto &v) { v.catchesNativeExceptions = false; });
+        }
+      }
+  if (!checked)
+    throw std::runtime_error("C04 worker controls have no sealed task scope");
+  (void)validate();
+  std::cout << "worker mutation controls: " << checked << '\n';
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -108,13 +220,30 @@ int main(int argc, char **argv) {
     const std::string level(argv[3]);
     const std::string boundaries(argc >= 5 ? argv[4] : "fixed");
     const std::string profileName(argc >= 6 ? argv[5] : "scalar-cleanup");
-    if (profileName != "scalar-cleanup" && profileName != "native-boundary")
+    if (profileName != "scalar-cleanup" && profileName != "native-boundary" &&
+        profileName != "dynamic-calls" && profileName != "scoped-workers")
       return 64;
     const auto profile = profileName == "native-boundary"
                              ? C04EvaluationProfile::NativeBoundary
-                             : C04EvaluationProfile::ScalarCleanup;
-    if (argc == 7 && (std::string_view(argv[6]) != "--native-contracts" ||
-                      profile != C04EvaluationProfile::NativeBoundary))
+                             : profileName == "dynamic-calls"
+                                 ? C04EvaluationProfile::DynamicCalls
+                                 : profileName == "scoped-workers"
+                                     ? C04EvaluationProfile::ScopedWorkers
+                                     : C04EvaluationProfile::ScalarCleanup;
+    const bool nativeControls = argc == 7 && std::string_view(argv[6]) == "--native-contracts";
+    const bool dynamicControls = argc == 7 && std::string_view(argv[6]) == "--dynamic-contracts";
+    const bool workerControls = argc == 7 && std::string_view(argv[6]) == "--worker-contracts";
+    const bool workers = profile == C04EvaluationProfile::ScopedWorkers;
+    const bool standardLibrary = profile == C04EvaluationProfile::DynamicCalls || workers ||
+        (argc == 7 && std::string_view(argv[6]) == "--standard-library");
+    if (argc == 7 && !nativeControls && !dynamicControls && !workerControls &&
+        std::string_view(argv[6]) != "--standard-library")
+      return 64;
+    if (nativeControls && profile != C04EvaluationProfile::NativeBoundary)
+      return 64;
+    if (dynamicControls && profile != C04EvaluationProfile::DynamicCalls)
+      return 64;
+    if (workerControls && !workers)
       return 64;
     if (boundaries != "fixed" && boundaries != "optimizable")
       return 64;
@@ -125,7 +254,15 @@ int main(int argc, char **argv) {
     if (!stream)
       throw std::runtime_error("cannot read C04 source fixture");
     const std::string text(std::istreambuf_iterator<char>{stream}, {});
-    const auto frontend = Frontend().analyze(source.filename().string(), text);
+    const auto library = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+    FrontendOptions frontendOptions;
+    if (workers) {
+      frontendOptions.target.executionProfile = ExecutionProfile::Concurrent;
+      frontendOptions.target.runtimeCapabilities.threads = true;
+    }
+    const auto frontend = standardLibrary
+        ? Frontend(frontendOptions).analyze(source.filename().string(), text, {library / "prelude.gti"}, {}, {library})
+        : Frontend().analyze(source.filename().string(), text);
     if (!frontend.canGenerateCode()) {
       if (!frontend.mirValid)
         write(prefix + ".invalid-mir", MirPrinter().print(frontend.mir));
@@ -135,7 +272,7 @@ int main(int argc, char **argv) {
     }
     std::vector<LoweredProgramIssue> issues;
     const auto verified = verifiedLoweredProgram(
-        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, frontendOptions.target), issues);
     if (!verified)
       throw std::runtime_error("C04 source did not produce a sealed program");
     const LlvmBackendOptions options{
@@ -159,9 +296,18 @@ int main(int argc, char **argv) {
     }
     // Reject before writing an object, including before the test declaration
     // planner could accidentally make an unsupported return look compatible.
+    if (profile == C04EvaluationProfile::DynamicCalls || workers) {
+      if (!root)
+        throw BackendUnsupportedError("C04 dynamic evaluation requires its exact root");
+      selected = {root->id};
+    }
     validateC04Evaluation(session, admission, selected, profile);
-    if (argc == 7)
+    if (nativeControls)
       checkNativeControls(session, admission, selected);
+    if (dynamicControls)
+      checkDynamicControls(session, admission, selected);
+    if (workerControls)
+      checkWorkerControls(session, admission, selected);
     const auto reference =
         SemanticType::referenceTo(SemanticType::Int32, AccessMode::Mutable);
     const bool borrowedCleanup =
@@ -186,6 +332,11 @@ int main(int argc, char **argv) {
     session.module().addModuleFlag(
         llvm::Module::Error, "gti.c04.native-boundary",
         profile == C04EvaluationProfile::NativeBoundary ? 1u : 0u);
+    session.module().addModuleFlag(
+        llvm::Module::Error, "gti.c04.dynamic-calls",
+        profile == C04EvaluationProfile::DynamicCalls ? 1u : 0u);
+    session.module().addModuleFlag(
+        llvm::Module::Error, "gti.c04.scoped-workers", workers ? 1u : 0u);
     if (abi.statusResult != status ||
         abi.parameters.size() !=
             root->parameterTypes.size() + (status ? 2 : 0) ||
@@ -225,6 +376,7 @@ int main(int argc, char **argv) {
             "#define GTI_C04_STATUS " + (status ? "1\n" : "0\n") +
             "#define GTI_C04_NATIVE_BOUNDARY " +
             (profile == C04EvaluationProfile::NativeBoundary ? "1\n" : "0\n") +
+            "#define GTI_C04_SCOPED_WORKERS " + (workers ? "1\n" : "0\n") +
             "#define GTI_C04_BORROWED_CLEANUP " +
             (borrowedCleanup ? "1\n" : "0\n") + "#define GTI_C04_ENTRY " +
             name + "\n" + "extern \"C\" " + (status ? "bool " : "int32_t ") +
@@ -232,7 +384,7 @@ int main(int argc, char **argv) {
             (borrowedCleanup ? ", int32_t*, int32_t*, int32_t*);\n" : ");\n"));
     write(prefix + ".o", object.contents);
     std::cout << GTI_C04_MODE << ' ' << level
-              << " verified scalar closure emitted\n";
+              << ' ' << profileName << " verified closure emitted\n";
     return 0;
   } catch (const BackendUnsupportedError &error) {
     std::cerr << error.what() << '\n';

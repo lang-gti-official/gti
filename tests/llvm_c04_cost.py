@@ -40,7 +40,9 @@ def verify_artifacts(evidence, directory, fixtures):
         raise ValueError("unknown call-boundary policy")
     selected = {}
     for fixture in fixtures:
-        required_profile = "native-boundary" if fixture == "native_boundary" else "scalar-cleanup"
+        required_profile = {"native_boundary": "native-boundary",
+                            "dynamic_pointer": "dynamic-calls",
+                            "scoped_worker": "scoped-workers"}.get(fixture, "scalar-cleanup")
         if evidence.get("profile", "scalar-cleanup") != required_profile:
             raise ValueError("cost fixture requires its exact evaluation profile")
         signatures = set()
@@ -101,7 +103,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--size-tool", default=shutil.which("llvm-size"))
     parser.add_argument("--fixtures", nargs="+",
-                        choices=(*FIXTURES, "field_replacement_cleanup", "native_boundary"), default=FIXTURES)
+                        choices=(*FIXTURES, "field_replacement_cleanup", "native_boundary",
+                                 "dynamic_pointer", "scoped_worker"), default=FIXTURES)
     parser.add_argument("--samples", type=int, default=9)
     parser.add_argument("--warmups", type=int, default=2)
     parser.add_argument("--success-iterations", type=int, default=2000000)

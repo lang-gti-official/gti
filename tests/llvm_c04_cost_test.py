@@ -106,13 +106,20 @@ class CostTests(unittest.TestCase):
                 verify_artifacts(evidence, root, ("scalar",))
 
     def test_native_profile_cannot_be_omitted(self):
+        for fixture, profile in (("native_boundary", "native-boundary"),
+                                 ("dynamic_pointer", "dynamic-calls"),
+                                 ("scoped_worker", "scoped-workers")):
+            with self.subTest(fixture=fixture):
+                self.check_explicit_profile(fixture, profile)
+
+    def check_explicit_profile(self, fixture, profile):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             evidence = {"sanitized_native_carrier": False, "receipts": []}
             for mode in ("status", "unwind"):
-                case = root / f"native_boundary-{mode}-O3"
+                case = root / f"{fixture}-{mode}-O3"
                 case.mkdir()
-                row = {"fixture": "native_boundary", "mode": mode, "level": "O3"}
+                row = {"fixture": fixture, "mode": mode, "level": "O3"}
                 for filename, key in (("generated.lowered", "input_sha256"),
                                       ("generated.o", "object_sha256"),
                                       ("probe", "executable_sha256")):
@@ -121,13 +128,16 @@ class CostTests(unittest.TestCase):
                     row[key] = digest(path)
                 evidence["receipts"].append(row)
             with self.assertRaisesRegex(ValueError, "exact evaluation profile"):
-                verify_artifacts(evidence, root, ("native_boundary",))
-            evidence["profile"] = "native-boundary"
+                verify_artifacts(evidence, root, (fixture,))
+            evidence["profile"] = profile
             with self.assertRaisesRegex(ValueError, "exact evaluation profile"):
-                verify_artifacts(evidence, root, ("native_boundary",))
+                verify_artifacts(evidence, root, (fixture,))
             for row in evidence["receipts"]:
-                row["profile"] = "native-boundary"
-            self.assertEqual(len(verify_artifacts(evidence, root, ("native_boundary",))), 2)
+                row["profile"] = profile
+            self.assertEqual(len(verify_artifacts(evidence, root, (fixture,))), 2)
+            evidence["profile"] = "wrong-profile"
+            with self.assertRaisesRegex(ValueError, "exact evaluation profile"):
+                verify_artifacts(evidence, root, (fixture,))
 
 
 if __name__ == "__main__":
