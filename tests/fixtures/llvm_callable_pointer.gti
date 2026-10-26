@@ -1,0 +1,20 @@
+#include <std/functional>
+
+int increment(int value) { return value + 1; }
+int answer() { return 42; }
+int add(int left, int right) { return left + right; }
+int& identity(int& value) { return value; }
+
+int main() {
+  std::function_ptr<int(int)> named{increment};
+  std::function_ptr<int(int)> lambda{
+      [](int value) -> int { return value + 2; }};
+  std::function_ptr<int()> empty{answer};
+  std::function_ptr<int(int, int)> pair{add};
+  std::function_ptr<int&(int&)> borrowing{identity};
+  int value = 9;
+  return named(3) == 4 && lambda(3) == 5 && empty() == 42 &&
+                 pair(6, 7) == 13 && borrowing(value) == 9
+             ? 0
+             : 1;
+}
