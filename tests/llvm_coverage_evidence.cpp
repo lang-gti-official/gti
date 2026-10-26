@@ -239,10 +239,10 @@ lowerSource(const std::filesystem::path &root,
   return verified;
 }
 
-int probeSource(const std::filesystem::path &root,
-                const std::filesystem::path &source) {
-  auto verified =
-      lowerSource(root, source, lang::ExecutionProfile::SingleThreaded);
+int probeSource(
+    const std::filesystem::path &root, const std::filesystem::path &source,
+    lang::ExecutionProfile profile = lang::ExecutionProfile::SingleThreaded) {
+  auto verified = lowerSource(root, source, profile);
   if (!verified)
     return 1;
   const lang::LlvmAdmissionPlan plan =
@@ -640,6 +640,15 @@ int main(int argc, char **argv) {
   if (argc == 4 && std::string_view(argv[1]) == "--probe")
     return probeSource(std::filesystem::weakly_canonical(argv[2]),
                        std::filesystem::weakly_canonical(argv[3]));
+  if (argc == 5 && std::string_view(argv[1]) == "--probe") {
+    const auto profile = lang::parseExecutionProfile(argv[4]);
+    if (!profile) {
+      std::cerr << "invalid execution profile: " << argv[4] << '\n';
+      return 2;
+    }
+    return probeSource(std::filesystem::weakly_canonical(argv[2]),
+                       std::filesystem::weakly_canonical(argv[3]), *profile);
+  }
   if (argc == 5 && std::string_view(argv[1]) == "--probe-uses") {
     const auto profile = lang::parseExecutionProfile(argv[4]);
     if (!profile) {
@@ -650,7 +659,8 @@ int main(int argc, char **argv) {
                      std::filesystem::weakly_canonical(argv[3]), *profile);
   }
   std::cerr << "usage: gti_llvm_coverage_evidence --ledger | --probe "
-               "<repo-root> <source> | --probe-uses <repo-root> <source> "
+               "<repo-root> <source> [single-threaded|concurrent] | "
+               "--probe-uses <repo-root> <source> "
                "<single-threaded|concurrent> | --observe-canonical-host "
                "<repo-root> <source> <single-threaded|concurrent> <O0|O3> | "
                "--canonical-host-target <single-threaded|concurrent>\n";

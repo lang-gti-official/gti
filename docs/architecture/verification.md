@@ -10102,10 +10102,15 @@ ownership or entry-signature inference.
 
 ### Native LLVM Admission Gates
 
-The registered evidence inventory reconciled through `50974a99c` contains 215
+The registered evidence inventory reconciled through `d3585a07d` contains 217
 source cases. It retains every case identity from the prior 143-case inventory
 and adds two class cases, 21 hosted cases, 32 native-interop cases and 17
-dispatch cases. Its count and content fingerprint remain enforced. This
+dispatch cases, then two concurrent C-thread startup cases. Execution manifests
+use schema v2 with an explicit single-threaded or concurrent profile per group;
+structural probes consume that profile rather than guessing it from source.
+Existing case-context sidecars remain intact. Removing only the two new cases
+and v2 profile metadata reproduces the prior 215-case fingerprint exactly.
+Its count and content fingerprint remain enforced. This
 inventory reconciliation does not mark those cases executed, remove frozen
 baseline obligations, or satisfy any target, sanitizer, cost or promotion gate.
 

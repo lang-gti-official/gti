@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from llvm_evidence_manifest import validate_manifest
+from llvm_evidence_manifest import build_manifest, validate_manifest
 
 
 BASELINE_SCHEMA = "gti.llvm.readiness-baseline/v1"
@@ -401,7 +401,7 @@ def provider_mutation_controls(providers: dict[str, dict],
         raise AssertionError("truncated canonical source provider passed")
 
 
-def profile_sources(root: Path, modules: dict) -> dict[str, tuple[dict[str, str], dict[str, tuple[str, ...]]]]:
+def profile_sources(root: Path, modules: dict) -> dict:
     sources = {}
     for test, module in modules.items():
         cases = module.evidence_cases(root)
@@ -420,7 +420,7 @@ def profile_sources(root: Path, modules: dict) -> dict[str, tuple[dict[str, str]
             raise AssertionError(listed.stderr)
         if json.loads(listed.stdout) != declared:
             raise AssertionError(f"{test}: --list-evidence diverges from runnable cases")
-        sources[test] = (cases, profiles)
+        sources[test] = (cases, profiles, declared["profiles"])
     return sources
 
 
@@ -462,6 +462,55 @@ def manifest_mutation_controls(root: Path, modules: dict) -> None:
         raise AssertionError("unknown manifest field was accepted")
     except ValueError:
         pass
+
+
+def execution_profile_controls(evidence: Path, root: Path) -> None:
+    cases = {"basic": "int main() { return 0; }\n"}
+    profiles = {"basic": ("basic",)}
+    manifest = build_manifest("profile-control", cases, profiles)
+    for mode in ("sequential", "unknown", 0, None):
+        changed = deepcopy(manifest)
+        changed["profiles"]["basic"]["execution-profile"] = mode
+        try:
+            validate_manifest(changed, "profile-control", cases, profiles)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid execution profile was accepted")
+    for remove in (True, False):
+        changed = deepcopy(manifest)
+        if remove:
+            changed["profiles"]["basic"].pop("execution-profile")
+        else:
+            changed["schema"] = "gti.llvm.execution-evidence/v1"
+        try:
+            validate_manifest(changed, "profile-control", cases, profiles)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("missing or legacy profile metadata was accepted")
+    try:
+        build_manifest("profile-control", cases, profiles,
+                       execution_profiles={"unknown": "concurrent"})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown execution profile override was accepted")
+    with tempfile.TemporaryDirectory(prefix="gti-llvm-profile-controls-") as raw:
+        source = Path(raw) / "basic.gti"
+        source.write_text(cases["basic"], encoding="utf-8")
+        for mode, key in (("single-threaded", "ExecutionProfile.SingleThreaded"),
+                          ("concurrent", "ExecutionProfile.Concurrent")):
+            result = run([str(evidence), "--probe", str(root), str(source), mode])
+            require(result.returncode == 0 and key in result.stdout.splitlines(),
+                    f"explicit profile probe failed: {mode}: {result.stderr}")
+        default = run([str(evidence), "--probe", str(root), str(source)])
+        require(default.returncode == 0 and
+                "ExecutionProfile.SingleThreaded" in default.stdout.splitlines(),
+                "default probe changed its execution profile")
+        invalid = run([str(evidence), "--probe", str(root), str(source), "unknown"])
+        require(invalid.returncode == 2 and "GTI-" not in invalid.stderr,
+                "invalid profile reached source analysis")
 
 
 def registry_mutation_controls(registry: Path, root: Path,
@@ -520,14 +569,15 @@ def observed_profiles(report: dict, evidence: Path, root: Path,
         for test, profile in sorted(requested):
             if test not in sources:
                 continue
-            cases, profiles = sources[test]
+            cases, profiles, metadata = sources[test]
             if profile not in profiles:
                 continue
             keys: set[str] = set()
             for case in profiles[profile]:
                 source = directory / f"{test}-{profile}-{case}.gti"
                 source.write_text(cases[case], encoding="utf-8")
-                result = run([str(evidence), "--probe", str(root), str(source)])
+                result = run([str(evidence), "--probe", str(root), str(source),
+                              metadata[profile]["execution-profile"]])
                 if result.returncode != 0:
                     raise AssertionError(
                         f"coverage probe failed for {test}:{profile}:{case}:\n"
@@ -1228,6 +1278,7 @@ def main() -> None:
     provider_mutation_controls(providers, provider_inventories)
     registry_mutation_controls(registry, root, inventory)
     manifest_mutation_controls(root, modules)
+    execution_profile_controls(evidence, root)
     observations = observed_profiles(report, evidence, root, modules)
     errors = (repository_source_errors(report, observed_source) +
               validate(report, registered, observations))

@@ -179,7 +179,7 @@ def discover(root: Path, baseline_path: Path, ctest: str,
                 },
                 "ctest": {"name": test,
                           "script": Path(module.__file__).resolve().relative_to(root).as_posix()},
-                "reason": "execution-evidence/v1 lacks role/loading/options/target metadata",
+                "reason": "execution manifest alone lacks role/loading/options/target metadata",
             }
             if contextual is not None:
                 context = contextual["context"]
