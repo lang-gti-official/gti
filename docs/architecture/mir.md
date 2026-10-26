@@ -3762,6 +3762,16 @@ scope-exit lowering records descriptive local ends even for trivial locals;
 it does not emit fake destruction or change cleanup planning. The builder joins
 source MIR declarations and membership back to exact accepted HIR facts.
 
+Lowered receiver field fragments derive from existing verified scalar `Load`
+results and their exact direct-field place identities. They are intersected
+with freshly queried source-local readability and lexical ranges; unknown
+availability cannot become a positive fragment. Canonical memory effects end a
+cached field value after a possible write, including during an unreadable gap.
+Lifetime and loan boundaries remain owned by canonical readability, not by a
+second debug transfer implementation. Unrelated direct scalar local stores do
+not invalidate caller-owned receiver fields. Fragments do not cross CFG edges,
+and independent lowered verification reconstructs their complete inventory.
+
 `queryMirDebugAvailability` validates local/binding/type/place-domain identity
 before invoking the private canonical place query. It clips positive facts by
 known source membership and lexical ends, returns `Unproven` when membership

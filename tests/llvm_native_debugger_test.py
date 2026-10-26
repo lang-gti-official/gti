@@ -25,11 +25,11 @@ def main():
     parser.add_argument("--lldb", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--optimization", choices=(0, 3), type=int, default=0)
-    parser.add_argument("--case", choices=("basic", "lexical", "inlined", "receiver"), default="basic")
+    parser.add_argument("--case", choices=("basic", "lexical", "inlined", "receiver", "masked"), default="basic")
     parser.add_argument("--cc", default="clang")
     args = parser.parse_args()
     assert args.case != "lexical" or args.optimization == 0
-    assert args.case != "inlined" or args.optimization == 3
+    assert args.case not in ("inlined", "masked") or args.optimization == 3
     root = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
     assert not output.exists() and not output.is_relative_to(root)
@@ -45,6 +45,8 @@ def main():
         fixture = "native_debug_inline.gti"
     elif args.case == "receiver":
         fixture = "native_debug_receiver.gti"
+    elif args.case == "masked":
+        fixture = "native_debug_masked.gti"
     shutil.copyfile(root / "tests/fixtures/llvm_optimization" / fixture, source)
     manifest = {
         "status": "running", "commands": [],

@@ -1,4 +1,5 @@
 #include "gti/lowered_program_builder.h"
+#include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 #include "gti/support.h"
 
@@ -1329,6 +1330,122 @@ lowered_detail::deriveSourceValueRanges(const MirBody &body) {
   return ranges;
 }
 
+std::vector<LoweredSourceFragmentRange> lowered_detail::deriveSourceFragments(
+    const MirProgram &program, MirBodyAddress address,
+    std::span<const LoweredSourceRange> readable) {
+  std::vector<LoweredSourceFragmentRange> result;
+  const auto *body = findMirBody(program, address);
+  if (!body || !body->sourceDebug.tables || readable.empty())
+    return result;
+  const auto &tables = *body->sourceDebug.tables;
+  std::map<MirPlaceId, SourceLocalId> fields;
+  for (const auto &local : tables.locals) {
+    const auto *root = body->findPlace(local.place);
+    if (!local.declaration.receiver ||
+        local.policy != MirSourceLocalPolicy::ExistingPlace || !root ||
+        !root->key)
+      continue;
+    for (const auto &place : body->places) {
+      if (place.root != MirPlaceRootKind::This || !place.key ||
+          place.projections.size() != 1 ||
+          place.projections.front().kind != MirProjectionKind::Field ||
+          !isMirScalarValueType(&program, place.type))
+        continue;
+      const auto relation = placeRelation(*root->key, *place.key);
+      if (relation.compatibleDomain &&
+          relation.relation == PlaceRelation::LeftStrictPrefix)
+        fields.emplace(place.id, local.declaration.id);
+    }
+  }
+  if (fields.empty())
+    return result;
+  std::map<std::pair<MirBlockId, MirInstructionId>, std::size_t> positions;
+  std::map<std::pair<SourceLocalId, MirBlockId>,
+           std::vector<const LoweredSourceRange *>>
+      ranges;
+  for (const auto &range : readable)
+    ranges[{range.local, range.begin.block}].push_back(&range);
+  for (const auto &block : body->blocks) {
+    for (std::size_t i = 0; i < block.instructions.size(); ++i)
+      positions[{block.id, block.instructions[i].id}] = 2 * i + 1;
+    positions[{block.id, 0}] = 2 * block.instructions.size() + 1;
+  }
+  const auto position = [&](MirDebugPoint point) {
+    return point.blockEntry
+               ? std::size_t{0}
+               : positions.at({point.block, point.instruction}) + point.after;
+  };
+  const auto retain = [&](LoweredSourceFragmentRange candidate) {
+    for (const auto *range : ranges[{candidate.local, candidate.begin.block}]) {
+      auto fragment = candidate;
+      if (position(range->begin) > position(fragment.begin))
+        fragment.begin = range->begin;
+      if (position(range->end) < position(fragment.end))
+        fragment.end = range->end;
+      if (position(fragment.begin) < position(fragment.end))
+        result.push_back(fragment);
+    }
+  };
+  for (const auto &block : body->blocks) {
+    // No value is carried over a CFG edge. Readable ranges already enforce
+    // canonical lifetime/loan cuts; memory effects independently retire cached
+    // field contents, including across a temporarily unreadable interval.
+    std::map<std::pair<SourceLocalId, SymbolId>, LoweredSourceFragmentRange>
+        active;
+    const auto close = [&](MirDebugPoint end) {
+      for (auto &[key, fragment] : active) {
+        fragment.end = end;
+        retain(fragment);
+      }
+      active.clear();
+    };
+    for (const auto &instruction : block.instructions) {
+      if (instruction.tombstone)
+        continue;
+      const MirDebugPoint after{block.id, instruction.id, true};
+      const auto effect = effects(program, *body, instruction);
+      bool writes = effect.writesPlace;
+      // A direct scalar local store cannot change a caller-owned receiver.
+      // Reference, projected, user-code and unknown-memory writes stay cuts.
+      if (writes && instruction.destination &&
+          (instruction.kind == MirInstructionKind::Initialize ||
+           (instruction.kind == MirInstructionKind::Assign &&
+            instruction.operation == MirOperation::Assign))) {
+        const auto *destination = body->findPlace(*instruction.destination);
+        if (destination && destination->root == MirPlaceRootKind::Binding &&
+            destination->projections.empty() &&
+            !destination->initiallyAvailable &&
+            isMirScalarValueType(&program, destination->type))
+          writes = false;
+      }
+      if (writes || effect.writesUnknownMemory || effect.invokesUserCode ||
+          effect.maySynchronize)
+        close(after);
+      if (instruction.kind != MirInstructionKind::Load || !instruction.result ||
+          instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != MirOperandKind::Copy)
+        continue;
+      const auto found = fields.find(instruction.operands.front().place);
+      if (found == fields.end())
+        continue;
+      const auto *place = body->findPlace(found->first);
+      const auto *value = body->findValue(*instruction.result);
+      if (!value || value->definition != instruction.id ||
+          value->info.type != place->type)
+        continue;
+      const auto key =
+          std::pair{found->second, place->projections.front().field};
+      if (auto old = active.find(key); old != active.end()) {
+        old->second.end = after;
+        retain(old->second);
+      }
+      active[key] = {found->second, place->id, value->id, after, {}};
+    }
+    close({block.id, 0, false});
+  }
+  return result;
+}
+
 std::optional<std::vector<LoweredSourceRange>>
 lowered_detail::deriveSourceRanges(const MirProgram &program,
                                    MirBodyAddress address) {
@@ -1752,9 +1869,11 @@ LoweredProgramBuild LoweredProgramBuilder::build(
       debug.tables->locations = captureSourceLocations(mir);
       debug.tables->valueRanges = lowered_detail::deriveSourceValueRanges(mir);
       if (auto ranges =
-              lowered_detail::deriveSourceRanges(lowered.mir_, address))
+              lowered_detail::deriveSourceRanges(lowered.mir_, address)) {
         debug.tables->ranges = std::move(*ranges);
-      else
+        debug.tables->fragments = lowered_detail::deriveSourceFragments(
+            lowered.mir_, address, debug.tables->ranges);
+      } else
         addIssue(build.issues, LoweredProgramIssueKind::InvalidBodyInventory,
                  "source-local ranges require valid current MIR availability",
                  address);

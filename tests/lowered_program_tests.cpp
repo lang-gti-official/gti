@@ -1719,6 +1719,113 @@ void testDetachedDebugLocations() {
          "debug stages must identify exact optimized MIR operations");
 }
 
+void testDebugReceiverFragments() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("receiver-fragments.gti", R"gti(
+extern "C" { void checkpoint(); }
+class Receiver {
+public:
+  int value = 4;
+  int read() {
+    int before = this.value;
+    checkpoint();
+    return this.value & before;
+  }
+};
+int main() { Receiver owner{}; return owner.read(); }
+)gti");
+  expect(frontend.canGenerateCode(), "receiver fragment fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "verified field loads produce lowered debug fragments");
+  if (!built.valid())
+    return;
+  unsigned fragments = 0, beforeCall = 0, afterCall = 0, atCall = 0;
+  for (const auto &body : built.program->bodies()) {
+    if (!body.sourceDebug.tables)
+      continue;
+    const auto *mir =
+        lang::findMirBody(built.program->mir(), body.identity.address);
+    for (const auto &fragment : body.sourceDebug.tables->fragments) {
+      ++fragments;
+      const auto *place = mir->findPlace(fragment.place);
+      const auto *value = mir->findValue(fragment.value);
+      expect(place && value && value->info.type == place->type &&
+                 place->projections.size() == 1 &&
+                 place->projections.front().kind ==
+                     lang::MirProjectionKind::Field,
+             "fragment retains its exact typed field and existing load value");
+      const std::vector<lang::MirDebugAvailabilityRequest> request{
+          {fragment.local, fragment.begin}};
+      const auto observed = lang::queryMirDebugAvailability(
+          built.program->mir(), body.identity.address, request);
+      expect(observed.verification.valid() &&
+                 observed.requested.front().readability ==
+                     lang::MirDebugReadability::DefinitelyReadable,
+             "fragment begins inside canonical receiver availability");
+      const auto &block = *mir->findBlock(fragment.begin.block);
+      const auto position = [&](lang::MirDebugPoint point) {
+        if (point.blockEntry)
+          return std::size_t{0};
+        for (std::size_t i = 0; i < block.instructions.size(); ++i)
+          if (block.instructions[i].id == point.instruction)
+            return 2 * i + 1 + point.after;
+        return 2 * block.instructions.size() + 1;
+      };
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Call) {
+          const lang::MirDebugPoint boundary{block.id, instruction.id, true};
+          if (position(fragment.begin) < position(boundary)) {
+            ++beforeCall;
+            const lang::MirDebugPoint call{block.id, instruction.id, false};
+            atCall += position(fragment.begin) <= position(call) &&
+                      position(call) < position(fragment.end);
+            expect(position(fragment.end) <= position(boundary),
+                   "field value does not survive an unknown memory writer");
+          } else {
+            ++afterCall;
+          }
+        }
+    }
+  }
+  expect(fragments && beforeCall && afterCall && atCall,
+         "field loads on both sides of the unknown writer were exercised");
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto forged = *built.program;
+    bool changed = false;
+    for (auto &body : lang::LoweredProgramTestAccess::bodies(forged))
+      if (body.sourceDebug.tables &&
+          !body.sourceDebug.tables->fragments.empty()) {
+        auto &fragment = body.sourceDebug.tables->fragments.front();
+        if (mutation == 0)
+          fragment.value = 0;
+        else if (mutation == 1)
+          fragment.place =
+              body.sourceDebug.tables->locals.at(fragment.local - 1).place;
+        else if (mutation == 2)
+          fragment.end = {fragment.begin.block, 0, false};
+        else
+          body.sourceDebug.tables->fragments.clear();
+        changed = true;
+        break;
+      }
+    const auto issues = lang::verifyLoweredProgram(forged);
+    expect(changed &&
+               std::any_of(issues.begin(), issues.end(),
+                           [](const auto &issue) {
+                             return issue.detail.find("source fragments") !=
+                                    std::string::npos;
+                           }),
+           "forged field, value, extent or missing fragments reject "
+           "independently");
+  }
+}
+
 void testDebugValueEvents() {
   const auto frontend =
       lang::Frontend(
@@ -3059,6 +3166,7 @@ int main() {
   testDetachedDebugLocations();
   testDetachedDebugRanges();
   testDebugValueEvents();
+  testDebugReceiverFragments();
   testVerificationEvidenceOwnsItsProgram();
   testMutationRejection();
   testConcreteBranchSymbols();

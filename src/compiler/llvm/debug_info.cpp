@@ -5,7 +5,9 @@
 #include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/IR/DIBuilder.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/DebugProgramInstruction.h>
 #include <llvm/IR/Metadata.h>
+#include <llvm/Transforms/Utils/Local.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -273,6 +275,9 @@ public:
     std::vector<SourceLocalId> ends;
     std::vector<SourceLocalId> begins;
     std::vector<std::pair<SourceLocalId, MirValueId>> values;
+    using Fragment = std::tuple<SourceLocalId, MirPlaceId, MirValueId>;
+    std::vector<Fragment> fragmentBegins;
+    std::vector<Fragment> fragmentEnds;
   };
   std::map<Point, Events> events;
   bool finalized = false;
@@ -449,6 +454,9 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
         lowered->sourceDebug.tables->locals.at(range.local - 1).policy ==
             MirSourceLocalPolicy::OptimizedOut)
       valueLocals.insert(range.local);
+  if (impl->optimized())
+    for (const auto &fragment : lowered->sourceDebug.tables->fragments)
+      valueLocals.insert(fragment.local);
   for (const auto &local : lowered->sourceDebug.tables->locals) {
     if (local.policy != MirSourceLocalPolicy::OptimizedOut &&
         !valueLocals.contains(local.declaration.id))
@@ -496,6 +504,13 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
     event(range.begin).values.emplace_back(range.local, range.value);
     event(range.end).ends.push_back(range.local);
   }
+  if (impl->optimized())
+    for (const auto &fragment : lowered->sourceDebug.tables->fragments) {
+      const Impl::Events::Fragment value{fragment.local, fragment.place,
+                                         fragment.value};
+      event(fragment.begin).fragmentBegins.push_back(value);
+      event(fragment.end).fragmentEnds.push_back(value);
+    }
 }
 
 void DebugInfo::location(llvm::IRBuilder<> &ir, MirBodyAddress address,
@@ -625,6 +640,62 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
       emit(id, false);
   for (const auto id : event->second.begins)
     emit(id, true);
+  const auto fragmentField = [&](MirPlaceId id) {
+    const auto address = impl->bodies.at(function);
+    const auto *body = findMirBody(impl->session.program().mir(), address);
+    const auto *place = body->findPlace(id);
+    if (!place || place->root != MirPlaceRootKind::This ||
+        place->projections.size() != 1 ||
+        place->projections.front().kind != MirProjectionKind::Field)
+      throw std::logic_error("LLVM debug fragment lost its exact field place");
+    return place->projections.front().field;
+  };
+  const auto emitFragment = [&](const Impl::Events::Fragment &fragment,
+                                bool begin) {
+    const auto [id, placeId, valueId] = fragment;
+    const auto address = impl->bodies.at(function);
+    const auto &program = impl->session.program();
+    const auto *body = findMirBody(program.mir(), address);
+    const auto &place = *body->findPlace(placeId);
+    const auto &declaration = program.findBody(address)
+                                  ->sourceDebug.tables->locals.at(id - 1)
+                                  .declaration;
+    const auto field = fragmentField(placeId);
+    const auto layout = impl->session.layouts().get(declaration.type);
+    const auto leaf = impl->session.layouts().get(place.type);
+    const auto offset = layout.fieldOffsets.at(
+        impl->session.layouts().fieldIndex(declaration.type, field));
+    if (!leaf.size || offset > layout.size || leaf.size > layout.size - offset)
+      throw std::logic_error(
+          "LLVM debug fragment exceeds its exact object layout");
+    const auto &local = impl->locals.at({function, id});
+    auto *value = begin && valueId < values.size() ? values[valueId] : nullptr;
+    if (begin &&
+        (!value || value->getType() != leaf.value ||
+         (llvm::isa<llvm::Instruction>(value) &&
+          llvm::cast<llvm::Instruction>(value)->getFunction() != function) ||
+         (llvm::isa<llvm::Argument>(value) &&
+          llvm::cast<llvm::Argument>(value)->getParent() != function)))
+      throw std::logic_error(
+          "LLVM debug fragment has no exact existing SSA value");
+    impl->builder.insertDbgValueIntrinsic(
+        begin ? value : llvm::PoisonValue::get(leaf.value), local.variable,
+        impl->builder.createExpression(
+            {llvm::dwarf::DW_OP_LLVM_fragment, offset * 8, leaf.size * 8}),
+        llvm::DILocation::get(impl->session.context(), 0, 0,
+                              local.variable->getScope()),
+        ir.GetInsertBlock());
+  };
+  for (const auto &fragment : event->second.fragmentEnds)
+    if (std::none_of(event->second.fragmentBegins.begin(),
+                     event->second.fragmentBegins.end(), [&](const auto &next) {
+                       return std::get<0>(fragment) == std::get<0>(next) &&
+                              fragmentField(std::get<1>(fragment)) ==
+                                  fragmentField(std::get<1>(next));
+                     }))
+      emitFragment(fragment, false);
+  for (const auto &fragment : event->second.fragmentBegins)
+    emitFragment(fragment, true);
   for (const auto &[id, valueId] : event->second.values) {
     const auto &local = impl->locals.at({function, id});
     const auto address = impl->bodies.at(function);
@@ -642,11 +713,25 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
          llvm::cast<llvm::Argument>(value)->getParent() != function))
       throw std::logic_error(
           "LLVM debug value is missing, mistyped or belongs to another body");
-    impl->builder.insertDbgValueIntrinsic(
+    auto inserted = impl->builder.insertDbgValueIntrinsic(
         value, local.variable, impl->builder.createExpression(),
         llvm::DILocation::get(impl->session.context(), 0, 0,
                               local.variable->getScope()),
         ir.GetInsertBlock());
+    // Preserve a pure scalar computation as a debugger expression before
+    // machine lowering can discard its transient result. LLVM owns the bit
+    // semantics; no load, call, new SSA value or execution use is introduced.
+    if (auto *operation = llvm::dyn_cast<llvm::BinaryOperator>(value);
+        operation && operation->getType()->isIntegerTy() &&
+        operation->getType()->getIntegerBitWidth() <= 64) {
+      llvm::SmallVector<uint64_t, 8> operations;
+      llvm::SmallVector<llvm::Value *, 2> additional;
+      if (llvm::salvageDebugInfoImpl(*operation, 1, operations, additional))
+        if (auto *record =
+                llvm::dyn_cast_if_present<llvm::DbgRecord *>(inserted))
+          llvm::salvageDebugInfoForDbgValues(
+              *operation, {llvm::cast<llvm::DbgVariableRecord>(record)});
+    }
   }
 }
 

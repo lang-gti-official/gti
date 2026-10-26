@@ -4393,6 +4393,10 @@ profile is selected for optimized emission or already-promoted storage; O0
 retains proven existing storage across block boundaries. A value
 replacement at the same boundary supersedes its predecessor without an
 intervening unavailable record; genuine gaps and lexical exits still emit kills.
+Pure integer SSA computations may use LLVM's own debug-expression recovery to
+describe their value from existing operands before machine lowering eliminates
+the transient result. This does not create values, execution uses or memory
+reads, and does not extend the verified source availability interval.
 Optimized-out locals retain named declarations without fabricated storage or
 value availability. Private execution symbols are not DWARF linkage names:
 source subprogram names remain visible in native backtraces without changing
@@ -4413,7 +4417,14 @@ declaration is artificial and line zero in the real owning lexical scope. The
 debug hook reads the already-selected receiver argument without loads, slots or
 signature changes; positive ranges require the canonical program-aware entry,
 ownership and borrow observations. Whole partial-constructor and borrowed-state
-receivers remain unproven. Expanded pack fragments, broader optimized
+receivers remain unproven. For optimized receivers, direct scalar field loads
+can supply value fragments even when LLVM removes the object storage. The
+lowered builder intersects their exact SSA identities with canonical readable
+ranges, stops cached contents at possible memory writes, and carries no value
+across a CFG edge. Independent verification recomputes every field, value and
+boundary. LLVM chooses the target layout offsets and reads only the existing
+SSA-value table; there is no backend field reload or inferred availability.
+Unloaded fields are not fabricated. Expanded pack fragments, broader optimized
 representations and the full two-host failure/callback debugger matrix remain
 open.
 Managed Linux debugger checks stage distribution LLDB22 and its missing

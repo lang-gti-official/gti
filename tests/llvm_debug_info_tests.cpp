@@ -5,8 +5,10 @@
 #include "../src/compiler/llvm/parameter_packs.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
+#include "gti/mir_effects.h"
 #include "gti/optimizer.h"
 
+#include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/DebugProgramInstruction.h>
 #include <llvm/IR/Verifier.h>
@@ -816,12 +818,35 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
   if (!input)
     throw std::runtime_error("invalid production value snapshot");
+  if (receiver && !dumpPath.empty())
+    for (const auto &body : input->program().bodies()) {
+      if (!body.sourceDebug.tables ||
+          body.sourceDebug.tables->fragments.empty())
+        continue;
+      const auto *mir =
+          findMirBody(input->program().mir(), body.identity.address);
+      for (const auto &block : mir->blocks)
+        for (const auto &instruction : block.instructions) {
+          const auto effect =
+              effects(input->program().mir(), *mir, instruction);
+          std::cout << "fragment effect " << instruction.id << ' '
+                    << name(instruction.kind) << ' '
+                    << name(instruction.operation)
+                    << " writes=" << effect.writesPlace
+                    << " unknown=" << effect.writesUnknownMemory
+                    << " moves=" << effect.movesValue
+                    << " drops=" << effect.dropsValue
+                    << " loans=" << effect.startsLoan << effect.endsLoan
+                    << " user=" << effect.invokesUserCode
+                    << " sync=" << effect.maySynchronize << '\n';
+        }
+    }
   Session session(*input, {.optimization = LlvmCodegenOptimization::Aggressive,
                            .debugInfo = true});
   Session plain(*input, {.optimization = LlvmCodegenOptimization::Aggressive});
   lowerScalarProgram(session, planLlvmAdmission(*input));
   lowerScalarProgram(plain, planLlvmAdmission(*input));
-  unsigned values = 0, receivers = 0;
+  unsigned values = 0, receivers = 0, expressions = 0, fragments = 0;
   for (const auto &function : session.module()) {
     const auto *other = plain.module().getFunction(function.getName());
     if (!other || function.size() != other->size() ||
@@ -853,8 +878,12 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
                   llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
               variable && variable->isDbgValue() &&
               !variable->isKillLocation() &&
-              variable->getVariable()->getName() == "local")
+              variable->getVariable()->getName() == "local") {
             ++values;
+            for (const auto &operation : variable->getExpression()->expr_ops())
+              if (operation.getOp() == llvm::dwarf::DW_OP_and)
+                ++expressions;
+          }
           if (const auto *variable =
                   llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
               variable && !variable->isKillLocation() &&
@@ -864,6 +893,7 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
               throw std::runtime_error(
                   "implicit receiver forged a source declaration");
             ++receivers;
+            fragments += variable->getExpression()->isFragment();
           }
         }
         ++otherInstruction;
@@ -877,6 +907,54 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   if (receiver && !receivers)
     throw std::runtime_error(
         "production receiver has no existing address metadata");
+  if (receiver && !fragments)
+    throw std::runtime_error(
+        "eliminated receiver has no verified field fragments");
+  if (!expressions)
+    throw std::runtime_error(
+        "scalar computation has no existing-operand expression");
+  if (receiver) {
+    unsigned controls = 0;
+    for (const auto &body : input->program().bodies()) {
+      if (!body.sourceDebug.tables ||
+          body.sourceDebug.tables->fragments.empty())
+        continue;
+      const auto &fragment = body.sourceDebug.tables->fragments.front();
+      const auto *mir =
+          findMirBody(input->program().mir(), body.identity.address);
+      Session probe(*input,
+                    {.optimization = LlvmCodegenOptimization::Aggressive,
+                     .debugInfo = true});
+      auto *function = probe.abi().declareFunction(body.identity.address.owner);
+      auto *debug = probe.debugInfo();
+      debug->begin(body.identity.address, *function);
+      llvm::IRBuilder<> ir(
+          llvm::BasicBlock::Create(probe.context(), "entry", function));
+      std::vector<llvm::Value *> provided(mir->values.size() + 1);
+      const auto rejects = [&] {
+        try {
+          debug->point(ir, fragment.begin, provided);
+        } catch (const std::logic_error &) {
+          ++controls;
+          return;
+        }
+        throw std::runtime_error(
+            "forged receiver fragment SSA value was accepted");
+      };
+      rejects();
+      provided.at(fragment.value) = llvm::ConstantFP::get(ir.getDoubleTy(), 4);
+      rejects();
+      auto *foreign = llvm::Function::Create(
+          function->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
+          "foreign_fragment", probe.module());
+      provided.at(fragment.value) = foreign->getArg(1);
+      rejects();
+      ir.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
+      debug->finalize();
+    }
+    if (controls != 3)
+      throw std::runtime_error("receiver SSA forgery controls did not execute");
+  }
   session.debugInfo()->finalize();
   const auto dump = [&](const std::string &path) {
     if (path.empty())
@@ -889,6 +967,25 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   };
   dump(dumpPath);
   (void)session.emitObject();
+  (void)plain.emitObject();
+  for (const auto &function : session.module()) {
+    const auto *other = plain.module().getFunction(function.getName());
+    if (!other || function.size() != other->size())
+      throw std::runtime_error(
+          "debug metadata changed optimized execution blocks");
+    auto otherBlock = other->begin();
+    for (const auto &block : function) {
+      if (block.size() != otherBlock->size())
+        throw std::runtime_error(
+            "debug metadata changed optimized execution work");
+      auto otherInstruction = otherBlock->begin();
+      for (const auto &instruction : block)
+        if (instruction.getOpcode() != (otherInstruction++)->getOpcode())
+          throw std::runtime_error(
+              "debug metadata changed optimized execution opcodes");
+      ++otherBlock;
+    }
+  }
   dump(dumpPath.empty() ? "" : dumpPath + ".optimized.ll");
 }
 
