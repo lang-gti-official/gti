@@ -186,7 +186,9 @@ int main() {
 
 def rejections() -> dict[str, str]:
     return {
-        'polymorphic-owner': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }',
+        # The former scalar virtual-call source executes verbatim in the
+        # dispatch harness. Replacing a live polymorphic object still rejects.
+        'polymorphic-replacement': 'class Owner { public: virtual int read() { return 0; } }; int main() { mut Owner value{}; Owner other{}; value = other; return value.read(); }',
         'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
         'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }',
     }
