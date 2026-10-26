@@ -109,11 +109,6 @@ void validateC04Evaluation(const Session &session,
         reject("value outside scalar/reference/local class profile");
     for (const auto &block : body.blocks) {
       const auto term = block.terminator.kind;
-      // MIR's declaration-level may-fail bit is conservative. Helpers here
-      // must have no actual failure edge; fallible lifecycle calls require the
-      // next experiment's helper-unwind integration, not a nominal exemption.
-      if (helper && (term == MirTerminatorKind::Invoke || block.activeFailure))
-        reject("fallible lifecycle body");
       if (term != MirTerminatorKind::Return &&
           term != MirTerminatorKind::Exit && term != MirTerminatorKind::Goto &&
           term != MirTerminatorKind::Branch &&

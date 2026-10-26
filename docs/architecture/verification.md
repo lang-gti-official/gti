@@ -10140,13 +10140,18 @@ sanitized runtime archive for runtime coverage. It does not instrument generated
 LLVM code and cannot satisfy production generated-code sanitizer gates.
 The narrow supported profile and remaining proof obligations are recorded in
 [C04](../plans/implementation-sequence.md#c04-failure-transport-evaluation).
-Its fixed-boundary checks cover scalar propagation and exactly-once infallible
+Its fixed-boundary checks cover scalar propagation and exactly-once
 scalar/reference-field cleanup across three frames, including repeated and
-alternating failures. They reject fallible constructors/destructors before
-object publication. These are not full cleanup, worker or performance
+alternating failures. Fallible lifecycle cases check remaining local cleanup,
+non-destruction after a failed constructor, original primary/secondary source
+locations, and terminal stopping before later destructors. The last check uses
+a mapped parent-observable buffer rather than relying on normal process exit.
+Owning/raw fields remain rejected before object publication. These are not full
+owning-subobject cleanup, worker or performance
 acceptance and must not substitute for existing backend gates. Retained IR is
 the verified pre-object-emission module: target emission may rewrite `resume`
-into platform unwind-runtime calls.
+into platform unwind-runtime calls. Hash receipts are also printed into the step
+log so managed-runner collection retains them before deleting its build tree.
 
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves

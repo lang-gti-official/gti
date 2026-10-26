@@ -1,5 +1,31 @@
-struct Owner {
-  mut int value = 2147483647;
-  ~Owner() { value = value + 1; }
+struct Marker {
+  mut int& slot;
+  int input;
+  bool fail;
+  Marker(int value, mut int& target, bool fails) : slot(target), input(value), fail(fails) {}
+  ~Marker() {
+    if (slot == 0) { slot = 1; }
+    else { slot = 2; }
+    if (fail) {
+      if (input == 2147483647) {
+        int overflow = input + 1;
+      }
+    }
+  }
 };
-int sample(int input) { Owner value{}; return input + 1; }
+
+int leaf(int input, mut int& slot, mut int& remaining) {
+  Marker later_cleanup{input, remaining, false};
+  Marker marker{input, slot, true};
+  if (input == 2147483647) { return 0; }
+  return input + 1;
+}
+
+int middle(int input, mut int& leaf_slot, mut int& middle_slot) {
+  return leaf(input, leaf_slot, middle_slot);
+}
+
+int sample(int input, mut int& leaf_slot, mut int& middle_slot, mut int& outer_slot) {
+  Marker marker{input, outer_slot, false};
+  return middle(input, leaf_slot, middle_slot);
+}

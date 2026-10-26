@@ -1072,10 +1072,16 @@ private:
       ir.SetInsertPoint(done);
       return;
     }
-    auto *status = ir.CreateCall(
-        lifetimes.cleanup(*recipe, instruction.kind ==
-                                       MirInstructionKind::CleanupBeforeAssign),
+    auto *cleanup = lifetimes.cleanup(
+        *recipe, instruction.kind == MirInstructionKind::CleanupBeforeAssign);
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+    auto *status = evaluationCall(
+        cleanup->getFunctionType(), cleanup,
         {address, channel, ir.getInt1(current->activeFailure != 0)});
+#else
+    auto *status = ir.CreateCall(
+        cleanup, {address, channel, ir.getInt1(current->activeFailure != 0)});
+#endif
     if (checked) {
       auto *bad =
           llvm::BasicBlock::Create(session.context(), "drop.failed", &function);

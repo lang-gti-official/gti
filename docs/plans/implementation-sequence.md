@@ -10798,10 +10798,9 @@ and [LLVM exception-handling model](https://www.llvm.org/docs/ExceptionHandling.
 `GTI_BUILD_LLVM_C04_EVALUATION` targets build separate status and native-unwind
 backend copies against the same frontend and sealed MIR. Their structural
 profile accepts a closed scalar static-call graph, scalar-reference parameters,
-and local ordinary classes with scalar/reference fields. Constructor and
-destructor bodies must have no executable MIR failure edge; their conservative
-declaration-level may-fail flag alone is not an infallibility proof. Owning
-fields, hierarchy, global initialization, native imports and adapters remain
+and local ordinary classes with scalar/reference fields, including fallible
+source constructors and destructors. Owning fields, hierarchy, global
+initialization, native imports and adapters remain
 outside this experiment. Both candidates use the central ABI planner, the same
 verified MIR lifecycle/drop schedules and fixed `noinline` call boundaries.
 Native invokes enter cleanup-only landing pads, follow the MIR failure edge,
@@ -10811,17 +10810,24 @@ the successful path does not consult that carrier. This edge is explicitly
 unwind-permitted and is not a production runtime C service. It uses the platform
 C++ personality/unwinder without reading a C++ exception object's layout.
 Experimental symbols and module flags distinguish the artifacts.
+Generated leaf-class cleanup helpers retain unwind tables and unwind to the
+owning MIR `Drop` edge. The scalar/reference-field restriction matters here:
+these helpers have no owned child recipes left to drain. Admitting owning fields
+requires native helper cleanup continuations, not just widening this predicate.
 
 This staging replaces hand-built traces for the first comparison, not the
 remaining C04 obligations. The harness checks identical sealed-program input,
 direct/indirect root calls at O0/O3, original failure reporting, exactly-once
-cleanup in three frames, repeated and alternating failure/success entry, and
-structural rejections without overwriting existing objects. It does not validate
-fallible lifecycle bodies, constructor rollback, nested destructor failures,
+cleanup in three frames, remaining local cleanup after a destructor fails,
+non-destruction of a failed construction, and immediate terminal cleanup failure
+in an outer frame while the original failure is already propagating. A mapped
+test observation buffer verifies that later destructors did not run after that
+secondary failure. Repeated and alternating failure/success entry and structural
+rejections preserve their checks. It does not validate owning-field rollback,
 owning-field/parameter transfer, callbacks, user TLS, workers, foreign/forced
 unwind, carrier OOM, or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
 the generated LLVM object. No transport selection or production speedup follows
-from these checks. Next, extend real MIR cleanup to fallible lifecycle and
+from these checks. Next, extend real MIR cleanup to owned subobject rollback and
 ownership transfer, then worker containment before the representative
 platform/cost comparison and ADR decision.
 Remove or replace these opt-in evaluation hooks once that decision is implemented;

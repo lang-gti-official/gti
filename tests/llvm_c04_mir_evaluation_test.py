@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 
 
@@ -44,7 +45,8 @@ def main():
     fixtures = root / "tests/fixtures/llvm_c04_mir"
     receipts = []
     profiles = [(fixture, mode, emitter.resolve(), level)
-                for fixture in ("scalar", "cleanup", "borrowed_cleanup")
+                for fixture in ("scalar", "cleanup", "borrowed_cleanup",
+                                "fallible_cleanup", "fallible_constructor", "nested_failure")
                 for mode, emitter in (("status", args.status_emitter),
                                       ("unwind", args.unwind_emitter))
                 for level in ("O0", "O3")]
@@ -67,17 +69,36 @@ def main():
             for operation in ("invoke ", "landingpad ", "resume ", "__gxx_personality_v0"):
                 if operation not in ir:
                     raise AssertionError(f"missing MIR unwind lowering: {operation}")
+        if mode == "unwind" and fixture == "fallible_cleanup":
+            if "invoke i1 @__gti_native_cleanup_" not in ir:
+                raise AssertionError("fallible Drop bypassed its MIR failure edge")
         executable = directory / "probe"
         flags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"] if args.sanitized else []
+        flags += [f"-DGTI_C04_FAILED_CONSTRUCTION={int(fixture == 'fallible_constructor')}"]
         run([args.cxx, "-std=c++20", "-O3", *flags, "-pthread",
              "-I", root / "runtime/include", "-I", directory,
              fixtures / "driver.cpp", prefix.with_suffix(".o"),
              args.runtime.resolve(), "-o", executable], directory, "link")
         for outcome in ("success", "failure"):
             for dispatch in ("direct", "indirect"):
+                if fixture == "nested_failure" and outcome == "failure":
+                    observation = directory / f"{outcome}-{dispatch}.slots"
+                    observation.write_bytes(struct.pack("=iii", 0, 0, 0))
+                    result = run([executable, outcome, dispatch, "1", observation],
+                                 directory, f"{outcome}-{dispatch}", expected=70, timeout=15)
+                    error = ("nested_failure.gti:11: runtime error[GTI-R0014]: "
+                             "failure_during_cleanup; primary [GTI-R0001] at "
+                             "nested_failure.gti:19; secondary [GTI-R0001]\n")
+                    if (result.stdout, result.stderr) != ("", error):
+                        raise AssertionError("lost original primary/secondary failure attribution")
+                    if struct.unpack("=iii", observation.read_bytes()) != (1, 1, 0):
+                        raise AssertionError("cleanup continued after the secondary failure")
+                    continue
                 result = run([executable, outcome, dispatch], directory,
                              f"{outcome}-{dispatch}", timeout=15)
-                line = {"scalar": 1, "cleanup": 2, "borrowed_cleanup": 12}[fixture]
+                line = {"scalar": 1, "cleanup": 2, "borrowed_cleanup": 12,
+                        "fallible_cleanup": 11, "fallible_constructor": 13,
+                        "nested_failure": 19}[fixture]
                 expected_error = f"{fixture}.gti:{line}: runtime error[GTI-R0001]: integer_overflow in addition\n"
                 expected = ("1\n", "") if outcome == "success" else ("", expected_error)
                 if (result.stdout, result.stderr) != expected:
@@ -87,9 +108,10 @@ def main():
                 if repeated.stderr or not re.fullmatch(r"64 \d+ \d+\n", repeated.stdout):
                     raise AssertionError("repeated entry/cleanup/failure carrier reset failed")
         for dispatch in ("direct", "indirect"):
-            run([executable, "mixed", dispatch, "64"], directory,
-                f"repeat-mixed-{dispatch}", timeout=15)
-        for negative in ("fallible_cleanup", "fallible_constructor", "native_call", "global"):
+            if fixture != "nested_failure":
+                run([executable, "mixed", dispatch, "64"], directory,
+                    f"repeat-mixed-{dispatch}", timeout=15)
+        for negative in ("owned_field", "raw_field", "native_call", "global"):
             destination = directory / negative
             marker = b"existing artifact must survive rejection\n"
             destination.with_suffix(".o").write_bytes(marker)
@@ -97,8 +119,8 @@ def main():
                          directory, f"reject-{negative}", expected=65)
             if "C04 evaluation" not in result.stderr:
                 raise AssertionError("negative fixture failed before the structural evaluation boundary")
-            if negative.startswith("fallible_") and "fallible lifecycle body" not in result.stderr:
-                raise AssertionError("fallible lifecycle fixture did not reach its exact boundary")
+            if negative.endswith("_field") and "class outside ordinary scalar/reference-field cleanup profile" not in result.stderr:
+                raise AssertionError("field fixture did not reach its exact boundary")
             if destination.with_suffix(".o").read_bytes() != marker:
                 raise AssertionError("rejected experimental shape overwrote an artifact")
         receipts.append({"fixture": fixture, "mode": mode, "level": level, "emitter_sha256": digest(emitter),
@@ -106,18 +128,21 @@ def main():
                          "object_sha256": digest(prefix.with_suffix(".o")),
                          "object_bytes": prefix.with_suffix(".o").stat().st_size,
                          "executable_sha256": digest(executable)})
-        print(f"{fixture}/{mode}/{level}: exact and repeated success/failure, direct/indirect and 4 rejections passed", flush=True)
-    (output / "evidence.json").write_text(json.dumps({
-        "scope": "scalar MIR and infallible scalar/reference-field cleanup; fixed noinline boundaries; test-owned C++ carrier",
+        print(f"{fixture}/{mode}/{level}: lifecycle outcomes, direct/indirect and 4 rejections passed", flush=True)
+    evidence = {
+        "scope": "scalar MIR and fallible scalar/reference-field lifecycle; fixed noinline boundaries; test-owned C++ carrier",
         "production_transport_selected": False,
         "runtime_sha256": digest(args.runtime),
         "sanitized_native_carrier": args.sanitized,
         "llvm_object_instrumented": False,
-        "limitations": ["no fallible constructors/destructors, owning fields, callbacks, user TLS or workers",
+        "limitations": ["no owning-field rollback, callbacks, user TLS or workers",
                         "no OOM, foreign/forced unwind or artifact-unloading proof",
                         "no timing collected; not a production speedup claim"],
         "receipts": receipts,
-    }, indent=2))
+    }
+    (output / "evidence.json").write_text(json.dumps(evidence, indent=2))
+    # Managed runners retain step logs, not arbitrary files in the build tree.
+    print(json.dumps(evidence, sort_keys=True), flush=True)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,3 @@
+struct Child { ~Child() {} };
+struct Owner { mut Child child{}; ~Owner() {} };
+int sample(int input) { Owner value{}; return input + 1; }

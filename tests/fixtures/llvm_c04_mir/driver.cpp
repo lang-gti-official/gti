@@ -4,7 +4,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <fcntl.h>
 #include <limits>
+#include <new>
+#include <sys/mman.h>
+#include <unistd.h>
+
+struct Observation {
+  int32_t slots[3]{};
+};
 
 // The isolated experimental edge is explicitly unwind-permitted. It does not
 // alter any production C callback/runtime service contract. C++ exception
@@ -62,6 +70,19 @@ int main(int argc, char **argv) {
       argc > 3 ? std::strtoul(argv[3], nullptr, 10) : 1;
   if (iterations == 0)
     return 2;
+  Observation *observation = nullptr;
+  if (argc > 4) {
+    const int fd = open(argv[4], O_RDWR);
+    if (fd < 0)
+      return 7;
+    void *mapping = mmap(nullptr, sizeof(Observation), PROT_READ | PROT_WRITE,
+                         MAP_SHARED, fd, 0);
+    close(fd);
+    if (mapping == MAP_FAILED)
+      return 8;
+    // A parent process can inspect cleanup even after GTI's terminal _Exit.
+    observation = ::new (mapping) Observation{};
+  }
   Channel failure{};
   int32_t value = 0;
   std::uint64_t sum = 0;
@@ -70,10 +91,19 @@ int main(int argc, char **argv) {
     const bool failing = failureCase || (mixed && index % 2 != 0);
     const auto input = failing ? std::numeric_limits<int32_t>::max()
                                : static_cast<int32_t>(index % 1024);
-    int32_t slots[3]{};
+    int32_t localSlots[3]{};
+    auto &slots = observation ? observation->slots : localSlots;
+    for (auto &slot : slots)
+      slot = 0;
     const bool succeeded = call(input, value, failure, indirect, slots);
 #if GTI_C04_BORROWED_CLEANUP
-    if (slots[0] != 1 || slots[1] != 1 || slots[2] != 1)
+    const auto leafDrops =
+#if GTI_C04_FAILED_CONSTRUCTION
+        failing ? 0 : 1;
+#else
+        1;
+#endif
+    if (slots[0] != leafDrops || slots[1] != 1 || slots[2] != 1)
       return 6;
 #endif
     if (succeeded == failing || (!failing && value != input + 1))
@@ -92,6 +122,8 @@ int main(int argc, char **argv) {
   const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
                            std::chrono::steady_clock::now() - started)
                            .count();
+  if (observation)
+    munmap(observation, sizeof(Observation));
   if (iterations == 1) {
     if (failureCase)
       return gti_rt_failure_write_report_v2(

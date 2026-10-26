@@ -846,6 +846,11 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
         llvm::GlobalValue::InternalLinkage,
         "__gti_native_cleanup_" + std::to_string(cleanups.size()),
         session.module());
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+    // The evaluation profile permits no owned child recipes here. A source
+    // destructor can unwind through this frame to its owning MIR Drop edge.
+    function->setUWTableKind(llvm::UWTableKind::Sync);
+#endif
     cleanups.emplace_back(recipe, function);
     context.stack.push_back({&selectedProof, function});
     llvm::IRBuilder<> ir(
