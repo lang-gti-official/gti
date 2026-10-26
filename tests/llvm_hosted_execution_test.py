@@ -99,9 +99,12 @@ def text_source_rejections(gti, root, scratch, endpoints, env):
 def main():
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     selection = sys.argv[3] if len(sys.argv) > 3 else "all"
-    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "reference-return", "vector", "array", "text-return"}:
+    if selection not in {"all", "startup", "status", "source-location", "source-literals", "arguments", "reference-input", "reference-return", "vector", "array", "text-return", "generated-construction"}:
         raise ValueError(f"unknown hosted case: {selection}")
     cases = (
+        ("llvm_hosted_generated_default.gti", None),
+        ("llvm_hosted_generated_default_contexts.gti", None),
+        ("llvm_hosted_generated_default_failure.gti", "generated default argument failure"),
         ("llvm_hosted_success.gti", None),
         ("llvm_hosted_startup_failure.gti", "hosted startup failure"),
         ("llvm_hosted_entry_failure.gti", "hosted entry failure"),
@@ -125,7 +128,7 @@ def main():
     endpoints = (
         Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
         *(Endpoint("llvm", f"O{level}") for level in
-          (range(4) if selection in {"all", "reference-return", "text-return"}
+          (range(4) if selection in {"all", "reference-return", "text-return", "generated-construction"}
            else (0, 3))),
     )
     env = {**os.environ, "NO_COLOR": "1"}
@@ -135,6 +138,11 @@ def main():
             source_literals(gti, root, scratch, endpoints, env)
         for filename, failure in cases:
             if selection in {"status", "source-literals", "arguments"}:
+                continue
+            if selection == "generated-construction" and filename not in {
+                    "llvm_hosted_generated_default.gti",
+                    "llvm_hosted_generated_default_contexts.gti",
+                    "llvm_hosted_generated_default_failure.gti"}:
                 continue
             if selection == "reference-input" and filename not in {
                     "llvm_hosted_unsafe_reference_input.gti",
@@ -156,6 +164,9 @@ def main():
                     "llvm_hosted_text_return_failure.gti"}:
                 continue
             if selection == "startup" and filename in {
+                    "llvm_hosted_generated_default.gti",
+                    "llvm_hosted_generated_default_contexts.gti",
+                    "llvm_hosted_generated_default_failure.gti",
                     "llvm_hosted_unsafe_reference_invoke_readonly.gti",
                     "llvm_hosted_unsafe_reference_invoke_mutable.gti",
                     "llvm_hosted_reference_return_failure.gti",
@@ -183,7 +194,7 @@ def main():
                 observations.append(result.observable)
             if any(value != observations[0] for value in observations):
                 raise AssertionError(f"hosted observable drift: {filename}: {observations}")
-            levels = "O0-O3" if selection in {"all", "reference-return", "text-return"} else "O0/O3"
+            levels = "O0-O3" if selection in {"all", "reference-return", "text-return", "generated-construction"} else "O0/O3"
             print(f"{filename}: uninstrumented C++20/23 O3 and LLVM {levels} passed",
                   flush=True)
         for status in (-2147483648, -1, 0, 1, 70, 255, 256, 512, 2147483647):

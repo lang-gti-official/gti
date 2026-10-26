@@ -594,6 +594,10 @@
       "suite": "ownership"
     },
     {
+      "name": "testGeneratedDefaultConstructionContexts",
+      "suite": "ownership"
+    },
+    {
       "name": "testTemporaryArgumentBorrows",
       "suite": "ownership"
     },

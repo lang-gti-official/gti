@@ -33,8 +33,9 @@ selectedReferenceHandoff(const MirBody &body, const MirLoan &selected);
 [[nodiscard]] bool
 generatedUniqueConstruction(const MirInstruction &instruction);
 
-// A zero-input ordinary class value may use generated default construction
-// without a source constructor instance. This is only its producer shape:
+// A zero-input ordinary Construct explicitly represents generated default
+// construction without a source constructor instance. An unexplained Call is
+// never construction authority. This is only its producer shape:
 // program verification must prove the exact owner's generated policy and
 // absence of a required initializer schedule, while ordinary materialization,
 // full-expression drop, and call-loan verification remain mandatory.

@@ -1760,20 +1760,6 @@ exactWholeObjectVirtualTarget(const MirProgram &program, const MirBody &body,
       result.boundary = true;
       return result;
     }
-    if (mir_detail::generatedDefaultConstruction(instruction)) {
-      const auto owner = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const auto &candidate) {
-            return candidate.type == instruction.info.type;
-          });
-      // This exact generated default executes no source body. A selected
-      // field/base initialization schedule is a separate concrete constructor
-      // target, never an unknown call or an implicit effect of this shape.
-      if (owner != program.classInstances().end() &&
-          owner->defaultConstructor == SpecialMemberStatus::Generated &&
-          !owner->generatedDefaultRequiresSchedule)
-        return result;
-    }
     if (instruction.functionTarget) {
       result.addresses.push_back(
           {.kind = MirBodyKind::Function,
@@ -1793,6 +1779,19 @@ exactWholeObjectVirtualTarget(const MirProgram &program, const MirBody &body,
     }
   } else if (instruction.kind == MirInstructionKind::Construct ||
              instruction.kind == MirInstructionKind::InitializeBase) {
+    if (mir_detail::generatedDefaultConstruction(instruction)) {
+      const auto owner = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &candidate) {
+            return candidate.type == instruction.info.type;
+          });
+      // Bodyless generated construction executes no source callable. A real
+      // field/base schedule retains its separately selected constructor.
+      if (owner != program.classInstances().end() &&
+          owner->defaultConstructor == SpecialMemberStatus::Generated &&
+          !owner->generatedDefaultRequiresSchedule)
+        return result;
+    }
     if (instruction.constructorTarget) {
       result.addresses.push_back(
           {.kind = MirBodyKind::Constructor,

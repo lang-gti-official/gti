@@ -44,6 +44,9 @@ struct Case {
 };
 
 constexpr std::array cases{
+    Case{"llvm_hosted_generated_default.gti", 33333, "", 0},
+    Case{"llvm_hosted_generated_default_failure.gti", 321,
+         "generated default argument failure", 17},
     Case{"llvm_hosted_success.gti", 12354, "", 0},
     Case{"llvm_hosted_startup_failure.gti", 321, "hosted startup failure", 16},
     Case{"llvm_hosted_entry_failure.gti", 321, "hosted entry failure", 16},
@@ -1163,6 +1166,30 @@ void run(const std::filesystem::path &repository,
   rejectReturn(wrongOperation, invalidBuilder.getInt32(256));
   lowerScalarProgram(session, admission);
   auto &module = session.module();
+  if (test.fixture == "llvm_hosted_generated_default.gti") {
+    unsigned factories = 0;
+    for (const auto &instance : frontend.hir.functionInstances()) {
+      if (!instance.source)
+        continue;
+      const auto name = instance.source->name().lexeme;
+      if (name != "make_policy" && name != "make_defaulted" &&
+          name != "make_generic")
+        continue;
+      const auto *function = session.abi().declareFunction(instance.id);
+      require(!function->isDeclaration(),
+              "generated factory has an emitted body");
+      for (const auto &block : *function)
+        for (const auto &instruction : block)
+          if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction))
+            require(call->getCalledFunction() &&
+                        call->getCalledFunction()->isIntrinsic(),
+                    "bodyless factory adds no allocator, dispatch or "
+                    "source-constructor call");
+      ++factories;
+    }
+    require(factories == 3,
+            "three unrelated bodyless factories retain their cost contract");
+  }
   auto *global = module.getGlobalVariable(
       "__gti_native_v1_g" + std::to_string(trace), true);
   require(global && global->getValueType()->isIntegerTy(32) &&
@@ -1279,6 +1306,11 @@ void run(const std::filesystem::path &repository,
                 executed.output.find(test.failure) != std::string::npos,
             "panic containment observes cleanup and original source location");
   }
+  if (test.fixture == "llvm_hosted_generated_default.gti")
+    std::cout << "generated construction footprint: object="
+              << std::filesystem::file_size(object)
+              << " executable=" << std::filesystem::file_size(executable)
+              << " bytes; three factories have no runtime/source calls\n";
   std::cout << test.fixture << ' '
             << (optimization == LlvmCodegenOptimization::None ? "O0" : "O3")
             << ": native hosted lifecycle verified\n";

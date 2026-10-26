@@ -1144,8 +1144,8 @@ this is not a consuming transfer. Exact source/stage/parameter identities,
 cleanup-free copyability, and same-block adjacent consumption authorize the
 representation alias. Owning or borrowed elements, intervening argument work,
 and a transfer of the retained source obligation do not enter this proof.
-Targetless `Construct` and `Call` default producers can also publish into the
-same exact prepared-parameter slot: omitted brace-default fields in designated
+Bodyless generated `Construct` producers can also publish into the same exact
+prepared-parameter slot: omitted brace-default fields in designated
 construction retain CallInput activation, consuming handoff and failure cleanup.
 These are representation proofs over resolved MIR, not source-AST replay or
 standard-library type exceptions.
@@ -4721,9 +4721,12 @@ The prepared ReturnResult obligation retains cleanup authority over a completed
 caller-destination object until remaining local cleanup succeeds. Failure drops
 that object before propagating, without relocating it. Passive fixed-array drop
 recipes may have no active element recipe and produce no element-cleanup walk.
-Targetless generated default construction is admitted for exact fieldless,
+Explicit MIR `Construct` admits bodyless generated defaults for exact fieldless,
 baseless objects with no required initializer schedule; it arms their own
-destructor state without inventing a constructor call.
+destructor state without inventing a constructor call. HIR preserves the
+semantic construction selection even for `Type()` syntax. Ordinary targetless
+`Call` instructions remain invalid; backends do not infer constructors from
+the result type.
 Prepared class/array arguments use the same physical storage as their sealed
 parameter-drop obligation. Fresh objects construct there before publication;
 explicit copies/moves publish their snapshot before arming cleanup. A later

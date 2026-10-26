@@ -31,6 +31,15 @@ name determines language meaning or bypasses deleted/private constructors.
 
 ## Representation
 
+Bodyless generated default construction uses an explicit ordinary `Construct`
+with zero inputs and no constructor target. Whole-program verification requires
+the unique concrete owner's generated default policy and absence of an
+initializer schedule; ordinary materialization, publication and cleanup remain
+mandatory. Temporary receiver/argument proofs and effect analysis consume that
+same construction operation. A targetless ordinary `Call` cannot stand in for
+construction; native/deferred calls retain their separate typed targets or
+invocation capabilities.
+
 Raw address conversion uses `Compute/Convert` with one evaluated pointer value.
 The independent `rawPointerConversion` query is shared by body verification and
 production backend admission: only typed/void or same-pointee conversion is
@@ -4137,8 +4146,8 @@ input names an exact fresh class/struct producer or a passive payload-enum
 construction, and its selected parameter is read-only `T&`. Lowering
 materializes the producer's exact mutable place, emits `BorrowRead`, and
 attaches one `CallArgument` loan to the `CallInput`;
-a target-free, zero-input ordinary class `Call` can be the generated default
-producer. Body verification recognizes its exact structural shape; independent
+an explicit zero-input ordinary class `Construct` can be the bodyless generated
+default producer. Body verification recognizes its exact structural shape; independent
 program verification also requires the concrete owner's generated default
 constructor and no missing initializer schedule. This shares the receiver
 producer query and preserves all materialization, call-loan and drop checks.

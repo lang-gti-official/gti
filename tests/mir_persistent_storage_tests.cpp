@@ -369,9 +369,12 @@ int main() { int32_t& borrowed = first; execute(); return borrowed; }
     const auto *body = lang::findMirBody(frontend.mir, address);
     for (const auto &block : body->blocks)
       for (const auto &instruction : block.instructions)
-        if (instruction.kind == lang::MirInstructionKind::Call &&
+        if (instruction.kind == lang::MirInstructionKind::Construct &&
+            instruction.constructorKind == lang::ConstructorKind::Ordinary &&
             instruction.info.type.kind == lang::SemanticType::Class &&
             !instruction.functionTarget && !instruction.constructorTarget &&
+            instruction.operands.empty() &&
+            instruction.parameterTypes.empty() &&
             instruction.intrinsic == lang::IntrinsicKind::None) {
           producerBody = address;
           producerId = instruction.id;
@@ -383,7 +386,7 @@ int main() { int32_t& borrowed = first; execute(); return borrowed; }
         }
   }
   expect(producerBody.has_value(),
-         "fixture reaches a targetless generated default-construction call");
+         "fixture reaches its explicit bodyless generated Construct");
   if (!producerBody)
     return;
 

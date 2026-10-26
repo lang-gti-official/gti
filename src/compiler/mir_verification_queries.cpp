@@ -557,7 +557,7 @@ bool referenceAddressRetainsLoan(const MirBody &body, const MirPlace &address,
 }
 
 bool generatedDefaultConstruction(const MirInstruction &instruction) {
-  return instruction.kind == MirInstructionKind::Call &&
+  return instruction.kind == MirInstructionKind::Construct &&
          instruction.info.type.kind == SemanticType::Class &&
          instruction.info.category == ValueCategory::Value &&
          instruction.result && !instruction.functionTarget &&
@@ -567,7 +567,21 @@ bool generatedDefaultConstruction(const MirInstruction &instruction) {
          instruction.operands.empty() && instruction.parameterTypes.empty() &&
          instruction.constructorKind == ConstructorKind::Ordinary &&
          instruction.intrinsic == IntrinsicKind::None &&
-         instruction.dispatch == CallDispatch::Static;
+         instruction.dispatch == CallDispatch::Static &&
+         instruction.callSite == 0 && !instruction.callableBoundary &&
+         !instruction.callableInvocation &&
+         instruction.callableArguments.empty() &&
+         !instruction.nativeCallbackAdapter && !instruction.threadTaskAdapter &&
+         instruction.scopedThreadTasks.empty() &&
+         instruction.borrowOrigin == BorrowOriginKind::None &&
+         instruction.borrowArguments.empty() &&
+         instruction.borrowFields.empty() && !instruction.borrowPlace &&
+         !instruction.dependentTextPublication &&
+         !instruction.restoresReferenceResult &&
+         instruction.restoredBorrowFields.empty() &&
+         instruction.objectAllocation == 0 &&
+         instruction.definedFailure.empty() &&
+         instruction.localFailureSites.empty();
 }
 
 bool generatedUniqueConstruction(const MirInstruction &instruction) {

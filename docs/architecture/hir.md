@@ -759,6 +759,20 @@ The backend consumes the verified MIR group, not these HIR records alone.
 
 ## Executable Values
 
+A semantic-selected ordinary generated default with no initializer schedule
+uses `DirectInitializer`, including the `Type()` expression spelling. Its
+exact concrete class retains generated default policy, zero runtime inputs and
+no constructor instance. Plan verification checks that semantic selection;
+an unexplained `Call` result type cannot establish construction authority.
+Scheduled generated defaults and declared constructors retain their exact
+constructor targets. MIR consumes the existing construction path for each.
+Generic construction verification substitutes declaration-bound arguments from
+the exact enclosing concrete class/function/constructor instance through the
+shared semantic substitution kernel, including exact specializations. A lambda
+uses its exact lexical creator and must have one compatible context; missing,
+conflicting or cyclic creator contexts cannot establish construction authority.
+No argument is inferred from the construction result type.
+
 An unsafe expression is the same grouping value after frontend permission
 checking. Exact unsafe operations on its operand retain their ordinary
 semantic/HIR/MIR markers and verifier requirements. Class fresh-result
