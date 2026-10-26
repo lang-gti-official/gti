@@ -300,6 +300,12 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
   const auto *body = findMirBody(program.mir(), address);
   if (!body)
     throw std::logic_error("LLVM debug body does not belong to the snapshot");
+  // Generated glue has no source scope, even when its result type has no
+  // source debug representation. Exclude it before planning source types.
+  if (address.kind != MirBodyKind::Function &&
+      address.kind != MirBodyKind::Constructor &&
+      address.kind != MirBodyKind::Destructor)
+    return;
   const SourceSpan *source = nullptr;
   std::string name;
   std::vector<llvm::Metadata *> parameters{impl->type(body->returnType)};
