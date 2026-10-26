@@ -4533,6 +4533,11 @@ elements, stops at references/raw pointers, and fails closed on unknown or cycli
 storage. It grants no layout or borrow authority. Body and memory-store guards
 also reject byte transport before identity or memcpy shortcuts; copying a
 checked borrowed address is not copying its object.
+Placement asks the inline-storage exclusion only for candidate Load/Move or
+nonordinary Construct transfers. Calls that return opaque borrowed referents
+do not materialize that referent and do not require an inline layout merely to
+publish their checked address. This preserves erased-reference operations
+without admitting erased objects as value storage or relaxing hierarchy checks.
 
 The isolated explicit copy through an evaluated base-reference Loan passes
 independent verified source/MIR and native O0-O3 checks. The existing C++20/23

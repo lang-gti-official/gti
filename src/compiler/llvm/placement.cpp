@@ -797,11 +797,12 @@ void Placement::collect(const MirProgram *program, const MirBody &body) {
     for (const auto &stage : block.instructions)
       if (!stage.tombstone && stage.result && storesAddress(stage.info.type)) {
         const bool hierarchyTransport =
-            program && containsHierarchyStorage(*program, stage.info.type) &&
+            program &&
             (stage.kind == MirInstructionKind::Load ||
              stage.kind == MirInstructionKind::Move ||
              (stage.kind == MirInstructionKind::Construct &&
-              stage.constructorKind != ConstructorKind::Ordinary));
+              stage.constructorKind != ConstructorKind::Ordinary)) &&
+            containsHierarchyStorage(*program, stage.info.type);
         if (!hierarchyTransport)
           producers.emplace(*stage.result, &stage);
       }

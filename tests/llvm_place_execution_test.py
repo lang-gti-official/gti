@@ -234,6 +234,23 @@ int main() {
 }
 '''
 
+ERASED_REFERENCES = r'''
+#include <std/memory>
+struct Record { mut int value = 7; };
+int main() {
+  mut Record object{};
+  {
+    std::erased_object& erased = std::erase_ref(object);
+    unsafe { if (std::restore_ref<Record>(erased).value != 7) { return 1; } }
+  }
+  {
+    mut std::erased_object& erased = std::erase_mut(object);
+    unsafe { std::restore_mut<Record>(erased).value += 5; }
+  }
+  return object.value - 12;
+}
+'''
+
 RAW_CLAIMS = r'''
 [[borrowed_from(owner)]] unsafe mut int& claim(int* address, mut int& owner) {
   unsafe { return *address; }
@@ -288,6 +305,7 @@ def successes(root: Path) -> dict[str, str]:
              'references': REFERENCES, 'pointers': POINTERS,
              'primitive-pointers': PRIMITIVE_POINTERS, 'text': TEXT,
              'owner-addresses': OWNER_ADDRESSES, 'raw-claims': RAW_CLAIMS,
+             'erased-references': ERASED_REFERENCES,
              'unsafe-wrapper': UNSAFE_WRAPPER,
              'conditional-references': CONDITIONAL_REFERENCES}
     cases['shipped-example'] = (
@@ -327,6 +345,8 @@ def rejection_cases() -> dict[str, str]:
         'expired-reference': 'int& expired() { int local = 1; return local; } int main() { return expired(); }',
         'overlapping-mutable': 'int main() { mut int value = 1; mut int& first = value; mut int& second = value; return first + second; }',
         'read-only-reference': 'void change(int& value) { value = 2; } int main() { return 0; }',
+        'erased-restore-unsafe': '#include <std/memory>\nint main() { int value = 1; std::erased_object& erased = std::erase_ref(value); return std::restore_ref<int>(erased); }',
+        'erased-overlapping-mutable': '#include <std/memory>\nint main() { mut int value = 1; mut std::erased_object& first = std::erase_mut(value); mut std::erased_object& second = std::erase_mut(value); unsafe { return std::restore_mut<int>(first) + std::restore_mut<int>(second); } }',
         'enum-reference-escape': 'enum class E { first }; E& expired() { E value = E::first; return value; } int main() { return 0; }',
         'enum-reference-mutation': 'enum class E { first, second }; void change(E& value) { value = E::second; } int main() { return 0; }',
     }
