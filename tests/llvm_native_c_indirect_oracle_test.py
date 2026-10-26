@@ -185,9 +185,9 @@ def main():
             if b"GTI-B0003" not in result.stderr or destination.read_bytes() != sentinel:
                 raise RuntimeError("unsupported required native boundary replaced an artifact")
             if source == "reject_native_indirect_required":
-                if (b"MirDefinitionKind.Declaration (O-LLVM-03)" not in result.stderr or
-                        b"reject_native_indirect_required.gti:4:17:" not in result.stderr or
-                        b"obtain_native_record" not in result.stderr):
+                if (b"UnsafeOperationKind.ForeignPointerCall (O-LLVM-05)" not in result.stderr or
+                        b"reject_native_indirect_required.gti:6:9:" not in result.stderr or
+                        b"dormant_unsupported" not in result.stderr):
                     raise RuntimeError("required body must reject at its unchanged function-field import")
             if source == "reject_native_indirect_callback":
                 if (b"MirOperation.NativeCallback (O-LLVM-11)" not in result.stderr or
