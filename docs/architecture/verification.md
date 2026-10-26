@@ -10326,6 +10326,112 @@ runtime handoff exceptions in either candidate; the unwind candidate additionall
 allocates two private GTI worker carriers and one caller carrier after join.
 Counts remain provider observations, not total heap or timing evidence.
 
+##### C04 Two-Host Decision Evidence (2026-10-27)
+
+This is a recommendation to the ABI/failure owner, not a selected convention
+or production acceptance. Exact clean source
+`d655441fd77834402147a8eb9a4d2f9e4c364c83` includes the frozen integration
+`aac6bd032d2e1e083331e60091d3311eaf1ac6b6`; later integration source is not
+covered. PR 363 preserves the implementation and dependency histories.
+
+Darwin AArch64 (LLVM 23.1.2) and Linux x86_64 System V (LLVM 21, GCC 14)
+passed, for each fixed/optimizable policy: dynamic 4/4, workers 16/16,
+native boundary 4/4 and scalar cleanup 92/92 observations. Dynamic/worker
+helper ASan/UBSan matrices passed 4/4 and 16/16, respectively; generated
+objects and the runtime archive were not instrumented by those helper flags.
+Both allocation profiles passed 12 observations per policy. Cost controls
+6/6, allocation controls 3/3 and ten affected native/callable/dispatch/storage/
+memory/admission/cleanup gates passed. This is not a full campaign or proof
+of worker-local fallible cleanup, nested scopes, arbitrary erased environments,
+public callback transport or final fallible embedding.
+
+The Linux managed run `run-50f2841a136e46d0b759ad03766fe785` passed, was fetched
+and removed. Snapshot SHA256:
+`1c09ddc805ce024cdbeb4deb348bec919e079492b5fd8cc9289546d1833c4e3e`.
+Its lossless content-addressed archive retains 22,620 artifact paths and 8,932
+unique objects in 20 ZIPs; every CRC, size and SHA256 was verified, with no
+runner truncation. The Mac archive retains the same path count and 8,626 unique
+objects in 20 verified ZIPs. Durable results are under the primary checkout's
+`build-worktrees/llvm-production-native-handoff/{c04-d655-macos,linux-c04-d655-validation}`;
+the handoff records commands, source hashes, archive indexes and older evidence.
+
+O3 dynamic-call medians below are nanoseconds per invocation, status/unwind;
+the ranges cover direct and indirect root entry, not confidence intervals.
+Each entry still performs actual runtime-selected GTI adapter invocation.
+
+| Host / boundaries | Success | Failure unwind/status |
+| --- | --- | --- |
+| Darwin fixed | 7.90 / 8.03-8.22 | 72.8-73.3 |
+| Darwin optimizable | 4.17-4.18 / 2.55-2.81 | 59.2-59.7 |
+| Linux fixed | 12.65-12.68 / 11.03-11.05 | 12.99-13.08 |
+| Linux optimizable | 6.83-7.96 / 3.99-4.01 | 11.30-11.72 |
+
+Linux timing overlapped another registered two-job build; load average was
+about 3.10 on eight CPUs and raw samples vary materially. Darwin load was
+about 4.35-4.47 on twelve CPUs. Neither run establishes isolated whole-program
+speedups. The Darwin optimized dynamic result is nevertheless a concrete
+status hot-path disadvantage (1.36-1.63 ns), not parity. Retained optimized IR
+shows status output slots/branches versus direct scalar return with unwind;
+this is a plausible explanation, not a new ABI contract. Real two-worker
+success medians span 14.8-16.2 us on Darwin and 33.1-37.8 us on Linux, with
+variation and inconsistent winner. Worker failure unwind/status ratios are
+1.60-1.74 on Darwin and 1.10-1.20 on Linux; no worker-success parity claim.
+
+Optimizable dynamic text/unwind bytes are status 1192/488 versus unwind
+984/576 on Darwin, and 1045/416 versus 933/388 on Linux. Optimizable worker
+bytes are 1024/328 versus 848/360 and 963/280 versus 803/272, respectively.
+Receipts retain fixed-policy sizes, complete object/executable sizes, fixture
+emission/link wall time and peak RSS. These are not full compiler build costs.
+
+For 64 dynamic failures, status observed no exception-provider requests and
+unwind observed 64 one-byte payload requests; neither observed C++ new/delete.
+For 64 two-worker scopes, both candidates exactly matched the independently
+measured empty-runtime baseline: Darwin 512 new/delete calls, 248832 requested
+bytes; Linux 256 calls, 238592 bytes. Worker failures observed 128 exception
+requests for status and 320 for unwind, including existing runtime handoffs.
+Success observed no exception requests. These are bounded provider counts,
+not total heap allocations, exception frees, residency or OOM evidence.
+
+**Recommendation:** pursue native unwinding as the proposed hosted internal
+transport, subject to the explicit owner decision and correctness obligations
+below; retain current production status behavior until that migration is
+validated. This revises the earlier native-only provisional status preference:
+actual optimized dynamic adapters expose a successful-path and text-size cost
+that the native-only comparison did not measure. The recommendation prioritizes
+successful internal calls, not an assumed measured application failure rate.
+It explicitly accepts neither the substantial failure-path cost nor the status
+hot-path disadvantage on the owner's behalf. Expected/recoverable source
+results remain ordinary values; do not benchmark a different failure contract
+or hide costs by moving source failures into that protocol.
+
+The owner must accept the measured workload tradeoffs or require optimization
+before selecting either candidate. Required remaining implementation inputs:
+
+- Approve the exact C04-only managed-emergency landingpad extension retained as
+  `c04-managed-emergency-resume.patch` in the handoff. It changes no production
+  owner cleanup or dispatch. Body and cleanup landings must resume an active
+  managed emergency before reading a GTI channel. The existing typed runtime
+  catcher, not TLS alone, establishes handoff identity; foreign exceptions
+  terminate. Prove disposal of a superseded, previously identity-verified GTI
+  carrier only after its LLVM frames exit, without guessed exception headers,
+  double destruction, primary reuse or abandoned-carrier leaks. Until then
+  worker-local fallible cleanup and nesting remain explicit rejections.
+- Select carrier ownership, OOM/emergency storage, personality/unwinder and
+  foreign/forced/dependent-unwind policy for both supported targets. The private
+  C++ marker and test-owned worker query are not production ABI proposals.
+  Ordinary C callbacks remain terminal containment; imports retain their
+  no-foreign-unwind contract. A violating foreign throw is not a GTI failure.
+- Record one convention and migration in ADR 031/C04, then update the single
+  ABI authority, all definitions/call forms/adapters, ABI/cache identity and
+  runtime/package linkage together. Native C signatures stay separate. Define
+  fallible embedding ownership, output publication and unload pinning without
+  letting an internal carrier cross the ordinary C export boundary.
+- Complete generated-code/runtime sanitizer, application-level performance,
+  dynamic-owner lifecycle and installed-consumer checks on the selected source.
+  Retain constructor/result/parameter rollback, original artifact attribution,
+  worker join-all and terminal secondary-failure semantics. Remove the private
+  comparison hooks after migration; no permanent alternate production backend.
+
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves
 as a comparator for its existing supported behavior. Retain valid differential
