@@ -157,6 +157,7 @@ int probeSource(const std::filesystem::path &root,
   lang::FrontendOptions options;
   options.target = lang::TargetInfo::host();
   options.lowerReachableOnly = true;
+  options.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1;
   const std::filesystem::path standardLibrary = root / "stdlib";
   const lang::FrontendResult frontend =
       lang::Frontend(std::move(options))
@@ -168,7 +169,7 @@ int probeSource(const std::filesystem::path &root,
   }
   lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, lang::TargetInfo::host(), true);
+      frontend.mir, {}, lang::TargetInfo::host());
   if (!lowered.valid()) {
     for (const lang::LoweredProgramIssue &issue : lowered.issues)
       std::cerr << issue.detail << '\n';

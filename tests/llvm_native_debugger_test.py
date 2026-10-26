@@ -24,7 +24,11 @@ def main():
     parser.add_argument("--gti-build-cache", required=True, type=Path)
     parser.add_argument("--lldb", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--optimization", choices=(0, 3), type=int, default=0)
+    parser.add_argument("--case", choices=("basic", "lexical"), default="basic")
+    parser.add_argument("--cc", default="clang")
     args = parser.parse_args()
+    assert args.case == "basic" or args.optimization == 0
     root = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
     assert not output.exists() and not output.is_relative_to(root)
@@ -33,11 +37,16 @@ def main():
                      args.gti_build_cache.read_text(), re.M)
     output.mkdir(parents=True)
     source = output / "native_debug.gti"
-    shutil.copyfile(root / "tests/fixtures/llvm_optimization/native_debug.gti", source)
+    fixture = "native_debug_optimized.gti" if args.optimization == 3 else "native_debug.gti"
+    if args.case == "lexical":
+        fixture = "native_debug_lexical.gti"
+    shutil.copyfile(root / "tests/fixtures/llvm_optimization" / fixture, source)
     manifest = {
         "status": "running", "commands": [],
         "gti_sha256": hashlib.sha256(args.gti.read_bytes()).hexdigest(),
         "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "optimization": args.optimization,
+        "case": args.case,
         "pending": ["optimized/inlined variable availability", "lexical shadow scopes",
                     "defined-failure and native callback backtraces", "second supported host"],
     }
@@ -56,20 +65,35 @@ def main():
         manifest["gti_version"] = run([args.gti, "--version"]).stdout.strip()
         manifest["lldb_version"] = run([args.lldb, "--version"]).stdout.strip()
         binary = output / "native-debug"
-        run([args.gti, source, "--backend", "llvm", "-g", "-O0",
-             "--progress", "never", "-o", binary])
+        native = []
+        if args.optimization == 3:
+            provider = root / "tests/fixtures/llvm_optimization/native_debug_probe.c"
+            manifest["native_probe_sha256"] = hashlib.sha256(provider.read_bytes()).hexdigest()
+            manifest["cc_version"] = run([args.cc, "--version"]).stdout.strip()
+            obj = output / "debug-probe.o"
+            run([args.cc, "-std=c17", "-g", "-O3", "-c", provider, "-o", obj])
+            native = ["--", obj]
+        run([args.gti, source, "--backend", "llvm", "-g", f"-O{args.optimization}",
+             "--progress", "never", "-o", binary, *native])
         result = run([binary])
         assert not result.stdout and not result.stderr
         manifest["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
         if sys.platform == "darwin":
             symbols = Path(str(binary) + ".dSYM") / "Contents/Resources/DWARF" / binary.name
             assert symbols.is_file(), "Darwin production debug companion is missing"
+        line = 6 if args.case == "lexical" else 5 if args.optimization == 3 else 4
         command = [str(args.lldb), "--no-lldbinit", "--batch", str(binary),
-                   "-o", "breakpoint set --file native_debug.gti --line 4",
+                   "-o", f"breakpoint set --file native_debug.gti --line {line}",
                    "-o", "run", "-o", "frame info",
-                   "-o", "frame variable -- input local", "-o", "thread backtrace",
-                   "-o", "thread step-over", "-o", "frame info",
-                   "-o", "frame variable -- input local", "-o", "continue"]
+                   "-o", "frame variable -- input local", "-o", "thread backtrace"]
+        if args.case == "lexical":
+            command += ["-o", "breakpoint set --file native_debug.gti --line 8",
+                        "-o", "continue", "-o", "frame info",
+                        "-o", "frame variable -- input local"]
+        elif args.optimization == 0:
+            command += ["-o", "thread step-over", "-o", "frame info",
+                        "-o", "frame variable -- input local"]
+        command += ["-o", "continue"]
         result = debugger(command, output)
         transcript = result.stdout + result.stderr
         (output / "lldb.log").write_text(transcript)
@@ -83,15 +107,25 @@ def main():
             return 77
         assert result.returncode == 0, str(output / "lldb.log")
         assert "stop reason = breakpoint" in transcript
-        assert re.search(r"native_debug\.gti:4\b", transcript)
-        assert re.search(r"native_debug\.gti:5\b", transcript)
-        assert re.search(r"\binput = 4\b", transcript)
-        assert re.search(r"\blocal = 9\b", transcript)
-        assert re.search(r"\blocal = 10\b", transcript)
+        assert re.search(rf"native_debug\.gti:{line}\b", transcript)
+        if args.case == "lexical":
+            assert re.search(r"native_debug\.gti:8\b", transcript)
+            values = re.findall(r"\blocal = (\d+)\b", transcript)
+            assert values == ["11", "9"], transcript
+            assert re.search(r"\binput = 4\b", transcript)
+        elif args.optimization == 0:
+            assert re.search(r"native_debug\.gti:5\b", transcript)
+            assert re.search(r"\binput = 4\b", transcript)
+            assert re.search(r"\blocal = 9\b", transcript)
+            assert re.search(r"\blocal = 10\b", transcript)
+        else:
+            for name in ("input", "local"):
+                assert re.search(rf"\b{name} = (4\b|<variable not available>)", transcript), transcript
+            assert "[inlined] inspect" in transcript, transcript
         assert re.search(r"frame #\d+.*inspect", transcript)
         assert re.search(r"frame #\d+.*main", transcript)
         assert "exited with status = 0" in transcript
-        manifest["status"] = "passed-native-debugger-O0"
+        manifest["status"] = f"passed-native-debugger-{args.case}-O{args.optimization}"
         print(manifest["status"] + "; remaining debug matrix stays explicit")
     except BaseException as error:
         manifest["status"], manifest["error"] = "failed", str(error)

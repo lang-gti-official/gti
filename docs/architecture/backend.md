@@ -4370,8 +4370,8 @@ before and after optimization; LLVM error diagnostics prevent publication and
 warnings remain session-owned. Emission is single-use and returns binary
 `BackendArtifactKind::Object` bytes only after successful target emission.
 
-Private diagnostic consumers are wired but remain activation-gated: the target
-factory still rejects debug requests and non-None instrumentation. `Session`
+Source debug is selected by the driver's lexical debug profile; the target
+factory still rejects non-None instrumentation. `Session`
 owns the optional source-debug consumer and finalizes it before initial module
 verification. Body lowering binds source functions and source constructors or
 destructors to the exact existing declaration/factory result, maps sealed MIR
@@ -4383,9 +4383,15 @@ independent verification recomputes those queries and mandatory cuts. Unknown
 membership or untracked storage does not acquire positive availability. A move
 followed by reinitialization cannot be bridged by a single readable range.
 The LLVM debug consumer builds scopes from those identities and exposes boundary
-events for existing storage, without requesting a new execution slot. Its shared
-body-emitter boundary registration is still pending integration; this component
-work is not activation or native-debugger acceptance. Expanded pack elements,
+events for existing storage, without requesting a new execution slot. The body
+emitter registers existing storage and consumes the verified range boundaries.
+Optimized-out locals retain named declarations without fabricated storage or
+value availability. Private execution symbols are not DWARF linkage names:
+source subprogram names remain visible in native backtraces without changing
+execution ABI names. Native macOS O0 breakpoint, stepping, scalar-local and
+backtrace evidence exists; O3 startup inlining currently loses the executing
+copy's source chain because generated entry glue has no debug carrier. This is
+an unresolved debugger gate, not an accepted optimized-debug boundary. Expanded pack elements,
 receivers and recovered optimized values still need their complete contracts
 and execution evidence.
 

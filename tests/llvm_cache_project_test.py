@@ -199,9 +199,15 @@ def main():
         (project / "src/main.gti").write_text(
             'extern "C" { int32_t cache_native_value(); }\n'
             "int main() { return cache_native_value(); }\n", encoding="utf-8")
-        foreign = invoke("build", "app", "--cxx", wrapper, expected=65)
-        assert "GTI-B0003" in foreign.stderr and "MirDefinitionKind.Declaration" in foreign.stderr
+        foreign = invoke("build", "app", "--cxx", wrapper, "--verbose")
+        assert "gti: cache miss " in foreign.stderr, foreign.stderr
+        run([output], project, expected=17, env=environment)
+        preserved = output.read_bytes()
+        output.unlink()
+        foreign_hit = invoke("build", "app", "--cxx", wrapper, "--verbose")
+        assert "gti: cache hit " in foreign_hit.stderr, foreign_hit.stderr
         assert output.read_bytes() == preserved
+        run([output], project, expected=17, env=environment)
         (project / "src/main.gti").write_text(
             "class Dynamic { public: virtual int value() { return 1; } }; "
             "int main() { Dynamic value{}; return value.value(); }\n",

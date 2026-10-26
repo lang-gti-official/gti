@@ -365,8 +365,10 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
   if (impl->optimized())
     flags |= llvm::DISubprogram::SPFlagOptimized;
   auto *file = impl->file(*source);
+  // GTI's private execution symbols are not source-language manglings. A
+  // linkage name makes debuggers prefer those opaque symbols to this name.
   function.setSubprogram(impl->builder.createFunction(
-      file, name, function.getName(), file, source->line,
+      file, name, {}, file, source->line,
       impl->builder.createSubroutineType(
           impl->builder.getOrCreateTypeArray(parameters)),
       source->line, llvm::DINode::FlagPrototyped, flags));
@@ -387,6 +389,40 @@ void DebugInfo::begin(MirBodyAddress address, llvm::Function &function) {
             : impl->builder.createLexicalBlock(scopes[scope.parent],
                                                impl->file(scope.source),
                                                scope.source.line, 0));
+  }
+  const std::vector<HirBindingId> *parameterBindings = nullptr;
+  if (address.kind == MirBodyKind::Function)
+    parameterBindings =
+        &program.mir().findFunctionInstance(address.owner)->parameterBindings;
+  else if (address.kind == MirBodyKind::Constructor)
+    parameterBindings = &program.mir()
+                             .findConstructorInstance(address.owner)
+                             ->parameterBindings;
+  for (const auto &local : lowered->sourceDebug.tables->locals) {
+    if (local.policy != MirSourceLocalPolicy::OptimizedOut)
+      continue;
+    const auto &declaration = local.declaration;
+    auto *scope = scopes.at(declaration.scope);
+    auto *file = impl->file(declaration.declaration);
+    unsigned parameter = 0;
+    if (declaration.parameter && parameterBindings) {
+      const auto found =
+          std::find(parameterBindings->begin(), parameterBindings->end(),
+                    declaration.binding);
+      if (found != parameterBindings->end())
+        parameter =
+            static_cast<unsigned>(found - parameterBindings->begin() + 1);
+    }
+    auto *variable = parameter ? impl->builder.createParameterVariable(
+                                     scope, declaration.name, parameter, file,
+                                     declaration.declaration.line,
+                                     impl->type(declaration.type), true)
+                               : impl->builder.createAutoVariable(
+                                     scope, declaration.name, file,
+                                     declaration.declaration.line,
+                                     impl->type(declaration.type), true);
+    impl->locals.emplace(std::pair{&function, declaration.id},
+                         Impl::Local{variable, nullptr});
   }
   const auto event = [&](MirDebugPoint point) -> Impl::Events & {
     return impl->events[{&function, point.block, point.instruction, point.after,

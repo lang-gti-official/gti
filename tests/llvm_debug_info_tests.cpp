@@ -4,6 +4,7 @@
 #include "../src/compiler/llvm/parameter_packs.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
+#include "gti/optimizer.h"
 
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/DebugProgramInstruction.h>
@@ -117,9 +118,15 @@ int main() { Node node{}; return inspect(node, 4) == 11 ? 0 : 1; }
   if (!declaration || wrong->getSubprogram())
     throw std::runtime_error("non-source declaration acquired a debug scope");
   const auto attributes = function->getAttributes();
+  const auto executionName = function->getName().str();
   debug.begin(address, *function);
   if (attributes != function->getAttributes())
     throw std::runtime_error("debug info added execution attributes");
+  if (function->getName() != executionName ||
+      function->getSubprogram()->getName() != "inspect" ||
+      !function->getSubprogram()->getLinkageName().empty())
+    throw std::runtime_error(
+        "source debugger names changed or exposed private execution symbols");
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", function));
   unsigned locals = 0, lines = 0;
@@ -581,6 +588,74 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
             << unavailable << " parameter unavailable controls passed\n";
 }
 
+void optimizedOutDeclarations() {
+  const auto frontend =
+      Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("optimized-debug.gti",
+                   "int probe(int input) { mut int local = input & 31; return "
+                   "local; }");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("invalid optimized debug fixture");
+  const auto optimized =
+      OptimizationPipeline().run({.hir = frontend.hir,
+                                  .mir = frontend.mir,
+                                  .level = OptimizationLevel::O3,
+                                  .target = TargetInfo::host()});
+  if (!optimized.valid())
+    throw std::runtime_error("invalid optimized debug MIR");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, optimized.sourceMir,
+      optimized.mir, optimized.report.transformations, TargetInfo::host());
+  if (!lowered.valid())
+    throw std::runtime_error("invalid optimized debug lowering");
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
+  if (!input)
+    throw std::runtime_error("invalid optimized debug snapshot");
+  Session session(*input,
+                  {.optimization = LlvmCodegenOptimization::Aggressive});
+  DebugInfo debug(session);
+  llvm::Function *selected = nullptr;
+  bool removed = false;
+  for (const auto &source : input->program().mir().functionInstances()) {
+    if (input->program()
+            .findFunctionDeclaration(source.declaration)
+            ->qualifiedName != "probe")
+      continue;
+    const MirBodyAddress address{MirBodyKind::Function, source.id};
+    const auto &tables =
+        *input->program().findBody(address)->sourceDebug.tables;
+    for (const auto &local : tables.locals)
+      if (local.declaration.name == "local")
+        removed =
+            local.policy == MirSourceLocalPolicy::OptimizedOut && !local.place;
+    selected = session.abi().declareFunction(source.id);
+    debug.begin(address, *selected);
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", selected));
+    if (selected->getReturnType()->isVoidTy())
+      ir.CreateRetVoid();
+    else
+      ir.CreateRet(llvm::Constant::getNullValue(selected->getReturnType()));
+  }
+  debug.finalize();
+  bool retained = false;
+  if (selected)
+    for (const auto *node : selected->getSubprogram()->getRetainedNodes())
+      if (const auto *local = llvm::dyn_cast<llvm::DILocalVariable>(node))
+        retained |= local->getName() == "local";
+  if (!removed || !retained ||
+      llvm::verifyModule(session.module(), &llvm::errs()))
+    throw std::runtime_error(
+        "optimized-out local lost its declaration or gained invalid metadata");
+  for (const auto &block : *selected)
+    for (const auto &instruction : block)
+      if (!instruction.getDbgRecordRange().empty() ||
+          llvm::isa<llvm::AllocaInst>(instruction))
+        throw std::runtime_error("optimized-out declaration fabricated value "
+                                 "storage or availability");
+}
+
 int main() {
   if (metadata("/checkout-one/debug.gti") !=
       metadata("/other-checkout/debug.gti"))
@@ -590,6 +665,7 @@ int main() {
   lifecycleIdentities();
   concreteParameterMetadata();
   generatedMetadataExclusion();
+  optimizedOutDeclarations();
   std::cout << "sealed debug identities, locations, locals, recursive layout, "
                "root relocation and inlined source/parameter chains passed\n";
 }

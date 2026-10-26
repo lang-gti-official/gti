@@ -1485,6 +1485,16 @@ private:
         break;
       }
     }
+    if (auto *debug = session.debugInfo())
+      if (const auto *body = session.program().findBody(address);
+          body && body->sourceDebug.tables)
+        for (const auto &local : body->sourceDebug.tables->locals) {
+          if (local.policy != MirSourceLocalPolicy::ExistingPlace ||
+              local.declaration.parameter)
+            continue;
+          const auto &place = *input.findPlace(local.place);
+          debug->local(ir, place, memory.address(place.id));
+        }
     for (const auto &record : input.failureRecords)
       channels.at(record.id) = ir.CreateAlloca(session.abi().failureChannel());
     // A constructor's entry Stored loans are the sealed field-publication
@@ -1530,8 +1540,11 @@ private:
     for (auto id : order) {
       current = input.findBlock(id);
       ir.SetInsertPoint(blocks.at(id));
+      if (auto *debug = session.debugInfo())
+        debug->point(ir, {id, 0, false, true});
       for (const auto &row : current->instructions) {
         if (auto *debug = session.debugInfo()) {
+          debug->point(ir, {id, row.id, false});
           debug->location(ir, address, id, row.id);
           // Selected move construction can consume a place without a Move
           // operand. End its value location, never its lexical scope.
@@ -1541,9 +1554,13 @@ private:
                 debug->endLocal(ir, *place);
         }
         instruction(row);
+        if (auto *debug = session.debugInfo())
+          debug->point(ir, {id, row.id, true});
       }
-      if (auto *debug = session.debugInfo())
+      if (auto *debug = session.debugInfo()) {
+        debug->point(ir, {id, 0, false});
         debug->location(ir, address, id, 0);
+      }
       terminator(*current);
     }
     for (const auto &block : input.blocks)
