@@ -9,6 +9,11 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.480.1 — Lambda argument formatting
+
+- Keep lambda captures adjacent to opening call parentheses (`start([]()...)`)
+  in the shared formatter, without changing comma, assignment or comment spacing.
+
 ## 0.478.0 - Native LLVM classes and storage
 
 - Extend the native backend with concrete ordinary classes, direct methods,
