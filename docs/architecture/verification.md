@@ -10102,6 +10102,20 @@ ownership or entry-signature inference.
 
 ### Native LLVM Admission Gates
 
+`llvm_cleanup_context_execution` compiles ordinary user classes through C++23 O3
+and LLVM O0-O3, checking normal cleanup, a first failure inside a destructor,
+an inherited secondary failure before callee-local destruction, and scope
+restoration before a later ordinary failure. `llvm_hosted_cleanup_execution`
+uses an explicitly inventoried alternative library to inject constructor and
+destructor failures into owned argument startup. Its exact drop order, original
+primary/secondary messages and source locations are checked on C++ O3 and LLVM
+O0/O3. Instrumented release-return markers additionally check completion after
+each successful string drop and immediate stopping at a secondary failure;
+removing those markers must fail the checker. They do not measure allocator
+calls or freed bytes. These are execution checks, not stock-library census receipts or evidence
+for the pending managed-worker transport. `runtime_failure_boundary` separately
+checks root/nested cleanup tokens, restoration and per-thread isolation.
+
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves
 as a comparator for its existing supported behavior. Retain valid differential

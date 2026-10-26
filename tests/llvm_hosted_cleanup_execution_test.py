@@ -31,7 +31,7 @@ def run(command, root, env, directory, label):
     return result
 
 
-def check(result, arguments, executable, library, failures):
+def check(result, arguments, executable, library, failures, markers=False):
     primary = "fixture-primary" in arguments and failures
     secondary = "fixture-secondary" in arguments and primary
     expected_code = 70 if primary else 0
@@ -55,6 +55,23 @@ def check(result, arguments, executable, library, failures):
     observed_drops = [line for line in lines if line.startswith("drop:") and line != "drop:"]
     if observed_drops != expected_drops:
         raise AssertionError(f"completed owners must drop once in reverse order: {observed_drops} != {expected_drops}")
+    release = "lease-release-returned"
+    if not markers and release in lines:
+        raise AssertionError("uninstrumented library emitted a release marker")
+    if markers:
+        # These trace source-level release returns, not allocator/free counts.
+        # Each non-failing string drop must finish its lease release; a second
+        # failure must stop before that release or any earlier owner's cleanup.
+        if secondary:
+            if lines[-1] != expected_drops[0] or release not in lines:
+                raise AssertionError("secondary cleanup continued past its failing destructor")
+        else:
+            for drop in expected_drops:
+                position = lines.index(drop)
+                if lines[position + 1:position + 2] != [release]:
+                    raise AssertionError(f"missing source release after {drop}")
+            if lines[-2:] != [release, release]:
+                raise AssertionError("last string/vector source releases did not complete")
     if primary:
         if lines.index("primary-trigger") > lines.index(expected_drops[0]):
             raise AssertionError("failure cleanup ran before the primary trigger")
@@ -129,7 +146,18 @@ def main():
                 ("secondary", ["prior-one", "fixture-secondary", "fixture-primary"]),
             ):
                 observed = run([str(executable), *arguments], root, env, endpoint, name)
-                check(observed, arguments, executable, library, failures)
+                check(observed, arguments, executable, library, failures, markers)
+                if markers:
+                    missing = subprocess.CompletedProcess(
+                        observed.args, observed.returncode,
+                        observed.stdout.replace("lease-release-returned\n", ""),
+                        observed.stderr)
+                    try:
+                        check(missing, arguments, executable, library, failures, markers)
+                    except AssertionError:
+                        pass
+                    else:
+                        raise AssertionError("missing source release markers were accepted")
                 print(f"{variant} {backend}/{level} {name}: passed", flush=True)
         if inventory(library) != transformed:
             raise AssertionError("alternative library changed during execution")

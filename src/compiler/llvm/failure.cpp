@@ -128,6 +128,24 @@ void Failures::terminate(llvm::IRBuilder<> &ir, llvm::Value *channel) {
       {record(ir, channel), origin(ir, channel), null, null});
   ir.CreateUnreachable();
 }
+llvm::Value *Failures::enterCleanup(llvm::IRBuilder<> &ir,
+                                    llvm::Value *primary) {
+  return ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::EnterFailureCleanup),
+      {record(ir, primary), origin(ir, primary)});
+}
+void Failures::leaveCleanup(llvm::IRBuilder<> &ir, llvm::Value *token) {
+  if (token)
+    ir.CreateCall(
+        declareRuntimeService(session, RuntimeService::LeaveFailureCleanup),
+        {token});
+}
+void Failures::checkIncomingCleanup(llvm::IRBuilder<> &ir,
+                                     llvm::Value *secondary) {
+  ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::CheckFailureCleanup),
+      {record(ir, secondary), origin(ir, secondary)});
+}
 void Failures::terminateCleanup(llvm::IRBuilder<> &ir, llvm::Value *primary,
                                 llvm::Value *secondary) {
   auto *type = session.abi().failureEmergency();

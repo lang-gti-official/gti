@@ -1743,6 +1743,14 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_hosted_execution_test.py"
             "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_hosted_execution PROPERTIES TIMEOUT 300)
+  add_test(NAME llvm_cleanup_context_execution
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_cleanup_context_execution_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_cleanup_context_execution PROPERTIES TIMEOUT 300)
+  add_test(NAME llvm_hosted_cleanup_execution
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_hosted_cleanup_execution_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}")
+  set_tests_properties(llvm_hosted_cleanup_execution PROPERTIES TIMEOUT 300)
   gti_register_llvm_evidence_manifest(
     llvm_hosted_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_hosted_execution_test.py"

@@ -197,6 +197,7 @@ private:
   llvm::Value *nativeArgumentCount = nullptr, *nativeArguments = nullptr;
   const MirBlock *current = nullptr;
   const MirInstruction *stage = nullptr;
+  llvm::Value *cleanupToken = nullptr;
 
   [[nodiscard]] StoredFieldPublicationPlan
   fieldPublication(const MirLoan &loan) const {
@@ -439,6 +440,21 @@ private:
   void jump(MirBlockId target, std::span<const MirOperand> arguments) {
     ir.CreateBr(edge(target, arguments));
   }
+  void failedOperation() {
+    const auto &term = current->terminator;
+    if (term.kind != MirTerminatorKind::Invoke || !term.failureRecord)
+      throw std::logic_error("LLVM failed operation lost its Invoke record");
+    failures.checkIncomingCleanup(ir, channels.at(term.failureRecord));
+    if (cleanupToken)
+      ir.CreateStore(failures.enterCleanup(ir, channels.at(term.failureRecord)),
+                     cleanupToken);
+    jump(term.elseTarget, term.elseArguments);
+  }
+  void leaveFailureCleanup() {
+    if (cleanupToken)
+      failures.leaveCleanup(
+          ir, ir.CreateLoad(session.layouts().pointer(), cleanupToken));
+  }
   void guard(llvm::Value *condition, DefinedFailureOutcome outcome) {
     bool authorized = false;
     for (std::size_t index = 0;
@@ -477,7 +493,7 @@ private:
     } else {
       failures.originate(ir, channels.at(term.failureRecord), *stage, outcome,
                          callerSite, callerArtifact);
-      jump(term.elseTarget, term.elseArguments);
+      failedOperation();
     }
     ir.SetInsertPoint(normal);
   }
@@ -563,7 +579,7 @@ private:
         llvm::BasicBlock::Create(session.context(), "call.failed", &function);
     ir.CreateCondBr(status, normal, failed);
     ir.SetInsertPoint(failed);
-    jump(current->terminator.elseTarget, current->terminator.elseArguments);
+    failedOperation();
     ir.SetInsertPoint(normal);
     return resultSlot ? load(resultSlot, callable.result) : nullptr;
   }
@@ -611,7 +627,7 @@ private:
                          instruction.intrinsic == IntrinsicKind::Panic
                              ? operand(instruction.operands.at(0))
                              : nullptr);
-      jump(term.elseTarget, term.elseArguments);
+      failedOperation();
       return nullptr;
     }
     if (const auto outcome =
@@ -706,7 +722,7 @@ private:
                                                   "memory.failed", &function);
           ir.CreateCondBr(emitted.status, normal, failed);
           ir.SetInsertPoint(failed);
-          jump(term.elseTarget, term.elseArguments);
+          failedOperation();
           ir.SetInsertPoint(normal);
         }
         return emitted.value;
@@ -919,7 +935,7 @@ private:
           llvm::BasicBlock::Create(session.context(), "call.failed", &function);
       ir.CreateCondBr(result, normal, failed);
       ir.SetInsertPoint(failed);
-      jump(current->terminator.elseTarget, current->terminator.elseArguments);
+      failedOperation();
       ir.SetInsertPoint(normal);
     }
     return constructed                     ? constructed
@@ -994,7 +1010,7 @@ private:
           llvm::BasicBlock::Create(session.context(), "drop.failed", &function);
       ir.CreateCondBr(status, done, bad);
       ir.SetInsertPoint(bad);
-      jump(term.elseTarget, term.elseArguments);
+      failedOperation();
     } else {
       ir.CreateBr(done);
     }
@@ -1456,7 +1472,7 @@ private:
           [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
             guard(condition, outcome);
           },
-          [&] { jump(term.elseTarget, term.elseArguments); });
+          [&] { failedOperation(); });
       break;
     }
     case MirInstructionKind::DrainThreadLocals: {
@@ -1602,9 +1618,11 @@ private:
       ir.CreateStore(ir.CreateLoad(session.abi().failureChannel(),
                                    channels.at(term.failureRecord)),
                      failureDestination);
+      leaveFailureCleanup();
       ir.CreateRet(ir.getFalse());
       break;
     case MirTerminatorKind::ContainFailure:
+      leaveFailureCleanup();
       failures.terminate(ir, channels.at(term.failureRecord));
       break;
     case MirTerminatorKind::TerminateCleanupFailure:
@@ -1634,6 +1652,14 @@ private:
     auto *entry =
         llvm::BasicBlock::Create(session.context(), "entry", &function);
     ir.SetInsertPoint(entry);
+    if (std::any_of(input.blocks.begin(), input.blocks.end(),
+                    [](const MirBlock &block) { return block.activeFailure != 0; })) {
+      // A defined-failure chain cannot rejoin normal execution. One token
+      // spans that invocation's cleanup, with no TLS work on successful paths.
+      cleanupToken = ir.CreateAlloca(session.layouts().pointer());
+      ir.CreateStore(llvm::ConstantPointerNull::get(session.layouts().pointer()),
+                     cleanupToken);
+    }
     for (const auto &block : input.blocks) {
       blocks.at(block.id) = llvm::BasicBlock::Create(
           session.context(), "bb" + std::to_string(block.id), &function);
