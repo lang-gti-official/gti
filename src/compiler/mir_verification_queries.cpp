@@ -567,6 +567,11 @@ bool generatedDefaultConstruction(const MirInstruction &instruction) {
          instruction.operands.empty() && instruction.parameterTypes.empty() &&
          instruction.constructorKind == ConstructorKind::Ordinary &&
          instruction.intrinsic == IntrinsicKind::None &&
+         instruction.operation == MirOperation::None &&
+         instruction.unsafeOperation == UnsafeOperationKind::None &&
+         !instruction.rawMemoryAccess &&
+         instruction.synchronization.kind ==
+             SynchronizationOperationKind::None &&
          instruction.dispatch == CallDispatch::Static &&
          instruction.callSite == 0 && !instruction.callableBoundary &&
          !instruction.callableInvocation &&

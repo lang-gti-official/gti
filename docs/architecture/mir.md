@@ -4153,7 +4153,12 @@ constructor and no missing initializer schedule. This shares the receiver
 producer query and preserves all materialization, call-loan and drop checks.
 The shared invocation-target query uses that same shape and concrete lifecycle
 proof to classify this producer as executing no source body, rather than an
-unknown call that could access unrelated persistent storage. A required explicit
+unknown call that could access unrelated persistent storage. Per-instruction
+and transitive summaries retain its initialization without inventing user-code,
+runtime, allocation or escape effects. An unproven construction boundary keeps
+conservative unknown memory/call/trap and escape effects; persistent-storage
+checking cannot dismiss it merely because the instruction is a construction.
+A required explicit
 or implicit field initializer, or inherited-base initializer, instead has an
 exact concrete constructor schedule whose transitive effects remain checked.
 Missing or forged generated-constructor authority cannot suppress those effects.

@@ -2476,7 +2476,14 @@ MirEffectTraits effects(const MirProgram &program, const MirBody &body,
           structuralInstructionEffects(program, instruction))
     return *structural;
   const ExactTargets targets = exactTargets(program, body, instruction);
-  if (targets.boundary || targets.addresses.empty()) {
+  if (targets.boundary)
+    return cleanupEffects(merge(effects(instruction), unknownEffects()),
+                          targets);
+  if (targets.addresses.empty()) {
+    if (mir_detail::generatedDefaultConstruction(instruction))
+      return cleanupEffects(
+          finishInstructionEffects(instruction, {.initializesValue = true}),
+          targets);
     return cleanupEffects(effects(instruction), targets);
   }
   MirEffectTraits result =
@@ -2712,9 +2719,14 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
         } else {
           const auto structural =
               structuralInstructionEffects(program, instruction);
-          const MirEffectTraits instructionEffects = cleanupEffects(
-              structural
-                  ? *structural
+          const bool bodylessConstruction =
+              !targets.boundary && targets.addresses.empty() &&
+              mir_detail::generatedDefaultConstruction(instruction);
+          const MirEffectTraits shell =
+              structural ? *structural
+              : bodylessConstruction
+                  ? finishInstructionEffects(instruction,
+                                             {.initializesValue = true})
                   : finishInstructionEffects(
                         instruction,
                         isMirStructuralValueDrop(program, instruction)
@@ -2723,11 +2735,15 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
                             : MirEffectTraits{},
                         isMirStructuralValueTransfer(program, instruction),
                         isMirStructuralFinalAddressConstruction(program,
-                                                                instruction)),
+                                                                instruction));
+          const MirEffectTraits instructionEffects = cleanupEffects(
+              !structural && targets.boundary ? merge(shell, unknownEffects())
+                                              : shell,
               targets);
           node.local.traits = merge(node.local.traits, instructionEffects);
           if (isInvocation(instruction) &&
-              (targets.boundary || targets.addresses.empty()) &&
+              (targets.boundary ||
+               (targets.addresses.empty() && !bodylessConstruction)) &&
               !isMirStructuralValueDrop(program, instruction) &&
               instruction.intrinsic == IntrinsicKind::None &&
               instruction.synchronization.kind ==

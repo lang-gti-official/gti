@@ -419,9 +419,110 @@ int main() { int32_t& borrowed = first; execute(); return borrowed; }
     expect(targets.boundary,
            "missing generated status or an omitted concrete schedule cannot "
            "claim an empty hidden target set");
+    const auto invalidEffects = lang::effects(forged, *body, *producer);
+    expect(
+        invalidEffects.readsUnknownMemory &&
+            invalidEffects.writesUnknownMemory && invalidEffects.allocates &&
+            invalidEffects.invokesRuntime && invalidEffects.invokesUserCode &&
+            invalidEffects.mayTrap && invalidEffects.maySynchronize &&
+            invalidEffects.initializesValue && !invalidEffects.speculatable &&
+            !invalidEffects.removableWhenUnused && !invalidEffects.reorderable,
+        "unproven construction keeps unknown effects and initialization");
     expect(!lang::verifyMirPersistentStorageEffects(forged).valid(),
            "forged default-construction authority cannot suppress a hidden "
            "persistent conflict");
+  }
+
+  const auto effectsFrontend = lang::Frontend().analyze(
+      "/tmp/gti-mir-persistent-storage/generated-construction-effects.gti", R"(
+struct Empty {};
+struct Factory {
+  Empty produce(int32_t& input) { return Empty(); }
+};
+int main() {
+  int32_t value = 7;
+  Factory factory = Factory();
+  Empty result = factory.produce(value);
+  return 0;
+}
+)");
+  expect(effectsFrontend.canGenerateCode(),
+         "the exact known-bodyless effect control is valid source");
+  if (!effectsFrontend.canGenerateCode())
+    return;
+  lang::HirFunctionInstanceId method = 0;
+  for (const auto &function : effectsFrontend.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "produce")
+      method = function.id;
+  const auto *methodBody = effectsFrontend.mir.findFunctionInstance(method);
+  lang::MirInstructionId construction = 0;
+  if (methodBody)
+    for (const auto &block : methodBody->body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == lang::MirInstructionKind::Construct &&
+            !instruction.constructorTarget)
+          construction = instruction.id;
+  expect(method != 0 && construction != 0,
+         "the effect control reaches its exact bodyless construction");
+  if (method == 0 || construction == 0)
+    return;
+  const auto conservative = [](const lang::MirEffectTraits &traits) {
+    return traits.readsUnknownMemory && traits.writesUnknownMemory &&
+           traits.allocates && traits.invokesRuntime &&
+           traits.invokesUserCode && traits.mayTrap && traits.maySynchronize &&
+           !traits.speculatable && !traits.removableWhenUnused &&
+           !traits.reorderable;
+  };
+  for (int mutation = -1; mutation != 6; ++mutation) {
+    auto program = effectsFrontend.mir;
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        program.findFunctionInstance(method));
+    lang::MirInstruction *producer = nullptr;
+    for (auto &block : function->body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == construction)
+          producer = &instruction;
+    if (!producer)
+      continue;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == producer->info.type) {
+        auto &owner = const_cast<lang::MirClassInstance &>(candidate);
+        if (mutation == 0)
+          owner.defaultConstructor = lang::SpecialMemberStatus::Deleted;
+        else if (mutation == 1)
+          owner.generatedDefaultRequiresSchedule = true;
+      }
+    if (mutation == 2)
+      producer->constructorTarget = 999999;
+    else if (mutation == 3)
+      producer->kind = lang::MirInstructionKind::Call;
+    else if (mutation == 4)
+      producer->rawMemoryAccess = true;
+    else if (mutation == 5)
+      producer->operation = lang::MirOperation::Add;
+    const auto direct = lang::effects(program, function->body, *producer);
+    const auto summaries = lang::deriveMirProgramEffectSummaries(program);
+    const auto &summary = summaries.functions.at(method - 1);
+    if (mutation == -1) {
+      expect(
+          !direct.readsUnknownMemory && !direct.writesUnknownMemory &&
+              !direct.allocates && !direct.invokesRuntime &&
+              !direct.invokesUserCode && !direct.mayTrap &&
+              direct.initializesValue && !summary.traits.readsUnknownMemory &&
+              !summary.traits.writesUnknownMemory &&
+              !summary.traits.allocates && !summary.traits.invokesRuntime &&
+              !summary.traits.invokesUserCode && !summary.traits.mayTrap &&
+              !summary.receiverEscapes &&
+              summary.argumentsEscape == std::vector<bool>{false},
+          "known bodyless effects and transitive escape summary stay precise");
+    } else {
+      expect(conservative(direct) && conservative(summary.traits) &&
+                 summary.receiverEscapes &&
+                 summary.argumentsEscape == std::vector<bool>{true},
+             "direct and transitive unknown-construction effects agree");
+      expect(!lang::verifyMirProgram(program).valid(),
+             "forged constructor effects never authorize backend execution");
+    }
   }
 }
 

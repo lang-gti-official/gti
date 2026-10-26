@@ -25892,13 +25892,15 @@ returnDefaultConstructionDefinition(const MirBody &body, MirValueId value) {
   const MirValue *record = body.findValue(value);
   const MirInstruction *definition =
       record == nullptr ? nullptr : findInstruction(body, record->definition);
-  if (definition == nullptr || definition->kind != MirInstructionKind::Call ||
+  const bool generated = definition != nullptr &&
+                         mir_detail::generatedDefaultConstruction(*definition);
+  const bool parameterDefault =
+      definition != nullptr && definition->kind == MirInstructionKind::Call &&
+      definition->intrinsic == IntrinsicKind::DefaultTypeParameterConstruction;
+  if (definition == nullptr || (!generated && !parameterDefault) ||
       definition->functionTarget || definition->constructorTarget ||
       definition->lambdaTarget || definition->bodyTarget ||
       definition->callableInvocation || definition->receiver ||
-      (definition->intrinsic != IntrinsicKind::None &&
-       definition->intrinsic !=
-           IntrinsicKind::DefaultTypeParameterConstruction) ||
       !definition->operands.empty() || !definition->callableArguments.empty() ||
       !definition->localFailureSites.empty() || !definition->result ||
       !hasUniqueReturnUse(body, value)) {
