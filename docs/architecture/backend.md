@@ -4384,6 +4384,161 @@ below; private ownership capabilities, inheritance/dispatch and payload-enum
 representations retain their later milestones. No public ordinary-class
 `sizeof` contract is invented.
 
+O-LLVM-10 prerequisite layout queries locate a unique physical base subobject
+by sealed concrete type identity, or a field's declaring subobject by its exact
+SymbolId. They preserve existing field/base indices and use the same target
+offsets; missing, repeated, ambiguous, foreign or out-of-range identities reject.
+The place layer follows those paths for inherited fields and MIR-authorized
+class-reference upcasts, evaluating the source address once and retaining
+readonly/mutable permission. An already-selected base view is not adjusted
+again, and no general downcast or source member/access/override lookup is
+introduced. Public admission remains independently restricted as described below.
+
+The private dispatch planner reuses a polymorphic state-bearing base's physical
+pointer for its derived class views; interfaces retain distinct locations.
+Locations carry exact physical-owner paths, including nonzero offsets when an
+interface precedes the state base. Slot profiles preserve the ancestor prefix
+and append only new sealed roots; aliases of one physical location share one
+table and one installation store. Isolated nonpure adjustment thunks use the
+central ABI channels and exact selected target, adjust from the pointer owner,
+and forward failure/result destinations without publishing success on failure.
+Infallible direct results use target-aligned storage (including boolean `i8`);
+address-only results reuse the destination. This is the current central
+planner's provisional transport, not resolution of C04. Pure-bearing tables
+and infallible terminal targets remain explicitly gated; no failure meaning,
+null callee, trap or unreachable continuation is invented.
+
+The body call path consumes the named function instance's sealed root-family
+rows and the receiver's exact concrete root identities. It loads the stable
+slot through its physical pointer owner and uses the central root ABI, including
+the original MIR Invoke failure edge and success-only result publication.
+Direct member calls project an exact base path; inverse receiver presentation
+is limited to the shared verified exact-receiver proof and readonly access.
+No source overload/override selection or general downcast is reconstructed.
+Private tests inspect this wiring independently of public admission.
+
+Native required-body closure also follows exact selected source implementations
+from required constructor active states, verified no-schedule generated default
+events and static class cleanup recipes, even if no source virtual call occurs.
+A shared pure enumeration reads the sealed active-class target rows and requires
+each Source target's sealed executable body; the normal transitive worklist then
+checks its helpers and generated dependencies. Unreachable classes and unrelated
+methods are not new roots. Existing unknown-call/native/thread conservative
+triggers remain unchanged. Production dispatch binds the actual immutable
+admission plan and checks the complete source-target demand before publishing
+tables or adjustment bodies; final unresolved-definition checking is not an
+admission substitute. Only the owning structural test can construct an unbound
+private inspection probe. Representation and source demand alone do not admit
+an executable polymorphic operation.
+
+Source constructor bodies consume the verified constructor dispatch-state
+schedule: entry activation when there is no state-bearing base, or activation
+on the exact `InitializeBase` normal continuation. Base calls use the selected
+constructor, physical destination and current shared ABI; a failed base never
+installs derived state. MIR retains all base/subobject rollback publication and
+ordering. Unstaged polymorphic source constructors remain unsupported.
+
+An exact generated ordinary default with no source schedule can initialize
+fresh metadata-only class/struct storage directly: no declared fields or
+state-bearing bases, only verified interface subobjects, and no foreign layout,
+union or compiler capability. The body emitter checks the exact construction
+result or selected targetless base initializer and its physical `This` base
+destination. It initializes the empty storage, installs all exact class tables,
+then arms its existing own-destructor state at publication. An empty base still
+precedes the original derived activation anchor and field-failure rollback;
+the whole derived destructor is not armed early. This path has no source
+callbacks and is never used for assignment or generated copy/move destinations.
+It does not eliminate interface headers or relax observable pure-phase gates.
+
+The body emitter represents a source-sealed declaration-only instance-field
+initializer row as storage only, with no value store, cleanup arming or reference
+address publication. Source/HIR coherence proves the resolved initializer is
+absent; the shared MIR predicate checks exact body, field and instruction shape.
+Actual constructor writes, mixed declaration defaults/explicit overrides and
+reference loans retain their independent contracts. This does not admit empty
+local/global/static-field/constructor initialization or imply zero filling.
+Unsupported conservative inventory uses, polymorphic dispatch and library/export
+admission retain their separate gates; private complete-body lowering is not
+public native-dispatch acceptance.
+
+Static destruction recipes install their selected class state before observable
+source/child cleanup only when an existing source-destructor active byte in the
+exact recipe tree witnesses remaining observable work. The predicate is not
+object liveness: entry is already guarded by a completed object/subobject
+obligation. It follows only sealed field/base/fixed-array addresses, with no
+owner/raw-pointer traversal. A cleared own flag cannot hide live children; an
+all-inert shell suppresses header stores but still performs its original guarded
+cleanup. Trivial children omitted by MIR do not acquire invented lifetime state.
+Array descriptor destructor IDs summarize leaf effects, not an array-owned
+active byte. Helpers short-circuit at the first armed source destructor and use
+bounded native loops rather than code expansion per array extent. Source order,
+first/secondary-failure handling and aggregate draining are unchanged.
+
+Polymorphic replacement cleanup remains explicitly rejected: its invocation
+context must establish the receiver-state policy without inferring destruction
+from reuse of a drop recipe. Dynamic owning cleanup,
+transfer/assignment-state preservation and observable pure phases
+remain separate obligations.
+
+The bounded public hierarchy profile uses exact per-operation admission proofs,
+not a class-wide enable bit. `NativeStaticDispatchStorage` describes ordinary
+hierarchies with passive scalar fields and fresh whole-local final destinations,
+selected base initialization and static cleanup. "Static" describes the
+representation, not permission for global or thread-local storage.
+`NativeBorrowedDispatchView` describes checked selected class/base/interface
+addresses with preserved access; `NativeVirtualInvocation` requires the exact
+sealed root, one evaluated receiver, physical adjustment and scalar-or-void
+signature through the existing shared ABI and MIR failure edge. Abstract
+interface metadata is not an executable pure active state.
+
+Admission first records excluded transfers and complete required-body demand,
+then independently preflights exact uses in an options/snapshot-bound temporary
+session without publishing functions, tables or IR. Successful and unsupported
+occurrences remain separate even within one body. Cleanup and generated-empty
+preflights are shared with emission, which retains its own validation.
+`PolymorphicTransfer` explicitly rejects class-value copies/moves, assignment,
+replacement, by-value arguments/returns, captures, containing wrappers/arrays,
+nonlocal destinations and ownership/callback/native/thread combinations.
+The shared inline-storage exclusion follows exact fields/state bases and array
+elements, stops at references/raw pointers, and fails closed on unknown or cyclic
+storage. It grants no layout or borrow authority. Body and memory-store guards
+also reject byte transport before identity or memcpy shortcuts; copying a
+checked borrowed address is not copying its object.
+
+`DestructorDispatchObservation` remains pending: cleanup order and a destructor
+owner do not establish a virtual active-class transition. Source cleanup and
+transitive helper observations through virtual calls or unresolved escapes
+reject until an approved backend-neutral lifecycle-dispatch contract exists.
+This is a missing prerequisite, not a permanent source-language prohibition.
+The native execution gate uses verified constructor states and explicit numeric
+destructor IDs to check cleanup order without asserting that missing rule.
+Pure active states, dynamic owners and replacement remain separately pending.
+Exact pure GTI requirements may supply ABI-only owner/root/signature metadata
+without an executable body. That per-use declaration witness does not excuse a
+demanded concrete definition or promote the declaration family. Nonpure targets
+and every reachable active state retain their independent preflight and demand.
+Reference initialization presents its selected address using the destination's
+exact class-reference type before storing it. The original complete-object loan
+is unchanged; loading and forwarding an already selected interface/base alias
+does not apply the offset again.
+`llvm_dispatch_execution` owns real public native O0/O3 execution, supported
+C++20/23 comparisons and artifact-preserving exclusions, including the shipped
+`examples/llvm/inheritance-and-dispatch.gti`. A nested mutable-reference chain
+has verified source/MIR and native execution evidence but both existing C++
+standards reject its complete text vocabulary. The gate records those failed
+comparators explicitly rather than counting them as execution passes; all
+supported alias/base/method cases retain both comparators. The self-contained
+failure-cleanup guard checks an exact digit trace and preserves only the original
+failure/code/source/exit. A deliberately wrong expected trace must produce a
+secondary failure and be rejected by the same positive assertion. Importing
+`std/panic` solely for that guard would pull unrelated pending library bodies
+into the unchanged conservative virtual-call closure, so it uses checked scalar
+arithmetic instead. Hosted/stdlib composition remains pending.
+Its representative loop fixture
+checks correctness only; it proves neither retained dynamic-call cost nor
+allocation counts. Both target ABIs and separate optimized cost acceptance
+remain obligations before O-LLVM-10 can complete.
+
 `Abi` centralizes signatures for definitions, calls and future adapters:
 
 | Private GTI ABI v1 shape | Transport |
@@ -4950,7 +5105,9 @@ synchronization, native-runtime, declaration/generated-item and startup enum to
 a named O-LLVM milestone. Entries distinguish pending lowering, implemented
 lowering and verified nonexecuting facts. Scalar execution entries name the
 `llvm_scalar_execution` gate; implemented places/text shapes name
-`llvm_place_execution`; class/TLS shapes name `llvm_class_execution`.
+`llvm_place_execution`; class/TLS shapes name `llvm_class_execution`. Only the
+three exact bounded hierarchy witnesses name `llvm_dispatch_execution`; the
+global class-base, polymorphic and virtual-call vocabulary remains pending.
 A nonexecuting permission/provenance fact can be inventoried without a
 runtime operation; a source-only query marked `MustBeAbsent` cannot silently
 be erased if it appears as executable input. Neither classification grants LLVM
@@ -4965,6 +5122,19 @@ shapes have distinct inventory keys, so a supported occurrence cannot hide an
 unsupported occurrence of the same enum in the same body. `MustBeAbsent` rules
 are never overridden, and callers cannot supply witnesses. These facts live in
 the backend admission plan, not in `LoweredProgram`.
+
+The conservative class-inventory use may consume `NativeClassStorage` only for
+ordinary `Class`/`Struct` instances passing the existing recursive concrete
+storage proof, with native-record, opaque, union and private-capability layouts
+explicitly excluded. This does not promote the global class-kind ledger row.
+Every required field type, trait, body, cleanup, call and generated dependency
+is still inventoried independently; representable storage does not certify an
+unsupported method. Rootless ordinary object generation can therefore retain
+and lower complete declaration inventory without admitting library/export
+program kinds or polymorphic storage. A focused object consumer validates one
+infallible signed-32-bit GTI/C scalar ABI equivalence through the shared planner
+before linking actual public-backend objects at O0/O3. It is not a stable C
+export or general library ABI promise.
 
 The compiled switches reject new unassigned enum members, including enums with
 no count sentinel. `input_fields.def` checks the decomposition of the central
@@ -5045,7 +5215,8 @@ types. Passive data without a use is metadata; ordered executable initialization
 is never omitted. Unknown indirect/virtual/callback/task dispatch,
 declaration-backed generated dependencies, embedding exports and rootless
 libraries conservatively select `AllExecutableBodies` and retain all generated
-items. Those shapes reject until their families are admitted. This is a bounded
+items. Each required use still needs its own admitted shape; a supported virtual
+call does not hide unrelated unsupported bodies in that conservative closure. This is a bounded
 omission proof, not speculative whole-program devirtualization.
 
 Admission scans the full inventory before returning a result. The first

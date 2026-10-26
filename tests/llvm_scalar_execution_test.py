@@ -387,7 +387,7 @@ def main() -> None:
             result = subprocess.run(command, **options)
             if result.returncode != expected['exit_code'] or expected['diagnostic'] not in result.stderr or output.read_bytes() != sentinel:
                 raise AssertionError(f'unsupported {name}: {result}')
-    print('LLVM scalar O0/O3 execution, C++ differential failures and unsupported-owner controls passed')
+    print('LLVM scalar O0/O3 execution, C++ differential failures and unsupported hierarchy-storage controls passed')
 
 
 if __name__ == '__main__':

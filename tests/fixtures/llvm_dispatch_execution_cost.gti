@@ -1,0 +1,41 @@
+// Representative direct and interface-call loops. The default gate checks
+// correctness only. Optimizers may devirtualize or fold this program; it is not
+// proof of a retained indirect call, allocation count or a runtime speedup.
+interface Step { int apply(int value); };
+
+class Offset : public Step {
+  int amount;
+public:
+  Offset(int amount) : amount(amount) {}
+  int apply(int value) override { return value + this.amount; }
+};
+
+class Seven : public Step {
+public:
+  int apply(int value) override { return value + 7; }
+};
+
+int direct_sum(int amount, int count) {
+  mut int total = 0;
+  for (mut int index = 0; index < count; index++) {
+    total += (index & 255) + amount;
+  }
+  return total;
+}
+
+int dynamic_sum(Step& step, int count) {
+  mut int total = 0;
+  for (mut int index = 0; index < count; index++) {
+    total += step.apply(index & 255);
+  }
+  return total;
+}
+
+int main() {
+  Offset offset{3};
+  Seven seven{};
+  int first = dynamic_sum(offset, 8192);
+  int second = dynamic_sum(seven, 8192);
+  if (first != 1069056 || second != 1101824) { return 1; }
+  return first == direct_sum(3, 8192) && second == direct_sum(7, 8192) ? 0 : 2;
+}

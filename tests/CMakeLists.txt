@@ -1624,6 +1624,10 @@ add_executable("gti_lowered_program_tests"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_contract_client.cpp")
 target_link_libraries("gti_lowered_program_tests" PRIVATE gti_compiler)
 add_test(NAME lowered_program_contract COMMAND gti_lowered_program_tests)
+add_executable(gti_llvm_dispatch_plan_tests llvm_dispatch_plan_tests.cpp)
+target_link_libraries(gti_llvm_dispatch_plan_tests PRIVATE gti_compiler)
+add_test(NAME llvm_dispatch_plans COMMAND gti_llvm_dispatch_plan_tests)
+set_tests_properties(llvm_dispatch_plans PROPERTIES TIMEOUT 120)
 add_executable(gti_field_symbol_identity_tests field_symbol_identity_tests.cpp)
 target_link_libraries(gti_field_symbol_identity_tests PRIVATE gti_compiler)
 add_test(NAME field_symbol_identity COMMAND gti_field_symbol_identity_tests)
@@ -1742,6 +1746,12 @@ if(Python3_Interpreter_FOUND)
   )
 endif()
 
+add_executable(gti_llvm_dispatch_layout_tests llvm_dispatch_layout_tests.cpp)
+target_include_directories(gti_llvm_dispatch_layout_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_dispatch_layout_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_dispatch_layout COMMAND gti_llvm_dispatch_layout_tests)
+set_tests_properties(llvm_dispatch_layout PROPERTIES TIMEOUT 120)
+
 add_executable(gti_runtime_execution_tests runtime_execution_tests.cpp)
 target_link_libraries(gti_runtime_execution_tests PRIVATE gti_runtime)
 add_test(NAME runtime_execution_boundary COMMAND gti_runtime_execution_tests)
@@ -1843,6 +1853,15 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(stdlib_surface_context_controls PROPERTIES TIMEOUT 180)
+
+  add_test(NAME llvm_dispatch_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_dispatch_execution_test.py"
+                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_dispatch_execution PROPERTIES TIMEOUT 1200)
+  gti_register_llvm_evidence_manifest(
+    llvm_dispatch_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_dispatch_execution_test.py"
+  )
   add_test(NAME llvm_placement_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_placement_execution_test.py"
                    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")

@@ -926,6 +926,13 @@ LLVM_COVERAGE_ENTRY(DirectReturn, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_scalar_exec
 LLVM_COVERAGE_ENTRY(BorrowReturn, 5, Pending, None, "reference return transports the selected address")
 LLVM_COVERAGE_ENTRY(OwnedReturn, 6, Pending, None, "owned value uses its exact publication and cleanup schedule")
 LLVM_COVERAGE_ENTRY(FailureReturn, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_scalar_execution", "scalars"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
+LLVM_COVERAGE_ENTRY(NativeStaticDispatchStorage, 10, LLVM_COVERAGE_IMPLEMENTED("llvm_dispatch_execution", "base-interface-adjustments"), None, "exact fresh final local or selected base object representation with ordinary scalar fields and demanded nonpure shared layout/ABI state; no static/global lifetime, foreign layout, compiler capability, union or owned transfer")
+LLVM_COVERAGE_ENTRY(NativeBorrowedDispatchView, 10, LLVM_COVERAGE_IMPLEMENTED("llvm_dispatch_execution", "mut-borrow-scalar-bool"), None, "sealed class/base/interface metadata with exact selected address, provenance and access; no owned transfer or executable pure state")
+LLVM_COVERAGE_ENTRY(NativeVirtualInvocation, 10, LLVM_COVERAGE_IMPLEMENTED("llvm_dispatch_execution", "scalar-virtual-invocation"), None, "exact sealed root, once-evaluated receiver, physical adjustment and scalar-or-void signature under the existing Invoke/result/failure contract")
+LLVM_COVERAGE_ENTRY(PolymorphicTransfer, 10, Pending, None, "polymorphic transfer, ownership and nonlocal or nested destinations, recursively through fields, arrays, wrappers, captures, by-value parameters and results, or replacement")
+LLVM_COVERAGE_ENTRY(NativeFreshHierarchyTransfer, 10, Pending, None, "experimental fresh-local scalar hierarchy copy/move prototype; public activation requires complete positive/negative execution proof, including destination static dispatch state and source lifetime commit")
+LLVM_COVERAGE_ENTRY(PureDispatchState, 10, Pending, None, "demanded pure dispatch state or unsupported terminal outcome requires its separately admitted execution policy")
+LLVM_COVERAGE_ENTRY(DestructorDispatchObservation, 10, Pending, None, "destructor or rollback observation through virtual calls, borrowed helpers or unresolved escapes requires an approved verified lifecycle-dispatch contract")
 LLVM_COVERAGE_END()
 
 LLVM_COVERAGE_BEGIN(ProgramStorageKind)

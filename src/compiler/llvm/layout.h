@@ -41,6 +41,28 @@ struct SharedOwnerLayout {
   unsigned blockAllocation = 1;
 };
 
+struct BaseSubobjectLayout {
+  SemanticType type = SemanticType::Unknown;
+  std::uint64_t offset = 0;
+  std::vector<unsigned> indices;
+  friend bool operator==(const BaseSubobjectLayout &,
+                         const BaseSubobjectLayout &) = default;
+};
+
+struct DispatchLocation {
+  BaseSubobjectLayout owner;
+  unsigned index = 0;
+  friend bool operator==(const DispatchLocation &,
+                         const DispatchLocation &) = default;
+};
+
+struct FieldSubobjectLayout {
+  BaseSubobjectLayout owner;
+  unsigned index = 0;
+  SemanticType type = SemanticType::Unknown;
+  std::uint64_t offset = 0;
+};
+
 // All layout queries, allocation sizes and ABI address-only choices share this
 // session-owned map. Opaque LLVM declarations are allocated before their
 // bodies.
@@ -60,6 +82,18 @@ public:
   activeIndex(const SemanticType &type) const;
   [[nodiscard]] unsigned captureIndex(const SemanticType &type,
                                       std::size_t capture) const;
+  [[nodiscard]] std::optional<unsigned>
+  dispatchIndex(const SemanticType &type) const;
+  [[nodiscard]] std::optional<DispatchLocation>
+  dispatchLocation(const SemanticType &type);
+  [[nodiscard]] const HirBaseInstance *
+  primaryBase(const SemanticType &type) const;
+  [[nodiscard]] BaseSubobjectLayout
+  basePath(const SemanticType &type, std::span<const HirClassInstanceId> path);
+  [[nodiscard]] BaseSubobjectLayout baseSubobject(const SemanticType &source,
+                                                  const SemanticType &target);
+  [[nodiscard]] FieldSubobjectLayout fieldSubobject(const SemanticType &source,
+                                                    SymbolId field);
 
 private:
   friend class Session;
@@ -91,6 +125,9 @@ private:
   std::map<HirLambdaId, LambdaRecord> lambdas;
   [[nodiscard]] TypeLayout record(const SemanticType &type);
   [[nodiscard]] TypeLayout closure(const SemanticType &type);
+  [[nodiscard]] BaseSubobjectLayout findSubobject(const SemanticType &source,
+                                                  HirClassInstanceId base,
+                                                  SymbolId field);
   [[nodiscard]] TypeLayout describe(llvm::Type *storage,
                                     bool addressOnly = false,
                                     llvm::Type *value = nullptr) const;

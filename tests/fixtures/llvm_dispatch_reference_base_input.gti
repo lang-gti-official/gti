@@ -1,0 +1,61 @@
+class ReferenceBase {
+  mut int value;
+public:
+  ReferenceBase(int& input, int divisor) : value(0) {
+    this.value = input / divisor;
+  }
+  ~ReferenceBase() {}
+  virtual int read() { return this.value; }
+};
+
+class ReferenceLeaf : public ReferenceBase {
+public:
+  ReferenceLeaf(int& input, int& other, int divisor) : ReferenceBase(input, divisor) {}
+};
+
+class ReadViaMutable : public ReferenceBase {
+public:
+  ReadViaMutable(mut int& input, int divisor) : ReferenceBase(input, divisor) {}
+};
+
+class LiteralReferenceLeaf : public ReferenceBase {
+public:
+  LiteralReferenceLeaf(int& input) : ReferenceBase(input, 1) {}
+};
+
+int next_divisor(mut int& counter) { counter += 1; return counter; }
+class EffectfulReferenceLeaf : public ReferenceBase {
+public:
+  // Valid source, but this checkpoint must not prepare the first reference
+  // across the later call without the complete ordered-input protocol.
+  EffectfulReferenceLeaf(mut int& input, mut int& counter)
+    : ReferenceBase(input, next_divisor(counter)) {}
+};
+
+class MutableBase {
+  mut int value;
+public:
+  MutableBase(mut int& input, int divisor) : value(0) {
+    input += 1;
+    this.value = input / divisor;
+  }
+  virtual int read() { return this.value; }
+};
+
+class MutableLeaf : public MutableBase {
+public:
+  MutableLeaf(mut int& input, int divisor) : MutableBase(input, divisor) {}
+};
+
+int main() {
+  mut int input = 3;
+  int other = 9;
+  ReferenceLeaf leaf{input, other, 1};
+  input = 4;
+  ReadViaMutable readonly{input, 1};
+  LiteralReferenceLeaf literal{input};
+  mut int counter = 0;
+  EffectfulReferenceLeaf pending{input, counter};
+  MutableLeaf editable{input, 1};
+  return leaf.read() + readonly.read() + literal.read() + pending.read() + editable.read() - 20;
+}

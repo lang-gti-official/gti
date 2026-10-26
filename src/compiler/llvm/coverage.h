@@ -79,6 +79,13 @@ enum class Shape {
   NativeSharedOwnership,
   NativeClassRawAccess,
   NativeObjectAddress,
+  NativeStaticDispatchStorage,
+  NativeBorrowedDispatchView,
+  NativeVirtualInvocation,
+  NativeFreshHierarchyTransfer,
+  PolymorphicTransfer,
+  PureDispatchState,
+  DestructorDispatchObservation,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

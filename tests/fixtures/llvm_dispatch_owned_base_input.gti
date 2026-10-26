@@ -1,0 +1,28 @@
+#include <std/utility>
+
+class Token {
+  int value = 7;
+public:
+  ~Token() {}
+  int read() { return this.value; }
+};
+
+class OwnerBase {
+  Token kept;
+public:
+  OwnerBase(int& input, Token value) : kept(std::move(value)) {}
+  virtual int read() { return this.kept.read(); }
+};
+
+class OwnerLeaf : public OwnerBase {
+public:
+  // The supported reference prefix must not partly stage an initializer whose
+  // later owning input still needs the separate prepared-parameter handoff.
+  OwnerLeaf(int& input, Token value) : OwnerBase(input, std::move(value)) {}
+};
+
+int main() {
+  int input = 1;
+  OwnerLeaf leaf{input, Token()};
+  return leaf.read() - 7;
+}

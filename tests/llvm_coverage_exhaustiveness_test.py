@@ -69,7 +69,22 @@ int main() {
             coverage.replace(", Pending, None,", ", Implemented, None,", 1))
         result = subprocess.run(command, capture_output=True, text=True, timeout=120)
         assert result.returncode != 0 and "Implemented" in result.stderr, result.stderr
-    print("LLVM enum, input-field and evidence-claim drift controls passed")
+        (temporary / "coverage.def").write_text(coverage)
+        (include / "mir.h").unlink()
+        for name, record in (("semantic_model.h", "ClassVirtualDispatch"),
+                             ("hir.h", "HirVirtualDispatch"),
+                             ("lowered_program.h", "LoweredClassInstance"),
+                             ("mir.h", "MirConstructorDispatchState"),
+                             ("lowered_program.h", "LoweredConstructorInstance")):
+            original = (root / "include/gti" / name).read_text()
+            marker = f"struct {record} {{"
+            assert marker in original, f"missing census record: {record}"
+            (include / name).write_text(original.replace(
+                marker, marker + " bool unclassifiedDispatchFact = false;", 1))
+            result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+            assert result.returncode != 0 and record in result.stderr, result.stderr
+            (include / name).unlink()
+    print("LLVM enum, input-field, dispatch-field and evidence-claim drift controls passed")
 
 
 if __name__ == "__main__":

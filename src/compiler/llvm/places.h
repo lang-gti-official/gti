@@ -68,6 +68,9 @@ private:
   [[nodiscard]] std::optional<std::size_t>
   packElement(const MirPlace &place) const;
   [[nodiscard]] Root root(const MirPlace &place);
+  [[nodiscard]] llvm::Value *baseAddress(llvm::Value *address,
+                                         SemanticType source,
+                                         const BaseSubobjectLayout &path);
   [[nodiscard]] llvm::Value *slot(llvm::Type *type);
 };
 

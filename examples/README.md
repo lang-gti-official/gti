@@ -5,6 +5,15 @@ overlapping union storage, concrete generic alternatives and scoped payload
 borrows. `llvm_payload_execution` runs it at LLVM O0-O3 against C++20/23 O3;
 it is outside the numbered full-language census like the other LLVM profiles.
 
+[`llvm/inheritance-and-dispatch.gti`](llvm/inheritance-and-dispatch.gti)
+demonstrates fresh local objects, a multilevel state base, multiple interfaces,
+and checked readonly/mutable borrowed calls without copying an object. Build with
+`gti examples/llvm/inheritance-and-dispatch.gti --backend llvm -O3 -o dispatch`.
+`llvm_dispatch_execution` owns its native O0/O3 checks. Owning polymorphism,
+object transfers and destructor-observed virtual phases remain pending. This
+bounded profile is outside the numbered full-language census and is not yet
+included by the shared preview example collector.
+
 [`llvm/immovable-placement.gti`](llvm/immovable-placement.gti) demonstrates
 deleted-copy/deleted-move objects constructed directly through fresh return
 chains and nested fixed-array elements, with stable addresses and exactly-once
