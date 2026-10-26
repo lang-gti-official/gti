@@ -9017,6 +9017,7 @@ mir_detail::debugEntryPlaces(const MirProgram &program,
     if (!place.projections.empty())
       continue;
     bool entry = false;
+    std::vector<MirDropObligationId> ownedElements;
     if (place.root == MirPlaceRootKind::This && function) {
       if (!owner || owner->id != *function->owner ||
           place.type != owner->type || !place.key ||
@@ -9037,26 +9038,59 @@ mir_detail::debugEntryPlaces(const MirProgram &program,
         reject("debug pack root is not a concrete source formal");
         return result;
       }
-      entry = std::all_of(place.type.arguments.begin(),
-                          place.type.arguments.end(), [&](const auto &type) {
-                            const auto traits =
-                                concreteMirTypeTraits(program, type);
-                            return traits &&
-                                   traits->drop == DropKind::Trivial &&
-                                   !traits->containsBorrowedState;
-                          });
+      entry = true;
+      for (std::size_t element = 0; element < place.type.arguments.size();
+           ++element) {
+        const auto &type = place.type.arguments[element];
+        const auto traits = concreteMirTypeTraits(program, type);
+        if (!traits || traits->containsBorrowedState) {
+          entry = false;
+          break;
+        }
+        if (traits->drop == DropKind::Trivial)
+          continue;
+        MirDropObligationId lifetime = 0;
+        for (const auto &drop : body->dropObligations) {
+          const auto *storage = body->findPlace(drop.place);
+          if (!storage || storage->root != MirPlaceRootKind::Binding ||
+              storage->binding != place.binding ||
+              storage->projections.size() != 1 ||
+              storage->projections.front().kind !=
+                  MirProjectionKind::PackElement ||
+              storage->projections.front().constantIndex != element ||
+              storage->type != type || !storage->initiallyAvailable ||
+              !storage->key || storage->key->domain != place.key->domain ||
+              storage->key->root != place.key->root ||
+              drop.kind != MirDropObligationKind::Binding ||
+              drop.binding != place.binding || drop.dropType.type != type ||
+              !drop.initiallyActive)
+            continue;
+          if (lifetime) {
+            entry = false;
+            break;
+          }
+          lifetime = drop.id;
+        }
+        if (!lifetime || !entry) {
+          entry = false;
+          break;
+        }
+        ownedElements.push_back(lifetime);
+      }
     }
     if (!entry)
       continue;
-    // These entries are caller-owned or trivial. Any independently retired
-    // overlapping lifetime needs its own flow observation before admission.
+    // Any overlapping lifetime must be an exact owned element observed by the
+    // canonical lifecycle replay. Caller-owned receivers have no such lifetime.
     for (const auto &drop : body->dropObligations) {
       const auto *storage = body->findPlace(drop.place);
       if (!storage || !storage->key || !place.key)
         continue;
       const auto relation = placeRelation(*storage->key, *place.key);
       if (relation.compatibleDomain &&
-          relation.relation != PlaceRelation::Disjoint)
+          relation.relation != PlaceRelation::Disjoint &&
+          std::find(ownedElements.begin(), ownedElements.end(), drop.id) ==
+              ownedElements.end())
         entry = false;
     }
     if (entry)

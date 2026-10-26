@@ -3740,8 +3740,11 @@ distinct points, including in an empty block.
 A separate private program-aware entry query checks concrete formal binding
 identities and aliases against the canonical parameter-role comparison, and
 ordinary member receiver roots against their exact concrete owner and access.
-Its initial observation coverage is non-borrowed-state member receivers and
-trivial concrete trailing packs without overlapping drop obligations. It still
+Its observation coverage includes non-borrowed-state member receivers and
+concrete trailing packs whose nontrivial elements each have an exact,
+entry-active Binding obligation. The read-only lifecycle replay requires every
+such obligation to remain available; retiring one element ends whole-pack
+readability. Unmatched overlapping obligations remain unproven. It still
 requires the ordinary ownership and loan-flow observations; body-only queries
 cannot invent these entry facts. Constructors do not acquire an initialized
 whole receiver at entry. Source-local range production consumes the exact
@@ -3749,8 +3752,11 @@ receiver and concrete-pack entries alongside canonical body observations.
 Lowered parameter fragments preserve the source pack binding, existing root,
 concrete element index and freshly derived readable interval. Independent
 verification reconstructs their complete inventory; missing or forged entries
-cannot become positive debug availability. Borrowed and nontrivial owning packs
-without a complete canonical per-element proof remain unproven.
+cannot become positive debug availability. Borrowed packs without a complete
+canonical referent/dependency proof remain unproven. A separately queried entry
+interval binds parameter metadata to the actual native entry block, ending
+before the first MIR instruction; generated prologue operations receive no
+invented source statements.
 The semantic receiver-state producer records its accepted concrete type and one
 implicit local with no binding, symbol or source token. HIR verifies that origin
 against its accepted producer; MIR joins it only to an existing, unprojected

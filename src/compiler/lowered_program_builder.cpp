@@ -1455,6 +1455,33 @@ lowered_detail::deriveSourceParameterFragments(
   if (!body || !body->sourceDebug.tables)
     return fragments;
   const auto &locals = body->sourceDebug.tables->locals;
+  const auto *entry = body->findBlock(body->entry);
+  if (entry && std::any_of(locals.begin(), locals.end(), [](const auto &local) {
+        return local.declaration.parameter &&
+               local.declaration.type.kind == SemanticType::TypePack;
+      })) {
+    const MirDebugPoint begin{entry->id, 0, false, true};
+    const MirDebugPoint end{
+        entry->id,
+        entry->instructions.empty() ? 0 : entry->instructions.front().id,
+        false};
+    std::vector<MirDebugAvailabilityRequest> requests;
+    for (const auto &local : locals)
+      if (local.declaration.parameter &&
+          local.declaration.type.kind == SemanticType::TypePack)
+        requests.push_back({local.declaration.id, begin});
+    const auto availability =
+        queryMirDebugAvailability(program, address, requests);
+    if (availability.verification.valid())
+      for (const auto &fact : availability.requested)
+        if (fact.readability == MirDebugReadability::DefinitelyReadable) {
+          const auto &local = locals.at(fact.request.local - 1);
+          for (std::size_t element = 0;
+               element < local.declaration.type.arguments.size(); ++element)
+            fragments.push_back(
+                {local.declaration.id, local.place, element, begin, end});
+        }
+  }
   for (const auto &range : readable) {
     const auto &local = locals.at(range.local - 1);
     const auto *place = body->findPlace(local.place);

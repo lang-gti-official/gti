@@ -22,6 +22,25 @@
 
 namespace lang::native_llvm {
 
+namespace {
+void salvageScalarDebugValue(llvm::DbgVariableRecord &record) {
+  if (!record.isDbgValue() || record.isKillLocation() || record.hasArgList())
+    return;
+  auto *operation = llvm::dyn_cast<llvm::BinaryOperator>(record.getValue());
+  if (!operation || !operation->getType()->isIntegerTy() ||
+      operation->getType()->getIntegerBitWidth() > 64)
+    return;
+  llvm::SmallVector<uint64_t, 8> operations;
+  llvm::SmallVector<llvm::Value *, 2> additional;
+  if (llvm::salvageDebugInfoImpl(*operation, 1, operations, additional))
+    llvm::salvageDebugInfoForDbgValues(*operation,
+#if LLVM_VERSION_MAJOR < 22
+                                       {},
+#endif
+                                       {&record});
+}
+} // namespace
+
 class DebugInfo::Impl {
 public:
   explicit Impl(Session &session)
@@ -354,8 +373,11 @@ public:
       lifecycleDefinitions;
   llvm::Function *hostedStartupDefinition = nullptr;
   struct Local {
-    llvm::DILocalVariable *variable = nullptr;
+    llvm::TypedTrackingMDRef<llvm::DILocalVariable> variable;
     llvm::Value *storage = nullptr;
+    Local() = default;
+    Local(llvm::DILocalVariable *declaration, llvm::Value *address)
+        : variable(declaration), storage(address) {}
   };
   std::map<llvm::Function *, std::vector<llvm::DILocalScope *>> scopes;
   std::map<std::pair<llvm::Function *, SourceLocalId>, Local> locals;
@@ -367,6 +389,10 @@ public:
   struct ParameterValue {
     llvm::Value *value = nullptr;
     bool address = false;
+    llvm::DbgVariableRecord *pendingEnd = nullptr;
+    llvm::BasicBlock *endBlock = nullptr;
+    std::size_t endInstructionCount = 0;
+    llvm::Instruction *endNextInstruction = nullptr;
   };
   std::map<std::tuple<llvm::Function *, SourceLocalId, std::size_t>,
            ParameterValue>
@@ -707,7 +733,7 @@ void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
     auto *scope = impl->scopes.at(function).at(declaration.scope);
     auto *file = declaration.receiver ? scope->getFile() : impl->file(source);
     entry->second.storage = storage;
-    entry->second.variable =
+    entry->second.variable.reset(
         parameter && declaration.parameter
             ? impl->builder.createParameterVariable(
                   scope, declaration.name, parameter, file, source.line,
@@ -716,7 +742,7 @@ void DebugInfo::local(llvm::IRBuilder<> &ir, const MirPlace &place,
                   scope, declaration.name, file, source.line,
                   impl->type(place.type), true,
                   declaration.receiver ? llvm::DINode::FlagArtificial
-                                       : llvm::DINode::FlagZero);
+                                       : llvm::DINode::FlagZero));
   }
 }
 
@@ -803,20 +829,44 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
     if (value == impl->parameterValues.end())
       throw std::logic_error(
           "LLVM debug pack has no registered physical parameter");
+    auto &physical = value->second;
+    // Distinct MIR points can lower to the same native position. Retain the
+    // latest availability there, without erasing a cut across any instruction.
+    if (begin && physical.pendingEnd &&
+        physical.endBlock == ir.GetInsertBlock() &&
+        physical.endInstructionCount == ir.GetInsertBlock()->size() &&
+        physical.endNextInstruction ==
+            (ir.GetInsertPoint() == ir.GetInsertBlock()->end()
+                 ? nullptr
+                 : &*ir.GetInsertPoint()))
+      physical.pendingEnd->eraseFromParent();
+    physical.pendingEnd = nullptr;
     auto *expression = impl->builder.createExpression(
         {llvm::dwarf::DW_OP_LLVM_fragment, offsets.at(element),
          offsets.at(element + 1) - offsets.at(element)});
     auto *location = llvm::DILocation::get(
         impl->session.context(), begin ? local.variable->getLine() : 0, 0,
         local.variable->getScope());
-    if (begin && value->second.address)
-      impl->builder.insertDeclare(value->second.value, local.variable,
-                                  expression, location, ir.GetInsertBlock());
-    else
-      impl->builder.insertDbgValueIntrinsic(
-          begin ? value->second.value
-                : llvm::PoisonValue::get(value->second.value->getType()),
+    if (begin && physical.address)
+      impl->builder.insertDeclare(physical.value, local.variable, expression,
+                                  location, ir.GetInsertBlock());
+    else {
+      auto inserted = impl->builder.insertDbgValueIntrinsic(
+          begin ? physical.value
+                : llvm::PoisonValue::get(physical.value->getType()),
           local.variable, expression, location, ir.GetInsertBlock());
+      if (!begin)
+        if (auto *record =
+                llvm::dyn_cast_if_present<llvm::DbgRecord *>(inserted)) {
+          physical.pendingEnd = llvm::cast<llvm::DbgVariableRecord>(record);
+          physical.endBlock = ir.GetInsertBlock();
+          physical.endInstructionCount = ir.GetInsertBlock()->size();
+          physical.endNextInstruction =
+              ir.GetInsertPoint() == ir.GetInsertBlock()->end()
+                  ? nullptr
+                  : &*ir.GetInsertPoint();
+        }
+    }
   };
   for (const auto &parameter : event->second.parameterEnds)
     if (std::find(event->second.parameterBegins.begin(),
@@ -906,21 +956,8 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
     // Preserve a pure scalar computation as a debugger expression before
     // machine lowering can discard its transient result. LLVM owns the bit
     // semantics; no load, call, new SSA value or execution use is introduced.
-    if (auto *operation = llvm::dyn_cast<llvm::BinaryOperator>(value);
-        operation && operation->getType()->isIntegerTy() &&
-        operation->getType()->getIntegerBitWidth() <= 64) {
-      llvm::SmallVector<uint64_t, 8> operations;
-      llvm::SmallVector<llvm::Value *, 2> additional;
-      if (llvm::salvageDebugInfoImpl(*operation, 1, operations, additional))
-        if (auto *record =
-                llvm::dyn_cast_if_present<llvm::DbgRecord *>(inserted))
-          llvm::salvageDebugInfoForDbgValues(
-              *operation,
-#if LLVM_VERSION_MAJOR < 22
-              {},
-#endif
-              {llvm::cast<llvm::DbgVariableRecord>(record)});
-    }
+    if (auto *record = llvm::dyn_cast_if_present<llvm::DbgRecord *>(inserted))
+      salvageScalarDebugValue(*llvm::cast<llvm::DbgVariableRecord>(record));
   }
 }
 
@@ -950,6 +987,8 @@ void DebugInfo::endLocal(llvm::IRBuilder<> &ir, const MirPlace &place) {
 
 void DebugInfo::finalize() {
   if (!impl->finalized) {
+    for (auto &[key, value] : impl->parameterValues)
+      value.pendingEnd = nullptr;
     impl->builder.finalize();
     impl->finalized = true;
   }

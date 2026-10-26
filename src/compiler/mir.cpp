@@ -1971,7 +1971,7 @@ struct MirPlaceObservationSink {
   std::map<PointKey, std::vector<std::size_t>> byPoint;
   std::vector<MirPlaceId> roots;
   std::vector<bool> covered;
-  std::vector<MirDropObligationId> lifetimes;
+  std::vector<std::vector<MirDropObligationId>> lifetimes;
   std::vector<std::pair<MirPlaceId, MirDropObligationId>> lifetimeRoots;
   std::vector<std::optional<bool>> initialized;
   std::vector<std::optional<bool>> readable;
@@ -1985,7 +1985,8 @@ struct MirPlaceObservationSink {
         lifetimes(requests.size()), initialized(requests.size()),
         readable(requests.size()), borrowReadable(requests.size()) {
     std::unordered_map<MirPlaceId, bool> coverage;
-    std::unordered_map<MirPlaceId, MirDropObligationId> lifetimeForPlace;
+    std::unordered_map<MirPlaceId, std::vector<MirDropObligationId>>
+        lifetimeForPlace;
     for (const auto &request : requests) {
       if (coverage.contains(request.place))
         continue;
@@ -2011,7 +2012,26 @@ struct MirPlaceObservationSink {
           lifetime = drop.id;
         }
       }
-      lifetimeForPlace.emplace(request.place, lifetime);
+      std::vector<MirDropObligationId> obligations;
+      if (lifetime)
+        obligations.push_back(lifetime);
+      // Program entry proof checks every concrete owned pack element against
+      // its exact entry-active obligation. Observe their conjunction without
+      // creating a separate ownership transfer rule for the grouped source
+      // local.
+      if (place && place->type.kind == SemanticType::TypePack &&
+          std::find(entries.begin(), entries.end(), request.place) !=
+              entries.end())
+        for (const auto &drop : body.dropObligations) {
+          const auto *storage = body.findPlace(drop.place);
+          if (!storage || !storage->key || !place->key)
+            continue;
+          const auto relation = placeRelation(*storage->key, *place->key);
+          if (relation.compatibleDomain &&
+              relation.relation != PlaceRelation::Disjoint)
+            obligations.push_back(drop.id);
+        }
+      lifetimeForPlace.emplace(request.place, std::move(obligations));
       coverage.try_emplace(
           request.place, place &&
                              (lifetime || tracksScalarInitialization(*place)) &&
@@ -2026,7 +2046,7 @@ struct MirPlaceObservationSink {
           if (const auto *destination =
                   body.findPlace(*instruction.destination))
             for (auto &[id, supported] : coverage)
-              if (supported && !lifetimeForPlace.at(id) &&
+              if (supported && lifetimeForPlace.at(id).empty() &&
                   sameScalarInitializationStorage(*body.findPlace(id),
                                                   *destination))
                 supported = false;
@@ -2046,8 +2066,8 @@ struct MirPlaceObservationSink {
       if (covered[i] &&
           std::find(roots.begin(), roots.end(), request.place) == roots.end()) {
         roots.push_back(request.place);
-        if (lifetimes[i])
-          lifetimeRoots.emplace_back(request.place, lifetimes[i]);
+        for (const auto lifetime : lifetimes[i])
+          lifetimeRoots.emplace_back(request.place, lifetime);
       }
     }
   }
@@ -2064,7 +2084,7 @@ struct MirPlaceObservationSink {
   void initialization(Point point, const std::vector<std::size_t> &storage,
                       const std::vector<bool> &state, bool entry = false) {
     at(point, [&](std::size_t index, MirPlaceId place) {
-      if (!lifetimes[index] && storage[place - 1] < state.size())
+      if (lifetimes[index].empty() && storage[place - 1] < state.size())
         initialized[index] = state[storage[place - 1]];
     });
     if (entry)
@@ -2076,9 +2096,13 @@ struct MirPlaceObservationSink {
   void lifecycle(Point point, std::span<const OwnershipStateSet> state,
                  bool cut = false) {
     at(point, [&](std::size_t index, MirPlaceId) {
-      if (lifetimes[index] && lifetimes[index] <= state.size())
-        initialized[index] =
-            state[lifetimes[index] - 1].definitely(OwnershipState::Available);
+      if (!lifetimes[index].empty())
+        initialized[index] = std::all_of(
+            lifetimes[index].begin(), lifetimes[index].end(),
+            [&](const auto lifetime) {
+              return lifetime <= state.size() &&
+                     state[lifetime - 1].definitely(OwnershipState::Available);
+            });
     });
     if (cut)
       for (const auto &[place, lifetime] : lifetimeRoots)

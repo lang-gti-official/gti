@@ -815,11 +815,40 @@ void hostedArtificialCarrier() {
     throw std::runtime_error("artificial startup metadata failed verification");
 }
 
-void productionValueEmission(const std::string &dumpPath,
-                             bool receiver = false) {
+enum class ProductionDebugCase { Scalar, Receiver, OwnedPack, Lexical };
+
+void productionValueEmission(
+    const std::string &dumpPath,
+    ProductionDebugCase selected = ProductionDebugCase::Scalar) {
+  const bool receiver = selected == ProductionDebugCase::Receiver;
+  const bool ownedPack = selected == ProductionDebugCase::OwnedPack;
+  const bool lexical = selected == ProductionDebugCase::Lexical;
   const auto frontend =
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
-          .analyze("value-emission.gti", receiver ? R"gti(
+          .analyze("value-emission.gti", lexical     ? R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+int32_t inspect(int32_t input) {
+  int32_t local = input ^ 13;
+  {
+    int32_t local = input ^ 15;
+    debug_checkpoint(local);
+  }
+  debug_checkpoint(local);
+  return local;
+}
+int main() { return inspect(debug_input()) == 9 ? 0 : 1; }
+)gti"
+                                         : ownedPack ? R"gti(
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+class Owner { public: int32_t value = 9; ~Owner() { debug_checkpoint(this.value); } };
+int32_t inspect<Args...>(int32_t input, Args... rest) {
+  mut int32_t local = input & 31;
+  debug_checkpoint(local);
+  return local;
+}
+int main() { return inspect(debug_input(), Owner(), Owner()) == 4 ? 0 : 1; }
+)gti"
+                                         : receiver  ? R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 class Receiver {
 public:
@@ -832,7 +861,7 @@ public:
 };
 int main() { Receiver owner{}; return owner.inspect(debug_input()) == 4 ? 0 : 1; }
 )gti"
-                                                  : R"gti(
+                                                     : R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 int32_t inspect(int32_t input) {
   mut int32_t local = input & 31;
@@ -857,6 +886,17 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
   if (!input)
     throw std::runtime_error("invalid production value snapshot");
+  if (ownedPack && !dumpPath.empty())
+    for (const auto &body : input->program().bodies())
+      if (body.sourceDebug.tables)
+        for (const auto &fragment : body.sourceDebug.tables->parameterFragments)
+          std::cout << "pack range " << body.identity.address.owner << ' '
+                    << fragment.begin.block << ':' << fragment.begin.instruction
+                    << ':' << fragment.begin.after << ':'
+                    << fragment.begin.blockEntry << " -> " << fragment.end.block
+                    << ':' << fragment.end.instruction << ':'
+                    << fragment.end.after << ':' << fragment.end.blockEntry
+                    << '\n';
   if (receiver && !dumpPath.empty())
     for (const auto &body : input->program().bodies()) {
       if (!body.sourceDebug.tables ||
@@ -886,6 +926,7 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   lowerScalarProgram(session, planLlvmAdmission(*input));
   lowerScalarProgram(plain, planLlvmAdmission(*input));
   unsigned values = 0, receivers = 0, expressions = 0, fragments = 0;
+  unsigned packValues = 0, packEnds = 0, entryPacks = 0;
   for (const auto &function : session.module()) {
     const auto *other = plain.module().getFunction(function.getName());
     if (!other || function.size() != other->size() ||
@@ -912,7 +953,23 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
         if (instruction.getOpcode() != otherInstruction->getOpcode())
           throw std::runtime_error(
               "debug value events changed execution opcodes");
+        std::vector<const llvm::DIExpression *> packKills;
         for (const auto &record : instruction.getDbgRecordRange()) {
+          if (const auto *variable =
+                  llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
+              variable && variable->getVariable()->getName() == "rest") {
+            if (variable->isKillLocation()) {
+              ++packEnds;
+              packKills.push_back(variable->getExpression());
+            } else {
+              ++packValues;
+              entryPacks += &block == &function.getEntryBlock();
+              if (std::find(packKills.begin(), packKills.end(),
+                            variable->getExpression()) != packKills.end())
+                throw std::runtime_error("pack restoration kept an obsolete "
+                                         "end at the same native position");
+            }
+          }
           if (const auto *variable =
                   llvm::dyn_cast<llvm::DbgVariableRecord>(&record);
               variable && variable->isDbgValue() &&
@@ -920,7 +977,8 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
               variable->getVariable()->getName() == "local") {
             ++values;
             for (const auto &operation : variable->getExpression()->expr_ops())
-              if (operation.getOp() == llvm::dwarf::DW_OP_and)
+              if (operation.getOp() == llvm::dwarf::DW_OP_and ||
+                  (lexical && operation.getOp() == llvm::dwarf::DW_OP_xor))
                 ++expressions;
           }
           if (const auto *variable =
@@ -943,6 +1001,9 @@ int main() { return inspect(debug_input()) == 4 ? 0 : 1; }
   if (!values)
     throw std::runtime_error(
         "production local has no existing SSA value metadata");
+  if (ownedPack && (!packValues || !packEnds || !entryPacks))
+    throw std::runtime_error(
+        "owned pack lost its entry location or genuine availability cuts");
   if (receiver && !receivers)
     throw std::runtime_error(
         "production receiver has no existing address metadata");
@@ -1040,7 +1101,12 @@ int main(int argc, char **argv) {
   optimizedOutDeclarations();
   hostedArtificialCarrier();
   productionValueEmission(argc > 1 ? argv[1] : "");
-  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".receiver.ll" : "", true);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".receiver.ll" : "",
+                          ProductionDebugCase::Receiver);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".pack.ll" : "",
+                          ProductionDebugCase::OwnedPack);
+  productionValueEmission(argc > 1 ? std::string(argv[1]) + ".lexical.ll" : "",
+                          ProductionDebugCase::Lexical);
   std::cout << "sealed debug identities, locations, locals, recursive layout, "
                "root relocation and inlined source/parameter chains passed\n";
 }

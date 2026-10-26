@@ -4429,11 +4429,20 @@ source parameter and a logical DWARF group with indexed, exactly typed members.
 This group is not a contiguous GTI object or a new ABI representation. Its
 fragments read existing physical arguments through the canonical parameter and
 ABI plans; direct lanes use values and indirect lanes use their existing
-addresses. Readability comes only from sealed canonical MIR intervals. Empty
+addresses. Exact MIR entry intervals are emitted at the initialized native
+entry before its branch, allowing unused argument locations without artificial
+execution uses. Readability comes only from sealed canonical MIR intervals.
+Availability ends and restorations at one native insertion position coalesce;
+an intervening emitted instruction preserves the cut. This prevents static
+address declarations from losing a restored location during optimization.
+Owning packs require all exact element lifetimes to remain available. Empty
 packs retain a declaration without fabricated storage or values. Foreign
 arguments and missing physical registrations reject. Broader optimized
 representations and the full two-host failure/callback debugger matrix remain
-open.
+open. The optimized lexical-shadowing probe also remains a failing gate:
+verified inner-local facts reach LLVM, but machine lowering does not retain a
+usable location at the inner checkpoint. Its exact fixture is retained; an
+unavailable or outer-variable result is not accepted as the inner value.
 Managed Linux debugger checks stage distribution LLDB22 and its missing
 dependencies under the run's build directory, retaining package and loaded-file
 hashes without installing host packages. LLDB21 reaches source breakpoints but

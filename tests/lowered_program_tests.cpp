@@ -1889,6 +1889,94 @@ int main() { return first(7) + first(7, 9, 11) == 14 ? 0 : 1; }
   }
 }
 
+void testDebugOwnedPackLifetimes() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-owned-pack.gti", R"gti(
+class Owner { public: int value = 9; ~Owner() {} };
+int first<Args...>(int input, Args... rest) { return input; }
+int main() { return first(7, Owner(), Owner()) == 7 ? 0 : 1; }
+)gti");
+  expect(frontend.canGenerateCode(), "owned pack fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "owned pack availability seals");
+  if (!built.valid())
+    return;
+  unsigned fragments = 0, retired = 0;
+  for (const auto &body : built.program->bodies())
+    if (body.sourceDebug.tables)
+      fragments += body.sourceDebug.tables->parameterFragments.size();
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &place : body.places) {
+      if (place.type.kind != lang::SemanticType::TypePack ||
+          !place.projections.empty())
+        continue;
+      const lang::MirBodyAddress address{lang::MirBodyKind::Function,
+                                         function.id};
+      using Query = lang::mir_detail::MirExistingPlaceQuery;
+      using State = lang::mir_detail::MirDebugReadability;
+      const std::vector<Query> entry{{place.id, {body.entry, 0, false, true}}};
+      const auto initial = lang::mir_detail::verifyMirBodyWithPlaceQueries(
+          frontend.mir, address, entry);
+      expect(initial.verification.valid() &&
+                 initial.requested.front().readability ==
+                     State::DefinitelyReadable,
+             "owned pack entry observes all canonical element lifetimes");
+      unsigned forgedLifetimes = 0;
+      for (const auto &drop : body.dropObligations) {
+        const auto *storage = body.findPlace(drop.place);
+        if (!storage || storage->binding != place.binding ||
+            !drop.initiallyActive)
+          continue;
+        auto forged = frontend.mir;
+        auto *changed = const_cast<lang::MirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        changed->body.dropObligations.at(drop.id - 1).initiallyActive = false;
+        const auto unavailable =
+            lang::mir_detail::verifyMirBodyWithPlaceQueries(forged, address,
+                                                            entry);
+        expect(!unavailable.verification.valid() ||
+                   unavailable.requested.front().readability !=
+                       State::DefinitelyReadable,
+               "one absent entry lifetime cannot publish the owning pack");
+        ++forgedLifetimes;
+      }
+      expect(forgedLifetimes == 2,
+             "each owned pack lifetime has an independent negative control");
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions)
+          for (const auto &event : instruction.lifecycle) {
+            if (event.kind != lang::MirLifecycleEventKind::Drop ||
+                !event.source)
+              continue;
+            const auto &drop = body.dropObligations.at(event.source - 1);
+            const auto *storage = body.findPlace(drop.place);
+            if (!storage || storage->binding != place.binding)
+              continue;
+            const std::vector<Query> after{
+                {place.id, {block.id, instruction.id, true}}};
+            const auto unavailable =
+                lang::mir_detail::verifyMirBodyWithPlaceQueries(frontend.mir,
+                                                                address, after);
+            expect(unavailable.verification.valid() &&
+                       unavailable.requested.front().readability ==
+                           State::Unavailable,
+                   "retiring one pack element makes the grouped value "
+                   "unavailable");
+            ++retired;
+          }
+    }
+  }
+  expect(fragments && retired,
+         "owned pack fragments and lifetime cuts were exercised");
+}
+
 void testDebugValueEvents() {
   const auto frontend =
       lang::Frontend(
@@ -3225,6 +3313,7 @@ int main() {
   testDebugLifetimeAndBorrowAvailability();
   testDebugConcreteEntryAvailability();
   testDebugPackFragments();
+  testDebugOwnedPackLifetimes();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();

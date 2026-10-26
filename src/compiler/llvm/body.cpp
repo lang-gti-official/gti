@@ -1525,6 +1525,8 @@ private:
       ir.CreateStore(ir.getInt1(obligation.initiallyActive),
                      live.at(obligation.id));
     }
+    if (auto *debug = session.debugInfo())
+      debug->point(ir, {input.entry, 0, false, true}, values);
     ir.CreateBr(blocks.at(input.entry));
 
     // RPO ensures ordinary SSA definitions precede their uses. Loop headers
@@ -1547,7 +1549,7 @@ private:
     for (auto id : order) {
       current = input.findBlock(id);
       ir.SetInsertPoint(blocks.at(id));
-      if (auto *debug = session.debugInfo())
+      if (auto *debug = session.debugInfo(); debug && id != input.entry)
         debug->point(ir, {id, 0, false, true}, values);
       for (const auto &row : current->instructions) {
         if (auto *debug = session.debugInfo()) {
