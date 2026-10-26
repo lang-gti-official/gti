@@ -296,7 +296,7 @@ lang::VerifiedLoweredProgram lower(std::string_view source,
   }
   auto build = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, lang::TargetInfo::host(), true);
+      frontend.mir, {}, lang::TargetInfo::host());
   if (!build.valid())
     throw std::runtime_error(build.issues.front().detail);
   std::vector<lang::LoweredProgramIssue> issues;
@@ -1729,7 +1729,7 @@ int main() { Message message = Message::item(E::first); return read(message) == 
       enums.front().underlyingType = SemanticType::Unknown;
     auto build = LoweredProgramBuilder().build(
         frontend.program, frontend.semantics, frontend.hir, mir, mir, {},
-        TargetInfo::host(), true);
+        TargetInfo::host());
     bool rejected = !build.valid();
     if (build.valid()) {
       std::vector<LoweredProgramIssue> issues;
@@ -1779,7 +1779,7 @@ int main() { Message message = Message::item(E::first); return read(message) == 
          "conservative relay effect does not change verified loan authority");
   auto rawBuild = LoweredProgramBuilder().build(
       rawFrontend.program, rawFrontend.semantics, rawFrontend.hir, rawMir,
-      rawMir, {}, TargetInfo::host(), true);
+      rawMir, {}, TargetInfo::host());
   if (!rawBuild.valid())
     throw std::runtime_error(rawBuild.issues.front().detail);
   std::vector<LoweredProgramIssue> issues;
@@ -1951,7 +1951,7 @@ void testNonExecutingEvidence() {
   expect(forged, "fixture must expose one lowered exact Identity operation");
   auto build = lang::LoweredProgramBuilder().build(
       frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, lang::TargetInfo::host(), true);
+      frontend.mir, {}, lang::TargetInfo::host());
   expect(build.valid(),
          "the current core MIR verifier delegates this HIR-only absence "
          "boundary to sealed backend admission");
@@ -2192,6 +2192,32 @@ int main() { int left[2] = {1, 2}; int right[2] = {1, 2}; return left == right ?
                  "Shape.ArrayValueComparison",
          "scalar equality admission cannot hide an unimplemented array "
          "comparison");
+  const auto pointerArrays = lang::planLlvmAdmission(lower(R"(
+int main() {
+  mut int value = 1;
+  int* pointers[2][2] = {{&value, nullptr}, {nullptr, &value}};
+  int* copy[2][2] = pointers;
+  return copy[1][1] == &value ? 0 : 1;
+}
+)"));
+  expect(pointerArrays.admitted(), "raw pointer arrays use passive value storage");
+  bool pointerAggregate = false;
+  for (const auto &use : pointerArrays.requirements())
+    if (use.entry->family == "MirOperation" && use.entry->name == "Aggregate") {
+      pointerAggregate = true;
+      expect(use.entry->state == lang::LlvmCoverageState::Pending &&
+                 use.implementedShape &&
+                 use.implementedShape->name == "PassiveArrayValue",
+             "pointer leaves refine arrays without admitting all aggregates");
+    }
+  expect(pointerAggregate, "pointer array fixture must construct an aggregate");
+  const auto pointerArrayEquality = lang::planLlvmAdmission(lower(R"(
+int main() { int* left[2] = {}; int* right[2] = {}; return left == right ? 0 : 1; }
+)"));
+  expect(!pointerArrayEquality.admitted() &&
+             pointerArrayEquality.firstUnsupported()->entry->key() ==
+                 "Shape.ArrayValueComparison",
+         "pointer array storage does not invent element comparison semantics");
   for (const auto &use : arrays.requirements())
     if (use.entry->family == "MirOperation" && use.entry->name == "Aggregate")
       expect(use.entry->state == lang::LlvmCoverageState::Pending &&
@@ -2430,7 +2456,7 @@ int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return
              "place");
     const auto mirrored = lang::LoweredProgramBuilder().build(
         frontend.program, frontend.semantics, frontend.hir, mir, mir, {},
-        lang::TargetInfo::host(), true);
+        lang::TargetInfo::host());
     expect(
         !mirrored.valid(),
         "mirrored malformed snapshots cannot enter verified lowered sealing");
@@ -2438,7 +2464,7 @@ int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return
     if (!rejected) {
       auto build = lang::LoweredProgramBuilder().build(
           frontend.program, frontend.semantics, frontend.hir, mir, mir, {},
-          lang::TargetInfo::host(), true);
+          lang::TargetInfo::host());
       rejected = !build.valid();
       rejectedBy = "LoweredProgramBuilder";
       if (!build.valid() && !build.issues.empty())
@@ -2798,7 +2824,7 @@ void accept(Outer& value) {}
   if (owned.canGenerateCode()) {
     const auto built = LoweredProgramBuilder().build(
         owned.program, owned.semantics, owned.hir, owned.mir, owned.mir, {},
-        TargetInfo::host(), true);
+        TargetInfo::host());
     std::vector<LoweredProgramIssue> issues;
     const auto verified = built.valid()
                               ? verifiedLoweredProgram(*built.program, issues)
@@ -2824,13 +2850,13 @@ void accept(Outer& value) {}
   const auto frontend =
       Frontend({.program = std::move(request)})
           .analyze("llvm-conservative-library.gti",
-                   "int inspect(int value) { return value; }");
+                   "int inspect(int value) { return value + 1; }");
   expect(frontend.canGenerateCode(),
          "library negative control has valid semantic export facts");
   if (frontend.canGenerateCode()) {
     const auto built = LoweredProgramBuilder().build(
         frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-        frontend.mir, {}, TargetInfo::host(), true);
+        frontend.mir, {}, TargetInfo::host());
     std::vector<LoweredProgramIssue> issues;
     const auto verified = built.valid()
                               ? verifiedLoweredProgram(*built.program, issues)
@@ -2841,8 +2867,8 @@ void accept(Outer& value) {}
       const auto library = planLlvmAdmission(*verified);
       expect(!library.admitted() && has(library, "ProgramKind", "Library") &&
                  has(library, "Shape", "EmbeddingExports"),
-             "rootless ordinary object storage does not admit library/export "
-             "program kinds");
+             "infallible embedding does not admit a checked-add export's "
+             "defined-failure transport");
       try {
         static_cast<void>(LlvmBackend().generate(*built.program));
         expect(false, "pending library/export plans cannot return a public "

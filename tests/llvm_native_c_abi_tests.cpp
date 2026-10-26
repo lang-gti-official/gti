@@ -804,6 +804,132 @@ void emitCountedTextProbes(Session &session) {
           "counted C oracle must include unrelated and actual runtime clients");
 }
 
+void checkNativeResultInputs(Session &session) {
+  const auto &program = session.program().mir();
+  const auto &target = session.program().target();
+  unsigned inputs = 0;
+  for (const auto &function : program.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (!nativeCResultInputContract(program, target, function.body, stage))
+          continue;
+        ++inputs;
+        const auto malformed = [&](const auto &mutate) {
+          auto body = function.body;
+          MirInstruction *selected = nullptr;
+          for (auto &block : body.blocks)
+            for (auto &candidate : block.instructions)
+              if (candidate.id == stage.id)
+                selected = &candidate;
+          require(selected != nullptr, "missing cloned native result input");
+          mutate(body, *selected);
+          require(!nativeCResultInputContract(program, target, body, *selected),
+                  "mutated native result input must reject");
+        };
+        malformed([](auto &, auto &value) { value.callSite = 0; });
+        malformed([](auto &, auto &value) { value.callInputIndex += 100; });
+        malformed([](auto &, auto &value) { value.hirValue = 0; });
+        malformed([](auto &, auto &value) { value.rawMemoryAccess = true; });
+        malformed([](auto &, auto &value) {
+          value.unsafeOperation = UnsafeOperationKind::RawDereference;
+        });
+        malformed([](auto &, auto &value) {
+          value.callInputKind = HirCallInputKind::MutableBorrow;
+        });
+        malformed([](auto &, auto &value) { value.operands.front().value = 0; });
+        malformed([](auto &body, auto &value) {
+          for (auto &block : body.blocks)
+            for (auto &producer : block.instructions)
+              if (producer.result == value.operands.front().value)
+                producer.hirValue = 0;
+        });
+        malformed([](auto &body, auto &value) {
+          for (auto &block : body.blocks)
+            for (auto &producer : block.instructions)
+              if (producer.result == value.operands.front().value)
+                producer.nativeCalleeType.reset();
+        });
+        malformed([](auto &body, auto &value) {
+          for (auto &block : body.blocks)
+            for (auto &call : block.instructions)
+              if (call.kind == MirInstructionKind::Call &&
+                  call.callSite == value.callSite)
+                call.operands[value.callInputIndex].value = 0;
+        });
+      }
+  require(inputs != 0, "native result fixture needs exact staged C results");
+}
+
+void checkFunctionBorrows(Session &session) {
+  const auto &program = session.program().mir();
+  const auto &target = session.program().target();
+  unsigned reads = 0, writes = 0;
+  for (const auto &function : program.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (!nativeCFunctionBorrowInputContract(program, target, function.body,
+                                                stage))
+          continue;
+        (stage.callInputKind == HirCallInputKind::MutableBorrow ? writes : reads)++;
+        const auto malformed = [&](const auto &mutate) {
+          auto body = function.body;
+          MirInstruction *selected = nullptr;
+          for (auto &block : body.blocks)
+            for (auto &candidate : block.instructions)
+              if (candidate.id == stage.id)
+                selected = &candidate;
+          require(selected != nullptr, "missing cloned native borrow input");
+          mutate(body, *selected);
+          require(!nativeCFunctionBorrowInputContract(program, target, body,
+                                                      *selected),
+                  "mutated native function borrow must reject");
+        };
+        malformed([](auto &, auto &value) { value.callSite = 0; });
+        malformed([](auto &, auto &value) { value.callInputIndex += 100; });
+        malformed([](auto &, auto &value) {
+          value.callInputRole = MirCallInputRole::Receiver;
+        });
+        malformed([](auto &, auto &value) {
+          value.callInputKind = HirCallInputKind::Value;
+        });
+        malformed([](auto &, auto &value) { value.rawMemoryAccess = true; });
+        malformed([](auto &, auto &value) {
+          value.unsafeOperation = UnsafeOperationKind::ForeignPointerCall;
+        });
+        malformed([](auto &, auto &value) {
+          value.operands.front().kind = MirOperandKind::Copy;
+        });
+        malformed([](auto &, auto &value) { value.operands.front().place = 0; });
+        malformed([](auto &, auto &value) {
+          value.info.type.arguments.front() = SemanticType::NativeFunction;
+        });
+        malformed([](auto &body, auto &value) {
+          for (auto &result : body.values)
+            if (result.id == *value.result)
+              result.definition = 0;
+        });
+        malformed([](auto &body, auto &value) {
+          for (auto &block : body.blocks)
+            for (auto &call : block.instructions)
+              if (call.kind == MirInstructionKind::Call &&
+                  call.callSite == value.callSite)
+                call.operands[value.callInputIndex].value = 0;
+        });
+        if (stage.callInputKind == HirCallInputKind::MutableBorrow)
+          malformed([](auto &body, auto &value) {
+            for (auto &place : body.places)
+              if (place.id == value.operands.front().place)
+                place.access = AccessMode::ReadOnly;
+          });
+        auto detached = stage;
+        detached.defaultArgument = !detached.defaultArgument;
+        require(!nativeCFunctionBorrowInputContract(program, target,
+                                                     function.body, detached),
+                "detached native borrow input must match its canonical stage");
+      }
+  require(reads && writes, "native borrow fixture needs read and mutable inputs");
+}
+
 void emitSourcePreflight(Session &session,
                          const VerifiedLoweredProgram &input) {
   const auto &program = session.program().mir();
@@ -1368,6 +1494,10 @@ int main(int argc, char **argv) {
         argc == 6 && std::string(argv[5]) == "--source-preflight";
     const bool storageContracts =
         argc == 6 && std::string(argv[5]) == "--storage-contracts";
+    const bool borrowContracts =
+        argc == 6 && std::string(argv[5]) == "--borrow-contracts";
+    const bool resultContracts =
+        argc == 6 && std::string(argv[5]) == "--result-contracts";
     const bool storage = argc == 6 && std::string(argv[5]) == "--storage";
     const bool text = argc == 6 && std::string(argv[5]) == "--text-contracts";
     const bool aggregates =
@@ -1385,7 +1515,7 @@ int main(int argc, char **argv) {
                  (std::string(argv[5]) == "--callbacks" || concurrent ||
                   contracts || preflight || storage || text || aggregates ||
                   reachability || nativeReachability || conservative ||
-                  storageContracts)),
+                  storageContracts || borrowContracts || resultContracts)),
             "usage: test fixture.gti output.o output.ll O[0-3] "
             "[--callbacks|--thread-callbacks]");
     const auto input = fixture(argv[1], concurrent, argc == 6);
@@ -1405,7 +1535,15 @@ int main(int argc, char **argv) {
       std::cout << "PASS: exact native call dependency roots\n";
       return 0;
     }
-    if (storageContracts) {
+    if (borrowContracts || resultContracts) {
+      if (borrowContracts)
+        checkFunctionBorrows(session);
+      else
+        checkNativeResultInputs(session);
+      const auto admission = planLlvmAdmission(input, session.options());
+      require(!admission.firstUnsupported(), "native borrows need public admission");
+      lowerScalarProgram(session, admission);
+    } else if (storageContracts) {
       checkStorageImports(session, input);
     } else if (aggregates) {
       checkAggregateImports(session);

@@ -134,7 +134,7 @@ def test_dependency_warning_policy(gti, root):
         assert str(own) in suppressed.stderr
         assert "Diagnostics: 0 errors, 2 warnings" in suppressed.stdout
     metadata = json.loads(run([gti, "metadata"], cwd=project).stdout)
-    assert metadata["schemaVersion"] == 14
+    assert metadata["schemaVersion"] == 15
     assert [profile["dependencyWarnings"] for profile in metadata["profiles"]] == [
         False, True]
     assert [output["dependencyWarnings"]
@@ -629,7 +629,7 @@ def main():
         configuration_metadata = json.loads(
             run([gti, "metadata"], cwd=configuration_project).stdout
         )
-        assert configuration_metadata["schemaVersion"] == 14
+        assert configuration_metadata["schemaVersion"] == 15
         assert configuration_metadata["targets"][0]["outputs"][0][
             "defines"
         ] == ["MANIFEST_FLAG"]
@@ -812,7 +812,7 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 14
+        assert metadata_document["schemaVersion"] == 15
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -820,6 +820,7 @@ def main():
                 "name": "dev",
                 "optimization": 0,
                 "cppStandard": "c++23",
+                "backend": "cpp",
                 "executionProfile": "single-threaded",
                 "rawPointerAudit": "off",
                 "disabledWarnings": [],
@@ -831,6 +832,7 @@ def main():
                 "name": "release",
                 "optimization": 3,
                 "cppStandard": "c++23",
+                "backend": "cpp",
                 "executionProfile": "concurrent",
                 "rawPointerAudit": "off",
                 "disabledWarnings": ["unused-mut"],
@@ -893,7 +895,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 14
+        assert test_metadata["schemaVersion"] == 15
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -1104,7 +1106,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 14
+        assert native_document["schemaVersion"] == 15
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -1428,7 +1430,7 @@ def main():
         workspace_metadata = json.loads(
             run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
         )
-        assert workspace_metadata["schemaVersion"] == 14
+        assert workspace_metadata["schemaVersion"] == 15
         assert workspace_metadata["workspace"]["declared"] is True
         assert workspace_metadata["workspace"]["selectedPackage"] == "app"
         assert [
@@ -2710,7 +2712,7 @@ def main():
         scripted_metadata = json.loads(
             run([gti, "metadata"], cwd=scripted_app).stdout
         )
-        assert scripted_metadata["schemaVersion"] == 14
+        assert scripted_metadata["schemaVersion"] == 15
         assert scripted_metadata["build"]["allowBuildScripts"] == [
             "scripted-native@0.1.0"
         ]
@@ -2863,7 +2865,7 @@ def main():
         composed_native = composed_metadata["targets"][0]["outputs"][0][
             "native"
         ]
-        assert composed_metadata["schemaVersion"] == 14
+        assert composed_metadata["schemaVersion"] == 15
         assert [
             (group["package"], group["cMacroDefinitions"])
             for group in composed_native["dependencyNative"]

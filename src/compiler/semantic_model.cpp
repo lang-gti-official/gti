@@ -2049,6 +2049,8 @@ SemanticModel::findDestructor(const DestructorDecl &declaration) const {
 }
 
 void SemanticModel::clear() {
+  sourceDebug_ = {};
+  sourceDebugProfile_ = SourceDebugProfile::None;
   foreignStorage_.clear();
   analyzedFunctionBodies.clear();
   expressions.clear();
@@ -2148,6 +2150,166 @@ void SemanticModel::clear() {
   frozenBaseAnchors.clear();
 }
 
+std::vector<std::string> SemanticModel::verifySourceDebug() const {
+  std::vector<std::string> issues;
+  const auto reject = [&](std::string detail) {
+    issues.push_back(std::move(detail));
+  };
+  if (!isValidSourceDebugProfile(sourceDebugProfile_) ||
+      !isValidSourceDebugRecord(sourceDebug_)) {
+    reject("invalid semantic source-debug profile or collection state");
+    return issues;
+  }
+  if (sourceDebugProfile_ == SourceDebugProfile::None) {
+    if (sourceDebug_.tables)
+      reject("disabled semantic source-debug profile owns tables");
+    return issues;
+  }
+  if (sourceDebug_.collection != SourceDebugCollection::CollectedLexicalV1 ||
+      !sourceDebug_.tables) {
+    reject("semantic source-debug collection is missing");
+    return issues;
+  }
+  const auto &bodies = sourceDebug_.tables->bodies;
+  for (std::size_t index = 0; index < bodies.size(); ++index) {
+    const auto &body = bodies[index];
+    if (!body.source || !isValidSourceDebugRecord(body.facts) ||
+        body.facts.collection != SourceDebugCollection::CollectedLexicalV1 ||
+        !body.facts.tables) {
+      reject("semantic source body has no collected facts");
+      continue;
+    }
+    if (std::any_of(
+            bodies.begin(), bodies.begin() + index, [&](const auto &other) {
+              return other.kind == body.kind && other.source == body.source;
+            }))
+      reject("duplicate semantic source-body identity");
+    bool exactBody = false;
+    switch (body.kind) {
+    case SourceDebugBodyKind::Function: {
+      const auto *info =
+          findFunction(*static_cast<const FunctionDecl *>(body.source));
+      exactBody = info && info->bodyDeclaration() == body.source;
+      break;
+    }
+    case SourceDebugBodyKind::Constructor: {
+      const auto *info =
+          findConstructor(*static_cast<const ConstructorDecl *>(body.source));
+      exactBody = info && info->declaration == body.source;
+      break;
+    }
+    case SourceDebugBodyKind::Destructor: {
+      const auto *info =
+          findDestructor(*static_cast<const DestructorDecl *>(body.source));
+      exactBody = info && info->declaration == body.source;
+      break;
+    }
+    case SourceDebugBodyKind::Lambda: {
+      const auto *info = findLambda(*static_cast<const Lambda *>(body.source));
+      exactBody = info && info->declaration == body.source;
+      if (body.creator && std::none_of(bodies.begin(), bodies.end(),
+                                       [&](const auto &candidate) {
+                                         return candidate.source ==
+                                                body.creator;
+                                       }))
+        reject("source lambda has no exact creator body in this model");
+      break;
+    }
+    case SourceDebugBodyKind::Initializer: {
+      const auto &declaration = *static_cast<const VariableDecl *>(body.source);
+      exactBody = findBinding(declaration) != nullptr;
+      break;
+    }
+    }
+    if (body.kind != SourceDebugBodyKind::Lambda && body.creator)
+      reject("non-lambda source body has a foreign creator");
+    const void *creator = body.creator;
+    for (std::size_t depth = 0; creator != nullptr; ++depth) {
+      if (creator == body.source || depth >= bodies.size()) {
+        reject("semantic source-body creator relation contains a cycle");
+        break;
+      }
+      const auto parent = std::find_if(
+          bodies.begin(), bodies.end(),
+          [&](const auto &candidate) { return candidate.source == creator; });
+      if (parent == bodies.end())
+        break;
+      creator = parent->creator;
+    }
+    if (!exactBody)
+      reject("semantic source-body anchor is not an analyzed declaration");
+    const auto &tables = *body.facts.tables;
+    if (!tables.consistent || tables.kind != body.kind ||
+        tables.source != body.source || tables.creator != body.creator ||
+        tables.snapshot != placeSnapshot_ ||
+        tables.instance != sourceDebug_.tables->instance ||
+        tables.scopes.empty() ||
+        tables.scopes.size() != tables.frameAnchors.size()) {
+      reject("semantic source facts have an inconsistent analysis/body domain");
+      continue;
+    }
+    for (std::size_t scope = 0; scope < tables.scopes.size(); ++scope) {
+      const auto &row = tables.scopes[scope];
+      if (row.id != scope + 1 || row.parent >= row.id ||
+          (scope == 0) != (row.parent == 0) ||
+          row.parent != tables.frameAnchors[scope].parent ||
+          row.source.end < row.source.start)
+        reject("semantic source scope has an invalid parent or provenance");
+    }
+    const auto validScope = [&](SourceScopeId scope) {
+      return scope != 0 && scope <= tables.scopes.size();
+    };
+    for (const auto &[anchor, scope] : tables.statements)
+      if (!anchor || !validScope(scope))
+        reject("semantic statement has an invalid source scope");
+    for (const auto &[anchor, scope] : tables.expressions)
+      if (!anchor || !validScope(scope))
+        reject("semantic expression has an invalid source scope");
+    for (std::size_t local = 0; local < tables.locals.size(); ++local) {
+      const auto &row = tables.locals[local];
+      if (row.id != local + 1 || !validScope(row.scope) ||
+          (row.variable == nullptr) == (row.parameter == nullptr)) {
+        reject("semantic source local has an invalid identity or origin");
+        continue;
+      }
+      const auto *binding = row.variable ? findBinding(*row.variable)
+                                         : findBinding(*row.parameter);
+      if (!binding || row.symbol != binding->symbol ||
+          row.type != binding->type)
+        reject("semantic source local does not match its accepted binding");
+      if (row.variable) {
+        const auto member = tables.statements.find(row.variable);
+        if (member == tables.statements.end() || member->second != row.scope)
+          reject(
+              "semantic source local belongs to a different statement scope");
+      } else if (row.scope != 1) {
+        reject("semantic source parameter belongs to a different root scope");
+      }
+    }
+  }
+  return issues;
+}
+
+void SemanticModel::setSourceDebugProfile(SourceDebugProfile profile) {
+  sourceDebugProfile_ = profile;
+  sourceDebug_ = {};
+  if (profile == SourceDebugProfile::LexicalV1) {
+    sourceDebug_.collection = SourceDebugCollection::CollectedLexicalV1;
+    sourceDebug_.tables = std::make_unique<SemanticSourceDebugModelTables>();
+  }
+}
+
+const SemanticSourceDebugBody *
+SemanticModel::findSourceDebugBody(SourceDebugBodyKind kind,
+                                   const void *source) const {
+  const auto &bodies = sourceDebugBodies();
+  const auto found =
+      std::find_if(bodies.begin(), bodies.end(), [&](const auto &body) {
+        return body.kind == kind && body.source == source;
+      });
+  return found == bodies.end() ? nullptr : &*found;
+}
+
 void SemanticModel::setExecutionProfile(ExecutionProfile profile) {
   executionProfile_ = profile;
 }
@@ -2201,6 +2363,7 @@ void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel,
   clear();
   callJournal = nullptr;
   executionProfile_ = baseModel.executionProfile();
+  setSourceDebugProfile(baseModel.sourceDebugProfile());
   placeSnapshot_ = baseModel.placeSnapshot();
   programKind_ = baseModel.programKind();
   embeddingPlan_ = baseModel.embeddingPlan();
@@ -2212,6 +2375,8 @@ void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel,
 void SemanticModel::beginSpeculativeDelta(const SemanticModel &baseModel) {
   beginInstanceDelta(baseModel);
   semanticAnalysisSeal = baseModel.analysisSeal();
+  if (sourceDebug_.tables && baseModel.sourceDebug_.tables)
+    sourceDebug_.tables->instance = baseModel.sourceDebug_.tables->instance;
   retainedLoans = baseModel.retainedLoans;
   setToolingOccurrencesEnabled(baseModel.semanticDatabase.toolingOccurrences);
 }
@@ -2346,7 +2511,12 @@ void SemanticModel::rebaseReusedInstance(const SemanticModel &baseModel) {
   callJournal = nullptr;
   functionDemandSink = nullptr;
   executionProfile_ = baseModel.executionProfile();
+  sourceDebugProfile_ = baseModel.sourceDebugProfile();
   placeSnapshot_ = baseModel.placeSnapshot();
+  if (sourceDebug_.tables)
+    for (auto &body : sourceDebug_.tables->bodies)
+      if (body.facts.tables)
+        body.facts.tables->snapshot = placeSnapshot_;
   programKind_ = baseModel.programKind();
   embeddingPlan_ = baseModel.embeddingPlan();
 }

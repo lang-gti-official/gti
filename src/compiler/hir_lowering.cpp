@@ -165,6 +165,7 @@ public:
       }
       processPendingInstances();
     }
+    finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
                             lifecycleValid;
@@ -201,6 +202,7 @@ private:
   HirLoweringResult finishConstant() {
     ensurePlaceDomain(output.program.moduleBody);
     processPendingInstances();
+    finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
                             lifecycleValid && output.program.lambdas.empty();
@@ -213,6 +215,7 @@ private:
     baseModel = &semantics;
     output = {};
     output.program.executionProfile_ = target.executionProfile;
+    output.program.sourceDebugProfile_ = baseModel->sourceDebugProfile();
     output.program.programKind_ = baseModel->programKind();
     output.program.semanticAnalysisSeal = baseModel->analysisSeal();
     constantClosure = false;
@@ -224,7 +227,7 @@ private:
     nextStatementId = 1;
     placeSnapshotId = baseModel->placeSnapshot();
     nextPlaceBodyId = 1;
-    lifecycleValid = true;
+    lifecycleValid = semantics.verifySourceDebug().empty();
     processedClasses = 0;
     processedFunctions = 0;
     processedConstructors = 0;
@@ -1362,6 +1365,10 @@ private:
       storage.initializer.roots.push_back(result);
       finalizeLifetimes(storage.initializer, *baseModel);
       lowerLoans(*baseModel, storage.initializer);
+      if (declaration->initializer())
+        appendInitializerSourceDebug(*baseModel, *declaration,
+                                     storage.initializer, {*initializer});
+      finishInitializerSourceDebug(storage.initializer);
       output.program.threadLocalStorage_.push_back(std::move(storage));
     }
   }
@@ -1401,6 +1408,10 @@ private:
                                      .value = initializer},
                                     output.program.moduleBody);
         output.program.moduleBody.roots.push_back(statement);
+        if (initializer)
+          appendInitializerSourceDebug(*baseModel, *declaration,
+                                       output.program.moduleBody,
+                                       {*initializer});
       }
       const LoweredProgramStorage lowered{.binding = binding,
                                           .initializer = initializer,
@@ -1423,6 +1434,7 @@ private:
         semanticPlan.steps.size()) {
       lifecycleValid = false;
     }
+    finishInitializerSourceDebug(output.program.moduleBody);
   }
 
   [[nodiscard]] const ConstructorInfo *
@@ -1852,6 +1864,8 @@ private:
       analysis = instanceProvider->analyzeClassFieldInitializers(
           snapshot.declaration, snapshot.typeArguments,
           snapshot.valueArguments);
+      lifecycleValid =
+          lifecycleValid && analysis.model.verifySourceDebug().empty();
       retainInstanceSymbols(analysis.model);
       appendInstanceDiagnostics(std::move(analysis.diagnostics),
                                 snapshot.instantiationSite, discoveryOrigin);
@@ -1931,10 +1945,14 @@ private:
                         .info = info,
                         .requiresActiveCleanup =
                             instanceProvider->requiresActiveCleanupFor(type)});
+      if (field.declaration && initializer)
+        appendInitializerSourceDebug(*model, *field.declaration,
+                                     fieldInitializers, {*initializer});
     }
     output.program.classes[index].fields = std::move(fields);
     finalizeLifetimes(fieldInitializers, *model, fieldBindings);
     lowerLoans(*model, fieldInitializers);
+    finishInitializerSourceDebug(fieldInitializers);
     output.program.classes[index].fieldInitializers =
         std::move(fieldInitializers);
     std::vector<HirClassField> staticFields;
@@ -1979,6 +1997,10 @@ private:
                                .value = lowered.initializer},
                               staticFieldInitializers);
           staticFieldInitializers.roots.push_back(lowered.statement);
+          if (lowered.initializer)
+            appendInitializerSourceDebug(*model, *field.declaration,
+                                         staticFieldInitializers,
+                                         {*lowered.initializer});
           if (declaration->genericParameters.empty()) {
             lifecycleValid = false;
           }
@@ -1998,6 +2020,7 @@ private:
     output.program.classes[index].staticFields = std::move(staticFields);
     finalizeLifetimes(staticFieldInitializers, *model, staticFieldBindings);
     lowerLoans(*model, staticFieldInitializers);
+    finishInitializerSourceDebug(staticFieldInitializers);
     output.program.classes[index].staticFieldInitializers =
         std::move(staticFieldInitializers);
     output.program.classes[index].destructor = enqueueDestructor(snapshot.id);
@@ -2122,6 +2145,8 @@ private:
         instanceProvider->analyzeFunctionInstance(
             declaration->id, classArguments, classValueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
+    lifecycleValid =
+        lifecycleValid && analysis->model.verifySourceDebug().empty();
     retainInstanceSymbols(analysis->model);
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
                               snapshot.instantiationSite,
@@ -2153,6 +2178,8 @@ private:
         instanceProvider->analyzeConstructorInstance(
             snapshot.declaration, owner.typeArguments, owner.valueArguments,
             snapshot.typeArguments, snapshot.valueArguments));
+    lifecycleValid =
+        lifecycleValid && analysis->model.verifySourceDebug().empty();
     retainInstanceSymbols(analysis->model);
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
                               snapshot.instantiationSite,
@@ -2483,6 +2510,9 @@ private:
                  const HirCallableParameter &right) {
                 return left.parameterIndex < right.parameterIndex;
               });
+    if (bodyDeclaration->body())
+      captureSourceDebug(SourceDebugBodyKind::Function, bodyDeclaration, *model,
+                         body);
     output.program.functions[index].body = std::move(body);
     output.program.functions[index].parameterBindings =
         std::move(parameterBindings);
@@ -2705,10 +2735,14 @@ private:
     // unwind previously completed fields and constructor parameters.
     SemanticInstanceAnalysis fieldAnalysis;
     const SemanticModel *fieldModel = baseModel;
-    if (!classArguments.empty() || !classValueArguments.empty()) {
+    const auto *fieldOwner = baseModel->findClassType(owner.declaration);
+    if ((fieldOwner && !fieldOwner->genericParameters.empty()) ||
+        !classArguments.empty() || !classValueArguments.empty()) {
       const PhaseTimeScope timeScope("hir-instance-analysis", "fields");
       fieldAnalysis = instanceProvider->analyzeClassFieldInitializers(
           owner.declaration, classArguments, classValueArguments);
+      lifecycleValid =
+          lifecycleValid && fieldAnalysis.model.verifySourceDebug().empty();
       retainInstanceSymbols(fieldAnalysis.model);
       // processPendingInstances completes this owner through processClass
       // before any constructor. That class-owned pass already publishes these
@@ -2739,6 +2773,8 @@ private:
                               .field = field.info.symbol,
                               .arguments = {*value},
                               .explicitArgumentCount = 1});
+      appendInitializerSourceDebug(*fieldModel, *field.declaration, body,
+                                   {*value});
     }
     const auto fieldOrder = [&](const HirConstructorInitializer &initializer) {
       if (initializer.kind == ConstructorInitializerTargetKind::Base)
@@ -2772,6 +2808,10 @@ private:
     output.program.constructors[index].parameterBindings =
         std::move(parameterBindings);
     output.program.constructors[index].initializers = std::move(initializers);
+    if (!snapshot.generatedDefault)
+      captureSourceDebug(SourceDebugBodyKind::Constructor, snapshot.source,
+                         bodyModel, body);
+    finishInitializerSourceDebug(body);
     output.program.constructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
@@ -2798,6 +2838,8 @@ private:
       const PhaseTimeScope timeScope("hir-instance-analysis", "destructor");
       analysis = instanceProvider->analyzeDestructorInstance(
           owner.declaration, owner.typeArguments, owner.valueArguments);
+      lifecycleValid =
+          lifecycleValid && analysis.model.verifySourceDebug().empty();
       retainInstanceSymbols(analysis.model);
       appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt,
                                 discoveryOrigin);
@@ -2821,6 +2863,8 @@ private:
                         owner.typeArguments, owner.valueArguments, body);
     finalizeLifetimes(body, *model);
     lowerLoans(*model, body, snapshot.source);
+    captureSourceDebug(SourceDebugBodyKind::Destructor, snapshot.source, *model,
+                       body);
     output.program.destructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
@@ -2910,6 +2954,182 @@ private:
     body.bindings.push_back({.id = id, .payloadPattern = &name, .info = info});
     (void)enqueueClass(info.type);
     return id;
+  }
+
+  void captureSourceDebug(SourceDebugBodyKind kind, const void *source,
+                          const SemanticModel &model, HirBody &body) {
+    ensurePlaceDomain(body);
+    if (output.program.sourceDebugProfile_ == SourceDebugProfile::None)
+      return;
+    const auto *accepted = model.findSourceDebugBody(kind, source);
+    if (model.sourceDebugProfile() != output.program.sourceDebugProfile_ ||
+        accepted == nullptr || !isValidSourceDebugRecord(accepted->facts) ||
+        accepted->facts.collection !=
+            SourceDebugCollection::CollectedLexicalV1 ||
+        accepted->facts.tables == nullptr) {
+      lifecycleValid = false;
+      return;
+    }
+    ensurePlaceDomain(body);
+    const auto &facts = *accepted->facts.tables;
+    body.sourceDebug.collection = SourceDebugCollection::CollectedLexicalV1;
+    if (!body.sourceDebug.tables)
+      body.sourceDebug.tables = std::make_unique<HirSourceDebugTables>();
+    auto &tables = *body.sourceDebug.tables;
+    tables.domain = body.placeDomain;
+    tables.acceptedSource_ = facts;
+    for (const auto &local : facts.locals) {
+      const auto binding = std::find_if(
+          body.bindings.begin(), body.bindings.end(),
+          [&](const auto &candidate) {
+            return (local.variable && candidate.variable == local.variable) ||
+                   (local.parameter && candidate.parameter == local.parameter);
+          });
+      if (binding != body.bindings.end() &&
+          (binding->info.symbol != local.symbol ||
+           binding->info.type != local.type)) {
+        lifecycleValid = false;
+        return;
+      }
+      tables.locals.push_back(
+          {.id = local.id,
+           .scope = local.scope,
+           .binding = binding == body.bindings.end() ? 0 : binding->id,
+           .symbol = local.symbol,
+           .type = local.type,
+           .name = local.name,
+           .declaration = local.declaration,
+           .parameter = local.parameter != nullptr});
+    }
+    for (const auto &statement : body.statements)
+      if (const auto scope = facts.statements.find(statement.source);
+          scope != facts.statements.end())
+        tables.statements.push_back(
+            {statement.id, scope->second,
+             statement.source->extent().value_or(SourceSpan{})});
+    for (const auto &value : body.values)
+      if (const auto scope = facts.expressions.find(value.source);
+          scope != facts.expressions.end())
+        tables.values.push_back({value.id, scope->second,
+                                 value.source->writtenOrigin()
+                                     ? *value.source->writtenOrigin()
+                                     : SourceSpan{}});
+  }
+
+  void appendInitializerSourceDebug(const SemanticModel &model,
+                                    const VariableDecl &declaration,
+                                    HirBody &body,
+                                    std::vector<HirValueId> roots) {
+    ensurePlaceDomain(body);
+    if (output.program.sourceDebugProfile_ == SourceDebugProfile::None)
+      return;
+    const auto *accepted = model.findSourceDebugBody(
+        SourceDebugBodyKind::Initializer, &declaration);
+    if (model.sourceDebugProfile() != output.program.sourceDebugProfile_ ||
+        !accepted || !isValidSourceDebugRecord(accepted->facts) ||
+        accepted->facts.collection !=
+            SourceDebugCollection::CollectedLexicalV1 ||
+        !accepted->facts.tables || roots.empty()) {
+      lifecycleValid = false;
+      return;
+    }
+    ensurePlaceDomain(body);
+    body.sourceDebug.collection = SourceDebugCollection::CollectedLexicalV1;
+    if (!body.sourceDebug.tables)
+      body.sourceDebug.tables = std::make_unique<HirSourceDebugTables>();
+    auto &tables = *body.sourceDebug.tables;
+    tables.domain = body.placeDomain;
+    auto &region = tables.initializers.emplace_back();
+    region.id = tables.initializers.size();
+    region.declaration = &declaration;
+    region.roots = std::move(roots);
+    region.acceptedSource_ = *accepted->facts.tables;
+  }
+
+  void finishInitializerSourceDebug(HirBody &body) {
+    ensurePlaceDomain(body);
+    if (!body.sourceDebug.tables)
+      return;
+    auto &regions = body.sourceDebug.tables->initializers;
+    if (regions.empty())
+      return;
+    std::vector<std::vector<HirValueId>> roots;
+    for (const auto &region : regions)
+      roots.push_back(region.roots);
+    const auto reachable = hirInitializerReachabilityBatch(body, roots);
+    for (std::size_t i = 0; i < regions.size(); ++i) {
+      auto &region = regions[i];
+      const auto &facts = region.sourceFacts();
+      lifecycleValid &= reachable[i].complete;
+      for (const auto &local : facts.locals) {
+        const auto binding = std::find_if(
+            body.bindings.begin(), body.bindings.end(), [&](const auto &row) {
+              return reachable[i].bindings.contains(row.id) &&
+                     row.variable == local.variable;
+            });
+        if (binding != body.bindings.end() &&
+            (binding->info.symbol != local.symbol ||
+             binding->info.type != local.type))
+          lifecycleValid = false;
+        region.locals.push_back(
+            {.id = local.id,
+             .scope = local.scope,
+             .binding = binding == body.bindings.end() ? 0 : binding->id,
+             .symbol = local.symbol,
+             .type = local.type,
+             .name = local.name,
+             .declaration = local.declaration});
+      }
+      for (const auto &statement : body.statements)
+        if (reachable[i].statements.contains(statement.id))
+          if (const auto scope = facts.statements.find(statement.source);
+              scope != facts.statements.end())
+            region.statements.push_back(
+                {statement.id, scope->second,
+                 statement.source->extent().value_or(SourceSpan{})});
+      for (const auto &value : body.values)
+        if (reachable[i].values.contains(value.id))
+          if (const auto scope = facts.expressions.find(value.source);
+              scope != facts.expressions.end())
+            region.values.push_back({value.id, scope->second,
+                                     value.source->writtenOrigin()
+                                         ? *value.source->writtenOrigin()
+                                         : SourceSpan{}});
+    }
+  }
+
+  void finishSourceDebugInventory() {
+    const bool collected =
+        output.program.sourceDebugProfile_ == SourceDebugProfile::LexicalV1;
+    const auto region = [&](HirBody &body) {
+      ensurePlaceDomain(body);
+      if (!collected || body.sourceDebug.tables)
+        return;
+      body.sourceDebug.collection = SourceDebugCollection::CollectedLexicalV1;
+      body.sourceDebug.tables = std::make_unique<HirSourceDebugTables>();
+      body.sourceDebug.tables->domain = body.placeDomain;
+    };
+    const auto generated = [&](HirBody &body, bool sourceBody) {
+      ensurePlaceDomain(body);
+      if (collected && !sourceBody && !body.sourceDebug.tables)
+        body.sourceDebug.collection = SourceDebugCollection::NotApplicable;
+    };
+    region(output.program.moduleBody);
+    for (auto &storage : output.program.threadLocalStorage_)
+      region(storage.initializer);
+    for (auto &instance : output.program.classes) {
+      region(instance.fieldInitializers);
+      region(instance.staticFieldInitializers);
+    }
+    for (auto &function : output.program.functions)
+      generated(function.body, function.source && function.source->body());
+    for (auto &constructor : output.program.constructors)
+      generated(constructor.body, !constructor.generatedDefault &&
+                                      constructor.source &&
+                                      constructor.source->body());
+    for (auto &destructor : output.program.destructors)
+      generated(destructor.body,
+                destructor.source && destructor.source->body());
   }
 
   void ensurePlaceDomain(HirBody &body) {
@@ -4167,6 +4387,7 @@ private:
     currentSourceFunctionName = enclosingSourceFunctionName;
     finalizeLifetimes(body, model);
     lowerLoans(model, body, nullptr, info->captures);
+    captureSourceDebug(SourceDebugBodyKind::Lambda, &lambda, model, body);
     std::vector<bool> captureRequiresActiveCleanup;
     captureRequiresActiveCleanup.reserve(info->captures.size());
     for (const LambdaCaptureInfo &capture : info->captures) {

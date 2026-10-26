@@ -1103,6 +1103,59 @@ struct MirRangeIteration {
                          const MirRangeIteration &) = default;
 };
 
+struct MirDebugPoint {
+  MirBlockId block = 0;
+  // Zero names the boundary before the terminator, unless blockEntry is set.
+  MirInstructionId instruction = 0;
+  bool after = false;
+  bool blockEntry = false;
+  friend bool operator==(const MirDebugPoint &,
+                         const MirDebugPoint &) = default;
+};
+
+enum class MirSourceLocalPolicy : std::uint8_t {
+  ExistingPlace,
+  Unproven,
+  OptimizedOut,
+};
+
+struct MirSourceLocal {
+  HirSourceLocal declaration;
+  MirPlaceId place = 0;
+  MirSourceLocalPolicy policy = MirSourceLocalPolicy::Unproven;
+  friend bool operator==(const MirSourceLocal &,
+                         const MirSourceLocal &) = default;
+};
+
+struct MirSourceLocalEnd {
+  SourceLocalId local = 0;
+  MirDebugPoint point;
+  friend bool operator==(const MirSourceLocalEnd &,
+                         const MirSourceLocalEnd &) = default;
+};
+
+struct MirSourceValueEvent {
+  SourceLocalId local = 0;
+  MirDebugPoint point;
+  MirValueId value = 0;
+  friend bool operator==(const MirSourceValueEvent &,
+                         const MirSourceValueEvent &) = default;
+};
+
+struct MirSourceDebugTables {
+  PlaceDomain domain;
+  std::vector<SourceDebugScope> scopes;
+  std::vector<MirSourceLocal> locals;
+  std::vector<SourceDebugAnchor> statements;
+  std::vector<SourceDebugAnchor> values;
+  // Descriptive exits from the actual lexical lowering walk, not Drop events
+  // or evidence that any storage was initialized or readable.
+  std::vector<MirSourceLocalEnd> localEnds;
+  std::vector<MirSourceValueEvent> valueEvents;
+  friend bool operator==(const MirSourceDebugTables &,
+                         const MirSourceDebugTables &) = default;
+};
+
 struct MirBody {
   MirBodyKind kind = MirBodyKind::Function;
   // Only a tracked source function owns an incoming caller-location parameter.
@@ -1129,6 +1182,7 @@ struct MirBody {
   std::vector<MirRangeIteration> rangeIterations;
   std::vector<MirValue> values;
   std::vector<std::vector<MirValueUse>> valueUses;
+  SourceDebugRecord<MirSourceDebugTables> sourceDebug;
 
   [[nodiscard]] const MirBlock *findBlock(MirBlockId id) const {
     return id == 0 || id > blocks.size() ? nullptr : &blocks[id - 1];
@@ -1892,6 +1946,9 @@ public:
   }
 
   [[nodiscard]] bool valid() const { return valid_; }
+  [[nodiscard]] SourceDebugProfile sourceDebugProfile() const {
+    return sourceDebugProfile_;
+  }
   [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] ExecutionProfile executionProfile() const {
     return executionProfile_;
@@ -2064,6 +2121,7 @@ private:
   friend struct MirProgramTestAccess;
 
   bool valid_ = true;
+  SourceDebugProfile sourceDebugProfile_ = SourceDebugProfile::None;
   TargetInfo target_ = TargetInfo::host();
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   ProgramKind programKind_ = ProgramKind::Executable;

@@ -33132,12 +33132,13 @@ private:
     if (body == debugBodies.end())
       return;
     const auto location =
-        std::find_if(body->sourceLocations.begin(), body->sourceLocations.end(),
+        std::find_if(body->sourceLocations().begin(),
+                     body->sourceLocations().end(),
                      [&](const LoweredSourceLocation &candidate) {
                        return candidate.block == block &&
                               candidate.instruction == instruction;
                      });
-    if (location == body->sourceLocations.end())
+    if (location == body->sourceLocations().end())
       return;
     output << "\n#line " << location->source.line << " \"";
     for (const unsigned char byte : location->source.source) {

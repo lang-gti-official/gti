@@ -1,0 +1,3 @@
+using Unary = (int32_t) -> int32_t;
+void clear(Unary& callback) { callback = nullptr; }
+int main() { return 0; }

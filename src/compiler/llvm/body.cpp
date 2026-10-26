@@ -3,7 +3,9 @@
 #include "callables.h"
 #include "constructor_field_publication.h"
 #include "dispatch.h"
+#include "debug_info.h"
 #include "failure.h"
+#include "embedding.h"
 #include "hosted.h"
 #include "lifetimes.h"
 #include "memory.h"
@@ -16,11 +18,13 @@
 #include "polymorphic_storage.h"
 #include "runtime_abi.h"
 #include "scalar.h"
+#include "simd.h"
 #include "text.h"
 #include "thread_locals.h"
 #include "thread_lifecycle.h"
 
 #include <algorithm>
+#include <array>
 #include <map>
 #include <set>
 #include <tuple>
@@ -453,6 +457,9 @@ private:
                           operand.kind == MirOperandKind::Move)) {
       auto *source = memory.address(operand.place);
       auto *value = load(source, operand.type);
+      if (operand.kind == MirOperandKind::Move)
+        if (auto *debug = session.debugInfo())
+          debug->endLocal(ir, *input.findPlace(operand.place));
       if (addressValue(session.program().mir(), operand.type)) {
         if (!target)
           target = memory.temporary(operand.type);
@@ -828,6 +835,20 @@ private:
       default:
         break;
       }
+      if (simdIntrinsic(instruction.intrinsic)) {
+        const std::array addresses{memory.selected(instruction.operands.at(0)),
+                                   memory.selected(instruction.operands.at(1)),
+                                   memory.selected(instruction.operands.at(2))};
+        const std::array arrays{
+            session.layouts().get(
+                instruction.parameterTypes.at(0).arguments.at(0)),
+            session.layouts().get(
+                instruction.parameterTypes.at(1).arguments.at(0)),
+            session.layouts().get(
+                instruction.parameterTypes.at(2).arguments.at(0))};
+        emitSimd(ir, instruction, addresses, arrays);
+        return nullptr;
+      }
       if (instruction.intrinsic ==
               IntrinsicKind::NumericTypeParameterConversion ||
           instruction.intrinsic == IntrinsicKind::NumericAliasConversion)
@@ -1025,8 +1046,13 @@ private:
   }
   void lifecycle(std::span<const MirLifecycleEvent> events) {
     for (const auto &event : events) {
-      if (event.source)
+      if (event.source) {
+        if (auto *debug = session.debugInfo())
+          debug->endLocal(
+              ir,
+              *input.findPlace(input.findDropObligation(event.source)->place));
         ir.CreateStore(ir.getFalse(), live.at(event.source));
+      }
       if (event.target)
         ir.CreateStore(ir.getTrue(), live.at(event.target));
     }
@@ -1041,6 +1067,12 @@ private:
         if (candidate.place == *instruction.destination &&
             candidate.kind == MirDropObligationKind::Binding)
           obligation = &candidate;
+    if (auto *debug = session.debugInfo()) {
+      const auto place =
+          instruction.destination.value_or(obligation ? obligation->place : 0);
+      if (const auto *source = input.findPlace(place))
+        debug->endLocal(ir, *source);
+    }
     const auto *recipe = instruction.replacementCleanup
                              ? &*instruction.replacementCleanup
                          : obligation ? &obligation->dropType
@@ -1782,6 +1814,8 @@ private:
       ir.CreateStore(llvm::ConstantPointerNull::get(session.layouts().pointer()),
                      cleanupToken);
     }
+    if (auto *debug = session.debugInfo())
+      debug->location(ir, address, 0, 0);
     for (const auto &block : input.blocks) {
       blocks.at(block.id) = llvm::BasicBlock::Create(
           session.context(), "bb" + std::to_string(block.id), &function);
@@ -1821,7 +1855,7 @@ private:
       case AbiChannel::CallerArtifact:
         callerArtifact = argument;
         break;
-      case AbiChannel::Argument:
+      case AbiChannel::Argument: {
         if (input.kind == MirBodyKind::HostedStartup) {
           if (parameter.sourceIndex == 0 &&
               argument->getType()->isIntegerTy(32))
@@ -1837,9 +1871,24 @@ private:
         if (parameter.sourceIndex >= parameters.size())
           throw std::logic_error(
               "LLVM ABI argument exceeds its exact parameter map");
-        memory.parameter(parameters[parameter.sourceIndex], argument,
-                         parameter.indirect);
+        const auto &lane = parameters[parameter.sourceIndex];
+        memory.parameter(lane, argument, parameter.indirect);
+        // Only ordinary prefix lanes have a one-to-one source parameter.
+        // Expanded packs and hidden ABI channels do not acquire fake names.
+        if (auto *debug = session.debugInfo();
+            debug && !lane.packElement && lane.materialized)
+          for (const auto &place : input.places) {
+            if (place.root != MirPlaceRootKind::Binding ||
+                place.binding != lane.binding || !place.projections.empty() ||
+                !place.initiallyAvailable || place.type != lane.type)
+              continue;
+            const auto *symbol = session.program().findSymbol(place.symbol);
+            if (symbol && symbol->kind == SymbolKind::Parameter)
+              debug->local(ir, place, memory.address(place.id),
+                           static_cast<unsigned>(parameter.sourceIndex + 1));
+          }
         break;
+      }
       case AbiChannel::Receiver:
         if (!receiverType)
           throw std::logic_error("LLVM receiver has no sealed object type");
@@ -1854,6 +1903,16 @@ private:
         (!nativeArgumentCount || !nativeArguments))
       throw std::logic_error(
           "LLVM hosted arguments were not supplied by the native entry");
+    if (auto *debug = session.debugInfo())
+      if (const auto *body = session.program().findBody(address);
+          body && body->sourceDebug.tables)
+        for (const auto &local : body->sourceDebug.tables->locals) {
+          if (local.policy != MirSourceLocalPolicy::ExistingPlace ||
+              local.declaration.parameter)
+            continue;
+          const auto &place = *input.findPlace(local.place);
+          debug->local(ir, place, memory.address(place.id));
+        }
     for (const auto &record : input.failureRecords)
       channels.at(record.id) = ir.CreateAlloca(session.abi().failureChannel());
     if (constructor && constructor->dispatchState &&
@@ -1903,13 +1962,33 @@ private:
     for (auto id : order) {
       current = input.findBlock(id);
       ir.SetInsertPoint(blocks.at(id));
-      for (const auto &row : current->instructions)
+      if (auto *debug = session.debugInfo())
+        debug->point(ir, {id, 0, false, true}, values);
+      for (const auto &row : current->instructions) {
+        if (auto *debug = session.debugInfo()) {
+          debug->point(ir, {id, row.id, false}, values);
+          debug->location(ir, address, id, row.id);
+          // Selected move construction can consume a place without a Move
+          // operand. End its value location, never its lexical scope.
+          if (row.constructorKind == ConstructorKind::Move)
+            for (const auto &operand : row.operands)
+              if (const auto *place = input.findPlace(operand.place))
+                debug->endLocal(ir, *place);
+        }
         instruction(row);
+        if (auto *debug = session.debugInfo())
+          debug->point(ir, {id, row.id, true}, values);
+      }
+      if (auto *debug = session.debugInfo()) {
+        debug->point(ir, {id, 0, false}, values);
+        debug->location(ir, address, id, 0);
+      }
       terminator(*current);
     }
     for (const auto &block : input.blocks)
       if (!visited.contains(block.id)) {
         ir.SetInsertPoint(blocks.at(block.id));
+        ir.SetCurrentDebugLocation({});
         ir.CreateUnreachable();
       }
   }
@@ -1997,6 +2076,13 @@ llvm::Function *Bodies::function(MirBodyAddress address) {
   } else
     throw BackendUnsupportedError("LLVM body kind is not implemented");
   functions.emplace(key, output);
+  if (auto *debug = session.debugInfo();
+      debug && (address.kind == MirBodyKind::Constructor ||
+                address.kind == MirBodyKind::Destructor))
+    debug->registerLifecycleBody(address, *output);
+  if (auto *debug = session.debugInfo();
+      debug && address.kind == MirBodyKind::HostedStartup)
+    debug->registerHostedStartupBody(address, *output);
   return output;
 }
 void Bodies::body(MirBodyAddress address) {
@@ -2019,8 +2105,11 @@ void Bodies::body(MirBodyAddress address) {
     receiverType = classOwner->type;
   else if (lambda && !lambda->captureTypes.empty())
     receiverType = lambda->type;
+  auto *output = function(address);
+  if (auto *debug = session.debugInfo())
+    debug->begin(address, *output);
   Body emission(
-      session, failures, dispatch, lifetimes, threadLocals, *function(address),
+      session, failures, dispatch, lifetimes, threadLocals, *output,
       address, input, plan, parameters.concrete.lanes,
       parameters.concrete.packs, parameters.sourceBindings, globals, callables,
       [&](MirBodyAddress target) { return function(target); },
@@ -2072,6 +2161,8 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
   emitNativeCCallbacks(session, failures, callbacks);
   for (auto address : admission.requiredBodies())
     body(address);
+  if (session.program().embeddingPlan())
+    emitEmbedding(session, failures, *function({MirBodyKind::Module, 0}));
 }
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
 void Bodies::lowerEvaluation(const LlvmAdmissionPlan &admission,

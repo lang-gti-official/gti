@@ -3,7 +3,7 @@
   "provenance": {
     "frozen_commit": "3cc3b3dc1b39b9cf55f04d1ddae7d533bde2b86d",
     "version": "0.473.0",
-    "reconciled_through": "d3585a07db6a6de699c0e8ca6540cb45b1d95498"
+    "reconciled_through": "ace6622f1f06a62b986b8ef5e4055b223c6585a6"
   },
   "providers": [
     {
@@ -16,8 +16,8 @@
     {
       "id": "registered-llvm-evidence",
       "kind": "registered-evidence-manifests",
-      "member_count": 217,
-      "inventory_sha256": "8539b07db184b85246467d12bd0192a9460ef4f0b77e87e9faeb27f9c0a9b9d9"
+      "member_count": 228,
+      "inventory_sha256": "f1c2af10aaa3b8654f71888833e236b0d88f3fa31f334078b458f8d6706592d5"
     },
     {
       "id": "stdlib-surface",

@@ -5,6 +5,7 @@
 #include "constructor_field_publication.h"
 #include "coverage.h"
 #include "dispatch.h"
+#include "embedding.h"
 #include "lifetimes.h"
 #include "memory_types.h"
 #include "native_c_contract.h"
@@ -35,7 +36,10 @@ bool passiveArrayElement(const SemanticType &type) {
   if (type.kind == SemanticType::Array)
     return type.arguments.size() == 1 && !type.arrayLengthParameterId &&
            passiveArrayElement(type.arguments.front());
-  return isPassiveScalarValueType(type) && type.kind != SemanticType::Void;
+  // Pointer storage is passive regardless of its referent. Accessing that
+  // referent still requires its own typed projection and unsafe witness.
+  return (isPassiveScalarValueType(type) && type.kind != SemanticType::Void) ||
+         (type.kind == SemanticType::RawPointer && type.arguments.size() == 1);
 }
 
 bool passiveAddress(const SemanticType &type) {
@@ -2124,6 +2128,10 @@ public:
       add(type.kind,
           opaqueReferent(type) ? std::optional(Shape::ErasedReference)
           : address            ? std::optional(Shape::PassiveAddressValue)
+          : type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+                    native_llvm::nativeCFunctionValueContract(
+                        program, nativeTarget, type.arguments.front())
+              ? std::optional(Shape::NativeCFunctionBorrow)
           : native_llvm::nativeCScalarFunctionValueContract(program,
                                                             nativeTarget, type)
               ? std::optional(Shape::NativeCFunctionValue)
@@ -2187,7 +2195,7 @@ public:
     }
   }
 
-  void operand(const MirOperand &operand) {
+  void operand(const MirOperand &operand, bool nativeFunctionBorrow = false) {
     const auto *place =
         currentBody ? currentBody->findPlace(operand.place) : nullptr;
     const bool selectedReference =
@@ -2201,7 +2209,9 @@ public:
     const auto view = currentBody
                           ? dispatchProofs.borrowed(*currentBody, operand)
                           : std::nullopt;
-    add(operand.kind, selectedReference ? std::optional(Shape::PassiveReference)
+    add(operand.kind, nativeFunctionBorrow
+                          ? std::optional(Shape::NativeCFunctionBorrow)
+                      : selectedReference ? std::optional(Shape::PassiveReference)
                       : borrowedUse     ? view
                       : operand.kind == MirOperandKind::Address && place &&
                               arrayProjection(*currentBody, *place)
@@ -2337,6 +2347,10 @@ public:
             : arrayProjection(mir, place)
                 ? std::optional(Shape::CheckedArrayProjection)
             : projection.kind == MirProjectionKind::Dereference &&
+                    native_llvm::nativeCFunctionValueContract(
+                        program, nativeTarget, place.type)
+                ? std::optional(Shape::NativeCFunctionBorrow)
+            : projection.kind == MirProjectionKind::Dereference &&
                     passiveReference(place.type)
                 ? std::optional(Shape::PassiveReference)
                 : placeClassShape(place));
@@ -2413,7 +2427,7 @@ public:
       add(record.kind);
 
     std::map<std::pair<MirBlockId, MirInstructionId>, const SourceSpan *> spans;
-    for (const auto &location : row.sourceLocations)
+    for (const auto &location : row.sourceLocations())
       spans.emplace(std::pair(location.block, location.instruction),
                     &location.source);
     for (const auto &mirBlock : mir.blocks) {
@@ -2440,6 +2454,9 @@ public:
           add(Shape::UnstagedConstructorFieldPublication,
               unstagedPublicationShape(mir, stage));
         const bool typedMemory = memoryOperation(stage);
+        const bool nativeFunctionBorrow =
+            native_llvm::nativeCFunctionBorrowInputContract(
+                program, nativeTarget, mir, stage);
         const bool rawReference = representedRawReference(mir, mirBlock, stage);
         const auto rawReferenceShape =
             rawReference ? std::optional(classShape(stage.info.type)
@@ -2501,6 +2518,8 @@ public:
                   : native_llvm::nativeCReceiverInputContract(
                         program, nativeTarget, mir, stage)
                       ? std::optional(Shape::NativeCSignature)
+                  : nativeFunctionBorrow
+                      ? std::optional(Shape::NativeCFunctionBorrow)
                       : classShape(stage.info.type);
           add(*stage.callInputRole, inputShape);
           add(stage.callInputKind,
@@ -2619,7 +2638,7 @@ public:
         if (stage.receiver)
           operand(*stage.receiver);
         for (const auto &input : stage.operands)
-          operand(input);
+          operand(input, nativeFunctionBorrow);
         for (const auto &type : stage.parameterTypes)
           this->type(type);
         for (const auto &type : stage.closureCaptureTypes)
@@ -2737,6 +2756,11 @@ public:
                             if (auto shape = placeClassShape(*place)) return shape;
                         return {};
                       }()
+              : stage.unsafeOperation ==
+                            UnsafeOperationKind::ForeignPointerCall &&
+                        native_llvm::nativeCResultInputContract(
+                            program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCResultInput)
               : stage.unsafeOperation ==
                           UnsafeOperationKind::ForeignPointerCall &&
                       native_llvm::nativeProcessMemoryCall(program, stage)
@@ -2982,7 +3006,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   StaticDispatchProofs dispatchProofs(plan, plan.input);
   Inventory inventory(plan.uses, mir, dispatchProofs, input.target());
   inventory.add(Shape::ObjectArtifact);
-  inventory.add(input.programKind());
+  inventory.add(input.programKind(),
+      input.embeddingPlan() && native_llvm::infallibleEmbeddingContract(input)
+          ? std::optional(Shape::InfallibleEmbedding) : std::nullopt);
   inventory.add(mir.executionProfile());
   for (const auto &body : input.bodies())
     inventory.inspect(body, *findMirBody(mir, body.identity.address),
@@ -3184,7 +3210,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       inventory.add(operation.failureBehavior);
     }
   if (input.embeddingPlan())
-    inventory.add(Shape::EmbeddingExports);
+    inventory.add(Shape::EmbeddingExports,
+        native_llvm::infallibleEmbeddingContract(input)
+            ? std::optional(Shape::InfallibleEmbedding) : std::nullopt);
   for (const auto &callback : mir.nativeCallbackAdapters()) {
     inventory.required = closure.contains(LoweredGeneratedItemIdentity{
         .kind = LoweredGeneratedItemKind::NativeInteropAdapter,

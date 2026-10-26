@@ -415,7 +415,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
         if (!worker) {
           worker = std::make_unique<Impl>(
               target, sourceGraph, false, workMetrics, sources, rawPointerAudit,
-              requireFunctionDefinitions, trustedBodies);
+              requireFunctionDefinitions, trustedBodies, sourceDebugProfile);
           worker->catalog = catalog.snapshotForInstanceAnalysis();
           worker->semanticModel = semanticModel;
           worker->macroLookup = macroLookup;
@@ -2920,7 +2920,10 @@ auto SemanticVisitor::Impl::analyze(const StmtPtr &stmt) -> void {
     if (statementUnit != 0) {
       currentSourceUnit = statementUnit;
     }
+    recordSourceDebugStatement(*stmt);
     stmt->accept(*this);
+    if (const auto *variable = stmtAs<VariableDecl>(stmt.get()))
+      recordSourceDebugLocal(*variable);
     currentSourceUnit = enclosingSourceUnit;
   }
 }
@@ -4115,6 +4118,7 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   }
   valueFlow.rawOperatorResults.erase(&expr);
   const std::size_t diagnosticsBefore = diagnostics.size();
+  recordSourceDebugExpression(expr);
   expr.accept(*this);
   SemanticType result = currentType;
   // Report only an otherwise valid assignment; an invalid one already has
@@ -9650,6 +9654,10 @@ auto SemanticVisitor::Impl::restoreScopeState(const ScopeStack &source)
       continue;
     }
     Scope &target = scopes[scopeIndex];
+    target.sourceDebugBody = from.sourceDebugBody;
+    target.sourceDebugOwner = from.sourceDebugOwner;
+    target.sourceDebugScope = from.sourceDebugScope;
+    target.sourceDebugNextChild = from.sourceDebugNextChild;
     std::erase_if(target, [&from](const auto &entry) {
       return !from.contains(entry.first);
     });
@@ -9806,7 +9814,185 @@ auto SemanticVisitor::Impl::validateLoopBackedge(const ScopeStack &beforeLoop,
   }
 }
 
-auto SemanticVisitor::Impl::beginScope() -> void { scopes.emplace_back(); }
+SemanticVisitor::Impl::SourceDebugRegionGuard::SourceDebugRegionGuard(
+    Impl &visitor, const VariableDecl &declaration)
+    : visitor(visitor) {
+  if (visitor.sourceDebugProfile != SourceDebugProfile::LexicalV1 ||
+      visitor.scopes.empty() ||
+      (visitor.functionDepth != 0 && !declaration.isStatic() &&
+       !declaration.isThreadLocal()))
+    return;
+  scopeIndex = visitor.scopes.size() - 1;
+  const auto &frame = visitor.scopes[scopeIndex];
+  body = frame.sourceDebugBody;
+  owner = frame.sourceDebugOwner;
+  scope = frame.sourceDebugScope;
+  nextChild = frame.sourceDebugNextChild;
+  active = true;
+  visitor.beginSourceDebugBody(
+      SourceDebugBodyKind::Initializer, &declaration,
+      declaration.extent().value_or(tokenSpan(declaration.name())));
+  visitor.recordSourceDebugStatement(declaration);
+}
+
+SemanticVisitor::Impl::SourceDebugRegionGuard::~SourceDebugRegionGuard() {
+  if (!active)
+    return;
+  auto &frame = visitor.scopes[scopeIndex];
+  frame.sourceDebugBody = body;
+  frame.sourceDebugOwner = owner;
+  frame.sourceDebugScope = scope;
+  frame.sourceDebugNextChild = nextChild;
+}
+
+auto SemanticVisitor::Impl::activeSourceDebugTables()
+    -> SemanticSourceDebugTables * {
+  if (sourceDebugProfile != SourceDebugProfile::LexicalV1 || scopes.empty() ||
+      !scopes.back().sourceDebugBody || !semanticModel.sourceDebug_.tables)
+    return nullptr;
+  const Scope &scope = scopes.back();
+  auto &bodies = semanticModel.sourceDebug_.tables->bodies;
+  const auto index = *scope.sourceDebugBody;
+  // An isolated speculative delta may retain a caller's ScopeStack value
+  // state. Such a frame is not a producer in the delta's body domain.
+  if (index >= bodies.size() || bodies[index].source != scope.sourceDebugOwner)
+    return nullptr;
+  auto *tables = bodies[index].facts.tables.get();
+  return tables != nullptr && scope.sourceDebugScope != 0 &&
+                 scope.sourceDebugScope <= tables->scopes.size()
+             ? tables
+             : nullptr;
+}
+
+auto SemanticVisitor::Impl::beginSourceDebugBody(
+    SourceDebugBodyKind kind, const void *source, const SourceSpan &extent,
+    std::span<const Parameter> parameters, const void *creator,
+    std::size_t expansion) -> void {
+  if (sourceDebugProfile != SourceDebugProfile::LexicalV1 || scopes.empty() ||
+      !semanticModel.sourceDebug_.tables)
+    return;
+  auto &bodies = semanticModel.sourceDebug_.tables->bodies;
+  const auto found =
+      std::find_if(bodies.begin(), bodies.end(), [&](const auto &body) {
+        return body.kind == kind && body.source == source;
+      });
+  const std::size_t index = std::size_t(found - bodies.begin());
+  if (found == bodies.end())
+    bodies.push_back({.kind = kind, .source = source, .creator = creator});
+  auto &body = bodies[index];
+  body.creator = creator;
+  body.facts.collection = SourceDebugCollection::CollectedLexicalV1;
+  body.facts.tables = std::make_unique<SemanticSourceDebugTables>();
+  auto &tables = *body.facts.tables;
+  tables.kind = kind;
+  tables.source = source;
+  tables.creator = creator;
+  tables.snapshot = semanticModel.placeSnapshot();
+  tables.instance = semanticModel.sourceDebug_.tables->instance;
+  tables.scopes.push_back({.id = 1,
+                           .sourceUnit = currentSourceUnit,
+                           .source = extent,
+                           .expansion = expansion});
+  tables.frameAnchors.push_back({});
+  auto &scope = scopes.back();
+  scope.sourceDebugBody = index;
+  scope.sourceDebugOwner = source;
+  scope.sourceDebugScope = 1;
+  scope.sourceDebugNextChild = 0;
+  for (const Parameter &parameter : parameters) {
+    const auto *binding = semanticModel.findBinding(parameter);
+    if (binding == nullptr || parameter.name.lexeme.empty())
+      continue;
+    tables.locals.push_back({.id = tables.locals.size() + 1,
+                             .scope = 1,
+                             .parameter = &parameter,
+                             .symbol = binding->symbol,
+                             .type = binding->type,
+                             .name = parameter.name.lexeme,
+                             .declaration = tokenSpan(parameter.name)});
+  }
+}
+
+auto SemanticVisitor::Impl::recordSourceDebugStatement(const Stmt &statement)
+    -> void {
+  if (auto *tables = activeSourceDebugTables()) {
+    const auto [found, inserted] =
+        tables->statements.emplace(&statement, scopes.back().sourceDebugScope);
+    tables->consistent &=
+        inserted || found->second == scopes.back().sourceDebugScope;
+  }
+}
+
+auto SemanticVisitor::Impl::recordSourceDebugExpression(const Expr &expression)
+    -> void {
+  if (auto *tables = activeSourceDebugTables()) {
+    const auto [found, inserted] = tables->expressions.emplace(
+        &expression, scopes.back().sourceDebugScope);
+    tables->consistent &=
+        inserted || found->second == scopes.back().sourceDebugScope;
+  }
+}
+
+auto SemanticVisitor::Impl::recordSourceDebugLocal(
+    const VariableDecl &declaration) -> void {
+  auto *tables = activeSourceDebugTables();
+  const auto *binding = semanticModel.findBinding(declaration);
+  if (tables == nullptr || binding == nullptr || declaration.isStatic() ||
+      declaration.isThreadLocal())
+    return;
+  const auto found = std::find_if(
+      tables->locals.begin(), tables->locals.end(),
+      [&](const auto &local) { return local.variable == &declaration; });
+  const auto scope = scopes.back().sourceDebugScope;
+  if (found != tables->locals.end()) {
+    tables->consistent &= found->scope == scope &&
+                          found->symbol == binding->symbol &&
+                          found->type == binding->type;
+    return;
+  }
+  tables->locals.push_back({.id = tables->locals.size() + 1,
+                            .scope = scope,
+                            .variable = &declaration,
+                            .symbol = binding->symbol,
+                            .type = binding->type,
+                            .name = declaration.name().lexeme,
+                            .declaration = tokenSpan(declaration.name())});
+}
+
+auto SemanticVisitor::Impl::beginScope() -> void {
+  Scope next;
+  if (auto *active = activeSourceDebugTables()) {
+    Scope &parent = scopes.back();
+    next.sourceDebugBody = parent.sourceDebugBody;
+    next.sourceDebugOwner = parent.sourceDebugOwner;
+    auto &tables = *active;
+    const auto ordinal = parent.sourceDebugNextChild++;
+    const Stmt *anchor = loanFlow.currentStatement;
+    const auto found =
+        std::find_if(tables.frameAnchors.begin(), tables.frameAnchors.end(),
+                     [&](const auto &candidate) {
+                       return candidate.parent == parent.sourceDebugScope &&
+                              candidate.statement == anchor &&
+                              candidate.ordinal == ordinal;
+                     });
+    if (found != tables.frameAnchors.end()) {
+      next.sourceDebugScope =
+          std::size_t(found - tables.frameAnchors.begin()) + 1;
+    } else {
+      next.sourceDebugScope = tables.scopes.size() + 1;
+      const SourceSpan extent =
+          anchor != nullptr && anchor->extent()
+              ? *anchor->extent()
+              : tables.scopes[parent.sourceDebugScope - 1].source;
+      tables.scopes.push_back({.id = next.sourceDebugScope,
+                               .parent = parent.sourceDebugScope,
+                               .sourceUnit = currentSourceUnit,
+                               .source = extent});
+      tables.frameAnchors.push_back({parent.sourceDebugScope, anchor, ordinal});
+    }
+  }
+  scopes.push_back(std::move(next));
+}
 
 auto SemanticVisitor::Impl::endScope() -> void {
   if (scopes.empty()) {
@@ -10693,8 +10879,10 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   // As in constexpr staging, concrete analysis must never reset an active
   // caller's scope/loan state. Reuse the ordinary analyzer in an isolated
   // snapshot; only the normalized result facts leave this worker.
-  auto worker = std::make_unique<Impl>(target, sourceGraph, false, workMetrics,
-                                       sources, RawPointerAuditMode::Warn);
+  auto worker =
+      std::make_unique<Impl>(target, sourceGraph, false, workMetrics, sources,
+                             RawPointerAuditMode::Warn, false,
+                             TrustedBodyAnalysis::Complete, sourceDebugProfile);
   // Every snapshot of the sealed catalog is identical, and the instance
   // analysis below asserts the worker's catalog unchanged on exit, so a
   // snapshot released by an earlier query is the same as a fresh one.

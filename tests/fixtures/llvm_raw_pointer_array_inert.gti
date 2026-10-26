@@ -1,0 +1,8 @@
+int main() {
+  mut int* expired = nullptr;
+  { mut int local = 7; expired = &local; }
+  int* original[2] = {expired, expired};
+  int* copied[2] = original;
+  int* nested[2][2] = {{copied[0], copied[1]}, {nullptr, expired}};
+  return nested[0][1] == expired && nested[1][0] == nullptr ? 0 : 1;
+}

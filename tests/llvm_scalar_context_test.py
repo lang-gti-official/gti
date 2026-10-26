@@ -18,9 +18,9 @@ from llvm_evidence_manifest import manifest_digest, validate_context_sidecar
 import llvm_scalar_execution_test as scalar
 
 
-# Frozen from 1a2dd6f1 before extraction; this is a regression oracle, not
-# another production source or profile registry.
-FROZEN_MANIFEST = "2aa0cc7009980d43b7b17c1bd48fb1113d663e9952cb7b33d452dce9b71f2e10"
+# Positive source/profile facts frozen before extraction, reconciled to v2's
+# explicit execution profile. This is a regression oracle, not a registry.
+FROZEN_MANIFEST = "a03c9ac03f0c0b471a1318aad91f8cecd70cfd7c68755acfeaa584cc71f852b8"
 FROZEN_SUCCESSES = (
     'scalars', 'widths', 'coverage-constructions', 'shipped-example', 'globals',
     'dormant-owner', 'numeric-intrinsics',
@@ -36,7 +36,7 @@ FROZEN_DIAGNOSTICS = {
     'assertion': 'GTI-R0017', 'initializer': 'GTI-R0001',
 }
 FROZEN_CONTROLS = {
-    'polymorphic-owner': '7777dd7aa782d171075349b216111476f6069aec0b4de3b39fc8fc0a3d9a8ffa',
+    'polymorphic-replacement': 'f95045603d423dbbefcd0ee7c9b2e6c0c72e0ba4925ea619ebe7508632971241',
     'polymorphic-array': '90928354b9d87b46309865c08133ccba7deecf3521d37188584d47a072ef1a0d',
     'polymorphic-tls': '0c6a904d28f62b5be56d8cd1f15f515ba478da38e444ceabe3a0055d89d28e55',
 }
@@ -76,7 +76,7 @@ def frozen_plans(name: str, gti: Path, root: Path, work: Path) -> list[dict]:
 
 def equivalent(root: Path, cases: dict, sidecar: dict) -> None:
     manifest = scalar.evidence_manifest(root)
-    assert manifest_digest(manifest) == FROZEN_MANIFEST, 'v1 membership/source/profile drift'
+    assert manifest_digest(manifest) == FROZEN_MANIFEST, 'membership/source/profile drift'
     validate_context_sidecar(sidecar, manifest,
                              expected_partition_policy=scalar.evidence_partition_policy(root))
     assert sidecar['partition_policy'] == {
@@ -177,8 +177,8 @@ def main() -> None:
     for selection, mutation in (
         ('scalars', 'success-output'), ('signed-add', 'failure-exit'),
         ('signed-add', 'missing-diagnostic'), ('signed-add', 'differential'),
-        ('polymorphic-owner', 'replaced-output'), ('polymorphic-owner', 'rejection-exit'),
-        ('polymorphic-owner', 'rejection-diagnostic'),
+        ('polymorphic-replacement', 'replaced-output'), ('polymorphic-replacement', 'rejection-exit'),
+        ('polymorphic-replacement', 'rejection-diagnostic'),
     ):
         rejects(lambda: exercise_main(root, cases, selection, mutation))
     for name, changed in (
@@ -201,7 +201,7 @@ def main() -> None:
         lambda value: value['cases']['scalars']['context'].__setitem__('source_sha256', '0' * 64),
         lambda value: value['cases']['scalars'].__setitem__('role', {}),
         lambda value: value['cases']['scalars'].__setitem__('role', 'expected-rejection-control'),
-        lambda value: value['controls']['polymorphic-owner'].__setitem__('role', 'positive-admission'),
+        lambda value: value['controls']['polymorphic-replacement'].__setitem__('role', 'positive-admission'),
         lambda value: value['cases']['signed-add'].__setitem__('role', 'expected-rejection-control'),
         lambda value: value.pop('partition_policy'),
         lambda value: value['partition_policy'].__setitem__('cases', 'expected-rejection-control'),
@@ -220,7 +220,7 @@ def main() -> None:
         rejects(lambda: validate_context_sidecar(
             coordinated, scalar.evidence_manifest(root),
             expected_partition_policy=scalar.evidence_partition_policy(root)))
-    print(json.dumps({'v1_manifest_unchanged': FROZEN_MANIFEST,
+    print(json.dumps({'v2_manifest_unchanged': FROZEN_MANIFEST,
                       'positive_cases': len(sidecar['cases']),
                       'separate_controls': len(sidecar['controls']),
                       'execution': 'controlled-protocol-only', 'campaign_promotion_ready': False}))

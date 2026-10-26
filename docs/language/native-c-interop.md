@@ -421,6 +421,15 @@ passive `[[c_abi]]` record or used as an `extern "C"` parameter or result. It
 is nullable: initialization, assignment, and comparison with `nullptr` are
 valid. A callback binding requires an explicit initializer.
 
+LLVM preserves ordinary GTI read and mutable references to exact native
+function-value storage when staging source-function arguments. A reference
+is not a C ABI parameter: it selects the GTI binding's storage and retains
+the existing borrow/access checks. A native invocation snapshots its callee
+before evaluating arguments, including an argument that clears that binding.
+Forwarding an aggregate C call result into another call also preserves the
+exact producer and prepared-parameter cleanup; its inherited unsafe-effect
+tag does not authorize a second foreign-memory operation.
+
 This is a native C callable facility, distinct from GTI function items and
 capturing closures. Native callback values cannot be arithmetically manipulated, cast, or formed
 from lambdas, methods, generic functions, `unsafe` functions, declarations

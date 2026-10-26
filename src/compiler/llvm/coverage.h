@@ -97,7 +97,10 @@ enum class Shape {
   NativeCFunctionImport,
   NativeCScalarIndirect,
   NativeCSignature,
+  NativeCFunctionBorrow,
+  NativeCResultInput,
   NativeCCallback,
+  InfallibleEmbedding,
 };
 
 #define LLVM_COVERAGE_BEGIN(Type)                                              \

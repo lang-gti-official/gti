@@ -353,6 +353,122 @@ bool nativeCReceiverInputContract(const MirProgram &program,
   return false;
 }
 
+bool nativeCFunctionBorrowInputContract(const MirProgram &program,
+                                        const TargetInfo &target,
+                                        const MirBody &body,
+                                        const MirInstruction &instruction) {
+  const auto &type = instruction.info.type;
+  const bool mutableBorrow =
+      instruction.callInputKind == HirCallInputKind::MutableBorrow;
+  if (instruction.tombstone ||
+      instruction.kind != MirInstructionKind::CallInput ||
+      instruction.callInputRole != MirCallInputRole::Argument ||
+      (!mutableBorrow &&
+       instruction.callInputKind != HirCallInputKind::ReadBorrow) ||
+      !instruction.result || !instruction.callSite ||
+      instruction.operands.size() != 1 || instruction.rawMemoryAccess ||
+      instruction.receiver || instruction.functionTarget ||
+      instruction.lambdaTarget || instruction.constructorTarget ||
+      instruction.nativeCalleeType || instruction.nativeCallbackAdapter ||
+      instruction.intrinsic != IntrinsicKind::None ||
+      instruction.unsafeOperation != UnsafeOperationKind::None ||
+      type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
+      type.referenceAccess !=
+          (mutableBorrow ? AccessMode::Mutable : AccessMode::ReadOnly) ||
+      !nativeCFunctionValueContract(program, target, type.arguments.front()))
+    return false;
+  const auto &input = instruction.operands.front();
+  const auto *place = body.findPlace(input.place);
+  const auto *value = body.findValue(*instruction.result);
+  if (input.type != type || input.value || input.literal || input.loan ||
+      input.kind != (mutableBorrow ? MirOperandKind::BorrowWrite
+                                   : MirOperandKind::BorrowRead) ||
+      !place || place->type != type.arguments.front() ||
+      (mutableBorrow && place->access != AccessMode::Mutable) ||
+      !value || value->definition != instruction.id || value->info.type != type)
+    return false;
+  bool canonical = false, consumed = false;
+  for (const auto &block : body.blocks)
+    for (const auto &stage : block.instructions) {
+      if (stage.id == instruction.id)
+        canonical = stage == instruction;
+      if (stage.tombstone || stage.kind != MirInstructionKind::Call ||
+          stage.callSite != instruction.callSite || !stage.functionTarget)
+        continue;
+      const auto *callee = program.findFunctionInstance(*stage.functionTarget);
+      const auto index = instruction.callInputIndex;
+      if (!callee || callee->linkage != LanguageLinkage::Gti ||
+          callee->definitionKind != MirDefinitionKind::Source ||
+          index >= callee->parameterTypes.size() ||
+          index >= stage.operands.size() ||
+          stage.parameterTypes != callee->parameterTypes ||
+          callee->parameterTypes[index] != type)
+        continue;
+      const auto &argument = stage.operands[index];
+      consumed |= argument.kind == MirOperandKind::Value &&
+                  argument.value == *instruction.result && argument.type == type;
+    }
+  return canonical && consumed;
+}
+
+bool nativeCResultInputContract(const MirProgram &program,
+                                const TargetInfo &target, const MirBody &body,
+                                const MirInstruction &instruction) {
+  if (instruction.tombstone ||
+      instruction.kind != MirInstructionKind::CallInput ||
+      instruction.callInputRole != MirCallInputRole::Argument ||
+      (instruction.callInputKind != HirCallInputKind::Value &&
+       instruction.callInputKind != HirCallInputKind::MoveValue) ||
+      instruction.unsafeOperation != UnsafeOperationKind::ForeignPointerCall ||
+      instruction.rawMemoryAccess || !instruction.result ||
+      instruction.receiver || instruction.functionTarget ||
+      instruction.lambdaTarget || instruction.constructorTarget ||
+      instruction.nativeCalleeType || instruction.nativeCallbackAdapter ||
+      instruction.intrinsic != IntrinsicKind::None ||
+      !instruction.callSite || !instruction.hirValue ||
+      instruction.operands.size() != 1 ||
+      !nativeCValueContract(program, target, instruction.info.type,
+                            NativeCValueRole::Result))
+    return false;
+  const auto &input = instruction.operands.front();
+  const auto *value = input.kind == MirOperandKind::Value
+                          ? body.findValue(input.value)
+                          : nullptr;
+  const auto *result = body.findValue(*instruction.result);
+  if (!value || input.type != instruction.info.type ||
+      value->info.type != input.type || !result ||
+      result->info.type != input.type || result->definition != instruction.id)
+    return false;
+  bool canonical = false, produced = false, consumed = false;
+  for (const auto &block : body.blocks)
+    for (const auto &stage : block.instructions) {
+      if (stage.id == instruction.id)
+        canonical = stage == instruction;
+      if (stage.id == value->definition)
+        produced = stage.result == input.value &&
+                   stage.info.type == input.type &&
+                   stage.hirValue == instruction.hirValue &&
+                   (nativeCDirectCallContract(program, target, body, stage) ||
+                    nativeCIndirectCallContract(program, target, body, stage));
+      const auto index = instruction.callInputIndex;
+      if (!stage.tombstone &&
+          (stage.kind == MirInstructionKind::Call ||
+           stage.kind == MirInstructionKind::Construct) &&
+          stage.callSite == instruction.callSite &&
+          index < stage.parameterTypes.size() && index < stage.operands.size()) {
+        const auto &argument = stage.operands[index];
+        consumed |= stage.parameterTypes[index] == instruction.info.type &&
+                    argument.kind == MirOperandKind::Value &&
+                    argument.value == *instruction.result &&
+                    argument.type == instruction.info.type;
+      }
+    }
+  // The unsafe effect belongs to the exact producing C call. Staging its
+  // already-produced value executes no second foreign access; destination and
+  // prepared-parameter cleanup remain separate verified MIR obligations.
+  return canonical && produced && consumed;
+}
+
 bool nativeCDirectCallContract(const MirProgram &program,
                                const TargetInfo &target, const MirBody &body,
                                const MirInstruction &instruction) {

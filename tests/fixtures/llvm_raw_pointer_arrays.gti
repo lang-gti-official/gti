@@ -1,0 +1,50 @@
+mut int* global_slots[2] = {};
+struct Table { mut int* slots[2] = {}; };
+struct Cell {
+  mut int value;
+  Cell(int number) : value(number) {}
+  ~Cell() { std::println(this.value); }
+};
+bool snapshot(mut int* slots[2], int* next) {
+  slots[0] = next;
+  return slots[0] == next;
+}
+int main() {
+  mut int first = 11;
+  mut int second = 22;
+  mut int* slots[2] = {};
+  if (slots[0] != nullptr || slots[1] != nullptr) return 1;
+  slots[0] = &first;
+  slots[1] = &second;
+  if (!snapshot(slots, &second) || slots[0] != &first) return 2;
+  int* copy[2] = slots;
+  slots[0] = &second;
+  if (copy[0] != &first || copy[1] != &second) return 3;
+  int* grid[2][2] = {{&first, &second}, {nullptr, &first}};
+  if (grid[0][1] != &second || grid[1][0] != nullptr) return 4;
+  mut int* cursor = &first;
+  int** addresses[2] = {&cursor, nullptr};
+  unsafe { *addresses[0] = &second; }
+  if (cursor != &second) return 5;
+  mut Table original{};
+  original.slots[0] = &first;
+  Table copied = original;
+  original.slots[0] = nullptr;
+  if (copied.slots[0] != &first || copied.slots[1] != nullptr) return 6;
+  global_slots[0] = &first;
+  if (global_slots[0] != &first || global_slots[1] != nullptr) return 7;
+  mut int* expired = nullptr;
+  { mut int local = 7; expired = &local; }
+  int* inert[2] = {expired, expired};
+  int* retained[2] = inert;
+  if (retained[0] != expired || retained[1] != expired) return 8;
+  {
+    Cell owner{31};
+    const Cell* observers[2] = {&owner, nullptr};
+    const Cell* saved[2] = observers;
+    if (saved[0] != &owner || saved[1] != nullptr) return 9;
+  }
+  global_slots[0] = nullptr;
+  std::println("arrays-ok");
+  return 0;
+}

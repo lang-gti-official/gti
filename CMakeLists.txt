@@ -245,13 +245,16 @@ foreach(gti_llvm_target IN ITEMS LLVMSupport LLVMTargetParser LLVMDemangle)
 endforeach()
 
 # Resolve the smallest LLVM component roots needed by the backend foundation.
-# `explicit_map_components_to_libraries` deliberately avoids a distribution's
-# monolithic libLLVM preference: component targets retain an auditable closure
-# in both ordinary builds and self-contained packages.
-if(NOT COMMAND explicit_map_components_to_libraries)
+# Map canonical component targets before walking their auditable dependency
+# closure; do not resolve a bare shared C API target such as Remarks.
+if(NOT COMMAND llvm_map_components_to_libnames)
   include("${LLVM_CMAKE_DIR}/LLVM-Config.cmake")
 endif()
-explicit_map_components_to_libraries(
+if(GTI_BUNDLE_LLVM)
+  # LLVM's native-architecture variable is local to its added subdirectory.
+  set(LLVM_NATIVE_ARCH "${GTI_LLVM_NATIVE_TARGET}")
+endif()
+llvm_map_components_to_libnames(
   GTI_LLVM_BACKEND_DIRECT_LIBRARIES core nativecodegen passes)
 if(NOT GTI_LLVM_BACKEND_DIRECT_LIBRARIES)
   message(FATAL_ERROR
@@ -601,18 +604,23 @@ target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
 add_library(
   "gti_llvm_backend" STATIC
   "src/compiler/llvm_backend.cpp"
+  "src/compiler/llvm_embedding.cpp"
   "src/compiler/llvm/admission.cpp"
   "src/compiler/llvm/coverage.cpp"
   "src/compiler/llvm/session.cpp"
+  "src/compiler/llvm/debug_info.cpp"
+  "src/compiler/llvm/instrumentation.cpp"
   "src/compiler/llvm/layout.cpp"
   "src/compiler/llvm/abi.cpp"
   "src/compiler/llvm/dispatch.cpp"
   "src/compiler/llvm/native_c_abi.cpp"
+  "src/compiler/llvm/embedding.cpp"
   "src/compiler/llvm/runtime_abi.cpp"
   "src/compiler/llvm/hosted.cpp"
   "src/compiler/llvm/reachability.cpp"
   "src/compiler/llvm/failure.cpp"
   "src/compiler/llvm/scalar.cpp"
+  "src/compiler/llvm/simd.cpp"
   "src/compiler/llvm/closure_environment.cpp"
   "src/compiler/llvm/constructor_field_publication.cpp"
   "src/compiler/llvm/callables.cpp"
@@ -675,6 +683,7 @@ endif()
 add_library(
   "gti_runtime" STATIC
   "runtime/src/execution.cpp"
+  "runtime/src/embedding.cpp"
   "runtime/src/charconv.cpp"
   "runtime/src/chrono.cpp"
   "runtime/src/cthread.cpp"
@@ -701,6 +710,9 @@ target_include_directories(
 )
 target_include_directories("gti_runtime" SYSTEM PRIVATE ${CURL_INCLUDE_DIRS})
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
+set_target_properties(gti_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_source_files_properties(runtime/src/embedding.cpp PROPERTIES
+  COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-fvisibility=hidden>")
 target_link_libraries("gti_runtime" PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/RuntimeCharconv.cmake")
 gti_configure_runtime_charconv()
@@ -712,6 +724,7 @@ endif()
 add_library(
   "gti_driver" STATIC
   "src/driver/artifact.cpp"
+  "src/driver/embedding_library.cpp"
   "src/driver/bindgen_import.cpp"
   "src/driver/build_script.cpp"
   "src/driver/build.cpp"

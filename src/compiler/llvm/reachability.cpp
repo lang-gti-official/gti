@@ -75,9 +75,9 @@ Reachability reachableProgram(const LoweredProgram &program) {
   body({MirBodyKind::Module, 0});
   if (mir.hostedStartupPlan())
     body({MirBodyKind::HostedStartup, mir.hostedStartupPlan()->entry});
-  // Libraries/embedding, unknown dispatch and declaration-backed generated
-  // storage require a broader root model before they can omit anything.
-  result.conservative = program.embeddingPlan().has_value();
+  if (program.embeddingPlan())
+    for (const auto &selected : program.embeddingPlan()->exports)
+      body({MirBodyKind::Function, selected.function});
   for (const auto &function : mir.functionInstances())
     if (function.linkage == LanguageLinkage::C &&
         function.definitionKind == MirDefinitionKind::Source)
@@ -238,7 +238,7 @@ Reachability reachableProgram(const LoweredProgram &program) {
     }
   }
   // Do not omit rootless library exports or dependency forms not yet modeled.
-  if (!mir.hostedStartupPlan())
+  if (!mir.hostedStartupPlan() && !program.embeddingPlan())
     result.conservative = true;
   if (result.conservative) {
     for (const auto &row : program.bodies())
