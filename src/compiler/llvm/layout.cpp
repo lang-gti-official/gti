@@ -50,6 +50,32 @@ const SharedOwnerLayout &Layouts::sharedOwner() {
   return *sharedOwner_;
 }
 
+PolymorphicStorageLayout Layouts::polymorphicStorage(const SemanticType &type) {
+  const auto &owner = instance(type);
+  if (!polymorphicStorageRepresentation(session.program().mir(), owner))
+    throw BackendUnsupportedError(
+        "LLVM inline polymorphic storage requires its exact sealed capability");
+  auto &entry = records.at(owner.id);
+  const auto capacity = type.valueArguments[0].value;
+  const auto alignment = type.valueArguments[1].value;
+  if (!entry.layout) {
+    auto *byte = llvm::Type::getInt8Ty(session.context());
+    // A zero-length alignment anchor carries no payload bytes or SIMD
+    // operation. Unlike an alloca-only alignment override, its DataLayout
+    // alignment survives containment in records and arrays.
+    auto *anchor = llvm::FixedVectorType::get(byte, alignment);
+    if (session.dataLayout().getABITypeAlign(anchor).value() != alignment)
+      throw BackendUnsupportedError(
+          "LLVM target cannot represent the requested inline slot alignment");
+    auto *payload = llvm::StructType::get(session.context(),
+                                          {llvm::ArrayType::get(byte, capacity),
+                                           llvm::ArrayType::get(anchor, 0)});
+    entry.storage->setBody({pointer(), pointer(), payload});
+    entry.layout = describe(entry.storage, true);
+  }
+  return {*entry.layout, 0, 1, 2, capacity, alignment};
+}
+
 TypeLayout Layouts::describe(llvm::Type *storage, bool addressOnly,
                              llvm::Type *value) const {
   const auto &data = session.dataLayout();
@@ -243,6 +269,8 @@ TypeLayout Layouts::record(const SemanticType &type) {
     entry.layout = sharedOwner().handle;
     return *entry.layout;
   }
+  if (polymorphicStorageRepresentation(session.program().mir(), instance))
+    return polymorphicStorage(type).type;
   const bool vacant =
       uninitializedStorageRepresentation(session.program().mir(), instance);
   if (instance.cOpaqueHandle ||

@@ -41,6 +41,17 @@ struct SharedOwnerLayout {
   unsigned blockAllocation = 1;
 };
 
+// Representation only: an operations descriptor and a cached interface address
+// accompany inline bytes. Relocation must recompute that address, not copy it.
+struct PolymorphicStorageLayout {
+  TypeLayout type;
+  unsigned operationsIndex = 0;
+  unsigned interfaceIndex = 1;
+  unsigned payloadIndex = 2;
+  std::uint64_t capacity = 0;
+  std::uint64_t payloadAlignment = 1;
+};
+
 struct BaseSubobjectLayout {
   SemanticType type = SemanticType::Unknown;
   std::uint64_t offset = 0;
@@ -72,6 +83,8 @@ public:
   [[nodiscard]] const PayloadLayout &payload(const SemanticType &type);
   [[nodiscard]] llvm::PointerType *pointer() const;
   [[nodiscard]] const SharedOwnerLayout &sharedOwner();
+  [[nodiscard]] PolymorphicStorageLayout
+  polymorphicStorage(const SemanticType &type);
   [[nodiscard]] const MirClassInstance &
   instance(const SemanticType &type) const;
   [[nodiscard]] unsigned fieldIndex(const SemanticType &type,

@@ -5155,6 +5155,22 @@ uses ordinary enums, not the legacy `OptionalStorage` capability. The live
 `PolymorphicStorage` family requires concrete polymorphic object layout from
 O-LLVM-10; heap-owned compositions also require O-LLVM-08. Neither dependency is
 silently granted by the existence of a payload layout.
+
+The private `PolymorphicStorage` representation now has a session-owned layout
+plan, without admitting its operations. It retains an operations-descriptor
+pointer, a cached interface address and inline payload bytes. The sealed
+capability identity, concrete interface and bounded byte/alignment arguments
+select this representation, never a public wrapper name. A zero-length LLVM
+vector alignment anchor makes the requested alignment part of the storage type,
+so ordinary containing records preserve it without allocation-site overrides.
+Target DataLayout must agree with the requested power-of-two alignment. No heap
+allocation or payload lifetime begins during layout. Relocation must eventually
+recompute the interface address at the destination rather than copy the cache.
+Construction, relocation, reset, checked reads, dynamic dispatch and cleanup
+remain separately gated pending their exact operation proofs. The component
+layout oracle is not evidence that `std::function` or `std::inline_polymorphic`
+executes on LLVM.
+
 ### LLVM Function Values And Closure Environments
 
 O-LLVM-09 lowers exact function items, invocation-pointer capabilities and

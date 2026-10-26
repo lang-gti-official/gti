@@ -11618,6 +11618,17 @@ execution remains an integration gate rather than component evidence.
 
 ### O-LLVM-10: Inheritance, Interfaces And Polymorphism
 
+**Inline-owner integration prerequisite:** the private polymorphic slot now has
+a target-checked representation plan and a dedicated component layout oracle.
+This does not close public erased-callable support. The next operation layer
+must use sealed concrete model identity and relocation/cleanup eligibility to
+construct and relocate the payload, recover the exact interface subobject at
+its new address, and implement empty/reset/read behavior. General boxed
+polymorphic ownership and dynamic cleanup remain necessary for payloads that
+do not qualify for inline storage; do not recognize `std::function` by name or
+admit a wrapper merely because its slot has a layout. Required platform and
+composition evidence remains part of milestone acceptance.
+
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
   milestone completion: generated scalar-hierarchy copies/moves now have exact
