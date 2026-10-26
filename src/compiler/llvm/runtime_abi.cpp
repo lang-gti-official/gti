@@ -61,6 +61,13 @@ llvm::Function *declareRuntimeService(Session &session,
     parameters = {ptr, llvm::Type::getInt64Ty(context),
                   llvm::Type::getInt32Ty(context), llvm::Type::getInt32Ty(context)};
     break;
+  case RuntimeService::BeginCThreadRuntime:
+  case RuntimeService::EndCThreadRuntime:
+    noUnwind = true;
+    name = service == RuntimeService::BeginCThreadRuntime
+               ? "gti_rt_cthread_begin_v1"
+               : "gti_rt_cthread_end_v1";
+    break;
   case RuntimeService::AtomicNotify:
     noUnwind = true;
     name = "gti_rt_atomic_notify_v1";

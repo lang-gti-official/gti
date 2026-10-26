@@ -1,0 +1,3 @@
+#include <std/cthread>
+
+int main() { return 0; }

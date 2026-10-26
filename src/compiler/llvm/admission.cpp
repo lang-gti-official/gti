@@ -9,6 +9,7 @@
 #include "parameter_packs.h"
 #include "reachability.h"
 #include "text.h"
+#include "thread_lifecycle.h"
 
 #include <iomanip>
 #include <map>
@@ -1831,12 +1832,14 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.required = closure.contains(*inventory.body);
     if (const auto *row = input.findBody(*inventory.body))
       inventory.source = row->identity.source;
-    const auto processMemory =
+    const auto nativeBinding =
         native_llvm::nativeProcessMemoryBinding(mir, function)
             ? std::optional(Shape::NativeProcessMemory)
+        : native_llvm::nativeCThreadLifecycleBinding(mir, function)
+            ? std::optional(Shape::NativeCThreadLifecycle)
             : std::nullopt;
-    inventory.add(function.definitionKind, processMemory);
-    inventory.add(function.linkage, processMemory);
+    inventory.add(function.definitionKind, nativeBinding);
+    inventory.add(function.linkage, nativeBinding);
     inventory.add(function.entryKind);
     if (function.owner)
       inventory.add(
@@ -1859,15 +1862,15 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       }
     }
     if (function.cThreadOperation != CThreadRuntimeOperation::None)
-      inventory.add(function.cThreadOperation);
+      inventory.add(function.cThreadOperation, nativeBinding);
     if (function.processMemoryOperation != ProcessMemoryRuntimeOperation::None)
-      inventory.add(function.processMemoryOperation, processMemory);
+      inventory.add(function.processMemoryOperation, nativeBinding);
     if (function.definitionKind == MirDefinitionKind::RuntimeBinding)
       inventory.add(Shape::RuntimeBinding);
     if (function.definitionKind == MirDefinitionKind::Declaration)
-      inventory.add(Shape::LibraryDeclaration, processMemory);
+      inventory.add(Shape::LibraryDeclaration, nativeBinding);
     if (function.linkage == LanguageLinkage::C)
-      inventory.add(Shape::NativeCall, processMemory);
+      inventory.add(Shape::NativeCall, nativeBinding);
     if (function.mayRaiseDefinedFailure)
       inventory.add(Shape::FailureReturn);
     if (function.receiverMutability != ReceiverMutability::ReadOnly)
@@ -1924,7 +1927,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   inventory.required = true;
   if (mir.hostedStartupPlan())
     for (const auto &operation : mir.hostedStartupPlan()->operations) {
-      inventory.add(operation.kind);
+      inventory.add(operation.kind,
+                    native_llvm::nativeCThreadLifecycleOperation(mir, operation)
+                        ? std::optional(Shape::NativeCThreadLifecycle)
+                        : std::nullopt);
       inventory.add(operation.failureBehavior);
     }
   if (input.embeddingPlan())

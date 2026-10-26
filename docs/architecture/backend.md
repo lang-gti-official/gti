@@ -4414,6 +4414,18 @@ contention and sanitizer-instrumented emitted accesses. The observational cost
 probe distinguishes runtime-service cost from the token/payload adapter and
 does not claim public-lifecycle parity.
 
+Concurrent hosted programs also consume the sealed startup plan's exact
+C-thread begin/end declarations through their real `void()` C services.
+Eligibility requires the trusted operation classification, selected declaration
+IDs, reviewed target/profile, exact signature and matching generated startup
+operation. It does not grant arbitrary native declarations or source-level
+access to runtime lifecycle control. The source-selected no-argument and TLS
+drain cases execute those real services; generated-entry checks require exactly
+one non-unwinding begin and end call. This lifecycle witness does not admit
+manual worker creation, managed callbacks or embedding initialization. Public
+native callback evidence requires composition with the separately owned O11
+callback boundary, not a synthetic attachment oracle.
+
 O-LLVM-03 provides the private machinery shared by all native lowering profiles.
 `Session` owns the exact
 `VerifiedLoweredProgram`, context, native target machine, module, unique layout

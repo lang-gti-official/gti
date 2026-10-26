@@ -623,6 +623,7 @@ add_library(
   "src/compiler/llvm/lifetimes.cpp"
   "src/compiler/llvm/memory.cpp"
   "src/compiler/llvm/thread_locals.cpp"
+  "src/compiler/llvm/thread_lifecycle.cpp"
   "src/compiler/llvm/text.cpp"
 )
 file(
