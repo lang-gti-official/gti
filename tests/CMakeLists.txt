@@ -1980,6 +1980,13 @@ if(Python3_Interpreter_FOUND)
       --indirect --cc "${CMAKE_C_COMPILER}"
       --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-native-c-indirect-cost")
   set_tests_properties(llvm_native_c_indirect_cost PROPERTIES TIMEOUT 180)
+  add_test(NAME llvm_raw_pointer_array_cost
+    COMMAND "${Python3_EXECUTABLE}"
+      "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_cost_test.py"
+      "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+      --pointer-array --cc "${CMAKE_C_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-raw-pointer-array-cost")
+  set_tests_properties(llvm_raw_pointer_array_cost PROPERTIES TIMEOUT 180)
   add_test(NAME llvm_native_c_aggregate_cost
     COMMAND "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/tests/llvm_native_c_cost_test.py"
@@ -2042,6 +2049,13 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_place_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_place_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_raw_pointer_array_execution
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_raw_pointer_array_test.py"
+      "$<TARGET_FILE:gti>" --cc "${CMAKE_C_COMPILER}"
+      --output-dir "${CMAKE_CURRENT_BINARY_DIR}/llvm-raw-pointer-array-evidence")
+  set_tests_properties(llvm_raw_pointer_array_execution PROPERTIES TIMEOUT 600)
+  gti_register_llvm_evidence_manifest(llvm_raw_pointer_array_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_raw_pointer_array_test.py")
   gti_register_llvm_evidence_manifest(
     llvm_place_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_place_execution_test.py"

@@ -2,6 +2,7 @@
 """C boundary cost probe; --measure requires an uncontended host window."""
 
 import argparse
+from hashlib import sha256
 import json
 from pathlib import Path
 import platform
@@ -23,27 +24,43 @@ def main():
     family.add_argument("--aggregate", action="store_true")
     family.add_argument("--storage", action="store_true")
     family.add_argument("--callback", action="store_true")
+    family.add_argument("--pointer-array", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     fixture = root / "tests/fixtures/llvm_native_c_abi"
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    stem = ("callback_cost" if args.callback else
+    stem = ("pointer_array_cost" if args.pointer_array else
+            "callback_cost" if args.callback else
             "storage_cost" if args.storage else
             "aggregate_cost" if args.aggregate else
             "indirect_cost" if args.indirect else "direct_cost")
+    host_source = fixture / ("pointer_array_cost.c" if args.pointer_array else
+                             "callback_cost.c" if args.callback else
+                             "storage_cost.c" if args.storage else
+                             "aggregate_cost.c" if args.aggregate else "direct_cost.c")
     report = {"head": subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip(),
+        "dirty": bool(subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"])),
+        "compiler_sha256": sha256(args.compiler.read_bytes()).hexdigest(),
+        "emitter_sha256": sha256(args.emitter.read_bytes()).hexdigest(),
+        "source_sha256": {str(path.relative_to(root)): sha256(path.read_bytes()).hexdigest()
+                          for path in (fixture / (stem + ".gti"),
+                                       fixture / (stem + "_baseline.c"), host_source)},
         "platform": platform.platform(), "cc": args.cc,
-        "family": ("native-callback" if args.callback else
+        "family": ("raw-pointer-array" if args.pointer_array else
+                   "native-callback" if args.callback else
                    "foreign-storage" if args.storage else
                    "passive-aggregate" if args.aggregate else
                    "scalar-indirect" if args.indirect else "direct"),
-        "calls_per_process": (20000001 if args.storage or args.callback else
+        "calls_per_process": (20000000 if args.pointer_array else
+                              20000001 if args.storage or args.callback else
                               40000003 if args.aggregate else
                               40000002 if args.indirect else 40000001),
         "measured": args.measure,
-        "measurement": ("whole process including startup; same C caller and exact uint64 XOR callback"
+        "measurement": ("whole process including startup; pointer-array snapshot, same C reader and checked additions"
+                        if args.pointer_array else
+                        "whole process including startup; same C caller and exact uint64 XOR callback"
                         if args.callback else
                         "whole process including startup; same C oracle and checked additions"),
         "records": {}, "steps": []}
@@ -83,9 +100,7 @@ def main():
     host = output / "host.o"
     run([args.cc, "-std=c17", "-O3", "-Wall", "-Wextra", "-Werror",
          "-I", root / "runtime/include", "-c",
-         fixture / ("callback_cost.c" if args.callback else
-                    "storage_cost.c" if args.storage else
-                    "aggregate_cost.c" if args.aggregate else "direct_cost.c"), "-o", host], "host")
+         host_source, "-o", host], "host")
     native, baseline = output / "native", output / "baseline"
     run([args.compiler.resolve(), fixture / (stem + ".gti"), "--backend", "llvm",
          "-O3", "-o", native, "--", host], "build-native", measured_build=True)

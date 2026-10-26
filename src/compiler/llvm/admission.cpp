@@ -36,7 +36,10 @@ bool passiveArrayElement(const SemanticType &type) {
   if (type.kind == SemanticType::Array)
     return type.arguments.size() == 1 && !type.arrayLengthParameterId &&
            passiveArrayElement(type.arguments.front());
-  return isPassiveScalarValueType(type) && type.kind != SemanticType::Void;
+  // Pointer storage is passive regardless of its referent. Accessing that
+  // referent still requires its own typed projection and unsafe witness.
+  return (isPassiveScalarValueType(type) && type.kind != SemanticType::Void) ||
+         (type.kind == SemanticType::RawPointer && type.arguments.size() == 1);
 }
 
 bool passiveAddress(const SemanticType &type) {

@@ -4973,11 +4973,21 @@ reference type, including pointer result destinations on checked-call success.
 Verified permission/availability operations erase; no runtime loan manager or
 LLVM alias attribute is inferred from source mutability.
 
-The current added profile admits passive fixed arrays of primitive values,
+The current added profile admits passive fixed arrays of primitive values or
+raw pointers (including nested pointer slots and pointers to non-passive objects),
 their multidimensional projections, by-value snapshots, primitive/array
 references and constrained fixed-array range operations. Array bounds compare
 the evaluated index before address selection or access. Constant global arrays
 consume sealed recursive constants; dynamic initialization keeps MIR order.
+Pointer elements store address bits at the target pointer size and alignment;
+copies do not access or extend the lifetime of their referents. Expired-pointer
+copies remain inert, while dereference, mutation and escape retain the existing
+semantic provenance and unsafe obligations. Pointer-only array storage does not
+admit by-value referent layout or array value equality. The registered
+`llvm_raw_pointer_array_execution` gate retains the primitive-array control and
+covers ordinary user arrays, the unchanged nested native slots fixture, exact
+bounds-failure cleanup, strict-audit inert copies and artifact-preserving
+rejections at LLVM O0-O3, with existing C++20/23 behavior as an oracle.
 
 Read-only and mutable references to integral enums, including reference returns,
 use the exact enum identity in the sealed integral inventory and its underlying
@@ -5025,7 +5035,7 @@ macOS measures C++23/O3 at 85.19 ms and LLVM O3 at 77.27 ms (5 warmups,
 GTI heap-allocation operations; process-startup allocation was not measured.
 This is one bounded workload, not a general backend speedup claim.
 
-Integral-enum/nonprimitive array/reference composition and fixed-array value
+Integral-enum/other nonprimitive array/reference composition and fixed-array value
 equality remain explicit preflight limitations. Scalar equality does not imply
 an array element comparison implementation. Ordinary class execution is described
 below; private owning storage, payloads and native calls remain later milestones. Source restrictions
@@ -5396,7 +5406,7 @@ attributes or permits removing a runtime check.
 
 A pending vocabulary family can have a narrower implemented shape. Each use
 retains its original ledger row and an optional inventory-produced structural
-implementation witness. Concrete primitive arrays satisfy `PassiveArrayValue`,
+implementation witness. Concrete primitive or raw-pointer arrays satisfy `PassiveArrayValue`,
 not the whole `Aggregate` family; admitted ordinary class arrays use the separate
 `NativeClassStorage` witness. Private capability/payload arrays remain rejected. Distinct
 shapes have distinct inventory keys, so a supported occurrence cannot hide an
