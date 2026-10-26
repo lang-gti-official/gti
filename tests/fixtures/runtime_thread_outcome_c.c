@@ -6,6 +6,11 @@
 _Static_assert(sizeof(gti_thread_failure_view_v1) == 40, "failure view C layout");
 _Static_assert(sizeof(gti_thread_failure_sink_v1) == 40, "failure sink C layout");
 _Static_assert(offsetof(gti_thread_failure_sink_v1, owner) == 32, "sink owner C offset");
+_Static_assert(_Generic(&gti_rt_thread_quarantine_v1,
+                       void (*)(gti_thread_state_v1 **): 1, default: 0),
+               "quarantine C signature");
+_Static_assert(_Generic(&gti_rt_thread_program_storage_retirement_ready_v1,
+                       uint32_t (*)(void): 1, default: 0), "retirement C signature");
 _Static_assert(_Generic(&gti_rt_thread_cleanup_failure_kind_v1,
                        gti_thread_worker_failure_kind_v1 (*)(void): 1, default: 0),
                "cleanup kind C signature");

@@ -1034,7 +1034,17 @@ remain `expected` results; an incoherent native join state is an integrity
 termination rather than a forgeable recoverable handle. An automatic-join
 host failure transfers its still-coherent state into a private terminal
 quarantine and raises `GTI-R0012`; this is neither detach nor a resumable
-ownership state.
+ownership state. `gti_rt_thread_quarantine_v1` exposes that same terminal-only
+ownership transfer to nonthrowing generated adapters. It permanently pins
+native process storage: the worker may still use share-capable globals, and
+the manual C-thread registry does not track managed workers. The nonthrowing
+`gti_rt_thread_program_storage_retirement_ready_v1` query returns zero after
+quarantine, even if the worker subsequently finishes. Hosted failure preserves
+the original record while leaving native roots live until terminal process
+exit. A native module-unload hook rejects live pinned roots rather than
+destroying or unmapping them. An embedding context must consult the same query
+and refuse shutdown/unload when pinned; normal foreign-caller quiescence remains
+a separate host obligation. There is no asynchronous cleanup or retry policy.
 
 The versioned nonthrowing worker seam is declared in `runtime_thread.h`.
 `gti_thread_failure_view_v1` borrows one exact v2 ordinary or cleanup record
@@ -1063,7 +1073,11 @@ the primary in the emergency envelope; a third failure terminates.
 
 `runtime_thread_outcome_boundary` tests the C17 layout/signatures, copied
 records, nested caller scopes, launch rollback, worker and post-join result
-cleanup, TLS-before-result cleanup and isolated integrity deaths. This is
+cleanup, TLS-before-result cleanup and isolated integrity deaths. A real join
+failure also checks sticky retirement pinning after worker cleanup. These are
+isolated terminal-retention checks; only that subprocess disables TSan's
+unjoined-thread exit report, while race detection and all ordinary shutdown
+leak reports remain enabled. This is
 runtime containment evidence, not generated LLVM worker admission or a C04
 transport selection. The generated entry/cleanup/result adapters remain a
 separate integration prerequisite.
@@ -1076,7 +1090,11 @@ after publication and in the source entry. C observers count real native shell
 initialization/retirement, verify TLS still sees both live roots and inspect the
 original record at the real failure terminator. This is source-composition
 evidence, not a public mutex/worker profile or a C04 transport decision. Separate
-kernel cases check repeated teardown and unpublished-prefix handling.
+kernel cases check repeated teardown and unpublished-prefix handling. A real
+quarantined worker keeps locking a published native root through explicit
+hosted retirement; the original ordinary failure is preserved and both roots
+remain live. The unload endpoint rejects those pinned roots without retiring
+them. These are terminal, isolated processes, not leaked normal-shutdown tests.
 
 An additional source-composition fixture uses the actual fallible GTI payload
 destructor, rather than the kernel's explicit C destructor double. A source

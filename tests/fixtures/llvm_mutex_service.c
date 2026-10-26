@@ -1,5 +1,6 @@
 #include "gti/runtime_failure.h"
 #include "gti/runtime_mutex.h"
+#include "gti/runtime_thread.h"
 
 #include <assert.h>
 #include <pthread.h>
@@ -29,6 +30,28 @@ static gti_mutex_slot_v1 *process_shells[2];
 static unsigned process_live;
 extern void gti_test_program_init_prefix(int32_t count);
 extern void gti_test_program_retire(void);
+extern void gti_test_program_unload(void);
+extern void gti_test_quarantine_worker(void (*)(void *), void *);
+extern void gti_test_quarantined_worker_progress(void);
+
+static void observe_process_shell(void *unused) {
+  (void)unused;
+  assert(gti_rt_mutex_lock_v1(process_shells[0]) == 0);
+  gti_rt_mutex_unlock_v1(process_shells[0]);
+}
+
+static void reject_quarantined_unload(void) {
+  process_lifecycles = true;
+  gti_test_program_init_prefix(2);
+  const unsigned before = destroyed;
+  gti_test_quarantine_worker(observe_process_shell, NULL);
+  gti_test_program_retire();
+  assert(process_live == 2 && destroyed == before);
+  gti_test_quarantined_worker_progress();
+  gti_test_program_retire();
+  assert(process_live == 2 && destroyed == before);
+  gti_test_program_unload();
+}
 
 static void process_retirement(void) {
   const unsigned before = initialized;
@@ -239,5 +262,7 @@ int main(int argc, char **argv) {
   assert(initialized == destroyed);
   active_lifecycles();
   process_retirement();
+  if (argc == 2 && strcmp(argv[1], "quarantined-unload") == 0)
+    reject_quarantined_unload();
   return 0;
 }

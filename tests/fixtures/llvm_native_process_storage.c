@@ -1,5 +1,6 @@
 #include "gti/runtime_mutex.h"
 #include "gti/runtime_failure.h"
+#include "gti/runtime_thread.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -8,12 +9,22 @@
 
 extern void gti_test_mutex_real_initialize_v1(gti_mutex_slot_v1 *);
 extern void gti_test_mutex_real_destroy_v1(gti_mutex_slot_v1 *);
+extern uint32_t gti_test_mutex_real_lock_v1(gti_mutex_slot_v1 *);
 
 static gti_mutex_slot_v1 *live[16];
 static unsigned initialized, destroyed, live_count;
 static bool ready;
 static bool tls_drained;
 static unsigned constructors;
+extern void gti_test_quarantine_worker(void (*)(void *), void *);
+extern void gti_test_quarantined_worker_progress(void);
+
+static void observe_live_globals(void *unused) {
+  (void)unused;
+  assert(live_count == 2 && ready);
+  assert(gti_test_mutex_real_lock_v1(live[0]) == 0);
+  gti_rt_mutex_unlock_v1(live[0]);
+}
 
 void gti_rt_mutex_initialize_v1(gti_mutex_slot_v1 *slot) {
   assert(live_count < 16);
@@ -60,6 +71,10 @@ int32_t gti_test_program_gate(int32_t stage) {
     ++constructors;
   if (!mode)
     return 1;
+  if (stage == 3 && strcmp(mode, "quarantine") == 0) {
+    gti_test_quarantine_worker(observe_live_globals, NULL);
+    return 0;
+  }
   const bool fail =
       (stage == 0 && strcmp(mode, "before") == 0) ||
       (stage == 1 && constructors == 1 && strcmp(mode, "partial-first") == 0) ||
@@ -77,8 +92,15 @@ _Noreturn void gti_rt_failure_terminate_v2(
     const gti_failure_record_v2 *record,
     const gti_failure_artifact_descriptor_v1 *artifact,
     gti_failure_observer_v2 observer, void *context) {
-  assert(getenv("GTI_O13_PROCESS_FAILURE") && live_count == 0 &&
-         initialized == destroyed);
+  const char *mode = getenv("GTI_O13_PROCESS_FAILURE");
+  assert(mode);
+  if (strcmp(mode, "quarantine") == 0) {
+    assert(live_count == 2 && initialized == destroyed + 2 &&
+           !gti_rt_thread_program_storage_retirement_ready_v1());
+    gti_test_quarantined_worker_progress();
+  } else {
+    assert(live_count == 0 && initialized == destroyed);
+  }
   assert(!ready || tls_drained);
   assert(record->abi_version == GTI_FAILURE_ABI_VERSION_V2 &&
          record->code == GTI_FAILURE_CODE_DIVISION_BY_ZERO_V1 &&

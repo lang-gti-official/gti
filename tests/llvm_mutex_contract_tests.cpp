@@ -123,6 +123,15 @@ void checkProcessStorage(const std::filesystem::path &root,
   ir.SetInsertPoint(llvm::BasicBlock::Create(session.context(), "entry", retire));
   lifetimes.retireProgramStorage(ir);
   ir.CreateRetVoid();
+  auto *unload = session.module().getFunction("__gti_program_unload_native");
+  require(unload && session.module().getGlobalVariable("llvm.global_dtors"),
+          "module endpoint guards pinned storage instead of silently unloading it");
+  auto *unloadTest = llvm::Function::Create(
+      unload->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
+      "gti_test_program_unload", session.module());
+  ir.SetInsertPoint(llvm::BasicBlock::Create(session.context(), "entry", unloadTest));
+  ir.CreateCall(unload);
+  ir.CreateRetVoid();
   if (!sanitizer.empty())
     for (auto &function : session.module())
       if (!function.isDeclaration())

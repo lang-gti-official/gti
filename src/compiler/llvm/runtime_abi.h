@@ -31,6 +31,8 @@ enum class RuntimeService {
   PublishThreadFailure,
   ThreadCleanupFailureKind,
   CopyThreadCleanupPrimary,
+  QuarantineThread,
+  ProgramStorageRetirementReady,
 };
 
 // Only real C symbols with explicitly modeled signatures enter the module.

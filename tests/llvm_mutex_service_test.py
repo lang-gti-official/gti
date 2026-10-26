@@ -72,6 +72,13 @@ def main():
         "-o", output / "runtime.o"])
     run("fixture", [args.cc, "-std=c17", *flags, "-c", root / "tests/fixtures/llvm_mutex_service.c",
                     "-o", output / "fixture.o"])
+    worker_objects = []
+    for name, source in (("quarantine", "tests/fixtures/llvm_native_quarantine.cpp"),
+                         ("thread-runtime", "runtime/src/thread.cpp"),
+                         ("cthread-runtime", "runtime/src/cthread_state.cpp")):
+        target = output / f"{name}.o"
+        run(name, [args.cxx, "-std=c++20", *flags, "-c", root / source, "-o", target])
+        worker_objects.append(target)
     run("emit-source-composition", [args.emitter.resolve(), root, "--source-composition",
                                      output / "source.ll", *sanitize])
     run("source-observer", [args.cc, "-std=c17", *flags, "-c",
@@ -118,6 +125,7 @@ def main():
         run(f"link-{mode}", [args.cxx, "-pthread", *instrumentation, output / "fixture.o", output / "runtime.o",
                              output / f"mutex-{mode}.o", output / f"mutex-active-{mode}.o",
                              output / f"mutex-process-{mode}.o",
+                             *worker_objects,
                              runtime_library, "-o", program])
         run(f"execute-{mode}", [program])
         run(f"source-ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation,
@@ -126,10 +134,11 @@ def main():
         run(f"source-link-{mode}", [args.cxx, "-pthread", *instrumentation,
                                      output / "source-observer.o", output / "runtime.o",
                                      output / "failure-runtime.o",
+                                     *worker_objects,
                                      output / f"source-{mode}.o", runtime_library,
                                      "-o", source_program])
         run(f"source-execute-{mode}", [source_program])
-        for failure_mode in ("before", "partial-first", "partial-last", "after", "entry"):
+        for failure_mode in ("before", "partial-first", "partial-last", "after", "entry", "quarantine"):
             run(f"source-{failure_mode}-{mode}", [source_program], expected=70,
                 failure_mode=failure_mode)
         run(f"active-source-ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation,
@@ -139,13 +148,14 @@ def main():
         run(f"active-source-link-{mode}", [args.cxx, "-pthread", *instrumentation,
                                             output / "active-source-observer.o", output / "runtime.o",
                                             output / "active-failure-runtime.o",
+                                            *worker_objects,
                                             output / f"active-source-{mode}.o", runtime_library,
                                             "-o", active_program])
         run(f"active-source-execute-{mode}", [active_program])
         for failure_mode in ("nested", "cell-last", "cell-first", "double"):
             run(f"active-source-{failure_mode}-{mode}", [active_program], expected=70,
                 failure_mode=failure_mode)
-        for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock"):
+        for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock", "quarantined-unload"):
             run(f"{fault}-{mode}", [program, fault], death=True)
 
     if args.gti:

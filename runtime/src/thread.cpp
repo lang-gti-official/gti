@@ -48,6 +48,7 @@ std::atomic<gti::runtime::detail::ThreadTestFault> testFault{
     gti::runtime::detail::ThreadTestFault::None};
 std::mutex quarantineMutex;
 gti_thread_state_v1 *quarantinedStates = nullptr;
+constinit std::atomic<bool> programStoragePinned{false};
 
 [[nodiscard]] bool
 consumeTestFault(gti::runtime::detail::ThreadTestFault expected) noexcept {
@@ -655,6 +656,9 @@ void quarantine_managed_thread_state(
     std::terminate();
   }
   gti_thread_state_v1 *state = *stateAddress;
+  // This atomic has no dynamic teardown and remains queryable by module dtors.
+  // Quarantine is terminal ownership retention, never eventual join completion.
+  programStoragePinned.store(true, std::memory_order_release);
   {
     const std::lock_guard lock(quarantineMutex);
     state->quarantineNext = quarantinedStates;
@@ -676,6 +680,16 @@ void setScopedThreadTestFailureAfter(std::uint64_t starts) noexcept {
 }
 
 } // namespace gti::runtime::detail
+
+extern "C" void
+gti_rt_thread_quarantine_v1(gti_thread_state_v1 **state) noexcept {
+  gti_runtime_detail::quarantine_managed_thread_state(state);
+}
+
+extern "C" uint32_t
+gti_rt_thread_program_storage_retirement_ready_v1() noexcept {
+  return programStoragePinned.load(std::memory_order_acquire) ? 0U : 1U;
+}
 
 extern "C" void gti_rt_thread_failure_sink_enter_v1(
     gti_thread_failure_sink_v1 *sink, gti_thread_failure_publish_v1 publish,

@@ -12,6 +12,16 @@ llvm::Function *declareRuntimeService(Session &session,
   bool neverReturns = false;
   bool noUnwind = false;
   switch (service) {
+  case RuntimeService::QuarantineThread:
+    noUnwind = true;
+    name = "gti_rt_thread_quarantine_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::ProgramStorageRetirementReady:
+    noUnwind = true;
+    name = "gti_rt_thread_program_storage_retirement_ready_v1";
+    result = llvm::Type::getInt32Ty(context);
+    break;
   case RuntimeService::EnterThreadFailureSink:
     noUnwind = true;
     name = "gti_rt_thread_failure_sink_enter_v1";

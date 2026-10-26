@@ -8,7 +8,9 @@
 #include <cassert>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string_view>
@@ -295,6 +297,35 @@ void nestedCaller(void *) {
 
 void noop(void *) {}
 
+void quarantine() {
+  assert(gti_rt_thread_program_storage_retirement_ready_v1() == 1);
+  struct TaskState {
+    std::atomic<bool> started{false}, finish{false}, destroyed{false};
+  };
+  auto *task = new TaskState;
+  auto launched = gti_rt_thread_spawn_v1(
+      [](void *raw) {
+        auto &task = *static_cast<TaskState *>(raw);
+        task.started.store(true, std::memory_order_release);
+        while (!task.finish.load(std::memory_order_acquire)) std::this_thread::yield();
+      }, task, [](void *raw) {
+        static_cast<TaskState *>(raw)->destroyed.store(true, std::memory_order_release);
+      });
+  assert(launched.status == GTI_THREAD_SPAWN_OK_V1 && launched.state);
+  while (!task->started.load(std::memory_order_acquire)) std::this_thread::yield();
+  gti::runtime::detail::setThreadTestFault(gti::runtime::detail::ThreadTestFault::JoinFailed);
+  const auto joined = gti_rt_thread_join_v2(&launched.state);
+  assert(joined.status == GTI_THREAD_JOIN_FAILED_V1 && launched.state);
+  assert(gti_rt_thread_program_storage_retirement_ready_v1() == 1);
+  gti_rt_thread_quarantine_v1(&launched.state);
+  assert(!launched.state && gti_rt_thread_program_storage_retirement_ready_v1() == 0);
+  task->finish.store(true, std::memory_order_release);
+  while (!task->destroyed.load(std::memory_order_acquire)) std::this_thread::yield();
+  assert(gti_rt_thread_program_storage_retirement_ready_v1() == 0);
+  // Terminal quarantine intentionally retains state, even after worker cleanup.
+  std::_Exit(0);
+}
+
 void costs() {
   using Clock = std::chrono::steady_clock;
   constexpr unsigned iterations = 500000;
@@ -320,6 +351,11 @@ void costs() {
 }
 
 void invalid(std::string_view mode) {
+  if (mode == "null-quarantine") {
+    gti_thread_state_v1 *state = nullptr;
+    gti_rt_thread_quarantine_v1(&state);
+    return;
+  }
   if (mode == "wrong-primary-envelope" || mode == "third-failure") {
     Task task;
     task.entryFails = true;
@@ -395,6 +431,7 @@ void invalid(std::string_view mode) {
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "quarantine") { quarantine(); return 99; }
   if (argc == 2 && std::string_view(argv[1]) == "--cost") { costs(); return 0; }
   if (argc == 2) { invalid(argv[1]); return 99; }
   assert(gti_test_thread_outcome_c());
@@ -406,4 +443,5 @@ int main(int argc, char **argv) {
   auto launched = gti_rt_thread_spawn_v1(nestedCaller, &context, noop);
   const auto joined = gti_rt_thread_join_v2(&launched.state);
   assert(joined.status == GTI_THREAD_JOIN_OK_V1 && !launched.state);
+  assert(gti_rt_thread_program_storage_retirement_ready_v1() == 1);
 }

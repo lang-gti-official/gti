@@ -4,7 +4,9 @@
 #include "memory.h"
 #include "mutexes.h"
 #include "payloads.h"
+#include "runtime_abi.h"
 
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
 namespace lang::native_llvm {
@@ -37,6 +39,12 @@ void Lifetimes::prepareProgramStorage(
       session.module());
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", programRetirement));
+  auto *run = llvm::BasicBlock::Create(session.context(), "ready", programRetirement);
+  auto *done = llvm::BasicBlock::Create(session.context(), "done", programRetirement);
+  auto *ready = ir.CreateCall(declareRuntimeService(
+      session, RuntimeService::ProgramStorageRetirementReady));
+  ir.CreateCondBr(ir.CreateICmpNE(ready, ir.getInt32(0)), run, done);
+  ir.SetInsertPoint(run);
   auto *failure = ir.CreateAlloca(session.abi().failureChannel());
   for (auto item = programStorage.rbegin(); item != programStorage.rend(); ++item) {
     auto *run = llvm::BasicBlock::Create(session.context(), "retire", programRetirement);
@@ -48,10 +56,29 @@ void Lifetimes::prepareProgramStorage(
     ir.CreateBr(next);
     ir.SetInsertPoint(next);
   }
+  ir.CreateBr(done);
+  ir.SetInsertPoint(done);
   ir.CreateRetVoid();
   // Module lifetime also has an endpoint when a native host unloads a library.
-  // Explicit hosted retirement clears the same flags before this idempotent hook.
-  llvm::appendToGlobalDtors(session.module(), programRetirement, 65535);
+  // Unlike terminal hosted failure, unloading cannot leave live roots behind.
+  auto *unload = llvm::Function::Create(
+      programRetirement->getFunctionType(), llvm::GlobalValue::InternalLinkage,
+      "__gti_program_unload_native", session.module());
+  ir.SetInsertPoint(llvm::BasicBlock::Create(session.context(), "entry", unload));
+  ir.CreateCall(programRetirement);
+  llvm::Value *live = ir.getFalse();
+  for (const auto &storage : programStorage)
+    live = ir.CreateOr(live, ir.CreateLoad(ir.getInt1Ty(), storage.live));
+  auto *pinned = llvm::BasicBlock::Create(session.context(), "pinned", unload);
+  auto *retired = llvm::BasicBlock::Create(session.context(), "retired", unload);
+  ir.CreateCondBr(live, pinned, retired);
+  ir.SetInsertPoint(pinned);
+  ir.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(&session.module(),
+                                                      llvm::Intrinsic::trap));
+  ir.CreateUnreachable();
+  ir.SetInsertPoint(retired);
+  ir.CreateRetVoid();
+  llvm::appendToGlobalDtors(session.module(), unload, 65535);
 }
 
 void Lifetimes::publishProgramStorage(llvm::IRBuilder<> &ir,

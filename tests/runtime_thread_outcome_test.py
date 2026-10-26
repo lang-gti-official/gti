@@ -25,13 +25,16 @@ def main():
     if output:
         output.mkdir(parents=True, exist_ok=True)
 
-    def run(name, command, expected=0):
+    def run(name, command, expected=0, overrides=None):
         start = time.monotonic()
         command = [str(part) for part in command]
+        execution_environment = dict(environment)
+        execution_environment.update(overrides or {})
         result = subprocess.run(command, capture_output=True, text=True,
-                                timeout=90, env=environment)
+                                timeout=90, env=execution_environment)
         records.append({"name": name, "argv": command, "exit": result.returncode,
-                        "seconds": time.monotonic() - start})
+                        "seconds": time.monotonic() - start,
+                        "environment_overrides": overrides or {}})
         if output:
             (output / f"{name}.log").write_text(result.stdout + result.stderr)
             (output / "results.json").write_text(json.dumps(records, indent=2) + "\n")
@@ -58,12 +61,20 @@ def main():
                                 root / "tests/runtime_thread_outcome_tests.cpp",
                                 output / "c17.o", "-o", program])
     run("outcome-matrix", [program])
+    # Retaining the joinable state is the asserted terminal contract, not an
+    # ordinary shutdown leak. Only this process disables exit-retention reports;
+    # race detection remains enabled and the ordinary matrix keeps all reports.
+    retention = ({"TSAN_OPTIONS": environment["TSAN_OPTIONS"] + ":report_thread_leaks=0"}
+                 if args.sanitize == "thread" else None)
+    run("terminal-quarantine", [program, "quarantine"], overrides=retention)
+    if retention:
+        print("terminal quarantine only: intentional joinable-thread retention report disabled; race checks enabled")
     for mode in ("no-sink", "wrong-thread", "out-of-order", "duplicate-enter",
                  "throwing-sink", "reentrant", "malformed", "successful-null-completion",
                  "bad-sink-version", "mutating-sink", "wrong-primary-envelope",
-                 "third-failure"):
+                 "third-failure", "null-quarantine"):
         run(mode, [program, mode], -signal.SIGABRT)
-    print("nonthrowing worker/caller outcome matrix and twelve boundary rejections passed")
+    print("nonthrowing worker/caller outcomes, terminal quarantine and thirteen boundary rejections passed")
 
 
 if __name__ == "__main__":

@@ -9188,6 +9188,7 @@ public:
       return;
     output << "void __gti_program_retire_native() noexcept {\n";
     ++indentation;
+    output << "if (!::gti_rt_thread_program_storage_retirement_ready_v1()) return;\n";
     output << "::gti_failure_record_v2 failure{};\n";
     for (auto step = mir.programInitializationPlan().steps.rbegin();
          step != mir.programInitializationPlan().steps.rend(); ++step) {

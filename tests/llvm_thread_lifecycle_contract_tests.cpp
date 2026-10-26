@@ -117,7 +117,9 @@ void check(const std::filesystem::path &root) {
            std::tuple{RuntimeService::LeaveThreadFailureSink, 1U, false},
            std::tuple{RuntimeService::PublishThreadFailure, 1U, false},
            std::tuple{RuntimeService::ThreadCleanupFailureKind, 0U, true},
-           std::tuple{RuntimeService::CopyThreadCleanupPrimary, 2U, true}}) {
+           std::tuple{RuntimeService::CopyThreadCleanupPrimary, 2U, true},
+           std::tuple{RuntimeService::QuarantineThread, 1U, false},
+           std::tuple{RuntimeService::ProgramStorageRetirementReady, 0U, true}}) {
     const auto *function = declareRuntimeService(session, service);
     require(function->arg_size() == arguments && function->doesNotThrow() &&
                 !function->hasFnAttribute(llvm::Attribute::NoReturn) &&

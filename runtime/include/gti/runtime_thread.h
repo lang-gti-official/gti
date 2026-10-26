@@ -168,6 +168,18 @@ uint32_t gti_rt_thread_cleanup_primary_copy_v2(
     gti_failure_record_v2 *record,
     const gti_failure_artifact_descriptor_v1 **artifact) GTI_THREAD_SINK_NOEXCEPT;
 
+/* Only terminal automatic-join failure may transfer a coherent joinable state
+ * here. This clears the owned handle, but neither joins nor detaches the worker.
+ * A quarantined worker can still access process storage: retirement readiness
+ * becomes permanently false, including after that worker finishes. Hosted
+ * terminal failure must leave native roots live; a host must reject unload or
+ * context shutdown while readiness is false. Readiness is not a substitute for
+ * the host's ordinary quiescence obligation for foreign/manual callers. */
+void gti_rt_thread_quarantine_v1(gti_thread_state_v1 **state)
+    GTI_THREAD_SINK_NOEXCEPT;
+uint32_t gti_rt_thread_program_storage_retirement_ready_v1(void)
+    GTI_THREAD_SINK_NOEXCEPT;
+
 #undef GTI_THREAD_SINK_NOEXCEPT
 
 /*

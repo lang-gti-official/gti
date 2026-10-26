@@ -2802,9 +2802,15 @@ does not authorize an arbitrary call during failure cleanup.
 
 LLVM uses one publication bit per root and a reverse-order helper, clearing
 each bit before native cleanup. Hosted exit and the module unload destructor
-share the idempotent helper. C-thread end requires the manual-worker registry
-to be empty; unsafe hosts must independently ensure no foreign execution can
-access unloading storage. This does not enable general source global
+share the idempotent helper. The helper first queries managed-worker retirement
+readiness: terminal automatic-join quarantine pins all native roots and leaves
+their publication bits intact. Explicit hosted failure can then contain its
+original record without invalidating storage still accessible to that worker.
+The unload wrapper rejects any remaining live roots after the helper, rather
+than unmapping pinned storage. C-thread end requires the manual-worker registry
+to be empty, which alone does not prove managed-worker quiescence. Embedding
+shutdown must reject pinned storage; unsafe hosts must independently ensure no
+foreign execution can access unloading storage. This does not enable general source global
 destructors or change embedding activation/context lifetime rules.
 
 `mirOwnedStoragePayloadInitialization` proves the existing compiler-private
