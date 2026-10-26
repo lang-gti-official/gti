@@ -131,6 +131,10 @@ mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
 // have no descriptor.
 [[nodiscard]] std::optional<MirDropType>
 mirUniqueCleanupType(const MirProgram &program, const SemanticType &type);
+// A complete, exact recipe that retires native state without source code,
+// allocation release, borrowed dependencies or a defined-failure channel.
+[[nodiscard]] bool mirDropIsNativeRetirement(const MirProgram &program,
+                                             const MirDropType &type);
 
 // All exact source-destructor effects of a represented cleanup schedule, not
 // one representative leaf standing in for a whole aggregate. The argument

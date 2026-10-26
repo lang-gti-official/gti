@@ -12671,11 +12671,15 @@ private:
                                            .ownerClass = step.ownerClass,
                                            .requiresActiveCleanup =
                                                step.requiresActiveCleanup,
+                                           .nativeRetirement = step.nativeRetirement
+                                               ? std::optional{lowerDropType(*step.nativeRetirement)}
+                                               : std::nullopt,
                                            .binding = step.binding,
                                            .storagePlace = storagePlace,
                                            .entryBlock = entryBlock};
       if (binding == nullptr || binding->info.symbol != step.symbol ||
-          storagePlace == 0 || step.requiresActiveCleanup) {
+          storagePlace == 0 ||
+          step.requiresActiveCleanup != step.nativeRetirement.has_value()) {
         valid = false;
       }
 

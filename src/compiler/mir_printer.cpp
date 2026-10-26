@@ -268,6 +268,8 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
     return "drain-thread-locals";
   case MirHostedStartupOperationKind::BeginThreadLocals:
     return "begin-thread-locals";
+  case MirHostedStartupOperationKind::RetireProgramStorage:
+    return "retire-program-storage";
   }
   return "invalid";
 }
@@ -280,7 +282,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v114 valid=" << program.valid() << '\n';
+    output << "mir-v115 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -939,6 +941,7 @@ private:
              << " role=" << programInitializationRoleName(step.role)
              << " symbol=" << step.symbol << " owner-class=" << step.ownerClass
              << " active-cleanup=" << step.requiresActiveCleanup
+             << " native-retirement=" << step.nativeRetirement.has_value()
              << " binding=" << step.binding << " place=p" << step.storagePlace
              << " entry=bb" << step.entryBlock << " initialize=i"
              << step.storageInitialization << " data-kind="
@@ -963,6 +966,8 @@ private:
       output << "] nested-full-expressions=[";
       list(step.nestedFullExpressions);
       output << "]\n";
+      if (step.nativeRetirement)
+        dropObligation(MirDropObligation{.dropType = *step.nativeRetirement});
     }
   }
 

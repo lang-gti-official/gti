@@ -23322,11 +23322,14 @@ public:
             (row.type.kind != SemanticType::Class && !fixedClassArray) ||
             step == nullptr ||
             step->role != ProgramInitializationStepRole::Initializer ||
-            step->ownerClass != row.owner || step->requiresActiveCleanup ||
+            step->ownerClass != row.owner ||
+            (step->requiresActiveCleanup &&
+             (!step->nativeRetirement ||
+              !mirDropIsNativeRetirement(program, *step->nativeRetirement))) ||
             storage == nullptr || storage->type != row.type) {
           add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
-              "runtime lifetime slot is not attached to an exact passive "
-              "class program-initialization step");
+              "runtime lifetime slot is not attached to an exact passive or "
+              "native-only class program-initialization step");
         }
       }
       if (std::find_if(representations.symbols().begin(),
@@ -24616,6 +24619,7 @@ private:
     case MirInstructionKind::EnsureThreadLocal:
     case MirInstructionKind::DrainThreadLocals:
     case MirInstructionKind::BeginThreadLocals:
+    case MirInstructionKind::RetireProgramStorage:
       requireType(instruction.info.type, block.id, instruction.id);
       break;
     case MirInstructionKind::Count:
@@ -25177,6 +25181,7 @@ CppMirEmissionEncoding classifyCppMirInstructionKind(MirInstructionKind kind) {
   case MirInstructionKind::EnsureThreadLocal:
   case MirInstructionKind::DrainThreadLocals:
   case MirInstructionKind::BeginThreadLocals:
+  case MirInstructionKind::RetireProgramStorage:
   case MirInstructionKind::AllocateObject:
   case MirInstructionKind::InitializeBase:
   case MirInstructionKind::CleanupBeforeAssign:
@@ -50645,6 +50650,22 @@ hostedMarshallingSchedule(const MirProgram &program) {
   }
   MirHostedStartupPlan plan = *program.hostedStartupPlan();
   using Kind = MirHostedStartupOperationKind;
+  const bool nativeRetirement = std::any_of(
+      program.programInitializationPlan().steps.begin(),
+      program.programInitializationPlan().steps.end(),
+      [](const auto &step) { return step.nativeRetirement.has_value(); });
+  if (nativeRetirement) {
+    if (!verifyMirProgram(program).valid())
+      return std::nullopt;
+    const auto *body = program.hostedStartup();
+    std::erase_if(plan.operations, [&](const auto &op) {
+      const auto *block = body->findBlock(op.block);
+      return op.kind == Kind::RetireProgramStorage ||
+             (block && block->activeFailure != 0 &&
+              (op.kind == Kind::DrainThreadLocals ||
+               op.kind == Kind::EndCThreadRuntime));
+    });
+  }
   const auto attachment = std::find_if(
       plan.operations.begin(), plan.operations.end(),
       [](const auto &op) { return op.kind == Kind::BeginThreadLocals; });

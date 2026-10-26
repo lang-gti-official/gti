@@ -193,6 +193,7 @@ LLVM_COVERAGE_ENTRY(RestoreRangeCursor, 5, VerifiedNonExecuting, VerifiedMetadat
 LLVM_COVERAGE_ENTRY(EnsureThreadLocal, 6, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(DrainThreadLocals, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_class_execution", "tls-passive-dynamic"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
 LLVM_COVERAGE_ENTRY(BeginThreadLocals, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_class_execution", "tls-passive-dynamic"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
+LLVM_COVERAGE_ENTRY(RetireProgramStorage, 13, Pending, None, "exact native-only process storage retirement")
 LLVM_COVERAGE_SENTINEL(Count)
 LLVM_COVERAGE_END()
 
@@ -362,6 +363,7 @@ LLVM_COVERAGE_ENTRY(BeginCThreadRuntime, 4, Pending, None, "all represented shap
 LLVM_COVERAGE_ENTRY(EndCThreadRuntime, 4, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(DrainThreadLocals, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_class_execution", "tls-passive-dynamic"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
 LLVM_COVERAGE_ENTRY(BeginThreadLocals, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_class_execution", "tls-passive-dynamic"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
+LLVM_COVERAGE_ENTRY(RetireProgramStorage, 13, Pending, None, "exact native-only process storage retirement")
 LLVM_COVERAGE_SENTINEL(Count)
 LLVM_COVERAGE_END()
 

@@ -383,6 +383,16 @@ target_include_directories("gti_runtime_cthread_tests"
 target_compile_features("gti_runtime_cthread_tests" PRIVATE cxx_std_20)
 target_link_libraries("gti_runtime_cthread_tests" PRIVATE gti_runtime)
 add_test(NAME cthread_runtime_boundary COMMAND gti_runtime_cthread_tests)
+add_executable(gti_runtime_thread_outcome_tests runtime_thread_outcome_tests.cpp
+               fixtures/runtime_thread_outcome_c.c)
+target_compile_features(gti_runtime_thread_outcome_tests PRIVATE cxx_std_20 c_std_17)
+target_link_libraries(gti_runtime_thread_outcome_tests PRIVATE gti_runtime)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME runtime_thread_outcome_boundary
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runtime_thread_outcome_test.py"
+            "$<TARGET_FILE:gti_runtime_thread_outcome_tests>")
+  set_tests_properties(runtime_thread_outcome_boundary PROPERTIES TIMEOUT 120)
+endif()
 set_tests_properties(cthread_runtime_boundary PROPERTIES TIMEOUT 60)
 
 add_executable(gti_runtime_cthread_sleep_tests

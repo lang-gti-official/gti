@@ -69,9 +69,11 @@ def main():
                            "-o", output / f"mutex-{mode}.o"])
         run(f"active-ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation, "-c",
                                   output / "mutex-active.ll", "-o", output / f"mutex-active-{mode}.o"])
+        run(f"process-ir-{mode}", [args.llvm_cc, "-x", "ir", f"-{mode}", *instrumentation, "-c",
+                                   output / "mutex-process.ll", "-o", output / f"mutex-process-{mode}.o"])
         if args.sanitize:
             marker = "__tsan_read" if args.sanitize == "thread" else "__asan_report_"
-            for family in ("mutex", "mutex-active"):
+            for family in ("mutex", "mutex-active", "mutex-process"):
                 symbols = run(f"{family}-instrumentation-{mode}",
                               ["nm", "-u", output / f"{family}-{mode}.o"])
                 if marker not in symbols:
@@ -80,6 +82,7 @@ def main():
         program = output / f"mutex-{mode}"
         run(f"link-{mode}", [args.cxx, "-pthread", *instrumentation, output / "fixture.o", output / "runtime.o",
                              output / f"mutex-{mode}.o", output / f"mutex-active-{mode}.o",
+                             output / f"mutex-process-{mode}.o",
                              runtime_library, "-o", program])
         run(f"execute-{mode}", [program])
         for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock"):

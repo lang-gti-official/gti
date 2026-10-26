@@ -2413,10 +2413,19 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     const ProgramInitializationStep &semantic =
         semanticInitialization.steps[index];
     const HirProgramInitializationStep &step = initialization.steps[index];
+    const BindingInfo *semanticBinding =
+        semantic.declaration == nullptr
+            ? nullptr
+            : semantics.findBinding(*semantic.declaration);
     if (step.id != semantic.id || step.sourceUnit != semantic.sourceUnit ||
         step.kind != semantic.kind || step.role != semantic.role ||
         step.source != semantic.declaration || step.symbol != semantic.symbol ||
-        step.requiresActiveCleanup != semantic.requiresActiveCleanup) {
+        step.requiresActiveCleanup != semantic.requiresActiveCleanup ||
+        step.nativeRetirement.has_value() != semantic.requiresNativeRetirement ||
+        (step.nativeRetirement &&
+         (semanticBinding == nullptr ||
+          step.nativeRetirement->type != semanticBinding->type ||
+          !step.nativeRetirement->requiresActiveCleanup))) {
       result.errors.emplace_back(
           "program initialization step identity differs from semantics");
     }
@@ -2429,10 +2438,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     if (bindingFound != program.module().bindings.end()) {
       binding = &*bindingFound;
     }
-    const BindingInfo *semanticBinding =
-        semantic.declaration == nullptr
-            ? nullptr
-            : semantics.findBinding(*semantic.declaration);
     if (step.binding == 0 || binding == nullptr ||
         binding->variable != semantic.declaration ||
         semanticBinding == nullptr || binding->info != *semanticBinding ||

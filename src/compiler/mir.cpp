@@ -8213,7 +8213,29 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
         const bool failureBoundary =
             instruction.kind == MirInstructionKind::Lifecycle &&
             instruction.cleanupBoundaryEnd != 0;
-        if (!failureDrop && !failureBoundary) {
+        // Native lifetime shutdown is a closed suffix, not arbitrary work in
+        // a failure block. Program verification seals the C-thread target and
+        // native-only recipes in addition to this body-local ordering proof.
+        bool nativeShutdown = false;
+        if (block.terminator.kind == MirTerminatorKind::ContainFailure &&
+            !block.instructions.empty() &&
+            block.instructions.back().kind == MirInstructionKind::RetireProgramStorage) {
+          auto suffix = block.instructions.rbegin();
+          nativeShutdown = suffix->id == instruction.id;
+          ++suffix;
+          if (suffix != block.instructions.rend() &&
+              suffix->kind == MirInstructionKind::Call &&
+              suffix->functionTarget && suffix->definedFailure.empty() &&
+              suffix->info.type == SemanticType::Void &&
+              !suffix->result && suffix->operands.empty()) {
+            nativeShutdown = nativeShutdown || suffix->id == instruction.id;
+            ++suffix;
+          }
+          if (suffix != block.instructions.rend() &&
+              suffix->kind == MirInstructionKind::DrainThreadLocals)
+            nativeShutdown = nativeShutdown || suffix->id == instruction.id;
+        }
+        if (!failureDrop && !failureBoundary && !nativeShutdown) {
           return failure(body, owner,
                          "hosted-startup active-failure block contains a "
                          "non-cleanup instruction",
@@ -11571,6 +11593,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                   FailurePropagationKind::BodyCall ||
               instruction.definedFailure.empty());
     case MirInstructionKind::BeginThreadLocals:
+    case MirInstructionKind::RetireProgramStorage:
     case MirInstructionKind::DrainThreadLocals:
       return body.kind == MirBodyKind::HostedStartup && noOperation &&
              !hasResult && !instruction.destination && !instruction.receiver &&

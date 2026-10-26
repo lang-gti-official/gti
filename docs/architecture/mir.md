@@ -329,7 +329,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v114`/`mir-body-v93`,
+The combined deterministic serialization is currently `mir-v115`/`mir-body-v93`,
 with `lowered-program-v26` declaration metadata. These distinct combined
 identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
@@ -2778,6 +2778,34 @@ is an explicit hosted-exit operation, not an emitter-added source call. Passive
 data storage uses native per-thread literal-initialized data without dynamic guard or
 registration; owning storage uses a byte slot and explicit object lifetime so
 emergency abandonment cannot accidentally run a native destructor.
+
+Process storage with native-only cleanup retains an exact optional
+`MirProgramInitializationStep::nativeRetirement` recipe. It must equal the
+unique structural cleanup recipe for that root and contain no source
+destructor, owning allocation release, borrowed state, polymorphic cleanup or
+recursive cleanup. This authority composes through ordinary aggregates; it is
+not a named-library exception. Process roots do not acquire lexical drops.
+Publication follows the exact recorded final storage initializer, so failure
+leaves only the successfully constructed prefix live.
+
+`RetireProgramStorage` is a generated hosted-only operation with runtime,
+unknown-write and drop effects, but no user-code or defined-failure effect.
+Normal hosted teardown drains TLS, ends the C-thread runtime, then retires
+native process roots in reverse initialization order. An ordinary failure
+first finishes source cleanup, then drains TLS with the original primary,
+ends the C-thread runtime only if begun, retires native roots and contains the
+failure. Module-initialization failure uses that outer endpoint because TLS
+cleanup may still access already-published globals. Cleanup emergency and
+abort intentionally abandon further teardown. The closed program verifier
+checks this exact schedule and C-thread target; body-local suffix acceptance
+does not authorize an arbitrary call during failure cleanup.
+
+LLVM uses one publication bit per root and a reverse-order helper, clearing
+each bit before native cleanup. Hosted exit and the module unload destructor
+share the idempotent helper. C-thread end requires the manual-worker registry
+to be empty; unsafe hosts must independently ensure no foreign execution can
+access unloading storage. This does not enable general source global
+destructors or change embedding activation/context lifetime rules.
 
 Ambient persistent-storage effects are independently derived from executable
 MIR, not trusted frontend summary claims. `mir_storage_effects.cpp` reuses the

@@ -2457,6 +2457,7 @@ public:
       // Moving retires the payload, not the engaged native mutex shell. Its
       // later MIR drop must still destroy that shell, without a second T drop
       // or any change to an incoming primary/cleanup failure record.
+      mutex_.destroy_if_engaged();
       return true;
     }
     bool success = false;
@@ -2473,6 +2474,7 @@ public:
       return false;
     }
     value_.reset();
+    mutex_.destroy_if_engaged();
     return success;
   }
 

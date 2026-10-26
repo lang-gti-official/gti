@@ -307,6 +307,118 @@ void testPublicPipeline() {
   }
 }
 
+void testNativeProcessRetirement() {
+  const auto frontend = analyze("native-process-retirement.gti", R"gti(
+#include <std/mutex>
+#include <std/cthread>
+#include <std/panic>
+class Box {
+  std::mutex<int> value;
+public:
+  Box() : value(std::mutex<int>(7)) {}
+  int read() {
+    std::mutex_guard<int> guard = this.value.lock();
+    return guard.get();
+  }
+};
+Box global{};
+class Registry {
+public:
+  static Box item{};
+};
+thread_local mut int touched = 0;
+int main() {
+  touched = global.read();
+  if (touched != 7) { std::panic("global value"); }
+  return Registry::item.read() == 7 ? 0 : 1;
+}
+)gti");
+  if (!frontend.canGenerateCode())
+    printDiagnostics(frontend);
+  expect(frontend.canGenerateCode(),
+         "unrelated wrappers and static fields admit only native retirement");
+  if (!frontend.canGenerateCode())
+    return;
+  expect(lang::verifyHirProgramPlans(frontend.semantics, frontend.hir).valid() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "native process retirement preserves phase authority");
+  std::size_t roots = 0;
+  for (const auto &step : frontend.mir.programInitializationPlan().steps) {
+    if (!step.nativeRetirement)
+      continue;
+    ++roots;
+    expect(step.requiresActiveCleanup &&
+               lang::mirDropIsNativeRetirement(frontend.mir,
+                                                *step.nativeRetirement),
+           "each active process root retains its exact native-only recipe");
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto changed = frontend.mir;
+      auto &steps = const_cast<lang::MirProgramInitializationPlan &>(
+                        changed.programInitializationPlan()).steps;
+      auto &recipe = steps[step.id - 1].nativeRetirement;
+      if (mutation == 0)
+        recipe.reset();
+      if (mutation == 1)
+        recipe->aggregate.clear();
+      if (mutation == 2)
+        recipe->type = lang::SemanticType::Int32;
+      expect(!lang::verifyMirProgram(changed).valid(),
+             "native process recipes reject erasure, truncation and wrong type");
+    }
+  }
+  expect(roots == 2, "global and static wrapper each publish one retirement root");
+  const auto *hosted = frontend.mir.hostedStartup();
+  expect(hosted != nullptr, "native retirement has a hosted endpoint");
+  if (!hosted)
+    return;
+  std::size_t normal = 0, failure = 0;
+  for (const auto &block : hosted->blocks) {
+    const auto retirement = std::find_if(
+        block.instructions.begin(), block.instructions.end(), [](const auto &i) {
+          return i.kind == lang::MirInstructionKind::RetireProgramStorage;
+        });
+    if (retirement == block.instructions.end())
+      continue;
+    (block.activeFailure ? failure : normal)++;
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto changed = frontend.mir;
+      auto &body = *const_cast<lang::MirBody *>(changed.hostedStartup());
+      auto &instructions = body.blocks[block.id - 1].instructions;
+      const auto index = static_cast<std::size_t>(
+          retirement - block.instructions.begin());
+      if (mutation == 0)
+        instructions.erase(instructions.begin() + index);
+      if (mutation == 1) {
+        if (index == 0)
+          continue;
+        std::swap(instructions[index], instructions[index - 1]);
+      }
+      if (mutation == 2) {
+        if (index == 0 || instructions[index - 1].kind !=
+                              lang::MirInstructionKind::Call)
+          continue;
+        instructions[index - 1].functionTarget =
+            changed.hostedStartupPlan()->cThreadBegin;
+      }
+      expect(!lang::verifyMirProgram(changed).valid(),
+             "hosted teardown rejects missing/reordered retirement or wrong "
+             "C-thread endpoint");
+    }
+  }
+  expect(normal == 1 && failure != 0,
+         "normal and ordinary failure exits both contain native retirement");
+  for (const std::string declaration : {
+           "class Owned { public: ~Owned() {} }; Owned global{};",
+           "class Owned { public: ~Owned() {} }; "
+           "std::mutex<Owned> global{Owned()};"}) {
+    const auto denied = analyze("source-process-cleanup-rejected.gti",
+                                "#include <std/mutex>\n" + declaration +
+                                    "\nint main() { return 0; }\n");
+    expect(!denied.canGenerateCode() && hasCode(denied, "GTI-S2061"),
+           "even infallible source destructors remain outside native retirement");
+  }
+}
+
 void testReferencePrefixBeforeOwnedField() {
   const auto frontend = analyze("mutex-reference-prefix.gti", validProgram());
   expect(frontend.canGenerateCode(), "mutex reference-prefix fixture lowers");
@@ -1593,6 +1705,7 @@ int main(int argc, char **argv) {
     return 2;
   testDormantImport();
   testPublicPipeline();
+  testNativeProcessRetirement();
   testReferencePrefixBeforeOwnedField();
   testPreparedMutexPayload();
   testPassiveClosureParameterStorage();

@@ -6064,15 +6064,15 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "Values carrying stored references cannot have global or static "
            "storage duration.",
            "GTI-S2045");
-  } else if (processStorage && requiresActiveCleanupFor(declaredType)) {
+  } else if (processStorage && requiresSourceCleanupFor(declaredType)) {
     const std::string storageKind =
         currentClass ? "Static field" : "Namespace global";
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2061", DiagnosticPhase::Semantics, stmt.name(),
         storageKind + " '" + stmt.name().lexeme + "' has type '" +
             typeSpelling(declaredType) +
-            "', which requires active cleanup; GTI does not define "
-            "global or static shutdown.");
+            "', which requires source or owning cleanup; global and static "
+            "storage permit only native resource retirement.");
     if (const std::optional<ActiveCleanupCause> cause =
             activeCleanupCause(declaredType);
         cause && cause->source != nullptr) {

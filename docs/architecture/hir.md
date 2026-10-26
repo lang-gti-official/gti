@@ -514,6 +514,12 @@ generic classes are rejected by current semantics and have no accepted
 program-wide initialization contract; excluding them from this plan is not
 evidence of usable per-instance static storage.
 
+Each process root with semantic native-retirement authority retains an exact
+`nativeRetirement` cleanup recipe. It is not a lexical drop and cannot be
+inferred from a backend representation. HIR verifies recipe presence, concrete
+type and active-cleanup authority against the semantic initialization step;
+MIR independently verifies the fully instantiated native-only recipe.
+
 Thread-local declarations instead retain the semantic
 `threadLocalInitializationPlan` as a separate exact `HirThreadLocalStorage`
 inventory. Each declaration owns a typed initializer body and per-thread cleanup

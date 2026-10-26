@@ -91,6 +91,10 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
     unknownEffects(), // EnsureThreadLocal invokes the exact initializer once.
     unknownEffects(), // DrainThreadLocals runs exact initialized TLS cleanup.
     unknownEffects(), // BeginThreadLocals attaches the hosted thread lifetime.
+    MirEffectTraits{.writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .dropsValue = true}, // RetireProgramStorage is native-only.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -525,6 +529,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "ensure-thread-local",
     "drain-thread-locals",
     "begin-thread-locals",
+    "retire-program-storage",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({
@@ -2431,6 +2436,41 @@ bool mirDropHasPolymorphicCleanup(const MirDropType &type) {
   return type.polymorphicCleanup ||
          std::any_of(type.aggregate.begin(), type.aggregate.end(),
                      mirDropHasPolymorphicCleanup);
+}
+
+bool mirDropIsNativeRetirement(const MirProgram &program,
+                               const MirDropType &type) {
+  const auto exact = mirUniqueCleanupType(program, type.type);
+  if (!exact || *exact != type)
+    return false;
+  const auto native = [&](const auto &self, const MirDropType &drop) -> bool {
+    if (!drop.requiresActiveCleanup || drop.destructor ||
+        drop.recursiveCleanup || drop.polymorphicCleanup ||
+        drop.uniquePointeeClass ||
+        drop.type.kind == SemanticType::UniqueOwner ||
+        drop.type.kind == SemanticType::SharedPointer)
+      return false;
+    bool shell = false;
+    if (drop.type.kind == SemanticType::Class) {
+      const auto *owner = drop.classInstance
+                              ? program.findClassInstance(*drop.classInstance)
+                              : nullptr;
+      if (!owner || owner->destructor || owner->traits.containsBorrowedState ||
+          (owner->compilerCapability != CompilerCapabilityTypeKind::None &&
+           owner->compilerCapability != CompilerCapabilityTypeKind::MutexStorage &&
+           owner->compilerCapability != CompilerCapabilityTypeKind::OptionalStorage))
+        return false;
+      shell = owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage;
+    } else if (drop.type.kind != SemanticType::Array &&
+               drop.type.kind != SemanticType::Enum &&
+               drop.type.kind != SemanticType::Lambda) {
+      return false;
+    }
+    return (shell || !drop.aggregate.empty()) &&
+           std::all_of(drop.aggregate.begin(), drop.aggregate.end(),
+                       [&](const auto &child) { return self(self, child); });
+  };
+  return native(native, type);
 }
 
 bool mirDropMayRaiseDefinedFailure(const MirProgram &program,

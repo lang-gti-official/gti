@@ -1415,6 +1415,9 @@ private:
            .symbol = step.symbol,
            .ownerClass = ownerClass,
            .requiresActiveCleanup = step.requiresActiveCleanup,
+           .nativeRetirement = step.requiresNativeRetirement
+                                   ? std::optional{dropTypeFor(info->type)}
+                                   : std::nullopt,
            .binding = binding,
            .initializer = initializer,
            .statement = statement});

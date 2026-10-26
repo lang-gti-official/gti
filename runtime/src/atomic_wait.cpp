@@ -20,16 +20,19 @@ struct Bucket {
 // user. A failed initialization terminates before publishing a partial domain.
 constinit std::array<Bucket, 256> buckets{};
 constinit pthread_once_t initializeOnce = PTHREAD_ONCE_INIT;
+constinit std::atomic<bool> initialized{false};
 
 void initialize() noexcept {
   for (auto &bucket : buckets) {
     require(pthread_mutex_init(&bucket.mutex, nullptr) == 0);
     require(pthread_cond_init(&bucket.condition, nullptr) == 0);
   }
+  initialized.store(true, std::memory_order_release);
 }
 
 Bucket &bucketFor(const void *address, std::uint32_t width) noexcept {
-  require(pthread_once(&initializeOnce, initialize) == 0);
+  if (!initialized.load(std::memory_order_acquire))
+    require(pthread_once(&initializeOnce, initialize) == 0);
   return buckets[((reinterpret_cast<std::uintptr_t>(address) >> 3) ^ width) %
                  buckets.size()];
 }

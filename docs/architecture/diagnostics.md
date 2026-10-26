@@ -1149,7 +1149,9 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   value. Do not suggest an undocumented feature switch: activation is gated
   on the complete wrapper, runtime, publication, and dynamic-host evidence.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
-  type requires active cleanup while GTI has no global/static shutdown plan.
+  type requires source or owning cleanup. Native-only resource retirement is
+  permitted by an exact structural recipe; it does not authorize source
+  destructors or allocation release, including infallible destructors.
   Point at the binding name, attach the first exact declared-cleanup, base, or
   field cause when available, suggest local storage or removing the owning
   component, and do not offer a mechanical fix-it. More-specific owner,

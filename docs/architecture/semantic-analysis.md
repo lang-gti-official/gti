@@ -3361,10 +3361,16 @@ M-LIFE-01 adds the v1 restriction on cleanup-owning namespace globals and
 static fields after the existing more-specific unique-owner, storage, and
 borrowed-state checks. The recursive semantic trait follows arrays, aliases,
 bases, fields, captures, and concrete generic substitutions,
-and treats declared cleanup as an active obligation. `GTI-S2061` reports the
+and treats declared cleanup as an active obligation. A native resource shell
+is independently active even with a passive payload. Process storage permits
+only structural native retirement: the same recursive query excludes the shell
+itself but still follows its payload and every source base/field. Source
+destructors and owning allocation release remain forbidden even when failure
+free; no public type spelling grants an exception. `GTI-S2061` reports the
 outer declaration plus the first available declared-cleanup/base/field cause.
 HIR and MIR can therefore rely on the absence of source global/static drop
-obligations; this does not define global shutdown.
+obligations. The initialization plan marks native-retirement roots explicitly;
+this is not a general source-destructor shutdown policy.
 
 ## Bounded Aggregate Constant Evaluation
 

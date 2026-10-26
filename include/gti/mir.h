@@ -600,6 +600,7 @@ enum class MirInstructionKind {
   EnsureThreadLocal,
   DrainThreadLocals,
   BeginThreadLocals,
+  RetireProgramStorage,
   Count,
 };
 
@@ -1650,6 +1651,9 @@ struct MirProgramInitializationStep {
   SymbolId symbol = 0;
   HirClassInstanceId ownerClass = 0;
   bool requiresActiveCleanup = false;
+  // Only infallible native retirement, never source destruction or release of
+  // owning payloads. The endpoint retires published roots in reverse order.
+  std::optional<MirDropType> nativeRetirement;
   HirBindingId binding = 0;
   MirPlaceId storagePlace = 0;
   MirBlockId entryBlock = 0;
@@ -1733,6 +1737,7 @@ enum class MirHostedStartupOperationKind {
   EndCThreadRuntime,
   DrainThreadLocals,
   BeginThreadLocals,
+  RetireProgramStorage,
   Count,
 };
 

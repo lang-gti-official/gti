@@ -801,6 +801,7 @@ struct HirProgramInitializationStep {
   SymbolId symbol = 0;
   HirClassInstanceId ownerClass = 0;
   bool requiresActiveCleanup = false;
+  std::optional<HirDropType> nativeRetirement;
   HirBindingId binding = 0;
   std::optional<HirValueId> initializer;
   HirStatementId statement = 0;

@@ -29,6 +29,105 @@ void requirePublicRejection(const VerifiedLoweredProgram &input) {
   require(rejected, "public backend rejects before producing a mutex artifact");
 }
 
+// Exercise publication/retirement with source-selected roots and recipes.
+// Shell initialization here is a kernel driver, not source-constructor evidence.
+void checkProcessStorage(const std::filesystem::path &root,
+                         const std::filesystem::path &output,
+                         std::string_view sanitizer) {
+  FrontendOptions options;
+  options.target.executionProfile = ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  options.requireEntryPoint = true;
+  options.lowerReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      root / "tests/fixtures/llvm_native_process_storage.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  require(frontend.canGenerateCode(), "process shell source reaches verified MIR");
+  std::vector<LoweredProgramIssue> issues;
+  const auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
+                             options.target), issues);
+  require(input.has_value(), "process shell source has a sealed snapshot");
+  requirePublicRejection(*input);
+  Session session(*input, {});
+  const auto &program = input->program().mir();
+  std::map<SymbolId, llvm::GlobalVariable *> globals;
+  require(program.programInitializationPlan().steps.size() == 2,
+          "global and static wrapper are exactly two process roots");
+  for (const auto &step : program.programInitializationPlan().steps) {
+    require(step.nativeRetirement &&
+                mirDropIsNativeRetirement(program, *step.nativeRetirement),
+            "process root has its exact native-only cleanup recipe");
+    auto *type = session.layouts().get(step.nativeRetirement->type).storage;
+    globals.emplace(step.symbol, new llvm::GlobalVariable(
+        session.module(), type, false, llvm::GlobalValue::InternalLinkage,
+        llvm::Constant::getNullValue(type), "process-root"));
+  }
+  Failures failures(session);
+  Lifetimes lifetimes(session, failures, [](MirBodyAddress) -> llvm::Function * {
+    throw std::logic_error("native process retirement invokes no source body");
+  });
+  lifetimes.prepareProgramStorage(globals);
+  auto *initialize = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                              {llvm::Type::getInt32Ty(session.context())}, false),
+      llvm::GlobalValue::ExternalLinkage, "gti_test_program_init_prefix",
+      session.module());
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", initialize));
+  const auto initializeShells = [&](const auto &self, llvm::Value *address,
+                                    const SemanticType &type) -> void {
+    if (nativeMutexElement(program, type, CompilerCapabilityTypeKind::MutexStorage)) {
+      const auto layout = session.layouts().mutexStorage(type);
+      Mutexes(session, ir).initializeShell(address, type);
+      ir.CreateStore(ir.getInt32(7),
+                     ir.CreateStructGEP(layout.object.storage, address,
+                                         layout.payloadIndex));
+      ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive |
+                                 MutexStorageLayout::payloadLive),
+                     ir.CreateStructGEP(layout.object.storage, address,
+                                         layout.payloadActiveIndex));
+      return;
+    }
+    const auto &owner = session.layouts().instance(type);
+    require(owner.bases.empty(), "kernel wrapper has no invented base schedule");
+    for (std::size_t field = 0; field < owner.declaredFields.size(); ++field)
+      self(self, ir.CreateStructGEP(session.layouts().get(type).storage, address,
+                                    field), owner.declaredFields[field].type);
+  };
+  for (const auto &step : program.programInitializationPlan().steps) {
+    auto *run = llvm::BasicBlock::Create(session.context(), "initialize", initialize);
+    auto *next = llvm::BasicBlock::Create(session.context(), "next", initialize);
+    ir.CreateCondBr(ir.CreateICmpUGE(initialize->getArg(0), ir.getInt32(step.id)),
+                    run, next);
+    ir.SetInsertPoint(run);
+    initializeShells(initializeShells, globals.at(step.symbol),
+                     step.nativeRetirement->type);
+    lifetimes.publishProgramStorage(ir, step.storageInitialization);
+    ir.CreateBr(next);
+    ir.SetInsertPoint(next);
+  }
+  ir.CreateRetVoid();
+  auto *retire = llvm::Function::Create(
+      llvm::FunctionType::get(ir.getVoidTy(), false),
+      llvm::GlobalValue::ExternalLinkage, "gti_test_program_retire", session.module());
+  ir.SetInsertPoint(llvm::BasicBlock::Create(session.context(), "entry", retire));
+  lifetimes.retireProgramStorage(ir);
+  ir.CreateRetVoid();
+  if (!sanitizer.empty())
+    for (auto &function : session.module())
+      if (!function.isDeclaration())
+        function.addFnAttr(sanitizer == "thread" ? llvm::Attribute::SanitizeThread
+                                                : llvm::Attribute::SanitizeAddress);
+  if (!output.empty()) {
+    std::error_code error;
+    llvm::raw_fd_ostream stream(output.string(), error);
+    require(!error, "process kernel IR output opens");
+    session.module().print(stream, nullptr);
+  }
+  static_cast<void>(session.emitObject());
+}
+
 // Test the native lifecycle kernel, not BodyDrop or public admission. The C
 // observer stands in for the selected source destructor, with its exact planned
 // signature; no recipe or source cleanup endpoint is synthesized by this test.
@@ -423,6 +522,11 @@ int main(int argc, char **argv) {
                                 "mutex-active.ll"
                           : std::filesystem::path{},
                 sanitizer);
+    checkProcessStorage(argv[1],
+                        argc >= 3 ? std::filesystem::path(argv[2]).parent_path() /
+                                        "mutex-process.ll"
+                                  : std::filesystem::path{},
+                        sanitizer);
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

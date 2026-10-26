@@ -1,0 +1,15 @@
+#include <std/mutex>
+
+class Box {
+  std::mutex<int32_t> value;
+public:
+  Box() : value(std::mutex<int32_t>(7)) {}
+};
+
+Box first{};
+class Registry {
+public:
+  static Box last{};
+};
+
+int main() { return 0; }

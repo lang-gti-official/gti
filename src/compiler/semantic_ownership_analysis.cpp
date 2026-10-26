@@ -151,10 +151,15 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
     const SemanticType &type, ActiveCleanupQuery &query) const -> bool {
   if (type.kind == SemanticType::Class) {
     const ClassInfo *owner = classInfo(type);
-    if (owner != nullptr &&
-        (owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner ||
-         owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage)) {
+    if (owner != nullptr && owner->compilerCapability ==
+                                CompilerCapabilityTypeKind::SharedOwner) {
       return true;
+    }
+    if (owner != nullptr && owner->compilerCapability ==
+                                CompilerCapabilityTypeKind::MutexStorage) {
+      return !query.excludeNativeRetirement ||
+             (type.arguments.size() == 1 &&
+              requiresActiveCleanup(type.arguments.front(), query));
     }
     if (owner != nullptr && owner->compilerCapability ==
                                 CompilerCapabilityTypeKind::OptionalStorage) {
@@ -291,6 +296,13 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
       result ? ActiveCleanupState::Present : ActiveCleanupState::Absent;
   query.activeTypes.pop_back();
   return result;
+}
+
+bool SemanticVisitor::Impl::requiresSourceCleanupFor(
+    const SemanticType &type) const {
+  ActiveCleanupQuery query;
+  query.excludeNativeRetirement = true;
+  return requiresActiveCleanup(type, query);
 }
 
 auto SemanticVisitor::Impl::activeCleanupCause(const SemanticType &type) const

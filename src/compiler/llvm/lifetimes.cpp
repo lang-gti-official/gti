@@ -5,10 +5,67 @@
 #include "mutexes.h"
 #include "payloads.h"
 
+#include <llvm/Transforms/Utils/ModuleUtils.h>
+
 namespace lang::native_llvm {
 
 Lifetimes::Lifetimes(Session &session, Failures &failures, FindBody findBody)
     : session(session), failures(failures), findBody(std::move(findBody)) {}
+
+void Lifetimes::prepareProgramStorage(
+    const std::map<SymbolId, llvm::GlobalVariable *> &globals) {
+  if (programRetirement || !programStorage.empty())
+    throw std::logic_error("LLVM program retirement prepared twice");
+  for (const auto &step : session.program().mir().programInitializationPlan().steps) {
+    if (!step.nativeRetirement)
+      continue;
+    if (!mirDropIsNativeRetirement(session.program().mir(), *step.nativeRetirement))
+      throw std::logic_error("LLVM program retirement lost its exact native recipe");
+    auto *live = new llvm::GlobalVariable(
+        session.module(), llvm::Type::getInt1Ty(session.context()), false,
+        llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::getFalse(session.context()),
+        "__gti_program_storage_live_" + std::to_string(step.id));
+    programStorage.push_back({step.storageInitialization, globals.at(step.symbol),
+                              live, *step.nativeRetirement});
+  }
+  if (programStorage.empty())
+    return;
+  programRetirement = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
+      llvm::GlobalValue::InternalLinkage, "__gti_program_retire_native",
+      session.module());
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", programRetirement));
+  auto *failure = ir.CreateAlloca(session.abi().failureChannel());
+  for (auto item = programStorage.rbegin(); item != programStorage.rend(); ++item) {
+    auto *run = llvm::BasicBlock::Create(session.context(), "retire", programRetirement);
+    auto *next = llvm::BasicBlock::Create(session.context(), "next", programRetirement);
+    ir.CreateCondBr(ir.CreateLoad(ir.getInt1Ty(), item->live), run, next);
+    ir.SetInsertPoint(run);
+    ir.CreateStore(ir.getFalse(), item->live);
+    ir.CreateCall(cleanup(item->recipe), {item->storage, failure, ir.getFalse()});
+    ir.CreateBr(next);
+    ir.SetInsertPoint(next);
+  }
+  ir.CreateRetVoid();
+  // Module lifetime also has an endpoint when a native host unloads a library.
+  // Explicit hosted retirement clears the same flags before this idempotent hook.
+  llvm::appendToGlobalDtors(session.module(), programRetirement, 65535);
+}
+
+void Lifetimes::publishProgramStorage(llvm::IRBuilder<> &ir,
+                                     MirInstructionId instruction) {
+  for (const auto &storage : programStorage)
+    if (storage.initialization == instruction)
+      ir.CreateStore(ir.getTrue(), storage.live);
+}
+
+void Lifetimes::retireProgramStorage(llvm::IRBuilder<> &ir) {
+  if (!programRetirement)
+    throw std::logic_error("LLVM retirement has no sealed process storage");
+  ir.CreateCall(programRetirement);
+}
 
 bool Lifetimes::containsMutex(const SemanticType &type) const {
   if (type.kind == SemanticType::Array)

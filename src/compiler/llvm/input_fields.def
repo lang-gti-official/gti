@@ -24,7 +24,7 @@ LLVM_INPUT_FIELDS(MirThreadTaskAdapter, id, taskType, resultType, spawnValue, so
 LLVM_INPUT_FIELDS(MirHostedStartupPlan, kind, entry, appendFunction, vectorConstructor, stringConstructor, sourceAnchor, programInitializationTarget, exitPolicy, argumentIndexPlace, argumentVectorPlace, stabilizedCount, argumentVector, entryResult, cThreadBegin, cThreadEnd, operations)
 LLVM_INPUT_FIELDS(MirHostedStartupOperation, id, kind, failureBehavior, block, instruction, place, value, dropObligation, failureRecord, cleanupBoundary, terminator)
 LLVM_INPUT_FIELDS(MirProgramInitializationPlan, units, steps)
-LLVM_INPUT_FIELDS(MirProgramInitializationStep, id, sourceUnit, storageKind, role, symbol, ownerClass, requiresActiveCleanup, binding, storagePlace, entryBlock, storageInitialization, dataInitialization, dataConstant, statement, initializer, fullExpression, locals, nestedFullExpressions)
+LLVM_INPUT_FIELDS(MirProgramInitializationStep, id, sourceUnit, storageKind, role, symbol, ownerClass, requiresActiveCleanup, nativeRetirement, binding, storagePlace, entryBlock, storageInitialization, dataInitialization, dataConstant, statement, initializer, fullExpression, locals, nestedFullExpressions)
 LLVM_INPUT_FIELDS(MirThreadLocalStorage, symbol, sourceUnit, type, traits, access, requiresActiveCleanup, dataInitializer, cleanup, effectSummary, initializer)
 LLVM_INPUT_FIELDS(MirPayloadEnum, declaration, sourceUnit, type, traits, variants, requiresActiveCleanup)
 LLVM_INPUT_FIELDS(MirPayloadEnumVariant, variantIndex, payloadTypes, payloadSymbols, payloadRequiresActiveCleanup)

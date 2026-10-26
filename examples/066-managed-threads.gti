@@ -5,6 +5,10 @@
 #include <std/optional>
 #include <std/string>
 
+// A passive process payload needs only native-shell retirement after workers
+// and TLS finish. Source destructors/owning payloads still require local scope.
+std::mutex<int> global_progress{0};
+
 // An owning sum replaces alternatives by construction, so its payload needs
 // no assignment operation. A mutex remains non-relocatable and nonassignable.
 enum pending_message { empty, ready(std::mutex<std::string> message) };
@@ -34,7 +38,11 @@ public:
 
 int main() {
   auto first_started = std::thread::start(
-      []() -> void { std::println("first task"); });
+      []() -> void {
+        mut auto guard = global_progress.lock();
+        guard.get() = 1;
+        std::println("first task");
+      });
   if (!first_started.has_value()) {
     return 1;
   }
@@ -43,6 +51,10 @@ int main() {
   auto first_joined = moved.join();
   if (!first_joined.has_value() || moved.joinable()) {
     return 2;
+  }
+  {
+    auto guard = global_progress.lock();
+    if (guard.get() != 1) return 2;
   }
 
   auto owned = std::make_unique<message>(42);

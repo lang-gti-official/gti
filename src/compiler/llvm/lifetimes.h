@@ -23,6 +23,11 @@ public:
                                      llvm::Value *source,
                                      const SemanticType &type);
   [[nodiscard]] llvm::Function *cleanup(const MirDropType &recipe);
+  void prepareProgramStorage(
+      const std::map<SymbolId, llvm::GlobalVariable *> &globals);
+  void publishProgramStorage(llvm::IRBuilder<> &ir,
+                              MirInstructionId instruction);
+  void retireProgramStorage(llvm::IRBuilder<> &ir);
 
 private:
   Session &session;
@@ -32,6 +37,14 @@ private:
   std::vector<std::pair<MirDropType, llvm::Function *>> buildingCleanups;
   std::map<llvm::Type *, llvm::Function *> moves;
   std::map<llvm::Type *, llvm::Function *> mutexTransfers;
+  struct ProgramStorage {
+    MirInstructionId initialization = 0;
+    llvm::GlobalVariable *storage = nullptr;
+    llvm::GlobalVariable *live = nullptr;
+    MirDropType recipe;
+  };
+  std::vector<ProgramStorage> programStorage;
+  llvm::Function *programRetirement = nullptr;
   [[nodiscard]] bool containsMutex(const SemanticType &type) const;
   [[nodiscard]] llvm::Function *mutexTransfer(const SemanticType &type);
   [[nodiscard]] bool needsMoveState(const SemanticType &type) const;

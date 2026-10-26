@@ -2367,6 +2367,9 @@ auto SemanticVisitor::Impl::collectProgramInitializationStatement(
        .symbol = binding->symbol,
        .ownerClass = enclosingClass.value_or(0),
        .requiresActiveCleanup = requiresActiveCleanupFor(binding->type),
+       .requiresNativeRetirement = !variable->isThreadLocal() &&
+                                   requiresActiveCleanupFor(binding->type) &&
+                                   !requiresSourceCleanupFor(binding->type),
        .threadLocal = variable->isThreadLocal(),
        .ensureFailure =
            variable->isThreadLocal()

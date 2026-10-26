@@ -1258,10 +1258,15 @@ private:
            channel ? failures.origin(ir, channel) : null});
       break;
     }
+    case MirInstructionKind::RetireProgramStorage:
+      lifetimes.retireProgramStorage(ir);
+      break;
     default:
       throw BackendUnsupportedError(
           "LLVM instruction shape is not implemented");
     }
+    if (address.kind == MirBodyKind::Module)
+      lifetimes.publishProgramStorage(ir, instruction.id);
     if (instruction.result && result)
       values.at(*instruction.result) = result;
     if (published.matched()) {
@@ -1702,6 +1707,7 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     global->setAlignment(llvm::Align(layout.alignment));
     globals.emplace(step.symbol, global);
   }
+  lifetimes.prepareProgramStorage(globals);
   for (auto address : admission.requiredBodies())
     static_cast<void>(function(address));
   for (auto address : admission.requiredBodies())

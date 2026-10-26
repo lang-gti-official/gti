@@ -24,6 +24,27 @@ extern void gti_test_mutex_real_destroy_v1(gti_mutex_slot_v1 *);
 
 static unsigned initialized, destroyed;
 static gti_mutex_slot_v1 *live_shells[8];
+static bool process_lifecycles;
+static gti_mutex_slot_v1 *process_shells[2];
+static unsigned process_live;
+extern void gti_test_program_init_prefix(int32_t count);
+extern void gti_test_program_retire(void);
+
+static void process_retirement(void) {
+  const unsigned before = initialized;
+  process_lifecycles = true;
+  gti_test_program_retire();
+  for (int32_t prefix = 1; prefix != 3; ++prefix) {
+    gti_test_program_init_prefix(prefix);
+    assert(process_live == (unsigned)prefix);
+    gti_test_program_retire();
+    assert(process_live == 0 && initialized == destroyed);
+    gti_test_program_retire();
+    assert(initialized == destroyed);
+  }
+  assert(initialized == before + 3);
+  process_lifecycles = false;
+}
 
 struct failure_channel {
   gti_failure_record_v2 record;
@@ -122,9 +143,16 @@ void gti_rt_mutex_initialize_v1(gti_mutex_slot_v1 *slot) {
   assert(empty != 8);
   gti_test_mutex_real_initialize_v1(slot);
   live_shells[empty] = slot;
+  if (process_lifecycles) {
+    assert(process_live < 2);
+    process_shells[process_live++] = slot;
+  }
   ++initialized;
 }
 void gti_rt_mutex_destroy_v1(gti_mutex_slot_v1 *slot) {
+  if (process_lifecycles) {
+    assert(process_live != 0 && process_shells[--process_live] == slot);
+  }
   unsigned found = 8;
   for (unsigned index = 0; index != 8; ++index)
     if (live_shells[index] == slot)
@@ -210,5 +238,6 @@ int main(int argc, char **argv) {
   gti_test_mutex_destroy(storage);
   assert(initialized == destroyed);
   active_lifecycles();
+  process_retirement();
   return 0;
 }

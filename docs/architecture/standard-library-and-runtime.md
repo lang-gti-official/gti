@@ -1036,6 +1036,38 @@ host failure transfers its still-coherent state into a private terminal
 quarantine and raises `GTI-R0012`; this is neither detach nor a resumable
 ownership state.
 
+The versioned nonthrowing worker seam is declared in `runtime_thread.h`.
+`gti_thread_failure_view_v1` borrows one exact v2 ordinary or cleanup record
+plus its pinned artifact descriptors for the duration of publication. A sink
+must copy the record before returning. The runtime installs a default worker
+sink around entry, task/result cleanup and TLS drain. Publication records an
+outcome but performs no control transfer: generated adapters must catch their
+selected internal GTI transport before returning through any C callback.
+No C service or callback receives permission to unwind.
+
+A typed completion callback consumes its task exactly once. Null is accepted
+only after an outcome failure has been published and no live result remains;
+a non-null result on failure is abandoned by the runtime. Successful null
+completion remains an integrity termination. This lets a nonthrowing adapter
+finish failed task/capture cleanup without manufacturing an owned result.
+
+Synchronous launch rollback and post-join result take/abandon instead need a
+caller-owned `gti_thread_failure_sink_v1`. Enter/leave nest address-stable,
+thread-confined descriptors in strict LIFO order; an inner caller sink takes
+precedence even when its caller is a managed worker. The descriptor allocates
+no memory and owns no mandatory success-path failure buffer. Publication is
+cold, rejects malformed records/reentry/descriptor mutation and terminates if
+a sink throws. Worker task-cleanup queries expose the pending primary only
+while that exact default sink is active. A second cleanup failure preserves
+the primary in the emergency envelope; a third failure terminates.
+
+`runtime_thread_outcome_boundary` tests the C17 layout/signatures, copied
+records, nested caller scopes, launch rollback, worker and post-join result
+cleanup, TLS-before-result cleanup and isolated integrity deaths. This is
+runtime containment evidence, not generated LLVM worker admission or a C04
+transport selection. The generated entry/cleanup/result adapters remain a
+separate integration prerequisite.
+
 ### Scoped-worker execution
 
 `gti_rt_thread_scope_v1` adds a synchronous native group boundary over borrowed
