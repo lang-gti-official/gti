@@ -27,6 +27,8 @@ struct Probe {
 thread_local Probe *probe = nullptr;
 std::atomic<unsigned> initializations{0};
 const char *fault = "";
+thread_local bool pauseBroadcast = false;
+std::atomic<bool> broadcastEntered{false}, releaseBroadcast{false};
 
 void await(Probe &state, unsigned count) {
   auto seen = state.waits.load();
@@ -134,6 +136,47 @@ void parkedCpuBudget() {
   std::cout << "parked_wait_thread_cpu_seconds=" << cpu
             << " minimum_park_seconds=0.1\n";
 }
+
+void coalescedNotifications() {
+  alignas(8) std::array<std::uint64_t, 257> lanes{};
+  std::array<Probe, 2> states;
+  std::array<std::thread, 2> waiters;
+  for (unsigned index = 0; index != 2; ++index)
+    waiters[index] = std::thread([&, index] {
+      probe = &states[index];
+      gti_rt_atomic_wait_v1(&lanes[index * 256], 0, 8, 1);
+      require(__atomic_load_n(&lanes[index * 256], __ATOMIC_ACQUIRE) == 1);
+    });
+  for (auto &state : states)
+    await(state, 1);
+  std::thread first([&] {
+    pauseBroadcast = true;
+    __atomic_store_n(&lanes[0], 1U, __ATOMIC_RELEASE);
+    gti_rt_atomic_notify_v1(&lanes[0], 8, 0);
+  });
+  broadcastEntered.wait(false);
+  std::atomic<bool> published{false}, notified{false};
+  std::thread second([&] {
+    __atomic_store_n(&lanes[256], 1U, __ATOMIC_RELEASE);
+    published.store(true);
+    published.notify_all();
+    gti_rt_atomic_notify_v1(&lanes[256], 8, 0);
+    notified.store(true);
+    notified.notify_all();
+  });
+  published.wait(false);
+#if defined(__x86_64__)
+  // The first notifier still holds the bucket mutex after broadcasting. The
+  // second publication must coalesce, and survive the first notifier's rearm.
+  notified.wait(false);
+#endif
+  releaseBroadcast.store(true);
+  releaseBroadcast.notify_all();
+  first.join();
+  second.join();
+  for (auto &waiter : waiters)
+    waiter.join();
+}
 } // namespace
 
 // Only the separately compiled service test object substitutes these pthread
@@ -168,6 +211,16 @@ extern "C" int gti_test_wait_sleep(pthread_cond_t *condition,
       return 0;
   }
   return pthread_cond_wait(condition, mutex);
+}
+
+extern "C" int gti_test_wait_wake(pthread_cond_t *condition) {
+  const int status = pthread_cond_broadcast(condition);
+  if (pauseBroadcast) {
+    broadcastEntered.store(true);
+    broadcastEntered.notify_all();
+    releaseBroadcast.wait(false);
+  }
+  return status;
 }
 
 int main(int argc, char **argv) {
@@ -218,6 +271,7 @@ int main(int argc, char **argv) {
   beforeEnrollment(false);
   beforeEnrollment(true);
   collisions();
+  coalescedNotifications();
   parkedCpuBudget();
   std::cout << "runtime wait: lanes/orders, publication, enrollment, ABA, "
                "spurious wakes, collisions, one/all and once passed\n";

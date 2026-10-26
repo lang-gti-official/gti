@@ -4399,7 +4399,7 @@ notifications carry neither saved credit nor a source memory-order edge. No
 unbounded polling, GTI allocation, callback, or C++ exception transport implements
 this operation. The probe is a latency/CPU tradeoff, not a progress substitute.
 
-Each bucket counts registered waiters. Registration precedes an SC fence and
+Each bucket counts registered waiters. On ARM, registration precedes an SC fence and
 the under-lock lane check; notification places an SC fence after the caller's
 lane publication and before checking that count. The two fences cannot both
 precede the other's preceding atomic write in coherence order: that would
@@ -4409,6 +4409,18 @@ sees the lane publication before sleeping. The mutex closes the remaining
 check-to-sleep window. This uses the reviewed raw-lane compiler profile and
 the fence/coherence rule in [the C++ memory model](https://eel.is/c++draft/atomics.order#4),
 not an inferred synchronization edge in GTI source. ABA remains allowed.
+
+On x86, an acquire/release `wakeNeeded` exchange folds notification's ordering
+and empty-domain test into one RMW. Enrollment exchanges true under the bucket
+mutex before rechecking the lane. If notification precedes enrollment, the RMW
+chain carries its preceding lane publication into the waiter's recheck;
+otherwise notification observes enrollment and takes the bucket mutex. Every
+update, including last-waiter removal and notifier rearm, is an acquire/release
+RMW, preserving that chain across coalesced notifications. A notifier broadcasts
+and rearms under the mutex before any woken waiter can recheck and repark.
+Deterministic controls pause after broadcast while a second colliding-lane
+notification coalesces, then require both waiters to finish. This does not
+replace parking with spinning or weaken one/all notification semantics.
 
 All callers in an executable must share one final-image parking provider. This
 does not establish independently linked module attachment/unload support. The

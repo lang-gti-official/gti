@@ -76,7 +76,14 @@ def main():
             for family in ("mutex", "mutex-active", "mutex-process"):
                 symbols = run(f"{family}-instrumentation-{mode}",
                               ["nm", "-u", output / f"{family}-{mode}.o"])
-                if marker not in symbols:
+                # Fixed internal process roots need global redzones, not a
+                # surviving bounds check for statically proved field accesses.
+                instrumented = ("__asan_register_image_globals" in symbols and
+                                "__asan_unregister_image_globals" in symbols
+                                if family == "mutex-process" and
+                                args.sanitize == "address,undefined"
+                                else marker in symbols)
+                if not instrumented:
                     raise AssertionError(
                         f"generated {mode} {family} access lacks {args.sanitize} instrumentation")
         program = output / f"mutex-{mode}"

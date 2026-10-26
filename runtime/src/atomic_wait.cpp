@@ -14,6 +14,9 @@ struct Bucket {
   pthread_mutex_t mutex;
   pthread_cond_t condition;
   std::atomic<unsigned> waiters{0};
+#if defined(__x86_64__)
+  std::atomic<bool> wakeNeeded{false};
+#endif
 };
 
 // Trivial process-lifetime storage: late TLS/static cleanup may be its first
@@ -65,13 +68,26 @@ void wait(const void *lane, std::uint64_t old, std::uint32_t order) noexcept {
   require(pthread_mutex_lock(&bucket.mutex) == 0);
   require(bucket.waiters.fetch_add(1, std::memory_order_relaxed) !=
           std::numeric_limits<unsigned>::max());
+#if defined(__x86_64__)
+  // Every update is an acquire/release RMW. If notification precedes this
+  // enrollment, its preceding lane publication happens before our recheck.
+  // Otherwise notification sees this enrollment and must take the mutex.
+  bucket.wakeNeeded.exchange(true, std::memory_order_acq_rel);
+#else
   // Together with notify's fence, registration and the publishing lane store
   // cannot both be missed: whichever fence comes second observes the other's
   // preceding atomic write. The mutex then closes the check-to-sleep window.
   std::atomic_thread_fence(std::memory_order_seq_cst);
+#endif
   while (gti::runtime::atomic_lane::load<T>(lane, order) == static_cast<T>(old))
     require(pthread_cond_wait(&bucket.condition, &bucket.mutex) == 0);
-  bucket.waiters.fetch_sub(1, std::memory_order_relaxed);
+  const auto previous = bucket.waiters.fetch_sub(1, std::memory_order_relaxed);
+#if defined(__x86_64__)
+  if (previous == 1)
+    bucket.wakeNeeded.exchange(false, std::memory_order_acq_rel);
+#else
+  static_cast<void>(previous);
+#endif
   require(pthread_mutex_unlock(&bucket.mutex) == 0);
 }
 } // namespace
@@ -105,12 +121,24 @@ extern "C" void gti_rt_atomic_notify_v1(const void *lane,
   gti::runtime::atomic_lane::validate(lane, width_bytes);
   require(all <= 1);
   auto &bucket = bucketFor(lane, width_bytes);
+#if defined(__x86_64__)
+  if (!bucket.wakeNeeded.exchange(false, std::memory_order_acq_rel))
+    return;
+#else
   std::atomic_thread_fence(std::memory_order_seq_cst);
   if (bucket.waiters.load(std::memory_order_relaxed) == 0)
     return;
+#endif
   require(pthread_mutex_lock(&bucket.mutex) == 0);
   // A single native wake could choose a different colliding lane and strand
   // an eligible waiter. Broadcast preserves both source notification contracts.
   require(pthread_cond_broadcast(&bucket.condition) == 0);
+#if defined(__x86_64__)
+  // Concurrent notifications can coalesce only while this notifier owns the
+  // check-to-sleep mutex. Rearm before a woken waiter can recheck and repark.
+  // RMW preserves the publication chain of notifications coalesced above.
+  bucket.wakeNeeded.exchange(bucket.waiters.load(std::memory_order_relaxed) != 0,
+                             std::memory_order_acq_rel);
+#endif
   require(pthread_mutex_unlock(&bucket.mutex) == 0);
 }

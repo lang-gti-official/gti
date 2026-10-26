@@ -91,6 +91,7 @@ def main():
     run("controlled-runtime", [args.cxx, "-std=c++20", *flags,
         "-Dpthread_mutex_init=gti_test_wait_init",
         "-Dpthread_mutex_lock=gti_test_wait_lock",
+        "-Dpthread_cond_broadcast=gti_test_wait_wake",
         "-Dpthread_cond_wait=gti_test_wait_sleep", "-c", runtime,
         "-o", output / "controlled.o"])
     run("controlled-link", [args.cxx, "-std=c++20", *flags,
