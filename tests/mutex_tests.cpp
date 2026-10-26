@@ -73,7 +73,14 @@ std::string validProgram() {
 
 std::mutex<int32_t> program_value{1};
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "--shell-recipes") {
+    testMutexCleanupRecipe();
+    testPassiveMutexShellRecipe();
+    return failures == 0 ? 0 : 1;
+  }
+  if (argc != 1)
+    return 2;
   {
     std::mutex_guard<int32_t> first = program_value.lock();
     mut std::mutex_guard<int32_t> moved = std::move(first);

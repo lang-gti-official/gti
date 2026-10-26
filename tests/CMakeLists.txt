@@ -1592,6 +1592,7 @@ add_executable("gti_mutex_tests"
                "${PROJECT_SOURCE_DIR}/tests/mutex_tests.cpp")
 target_link_libraries("gti_mutex_tests" PRIVATE gti_cpp_backend)
 add_test(NAME mutex_semantic_ir COMMAND gti_mutex_tests)
+add_test(NAME mutex_shell_recipes COMMAND gti_mutex_tests --shell-recipes)
 
 add_executable(gti_source_location_tests source_location_tests.cpp)
 target_link_libraries(gti_source_location_tests PRIVATE gti_cpp_backend)
