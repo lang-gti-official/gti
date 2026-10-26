@@ -5,26 +5,44 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
 import struct
 import subprocess
+import time
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run(command, directory, name, *, expected=0, timeout=180):
-    result = subprocess.run([str(arg) for arg in command], capture_output=True,
+def run(command, directory, name, *, expected=0, timeout=180, measure_build=False):
+    command = [str(arg) for arg in command]
+    metrics = directory / f"{name}.metrics"
+    if measure_build:
+        if platform.system() not in ("Darwin", "Linux"):
+            raise ValueError("build metrics require Darwin or Linux system time")
+        command = ["/usr/bin/time", "-l" if platform.system() == "Darwin" else "-v",
+                   "-o", str(metrics), *command]
+    start = time.perf_counter()
+    result = subprocess.run(command, capture_output=True,
                             text=True, check=False, timeout=timeout,
                             env={**os.environ, "NO_COLOR": "1"})
+    elapsed = time.perf_counter() - start
     (directory / f"{name}.stdout").write_text(result.stdout)
     (directory / f"{name}.stderr").write_text(result.stderr)
-    (directory / f"{name}.json").write_text(json.dumps({
-        "command": [str(arg) for arg in command], "returncode": result.returncode,
-    }, indent=2))
+    record = {"command": command, "returncode": result.returncode,
+              "seconds": elapsed}
+    if measure_build:
+        pattern = (r"(\d+)\s+maximum resident set size" if platform.system() == "Darwin"
+                   else r"Maximum resident set size \(kbytes\):\s*(\d+)")
+        match = re.search(pattern, metrics.read_text())
+        if not match:
+            raise ValueError(f"missing build peak memory: {metrics}")
+        record["peak_rss_kib"] = int(match[1]) / (1024 if platform.system() == "Darwin" else 1)
+    (directory / f"{name}.json").write_text(json.dumps(record, indent=2))
     if result.returncode != expected:
         raise AssertionError(f"{name}: exit {result.returncode}, expected {expected}: {result.stderr}")
     return result
@@ -39,6 +57,7 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--cxx", default=shutil.which("c++"))
     parser.add_argument("--sanitized", action="store_true")
+    parser.add_argument("--build-metrics", action="store_true")
     args = parser.parse_args()
     root, output = args.root.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -60,7 +79,8 @@ def main():
         directory = output / f"{fixture}-{mode}-{level}"
         directory.mkdir()
         prefix = directory / "generated"
-        run([emitter, fixtures / f"{fixture}.gti", prefix, level], directory, "emit")
+        run([emitter, fixtures / f"{fixture}.gti", prefix, level], directory, "emit",
+            measure_build=args.build_metrics)
         snapshot = prefix.with_suffix(".lowered").read_bytes()
         if fixture in snapshots and snapshot != snapshots[fixture]:
             raise AssertionError("transport candidates did not consume identical sealed-program text")
@@ -84,7 +104,8 @@ def main():
         run([args.cxx, "-std=c++20", "-O3", *flags, "-pthread",
              "-I", root / "runtime/include", "-I", directory,
              fixtures / "driver.cpp", prefix.with_suffix(".o"),
-             args.runtime.resolve(), "-o", executable], directory, "link")
+             args.runtime.resolve(), "-o", executable], directory, "link",
+            measure_build=args.build_metrics)
         for outcome in ("success", "failure"):
             for dispatch in ("direct", "indirect"):
                 nested = fixture in ("nested_failure", "owned_nested_failure", "replacement_nested_failure")
@@ -145,6 +166,8 @@ def main():
                          "input_sha256": hashlib.sha256(snapshot).hexdigest(),
                          "object_sha256": digest(prefix.with_suffix(".o")),
                          "object_bytes": prefix.with_suffix(".o").stat().st_size,
+                         "build": {phase: json.loads((directory / f"{phase}.json").read_text())
+                                   for phase in ("emit", "link")},
                          "executable_sha256": digest(executable)})
         print(f"{fixture}/{mode}/{level}: lifecycle outcomes, direct/indirect and 5 rejections passed", flush=True)
     evidence = {
@@ -153,6 +176,7 @@ def main():
         "runtime_sha256": digest(args.runtime),
         "sanitized_native_carrier": args.sanitized,
         "llvm_object_instrumented": False,
+        "build_metrics": args.build_metrics,
         "limitations": ["no projected replacement, callbacks, user TLS or workers",
                         "raw access limited to explicit unsafe scalar observation; no pointer arithmetic or allocation",
                         "no arrays, private owner representations or hierarchy",

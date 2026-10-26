@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Automation-only controls for the optional C04 cost reporter."""
+
+import tempfile
+import json
+import platform
+import sys
+import unittest
+from pathlib import Path
+
+from llvm_c04_cost import checksum, digest, observation, sections, verify_artifacts
+from llvm_c04_mir_evaluation_test import run
+
+
+class CostTests(unittest.TestCase):
+    @unittest.skipUnless(platform.system() in ("Darwin", "Linux"), "system time metrics")
+    def test_build_metrics_include_process_memory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = run([sys.executable, "-c", "print(7)"], root, "measure",
+                         measure_build=True)
+            self.assertEqual(result.stdout, "7\n")
+            record = json.loads((root / "measure.json").read_text())
+            self.assertGreater(record["seconds"], 0)
+            self.assertGreater(record["peak_rss_kib"], 0)
+            self.assertEqual(record["returncode"], 0)
+
+    def test_checksum_crosses_input_wrap(self):
+        for count in (2, 63, 1024, 1025, 2051):
+            for outcome in ("success", "failure", "mixed"):
+                expected = sum(1 if outcome == "failure" or
+                               (outcome == "mixed" and i % 2) else i % 1024 + 1
+                               for i in range(count))
+                self.assertEqual(checksum(outcome, count), expected)
+
+    def test_timing_requires_result_oracle(self):
+        self.assertEqual(observation("2 100 3\n", "success", 2), 100)
+        for text in ("2 0 3\n", "3 100 3\n", "2 100 4\n", "2 100 3\njunk"):
+            with self.assertRaises(ValueError):
+                observation(text, "success", 2)
+
+    def test_section_formats(self):
+        self.assertEqual(sections("section size addr\n.text 17 0\n.eh_frame 48 0x20\nTotal 65\n"),
+                         {".text": 17, ".eh_frame": 48})
+        self.assertEqual(sections("__text 17 0\n__compact_unwind 32 17\n"),
+                         {"__text": 17, "__compact_unwind": 32})
+        self.assertEqual(sections("__const 1 0\n__const 2 8\n"), {"__const": 3})
+        with self.assertRaises(ValueError):
+            sections("no sections")
+
+    def test_validation_is_bound_to_exact_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evidence = {"sanitized_native_carrier": False, "receipts": []}
+            for mode in ("status", "unwind"):
+                case = root / f"scalar-{mode}-O3"
+                case.mkdir()
+                row = {"fixture": "scalar", "mode": mode, "level": "O3"}
+                for filename, key in (("generated.lowered", "input_sha256"),
+                                      ("generated.o", "object_sha256"),
+                                      ("probe", "executable_sha256")):
+                    path = case / filename
+                    path.write_bytes(filename.encode())
+                    row[key] = digest(path)
+                evidence["receipts"].append(row)
+            self.assertEqual(len(verify_artifacts(evidence, root, ("scalar",))), 2)
+            evidence["sanitized_native_carrier"] = True
+            with self.assertRaisesRegex(ValueError, "unsanitized"):
+                verify_artifacts(evidence, root, ("scalar",))
+            evidence["sanitized_native_carrier"] = False
+            evidence["receipts"].append(evidence["receipts"][0])
+            with self.assertRaisesRegex(ValueError, "duplicate"):
+                verify_artifacts(evidence, root, ("scalar",))
+            evidence["receipts"].pop()
+            path = root / "scalar-unwind-O3/generated.lowered"
+            path.write_bytes(b"different MIR")
+            with self.assertRaisesRegex(ValueError, "artifact changed"):
+                verify_artifacts(evidence, root, ("scalar",))
+            evidence["receipts"][1]["input_sha256"] = digest(path)
+            with self.assertRaisesRegex(ValueError, "different MIR"):
+                verify_artifacts(evidence, root, ("scalar",))
+
+
+if __name__ == "__main__":
+    unittest.main()

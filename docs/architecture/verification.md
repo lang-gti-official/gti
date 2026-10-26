@@ -10170,6 +10170,25 @@ the verified pre-object-emission module: target emission may rewrite `resume`
 into platform unwind-runtime calls. Hash receipts are also printed into the step
 log so managed-runner collection retains them before deleting its build tree.
 
+For bounded transport-cost evidence, run that evaluation without `--sanitized`
+and with `--build-metrics` on macOS or Linux. The latter retains system-time
+output, emission/link wall time and peak RSS (normalized to KiB). It measures
+the fixture compiler invocation and host link, not a full compiler rebuild.
+Then run `python3 tests/llvm_c04_cost.py --evidence <output>/evidence.json
+--output <new-cost-directory>` inside the suite window; provide `--size-tool`
+if `llvm-size` is not on PATH. The reporter verifies object/executable/input
+hashes, rejects sanitized receipts and mismatched MIR, and checks an independent
+checksum on every timed run. Defaults use two warmups and nine alternating
+samples per candidate for direct/indirect success, failure and mixed entry.
+Each report retains the raw observations, per-call distributions, medians,
+object/executable sizes and code/unwind sections (same-named Mach-O sections
+are summed, with the original tool output retained). Run
+`python3 tests/llvm_c04_cost_test.py` for the automation-only controls; its
+system-time check requires permission to collect child-process memory metrics.
+These fixed-noinline microbenchmarks do not establish whole-program speedups,
+allocation counts, worker/callback costs, contention isolation or final transport
+acceptance. Keep those missing obligations explicit in the C04 decision.
+
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves
 as a comparator for its existing supported behavior. Retain valid differential

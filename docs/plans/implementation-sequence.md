@@ -10864,6 +10864,16 @@ platform/cost comparison and ADR decision.
 Remove or replace these opt-in evaluation hooks once that decision is implemented;
 they are not a permanent second production backend or CLI transport option.
 
+The staging also includes a hash-bound cost reporter, `tests/llvm_c04_cost.py`,
+over validated unsanitized O3 artifacts. It alternates status/unwind candidates
+for direct/indirect success, failure and mixed entry, retaining independent
+checksum checks, runtime distributions and code/unwind-table sizes. The
+evaluation's optional `--build-metrics` records fixture emission/link time and
+peak memory. This is supporting evidence for the bounded local/parameter/return/
+replacement workloads, not completion of the representative platform comparison:
+allocation measurement, dynamic GTI adapters, workers, foreign containment and
+production inlining remain explicit obligations before choosing the transport.
+
 ##### LLVM-C05: Dynamic Calls Use Planned Adapters
 
 For erased GTI callables, use a planned code/environment invocation boundary;
