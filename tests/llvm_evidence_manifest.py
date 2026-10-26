@@ -11,6 +11,30 @@ EXECUTION_PROFILES = frozenset({"single-threaded", "concurrent"})
 CONTEXT_SCHEMA = "gti.llvm.case-context-sidecar/v1"
 
 
+def validate_program_request(request: dict) -> None:
+    if (not isinstance(request, dict) or set(request) != {"kind", "exports"} or
+            request["kind"] != "library" or not isinstance(request["exports"], list) or
+            not request["exports"]):
+        raise ValueError("embedding evidence requires an exact library/export request")
+    functions, symbols = set(), set()
+    for export in request["exports"]:
+        if (not isinstance(export, dict) or set(export) != {"function", "symbol"} or
+                any(not isinstance(value, str) or not value for value in export.values())):
+            raise ValueError("invalid embedding evidence export")
+        if export["function"] in functions or export["symbol"] in symbols:
+            raise ValueError("duplicate embedding evidence export")
+        functions.add(export["function"])
+        symbols.add(export["symbol"])
+
+
+def program_request_arguments(request: dict | None) -> list[str]:
+    if request is None:
+        return []
+    validate_program_request(request)
+    return ["--library", *(item["function"] + "=" + item["symbol"]
+                            for item in request["exports"])]
+
+
 def manifest_digest(manifest: dict) -> str:
     return sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -75,14 +99,23 @@ def validate_context_sidecar(sidecar: dict, manifest: dict, *,
                 not isinstance(observation.get("setup"), dict) or
                 not isinstance(observation.get("endpoints"), list)):
             raise ValueError("case-context needs its actual setup, endpoints and assertion policy")
+        if name in cases and manifest["sources"][name].get("program-request") is not None:
+            if observation["setup"].get("program-request") != manifest["sources"][name]["program-request"]:
+                raise ValueError("case-context embedding request differs from its manifest")
 
 
 def build_manifest(test: str, cases: dict[str, str],
                    profiles: dict[str, tuple[str, ...]],
                    origins: dict[str, str] | None = None, *,
-                   execution_profiles: dict[str, str] | None = None) -> dict:
+                   execution_profiles: dict[str, str] | None = None,
+                   program_requests: dict[str, dict] | None = None) -> dict:
     origins = origins or {}
     execution_profiles = execution_profiles or {}
+    program_requests = program_requests or {}
+    if set(program_requests) - set(cases):
+        raise ValueError("program request names an unknown evidence source")
+    for request in program_requests.values():
+        validate_program_request(request)
     if not test or not cases or not profiles:
         raise ValueError("evidence test, sources and profiles must be nonempty")
     if set(origins) - set(cases):
@@ -105,6 +138,7 @@ def build_manifest(test: str, cases: dict[str, str],
             name: {
                 "origin": origins.get(name, "inline"),
                 "sha256": sha256(source.encode("utf-8")).hexdigest(),
+                **({"program-request": program_requests[name]} if name in program_requests else {}),
             }
             for name, source in sorted(cases.items())
         },
@@ -112,7 +146,9 @@ def build_manifest(test: str, cases: dict[str, str],
 
 
 def validate_manifest(manifest: dict, test: str, cases: dict[str, str],
-                      profiles: dict[str, tuple[str, ...]]) -> None:
+                      profiles: dict[str, tuple[str, ...]], *,
+                      program_requests: dict[str, dict] | None = None) -> None:
+    program_requests = program_requests or {}
     if set(manifest) != {"schema", "test", "profiles", "sources"}:
         raise ValueError("unknown or missing evidence-manifest top-level field")
     if manifest["schema"] != SCHEMA or manifest["test"] != test:
@@ -130,15 +166,16 @@ def validate_manifest(manifest: dict, test: str, cases: dict[str, str],
             raise ValueError(f"invalid execution-profile for {profile}")
         modes[profile] = mode
     for name, record in manifest["sources"].items():
-        if (not isinstance(record, dict) or set(record) != {"origin", "sha256"}
+        fields = {"origin", "sha256"} | ({"program-request"} if name in program_requests else set())
+        if (not isinstance(record, dict) or set(record) != fields
                 or not isinstance(record["origin"], str)):
             raise ValueError(f"invalid evidence source record {name}")
     expected = build_manifest(test, cases, profiles, {
         name: source["origin"] for name, source in manifest["sources"].items()
-    }, execution_profiles=modes)
+    }, execution_profiles=modes, program_requests=program_requests)
     for profile, record in manifest["profiles"].items():
         if record != expected["profiles"][profile]:
             raise ValueError(f"invalid evidence profile record {profile}")
     for name, record in manifest["sources"].items():
-        if set(record) != {"origin", "sha256"} or record != expected["sources"][name]:
+        if record != expected["sources"][name]:
             raise ValueError(f"invalid evidence source record {name}")

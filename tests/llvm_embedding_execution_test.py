@@ -9,7 +9,8 @@ import tempfile
 import subprocess
 import sys
 import time
-from llvm_evidence_manifest import build_manifest
+from llvm_evidence_manifest import build_manifest, build_context_sidecar
+from llvm_case_context import CaseContext
 
 SOURCE = "tests/fixtures/embedding/infallible.gti"
 EXPORTS = ["exchange", "mix", "pair", "large", "hfa", "engine", "record",
@@ -26,9 +27,35 @@ def evidence_profiles(root):
     return {"infallible": ("infallible",)}
 
 
+def evidence_program_requests(root):
+    del root
+    return {"infallible": {"kind": "library", "exports": [
+        {"function": name, "symbol": "embed_" + name} for name in EXPORTS]}}
+
+
 def evidence_manifest(root):
     return build_manifest("llvm_embedding_execution", evidence_cases(root),
-                          evidence_profiles(root), {"infallible": SOURCE})
+                          evidence_profiles(root), {"infallible": SOURCE},
+                          program_requests=evidence_program_requests(root))
+
+
+def evidence_partition_policy(root):
+    del root
+    return {"cases": "positive-admission", "controls": "expected-rejection-control"}
+
+
+def evidence_context(root):
+    context = CaseContext("llvm_embedding_execution", "infallible", SOURCE,
+                          sha256((root / SOURCE).read_bytes()).hexdigest(),
+                          "single-threaded", "library-export-program-request",
+                          "native-shared-library-dynamic-host", ())
+    return build_context_sidecar(evidence_manifest(root), {"infallible": {
+        "context": context.record(), "role": "positive-admission", "observation": {
+            "setup": {"program-request": evidence_program_requests(root)["infallible"],
+                      "optimization": [0, 1, 2, 3], "hosts": ["c17", "c++20", "c++23"]},
+            "endpoints": ["create", "invoke", "destroy", "unload", "reload"],
+            "expectation": {"exit": 0, "reload_cycles": 3, "export_count": len(EXPORTS)}
+        }}}, {}, partition_policy=evidence_partition_policy(root))
 
 
 def main():

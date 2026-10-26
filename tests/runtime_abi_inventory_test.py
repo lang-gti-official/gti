@@ -17,6 +17,7 @@ POLICIES = {
     "c_abi.h": ("borrowed records", "no functions", "none"),
     "charconv.h": ("call-bounded input/output buffers", "explicit status", "none"),
     "chrono.h": ("call-bounded output records", "explicit status", "none"),
+    "embedding.h": ("image-owned context; borrowed descriptors until unload", "generated lifecycle and export status; output publication only on success", "retained optional failure observer; no unwind through host boundary"),
     "cthread.h": ("opaque handles; explicit create/destroy/join", "status or documented terminal contract", "C callbacks; explicit attachment and containment"),
     "environment.h": ("call-bounded views and output buffers", "explicit status", "none"),
     "filesystem.h": ("explicit opaque directory handles and borrowed buffers", "explicit status", "none"),
@@ -86,6 +87,13 @@ def main():
     expected = set(re.findall(r"\b(gti_rt_\w+)\s*\(", preprocessed))
     assert set(symbols) == expected, f"runtime C inventory drift: missing={sorted(expected - set(symbols))}, extra={sorted(set(symbols) - expected)}"
     assert len(symbols) > 100, "runtime inventory unexpectedly empty"
+    # Generated per-image entry points are declared publicly but are not
+    # runtime archive services. Keep the distinction explicit in this inventory.
+    embedding = (include / "gti/embedding.h").read_text()
+    for name in ("gti_get_module_descriptor_v1", "gti_context_create_v1",
+                 "gti_context_destroy_v1"):
+        assert re.search(r"\b" + name + r"\s*\(", embedding)
+        assert name not in symbols
     args.output.write_text(json.dumps({"schema": 1, "command": command,
                                       "services": [symbols[key] for key in sorted(symbols)]}, indent=2) + "\n")
     print(f"Inventoried {len(symbols)} exact C signatures with ownership/failure/callback contracts")

@@ -203,8 +203,9 @@ void printDiagnostics(const lang::FrontendResult &frontend) {
 std::optional<lang::VerifiedLoweredProgram>
 lowerSource(const std::filesystem::path &root,
             const std::filesystem::path &source,
-            lang::ExecutionProfile profile) {
+            lang::ExecutionProfile profile, lang::ProgramRequest request = {}) {
   lang::FrontendOptions options;
+  options.program = std::move(request);
   options.target = lang::TargetInfo::host();
   options.target.executionProfile = profile;
   options.target.runtimeCapabilities.threads =
@@ -241,8 +242,9 @@ lowerSource(const std::filesystem::path &root,
 
 int probeSource(
     const std::filesystem::path &root, const std::filesystem::path &source,
-    lang::ExecutionProfile profile = lang::ExecutionProfile::SingleThreaded) {
-  auto verified = lowerSource(root, source, profile);
+    lang::ExecutionProfile profile = lang::ExecutionProfile::SingleThreaded,
+    lang::ProgramRequest request = {}) {
+  auto verified = lowerSource(root, source, profile, std::move(request));
   if (!verified)
     return 1;
   const lang::LlvmAdmissionPlan plan =
@@ -640,14 +642,30 @@ int main(int argc, char **argv) {
   if (argc == 4 && std::string_view(argv[1]) == "--probe")
     return probeSource(std::filesystem::weakly_canonical(argv[2]),
                        std::filesystem::weakly_canonical(argv[3]));
-  if (argc == 5 && std::string_view(argv[1]) == "--probe") {
+  if (argc >= 5 && std::string_view(argv[1]) == "--probe") {
     const auto profile = lang::parseExecutionProfile(argv[4]);
     if (!profile) {
       std::cerr << "invalid execution profile: " << argv[4] << '\n';
       return 2;
     }
+    lang::ProgramRequest request;
+    if (argc > 5) {
+      if (argc < 7 || std::string_view(argv[5]) != "--library")
+        return 2;
+      request.kind = lang::ProgramKind::Library;
+      for (int i = 6; i < argc; ++i) {
+        const std::string spec = argv[i];
+        const auto split = spec.find('=');
+        if (split == std::string::npos || split == 0 || split + 1 == spec.size() ||
+            spec.find('=', split + 1) != std::string::npos)
+          return 2;
+        request.exports.push_back({.function = spec.substr(0, split),
+                                   .symbol = spec.substr(split + 1)});
+      }
+    }
     return probeSource(std::filesystem::weakly_canonical(argv[2]),
-                       std::filesystem::weakly_canonical(argv[3]), *profile);
+                       std::filesystem::weakly_canonical(argv[3]), *profile,
+                       std::move(request));
   }
   if (argc == 5 && std::string_view(argv[1]) == "--probe-uses") {
     const auto profile = lang::parseExecutionProfile(argv[4]);

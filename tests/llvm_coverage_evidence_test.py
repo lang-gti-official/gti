@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from llvm_evidence_manifest import build_manifest, validate_manifest
+from llvm_evidence_manifest import build_manifest, validate_manifest, program_request_arguments
 
 
 BASELINE_SCHEMA = "gti.llvm.readiness-baseline/v1"
@@ -407,7 +407,8 @@ def profile_sources(root: Path, modules: dict) -> dict:
         cases = module.evidence_cases(root)
         profiles = module.evidence_profiles(root)
         declared = module.evidence_manifest(root)
-        validate_manifest(declared, test, cases, profiles)
+        requests = getattr(module, "evidence_program_requests", lambda root: {})(root)
+        validate_manifest(declared, test, cases, profiles, program_requests=requests)
         for name, record in declared["sources"].items():
             origin = record["origin"]
             if origin == "inline":
@@ -420,7 +421,7 @@ def profile_sources(root: Path, modules: dict) -> dict:
             raise AssertionError(listed.stderr)
         if json.loads(listed.stdout) != declared:
             raise AssertionError(f"{test}: --list-evidence diverges from runnable cases")
-        sources[test] = (cases, profiles, declared["profiles"])
+        sources[test] = (cases, profiles, declared["profiles"], requests)
     return sources
 
 
@@ -513,6 +514,39 @@ def execution_profile_controls(evidence: Path, root: Path) -> None:
                 "invalid profile reached source analysis")
 
 
+def embedding_request_controls(evidence: Path, root: Path, modules: dict) -> None:
+    module = modules["llvm_embedding_execution"]
+    cases, profiles = module.evidence_cases(root), module.evidence_profiles(root)
+    requests = module.evidence_program_requests(root)
+    manifest = module.evidence_manifest(root)
+    for mutation in (lambda record: record.pop("program-request"),
+                     lambda record: record["program-request"].update(kind="executable"),
+                     lambda record: record["program-request"].update(exports=[]),
+                     lambda record: record["program-request"]["exports"][0].update(function="unused"),
+                     lambda record: record["program-request"]["exports"][0].update(symbol="wrong_symbol")):
+        changed = deepcopy(manifest)
+        mutation(changed["sources"]["infallible"])
+        try:
+            validate_manifest(changed, manifest["test"], cases, profiles,
+                              program_requests=requests)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("wrong/omitted embedding request manufactured evidence")
+    with tempfile.TemporaryDirectory(prefix="gti-llvm-embedding-controls-") as raw:
+        source = Path(raw) / "embedding.gti"
+        source.write_text(cases["infallible"], encoding="utf-8")
+        prefix = [str(evidence), "--probe", str(root), str(source), "single-threaded"]
+        for arguments in ([], ["--library"], ["--library", "missing=embed_missing"]):
+            result = run([*prefix, *arguments])
+            require((not arguments or result.returncode != 0) and
+                    "Shape.InfallibleEmbedding" not in result.stdout,
+                    "invalid embedding probe manufactured a witness")
+        result = run([*prefix, *program_request_arguments(requests["infallible"])])
+        require(result.returncode == 0 and "Shape.InfallibleEmbedding" in result.stdout,
+                f"exact embedding request did not produce its witness: {result.stderr}")
+
+
 def registry_mutation_controls(registry: Path, root: Path,
                                registered: dict[str, dict]) -> None:
     lines = registry.read_text(encoding="utf-8").splitlines()
@@ -569,7 +603,7 @@ def observed_profiles(report: dict, evidence: Path, root: Path,
         for test, profile in sorted(requested):
             if test not in sources:
                 continue
-            cases, profiles, metadata = sources[test]
+            cases, profiles, metadata, requests = sources[test]
             if profile not in profiles:
                 continue
             keys: set[str] = set()
@@ -577,7 +611,8 @@ def observed_profiles(report: dict, evidence: Path, root: Path,
                 source = directory / f"{test}-{profile}-{case}.gti"
                 source.write_text(cases[case], encoding="utf-8")
                 result = run([str(evidence), "--probe", str(root), str(source),
-                              metadata[profile]["execution-profile"]])
+                              metadata[profile]["execution-profile"],
+                              *program_request_arguments(requests.get(case))])
                 if result.returncode != 0:
                     raise AssertionError(
                         f"coverage probe failed for {test}:{profile}:{case}:\n"
@@ -1279,6 +1314,7 @@ def main() -> None:
     registry_mutation_controls(registry, root, inventory)
     manifest_mutation_controls(root, modules)
     execution_profile_controls(evidence, root)
+    embedding_request_controls(evidence, root, modules)
     observations = observed_profiles(report, evidence, root, modules)
     errors = (repository_source_errors(report, observed_source) +
               validate(report, registered, observations))
