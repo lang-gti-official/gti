@@ -11,6 +11,9 @@ class DebugInfo final {
 public:
   explicit DebugInfo(Session &session);
   ~DebugInfo();
+  // Only the existing Body function factory registers exact lifecycle bodies.
+  // This records its result; it does not plan a signature or require a body.
+  void registerLifecycleBody(MirBodyAddress address, llvm::Function &function);
   void begin(MirBodyAddress address, llvm::Function &function);
   void location(llvm::IRBuilder<> &ir, MirBodyAddress address, MirBlockId block,
                 MirInstructionId instruction);

@@ -1,8 +1,7 @@
 {
   "schema": 1,
-  "admitted": ["arithmetic", "branches", "arrays", "text", "classes", "tls", "cleanup"],
+  "admitted": ["arithmetic", "branches", "arrays", "text", "classes", "tls", "cleanup", "simd"],
   "pending": {
-    "simd": ["O15 shared intrinsic dispatch/coverage wiring and real GTI execution"],
     "allocation_containers": ["O-LLVM-08 verified allocation, ownership and container composition"],
     "callables": ["O-LLVM-09 executable callable families through the central ABI"],
     "polymorphism": ["O-LLVM-10 executable dispatch and polymorphic ownership"],

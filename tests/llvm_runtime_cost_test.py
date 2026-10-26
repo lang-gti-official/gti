@@ -89,6 +89,18 @@ int gti_cost_end(c_ulonglong checksum, c_ulonglong effects) {
 '''
 
 CASES = {
+    "simd": (7, '''#include <std/simd>
+int main() {
+  int count = gti_cost_iterations(); mut uint64_t value = 7;
+  gti_cost_begin();
+  for (mut int i = 0; i < count; i += 1) {
+    std::simd<float, 7> input{float(i % 31 + 1)};
+    std::simd<float, 7> two{float(2)};
+    std::simd<float, 7> result = (input + two) * two - input;
+    value = (value * 33 + uint64_t(result.reduce())) % 1000003;
+  }
+  return gti_cost_end(c_ulonglong(value), c_ulonglong(0));
+}'''),
     "arithmetic": (0, '''int main() {
   int count = gti_cost_iterations(); mut uint64_t value = 7;
   gti_cost_begin();
