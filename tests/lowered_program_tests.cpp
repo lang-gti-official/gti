@@ -4,6 +4,7 @@
 #include "gti/lowered_program_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
+#include "gti/source_debug.h"
 
 #include "lowered_program_contract_client.h"
 
@@ -72,6 +73,83 @@ void expect(bool condition, std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+struct SourceDebugTestTables {
+  std::vector<int> rows;
+  friend bool operator==(const SourceDebugTestTables &,
+                         const SourceDebugTestTables &) = default;
+};
+
+void testSourceDebugRecordOwnership() {
+  using lang::SourceDebugCollection;
+  using Record = lang::SourceDebugRecord<SourceDebugTestTables>;
+  Record uncollected;
+  expect(lang::isValidSourceDebugRecord(uncollected) && !uncollected.tables,
+         "uncollected records have no table storage");
+  Record notApplicable;
+  notApplicable.collection = SourceDebugCollection::NotApplicable;
+  expect(lang::isValidSourceDebugRecord(notApplicable) && !notApplicable.tables,
+         "not-applicable records have no table storage");
+  const Record uncollectedCopy(uncollected);
+  const Record notApplicableCopy(notApplicable);
+  expect(uncollectedCopy == uncollected && !uncollectedCopy.tables &&
+             notApplicableCopy == notApplicable && !notApplicableCopy.tables,
+         "copying absent collection preserves state without allocating tables");
+  Record collected;
+  collected.collection = SourceDebugCollection::CollectedLexicalV1;
+  expect(!lang::isValidSourceDebugRecord(collected),
+         "collected state requires tables, including for an empty body");
+  collected.tables = std::make_unique<SourceDebugTestTables>();
+  expect(lang::isValidSourceDebugRecord(collected) &&
+             collected.tables->rows.empty() && collected != uncollected,
+         "collected empty tables differ from uncollected facts");
+  collected.tables->rows = {1, 2, 3};
+  Record copy(collected);
+  expect(copy == collected && copy.tables.get() != collected.tables.get() &&
+             copy.tables->rows.data() != collected.tables->rows.data(),
+         "copy construction deeply owns equal table contents");
+  collected.tables->rows[0] = 9;
+  expect(copy.tables->rows[0] == 1 && copy != collected,
+         "mutating source rows does not alter a copied snapshot");
+  Record assigned;
+  assigned = copy;
+  expect(assigned == copy && assigned.tables.get() != copy.tables.get(),
+         "copy assignment does not share mutable tables");
+  copy.tables->rows.push_back(4);
+  expect(assigned.tables->rows.size() == 3,
+         "copy-assigned table contents remain independent");
+  const auto *owned = assigned.tables.get();
+  Record moved(std::move(assigned));
+  expect(moved.tables.get() == owned &&
+             lang::isValidSourceDebugRecord(moved) &&
+             lang::isValidSourceDebugRecord(assigned) && !assigned.tables,
+         "move construction transfers tables and leaves a valid empty source");
+  Record moveAssigned;
+  moveAssigned = std::move(moved);
+  expect(moveAssigned.tables.get() == owned &&
+             lang::isValidSourceDebugRecord(moveAssigned) &&
+             lang::isValidSourceDebugRecord(moved) && !moved.tables,
+         "move assignment transfers tables and resets collection state");
+  for (const auto state : {SourceDebugCollection::Uncollected,
+                           SourceDebugCollection::NotApplicable,
+                           static_cast<SourceDebugCollection>(255)}) {
+    Record forged;
+    forged.collection = state;
+    forged.tables = std::make_unique<SourceDebugTestTables>();
+    expect(!lang::isValidSourceDebugRecord(forged),
+           "unexpected table storage and unknown collection states reject");
+  }
+  Record unknown;
+  unknown.collection = static_cast<SourceDebugCollection>(255);
+  expect(!lang::isValidSourceDebugRecord(unknown),
+         "an unknown collection state also rejects without tables");
+  expect(lang::isValidSourceDebugProfile(lang::SourceDebugProfile::None) &&
+             lang::isValidSourceDebugProfile(
+                 lang::SourceDebugProfile::LexicalV1) &&
+             !lang::isValidSourceDebugProfile(
+                 static_cast<lang::SourceDebugProfile>(255)),
+         "only the two reviewed collection profiles are valid");
 }
 
 [[nodiscard]] bool
@@ -1671,6 +1749,7 @@ int main() {
 } // namespace
 
 int main() {
+  testSourceDebugRecordOwnership();
   testDetachedDeterministicProgram();
   testBuilderRejectsForgedOptimizationEvidence();
   testDetachedDebugLocations();
