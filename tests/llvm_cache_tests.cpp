@@ -10,9 +10,12 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 namespace {
 using namespace lang;
@@ -114,6 +117,16 @@ void runChecks(const std::filesystem::path &self) {
   std::filesystem::create_directories(managedRoot);
   std::filesystem::copy(GTI_LLVM_CACHE_FIXTURE, project,
                         std::filesystem::copy_options::recursive);
+  const auto edges = project / "edges";
+  const auto selectEdges = [&](bool swapped) {
+    std::filesystem::remove(edges / "left-leaf.gti");
+    std::filesystem::remove(edges / "right-leaf.gti");
+    std::filesystem::create_symlink(swapped ? "second.gti" : "first.gti",
+                                    edges / "left-leaf.gti");
+    std::filesystem::create_symlink(swapped ? "first.gti" : "second.gti",
+                                    edges / "right-leaf.gti");
+  };
+  selectEdges(false);
   auto toolchain = discoverToolchainLayout(self.c_str());
   const auto originalRuntime = toolchain.runtimeLibrary;
   toolchain.runtimeLibrary = temporary.root / "libgti_runtime.a";
@@ -124,13 +137,16 @@ void runChecks(const std::filesystem::path &self) {
                         std::filesystem::copy_options::recursive);
   const ManagedOutputPolicy managed{.trustedRoot = project,
                                     .outputRoot = managedRoot};
+  const auto compilation = [&](const Policy &policy = Policy{}) {
+    return CompilationRequest(project / "main.gti", toolchain.standardLibrary,
+                              policy.target, policy.optimization,
+                              CppStandard::Cpp23, {}, {}, {}, {}, policy.debug,
+                              {}, policy.audit)
+        .withBackend(policy.backend);
+  };
   const auto build = [&](const Policy &policy = Policy{}) {
-    CompilationRequest compilation(project / "main.gti",
-                                   toolchain.standardLibrary, policy.target,
-                                   policy.optimization, CppStandard::Cpp23, {},
-                                   {}, {}, {}, policy.debug, {}, policy.audit);
     return buildExecutable(ExecutableBuildRequest(
-        compilation.withBackend(policy.backend), toolchain,
+        compilation(policy), toolchain,
         policy.backend == BackendKind::Cpp ? managedRoot / "app.cpp"
                                            : representation,
         output, policy.compiler, policy.native, policy.keep, true, false,
@@ -266,6 +282,39 @@ void runChecks(const std::filesystem::path &self) {
     require(again.cache.status == BuildCacheStatus::Hit && !again.nativeProcess,
             "changed-identity rebuild must itself become a real hit");
   };
+  const auto sourceSnapshot = [&] {
+    const auto inputs = loadCompilationInputs(compilation());
+    require(inputs.succeeded(), "dependency-edge fixture must load");
+    std::map<std::filesystem::path, std::string> files;
+    std::set<std::tuple<std::filesystem::path, std::filesystem::path,
+                        SourceDependencyKind>>
+        dependencies;
+    for (const auto &unit : inputs.sourceGraph.sourceUnits())
+      files.emplace(unit.path, read(unit.path));
+    for (const auto &edge : inputs.sourceGraph.dependencyEdges()) {
+      const auto *source = inputs.sourceGraph.findUnit(edge.source);
+      const auto *target = inputs.sourceGraph.findUnit(edge.target);
+      require(source && target, "dependency edge must name loaded units");
+      dependencies.emplace(source->path, target->path, edge.kind);
+    }
+    return std::pair{std::move(files), std::move(dependencies)};
+  };
+  const auto originalSources = sourceSnapshot();
+  selectEdges(true);
+  const auto swappedSources = sourceSnapshot();
+  require(originalSources.first == swappedSources.first &&
+              originalSources.second.size() == swappedSources.second.size() &&
+              originalSources.second != swappedSources.second,
+          "edge mutation must preserve all loaded file paths and bytes");
+  miss({}, "dependency edges alone must invalidate a native cache entry");
+  execute(17);
+  selectEdges(false);
+  const auto originalEdges = build();
+  checkBuild(originalEdges);
+  require(originalEdges.cache.status == BuildCacheStatus::Hit &&
+              originalEdges.cache.key == first.cache.key &&
+              !originalEdges.nativeProcess,
+          "restoring the original dependency edges must reuse their entry");
   auto changed = Policy{};
   changed.optimization = OptimizationLevel::O0;
   miss(changed, "optimization changes must invalidate native objects");
@@ -317,7 +366,10 @@ void runChecks(const std::filesystem::path &self) {
           !std::filesystem::exists(failedLink.cache.entry / "metadata") &&
           read(output) == executable,
       "failed native link must not publish cache metadata or replace output");
+  const auto sourceTimestamp =
+      std::filesystem::last_write_time(project / "value.gti");
   write(project / "value.gti", "int cache_value() { return 23; }\n");
+  std::filesystem::last_write_time(project / "value.gti", sourceTimestamp);
   miss({}, "transitive GTI source content must invalidate native objects");
   execute(23);
   std::filesystem::copy_file(
@@ -417,13 +469,66 @@ void runChecks(const std::filesystem::path &self) {
               nativeAgain.cache.key == first.cache.key &&
               read(output) == executable,
           "C++ build must not replace a native-object cache entry");
+  const auto validSource = read(project / "main.gti");
+  const auto validMetadata = read(first.cache.entry / "metadata");
+  write(project / "main.gti", read(project / "polymorphic_owner.gti"));
+  require(checkCompilation(compilation().forExecutable()).succeeded(),
+          "backend rejection fixture must pass source-language checking");
+  const auto rejectedAdmission = [&](const ExecutableBuildResult &result) {
+    bool backendDiagnostic = false;
+    for (const auto &diagnostic : result.compilation.diagnostics)
+      backendDiagnostic |= diagnostic.code == "GTI-B0003";
+    require(
+        !result.succeeded() &&
+            result.status == ExecutableBuildStatus::CompilationFailure &&
+            result.compilation.status == CompilationStatus::BackendFailure &&
+            backendDiagnostic && !result.compilation.artifact &&
+            !result.nativeProcess &&
+            result.cache.status == BuildCacheStatus::Miss &&
+            result.cache.key != first.cache.key,
+        "unadmitted polymorphic ownership must fail before link or restore");
+  };
+  const auto admission = build(retained);
+  rejectedAdmission(admission);
+  require(!std::filesystem::exists(admission.cache.entry / "metadata") &&
+              read(output) == executable,
+          "failed admission must not publish or replace an existing output");
+  std::filesystem::copy(first.cache.entry, admission.cache.entry,
+                        std::filesystem::copy_options::recursive);
+  std::filesystem::remove(output);
+  std::filesystem::remove(representation);
+  const auto staleAdmission = build(retained);
+  rejectedAdmission(staleAdmission);
+  require(staleAdmission.cache.warning && !std::filesystem::exists(output) &&
+              !std::filesystem::exists(representation) &&
+              read(first.cache.entry / "metadata") == validMetadata &&
+              read(admission.cache.entry / "metadata") == validMetadata,
+          "a stale entry for another source must not evade failed admission or "
+          "restore any artifact");
+  write(project / "main.gti", validSource);
+  const auto afterAdmission = build(retained);
+  checkBuild(afterAdmission);
+  require(afterAdmission.cache.status == BuildCacheStatus::Hit &&
+              afterAdmission.cache.key == first.cache.key &&
+              !afterAdmission.nativeProcess && read(output) == executable &&
+              read(representation) == object,
+          "failed admission must leave the valid executable and object "
+          "restorable");
+  execute(17);
+
   write(project / "main.gti", "int main() { return missing_cache_symbol; }\n");
   const auto rejected = build();
   require(!rejected.succeeded() &&
               !std::filesystem::exists(rejected.cache.entry / "metadata") &&
               read(output) == executable,
           "source rejection must not publish a cache entry or replace output");
-  std::cout << "LLVM cache round trips, invalidation, corruption, restoration, "
+  std::cout << "Backend identity: schema=" << identity->schema
+            << " LLVM=" << identity->llvmVersion
+            << " private-ABI=" << identity->privateAbi
+            << " triple=" << identity->triple << " CPU=" << identity->cpu
+            << " features=" << identity->features << '\n';
+  std::cout << "LLVM cache round trips, content/edge invalidation, failed "
+               "admission, corruption, restoration, "
                "publication safety and C++ isolation passed\n";
 }
 } // namespace
