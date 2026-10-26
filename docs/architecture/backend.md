@@ -4598,6 +4598,17 @@ active byte. Helpers short-circuit at the first armed source destructor and use
 bounded native loops rather than code expansion per array extent. Source order,
 first/secondary-failure handling and aggregate draining are unchanged.
 
+Indirect unique/shared cleanup follows the canonical recipe rather than treating
+every hierarchy-containing pointee as dynamically typed. An ordinary record
+containing an inline polymorphic subobject has an exact static recipe. Its
+owned children receive the same non-publishing hierarchy/dispatch preflight as
+a root static object, including replacement restrictions; recursive owner edges
+reuse their already-proved ancestor. A genuinely polymorphic pointee still
+carries `polymorphicCleanup` and requires the separate dynamic-cleanup mechanism.
+Native component probes exercise real allocation/release of passive
+hierarchy-containing records, shared last-owner release and repeated empty
+cleanup. They do not grant public owner construction or dynamic deletion.
+
 Polymorphic replacement cleanup remains explicitly rejected: its invocation
 context must establish the receiver-state policy without inferring destruction
 from reuse of a drop recipe. Dynamic owning cleanup,

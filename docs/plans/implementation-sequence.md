@@ -11671,6 +11671,13 @@ cleanup operation still needs an exact selected cleanup adapter and must retain
 the allocation identity before changing lifecycle state. It does not authorize
 source downcasts or establish destructor-observed virtual phase semantics.
 
+Static owner cleanup now distinguishes an ordinary record containing hierarchy
+storage from a dynamically typed pointee. The former retains an exact canonical
+recipe and runs hierarchy preflight at owned child edges; the latter remains
+gated by `polymorphicCleanup`. Unique/shared allocation, last-owner release and
+empty cleanup have native component probes. Public construction/transport and
+dynamic cleanup remain separate integration prerequisites.
+
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
   milestone completion: generated scalar-hierarchy copies/moves now have exact

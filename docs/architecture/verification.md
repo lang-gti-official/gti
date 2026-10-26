@@ -10324,6 +10324,15 @@ execution recovers every relocated interface/base view and distinguishes an
 installed base state at a nonzero offset from the complete allocation. These
 are representation checks, not proof of dynamic cleanup or legal downcasting.
 
+The same gate distinguishes static unique/shared owners of ordinary records
+containing hierarchy storage from genuinely polymorphic pointees. Exact static
+recipes emit and reuse their helpers; forged dynamic metadata and genuinely
+dynamic recipes reject before publication, including after cache warming.
+Native O0/O3 probes link the real runtime and exercise passive pointee release,
+shared two-to-one survival, last-owner release, null handles and repeated empty
+cleanup. These checks do not prove source destructor failure paths or dynamic
+deletion, and do not replace their independent execution gates.
+
 | Gate | Evidence |
 | --- | --- |
 | `llvm_admission` | Every typed ledger row has a milestone/predicate; unknown values and sentinels reject; snapshot/target/policy identity survives; sealed entry/dependency reachability separates dormant metadata from required execution, with conservative all-body fallbacks; scalar, array, borrow, cleanup, native and TLS shapes are inventoried; pending generation carries source provenance and emits no artifact. |

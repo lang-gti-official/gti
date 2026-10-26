@@ -1637,7 +1637,19 @@ class SharedNest {
 public:
   SharedNest() : value(std::shared_ptr<HierarchyValue>()) {}
 };
-int main() { UniqueNest unique{}; SharedNest shared{}; return 0; }
+class ActiveHierarchy : public Base {
+public:
+  ActiveHierarchy() : Base() {}
+  ~ActiveHierarchy() {}
+};
+struct ActiveHierarchyValue { mut ActiveHierarchy value{}; };
+struct ActiveOwners {
+  mut std::unique_ptr<ActiveHierarchyValue> unique = nullptr;
+  mut std::shared_ptr<ActiveHierarchyValue> shared{};
+};
+int main() {
+  UniqueNest unique{}; SharedNest shared{}; ActiveOwners active{}; return 0;
+}
 )",
                          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
   expect(hierarchyOwnerFrontend.canGenerateCode(),
@@ -1659,7 +1671,7 @@ int main() { UniqueNest unique{}; SharedNest shared{}; return 0; }
       hierarchyOwnerSession, hierarchyOwnerFailures, hierarchyOwnerDispatch,
       [](MirBodyAddress) -> llvm::Function * {
         throw std::runtime_error(
-            "rejected hierarchy owner cleanup requested a source body");
+            "passive hierarchy owner cleanup requested a source body");
       });
   const auto &hierarchyValue =
       named(hierarchyOwnerSession.program(), "HierarchyValue");
@@ -1718,20 +1730,64 @@ int main() { UniqueNest unique{}; SharedNest shared{}; return 0; }
                         return containsDynamicCleanup(containsDynamicCleanup,
                                                       *entry.second);
                       }),
-         "hierarchy owner rejection recipes contain no dynamic-cleanup marker");
+         "static hierarchy-containing owners have no dynamic-cleanup marker");
   for (const auto &[name, recipe] : hierarchyRecipes) {
-    const auto publication = modulePublication(hierarchyOwnerSession);
-    for (int attempt = 0; attempt != 2; ++attempt)
-      rejects<BackendUnsupportedError>(
-          [&] {
-            static_cast<void>(hierarchyOwnerLifetimes.cleanup(*recipe, true));
-          },
-          std::string(name) +
-              " hierarchy-pointee cleanup rejects before emission");
-    expect(modulePublication(hierarchyOwnerSession) == publication,
+    auto *cleanup = hierarchyOwnerLifetimes.cleanup(*recipe);
+    expect(cleanup && !llvm::verifyFunction(*cleanup),
            std::string(name) +
-               " hierarchy-pointee rejection publishes no artifact");
+               " emits its exact static hierarchy-containing cleanup");
+    const auto publication = modulePublication(hierarchyOwnerSession);
+    expect(hierarchyOwnerLifetimes.cleanup(*recipe) == cleanup &&
+               modulePublication(hierarchyOwnerSession) == publication,
+           std::string(name) + " reuses only the exact validated recipe");
+    // Freeing a passive pointee does not replace any live polymorphic object.
+    expect(hierarchyOwnerLifetimes.cleanup(*recipe, true) == cleanup &&
+               modulePublication(hierarchyOwnerSession) == publication,
+           std::string(name) + " permits passive owner-handle replacement");
+    auto forged = *recipe;
+    forged.polymorphicCleanup = true;
+    rejects<std::logic_error>(
+        [&] { static_cast<void>(hierarchyOwnerLifetimes.cleanup(forged)); },
+        "a warmed static cleanup cannot acquire dynamic cleanup authority");
+    expect(modulePublication(hierarchyOwnerSession) == publication,
+           "forged owner cleanup rejects before publication");
   }
+  const auto &activeValue =
+      named(hierarchyOwnerSession.program(), "ActiveHierarchyValue");
+  const auto activeUnique =
+      mirUniqueCleanupType(hierarchyOwnerSession.program().mir(),
+                           SemanticType::uniqueOwnerOf(activeValue.type));
+  expect(activeUnique && !activeUnique->aggregate.empty(),
+         "an active hierarchy-containing pointee retains its child recipe");
+  if (!activeUnique || activeUnique->aggregate.empty())
+    return;
+  const auto beforeActive = modulePublication(hierarchyOwnerSession);
+  rejects<BackendUnsupportedError>(
+      [&] {
+        static_cast<void>(hierarchyOwnerLifetimes.cleanup(*activeUnique, true));
+      },
+      "owned hierarchy child preflight preserves replacement rejection");
+  expect(modulePublication(hierarchyOwnerSession) == beforeActive,
+         "owned child preflight rejects before requesting a destructor body "
+         "or publishing a helper");
+  const auto dynamicOwner = mirUniqueCleanupType(
+      hierarchyOwnerSession.program().mir(),
+      SemanticType::uniqueOwnerOf(
+          named(hierarchyOwnerSession.program(), "Derived").type));
+  expect(dynamicOwner && dynamicOwner->polymorphicCleanup,
+         "a genuinely polymorphic pointee retains dynamic cleanup authority");
+  if (!dynamicOwner)
+    return;
+  const auto beforeDynamic = modulePublication(hierarchyOwnerSession);
+  rejects<BackendUnsupportedError>(
+      [&] {
+        static_cast<void>(hierarchyOwnerLifetimes.cleanup(*dynamicOwner));
+      },
+      "dynamic owner cleanup still requires its independent dispatch "
+      "mechanism");
+  expect(
+      modulePublication(hierarchyOwnerSession) == beforeDynamic,
+      "dynamic owner rejection remains non-publishing after static cache use");
   hierarchyOwnerSession.verify();
 
   TargetInfo privateTarget = TargetInfo::host();
@@ -3597,6 +3653,10 @@ interface Second {};
 class Parent : public First { public: mut int number = 17; };
 class Item : public Second, public Parent { public: mut int extra = 25; };
 struct Items { mut Item values[2] = {}; };
+struct StaticOwners {
+  mut std::unique_ptr<Items> unique = nullptr;
+  mut std::shared_ptr<Items> shared{};
+};
 struct Active { mut int marker = 113; ~Active() {} };
 struct Owners {
   mut std::unique_ptr<int> unique = nullptr;
@@ -3615,6 +3675,7 @@ struct Choices {
 };
 int main() {
   Items items{}; Active active{}; Choices choices{}; Owners owners{};
+  StaticOwners staticOwners{};
   NonRelocatable custom{};
   return 0;
 }
@@ -3633,6 +3694,14 @@ int main() {
     throw std::runtime_error("inert relocation source lost its MIR seal");
   const auto &item = named(input->program(), "Item");
   const auto &items = named(input->program(), "Items");
+  const MirClassInstance *staticShared = nullptr;
+  for (const auto &candidate : input->program().mir().classInstances())
+    if (candidate.compilerCapability ==
+            CompilerCapabilityTypeKind::SharedOwner &&
+        candidate.type.arguments == std::vector<SemanticType>{items.type})
+      staticShared = &candidate;
+  if (!staticShared)
+    throw std::runtime_error("static owner fixture lost its shared capability");
   const auto &parent = named(input->program(), "Parent");
   const auto &active = named(input->program(), "Active");
   const auto &choices = named(input->program(), "Choices");
@@ -3657,9 +3726,18 @@ int main() {
   } cleanup{temporary};
   const auto consumer = temporary / "consumer.c";
   expect(driver::writeArtifact(consumer, R"(
+#define _POSIX_C_SOURCE 200112L
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 extern int gti_relocation_probe(void);
+void *gti_cleanup_allocate(uint64_t bytes, uint64_t alignment) {
+  void *result = NULL;
+  if (alignment < sizeof(void*)) alignment = sizeof(void*);
+  if (posix_memalign(&result, alignment, bytes) != 0) abort();
+  memset(result, 0, bytes);
+  return result;
+}
 int gti_relocation_observe(void *source, void *destination, uint64_t first,
                             uint64_t second, uint64_t header, void *expected,
                             int32_t number, int32_t extra) {
@@ -4090,6 +4168,88 @@ int main(void) { return gti_relocation_probe(); }
       tagPlan.applyTo(*observed);
       bad = ir.CreateOr(bad, ir.CreateICmpNE(observed, ir.getInt32(0)));
     }
+    const std::array<SemanticType, 2> allocationParameters{
+        SemanticType::UInt64, SemanticType::UInt64};
+    const auto allocationPlan =
+        session.abi().nativeC(pointer, allocationParameters);
+    auto *allocate = llvm::Function::Create(
+        allocationPlan.type, llvm::GlobalValue::ExternalLinkage,
+        "gti_cleanup_allocate", session.module());
+    allocationPlan.applyTo(*allocate);
+    const auto allocateBytes = [&](std::uint64_t size,
+                                   std::uint64_t alignment) {
+      auto *allocation =
+          ir.CreateCall(allocate, {ir.getInt64(size), ir.getInt64(alignment)});
+      allocationPlan.applyTo(*allocation);
+      return allocation;
+    };
+    const auto itemLayout = session.layouts().get(items.type);
+    const auto uniqueItems = SemanticType::uniqueOwnerOf(items.type);
+    auto uniqueRecipe =
+        mirUniqueCleanupType(session.program().mir(), uniqueItems);
+    auto sharedRecipe =
+        mirUniqueCleanupType(session.program().mir(), staticShared->type);
+    if (!uniqueRecipe || !sharedRecipe)
+      throw std::runtime_error("static owner native probe lost exact cleanup");
+    auto *uniqueCleanup = lifetimes.cleanup(*uniqueRecipe);
+    auto *sharedCleanup = lifetimes.cleanup(*sharedRecipe);
+    auto *channel = ir.CreateAlloca(session.abi().failureChannel());
+    const auto freshHeap = [&] {
+      auto *allocation = allocateBytes(itemLayout.size, itemLayout.alignment);
+      ir.CreateStore(llvm::Constant::getNullValue(storage), allocation);
+      for (unsigned index = 0; index != 2; ++index) {
+        auto *value = element(allocation, index);
+        ir.CreateStore(ir.getInt32(17 + index), at(value, numberOffset));
+        ir.CreateStore(ir.getInt32(25 + index), at(value, extraOffset));
+        dispatch.install(ir, value, item.id);
+      }
+      return allocation;
+    };
+    auto *heap = freshHeap();
+    auto *uniqueSlot = ir.CreateAlloca(session.layouts().pointer());
+    ir.CreateStore(heap, uniqueSlot);
+    for (int attempt = 0; attempt != 2; ++attempt) {
+      bad = ir.CreateOr(
+          bad, ir.CreateNot(ir.CreateCall(
+                   uniqueCleanup, {uniqueSlot, channel, ir.getFalse()})));
+      bad = ir.CreateOr(bad, ir.CreateIsNotNull(ir.CreateLoad(
+                                 session.layouts().pointer(), uniqueSlot)));
+    }
+    heap = freshHeap();
+    auto *block = allocateBytes(shared.block.size, shared.block.alignment);
+    ir.CreateStore(llvm::Constant::getNullValue(shared.block.storage), block);
+    auto *count =
+        ir.CreateStructGEP(shared.block.storage, block, shared.blockStrong);
+    ir.CreateStore(ir.getInt64(2), count);
+    ir.CreateStore(heap, ir.CreateStructGEP(shared.block.storage, block,
+                                            shared.blockAllocation));
+    llvm::Value *handle = llvm::Constant::getNullValue(shared.handle.storage);
+    handle = ir.CreateInsertValue(handle, block, shared.handleBlock);
+    handle = ir.CreateInsertValue(handle, heap, shared.handleView);
+    auto *firstOwner = ir.CreateAlloca(shared.handle.storage);
+    auto *lastOwner = ir.CreateAlloca(shared.handle.storage);
+    ir.CreateStore(handle, firstOwner);
+    ir.CreateStore(handle, lastOwner);
+    bad = ir.CreateOr(
+        bad, ir.CreateNot(ir.CreateCall(sharedCleanup,
+                                        {firstOwner, channel, ir.getFalse()})));
+    bad =
+        ir.CreateOr(bad, ir.CreateICmpNE(ir.CreateLoad(ir.getInt64Ty(), count),
+                                         ir.getInt64(1)));
+    bad = ir.CreateOr(
+        bad, ir.CreateICmpNE(ir.CreateLoad(ir.getInt32Ty(),
+                                           at(element(heap, 0), numberOffset)),
+                             ir.getInt32(17)));
+    for (auto *owner : {lastOwner, firstOwner, lastOwner}) {
+      bad = ir.CreateOr(
+          bad, ir.CreateNot(ir.CreateCall(sharedCleanup,
+                                          {owner, channel, ir.getFalse()})));
+      auto *empty = ir.CreateLoad(shared.handle.storage, owner);
+      bad = ir.CreateOr(bad, ir.CreateIsNotNull(ir.CreateExtractValue(
+                                 empty, shared.handleBlock)));
+      bad = ir.CreateOr(bad, ir.CreateIsNotNull(ir.CreateExtractValue(
+                                 empty, shared.handleView)));
+    }
     ir.CreateRet(ir.CreateZExt(bad, ir.getInt32Ty()));
     expect(!llvm::verifyModule(session.module()),
            "inert relocation module verifies");
@@ -4099,10 +4259,13 @@ int main(void) { return gti_relocation_probe(); }
                driver::ArtifactWriteStatus::Success,
            "write relocation native object");
     driver::NativeInputs inputs;
-    inputs.libraryFiles.push_back(cobject);
+    inputs.finalLibraryFiles = {
+        cobject, driver::discoverToolchainLayout(nullptr).runtimeLibrary};
     const auto executable = temporary / "probe";
     const auto linked = toolchain.invoke(driver::NativeLinkRequest(
         driver::discoverNativeCompiler(), object, executable, inputs));
+    if (!linked.succeeded())
+      std::cerr << linked.output << '\n';
     expect(linked.succeeded(), "link relocation native object");
     if (linked.succeeded())
       expect(driver::invokeProcess({executable.string()}).succeeded(),
