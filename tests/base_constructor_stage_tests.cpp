@@ -542,6 +542,169 @@ int main() {
          "one literal and one computed closure-typed base were checked");
 }
 
+// An owned base argument, moved in or created in place, moves into one
+// prepared parameter that the InitializeBase alone hands to the selected base
+// constructor. The C++ backend does not represent this staging; it stays an
+// LLVM-only shape.
+void checkOwnedBaseArguments() {
+  const auto frontend =
+      analyzeWithStandardLibrary("owned-base-arguments.gti", R"(
+class Resource {
+  int id;
+public:
+  Resource(int id) : id(id) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+  int value() { return this.id; }
+};
+enum class Parcel { empty, item(Resource value) };
+Resource make(int id) { return Resource(id); }
+class Base {
+public:
+  Resource first;
+  Parcel parcel;
+  int count;
+  Base(Resource first, Parcel parcel, int count)
+      : first(std::move(first)), parcel(std::move(parcel)), count(count) {}
+};
+class Moved : public Base {
+public:
+  Moved(Resource first, Parcel parcel)
+      : Base(std::move(first), std::move(parcel), 1) {}
+};
+class Fresh : public Base {
+public:
+  Fresh(int id) : Base(make(id), Parcel::item(Resource(id + 1)), 2) {}
+};
+int main() {
+  Moved moved{Resource(1), Parcel::empty};
+  Fresh fresh{3};
+  return moved.count + fresh.count - 3;
+}
+)");
+  expect(frontend.canGenerateCode(), "owned base arguments verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(!lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "the C++ backend does not represent staged owned base arguments");
+  const auto definitionOf = [](const lang::MirBody &body,
+                               const lang::MirOperand &operand)
+      -> const lang::MirInstruction * {
+    const auto *value = operand.kind == lang::MirOperandKind::Value
+                            ? body.findValue(operand.value)
+                            : nullptr;
+    if (value == nullptr)
+      return nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == value->definition)
+          return &instruction;
+    return nullptr;
+  };
+  std::size_t stages = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::InitializeBase ||
+            instruction.operands.size() != 3)
+          continue;
+        ++stages;
+        expect(lang::mirBodyRoutesFailureEdges(constructor.body),
+               "a staged owned base argument is not an unarmed transfer");
+        for (std::size_t index = 0; index < 2; ++index) {
+          const auto *input =
+              definitionOf(constructor.body, instruction.operands[index]);
+          const auto *prepared =
+              input && input->preparedParameterDrop
+                  ? constructor.body.findDropObligation(
+                        *input->preparedParameterDrop)
+                  : nullptr;
+          expect(input != nullptr &&
+                     input->kind == lang::MirInstructionKind::CallInput &&
+                     input->callSite == 0 &&
+                     input->constructorInitializer ==
+                         instruction.constructorInitializer &&
+                     input->callInputIndex == index &&
+                     input->callInputKind == lang::HirCallInputKind::MoveValue,
+                 "each owned base argument is an exact prepared move input");
+          expect(prepared != nullptr &&
+                     prepared->kind ==
+                         lang::MirDropObligationKind::PreparedParameter &&
+                     std::count_if(
+                         instruction.lifecycle.begin(),
+                         instruction.lifecycle.end(),
+                         [&](const lang::MirLifecycleEvent &event) {
+                           return event.kind ==
+                                      lang::MirLifecycleEventKind::
+                                          TransferOut &&
+                                  event.source == prepared->id;
+                         }) == 1,
+                 "the base stage hands each prepared parameter over once");
+        }
+        expect(definitionOf(constructor.body, instruction.operands[2]) ==
+                       nullptr ||
+                   definitionOf(constructor.body, instruction.operands[2])
+                           ->kind != lang::MirInstructionKind::CallInput,
+               "the scalar base argument is passed directly");
+        for (int mutation = 0; mutation < 7; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              malformed.findConstructorInstance(constructor.id));
+          auto &instructions = changed->body.blocks[block.id - 1].instructions;
+          auto &stage = *std::find_if(
+              instructions.begin(), instructions.end(),
+              [&](const auto &candidate) {
+                return candidate.id == instruction.id;
+              });
+          const auto *original =
+              definitionOf(constructor.body, instruction.operands[0]);
+          lang::MirInstruction *input = nullptr;
+          for (auto &candidateBlock : changed->body.blocks)
+            for (auto &candidate : candidateBlock.instructions)
+              if (original && candidate.id == original->id)
+                input = &candidate;
+          if (input == nullptr) {
+            expect(false, "the owned base input is addressable");
+            break;
+          }
+          if (mutation == 0) {
+            // The callee never receives the prepared parameter.
+            std::erase_if(stage.lifecycle, [](const auto &event) {
+              return event.kind == lang::MirLifecycleEventKind::TransferOut;
+            });
+          } else if (mutation == 1) {
+            // The same prepared parameter is handed over twice.
+            stage.lifecycle.insert(stage.lifecycle.begin(),
+                                   stage.lifecycle.front());
+          } else if (mutation == 2) {
+            input->callInputKind = lang::HirCallInputKind::Value;
+          } else if (mutation == 3) {
+            // Bypass the prepared input with the moved source value.
+            stage.operands.front() = input->operands.front();
+          } else if (mutation == 4) {
+            input->constructorInitializer = 0;
+          } else if (mutation == 5) {
+            changed->body.dropObligations[*input->preparedParameterDrop - 1]
+                .kind = lang::MirDropObligationKind::Value;
+          } else {
+            // A forged trivial value cannot replace the owning formal's
+            // prepared parameter: the catalog decides that the formal owns.
+            changed->body.values[stage.operands.front().value - 1]
+                .info.traits.drop = lang::DropKind::Trivial;
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "owned base argument staging is sealed (mutation " +
+                     std::to_string(mutation) + ")");
+        }
+      }
+    }
+  }
+  expect(stages == 2, "both derived constructors stage their owned base "
+                      "arguments");
+}
+
 int main() {
   checkSelectedGeneratedBaseSchedule();
   checkFieldArgumentOrder();
@@ -550,6 +713,7 @@ int main() {
   checkBaseInitializerTemporaries(fixtures);
   checkGenericBaseArguments(fixtures);
   checkClosureGenericBaseArguments();
+  checkOwnedBaseArguments();
   for (const auto name :
        {"coverage/reproducers/a45-base-state-rollback-unsupported.gti",
         "coverage/reproducers/a45-base-plus-string-field-unsupported.gti",

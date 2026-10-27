@@ -6733,8 +6733,9 @@ that carrier, which its constructor builds in place as the delegated
 constructor's parameter, so each one's MIR drop still follows native base
 construction. This is not closure of the full base-initializer goal:
 owned derived parameters need one reference-bound frame with no extra native
-moves/copies/drops; owned base arguments need exact `CallInput` transfer and
-prepared-drop facts; borrowed arguments need original places/access/loan
+moves/copies/drops; owned base arguments now have exact MIR `CallInput`
+transfer and prepared-drop facts, which only the native backend consumes;
+borrowed arguments need original places/access/loan
 endpoints and temporary/escape rejections. Generic derived and base instances
 emitted as their own concrete classes now use the same carrier and gate; a
 generic class retained as a native class template still requires exact carrier
@@ -11728,10 +11729,13 @@ seven belong to the threads track, which builds on this branch:
 Base-view replacement, enum copies, payload values returned by value,
 thread-local hierarchy objects and observable pure phases stay
 `PolymorphicTransfer` or `PureDispatchState`.
-A derived constructor whose base initializer MIR leaves unstaged, such as
-one passing an owned value to its base constructor, is refused as
-`UnstagedBaseInitializer`. Until 2026-10-27 LLVM lowered it without its base.
-Running it needs MIR to stage owned base arguments.
+A derived constructor passing an owned value to its base constructor, moved
+in or created in place, now runs natively: MIR stages each owned argument as a
+prepared parameter that `InitializeBase` hands to the base constructor
+(`owned-base-initializers` in `llvm_dispatch_execution`). A base initializer
+MIR still leaves unstaged is refused as `UnstagedBaseInitializer`: a reference
+formal whose referent is not a passive scalar, an owned argument beside a
+reference formal, a borrow carrier passed by value or a by-value array.
 
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
@@ -12059,9 +12063,12 @@ artifacts name `--backend cpp` explicitly.
   mismatch (`llvm_dispatch_lifecycle_phases`).
 - `scoped_parallel_allocations` counts the C++ backend's nothrow `operator new`,
   which native task boxes do not use.
-- A derived constructor that passes an owned value or a reference to its base
-  initializer is refused on LLVM (`UnstagedBaseInitializer`) and fails on C++:
-  MIR leaves such base initializers unstaged. Staging them is follow-up MIR work.
+- A derived constructor that passes an owned value to its base initializer
+  now runs on LLVM; MIR stages the argument as a prepared parameter. C++ still
+  fails on it. A reference formal whose referent is not a passive scalar, an
+  owned argument beside a reference formal, a borrow carrier passed by value
+  and a by-value array remain unstaged: LLVM refuses them
+  (`UnstagedBaseInitializer`) and C++ fails. Staging them is follow-up MIR work.
 - Follow-up branches carry further work not in this candidate: borrow-carrier
   value moves, interface views of borrow carriers (blocked on an upcast-borrow
   soundness fix in semantics and MIR), invocation-pointer text results and

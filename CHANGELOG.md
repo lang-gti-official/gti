@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.485.0 - Owned base-constructor arguments on LLVM
+
+- A derived constructor can now pass an owned value to its base constructor
+  on the native LLVM backend, as in `Derived(std::string t) :
+  Base(std::move(t))` or `Derived() : Base(make_value())`. The value can be a
+  `std::string`, `std::vector`, `std::unique_ptr`, a payload enum, a closure
+  or a class with a destructor, moved in or created in place. 0.484.0 rejected
+  these constructors with `GTI-B0003`. If a later argument or the base
+  constructor fails, each owned value is still destroyed exactly once. Passing
+  a reference to a class, a borrowing value or an array to a base constructor
+  still reports `GTI-B0003`, and the C++ backend does not compile these
+  constructors.
+
 ## 0.484.0 - Native LLVM correctness and broader language coverage
 
 - On macOS arm64, `gti` now builds with the native LLVM backend by default.

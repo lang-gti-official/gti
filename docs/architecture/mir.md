@@ -3663,6 +3663,35 @@ Interprocedural effect analysis follows
 the selected base constructor, so its allocation, memory, and other effects
 remain visible in the derived constructor's summary and to the optimizer.
 
+An owned base argument uses the ordered prepared-input protocol that calls
+already use. Its formal is an owning class, a payload enum or a closure, and
+the argument is either moved in from a derived parameter or created in place
+by a temporary or call. It moves into a prepared parameter through a
+`MoveValue` `CallInput` that names call site 0, the constructor-initializer
+ordinal and the source-argument index. The `InitializeBase` alone transfers
+each prepared obligation out, as an ordinary construction does. Until then the
+derived constructor owns the prepared parameter, so a later argument that fails
+drops it once. Once the stage begins, the selected base constructor owns it,
+so a failing base drops what it received and the derived failure edge drops
+nothing twice. A moved-from derived parameter is never dropped again.
+Scalar arguments beside owned ones stay direct operands. These stages arm the
+ordinary base rollback and route failure edges; they are not unarmed subobject
+transfers. Construction still follows section 4.2.3: base arguments, then the
+base, then derived fields in declaration order, then the body.
+
+The ordered-invocation checks cover base stages as they cover calls. Each
+owning input needs a distinct `PreparedParameter` obligation that the stage
+transfers exactly once, and inputs precede the stage in order. Program
+verification binds each prepared input to its exact stage, index, HIR argument
+and type. The type catalog, not a value's own traits, decides that a formal
+owns cleanup, so a value claiming trivial traits cannot stand in for the
+prepared parameter. Some base arguments remain unstaged: a reference formal
+whose referent is not a passive scalar, an owned argument beside a reference
+formal, a borrow carrier passed by value and a by-value array. Such a body has
+no `InitializeBase`, and the native backend refuses it as
+`UnstagedBaseInitializer`. The C++ backend does not represent staged owned base
+arguments; those programs remain native-only.
+
 The C++ backend fuses observation-free scalar parameter/literal prefixes into
 the exact native base initializer, including passive text-view parameter loads,
 using its status overload when fallible,
