@@ -319,9 +319,9 @@ private:
             UnstagedConstructorFieldPublicationTransport::ExactValue)
           return publicationAddress(*publication.initializer);
         if (publication.transport ==
-            UnstagedConstructorFieldPublicationTransport::NullUniqueOwner)
+            UnstagedConstructorFieldPublicationTransport::NullPointer)
           throw std::logic_error(
-              "LLVM null owner publication requested source placement");
+              "LLVM null pointer publication requested source placement");
       }
     if (const auto *target = placement.target(value)) {
       if (target->place) {
@@ -386,6 +386,49 @@ private:
     return entry->second;
   }
 
+  // The hidden temporary a Move or Load of that same temporary materializes,
+  // when the moved type lives in memory.
+  [[nodiscard]] const MirPlace *
+  materializedTemporary(const MirInstruction &instruction) const {
+    if (!instruction.result || instruction.operands.size() != 1 ||
+        !addressValue(session.program().mir(), instruction.info.type))
+      return nullptr;
+    const auto *slot = input.findPlace(instruction.operands.front().place);
+    if (!slot || slot->root != MirPlaceRootKind::Temporary ||
+        !slot->projections.empty())
+      return nullptr;
+    const auto materialization =
+        findMirTemporaryMaterialization(input, *slot, slot->sourceValue);
+    return materialization && materialization.producer == &instruction
+               ? slot
+               : nullptr;
+  }
+  // A by-value call input formed from a place observation. The parameter is
+  // the callee's own object, which it may move from or mutate, so the input
+  // needs its own copy rather than the observed place's address.
+  [[nodiscard]] bool observedParameter(const MirInstruction &instruction) const {
+    if (instruction.kind != MirInstructionKind::CallInput ||
+        instruction.destination || instruction.operands.size() != 1 ||
+        instruction.info.category != ValueCategory::Value ||
+        !addressValue(session.program().mir(), instruction.info.type))
+      return false;
+    const auto &source = instruction.operands.front();
+    const auto *observed = source.kind == MirOperandKind::Value && source.value
+                               ? input.findValue(source.value)
+                               : nullptr;
+    return observed && observed->info.category == ValueCategory::Place;
+  }
+  // An array element initialized from a differently typed scalar applies the
+  // implicit initialization conversion MIR leaves to element formation, as an
+  // Initialize of the element's place would.
+  [[nodiscard]] llvm::Value *aggregateElement(const MirOperand &source,
+                                              const SemanticType &element) {
+    auto *value = operand(source);
+    if (source.type != element &&
+        isImplicitScalarInitializationConversion(element, source.type))
+      value = scalars.convert(value, source.type, element, false);
+    return value;
+  }
   [[nodiscard]] llvm::Value *load(llvm::Value *address,
                                   const SemanticType &type) {
     return memory.load(address, type);
@@ -434,28 +477,6 @@ private:
     if (!lifetimes.transferMutexes(ir, address, value, type))
       memory.store(value, address, type);
   }
-  // A Loan operand carries provenance; its place is the optional exact
-  // runtime address source. Some loans protect a carrier object rather than
-  // the referent a borrow designates -- an entry Stored loan self-sourced at
-  // a by-value borrowed-state parameter's carrier, and a cursor loan whose
-  // source place is the cursor itself -- and no physical address is published
-  // for the designated referent under that loan. Such an operand supplies
-  // provenance only, and this borrow's own loan already names the exact
-  // source place of the referent. Every fact below is sealed MIR: the
-  // produced loan must be a direct child of the operand's provenance loan,
-  // its source place must carry exactly the operand type, and the provenance
-  // loan must protect a differently typed carrier. Anything else keeps the
-  // ordinary selection path, which fails closed on its own.
-  // An opaque stored entry loan is self-sourced at its carrier binding and
-  // never published: its slot holds no address. This is the condition under
-  // which Places::selected refuses such an operand.
-  [[nodiscard]] bool opaqueEntryProvenance(const MirOperand &operand) const {
-    const auto *record = input.findLoan(operand.loan);
-    const auto *source = record ? input.findPlace(record->source) : nullptr;
-    return record && record->kind == MirLoanKind::Stored && record->entry &&
-           record->protectsSource(record->source) && source &&
-           source->type != operand.type;
-  }
   // Whether any place, operand or receiver of this body reads the runtime
   // address published for a loan. Ending or retiring a loan reads nothing.
   [[nodiscard]] bool loanAddressRead(MirLoanId id) const {
@@ -488,6 +509,18 @@ private:
     }
     return false;
   }
+  // A Loan operand carries provenance; its place is the optional exact
+  // runtime address source. Some loans protect a carrier object rather than
+  // the referent a borrow designates -- an entry Stored loan self-sourced at
+  // a by-value borrowed-state parameter's carrier, and a cursor loan whose
+  // source place is the cursor itself -- and no physical address is published
+  // for the designated referent under that loan. Such an operand supplies
+  // provenance only, and this borrow's own loan already names the exact
+  // source place of the referent. Every fact below is sealed MIR: the
+  // produced loan must be a direct child of the operand's provenance loan,
+  // its source place must carry exactly the operand type, and the provenance
+  // loan must protect a differently typed carrier. Anything else keeps the
+  // ordinary selection path, which fails closed on its own.
   [[nodiscard]] bool
   provenanceOnlyCarrierBorrow(const MirOperand &operand,
                               const MirLoan &produced) const {
@@ -497,9 +530,22 @@ private:
       return false;
     const auto *carrier = input.findPlace(provenance->source);
     const auto *referent = input.findPlace(produced.source);
-    if (!carrier || !referent)
+    if (!carrier || !referent || referent->type != operand.type)
       return false;
-    return referent->type == operand.type && carrier->type != operand.type;
+    if (carrier->type != operand.type)
+      return true;
+    // A construction or call that produces the provenance loan publishes its
+    // own result under it -- the carrier -- whatever referent the loan names
+    // as its source.
+    for (const auto &block : input.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.loan == provenance->id &&
+            (stage.kind == MirInstructionKind::Construct ||
+             stage.kind == MirInstructionKind::Call ||
+             stage.kind == MirInstructionKind::CallBody) &&
+            stage.info.type != operand.type)
+          return true;
+    return false;
   }
   [[nodiscard]] UnstagedConstructorFieldPublicationPlan
   recordPublication(const MirInstruction &instruction) const {
@@ -654,8 +700,20 @@ private:
     }
     // An absent outcome is either statically infallible or discharged by
     // verified MIR proof. It does not authorize originating a different record.
-    if (!authorized)
+    // A live outcome of the same code under another detail means the lowering
+    // lost the recorded outcome; dropping the check would remove a live one.
+    if (!authorized) {
+      for (std::size_t index = 0;
+           index < stage->definedFailure.localOrigins.size(); ++index)
+        for (const auto &recorded :
+             stage->definedFailure.localOrigins[index].outcomes)
+          if (recorded.code == outcome.code &&
+              recorded.detail != outcome.detail &&
+              !isMirFailureOutcomeDischarged(*stage, index, recorded))
+            throw std::logic_error(
+                "LLVM checked operation lost its recorded failure detail");
       return;
+    }
     if (const auto *constant = llvm::dyn_cast<llvm::ConstantInt>(condition);
         constant && constant->isZero())
       return;
@@ -1523,7 +1581,8 @@ private:
             auto *slot =
                 ir.CreateGEP(session.layouts().get(type).storage, result,
                              {ir.getInt64(0), ir.getInt64(index)});
-            store(operand(source), slot, type.arguments.at(0));
+            store(aggregateElement(source, type.arguments.at(0)), slot,
+                  type.arguments.at(0));
           }
           break;
         }
@@ -1531,7 +1590,8 @@ private:
             llvm::Constant::getNullValue(session.layouts().get(type).value);
         for (std::size_t index = 0; index < instruction.operands.size();
              ++index) {
-          auto *element = operand(instruction.operands[index]);
+          auto *element =
+              aggregateElement(instruction.operands[index], type.arguments.at(0));
           if (type.arguments.at(0) == SemanticType::Bool)
             element = ir.CreateZExt(element, ir.getInt8Ty());
           if (type.arguments.at(0).kind == SemanticType::Class)
@@ -1566,6 +1626,13 @@ private:
     }
     case MirInstructionKind::Load:
     case MirInstructionKind::Move:
+      if (const auto *slot = materializedTemporary(instruction)) {
+        // MIR names a branch-produced object in its hidden temporary through
+        // this Move or Load: the value is that object in place, not a copy, and
+        // the temporary keeps its live state and cleanup.
+        result = memory.address(slot->id);
+        break;
+      }
       // Only a planned producer transfers; another place-category Load of
       // hierarchy storage observes its address for a reference consumer.
       if (isFreshHierarchyTransferProducer(instruction) &&
@@ -1599,7 +1666,25 @@ private:
                DefinedFailureDetail::NegativeArgumentCount});
         break;
       }
-      result = operand(instruction.operands.at(0), publishedAddress);
+      {
+        // A Move into a destination publishes the moved object there, and
+        // that object is the Move's value: one live object, not a copy.
+        llvm::Value *moveDestination =
+            instruction.kind == MirInstructionKind::Move &&
+                    instruction.destination && !publishedAddress &&
+                    addressValue(session.program().mir(), instruction.info.type)
+                ? memory.address(*instruction.destination)
+                : nullptr;
+        result = operand(instruction.operands.at(0),
+                         moveDestination ? moveDestination : publishedAddress);
+      }
+      if (observedParameter(instruction)) {
+        auto *copy = publishedAddress
+                         ? publishedAddress
+                         : memory.temporary(instruction.info.type);
+        store(result, copy, instruction.info.type);
+        result = copy;
+      }
       if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.info.type == SemanticType::CString &&
           instruction.operands[0].type == SemanticType::StringView) {
@@ -1610,9 +1695,14 @@ private:
         result = ir.CreateExtractValue(result, 0);
       }
       if (instruction.kind == MirInstructionKind::Move &&
-          instruction.destination)
-        store(result, memory.address(*instruction.destination),
-              input.findPlace(*instruction.destination)->type);
+          instruction.destination) {
+        const auto &place = *input.findPlace(*instruction.destination);
+        auto *destination = memory.address(place.id);
+        if (result != destination)
+          store(result, destination, place.type);
+        if (addressValue(session.program().mir(), place.type))
+          result = destination;
+      }
       if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.destination) {
         const auto &place = *input.findPlace(*instruction.destination);
@@ -1788,11 +1878,12 @@ private:
       } else if (const auto &borrowed = instruction.operands.at(0);
                  !instruction.result && !publication.matched() &&
                  borrowed.kind == MirOperandKind::Loan && borrowed.place == 0 &&
-                 opaqueEntryProvenance(borrowed) && !loanAddressRead(loan.id)) {
-        // The operand names an opaque stored entry loan, which carries
-        // provenance only, and nothing in this body reads the produced loan's
-        // address: it only states the provenance of a value this body passes
-        // on, such as a returned view. There is no runtime address to publish.
+                 !loanAddressRead(loan.id)) {
+        // The operand names a loan, not a place, so selecting it performs no
+        // checked address work, and nothing in this body reads the produced
+        // loan's address: it only states the provenance of a value this body
+        // passes on, such as a returned view or a payload holding one. There
+        // is no runtime address to publish.
         break;
       } else if (borrowed.kind == MirOperandKind::Loan && borrowed.place == 0 &&
                  provenanceOnlyCarrierBorrow(borrowed, loan)) {
@@ -1873,13 +1964,12 @@ private:
           UnstagedConstructorFieldPublicationTransport::ExactValue) {
         store(result, publishedAddress, published.targetType);
       } else if (published.transport ==
-                 UnstagedConstructorFieldPublicationTransport::
-                     NullUniqueOwner) {
+                 UnstagedConstructorFieldPublicationTransport::NullPointer) {
         auto *storage = llvm::dyn_cast<llvm::PointerType>(
             session.layouts().get(published.targetType).storage);
         if (!storage)
           throw std::logic_error(
-              "LLVM null owner publication lost its pointer storage");
+              "LLVM null pointer publication lost its pointer storage");
         store(llvm::ConstantPointerNull::get(storage), publishedAddress,
               published.targetType);
       } else {

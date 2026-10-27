@@ -21,6 +21,7 @@ def source_fixtures():
         "process-retirement": "llvm_native_process_storage.gti",
         "payload-cleanup": "llvm_mutex_source_lifecycle.gti",
         "relocation": "mutex_relocation.gti",
+        "owned-pointees": "mutex_owned_pointees.gti",
     }
 
 
@@ -314,6 +315,11 @@ def main():
                 "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
                 root / "tests/fixtures" / fixtures["relocation"], "-o", relocation_program])
             run(f"public-relocation-execute-{mode}", [relocation_program])
+            owned_program = output / f"public-owned-pointees-{mode}"
+            run(f"public-owned-pointees-build-{mode}", [args.public_gti.resolve(),
+                "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
+                root / "tests/fixtures" / fixtures["owned-pointees"], "-o", owned_program])
+            run(f"public-owned-pointees-execute-{mode}", [owned_program])
             guard_program = output / f"public-basic-{mode}"
             run(f"public-basic-build-{mode}", [args.public_gti.resolve(),
                 "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
@@ -342,6 +348,12 @@ def main():
                 "--std", standard, "-O3", root / "tests/fixtures/mutex_relocation.gti",
                 "-o", relocation])
             run(f"cpp-relocation-execute-{standard}", [relocation])
+            owned = output / f"cpp-owned-pointees-{standard}"
+            run(f"cpp-owned-pointees-build-{standard}", [args.public_gti.resolve(),
+                "--backend", "cpp", "--execution-profile", "concurrent",
+                "--std", standard, "-O3", root / "tests/fixtures/mutex_owned_pointees.gti",
+                "-o", owned])
+            run(f"cpp-owned-pointees-execute-{standard}", [owned])
 
     if args.gti:
         run("cpp-source-observer", [args.cc, "-std=c17", *flags, "-DGTI_CPP_ORACLE", "-c",

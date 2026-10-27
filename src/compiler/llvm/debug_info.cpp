@@ -41,6 +41,13 @@ void salvageScalarDebugValue(llvm::DbgVariableRecord &record) {
 #endif
                                        {&record});
 }
+// A debug record emitted at a block's end. Once the block is terminated the
+// record precedes its terminator, which must stay the block's last entry.
+llvm::InsertPosition recordPosition(llvm::BasicBlock *block) {
+  if (auto *terminator = block->getTerminator())
+    return terminator->getIterator();
+  return block->end();
+}
 } // namespace
 
 class DebugInfo::Impl {
@@ -348,6 +355,8 @@ public:
       builder.replaceTemporary(llvm::TempDICompositeType(temporary), complete);
       return types[index].second.get();
     } else if (value.kind == SemanticType::Enum) {
+      if (const auto *payload = session.program().mir().findPayloadEnum(value))
+        return payloadType(value, *payload);
       for (const auto &enumeration : session.program().mir().integralEnums()) {
         if (enumeration.type != value)
           continue;
@@ -413,6 +422,81 @@ public:
           "LLVM debug type requires its representation milestone");
     types.emplace_back(value, llvm::TypedTrackingMDRef<llvm::DIType>(result));
     return result;
+  }
+
+  // A payload enum is described by its private representation: the active
+  // alternative's tag, then a union of one structure per alternative laid out
+  // over the shared payload bytes. Registered before its members so a payload
+  // reached again through an owner refers back to it.
+  llvm::DIType *payloadType(const SemanticType &value,
+                            const MirPayloadEnum &payload) {
+    const auto *declaration = session.program().findEnumDeclaration(value);
+    const auto *row = session.program().findEnumDeclarationRow(value);
+    if (!declaration || !row)
+      throw std::logic_error("LLVM debug payload lost its declaration");
+    const auto &layout = session.layouts().payload(value);
+    const auto *offsets = session.dataLayout().getStructLayout(layout.storage);
+    auto *source = file(row->source);
+    auto *temporary = builder.createReplaceableCompositeType(
+        llvm::dwarf::DW_TAG_structure_type, declaration->qualifiedName, unit,
+        source, row->source.line, 0, layout.type.size * 8,
+        layout.type.alignment * 8);
+    const auto index = types.size();
+    types.emplace_back(value,
+                       llvm::TypedTrackingMDRef<llvm::DIType>(temporary));
+    std::vector<llvm::Metadata *> alternatives;
+    const auto payloadBytes =
+        layout.type.size - offsets->getElementOffset(layout.payloadIndex);
+    for (const auto &variant : payload.variants) {
+      std::string name = "alternative" + std::to_string(variant.variantIndex);
+      for (const auto &enumerator : declaration->enumerators)
+        if (enumerator.variantIndex == variant.variantIndex)
+          name = enumerator.name;
+      auto *storage = layout.variants.at(variant.variantIndex);
+      const auto *fields = session.dataLayout().getStructLayout(storage);
+      std::vector<llvm::Metadata *> members;
+      for (std::size_t field = 0; field < variant.payloadTypes.size();
+           ++field) {
+        const auto *symbol =
+            field < variant.payloadSymbols.size()
+                ? session.program().findSymbol(variant.payloadSymbols[field])
+                : nullptr;
+        const auto fieldLayout =
+            session.layouts().get(variant.payloadTypes[field]);
+        members.push_back(builder.createMemberType(
+            unit, symbol ? symbol->name : "_" + std::to_string(field), source,
+            row->source.line, fieldLayout.size * 8, fieldLayout.alignment * 8,
+            fields->getElementOffsetInBits(field), llvm::DINode::FlagZero,
+            type(variant.payloadTypes[field])));
+      }
+      auto *alternative = builder.createStructType(
+          unit, name, source, row->source.line, fields->getSizeInBits(),
+          fields->getAlignment().value() * 8, llvm::DINode::FlagZero, nullptr,
+          builder.getOrCreateArray(members));
+      alternatives.push_back(builder.createMemberType(
+          unit, name, source, row->source.line, fields->getSizeInBits(),
+          fields->getAlignment().value() * 8, 0, llvm::DINode::FlagZero,
+          alternative));
+    }
+    auto *payloads = builder.createUnionType(
+        unit, declaration->qualifiedName + "::payload", source,
+        row->source.line, payloadBytes * 8, layout.type.alignment * 8,
+        llvm::DINode::FlagZero, builder.getOrCreateArray(alternatives));
+    auto *tag = builder.createMemberType(
+        temporary, "tag", source, row->source.line, 32, 32,
+        offsets->getElementOffsetInBits(layout.tagIndex),
+        llvm::DINode::FlagArtificial, type(SemanticType::UInt32));
+    auto *bytes = builder.createMemberType(
+        temporary, "payload", source, row->source.line, payloadBytes * 8,
+        layout.type.alignment * 8,
+        offsets->getElementOffsetInBits(layout.payloadIndex),
+        llvm::DINode::FlagZero, payloads);
+    auto *complete = builder.createStructType(
+        unit, declaration->qualifiedName, source, row->source.line,
+        layout.type.size * 8, layout.type.alignment * 8, llvm::DINode::FlagZero,
+        nullptr, builder.getOrCreateArray({tag, bytes}));
+    builder.replaceTemporary(llvm::TempDICompositeType(temporary), complete);
+    return types[index].second.get();
   }
 
   Session &session;
@@ -960,11 +1044,12 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
     if (begin)
       impl->builder.insertDeclare(local.storage, local.variable,
                                   impl->builder.createExpression(), location,
-                                  ir.GetInsertBlock());
+                                  recordPosition(ir.GetInsertBlock()));
     else
       impl->builder.insertDbgValueIntrinsic(
           llvm::PoisonValue::get(ir.getInt8Ty()), local.variable,
-          impl->builder.createExpression(), location, ir.GetInsertBlock());
+          impl->builder.createExpression(), location,
+          recordPosition(ir.GetInsertBlock()));
   };
   for (const auto id : event->second.ends)
     if (std::none_of(event->second.values.begin(), event->second.values.end(),
@@ -1012,12 +1097,14 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
         local.variable->getScope());
     if (begin && physical.address)
       impl->builder.insertDeclare(physical.value, local.variable, expression,
-                                  location, ir.GetInsertBlock());
+                                  location,
+                                  recordPosition(ir.GetInsertBlock()));
     else {
       auto inserted = impl->builder.insertDbgValueIntrinsic(
           begin ? physical.value
                 : llvm::PoisonValue::get(physical.value->getType()),
-          local.variable, expression, location, ir.GetInsertBlock());
+          local.variable, expression, location,
+          recordPosition(ir.GetInsertBlock()));
       if (!begin)
         if (auto *record =
                 llvm::dyn_cast_if_present<llvm::DbgRecord *>(inserted)) {
@@ -1080,11 +1167,11 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
         begin ? value : llvm::PoisonValue::get(leaf.value), local.variable,
         offset == 0 && leaf.size == layout.size
             ? impl->builder.createExpression()
-            : impl->builder.createExpression(
-                  {llvm::dwarf::DW_OP_LLVM_fragment, offset * 8, leaf.size * 8}),
+            : impl->builder.createExpression({llvm::dwarf::DW_OP_LLVM_fragment,
+                                              offset * 8, leaf.size * 8}),
         llvm::DILocation::get(impl->session.context(), 0, 0,
                               local.variable->getScope()),
-        ir.GetInsertBlock());
+        recordPosition(ir.GetInsertBlock()));
   };
   for (const auto &fragment : event->second.fragmentEnds)
     if (std::none_of(event->second.fragmentBegins.begin(),
@@ -1117,7 +1204,7 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
         value, local.variable, impl->builder.createExpression(),
         llvm::DILocation::get(impl->session.context(), 0, 0,
                               local.variable->getScope()),
-        ir.GetInsertBlock());
+        recordPosition(ir.GetInsertBlock()));
     // Preserve a pure scalar computation as a debugger expression before
     // machine lowering can discard its transient result. LLVM owns the bit
     // semantics; no load, call, new SSA value or execution use is introduced.
@@ -1146,7 +1233,7 @@ void DebugInfo::endLocal(llvm::IRBuilder<> &ir, const MirPlace &place) {
           impl->builder.createExpression(),
           llvm::DILocation::get(impl->session.context(), 0, 0,
                                 found->second.variable->getScope()),
-          ir.GetInsertBlock());
+          recordPosition(ir.GetInsertBlock()));
   }
 }
 

@@ -6595,9 +6595,21 @@ private:
         value.place = value.ownership->place;
       }
     }
+    // A constructor body records no receiver place for its fields, so an
+    // unqualified instance field there is identified by its resolved symbol.
+    const SymbolRecord *implicitField =
+        (value.kind == HirValueKind::Variable ||
+         value.kind == HirValueKind::Assignment) &&
+                value.symbol != 0 && !value.place &&
+                currentReceiverType.kind == SemanticType::Class
+            ? model.database().findSymbol(value.symbol)
+            : nullptr;
     if ((value.kind == HirValueKind::Variable ||
          value.kind == HirValueKind::Assignment) &&
-        value.place && value.place->receiver && value.symbol != 0) {
+        value.symbol != 0 &&
+        ((value.place && value.place->receiver) ||
+         (implicitField && implicitField->kind == SymbolKind::Field &&
+          !implicitField->staticMember))) {
       // Preserve the resolved meaning of an unqualified instance field in
       // HIR. It is the same receiver projection as `this.field`, even though
       // the source omitted the explicit receiver.

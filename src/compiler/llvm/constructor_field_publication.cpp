@@ -51,18 +51,23 @@ publicationTransport(const MirProgram &program,
   exactSourceNull.literal = instruction.literal;
   exactSourceNull.literalProvenance.kind = MirLiteralProvenanceKind::Source;
   exactSourceNull.info = instruction.info;
-  const auto exactNullOwner =
-      targetType.kind == SemanticType::UniqueOwner &&
-      targetType.arguments.size() == 1 &&
-      uniqueOwnerPointee(program, targetType.arguments.front()) &&
-      instruction.info.type == SemanticType::NullPtr &&
+  // A unique owner of a polymorphic view is one handle; its pointee need not
+  // be a complete object type.
+  const auto pointerTarget =
+      (targetType.kind == SemanticType::UniqueOwner &&
+       targetType.arguments.size() == 1 &&
+       uniqueOwnerPointee(program, targetType.arguments.front())) ||
+      targetType.kind == SemanticType::CString ||
+      (targetType.kind == SemanticType::RawPointer &&
+       targetType.arguments.size() == 1);
+  const auto exactNull =
+      pointerTarget && instruction.info.type == SemanticType::NullPtr &&
       instruction.info.category == ValueCategory::Value &&
       instruction.literal &&
       std::holds_alternative<std::nullptr_t>(*instruction.literal) &&
       instruction == exactSourceNull;
-  return exactNullOwner
-             ? UnstagedConstructorFieldPublicationTransport::NullUniqueOwner
-             : UnstagedConstructorFieldPublicationTransport::None;
+  return exactNull ? UnstagedConstructorFieldPublicationTransport::NullPointer
+                   : UnstagedConstructorFieldPublicationTransport::None;
 }
 
 } // namespace

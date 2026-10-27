@@ -1448,9 +1448,88 @@ void ownerPointerMetadata(LlvmCodegenOptimization optimization) {
   unchangedExecution();
 }
 
+// A payload enum is described by its tag and one structure per alternative.
+// An inactive optional access originates its failure and ends its block before
+// the receiver's debug range ends there; that record precedes the terminator.
+void payloadEnumMetadata(LlvmCodegenOptimization optimization) {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend({.requireEntryPoint = true,
+                .lowerReachableOnly = true,
+                .lowerLibraryReachableOnly = true,
+                .trustedBodies = TrustedBodyAnalysis::Reachable,
+                .sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("payload-debug.gti", R"gti(
+#include <std/optional>
+extern "C" { int32_t debug_input(); }
+enum Reading { sample(int32_t value, int64_t at), missing };
+int32_t inspect(Reading reading) {
+  switch (reading) {
+  case Reading::sample(auto& value, auto& at): return value + int32_t(at);
+  case Reading::missing: return -1;
+  }
+}
+int main() {
+  std::optional<int32_t> input = std::optional<int32_t>(debug_input());
+  Reading reading =
+      input.value() > 0 ? Reading::sample(input.value(), 2) : Reading::missing;
+  return inspect(reading) == 6 ? 0 : 1;
+}
+)gti",
+                   {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("payload debug source failed analysis");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  if (!lowered.valid())
+    throw std::runtime_error("payload debug source failed lowering");
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
+  if (!input)
+    throw std::runtime_error("payload debug source lost its seal");
+  Session session(*input, {.optimization = optimization, .debugInfo = true});
+  lowerScalarProgram(session, planLlvmAdmission(*input, session.options()));
+  session.debugInfo()->finalize();
+  session.verify();
+  llvm::DebugInfoFinder finder;
+  finder.processModule(session.module());
+  const auto members = [](const llvm::DICompositeType *type) {
+    std::vector<std::string> names;
+    for (auto *element : type->getElements())
+      if (const auto *member = llvm::dyn_cast<llvm::DIDerivedType>(element))
+        names.push_back(member->getName().str());
+    return names;
+  };
+  bool described = false;
+  for (auto *type : finder.types()) {
+    const auto *payload = llvm::dyn_cast<llvm::DICompositeType>(type);
+    if (!payload || payload->getName() != "Reading" ||
+        members(payload) != std::vector<std::string>{"tag", "payload"})
+      continue;
+    const auto *union_ = llvm::dyn_cast<llvm::DICompositeType>(
+        llvm::cast<llvm::DIDerivedType>(payload->getElements()[1])
+            ->getBaseType());
+    if (!union_ || union_->getTag() != llvm::dwarf::DW_TAG_union_type ||
+        members(union_) != std::vector<std::string>{"sample", "missing"})
+      throw std::runtime_error("payload metadata lost its alternatives");
+    const auto *sample = llvm::dyn_cast<llvm::DICompositeType>(
+        llvm::cast<llvm::DIDerivedType>(union_->getElements()[0])
+            ->getBaseType());
+    if (!sample || members(sample) != std::vector<std::string>{"value", "at"})
+      throw std::runtime_error("payload metadata lost an alternative's fields");
+    described = true;
+  }
+  if (!described)
+    throw std::runtime_error("payload enum has no tag/payload description");
+  (void)session.emitObject();
+}
+
 int main(int argc, char **argv) {
   ownerPointerMetadata(LlvmCodegenOptimization::None);
   ownerPointerMetadata(LlvmCodegenOptimization::Aggressive);
+  payloadEnumMetadata(LlvmCodegenOptimization::None);
+  payloadEnumMetadata(LlvmCodegenOptimization::Aggressive);
   if (metadata("/checkout-one/debug.gti") !=
       metadata("/other-checkout/debug.gti"))
     throw std::runtime_error(

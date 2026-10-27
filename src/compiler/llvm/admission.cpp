@@ -42,9 +42,21 @@ bool passiveArrayElement(const SemanticType &type) {
     return type.arguments.size() == 1 && !type.arrayLengthParameterId &&
            passiveArrayElement(type.arguments.front());
   // Pointer storage is passive regardless of its referent. Accessing that
-  // referent still requires its own typed projection and unsafe witness.
+  // referent still requires its own typed projection and unsafe witness. A C
+  // string is such an inert native address; it is compared only by address.
   return (isPassiveScalarValueType(type) && type.kind != SemanticType::Void) ||
-         (type.kind == SemanticType::RawPointer && type.arguments.size() == 1);
+         (type.kind == SemanticType::RawPointer && type.arguments.size() == 1) ||
+         type.kind == SemanticType::CString;
+}
+
+// A one-dimensional fixed array of counted text views. Each element is a
+// bitwise view, but element equality and hashing compare text, so only
+// storage, transport, complete formation and checked element selection use
+// this; it is not a passive array.
+bool textViewArray(const SemanticType &type) {
+  return type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+         !type.arrayLengthParameterId &&
+         type.arguments.front().kind == SemanticType::StringView;
 }
 
 bool passiveAddress(const SemanticType &type) {
@@ -1627,7 +1639,10 @@ public:
       : uses(uses), program(program), dispatchProofs(dispatchProofs),
         nativeTarget(nativeTarget),
         natives(program, nativeTarget, [this](const SemanticType &pointee) {
-          return this->dispatchProofs.metadata(pointee).has_value();
+          // A mutex-bearing pointee has its own admitted representation,
+          // whose native identity the allocation holds in place.
+          return this->dispatchProofs.metadata(pointee).has_value() ||
+                 this->mutexShape(pointee).has_value();
         }) {}
 
   std::optional<MirBodyAddress> body;
@@ -1644,6 +1659,94 @@ public:
   bool representedValue(const SemanticType &type) const {
     return nativeValue(type) || (dispatchProofs.contains(type) &&
                                  dispatchProofs.metadata(type).has_value());
+  }
+  // A sealed integral enum is stored exactly as its fixed-width underlying
+  // integer, so raw access through a pointer to one is primitive raw access to
+  // that integer's representation. A payload enum carries a tag and stays
+  // outside this rule.
+  bool integralEnumPointee(const SemanticType &type) const {
+    const auto *sealed =
+        type.kind == SemanticType::Enum ? program.findIntegralEnum(type)
+                                        : nullptr;
+    return sealed && !program.findPayloadEnum(type) &&
+           constantIntegerDomain(sealed->underlyingType).has_value();
+  }
+  bool integralEnumAddress(const SemanticType &type) const {
+    return type.kind == SemanticType::RawPointer &&
+           type.arguments.size() == 1 &&
+           integralEnumPointee(type.arguments.front());
+  }
+  bool primitiveAddress(const SemanticType &type) const {
+    return passiveAddress(type) || integralEnumAddress(type);
+  }
+  bool scalarPointerArithmetic(const MirInstruction &stage) const {
+    if (primitivePointerArithmetic(stage))
+      return true;
+    if (stage.operands.size() != 2)
+      return false;
+    const bool reversed =
+        stage.operation == MirOperation::PointerAdd &&
+        stage.operands[1].type.kind == SemanticType::RawPointer;
+    const auto &pointer = stage.operands[reversed ? 1 : 0].type;
+    if (!integralEnumAddress(pointer))
+      return false;
+    return stage.operation == MirOperation::PointerDifference
+               ? stage.operands[1].type == pointer
+               : (stage.operation == MirOperation::PointerAdd ||
+                  stage.operation == MirOperation::PointerSubtract) &&
+                     stage.info.type == pointer &&
+                     constantIntegerDomain(
+                         stage.operands[reversed ? 0 : 1].type)
+                         .has_value();
+  }
+  bool scalarRawAccess(const MirBody &body, const MirPlace &place) const {
+    if (primitiveRawAccess(body, place))
+      return true;
+    const auto *value = body.findValue(place.value);
+    return place.root == MirPlaceRootKind::Value && value &&
+           integralEnumAddress(value->info.type) &&
+           place.type == value->info.type.arguments.front() &&
+           place.projections.size() == 1 &&
+           (place.projections.front().kind == MirProjectionKind::RawIndex ||
+            place.projections.front().kind ==
+                MirProjectionKind::RawDereference);
+  }
+  // An index path through a local array of passive elements or of a sealed
+  // integral enum, whose elements are stored as their underlying integers.
+  bool scalarArrayProjection(const MirBody &body, const MirPlace &place) const {
+    if (arrayProjection(body, place))
+      return true;
+    const auto root = std::find_if(
+        body.places.begin(), body.places.end(),
+        [&](const auto &candidate) { return sameStorageRoot(candidate, place); });
+    if (root == body.places.end())
+      return false;
+    auto type = root->type;
+    const auto &array =
+        type.kind == SemanticType::Reference && type.arguments.size() == 1
+            ? type.arguments.front()
+            : type;
+    if (!integralEnumArray(array) && !textViewArray(array))
+      return false;
+    for (const auto &projection : place.projections) {
+      if (!((projection.kind == MirProjectionKind::Index &&
+             type.kind == SemanticType::Array) ||
+            (projection.kind == MirProjectionKind::Dereference &&
+             type.kind == SemanticType::Reference)))
+        return false;
+      auto element = type.arguments.front();
+      type = std::move(element);
+    }
+    return type == place.type;
+  }
+  bool scalarRawIndex(const MirInstruction &stage) const {
+    if (primitiveRawIndex(stage))
+      return true;
+    return stage.operation == MirOperation::Index &&
+           stage.operands.size() == 2 &&
+           integralEnumAddress(stage.operands[0].type) &&
+           stage.info.type == stage.operands[0].type.arguments.front() &&
+           constantIntegerDomain(stage.operands[1].type).has_value();
   }
   // A value whose representation relocation may transfer: an admitted native
   // value, or a mutex-bearing representation, whose native mutex identity is
@@ -1754,6 +1857,17 @@ public:
     return std::all_of(
         stage.operands.begin(), stage.operands.end(),
         [&](const auto &operand) { return operand.type == element; });
+  }
+  // Complete element-wise formation of a text view array from exact views.
+  bool textViewArrayAggregate(const MirInstruction &stage) const {
+    return stage.kind == MirInstructionKind::Compute &&
+           stage.operation == MirOperation::Aggregate &&
+           textViewArray(stage.info.type) &&
+           stage.operands.size() == stage.info.type.arrayLength &&
+           std::all_of(stage.operands.begin(), stage.operands.end(),
+                       [&](const auto &operand) {
+                         return operand.type == SemanticType::StringView;
+                       });
   }
   std::optional<Shape> mutexShape(const SemanticType &type) const {
     if (program.executionProfile() != ExecutionProfile::Concurrent ||
@@ -2157,7 +2271,7 @@ public:
                                 projection.kind == MirProjectionKind::RawIndex;
                        }))
         return;
-      if (!primitiveRawAccess(mir, *selected)) {
+      if (!scalarRawAccess(mir, *selected)) {
         extended = true;
         valid &= nativeRawPlace(mir, *selected);
       }
@@ -2259,7 +2373,7 @@ public:
         // pointee must not be reported as class raw access.
         return nativePointerArithmetic(producer)
                    ? std::optional(Shape::NativeClassRawAccess)
-               : primitivePointerArithmetic(producer)
+               : scalarPointerArithmetic(producer)
                    ? std::optional(Shape::PrimitiveRawAccess)
                : payloadPointerArithmetic(producer)
                    ? std::optional(Shape::NativePayloadRawAccess)
@@ -2311,10 +2425,10 @@ public:
               (mutableInput ? MirOperandKind::BorrowWrite
                             : MirOperandKind::BorrowRead))
         return false;
+      // The receiver is the pointee or a field or element reached from it;
+      // nativeRawPlace proves the whole path, including its raw step.
       const auto *place = mir.findPlace(input.operands.front().place);
       return place && !place->projections.empty() &&
-             place->projections.back().kind ==
-                 MirProjectionKind::RawDereference &&
              nativeRawPlace(mir, *place);
     };
     if (stage.kind == MirInstructionKind::CallInput)
@@ -2333,8 +2447,11 @@ public:
           return candidate.id == value->definition &&
                  candidate.result == stage.receiver->value;
         });
+    // The staged receiver carries the raw access whatever the call's own
+    // marker: none for an ordinary method on a field reached through the
+    // pointer, the same access for a method on the pointee itself, or the
+    // method's declared unsafe permission, which is admitted separately.
     return input != block->instructions.end() && !input->tombstone &&
-           input->unsafeOperation == stage.unsafeOperation &&
            input->callSite != 0 && input->callSite == stage.callSite &&
            staged(*input);
   }
@@ -2504,6 +2621,10 @@ public:
         type.kind == SemanticType::Reference && type.arguments.size() == 1
             ? type.arguments[0]
             : type;
+    // An admitted array value is selected by address like a passive array;
+    // its elements are reached only through checked array projection.
+    if (textViewArray(scalar) || integralEnumArray(scalar))
+      return true;
     return scalar.kind == SemanticType::Enum &&
            program.findIntegralEnum(scalar) &&
            !program.findPayloadEnum(scalar) && nativeValue(scalar);
@@ -2588,11 +2709,33 @@ public:
            nativeValue(type) && classShape(type) == Shape::NativeClassStorage;
   }
 
+  // A native C record is addressed like any complete object; its fields
+  // keep the C layout the record's own layout supplies.
+  bool nativeRecordObject(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class)
+      return false;
+    const MirClassInstance *owner = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == type) {
+        if (owner)
+          return false;
+        owner = &candidate;
+      }
+    return owner && (owner->cAbiRecord || owner->cAbiLayout) &&
+           !owner->cOpaqueHandle && !owner->unionLayout &&
+           owner->compilerCapability == CompilerCapabilityTypeKind::None &&
+           owner->bases.empty() && owner->structuralBases.empty() &&
+           nativeValue(type);
+  }
+
   bool representedRawReferenceTypes(const MirInstruction &stage) const {
     const auto &pointer = stage.operands[0].type;
     if (!(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
         !ordinaryRawReferenceObject(pointer.arguments.front()) &&
-        !payloadRawReferent(stage))
+        !nativeRecordObject(pointer.arguments.front()) &&
+        !payloadRawReferent(stage) &&
+        !(integralEnumAddress(pointer) &&
+          stage.info.type == pointer.arguments.front()))
       return false;
     const auto &witness = stage.parameterTypes[1];
     // The verifier owns origin/access; the witness need not share the raw
@@ -2774,7 +2917,8 @@ public:
            loan && loan->kind == MirLoanKind::CallResult && !loan->entry &&
            !loan->escapes && loan->producedBy == stage.hirValue &&
            loan->access == place->access &&
-           unsafeCallResultProducer(body, block, stage, *loan, stage.info.type);
+           unsafeCallResultProducer(body, block, stage, *loan, stage.info.type,
+                                    ValueCategory::Place, 0, true);
   }
 
   // An argument stages a reference to the borrowed referent; a receiver stages
@@ -2841,11 +2985,51 @@ public:
     // staging.
     return place && place->root == MirPlaceRootKind::Loan &&
            place->projections.empty() && place->loan == selected && loan &&
-           place->type == referent &&
-           loan->kind == MirLoanKind::CallResult && !loan->entry &&
-           !loan->escapes && loan->producedBy == stage.hirValue &&
+           place->type == referent && loan->kind == MirLoanKind::CallResult &&
+           !loan->entry && !loan->escapes &&
+           loan->producedBy == stage.hirValue &&
            loan->access == place->access && loan->access == requiredAccess &&
-           unsafeCallResultProducer(body, block, stage, *loan, referent);
+           unsafeCallResultProducer(body, block, stage, *loan, referent,
+                                    ValueCategory::Place, 0, true);
+  }
+
+  // The caller's permission is repeated on the stage that transports an
+  // unsafe call's by-value result into its consumer. A call input carrying
+  // the exact result of an admitted ordinary unsafe call performs no unsafe
+  // operation of its own; the transport is admitted on its own terms.
+  bool unsafeCallResultStaging(const MirBody &body,
+                               const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::CallInput ||
+        stage.unsafeOperation != UnsafeOperationKind::DeclaredUnsafeCall ||
+        stage.rawMemoryAccess || stage.intrinsic != IntrinsicKind::None ||
+        stage.operands.size() != 1 ||
+        stage.operands.front().kind != MirOperandKind::Value ||
+        !stage.operands.front().value)
+      return false;
+    const auto *value = body.findValue(stage.operands.front().value);
+    const auto *block =
+        value ? body.findBlock(value->definitionBlock) : nullptr;
+    const MirInstruction *producer = nullptr;
+    if (block)
+      for (const auto &candidate : block->instructions)
+        if (!candidate.tombstone && candidate.id == value->definition)
+          producer = &candidate;
+    const auto *target =
+        producer && producer->functionTarget
+            ? program.findFunctionInstance(*producer->functionTarget)
+            : nullptr;
+    return producer && target && producer->kind == MirInstructionKind::Call &&
+           producer->result == stage.operands.front().value &&
+           producer->hirValue == stage.hirValue &&
+           producer->unsafeOperation ==
+               UnsafeOperationKind::DeclaredUnsafeCall &&
+           producer->intrinsic == IntrinsicKind::None &&
+           !producer->rawMemoryAccess && !producer->nativeCalleeType &&
+           !producer->lambdaTarget &&
+           producer->dispatch == CallDispatch::Static &&
+           producer->info.category == ValueCategory::Value &&
+           target->definitionKind == MirDefinitionKind::Source &&
+           target->linkage == LanguageLinkage::Gti && target->requiresUnsafe;
   }
 
   // A by-value result of an unsafe call that receives a further call is
@@ -3068,15 +3252,32 @@ public:
       if (plan.targetType.kind == SemanticType::NativeFunction &&
           nativeValue(plan.targetType))
         return Shape::NativeCFunctionValue;
+      // A C string or primitive address is an inert address value.
+      if (plan.targetType.kind == SemanticType::CString ||
+          primitiveAddress(plan.targetType))
+        return Shape::PassiveAddressValue;
+      // An admitted array value is published by storing the whole array.
+      if (plan.targetType.kind == SemanticType::Array &&
+          passiveArrayElement(plan.targetType))
+        return Shape::PassiveArrayValue;
+      if (integralEnumArray(plan.targetType))
+        return Shape::IntegralEnumArrayValue;
+      if (textViewArray(plan.targetType))
+        return Shape::TextViewArrayValue;
       const auto storage = classShape(plan.targetType);
       return storage && *storage != Shape::CallableMetadata ? storage
                                                             : std::nullopt;
     }
     if (plan.transport !=
             native_llvm::UnstagedConstructorFieldPublicationTransport::
-                NullUniqueOwner ||
-        plan.sourceType != SemanticType::NullPtr ||
-        plan.targetType.kind != SemanticType::UniqueOwner ||
+                NullPointer ||
+        plan.sourceType != SemanticType::NullPtr)
+      return std::nullopt;
+    // A null address is inert whatever it would designate.
+    if (plan.targetType.kind == SemanticType::CString ||
+        plan.targetType.kind == SemanticType::RawPointer)
+      return Shape::PassiveAddressValue;
+    if (plan.targetType.kind != SemanticType::UniqueOwner ||
         plan.targetType.arguments.size() != 1 ||
         !native_llvm::uniqueOwnerPointee(program,
                                          plan.targetType.arguments.front()))
@@ -3167,12 +3368,14 @@ public:
       const bool passiveArray =
           type.kind == SemanticType::Array && passiveArrayElement(type);
       const bool enumArray = !passiveArray && integralEnumArray(type);
-      const bool arrayAddress = type.kind == SemanticType::RawPointer &&
-                                type.arguments.size() == 1 &&
-                                passiveArrayElement(type.arguments.front());
+      const bool textArray = textViewArray(type);
+      const bool arrayAddress =
+          type.kind == SemanticType::RawPointer && type.arguments.size() == 1 &&
+          (passiveArrayElement(type.arguments.front()) ||
+           type.arguments.front().kind == SemanticType::StringView);
       const bool reference =
           type.kind == SemanticType::Reference && passiveReference(type);
-      const bool address = passiveAddress(type) ||
+      const bool address = primitiveAddress(type) ||
                            type.kind == SemanticType::NullPtr ||
                            type.kind == SemanticType::CString;
       add(type.kind,
@@ -3189,6 +3392,7 @@ public:
               ? std::optional(Shape::NativeCSignature)
           : passiveArray ? std::optional(Shape::PassiveArrayValue)
           : enumArray    ? std::optional(Shape::IntegralEnumArrayValue)
+          : textArray    ? std::optional(Shape::TextViewArrayValue)
           : reference    ? std::optional(Shape::PassiveReference)
           : arrayAddress ? std::optional(Shape::CheckedArrayProjection)
                          : representationShape(type));
@@ -3204,6 +3408,7 @@ public:
         add(Shape::FixedArray,
             passiveArray ? std::optional(Shape::PassiveArrayValue)
             : enumArray  ? std::optional(Shape::IntegralEnumArrayValue)
+            : textArray  ? std::optional(Shape::TextViewArrayValue)
                          : representationShape(type));
       if (!type.arguments.empty())
         add(Shape::TypeArguments);
@@ -3266,7 +3471,7 @@ public:
                       : selectedReference ? std::optional(Shape::PassiveReference)
                       : borrowedUse     ? view
                       : operand.kind == MirOperandKind::Address && place &&
-                              arrayProjection(*currentBody, *place)
+                              scalarArrayProjection(*currentBody, *place)
                           ? std::optional(Shape::CheckedArrayProjection)
                           : representationShape(operand.type));
     type(operand.type);
@@ -3401,7 +3606,7 @@ public:
       const bool rawClassPlace = nativeRawPlace(mir, place);
       add(place.root,
           rawClassPlace ? std::optional(Shape::NativeClassRawAccess)
-          : primitiveRawAccess(mir, place)
+          : scalarRawAccess(mir, place)
               ? std::optional(Shape::PrimitiveRawAccess)
           : place.root == MirPlaceRootKind::Loan && passiveReference(place.type)
               ? std::optional(Shape::PassiveReference)
@@ -3412,9 +3617,9 @@ public:
       for (const auto &projection : place.projections)
         add(projection.kind,
             rawClassPlace ? std::optional(Shape::NativeClassRawAccess)
-            : primitiveRawAccess(mir, place)
+            : scalarRawAccess(mir, place)
                 ? std::optional(Shape::PrimitiveRawAccess)
-            : arrayProjection(mir, place)
+            : scalarArrayProjection(mir, place)
                 ? std::optional(Shape::CheckedArrayProjection)
             : projection.kind == MirProjectionKind::Dereference &&
                     native_llvm::nativeCFunctionValueContract(
@@ -3647,7 +3852,7 @@ public:
                   : nullptr;
           const bool arrayAddress =
               stage.operation == MirOperation::AddressOf && addressPlace &&
-              arrayProjection(mir, *addressPlace);
+              scalarArrayProjection(mir, *addressPlace);
           const bool referenceAddress =
               stage.operation == MirOperation::AddressOf && addressPlace &&
               passiveReference(addressPlace->type);
@@ -3668,13 +3873,15 @@ public:
               : (nativeRawIndex(stage) && validRaw) || classArithmetic
                   ? std::optional(Shape::NativeClassRawAccess)
               : scalarMutation ? std::optional(Shape::InPlaceScalarMutation)
-              : primitiveRawIndex(stage) || primitivePointerArithmetic(stage)
+              : scalarRawIndex(stage) || scalarPointerArithmetic(stage)
                   ? std::optional(Shape::PrimitiveRawAccess)
               : payloadPointerArithmetic(stage)
                   ? std::optional(Shape::NativePayloadRawAccess)
               : arrayAggregate ? std::optional(Shape::PassiveArrayValue)
               : integralEnumArrayAggregate(stage)
                   ? std::optional(Shape::IntegralEnumArrayValue)
+              : textViewArrayAggregate(stage)
+                  ? std::optional(Shape::TextViewArrayValue)
               : stage.operation == MirOperation::Aggregate &&
                       stage.info.type.kind == SemanticType::Array
                   ? classShape(stage.info.type)
@@ -3724,8 +3931,8 @@ public:
               : rawReference ? rawReferenceShape
               : stage.intrinsic == IntrinsicKind::RawPointerConversion &&
                       stage.operands.size() == 1 &&
-                      passiveAddress(stage.info.type) &&
-                      passiveAddress(stage.operands[0].type)
+                      primitiveAddress(stage.info.type) &&
+                      primitiveAddress(stage.operands[0].type)
                   ? std::optional(Shape::PassiveAddressValue)
               // A sealed integral enum already carries its underlying integer
               // representation, so reading that value is the ordinary scalar
@@ -3814,12 +4021,12 @@ public:
             stage.sourceLocation || stage.forwardsCallerLocation)
           add(Shape::CallerLocation);
         bool rawAccess =
-            rawReference || primitiveRawIndex(stage) ||
+            rawReference || scalarRawIndex(stage) ||
             (stage.destination &&
-             primitiveRawAccess(mir, *mir.findPlace(*stage.destination)));
+             scalarRawAccess(mir, *mir.findPlace(*stage.destination)));
         for (const auto &operand : stage.operands)
           if (const auto *place = mir.findPlace(operand.place))
-            rawAccess |= primitiveRawAccess(mir, *place);
+            rawAccess |= scalarRawAccess(mir, *place);
         const bool nativeStorage =
             native_llvm::nativeCStorageAccessContract(program, nativeTarget,
                                                       mir, stage) ||
@@ -3839,8 +4046,23 @@ public:
         // memory operation. The typed access/arithmetic stages are inventoried
         // independently; their pending shapes cannot be hidden by this marker.
         const auto &instructionCoverage = coverage(stage.kind);
+        // A drop of a place not reached through raw memory destroys an
+        // ordinary object; its marker repeats the statement's permission and
+        // the destruction is admitted by its own drop recipe.
+        const auto *dropped =
+            stage.kind == MirInstructionKind::Drop && stage.destination
+                ? mir.findPlace(*stage.destination)
+                : nullptr;
+        const bool ordinaryDrop =
+            dropped && !stage.rawMemoryAccess &&
+            std::none_of(dropped->projections.begin(),
+                         dropped->projections.end(), [](const auto &step) {
+                           return step.kind ==
+                                      MirProjectionKind::RawDereference ||
+                                  step.kind == MirProjectionKind::RawIndex;
+                         });
         const bool permissionOnly =
-            stage.kind == MirInstructionKind::Lifecycle ||
+            stage.kind == MirInstructionKind::Lifecycle || ordinaryDrop ||
             (instructionCoverage.state ==
                  LlvmCoverageState::VerifiedNonExecuting &&
              instructionCoverage.nonExecuting ==
@@ -3949,6 +4171,7 @@ public:
                   ? std::optional(Shape::NativeMemoryOperation)
               : (ordinaryUnsafe || unsafeCallResultLoad(mir, mirBlock, stage) ||
                  unsafeCallResultInput(mir, mirBlock, stage) ||
+                 unsafeCallResultStaging(mir, stage) ||
                  unsafeCallValueReceiver(mir, stage) ||
                  unsafeCallResultReturn(mir, mirBlock, stage))
                   ? std::optional(Shape::OrdinaryUnsafeInvocation)
@@ -3970,9 +4193,9 @@ public:
                   (stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
                    stage.unsafeOperation ==
                        UnsafeOperationKind::RawDereference)) ||
-                 ((primitivePointerArithmetic(stage) ||
+                 ((scalarPointerArithmetic(stage) ||
                    (stage.kind == MirInstructionKind::Assign &&
-                    passiveAddress(stage.info.type))) &&
+                    primitiveAddress(stage.info.type))) &&
                   stage.unsafeOperation ==
                       UnsafeOperationKind::PointerArithmetic))
                   ? std::optional(Shape::PrimitiveRawAccess)
