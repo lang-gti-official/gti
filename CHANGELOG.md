@@ -73,6 +73,10 @@ for what minor and patch releases mean.
   condition services, mutexes held by value in lambda captures, and mutexes
   protecting class values that need no cleanup. Worker failures re-raise at
   join and cleanup failures report exactly as on the C++ backend.
+- Native debug builds (`-g`) of programs using a library macro, such as
+  `std::testing::check_eq` in a `[[test]]` suite, no longer fail with an
+  internal error. A scope the macro opened was recorded under the macro's own
+  file while pointing at the caller's lines.
 - Native builds accept a C record or union passed by value straight from a C
   global, a field read through a selected member of a C union global, and the
   address of a C function-pointer variable. The native callback-slots and

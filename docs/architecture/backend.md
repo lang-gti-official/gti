@@ -4711,6 +4711,10 @@ membership or untracked storage does not acquire positive availability. A move
 followed by reinitialization cannot be bridged by a single readable range.
 The LLVM debug consumer builds scopes from those identities and exposes boundary
 events for existing storage and values, without requesting a new execution slot.
+A scope's unit names the file its extent is in. A scope opened while a library
+macro expands takes its extent from the expansion site, so semantics records
+the caller's unit for it, not the macro's; one file never acquires two logical
+names in native debug metadata.
 The private unique-owner handle is described as a pointer to its exact lowered
 pointee type using the existing target pointer size/alignment; source-defined
 wrappers keep their declared members. The null literal type retains its distinct

@@ -10002,10 +10002,18 @@ auto SemanticVisitor::Impl::beginScope() -> void {
           anchor != nullptr && anchor->extent()
               ? *anchor->extent()
               : tables.scopes[parent.sourceDebugScope - 1].source;
-      tables.scopes.push_back({.id = next.sourceDebugScope,
-                               .parent = parent.sourceDebugScope,
-                               .sourceUnit = currentSourceUnit,
-                               .source = extent});
+      // A scope's unit names the file its extent is in. While a macro body
+      // from another unit expands, the extent still comes from the expansion
+      // site in the caller's file.
+      const SourceUnitId extentUnit =
+          sourceGraph == nullptr
+              ? 0
+              : sourceGraph->sourceUnitForPath(extent.source);
+      tables.scopes.push_back(
+          {.id = next.sourceDebugScope,
+           .parent = parent.sourceDebugScope,
+           .sourceUnit = extentUnit != 0 ? extentUnit : currentSourceUnit,
+           .source = extent});
       tables.frameAnchors.push_back({parent.sourceDebugScope, anchor, ordinal});
     }
   }
