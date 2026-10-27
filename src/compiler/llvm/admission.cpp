@@ -2083,23 +2083,34 @@ public:
            unsafeCallResultProducer(body, block, stage, *loan, stage.info.type);
   }
 
+  // An argument stages a reference to the borrowed referent; a receiver stages
+  // the referent object itself, so its staged type is the class rather than a
+  // reference to it. Both transport the exact runtime address the verified
+  // unsafe producer returned, and the staging itself is a pass-through.
   bool unsafeCallResultInput(const MirBody &body, const MirBlock &block,
                              const MirInstruction &stage) const {
     const bool mutableInput =
         stage.callInputKind == HirCallInputKind::MutableBorrow;
+    const bool receiverStage =
+        stage.callInputRole == MirCallInputRole::Receiver;
+    const auto requiredAccess =
+        mutableInput ? AccessMode::Mutable : AccessMode::ReadOnly;
+    const bool stagedType =
+        receiverStage
+            ? stage.info.type.kind == SemanticType::Class
+            : stage.info.type.kind == SemanticType::Reference &&
+                  stage.info.type.arguments.size() == 1 &&
+                  stage.info.type.referenceAccess == requiredAccess;
     if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
-        stage.callInputRole != MirCallInputRole::Argument ||
+        (stage.callInputRole != MirCallInputRole::Argument &&
+         !receiverStage) ||
         (stage.callInputKind != HirCallInputKind::ReadBorrow &&
          !mutableInput) ||
         stage.callSite == 0 || stage.hirValue == 0 || stage.defaultArgument ||
         stage.rawMemoryAccess ||
         stage.unsafeOperation != UnsafeOperationKind::DeclaredUnsafeCall ||
         stage.intrinsic != IntrinsicKind::None ||
-        stage.operation != MirOperation::None ||
-        stage.info.type.kind != SemanticType::Reference ||
-        stage.info.type.arguments.size() != 1 ||
-        stage.info.type.referenceAccess !=
-            (mutableInput ? AccessMode::Mutable : AccessMode::ReadOnly) ||
+        stage.operation != MirOperation::None || !stagedType ||
         stage.info.category != ValueCategory::Value ||
         stage.info.access != AccessMode::ReadOnly ||
         stage.operands.size() != 1 || stage.destination || stage.receiver ||
@@ -2113,22 +2124,33 @@ public:
         !stage.definedFailure.empty() || !stage.localFailureSites.empty())
       return false;
     const auto &input = stage.operands.front();
-    if (input.kind != MirOperandKind::Loan || !input.loan || !input.place ||
-        input.value || input.literal || input.type != stage.info.type)
+    // An argument names the loan on the operand itself. A receiver borrows the
+    // loan-rooted place directly, so the loan identity comes from that place
+    // and the borrow kind must agree with the staged input kind.
+    const bool borrowedReceiver =
+        receiverStage && !input.loan &&
+        input.kind == (mutableInput ? MirOperandKind::BorrowWrite
+                                    : MirOperandKind::BorrowRead);
+    if (!((input.kind == MirOperandKind::Loan && input.loan) ||
+          borrowedReceiver) ||
+        !input.place || input.value || input.literal ||
+        input.type != stage.info.type)
       return false;
-    const auto &referent = stage.info.type.arguments.front();
+    const auto &referent = receiverStage ? stage.info.type
+                                         : stage.info.type.arguments.front();
     const auto *place = body.findPlace(input.place);
-    const auto *loan = body.findLoan(input.loan);
+    const auto selected = borrowedReceiver ? (place ? place->loan : 0)
+                                           : input.loan;
+    const auto *loan = selected ? body.findLoan(selected) : nullptr;
     // The explicit loan place carries the returned runtime address. Its
     // possible owner origin is never a substitute, including during call-input
     // staging.
     return place && place->root == MirPlaceRootKind::Loan &&
-           place->projections.empty() && place->loan == input.loan &&
-           place->type == referent && loan &&
+           place->projections.empty() && place->loan == selected && loan &&
+           place->type == referent &&
            loan->kind == MirLoanKind::CallResult && !loan->entry &&
            !loan->escapes && loan->producedBy == stage.hirValue &&
-           loan->access == place->access &&
-           loan->access == stage.info.type.referenceAccess &&
+           loan->access == place->access && loan->access == requiredAccess &&
            unsafeCallResultProducer(body, block, stage, *loan, referent);
   }
 
