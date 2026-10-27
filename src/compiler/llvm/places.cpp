@@ -423,6 +423,18 @@ llvm::Value *Places::selected(const MirOperand &operand) {
     const auto *record = body.findLoan(operand.loan);
     if (!record)
       throw std::logic_error("LLVM selected address lost its sealed loan");
+    // An opaque stored entry loan is self-sourced at its carrier binding and
+    // is never published, so its slot holds no address and its recorded type
+    // is the carrier rather than the designated referent. Such an operand
+    // carries provenance only; its consumer must supply the exact runtime
+    // address source. Fail closed instead of reading an unpublished slot.
+    if (record->kind == MirLoanKind::Stored && record->entry &&
+        record->source != 0 && record->protectsSource(record->source) &&
+        body.findPlace(record->source) &&
+        body.findPlace(record->source)->type != operand.type)
+      throw BackendUnsupportedError(
+          "LLVM provenance-only carrier loan operand has no selected runtime "
+          "address source");
     result = loan(operand.loan);
     source = loanTypes.at(operand.loan);
     access = record->access;
@@ -459,7 +471,8 @@ llvm::Value *Places::selected(const MirOperand &operand) {
       throw BackendUnsupportedError(
           "LLVM class reference adjustment has incompatible type or access");
     result = baseAddress(result, source,
-                         session.layouts().baseSubobject(source, target));
+                         session.layouts().baseSubobject(
+                             source, target, "places.referenceAdjustment"));
   }
   return result;
 }

@@ -410,7 +410,8 @@ public:
       if ((contains(source) && !metadata(source)) ||
           (contains(target) && !metadata(target)) || !planner())
         return {};
-      static_cast<void>(session->layouts().baseSubobject(source, target));
+      if (!session->layouts().findBaseSubobject(source, target))
+        return {};
       return Shape::NativeBorrowedDispatchView;
     } catch (const BackendUnsupportedError &) {
       return {};
@@ -993,8 +994,9 @@ private:
                   (!this->body({MirBodyKind::Constructor, base->id}) ||
                    !this->body({MirBodyKind::Constructor, base->id})->shape)))
           return {};
-        static_cast<void>(session->layouts().baseSubobject(
-            program.findClassInstance(target->owner)->type, owner.type));
+        if (!session->layouts().findBaseSubobject(
+                program.findClassInstance(target->owner)->type, owner.type))
+          return {};
         return Shape::NativeStaticDispatchStorage;
       }
       if (stage.kind == MirInstructionKind::Drop)
@@ -1057,14 +1059,15 @@ private:
           return {};
         const auto &source = unreference(stage.receiver->type);
         const auto &owner = *program.findClassInstance(*target->owner);
+        // An unrelated receiver/owner pair is simply not this shape, so the
+        // probe declines rather than asserting a sealed base relationship.
         if (isMirExactReceiverPresentation(program, stage, source)) {
           if (target->receiverMutability != ReceiverMutability::ReadOnly)
             return {};
-          static_cast<void>(
-              session->layouts().baseSubobject(owner.type, source));
-        } else {
-          static_cast<void>(
-              session->layouts().baseSubobject(source, owner.type));
+          if (!session->layouts().findBaseSubobject(owner.type, source))
+            return {};
+        } else if (!session->layouts().findBaseSubobject(source, owner.type)) {
+          return {};
         }
         return Shape::NativeBorrowedDispatchView;
       }

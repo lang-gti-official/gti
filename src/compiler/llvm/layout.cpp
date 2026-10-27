@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <unordered_set>
 
 namespace lang::native_llvm {
@@ -602,9 +603,9 @@ Layouts::basePath(const SemanticType &type,
   return result;
 }
 
-BaseSubobjectLayout Layouts::findSubobject(const SemanticType &source,
-                                           HirClassInstanceId target,
-                                           SymbolId field) {
+std::optional<BaseSubobjectLayout>
+Layouts::lookupSubobject(const SemanticType &source, HirClassInstanceId target,
+                         SymbolId field) {
   const auto matches = [&](const MirClassInstance &owner) {
     return field != 0           ? std::count_if(owner.declaredFields.begin(),
                                                 owner.declaredFields.end(),
@@ -617,10 +618,12 @@ BaseSubobjectLayout Layouts::findSubobject(const SemanticType &source,
   const auto &root = instance(source);
   // The ordinary non-inherited record path needs no traversal containers.
   if (root.bases.empty()) {
-    if (matches(root) != 1)
-      throw std::logic_error(
-          "LLVM physical subobject identity is missing or ambiguous");
-    return {.type = source};
+    const auto count = matches(root);
+    if (count > 1)
+      throw std::logic_error("LLVM physical subobject identity is ambiguous");
+    if (count != 1)
+      return std::nullopt;
+    return BaseSubobjectLayout{.type = source};
   }
   std::unordered_set<HirClassInstanceId> seen;
   std::vector<HirClassInstanceId> path;
@@ -644,13 +647,48 @@ BaseSubobjectLayout Layouts::findSubobject(const SemanticType &source,
   };
   visit(visit, source);
   if (!selected)
-    throw std::logic_error("LLVM physical subobject identity is missing");
+    return std::nullopt;
   return basePath(source, *selected);
 }
 
+BaseSubobjectLayout Layouts::findSubobject(const SemanticType &source,
+                                           HirClassInstanceId target,
+                                           SymbolId field,
+                                           const char *context) {
+  auto found = lookupSubobject(source, target, field);
+  if (!found) {
+    // Names the exact sealed inputs; a bare failure cannot be reduced from a
+    // program that reaches this through generic or reflected selection.
+    const auto &owner = instance(source);
+    std::string detail =
+        " (instance " + std::to_string(owner.id) + ", class " +
+        std::to_string(owner.type.classId) + ", requested " +
+        (field != 0 ? "field symbol " + std::to_string(field)
+                    : "base instance " + std::to_string(target)) +
+        ", declared";
+    for (const auto &candidate : owner.declaredFields)
+      detail += " " + std::to_string(candidate.symbol);
+    if (owner.declaredFields.empty())
+      detail += " none";
+    if (context && *context)
+      detail += std::string(", site ") + context;
+    throw std::logic_error(
+        "LLVM physical subobject identity is missing or ambiguous" + detail +
+        ")");
+  }
+  return *found;
+}
+
 BaseSubobjectLayout Layouts::baseSubobject(const SemanticType &source,
-                                           const SemanticType &target) {
-  return findSubobject(source, instance(target).id, 0);
+                                           const SemanticType &target,
+                                           const char *context) {
+  return findSubobject(source, instance(target).id, 0, context);
+}
+
+std::optional<BaseSubobjectLayout>
+Layouts::findBaseSubobject(const SemanticType &source,
+                           const SemanticType &target) {
+  return lookupSubobject(source, instance(target).id, 0);
 }
 
 FieldSubobjectLayout Layouts::fieldSubobject(const SemanticType &source,

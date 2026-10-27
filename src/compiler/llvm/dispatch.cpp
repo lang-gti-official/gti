@@ -119,7 +119,8 @@ Dispatch::views(HirClassInstanceId activeClass) {
       if (viewLayout.type != view->type || !location)
         throw std::logic_error("LLVM dispatch view lost its exact storage");
       location->owner =
-          session.layouts().baseSubobject(active->type, location->owner.type);
+          session.layouts().baseSubobject(active->type, location->owner.type,
+                                          "dispatch.activeView");
       DispatchViewPlan plan{.activeClass = activeClass,
                             .viewClass = id,
                             .path = path,
@@ -292,7 +293,8 @@ void Dispatch::preflightState(HirClassInstanceId activeClass) {
         session.program().mir().findClassInstance(view.viewClass);
     const auto path = session.layouts().basePath(active.type, view.path);
     const auto physical =
-        session.layouts().baseSubobject(active.type, view.location.owner.type);
+        session.layouts().baseSubobject(active.type, view.location.owner.type,
+                                        "dispatch.viewDisplacement");
     const auto indexBits = session.dataLayout().getIndexSizeInBits(0);
     if (!llvm::isUIntN(indexBits - 1, physical.offset))
       throw BackendUnsupportedError(
@@ -553,7 +555,8 @@ VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
     throw std::logic_error(
         "LLVM virtual root has no physical dispatch pointer");
   location->owner =
-      session.layouts().baseSubobject(source.type, location->owner.type);
+      session.layouts().baseSubobject(source.type, location->owner.type,
+                                      "dispatch.virtualRoot");
   const auto &profile = slotProfile(owner.id);
   const auto slot = std::find(profile.begin(), profile.end(), root);
   if (slot == profile.end())
@@ -606,15 +609,26 @@ llvm::Value *Dispatch::directReceiver(llvm::IRBuilder<> &ir,
     if (target->receiverMutability != ReceiverMutability::ReadOnly)
       throw std::invalid_argument(
           "LLVM exact interface presentation requires readonly access");
-    const auto inverse = session.layouts().baseSubobject(owner.type, source);
+    const auto inverse = session.layouts().baseSubobject(
+        owner.type, source, "dispatch.exactReceiverPresentation");
     return inverse.offset == 0
                ? evaluatedReceiver
                : ir.CreateGEP(
                      ir.getInt8Ty(), evaluatedReceiver,
                      ir.getInt64(-static_cast<std::int64_t>(inverse.offset)));
   }
-  return projectBase(session, ir, evaluatedReceiver, source,
-                     session.layouts().baseSubobject(source, owner.type));
+  auto adjustment = session.layouts().findBaseSubobject(source, owner.type);
+  if (!adjustment)
+    throw std::logic_error(
+        "LLVM direct member receiver is not a sealed subobject of its owner"
+        " (receiver instance " +
+        std::to_string(session.layouts().instance(source).id) + " class " +
+        std::to_string(source.classId) + ", owner instance " +
+        std::to_string(owner.id) + " class " +
+        std::to_string(owner.type.classId) + ", function instance " +
+        std::to_string(target->id) + " declaration " +
+        std::to_string(target->declaration) + ")");
+  return projectBase(session, ir, evaluatedReceiver, source, *adjustment);
 }
 
 } // namespace lang::native_llvm

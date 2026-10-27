@@ -561,7 +561,8 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
           "LLVM generated-empty initialization lost a metadata-only interface "
           "subobject");
     static_cast<void>(session.layouts().get(row.type));
-    static_cast<void>(session.layouts().baseSubobject(object.type, row.type));
+    static_cast<void>(session.layouts().baseSubobject(
+        object.type, row.type, "lifetimes.generatedEmptyInterface"));
     if (!checked.insert(row.instance).second)
       continue;
     interfaces.insert(interfaces.end(), selected->bases.begin(),

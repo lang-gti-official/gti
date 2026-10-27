@@ -1836,22 +1836,40 @@ int main() { std::mutex<int32_t> value{1}; return 0; }
       privateOwner = &candidate;
       break;
     }
-  expect(privateOwner && !mirUniqueCleanupType(privateSession.program().mir(),
-                                               privateOwner->type),
-         "private mutex storage retains an unavailable canonical cleanup "
-         "family");
+  // O-LLVM-13 implemented private mutex storage cleanup, so this family is no
+  // longer an example of an unavailable one. The canonical recipe is now the
+  // authority: the emitter must consume exactly that recipe, reuse one helper,
+  // and still refuse a recipe that does not match the sealed graph.
+  expect(privateOwner != nullptr, "private mutex storage instance exists");
   if (!privateOwner)
     return;
-  const MirDropType privateRecipe{.type = privateOwner->type,
-                                  .classInstance = privateOwner->id,
-                                  .requiresActiveCleanup = true};
-  const auto privatePublication = modulePublication(privateSession);
-  for (int attempt = 0; attempt != 2; ++attempt)
-    rejects<BackendUnsupportedError>(
-        [&] { static_cast<void>(privateLifetimes.cleanup(privateRecipe)); },
-        "an unsupported active private cleanup family rejects before emission");
-  expect(modulePublication(privateSession) == privatePublication,
-         "an unsupported active private cleanup family publishes no artifact");
+  const auto canonical =
+      mirUniqueCleanupType(privateSession.program().mir(), privateOwner->type);
+  expect(canonical.has_value(),
+         "private mutex storage has an implemented canonical cleanup family");
+  if (!canonical)
+    return;
+  auto *privateHelper = privateLifetimes.cleanup(*canonical);
+  expect(privateHelper != nullptr,
+         "the canonical private cleanup family emits its helper");
+  const auto afterFirst = modulePublication(privateSession);
+  expect(privateLifetimes.cleanup(*canonical) == privateHelper,
+         "a repeated canonical private cleanup reuses one helper");
+  expect(modulePublication(privateSession) == afterFirst,
+         "a repeated canonical private cleanup publishes no second artifact");
+  // A forged active-cleanup recipe for the same instance does not match the
+  // sealed graph and must fail closed without publishing anything.
+  const MirDropType forged{.type = privateOwner->type,
+                           .classInstance = privateOwner->id,
+                           .requiresActiveCleanup = true};
+  if (forged != *canonical) {
+    for (int attempt = 0; attempt != 2; ++attempt)
+      rejects<std::exception>(
+          [&] { static_cast<void>(privateLifetimes.cleanup(forged)); },
+          "a forged private cleanup recipe fails closed");
+    expect(modulePublication(privateSession) == afterFirst,
+           "a forged private cleanup recipe publishes no artifact");
+  }
 }
 
 void testDispatchAdmissionBinding() {

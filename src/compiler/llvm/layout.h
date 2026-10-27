@@ -5,6 +5,7 @@
 #include <llvm/IR/DerivedTypes.h>
 
 #include <map>
+#include <optional>
 #include <unordered_map>
 
 namespace lang::native_llvm {
@@ -123,8 +124,18 @@ public:
   primaryBase(const SemanticType &type) const;
   [[nodiscard]] BaseSubobjectLayout
   basePath(const SemanticType &type, std::span<const HirClassInstanceId> path);
+  // `context` names the emission site, so an internal failure identifies the
+  // operation that asserted the relationship rather than only the types.
   [[nodiscard]] BaseSubobjectLayout baseSubobject(const SemanticType &source,
-                                                  const SemanticType &target);
+                                                  const SemanticType &target,
+                                                  const char *context = "");
+  // Answers whether `target` is actually a sealed base subobject of `source`.
+  // An unrelated pair is an ordinary negative answer, so a shape probe can
+  // decline without an internal failure; malformed sealed input still fails
+  // closed. Emission paths keep `baseSubobject`, whose absent base remains an
+  // upstream producer error rather than an unsupported program.
+  [[nodiscard]] std::optional<BaseSubobjectLayout>
+  findBaseSubobject(const SemanticType &source, const SemanticType &target);
   [[nodiscard]] FieldSubobjectLayout fieldSubobject(const SemanticType &source,
                                                     SymbolId field);
 
@@ -160,7 +171,13 @@ private:
   [[nodiscard]] TypeLayout closure(const SemanticType &type);
   [[nodiscard]] BaseSubobjectLayout findSubobject(const SemanticType &source,
                                                   HirClassInstanceId base,
-                                                  SymbolId field);
+                                                  SymbolId field,
+                                                  const char *context = "");
+  // Shared traversal. `std::nullopt` means the requested subobject is absent;
+  // ambiguous or unsealed identity still throws.
+  [[nodiscard]] std::optional<BaseSubobjectLayout>
+  lookupSubobject(const SemanticType &source, HirClassInstanceId base,
+                  SymbolId field);
   [[nodiscard]] TypeLayout describe(llvm::Type *storage,
                                     bool addressOnly = false,
                                     llvm::Type *value = nullptr) const;
