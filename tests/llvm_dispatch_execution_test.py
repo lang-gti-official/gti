@@ -70,6 +70,7 @@ SUCCESS_FILES = {
     "program-storage": "tests/fixtures/llvm_dispatch_program_storage.gti",
     "shared-polymorphic-owners": "tests/fixtures/llvm_dispatch_shared_owners.gti",
     "lifecycle-phases": "tests/fixtures/llvm_dispatch_lifecycle_phases.gti",
+    "generated-empty-former-reject": "tests/fixtures/llvm_dispatch_generated_empty.gti",
     "hierarchy-payloads": "tests/fixtures/llvm_dispatch_hierarchy_payloads.gti",
 }
 
@@ -1226,7 +1227,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "hierarchy-payloads"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1743,7 +1744,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "hierarchy-payloads", "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup"),
         "lifecycle-dispatch": (
             "lifecycle-phases", "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
-            "base-destructor-observation-former-reject",
+            "generated-empty-former-reject", "base-destructor-observation-former-reject",
             "base-helper-observation-former-reject",
             "cleanup-helper-cycle-base-phase-former-reject",
             "rollback-virtual-observation-former-reject"),
