@@ -1,0 +1,31 @@
+#include <std/thread>
+#include <std/mutex>
+
+// An environmental automatic-join failure transfers the still-coherent worker
+// to terminal quarantine, pins native process storage and raises GTI-R0012.
+// The test helper injects the runtime join fault; it is not GTI source.
+std::mutex<int32_t> process_value{7};
+
+extern "C" {
+  void gti_test_inject_thread_join_failure();
+  void gti_test_expect_native_storage_pinned(int32_t value);
+}
+
+class pinned_probe {
+public:
+  ~pinned_probe() {
+    auto held = process_value.lock();
+    gti_test_expect_native_storage_pinned(held.get());
+  }
+};
+
+int main() {
+  pinned_probe probe{};
+  auto started = std::thread::start([]() -> void {
+    auto held = process_value.lock();
+  });
+  if (!started.has_value()) { return 1; }
+  std::thread worker = std::move(started).value();
+  gti_test_inject_thread_join_failure();
+  return 0;
+}

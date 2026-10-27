@@ -1,0 +1,46 @@
+#include <std/thread>
+#include <std/atomic>
+#include <std/format>
+
+// Each managed worker owns its thread-local objects; they are destroyed on
+// that worker before join returns, independently of the joining thread's.
+class visits {
+  int32_t base;
+  mut int32_t count = 0;
+public:
+  visits(int32_t base) : base(base) {}
+  int32_t next() mut {
+    this.count += 1;
+    return this.base + this.count;
+  }
+  ~visits() { std::println("visits retired {}", this.count); }
+};
+
+thread_local mut visits local{100};
+std::atomic<int32_t> published{0};
+
+class visitor {
+  int32_t times;
+public:
+  visitor(int32_t times) : times(times) {}
+  void operator()() {
+    mut int32_t last = 0;
+    mut int32_t index = 0;
+    while (index < this.times) {
+      last = local.next();
+      index += 1;
+    }
+    published.store(last, std::memory_order_release());
+  }
+};
+
+int main() {
+  if (local.next() != 101) { return 1; }
+  auto started = std::thread::start(visitor(3));
+  if (!started) { return 2; }
+  mut std::thread worker = std::move(started).value();
+  if (!worker.join()) { return 3; }
+  std::println(published.load(std::memory_order_acquire()));
+  std::println(local.next());
+  return 0;
+}

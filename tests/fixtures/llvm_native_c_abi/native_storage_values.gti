@@ -1,0 +1,36 @@
+// C objects copied straight out of C storage into by-value parameters, a
+// field read through a selected union member, and the address of a local C
+// function pointer handed to C.
+using QuietOperation = (int32_t) -> int32_t;
+[[c_abi]] struct StorageCell { mut int32_t count; mut double weight; };
+[[c_abi]] union StorageBits { mut uint64_t number; mut double real; };
+[[c_abi]] struct StorageState { mut StorageCell cells[2]; mut StorageBits bits; };
+[[c_abi]] union StorageShape { mut StorageCell cell; mut uint64_t raw; };
+extern "C" {
+  mut StorageState native_state;
+  mut StorageShape native_shape;
+  void native_storage_reset();
+  int32_t native_storage_cell_count(StorageCell value);
+  uint64_t native_storage_bits_number(StorageBits value);
+  QuietOperation native_storage_quiet();
+  void native_storage_requiet(QuietOperation* slot);
+}
+int32_t weigh(StorageCell cell) { return cell.count; }
+int main() {
+  native_storage_reset();
+  unsafe {
+    if (native_storage_bits_number(native_state.bits) != uint64_t(6)) return 1;
+    if (native_storage_cell_count(native_state.cells[1]) != 5) return 2;
+    if (weigh(native_state.cells[0]) != 4) return 3;
+    native_shape.cell.count = 12;
+    if (native_shape.cell.count != 12) return 4;
+    if (native_storage_cell_count(native_shape.cell) != 12) return 5;
+  }
+  unsafe {
+    mut QuietOperation operation = native_storage_quiet();
+    if (operation(4) != 4) return 6;
+    native_storage_requiet(&operation);
+    if (operation(4) != 12) return 7;
+  }
+  return 0;
+}

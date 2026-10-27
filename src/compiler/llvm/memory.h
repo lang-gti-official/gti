@@ -30,6 +30,12 @@ public:
   [[nodiscard]] llvm::Value *processCall(const MirFunctionInstance &target,
                                          std::span<llvm::Value *const> inputs);
   [[nodiscard]] llvm::Value *allocateObject(const MirInstruction &instruction);
+  // Raw native storage for a compiler-owned runtime box. Null reports
+  // exhaustion to the caller's own recoverable status; no GTI failure.
+  [[nodiscard]] llvm::Value *allocateStorage(std::uint64_t size,
+                                             std::uint64_t alignment) {
+    return allocateBytes(size, alignment);
+  }
   void releaseBytes(llvm::Value *address);
   [[nodiscard]] SharedRelease releaseShared(llvm::Value *handle);
   [[nodiscard]] Result emit(const MirInstruction &instruction,

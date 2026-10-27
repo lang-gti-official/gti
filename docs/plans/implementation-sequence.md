@@ -11789,6 +11789,36 @@ integration prerequisites.
   accesses obey the memory model, including lawful exclusive initialization,
   and wait/notify shares the exact atomic representation. Report sequential/
   parallel workload and synchronization cost.
+- **Status (2026-10-27):** managed `std::thread`/`std::thread_result` and
+  scoped `parallel_invoke` lower natively: handle representation, spawn, join,
+  automatic join with quarantine, take and scope through the versioned
+  `runtime_thread.h` services, per-adapter entry/cleanup/result callbacks that
+  publish contained failures to the worker sink, and generated worker
+  containment so a cleanup emergency in native worker frames is published and
+  abandoned by status instead of reaching the throwing legacy endpoint.
+  `llvm_thread_execution` matches the C++ oracle at O0-O3 on macOS arm64 for
+  user-defined tasks, results, scopes, failures, envelopes, TLS drain and
+  join quarantine; examples 076 and 175 match. Manual C-thread create/join,
+  once, mutex and condition services execute through their exact trusted C
+  declarations; the C-thread fixtures, including terminal and linked-helper
+  cases, match the oracle at O0-O3. Mutex storage held by value in a closure
+  environment or as a unique/shared owner's pointee, and a passive class mutex
+  payload, lower natively with their own witnesses (`threads.mutex-composition`,
+  including a payload cleanup failure on a worker re-raised at join); a
+  program without task adapters joins a never-started handle without worker
+  containment. Of the 47 recorded threading programs, 43 match the oracle at
+  O0 and O2; the remaining four (066, `scoped_parallel_threads`,
+  `transfer_function_threads`, `panic_runtime`) are refused only at erased
+  `std::transfer_function`/`std::function` storage and match with that use
+  removed. Known non-semantic divergences: the C++-only nothrow-`operator new`
+  allocation oracle (`scoped_parallel_allocations`) does not observe native
+  task boxes, which use the process memory provider, and a wrong-thread
+  confined-callback binding calls `abort` where C++ calls `std::terminate`,
+  observable only through an installed C++ terminate handler. Remaining:
+  erased transfer callables (O-LLVM-10), Linux execution evidence,
+  generated-code TSan, the terminal containment of a defined failure inside an
+  unattached native callback invoked on a managed worker (it still calls the
+  legacy runtime endpoint), and the workload/synchronization cost report.
 
 ### O-LLVM-14: Project, Artifact And Installed-Toolchain Completion
 
@@ -11929,7 +11959,7 @@ not size the work.
 | O-LLVM-10 public polymorphic-storage admission | 086, 135 | milestone; `nativeValue` refuses any capability-bearing type, and the inline slot's public admission waits on boxed-owner dynamic cleanup |
 | O-LLVM-10 polymorphic transfer and virtual-call shapes | 071, 025 | milestone |
 | O-LLVM-07/10 hierarchy containment on a receiver stage | 149 | milestone; the receiver's type merely contains hierarchy storage |
-| O-LLVM-13 thread-handle construction | 066, 076, 175 | milestone; the handle's own construction is outside admission |
+| O-LLVM-10 erased transfer callable | 066 | 076 and 175 now execute with native managed workers, and owner-held mutex storage has its own witness, so the `shared_ptr<mutex<T>>` receiver and its empty-owner field default now lower; 066 still needs `std::transfer_function` (inline polymorphic storage and virtual invocation). With that use removed, 066 matches the C++ oracle at O0-O3 |
 | element and pointee eligibility | 127, 129, 142 | admission only; the emitters are element-agnostic. `ArraySize`/`ArrayRangeBegin` return constants yet demand a passive element; a payload-enum pointee and an array of sealed integral enums have implemented shapes that the eligibility predicates do not reach |
 | unsafe receiver on a `Call` stage | 121 | admission only; a receiver-role `Call` with a mutable-temporary-borrow input kind and no call target |
 | remaining field projection | 042 | admission only; progressed from the earlier reference-adjustment refusal |

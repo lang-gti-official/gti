@@ -4530,6 +4530,26 @@ source-shutdown policy; borrowed global carriers remain rejected.
 Mutex admission has its own exact representation/operation witnesses, including
 constructor payload transfer, guard loans and native-only hosted retirement.
 It does not broaden the generic native-value or native-cleanup predicates.
+A payload without active cleanup keeps MIR's passive binding obligation for
+the consumed constructor parameter; the transferred payload leaves that Drop
+nothing to retire, whatever the payload's source type.
+
+Mutex storage also composes into closure environments and owner pointees, each
+with its own witness. A capture taken by value may hold mutex storage or an
+admitted composition of it (`NativeMutexClosure`): the environment stays
+address-valued, formation and every move use the typed mutex transfer that
+rebuilds the native identity, and cleanup follows the closure's verified
+capture recipe. A borrowing capture remains an ordinary native address. A
+unique or shared owner's pointee may be mutex storage or a composition holding
+it (`NativeOwnedMutexStorage`). Only the owner handle becomes a native value,
+because a move transfers the pointer; the pointee is built in place by the
+sealed storage constructor, borrowed through the owner, and retired by its
+recipe at the last release, which may run on a worker during task cleanup.
+An owner pointee already being decided beneath an enclosing owner is decided by
+that enclosing check, so recursive nodes owning their successors terminate.
+`llvm_thread_execution`'s `threads.mutex-composition` profile compares
+user-defined closure, owner, shared-worker, worker-failure and passive-payload
+cases with the C++ oracle at O0-O3.
 The public O0-O3 service harness additionally requires normal, rollback,
 first/emergency failure and moved-guard execution. The inline hierarchy query
 validates canonical atomic/mutex capabilities through their representation
@@ -4563,10 +4583,66 @@ so later result take/abandon callbacks also require caller-side containment;
 they cannot publish into a no-longer-live worker. Generated callers install
 their own outcome sink around launch rollback and post-join take/abandon, then
 propagate only after the C service returns. TLS drain precedes join publication
-and abandons a pending result on failure. Generated adapters still require the
-coordinator's C04 containment integration: catch the selected private transport
-inside each GTI callback, publish the copied outcome, and return normally across
-the C boundary. No C service's unwind permission changes with that integration.
+and abandons a pending result on failure. No C service's unwind permission
+changes with the native adapters described next.
+
+Native managed and scoped workers use that seam with the production status
+transport. The trusted thread-handle capability is the runtime's join-obligation
+state pointer; a result handle also holds one joined result context and its
+take/abandon callbacks until take. A generated move clears the source, and the
+handle drop runs no native cleanup: the source-defined automatic join discharges
+the obligation. Spawn allocates one box per task, relocates the consumed task
+into it with its typed relocation, and calls `gti_rt_thread_spawn_v1` or
+`gti_rt_thread_spawn_value_v1`. An occupied handle destroys the task and reports
+`operation_not_permitted`; box exhaustion reports `resource_unavailable`.
+Explicit and automatic join call the v2 join services, validate the record and
+ownership transition, and re-raise an ordinary worker record through the
+verified `TaskJoin` edge with its original artifact. A worker cleanup envelope
+is terminal. Explicit result join stores the result for the separate take,
+which relocates it into its final destination and releases the box; automatic
+join abandons an unobserved result. An environmental automatic-join failure
+quarantines the coherent state and originates the MIR-selected `GTI-R0012`
+outcome. A scope borrows each consumed task in its verified caller slot, passes
+stack descriptors and scratch to `gti_rt_thread_scope_v1`, treats a worker
+envelope as terminal, then cleans every task in reverse order on the caller.
+The first failing worker supplies the primary record; otherwise the first task
+cleanup failure does, and later cleanup inherits it like any failure chain.
+
+Each sealed adapter has its own generated entry callback, plus destroy for a
+void task or complete/abandon-task/take/abandon-result for a result task. Entry
+marks the thread as a native managed worker, invokes the exact MIR-selected
+function, call operator or lambda with the boxed task as receiver, and publishes
+an ordinary failure through `gti_rt_thread_failure_publish_v1`. Task/result
+cleanup follows the runtime's task-cleanup state: an emergency abandons the
+remaining box, and a pending ordinary failure is copied and inherited so a
+further failure completes its envelope. Synchronous caller-thread cleanup
+(spawn rollback, an occupied spawn, automatic-join abandonment) publishes to
+the worker sink on a managed worker, which records it and continues exactly at
+the C++ adapters' handoff boundary; elsewhere a caller-installed sink captures
+it and the caller terminates with the copied record after the C call returns.
+Runtime records crossing these C calls follow the target C ABI: spawn results
+return in two integer registers and join/scope results through an indirect
+result pointer; layouts are checked against `runtime_thread.h`.
+
+Programs with managed task adapters keep the inherited cleanup context in
+generated thread-local state instead of the runtime context. On a native worker
+a secondary failure therefore publishes the exact two-record envelope to the
+worker sink and requests abandonment, rather than reaching the legacy runtime
+endpoint that throws for managed workers. Every failed-operation edge, cleanup
+helper and TLS cleanup callback checks that request before reading a channel
+and returns failure status without further cleanup, up to the adapter or TLS
+callback boundary, which clears it. Off a worker the same helper takes the
+ordinary terminal path. Native callbacks suspend worker routing, keeping their
+terminal containment. Programs without adapters keep the runtime context;
+they cannot run a native worker, so joining a handle that never started
+treats a worker envelope as terminal on the caller.
+Adapter reachability names each exact entry body and the task/result cleanup
+recipes, so worker programs keep a sealed dependency closure.
+`llvm_thread_execution` compares user-defined task, capture, result, scope,
+failure, emergency and TLS cases with the C++ oracle at LLVM O0-O3, plus a
+linked runtime fault hook for automatic-join quarantine.
+`llvm_thread_lifecycle_contracts` adds negative MIR controls for every staged
+operation and adapter and the C record layout comparison.
 
 Concurrent hosted programs also consume the sealed startup plan's exact
 C-thread begin/end declarations through their real `void()` C services.
@@ -4576,7 +4652,13 @@ operation. It does not grant arbitrary native declarations or source-level
 access to runtime lifecycle control. The source-selected no-argument and TLS
 drain cases execute those real services; generated-entry checks require exactly
 one non-unwinding begin and end call. This lifecycle witness does not admit
-manual worker creation, managed callbacks or embedding initialization. Public
+managed callbacks or embedding initialization. Manual C-thread create/join,
+once invocation and manual mutex/condition services have a separate exact
+binding: the trusted `cthread.h` declaration that semantics classified, with
+its exact symbol and C signature, called through the ordinary native C ABI and
+carrying the synchronization record semantics derived from that operation.
+Their entry and once callbacks keep the sealed attachment adapters. The runtime
+supplies every edge; no source-level runtime control is exposed. Public
 native callback evidence requires composition with the separately owned O11
 callback boundary, not a synthetic attachment oracle.
 
@@ -5056,11 +5138,12 @@ private global/body helper names retain their independent `v1` spelling.
 The module execution-ABI identity owns whole-program invalidation.
 
 The hosted/source checks exercise this context through ordinary source classes
-and an explicitly transformed standard-library cleanup fixture. They do not
-authorize managed-worker transport: the existing legacy emergency endpoint can
-throw for a managed worker. O-LLVM-13/C04 must provide a contained native worker
-boundary before those runtime calls can execute with managed LLVM frames.
-The context mechanism does not select status returns versus native unwinding.
+and an explicitly transformed standard-library cleanup fixture. Because the
+legacy runtime emergency endpoint can throw for a managed worker, programs with
+managed task adapters keep this context in generated thread-local state and
+publish a worker emergency to the worker sink with status abandonment, as
+described under the native worker adapters. The context mechanism does not
+select status returns versus native unwinding.
 
 Native C planning is separate: exact scalar/pointer signatures and required
 narrow signed/unsigned extension attributes are applied identically to calls
@@ -5465,9 +5548,10 @@ not replaced; returning callbacks leave only the context they acquired.
 The primary artifact is not inferred from the TLS registration artifact.
 Focused TLS execution checks cover ordinary cleanup, a first TLS failure,
 body-failure drain, and an earlier TLS failure entering a later callback.
-This is not managed-worker admission: the legacy runtime emergency handoff can
-unwind, and generated managed callbacks still require the C04 containment
-boundary.
+On a native managed worker, a program with managed task adapters routes the
+callback's inherited context through generated state; a secondary failure
+publishes the worker envelope and the callback returns, so the drain stops on
+that terminal state without a C++ exception crossing generated frames.
 
 Stored reference fields consume either their entry capability or the address
 published by their non-entry MIR Borrow. The latter executes at its actual

@@ -1,0 +1,29 @@
+#include <std/memory>
+#include <std/mutex>
+#include <std/thread>
+
+// The worker's task closure holds the last shared owner of a mutex. Its
+// payload destructor fails while the task is cleaned on the worker; join
+// re-raises that worker failure on the caller.
+[[unsafe_transfer, unsafe_share]] class fragile {
+  int32_t divisor;
+public:
+  fragile(int32_t divisor) : divisor(divisor) {}
+  ~fragile() {
+    std::println("fragile released");
+    std::println(12 / this.divisor); // payload-cleanup-failure
+  }
+};
+
+int main() {
+  auto cell = std::make_shared<std::mutex<fragile>>(fragile(0));
+  auto started = std::thread::start([owned = std::move(cell)]() -> void {
+    auto guard = owned->lock();
+    std::println("worker locked");
+  });
+  if (!started) return 1;
+  mut auto worker = std::move(started).value();
+  [[discard]] worker.join();
+  std::println("unreachable");
+  return 0;
+}

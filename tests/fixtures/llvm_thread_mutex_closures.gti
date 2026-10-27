@@ -1,0 +1,86 @@
+#include <std/mutex>
+#include <std/thread>
+
+// Closure environments that hold mutex storage in a capture taken by value.
+// Every payload is a user-defined class; none of the captures is a library
+// callable wrapper.
+class ledger {
+  mut int32_t total;
+public:
+  ledger(int32_t total) : total(total) {}
+  void add(int32_t amount) mut { this.total = this.total + amount; }
+  int32_t read() { return this.total; }
+};
+
+// A passive payload whose copy is deleted: the mutex consumes it by move.
+class token {
+  int32_t value;
+public:
+  token(int32_t value) : value(value) {}
+  token(token& other) = delete;
+  token(token&& other) = default;
+  int32_t read() { return this.value; }
+};
+
+class audited {
+  int32_t id;
+public:
+  audited(int32_t id) : id(id) {}
+  int32_t read() { return this.id; }
+  ~audited() {
+    std::println("audited retired");
+    std::println(this.id);
+  }
+};
+
+int main() {
+  std::mutex<ledger> local{ledger(5)};
+  auto bump = [owned = std::move(local)](int32_t amount) -> int32_t {
+    mut auto guard = owned.lock();
+    guard.get().add(amount);
+    return guard.get().read();
+  };
+  if (bump(2) != 7) return 1;
+  // Moving the closure rebuilds the captured mutex's native identity.
+  auto moved = std::move(bump);
+  if (moved(3) != 10) return 2;
+  std::println("closure kept its mutex");
+
+  std::mutex<token> passive{token(4)};
+  {
+    auto guard = passive.lock();
+    if (guard.get().read() != 4) return 3;
+  }
+  // The captured payload's cleanup runs when the moved closure is retired.
+  {
+    std::mutex<audited> kept{audited(9)};
+    auto reader = [cell = std::move(kept)]() -> int32_t {
+      auto guard = cell.lock();
+      return guard.get().read();
+    };
+    auto relocated = std::move(reader);
+    if (relocated() + relocated() != 18) return 4;
+    std::println("closure scope ends");
+  }
+
+  // A worker task closure carries its mutex into the runtime task box.
+  mut std::thread_result<int32_t> worker{};
+  std::mutex<ledger> other{ledger(40)};
+  if (!worker.start([held = std::move(other)]() -> int32_t {
+        mut auto guard = held.lock();
+        guard.get().add(2);
+        return guard.get().read();
+      })) return 5;
+  auto joined = worker.join();
+  if (!joined || joined.value() != 42) return 6;
+  std::mutex<token> moved_token{token(8)};
+  mut std::thread_result<int32_t> second{};
+  if (!second.start([held = std::move(moved_token)]() -> int32_t {
+        auto guard = held.lock();
+        return guard.get().read();
+      })) return 7;
+  auto second_joined = second.join();
+  if (!second_joined || second_joined.value() != 8) return 8;
+  std::println("worker closures joined");
+  return 0;
+}

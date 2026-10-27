@@ -1,4 +1,5 @@
 #include "native_c_abi.h"
+#include "thread_lifecycle.h"
 #include "debug_info.h"
 #include "failure.h"
 #include "native_c_contract.h"
@@ -160,7 +161,8 @@ bool nativeCDeclarationContract(const MirProgram &program,
       !function.typeArguments.empty() || !function.valueArguments.empty() ||
       function.virtualMethod ||
       function.processMemoryOperation != ProcessMemoryRuntimeOperation::None ||
-      function.cThreadOperation != CThreadRuntimeOperation::None ||
+      (function.cThreadOperation != CThreadRuntimeOperation::None &&
+       !nativeCThreadOperationBinding(program, function)) ||
       !function.callableParameters.empty() ||
       !nativeCValueContract(program, target, function.returnType,
                             NativeCValueRole::Result))
@@ -625,7 +627,8 @@ namespace {
 
 // A representation query over verified places. Traversing an untagged union
 // does not prove native initialization or an active member; source unsafe
-// permission remains a separate requirement of the accessing instruction.
+// permission remains a separate requirement of the accessing instruction. The
+// result reports whether the final selection is a union member.
 std::optional<bool> nativeCStorageUnionProjection(const MirProgram &program,
                                                   const TargetInfo &target,
                                                   const MirBody &body,
@@ -672,7 +675,10 @@ std::optional<bool> nativeCStorageUnionProjection(const MirProgram &program,
         }
       if (!field)
         return std::nullopt;
-      unionMember |= record->unionLayout.has_value();
+      // MIR labels an access a union-member read exactly when its final
+      // selection is a union member; a field of a selected member, such as
+      // `storage.member.field`, is an ordinary foreign-storage access.
+      unionMember = record->unionLayout.has_value();
       if (field->access == AccessMode::ReadOnly)
         access = AccessMode::ReadOnly;
       type = field->type;
@@ -691,6 +697,7 @@ std::optional<bool> nativeCStorageUnionProjection(const MirProgram &program,
       }
       auto element = type.arguments.front();
       type = std::move(element);
+      unionMember = false;
     } else {
       return std::nullopt;
     }
@@ -708,6 +715,14 @@ bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
   const bool address = instruction.kind == MirInstructionKind::Compute &&
                        instruction.operation == MirOperation::AddressOf &&
                        !instruction.rawMemoryAccess;
+  // A by-value argument copied out of C storage reads the object exactly as a
+  // load does; its prepared temporary is an ordinary local destination.
+  const bool copiedArgument =
+      instruction.kind == MirInstructionKind::CallInput &&
+      instruction.callInputRole == MirCallInputRole::Argument &&
+      instruction.callInputKind == HirCallInputKind::CopyValue &&
+      instruction.operands.size() == 1 &&
+      instruction.operands.front().kind == MirOperandKind::Copy;
   if (instruction.tombstone || instruction.unsafeOperation != permission ||
       (!instruction.rawMemoryAccess && !address) || instruction.receiver ||
       instruction.intrinsic != IntrinsicKind::None ||
@@ -719,7 +734,8 @@ bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
       instruction.functionPointerLambdaTarget ||
       (instruction.kind != MirInstructionKind::Load &&
        instruction.kind != MirInstructionKind::Assign &&
-       instruction.kind != MirInstructionKind::Modify && !address))
+       instruction.kind != MirInstructionKind::Modify && !address &&
+       !copiedArgument))
     return false;
   bool selected = false;
   for (const auto &block : body.blocks)
@@ -1540,6 +1556,9 @@ void emitNativeCCallbacks(
     if (auto *debug = session.debugInfo())
       debug->beginNativeCallback(adapter.id, ir);
     callbackAttachment(session, ir, adapter, *wrapper, true);
+    // A native callback is terminal containment even on a managed worker; a
+    // cleanup emergency inside it is never published as worker output.
+    auto *previousWorker = failures.suspendWorker(ir);
     const auto inputs = decodeNativeCArguments(session, ir, native, *wrapper);
     llvm::Value *output = nullptr;
     if (gti.resultDestination)
@@ -1616,6 +1635,7 @@ void emitNativeCCallbacks(
       failures.terminate(ir, failure);
       ir.SetInsertPoint(success);
     }
+    failures.restoreWorker(ir, previousWorker);
     callbackAttachment(session, ir, adapter, *wrapper, false);
     llvm::Value *result = output;
     if (!native.result.storage.addressOnly && output)

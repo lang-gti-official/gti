@@ -1,0 +1,32 @@
+#include <std/thread>
+
+// A worker defined failure cleans task-owned state at the task boundary and
+// is re-raised by explicit join; the joining frame then cleans up normally.
+[[unsafe_transfer]] class witness {
+  int32_t id;
+public:
+  witness(int32_t id) : id(id) {}
+  ~witness() { std::println(this.id); }
+};
+
+class failing_task {
+  witness owned;
+  int32_t divisor;
+public:
+  failing_task(int32_t divisor) : owned(witness(7)), divisor(divisor) {}
+  void operator()() {
+    witness local = witness(3);
+    int32_t quotient = 10 / this.divisor;
+    std::println(quotient);
+  }
+};
+
+int main() {
+  witness outer = witness(1);
+  auto started = std::thread::start(failing_task(0));
+  if (!started) { return 1; }
+  mut std::thread worker = std::move(started).value();
+  [[discard]] worker.join();
+  std::println("unreachable");
+  return 0;
+}

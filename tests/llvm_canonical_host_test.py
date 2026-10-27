@@ -224,27 +224,27 @@ int main() { Value value{3}; return value.get() - 3; }
         assert checked["status"] == ("admitted-only" if artifact["uses"]["admitted"] else "unsupported")
     assert saw_sealed, "virtual-call control no longer seals its reachable call graph"
 
-    # A managed worker adapter is not a statically named target, so production
-    # reachability falls back to the conservative union. This keeps the
-    # fallback observed through a real program rather than a forged plan.
-    worker_source = """#include <std/thread>
+    # An erased callable invocation has no statically named target, so
+    # production reachability falls back to the conservative union. This keeps
+    # the fallback observed through a real program rather than a forged plan.
+    # (Managed worker adapters now name their exact entry bodies.)
+    worker_source = """#include <std/functional>
 int main() {
-  auto started = std::thread::start([]() -> void {});
-  if (!started.has_value()) { return 1; }
-  return 0;
+  std::function<int32_t()> callback{[]() -> int32_t { return 0; }};
+  return callback();
 }
 """
-    worker_member = {"provider": "focused-controls", "id": "conservative-worker",
+    worker_member = {"provider": "focused-controls", "id": "conservative-erased-callable",
         "source": {"path": "inline", "inline": worker_source,
                    "sha256": hashlib.sha256(worker_source.encode()).hexdigest()},
         "contract": {"role": "positive-admission", "metadata": {"scope": "focused-controls"}}}
     worker_plan = deepcopy(plan)
-    worker_key = "focused-controls:conservative-worker"
+    worker_key = "focused-controls:conservative-erased-callable"
     worker_plan["members"] = {worker_key: worker_member}
     worker_plan["provider_revision"] = audit.digest(worker_plan["members"])
-    worker_run = evidence / "conservative-worker"
+    worker_run = evidence / "conservative-erased-callable"
     worker_summary = collector.collect_host(worker_run, root, worker_plan, helper, report,
-        [worker_key], ["concurrent"], ["O0", "O3"], resume=False, scope="focused-controls")
+        [worker_key], ["single-threaded"], ["O0", "O3"], resume=False, scope="focused-controls")
     assert all(row["status"] in {"admitted-only", "unsupported"} for row in worker_summary["observations"])
     worker_manifest = collector.read_json(worker_run / "host-run.json")
     saw_conservative = False
@@ -255,7 +255,7 @@ int main() {
         assert artifact["request"]["definition_closure_required"] is True
         saw_conservative |= artifact["uses"]["closure"] == "all-executable-bodies"
         assert checked["status"] == ("admitted-only" if artifact["uses"]["admitted"] else "unsupported")
-    assert saw_conservative, "worker control no longer exercises conservative reachability"
+    assert saw_conservative, "erased-callable control no longer exercises conservative reachability"
 
     absent = evidence / "absent"
     env = dict(os.environ, GTI_RUNTIME_LIBRARY=str(absent / "runtime.a"),
