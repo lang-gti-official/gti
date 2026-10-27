@@ -323,6 +323,108 @@ int main() {
 '''
 
 
+# A fixed-array extent query is a sealed constant: range-for and size() over
+# class, owning-class and payload elements never read an element to count.
+ARRAY_EXTENT_QUERIES = r'''
+#include <std/string>
+struct Counter {
+  int count;
+  Counter(int number) : count(number) {}
+};
+struct Slot {
+  Counter value;
+  Slot(int number) : value(Counter(number)) {}
+};
+struct Named {
+  std::string text;
+  Named(std::string_view spelling) : text(std::string(spelling)) {}
+};
+enum Plain { none, pair(int first, int second) };
+int sum(Plain& value) {
+  switch (value) {
+  case Plain::none: return 0;
+  case Plain::pair(first, second): return first + second;
+  }
+}
+int main() {
+  Slot slots[3] = {Slot(4), Slot(5), Slot(6)};
+  mut int total = 0;
+  for (auto& slot : slots) { total = total * 10 + slot.value.count; }
+  if (total != 456 || slots.size() != uint64_t(3)) { return 1; }
+  Slot grid[2][2] = {{Slot(1), Slot(2)}, {Slot(3), Slot(4)}};
+  mut int weighted = 0;
+  for (auto& row : grid) {
+    for (auto& cell : row) { weighted = weighted * 10 + cell.value.count; }
+  }
+  if (weighted != 1234 || grid.size() != uint64_t(2) || grid[1].size() != uint64_t(2)) {
+    return 2;
+  }
+  Named names[2] = {Named("ab"), Named("cde")};
+  mut uint64_t letters = 0;
+  for (auto& name : names) { letters = letters + name.text.view().size(); }
+  if (letters != uint64_t(5) || names.size() != uint64_t(2)) { return 3; }
+  Plain plains[3] = {Plain::pair(1, 2), Plain::none, Plain::pair(3, 4)};
+  mut int sums = 0;
+  for (auto& plain : plains) { sums = sums * 10 + sum(plain); }
+  return sums == 307 && plains.size() == uint64_t(3) ? 0 : 4;
+}
+'''
+
+# One-dimensional arrays of sealed integral enums use their fixed-width
+# underlying integer storage in a user-defined owner and in std::array.
+INTEGRAL_ENUM_ARRAYS = r'''
+#include <std/array>
+enum class phase : uint8_t { idle, loading, running };
+enum class reach : int64_t { near = 7, far = 6000000000 };
+phase next(phase current) {
+  switch (current) {
+  case phase::idle: return phase::loading;
+  case phase::loading: return phase::running;
+  case phase::running: return phase::idle;
+  default: return phase::idle;
+  }
+}
+// A user-defined owner: aggregate formation, the by-value array parameter
+// and the field publication are the same rule std::array relies on.
+struct Track {
+  phase stops[3];
+  Track(phase initial[3]) : stops(initial) {}
+  phase at(uint64_t index) { return this.stops[index]; }
+};
+Track route(phase first) {
+  phase second = next(first);
+  return Track({first, second, next(second)});
+}
+std::array<phase, 3> cycle(phase first) {
+  phase second = next(first);
+  return std::array<phase, 3>({first, second, next(second)});
+}
+int main() {
+  Track track = route(phase::running);
+  if (track.at(uint64_t(0)) != phase::running || track.at(uint64_t(1)) != phase::idle ||
+      track.at(uint64_t(2)) != phase::loading) {
+    return 1;
+  }
+  std::array<phase, 3> states = cycle(phase::loading);
+  if (states[uint64_t(0)] != phase::loading || states[uint64_t(1)] != phase::running ||
+      states[uint64_t(2)] != phase::idle) {
+    return 2;
+  }
+  mut std::array<phase, 3> copy = states;
+  phase wrapped = next(copy.at(uint64_t(1)));
+  copy.at(uint64_t(0)) = wrapped;
+  if (states.at(uint64_t(0)) != phase::loading || copy.at(uint64_t(0)) != phase::idle ||
+      copy.at(uint64_t(2)) != phase::idle) {
+    return 3;
+  }
+  reach far = reach::far;
+  std::array<reach, 2> reaches = std::array<reach, 2>({far, reach::near});
+  if (reaches[uint64_t(0)] != reach::far || reaches[uint64_t(1)] != reach::near) { return 4; }
+  return 0;
+}
+'''
+
+
 def successes(root: Path) -> dict[str, str]:
     cases = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS,
              'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES,
@@ -332,7 +434,9 @@ def successes(root: Path) -> dict[str, str]:
              'erased-references': ERASED_REFERENCES,
              'erased-reference-cleanup': ERASED_REFERENCE_CLEANUP,
              'unsafe-wrapper': UNSAFE_WRAPPER,
-             'conditional-references': CONDITIONAL_REFERENCES}
+             'conditional-references': CONDITIONAL_REFERENCES,
+             'array-extent-queries': ARRAY_EXTENT_QUERIES,
+             'integral-enum-arrays': INTEGRAL_ENUM_ARRAYS}
     cases['shipped-example'] = (
         root / 'examples/llvm/places-and-text.gti').read_text()
     cases['enum-references'] = (

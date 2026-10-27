@@ -5685,6 +5685,14 @@ pointer coercion. Staging is transport, not a second pointer arithmetic operatio
 or an additional unsafe permission. Missing producers, changed pointee types
 and readonly-to-mutable coercions do not acquire that witness.
 
+`NativePayloadRawAccess` is the separate raw witness for an exact payload-enum
+pointee whose own storage is admitted as `NativePayloadStorage`. It covers
+pointer add/subtract by an exact integer offset, which strides by the sealed
+payload layout, its staged call argument, and checked `RawBorrow`/`RawBorrowMut`
+reference formation, which transports the unchanged address. Pointer difference
+and raw construction, extraction, relocation or cleanup through the pointer are
+not part of it, and the storage witness alone never grants raw access.
+
 `PolymorphicStorage` now implements private construct, has-value, read/read-mut,
 reset and relocation operations using instructions owned by the sealed session.
 Non-emitting preflight checks concrete relocation eligibility and exact interface
@@ -5862,7 +5870,13 @@ A pending vocabulary family can have a narrower implemented shape. Each use
 retains its original ledger row and an optional inventory-produced structural
 implementation witness. Concrete primitive or raw-pointer arrays satisfy `PassiveArrayValue`,
 not the whole `Aggregate` family; admitted ordinary class arrays use the separate
-`NativeClassStorage` witness. Private capability/payload arrays remain rejected. Distinct
+`NativeClassStorage` witness. One-dimensional arrays of a sealed integral enum
+with a fixed-width integer backing use `IntegralEnumArrayValue`: storage,
+by-value transport and complete element-wise formation of exactly the underlying
+integer array, never element projection or nested arrays. `ArraySize` and
+`ArrayRangeBegin` over any concrete array with an admitted representation use
+`ArrayExtentQuery`, because emission yields the sealed extent or zero without
+reading the receiver. Private capability/payload arrays remain rejected. Distinct
 shapes have distinct inventory keys, so a supported occurrence cannot hide an
 unsupported occurrence of the same enum in the same body. `MustBeAbsent` rules
 are never overridden, and callers cannot supply witnesses. These facts live in

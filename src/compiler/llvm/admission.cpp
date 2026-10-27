@@ -1285,6 +1285,54 @@ public:
     return sealed && sealed->underlyingType == stage.info.type &&
            isPassiveScalarValueType(stage.info.type);
   }
+  // A fixed array's extent query never reads its receiver: emission produces
+  // the sealed static extent (ArraySize) or the zero endpoint
+  // (ArrayRangeBegin). The element family is therefore irrelevant to this
+  // operation; the receiver only needs an admitted native representation,
+  // and its operand remains independently inventoried.
+  bool arrayExtentQuery(const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Call ||
+        (stage.intrinsic != IntrinsicKind::ArraySize &&
+         stage.intrinsic != IntrinsicKind::ArrayRangeBegin) ||
+        !stage.receiver || !stage.operands.empty() || stage.functionTarget ||
+        stage.constructorTarget || stage.bodyTarget || stage.lambdaTarget ||
+        stage.nativeCalleeType || stage.loan ||
+        stage.info.type != SemanticType::UInt64)
+      return false;
+    const auto &array = stage.receiver->type;
+    return array.kind == SemanticType::Array && array.arguments.size() == 1 &&
+           !array.arrayLengthParameterId && nativeValue(array);
+  }
+  // A sealed integral enum is represented by exactly its declared fixed-width
+  // underlying integer (layout.cpp), so a one-dimensional array of them has
+  // the storage and SSA aggregate form of that integer array. Nested arrays,
+  // payload enums, Bool/Char backings and every other element family stay
+  // outside this predicate.
+  bool integralEnumArray(const SemanticType &type) const {
+    if (type.kind != SemanticType::Array || type.arguments.size() != 1 ||
+        type.arrayLengthParameterId)
+      return false;
+    const auto &element = type.arguments.front();
+    const auto *sealed = program.findIntegralEnum(element);
+    return element.kind == SemanticType::Enum && sealed &&
+           !program.findPayloadEnum(element) &&
+           constantIntegerDomain(sealed->underlyingType).has_value() &&
+           nativeValue(element);
+  }
+  // Complete element-wise formation only: one operand of the exact element
+  // type per element, so no unwritten slot is zero-filled into a value that
+  // may not name an enumerator.
+  bool integralEnumArrayAggregate(const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Compute ||
+        stage.operation != MirOperation::Aggregate ||
+        !integralEnumArray(stage.info.type) ||
+        stage.operands.size() != stage.info.type.arrayLength)
+      return false;
+    const auto &element = stage.info.type.arguments.front();
+    return std::all_of(
+        stage.operands.begin(), stage.operands.end(),
+        [&](const auto &operand) { return operand.type == element; });
+  }
   std::optional<Shape> mutexShape(const SemanticType &type) const {
     if (program.executionProfile() != ExecutionProfile::Concurrent ||
         !program.target().runtimeCapabilities.threads)
@@ -1666,6 +1714,32 @@ public:
            constantIntegerDomain(stage.operands[reversed ? 0 : 1].type)
                .has_value();
   }
+  // An exact payload enum whose own storage is admitted as native payload
+  // storage. Raw access through it never reads the tag or a payload field:
+  // arithmetic strides by the payload layout and a raw reference transports
+  // the selected address unchanged. Hierarchy-related and capability
+  // payloads fail the storage witness and stay closed.
+  bool nativePayloadPointee(const SemanticType &type) const {
+    return type.kind == SemanticType::Enum && program.findPayloadEnum(type) &&
+           nativeValue(type) && classShape(type) == Shape::NativePayloadStorage;
+  }
+  bool payloadPointerArithmetic(const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Compute ||
+        stage.operands.size() != 2 ||
+        (stage.operation != MirOperation::PointerAdd &&
+         stage.operation != MirOperation::PointerSubtract))
+      return false;
+    const bool reversed =
+        stage.operation == MirOperation::PointerAdd &&
+        stage.operands[1].type.kind == SemanticType::RawPointer;
+    const auto &pointer = stage.operands[reversed ? 1 : 0].type;
+    return pointer.kind == SemanticType::RawPointer &&
+           pointer.arguments.size() == 1 &&
+           nativePayloadPointee(pointer.arguments[0]) &&
+           stage.info.type == pointer &&
+           constantIntegerDomain(stage.operands[reversed ? 0 : 1].type)
+               .has_value();
+  }
   std::optional<Shape> pointerArithmeticInput(const MirBlock &block,
                                               const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
@@ -1711,6 +1785,8 @@ public:
                    ? std::optional(Shape::NativeClassRawAccess)
                : primitivePointerArithmetic(producer)
                    ? std::optional(Shape::PrimitiveRawAccess)
+               : payloadPointerArithmetic(producer)
+                   ? std::optional(Shape::NativePayloadRawAccess)
                    : std::nullopt;
     }
     return std::nullopt;
@@ -1959,13 +2035,23 @@ public:
   bool representedRawReferenceTypes(const MirInstruction &stage) const {
     const auto &pointer = stage.operands[0].type;
     if (!(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
-        !ordinaryRawReferenceObject(pointer.arguments.front()))
+        !ordinaryRawReferenceObject(pointer.arguments.front()) &&
+        !payloadRawReferent(stage))
       return false;
     const auto &witness = stage.parameterTypes[1];
     // The verifier owns origin/access; the witness need not share the raw
     // pointer's type or address. Neither branch materializes or copies it.
     return passiveReferenceType(witness) ||
            ordinaryRawReferenceObject(witness.arguments.front());
+  }
+  // The raw-borrow call's result names exactly the pointer's payload-enum
+  // pointee; the reference is that unchanged address.
+  bool payloadRawReferent(const MirInstruction &stage) const {
+    const auto &pointer = stage.operands[0].type;
+    return pointer.kind == SemanticType::RawPointer &&
+           pointer.arguments.size() == 1 &&
+           nativePayloadPointee(pointer.arguments.front()) &&
+           stage.info.type == pointer.arguments.front();
   }
 
   bool representedTextAddress(const MirBody &body,
@@ -2464,6 +2550,7 @@ public:
             add(Shape::NativeUnion, classShape(type));
       const bool passiveArray =
           type.kind == SemanticType::Array && passiveArrayElement(type);
+      const bool enumArray = !passiveArray && integralEnumArray(type);
       const bool arrayAddress = type.kind == SemanticType::RawPointer &&
                                 type.arguments.size() == 1 &&
                                 passiveArrayElement(type.arguments.front());
@@ -2485,6 +2572,7 @@ public:
           : native_llvm::nativeCFunctionValueContract(program, nativeTarget, type)
               ? std::optional(Shape::NativeCSignature)
           : passiveArray ? std::optional(Shape::PassiveArrayValue)
+          : enumArray    ? std::optional(Shape::IntegralEnumArrayValue)
           : reference    ? std::optional(Shape::PassiveReference)
           : arrayAddress ? std::optional(Shape::CheckedArrayProjection)
                          : representationShape(type));
@@ -2497,9 +2585,10 @@ public:
         add(Shape::NativeScalar, nativeScalar);
       }
       if (type.kind == SemanticType::Array)
-        add(Shape::FixedArray, passiveArray
-                                   ? std::optional(Shape::PassiveArrayValue)
-                                   : representationShape(type));
+        add(Shape::FixedArray,
+            passiveArray ? std::optional(Shape::PassiveArrayValue)
+            : enumArray  ? std::optional(Shape::IntegralEnumArrayValue)
+                         : representationShape(type));
       if (!type.arguments.empty())
         add(Shape::TypeArguments);
       for (const SemanticType &argument : type.arguments) {
@@ -2824,10 +2913,14 @@ public:
             native_llvm::nativeCFunctionBorrowInputContract(
                 program, nativeTarget, mir, stage);
         const bool rawReference = representedRawReference(mir, mirBlock, stage);
+        // A payload referent is reached only through the raw-access witness;
+        // its storage witness does not itself grant raw reference formation.
         const auto rawReferenceShape =
-            rawReference ? std::optional(classShape(stage.info.type)
-                                             .value_or(Shape::PassiveReference))
-                         : std::nullopt;
+            !rawReference ? std::nullopt
+            : nativePayloadPointee(stage.info.type)
+                ? std::optional(Shape::NativePayloadRawAccess)
+                : std::optional(classShape(stage.info.type)
+                                    .value_or(Shape::PassiveReference));
         const auto [extendedRaw, validRaw] = nativeRawStage(mir, stage);
         const bool rawClassStage = extendedRaw && validRaw;
         const bool classArithmetic = nativePointerArithmetic(stage) && validRaw;
@@ -2959,7 +3052,11 @@ public:
               : scalarMutation ? std::optional(Shape::InPlaceScalarMutation)
               : primitiveRawIndex(stage) || primitivePointerArithmetic(stage)
                   ? std::optional(Shape::PrimitiveRawAccess)
+              : payloadPointerArithmetic(stage)
+                  ? std::optional(Shape::NativePayloadRawAccess)
               : arrayAggregate ? std::optional(Shape::PassiveArrayValue)
+              : integralEnumArrayAggregate(stage)
+                  ? std::optional(Shape::IntegralEnumArrayValue)
               : stage.operation == MirOperation::Aggregate &&
                       stage.info.type.kind == SemanticType::Array
                   ? classShape(stage.info.type)
@@ -3026,7 +3123,8 @@ public:
                       (stage.intrinsic == IntrinsicKind::ArraySize ||
                        stage.intrinsic == IntrinsicKind::ArrayRangeBegin)
                   ? std::optional(Shape::PassiveArrayValue)
-                  : std::nullopt);
+              : arrayExtentQuery(stage) ? std::optional(Shape::ArrayExtentQuery)
+                                        : std::nullopt);
         }
         if (stage.receiver)
           operand(*stage.receiver);
@@ -3213,6 +3311,10 @@ public:
                        stage.unsafeOperation ==
                            UnsafeOperationKind::PointerArithmetic)
                   ? std::optional(Shape::NativeClassRawAccess)
+              : payloadPointerArithmetic(stage) &&
+                      stage.unsafeOperation ==
+                          UnsafeOperationKind::PointerArithmetic
+                  ? std::optional(Shape::NativePayloadRawAccess)
               : typedMemory && stage.unsafeOperation ==
                                    UnsafeOperationKind::ObjectLifetime
                   ? std::optional(Shape::NativeMemoryOperation)

@@ -472,6 +472,72 @@ int main() {
   return 0;
 }
 ''',
+    "payload-raw-access": r'''
+#include <std/memory>
+#include <std/vector>
+mut int trace = 0;
+class Resource {
+  int id;
+public:
+  Resource(int id) : id(id) {}
+  Resource(Resource&) = delete;
+  Resource(Resource&&) = default;
+  ~Resource() { trace = trace * 10 + this.id; }
+  int read() { return this.id; }
+};
+enum Value { empty, one(Resource value), number(int count) };
+int score(Value& value) {
+  switch (value) {
+  case Value::empty: return 0;
+  case Value::one(auto& item): return item.read();
+  case Value::number(count): return count;
+  }
+}
+enum Plain { none, pair(int first, int second) };
+int sum(Plain& value) {
+  switch (value) {
+  case Plain::none: return 0;
+  case Plain::pair(first, second): return first + second;
+  }
+}
+struct Window {
+  mut Plain values[3] = {Plain::pair(1, 2), Plain::none, Plain::pair(3, 5)};
+};
+int main() {
+  {
+    // Library slots advance raw payload pointers to append, relocate on
+    // growth, read, write and destroy the elements of a payload enum.
+    mut std::vector<Value> values{};
+    values.push_back(Value::number(4));
+    values.push_back(Value::one(Resource(1)));
+    values.push_back(Value::empty);
+    values.push_back(Value::number(9));
+    values.push_back(Value::one(Resource(2)));
+    mut int total = 0;
+    for (auto& value : values) { total = total * 10 + score(value); }
+    if (total != 41092 || values.size() != uint64_t(5)) { return 1; }
+    values[uint64_t(2)] = Value::number(7);
+    if (score(values[uint64_t(2)]) != 7 || score(values.at(uint64_t(1))) != 1) { return 2; }
+    values.pop_back();
+    if (trace != 2 || values.size() != uint64_t(4)) { return 3; }
+  }
+  if (trace != 21) { return 4; }
+  // Direct add/subtract in either operand order with signed or unsigned
+  // offsets, a staged advanced argument, and checked raw references.
+  mut Window window{};
+  unsafe {
+    Plain* first = &window.values[0];
+    Plain* last = uint64_t(2) + first;
+    Plain* middle = last - int32_t(1);
+    if (sum(std::assume_ref(last, window)) != 8 || sum(std::assume_ref(middle, window)) != 0 ||
+        sum(std::assume_ref(first + uint64_t(2), window)) != 8) {
+      return 5;
+    }
+    std::assume_mut(last, window) = Plain::pair(4, 2);
+  }
+  return sum(window.values[2]) == 6 ? 0 : 6;
+}
+''',
     "example": None,
 }
 
@@ -498,6 +564,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "payload-access-failures": (
             "empty-optional", "inactive-value", "inactive-error"),
         "checked-arithmetic": ("checked-arithmetic",),
+        "payload-raw-access": ("payload-raw-access",),
     }
 
 

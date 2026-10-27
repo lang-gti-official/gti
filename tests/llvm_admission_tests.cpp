@@ -2218,6 +2218,94 @@ int main() { int* left[2] = {}; int* right[2] = {}; return left == right ? 0 : 1
              pointerArrayEquality.firstUnsupported()->entry->key() ==
                  "Shape.ArrayValueComparison",
          "pointer array storage does not invent element comparison semantics");
+  // An extent query reads no receiver bytes, so a class-element receiver
+  // reports the constant-extent witness rather than a passive-array claim.
+  const auto classExtents = lang::planLlvmAdmission(lower(R"(
+struct Slot { int value; Slot(int value) : value(value) {} };
+int main() {
+  Slot slots[2] = {Slot(3), Slot(4)};
+  mut int total = 0;
+  for (auto& slot : slots) { total += slot.value; }
+  return total == 7 && slots.size() == uint64_t(2) ? 0 : 1;
+}
+)"));
+  bool extentSize = false, extentBegin = false;
+  for (const auto &use : classExtents.requirements())
+    if (use.entry->family == "IntrinsicKind" &&
+        (use.entry->name == "ArraySize" ||
+         use.entry->name == "ArrayRangeBegin")) {
+      (use.entry->name == "ArraySize" ? extentSize : extentBegin) = true;
+      expect(use.entry->state == lang::LlvmCoverageState::Pending &&
+                 use.implementedShape &&
+                 use.implementedShape->name == "ArrayExtentQuery",
+             "a class-array extent query uses only the constant extent");
+    }
+  expect(classExtents.admitted() && extentSize && extentBegin,
+         "range-for and size() over class elements read no element");
+  // A sealed integral enum array is exactly its underlying integer array.
+  // Only complete one-dimensional formation is claimed.
+  const auto enumArrays = lang::planLlvmAdmission(lower(R"(
+enum class Phase : uint8_t { idle, running };
+struct Track {
+  Phase stops[2];
+  Track(Phase initial[2]) : stops(initial) {}
+  Phase at(uint64_t index) { return this.stops[index]; }
+};
+int main() {
+  Phase first = Phase::running;
+  Track track = Track({first, Phase::idle});
+  return track.at(uint64_t(0)) == Phase::running ? 0 : 1;
+}
+)"));
+  bool enumAggregate = false;
+  for (const auto &use : enumArrays.requirements())
+    if (use.entry->family == "MirOperation" && use.entry->name == "Aggregate") {
+      enumAggregate = true;
+      expect(use.implementedShape &&
+                 use.implementedShape->name == "IntegralEnumArrayValue",
+             "an enum array aggregate is integral enum array formation");
+    }
+  expect(enumArrays.admitted() && enumAggregate,
+         "one-dimensional integral enum arrays use underlying integer storage");
+  const auto nestedEnumArrays = lang::planLlvmAdmission(lower(R"(
+enum class Phase : uint8_t { idle, running };
+struct Grid {
+  Phase cells[2][2];
+  Grid(Phase a, Phase b) : cells({{a, b}, {b, a}}) {}
+};
+int main() { Grid grid = Grid(Phase::idle, Phase::running); return 0; }
+)"));
+  expect(!nestedEnumArrays.admitted() &&
+             nestedEnumArrays.firstUnsupported()->entry->key() ==
+                 "MirOperation.Aggregate",
+         "nested integral enum arrays remain outside the enum array witness");
+  // Raw payload access strides by the payload layout and transports the
+  // address; an element-count difference remains a separate operation.
+  const auto payloadDifference = lang::planLlvmAdmission(lower(R"(
+enum Plain { none, pair(int first, int second) };
+struct Window { mut Plain values[2] = {Plain::none, Plain::pair(1, 2)}; };
+int main() {
+  mut Window window{};
+  unsafe {
+    Plain* first = &window.values[0];
+    Plain* last = first + uint64_t(1);
+    return last - first == 1 ? 0 : 1;
+  }
+}
+)"));
+  bool payloadAdvance = false;
+  for (const auto &use : payloadDifference.requirements())
+    if (use.entry->family == "MirOperation" &&
+        use.entry->name == "PointerAdd") {
+      payloadAdvance = true;
+      expect(use.implementedShape &&
+                 use.implementedShape->name == "NativePayloadRawAccess",
+             "payload pointer advance uses the payload raw-access witness");
+    }
+  expect(payloadAdvance && !payloadDifference.admitted() &&
+             payloadDifference.firstUnsupported()->entry->key() ==
+                 "MirOperation.PointerDifference",
+         "payload raw access does not claim pointer difference");
   for (const auto &use : arrays.requirements())
     if (use.entry->family == "MirOperation" && use.entry->name == "Aggregate")
       expect(use.entry->state == lang::LlvmCoverageState::Pending &&
