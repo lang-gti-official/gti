@@ -44,7 +44,8 @@ for what minor and patch releases mean.
   move.
 - Compile on the native backend: destructuring declarations, reads of an
   integral enum's underlying value, counted text views held as values,
-  constructions and call receivers under declared `unsafe` permission,
+  constructions, call receivers and call results under declared `unsafe`
+  permission,
   constant-folded raw field indexing, native function values published into
   constructor fields, borrows reached through a carrier's stored reference,
   and restoring swaps and exchanges (`std::swap`, `std::exchange`,

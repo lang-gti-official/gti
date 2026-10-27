@@ -476,6 +476,40 @@ int main() {
   return 0;
 }
 ''',
+    # An unsafe call's by-value result moves into its consumer, and a fallible unsafe call's reference result is read and passed on in its success block.
+    "unsafe-result-staging": r'''
+mut int32_t divisor = 1;
+class Window {
+  int32_t& value;
+public:
+  Window(int32_t& value) : value(value) {}
+  int32_t read() { return this.value; }
+};
+unsafe Window open(int32_t& value) { return Window(value); }
+unsafe Window checked(int32_t& value) {
+  int32_t guard = 10 / divisor;
+  return Window(value);
+}
+int32_t consume(Window window) { return window.read(); }
+class Slots {
+  mut int32_t values[3];
+public:
+  Slots() : values({1, 2, 3}) {}
+  unsafe int32_t& at(uint64_t index) { return this.values[index]; }
+};
+int32_t twice(int32_t& value) { return value * 2; }
+int main() {
+  int32_t value = 7;
+  mut Slots slots{};
+  unsafe {
+    if (consume(open(value)) != 7) { return 1; }
+    if (consume(checked(value)) != 7) { return 2; }
+    if (slots.at(uint64_t(1)) != 2) { return 3; }
+    if (twice(slots.at(uint64_t(2))) != 6) { return 4; }
+  }
+  return 0;
+}
+''',
     # A consumed receiver selected by a conditional is destroyed exactly once: a fresh one at the full-expression end, a moved one through its moved-from owner.
     "consuming-conditional-receivers": r'''
 mut int log = 0;

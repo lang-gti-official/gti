@@ -2412,7 +2412,8 @@ public:
            loan && loan->kind == MirLoanKind::CallResult && !loan->entry &&
            !loan->escapes && loan->producedBy == stage.hirValue &&
            loan->access == place->access &&
-           unsafeCallResultProducer(body, block, stage, *loan, stage.info.type);
+           unsafeCallResultProducer(body, block, stage, *loan, stage.info.type,
+                                    ValueCategory::Place, 0, true);
   }
 
   // An argument stages a reference to the borrowed referent; a receiver stages
@@ -2479,11 +2480,51 @@ public:
     // staging.
     return place && place->root == MirPlaceRootKind::Loan &&
            place->projections.empty() && place->loan == selected && loan &&
-           place->type == referent &&
-           loan->kind == MirLoanKind::CallResult && !loan->entry &&
-           !loan->escapes && loan->producedBy == stage.hirValue &&
+           place->type == referent && loan->kind == MirLoanKind::CallResult &&
+           !loan->entry && !loan->escapes &&
+           loan->producedBy == stage.hirValue &&
            loan->access == place->access && loan->access == requiredAccess &&
-           unsafeCallResultProducer(body, block, stage, *loan, referent);
+           unsafeCallResultProducer(body, block, stage, *loan, referent,
+                                    ValueCategory::Place, 0, true);
+  }
+
+  // The caller's permission is repeated on the stage that transports an
+  // unsafe call's by-value result into its consumer. A call input carrying
+  // the exact result of an admitted ordinary unsafe call performs no unsafe
+  // operation of its own; the transport is admitted on its own terms.
+  bool unsafeCallResultStaging(const MirBody &body,
+                               const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::CallInput ||
+        stage.unsafeOperation != UnsafeOperationKind::DeclaredUnsafeCall ||
+        stage.rawMemoryAccess || stage.intrinsic != IntrinsicKind::None ||
+        stage.operands.size() != 1 ||
+        stage.operands.front().kind != MirOperandKind::Value ||
+        !stage.operands.front().value)
+      return false;
+    const auto *value = body.findValue(stage.operands.front().value);
+    const auto *block =
+        value ? body.findBlock(value->definitionBlock) : nullptr;
+    const MirInstruction *producer = nullptr;
+    if (block)
+      for (const auto &candidate : block->instructions)
+        if (!candidate.tombstone && candidate.id == value->definition)
+          producer = &candidate;
+    const auto *target =
+        producer && producer->functionTarget
+            ? program.findFunctionInstance(*producer->functionTarget)
+            : nullptr;
+    return producer && target && producer->kind == MirInstructionKind::Call &&
+           producer->result == stage.operands.front().value &&
+           producer->hirValue == stage.hirValue &&
+           producer->unsafeOperation ==
+               UnsafeOperationKind::DeclaredUnsafeCall &&
+           producer->intrinsic == IntrinsicKind::None &&
+           !producer->rawMemoryAccess && !producer->nativeCalleeType &&
+           !producer->lambdaTarget &&
+           producer->dispatch == CallDispatch::Static &&
+           producer->info.category == ValueCategory::Value &&
+           target->definitionKind == MirDefinitionKind::Source &&
+           target->linkage == LanguageLinkage::Gti && target->requiresUnsafe;
   }
 
   // A by-value result of an unsafe call that receives a further call is
@@ -3576,6 +3617,7 @@ public:
                   ? std::optional(Shape::NativeMemoryOperation)
               : (ordinaryUnsafe || unsafeCallResultLoad(mir, mirBlock, stage) ||
                  unsafeCallResultInput(mir, mirBlock, stage) ||
+                 unsafeCallResultStaging(mir, stage) ||
                  unsafeCallValueReceiver(mir, stage) ||
                  unsafeCallResultReturn(mir, mirBlock, stage))
                   ? std::optional(Shape::OrdinaryUnsafeInvocation)
