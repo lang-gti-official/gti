@@ -459,28 +459,6 @@ private:
     if (!lifetimes.transferMutexes(ir, address, value, type))
       memory.store(value, address, type);
   }
-  // A Loan operand carries provenance; its place is the optional exact
-  // runtime address source. Some loans protect a carrier object rather than
-  // the referent a borrow designates -- an entry Stored loan self-sourced at
-  // a by-value borrowed-state parameter's carrier, and a cursor loan whose
-  // source place is the cursor itself -- and no physical address is published
-  // for the designated referent under that loan. Such an operand supplies
-  // provenance only, and this borrow's own loan already names the exact
-  // source place of the referent. Every fact below is sealed MIR: the
-  // produced loan must be a direct child of the operand's provenance loan,
-  // its source place must carry exactly the operand type, and the provenance
-  // loan must protect a differently typed carrier. Anything else keeps the
-  // ordinary selection path, which fails closed on its own.
-  // An opaque stored entry loan is self-sourced at its carrier binding and
-  // never published: its slot holds no address. This is the condition under
-  // which Places::selected refuses such an operand.
-  [[nodiscard]] bool opaqueEntryProvenance(const MirOperand &operand) const {
-    const auto *record = input.findLoan(operand.loan);
-    const auto *source = record ? input.findPlace(record->source) : nullptr;
-    return record && record->kind == MirLoanKind::Stored && record->entry &&
-           record->protectsSource(record->source) && source &&
-           source->type != operand.type;
-  }
   // Whether any place, operand or receiver of this body reads the runtime
   // address published for a loan. Ending or retiring a loan reads nothing.
   [[nodiscard]] bool loanAddressRead(MirLoanId id) const {
@@ -513,6 +491,18 @@ private:
     }
     return false;
   }
+  // A Loan operand carries provenance; its place is the optional exact
+  // runtime address source. Some loans protect a carrier object rather than
+  // the referent a borrow designates -- an entry Stored loan self-sourced at
+  // a by-value borrowed-state parameter's carrier, and a cursor loan whose
+  // source place is the cursor itself -- and no physical address is published
+  // for the designated referent under that loan. Such an operand supplies
+  // provenance only, and this borrow's own loan already names the exact
+  // source place of the referent. Every fact below is sealed MIR: the
+  // produced loan must be a direct child of the operand's provenance loan,
+  // its source place must carry exactly the operand type, and the provenance
+  // loan must protect a differently typed carrier. Anything else keeps the
+  // ordinary selection path, which fails closed on its own.
   [[nodiscard]] bool
   provenanceOnlyCarrierBorrow(const MirOperand &operand,
                               const MirLoan &produced) const {
@@ -522,9 +512,22 @@ private:
       return false;
     const auto *carrier = input.findPlace(provenance->source);
     const auto *referent = input.findPlace(produced.source);
-    if (!carrier || !referent)
+    if (!carrier || !referent || referent->type != operand.type)
       return false;
-    return referent->type == operand.type && carrier->type != operand.type;
+    if (carrier->type != operand.type)
+      return true;
+    // A construction or call that produces the provenance loan publishes its
+    // own result under it -- the carrier -- whatever referent the loan names
+    // as its source.
+    for (const auto &block : input.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.loan == provenance->id &&
+            (stage.kind == MirInstructionKind::Construct ||
+             stage.kind == MirInstructionKind::Call ||
+             stage.kind == MirInstructionKind::CallBody) &&
+            stage.info.type != operand.type)
+          return true;
+    return false;
   }
   [[nodiscard]] UnstagedConstructorFieldPublicationPlan
   recordPublication(const MirInstruction &instruction) const {
@@ -1811,11 +1814,12 @@ private:
       } else if (const auto &borrowed = instruction.operands.at(0);
                  !instruction.result && !publication.matched() &&
                  borrowed.kind == MirOperandKind::Loan && borrowed.place == 0 &&
-                 opaqueEntryProvenance(borrowed) && !loanAddressRead(loan.id)) {
-        // The operand names an opaque stored entry loan, which carries
-        // provenance only, and nothing in this body reads the produced loan's
-        // address: it only states the provenance of a value this body passes
-        // on, such as a returned view. There is no runtime address to publish.
+                 !loanAddressRead(loan.id)) {
+        // The operand names a loan, not a place, so selecting it performs no
+        // checked address work, and nothing in this body reads the produced
+        // loan's address: it only states the provenance of a value this body
+        // passes on, such as a returned view or a payload holding one. There
+        // is no runtime address to publish.
         break;
       } else if (borrowed.kind == MirOperandKind::Loan && borrowed.place == 0 &&
                  provenanceOnlyCarrierBorrow(borrowed, loan)) {

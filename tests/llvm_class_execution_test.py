@@ -560,6 +560,70 @@ int main() {
   return seen == 54 ? 0 : 2;
 }
 ''',
+    # Methods on a field reached through a raw pointer use that field as their receiver; an unsafe method keeps its own permission, and a temporary dropped in that statement is an ordinary drop.
+    "raw-field-receivers": r'''
+mut int32_t dropped = 0;
+class Counter {
+  mut int32_t value = 0;
+public:
+  Counter() {}
+  void bump() mut { this.value += 1; }
+  int32_t read() { return this.value; }
+};
+class Label {
+  int32_t id;
+public:
+  Label(int32_t id) : id(id) {}
+  ~Label() { dropped += this.id; }
+  int32_t read() { return this.id; }
+};
+class Node {
+public:
+  mut Counter counter;
+  mut Label label;
+  Node() : counter(Counter()), label(Label(1)) {}
+  unsafe int32_t total() { return this.counter.read() + this.label.read(); }
+};
+Node* same(Node* node) { return node; }
+int main() {
+  mut Node node{};
+  mut Node* pointer = &node;
+  unsafe {
+    pointer->counter.bump();
+    same(pointer)->counter.bump();
+    if (pointer->counter.read() != 2) { return 1; }
+    same(pointer)->label = Label(10);
+    if (pointer->label.read() != 10 || dropped != 1) { return 2; }
+    if (same(pointer)->total() != 12) { return 3; }
+  }
+  return 0;
+}
+''',
+    # A reference reborrowed from a carrier's stored reference designates the referent, and a payload returned with a borrowed view only states provenance.
+    "carrier-reborrow-provenance": r'''
+#include <std/string>
+struct Pair {
+  int32_t& left;
+  mut int32_t& right;
+  Pair(int32_t& left, mut int32_t& right) : left(left), right(right) {}
+};
+enum Word { text(std::string_view value), none };
+Word word_of(std::string& input) { return Word::text(input.view()); }
+int main() {
+  int32_t a = 1;
+  mut int32_t b = 2;
+  mut Pair pair{a, b};
+  mut int32_t& right = pair.right;
+  right = right + pair.left + 4;
+  if (b != 7) { return 1; }
+  std::string source{"word"};
+  Word word = word_of(source);
+  switch (word) {
+  case Word::text(value): return value.size() == std::size_t(4) ? 0 : 2;
+  case Word::none: return 3;
+  }
+}
+''',
     # A consumed receiver selected by a conditional is destroyed exactly once: a fresh one at the full-expression end, a moved one through its moved-from owner.
     "consuming-conditional-receivers": r'''
 mut int log = 0;
