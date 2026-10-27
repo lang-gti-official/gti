@@ -4972,11 +4972,12 @@ hierarchy-containing records, shared last-owner release and repeated empty
 cleanup. Public polymorphic owner construction and deletion are admitted by
 `NativePolymorphicOwnership` at each allocation and dynamic drop.
 
-Polymorphic replacement cleanup remains explicitly rejected: its invocation
-context must establish the receiver-state policy without inferring destruction
-from reuse of a drop recipe. Dynamic owning cleanup,
-transfer/assignment-state preservation and observable pure phases
-remain separate obligations.
+Replacement cleanup of a complete object runs its exact recipe, and the
+assignment then publishes the new object (`NativeHierarchyReplacement`).
+Replacing a polymorphic base view inside a larger object stays rejected: its
+invocation context would have to establish the receiver-state policy rather
+than infer destruction from reuse of a drop recipe. Observable pure phases
+remain a separate obligation.
 
 The bounded public hierarchy profile uses exact per-operation admission proofs,
 not a class-wide enable bit. `NativeStaticDispatchStorage` describes ordinary
@@ -5042,10 +5043,64 @@ copy state remains live; a copied base view gets the base's static dispatch stat
 The cost follows logical payload, hierarchy headers and existing active flags;
 this structural model is not measured allocation or runtime-cost acceptance.
 
-`PolymorphicTransfer` still rejects unproved class-value copies/moves, assignment,
-replacement, by-value arguments, returns of existing objects, captures, arrays and
-non-generated wrappers, nonlocal destinations and callback/native/thread
-combinations. A unique owner of a polymorphic view (including an interface or
+The same planner now publishes a moved owned binding or a checked copy into
+these destinations:
+- the prepared storage of a by-value argument, or of a consuming call's
+  receiver;
+- an inline polymorphic slot (`NativeInlinePolymorphicSlot`);
+- the caller's return destination;
+- a constructor field, through its exact field initializer.
+
+`NativeConsumingHierarchyReceiver` admits several consuming-call receivers: a
+moved binding relocated into its own value storage, a retained owned field
+staged in place, and a fresh full-expression temporary. The caller keeps the
+receiver's value obligation in each case.
+
+`NativeHierarchyReplacement` admits assignment that replaces a whole object
+containing hierarchy storage. The paired cleanup ends the previous object
+exactly once. The generated relocation of a fresh or moved value, or the
+generated logical-field copy of a checked view, then publishes the new object
+with its own dispatch state. A polymorphic destination must be a complete
+object: a whole binding, value or hidden temporary, a field or array element,
+or an object of a class nothing derives from. An accessor result reserved by a
+two-phase borrow store qualifies on the same terms. Replacing a base view
+inside a larger object could change that object's dynamic type and stays
+`PolymorphicTransfer`.
+
+`NativeHierarchyArray` admits fixed arrays of hierarchy storage held in a whole
+local or a class field. Each element is a fresh construction or by-value result
+built directly in its slot of an aggregate. That aggregate itself publishes
+into the final storage, nested arrays included. Elements are complete objects
+selected through checked index projections. Cleanup runs each element's
+complete cleanup in reverse order. Whole-array copies and by-value array
+transport stay `PolymorphicTransfer`.
+
+`NativeProgramHierarchyStorage` admits a hierarchy object in namespace or
+static-field storage that its program initialization step constructs in
+place. Code borrows that complete object through its symbol. Program storage
+carries no source or owning cleanup. Thread-local hierarchy storage stays
+`PolymorphicTransfer`.
+
+A shared owner of a polymorphic object keeps one control block across clones
+and verified upcasts. An upcast moves only the handle's view to the static
+base subobject. The last handle, through whatever view, runs the complete
+cleanup that the installed descriptor selects, then releases the complete
+allocation.
+
+The MIR relocation query accepts several lowered instances of one closure type
+when they agree on captures, as happens with a field default's lambda. A
+closure's relocation moves exactly its captures.
+
+`PolymorphicTransfer` still rejects these shapes:
+- unproved class-value copies and moves;
+- replacement of base views;
+- captures and non-generated wrappers;
+- whole-array transport;
+- thread-local and other nonlocal destinations;
+- callback, native and thread combinations, including a moved erased callable
+  consumed by a thread spawn.
+
+A unique owner of a polymorphic view (including an interface or
 abstract class) is one handle; its pointee need not be a complete object type.
 `uniqueOwnerPointee` states that representation rule for placement, admission
 and null-owner field publication alike.
@@ -5068,15 +5123,48 @@ Other generated hierarchy transfers keep their supported C++20/23 comparisons.
 Normal move-chain cleanup and virtual failure after a move require exact,
 exactly-once numeric destructor traces without observing destructor dispatch.
 
-`DestructorDispatchObservation` remains pending: cleanup order and a destructor
-owner do not establish a virtual active-class transition. Source cleanup and
-transitive helper observations through virtual calls or unresolved escapes
-reject until an approved backend-neutral lifecycle-dispatch contract exists.
-This is a missing prerequisite, not a permanent source-language prohibition.
-The native execution gate uses verified constructor states and explicit numeric
-destructor IDs to check cleanup order without asserting that missing rule.
-Pure active states and in-place hierarchy replacement remain
-separately pending. Resetting a unique/shared handle to an ordinary record is
+#### Lifecycle Dispatch
+
+The backend-neutral lifecycle-dispatch contract, by owner decision on
+2026-10-27, is "destructor's own class". While a destructor of class `C`
+runs, a virtual call on `this` resolves as if the object's dynamic type were
+`C`. That covers direct calls and calls through helpers the destructor
+invokes on `this`. The rule holds from the destructor's entry, through its
+body and the cleanup of `C`'s own fields. A destroyed derived part is never
+reached. Each base's cleanup then runs under its own class, and so do
+constructor rollback and owner-selected complete cleanup.
+
+MIR owns the transition. Every source destructor of a polymorphic class
+carries `MirDestructorDispatchState{activeClass}`, with the active class set to
+the destructor's own class. The verifier requires that record exactly for
+those destructors, and the serialization is `mir-v117`. The LLVM cleanup
+recipe installs the recorded class at each class step that still has
+observable work; it never selects a destructor's phase itself.
+`NativeLifecycleDispatch` witnesses each `DestructorDispatchObservation`
+under that record. Only a destructor without the record would stay gated. An
+abstract phase that selects a pure member stays `PureDispatchState`.
+
+Constructors already follow the symmetric rule. This records existing
+behaviour; it is not a new decision. `MirConstructorDispatchState` activates
+the class under construction once its state-bearing base completes, or at
+entry when there is none. Both backends lower it.
+
+**Known C++ backend defect.** The C++ backend runs GTI cleanup as explicit
+cleanup sequences while the C++ object is still whole. Base destructors and
+constructor rollback therefore dispatch to the most-derived override, into
+destroyed or unconstructed state. A minimal case shows it: `~Base()` reads
+`this.read()` after `~Leaf()` has set Leaf's state to `-1`. The C++ backend
+observes `-1`, while the contract selects `Base::read` and observes `1`. A
+three-level trace gives `35353` on C++ against `35241` under the contract.
+With a `std::unique_ptr` field in the derived class, the same shape stops the
+C++ backend with an internal compiler error. Under ADR 031, C++ is not an
+oracle for this shape, and the C++ backend is unchanged for now.
+`llvm_dispatch_execution` profile `lifecycle-dispatch` checks independent
+expected values at native O0-O3 and pins the divergent C++ results in
+`CPP_DIVERGENCES`, so that a C++ fix is reviewed there. Shapes where the
+observation does not change a result keep their C++20/23 comparisons.
+
+Pure observable active states remain separately pending. Resetting a unique/shared handle to an ordinary record is
 not in-place replacement of that record: its exact static pointee recipe retires
 the allocation, including inline hierarchy fields. Canonical recursive recipe
 and dynamic-cleanup checks still run before helper publication.

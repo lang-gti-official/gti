@@ -785,7 +785,9 @@ void testStaticLifecycle() {
   if (!nestedInput)
     throw std::runtime_error("nested lifecycle source seal failed");
   const auto nestedAdmission = planLlvmAdmission(*nestedInput);
-  expect(!nestedAdmission.admitted() &&
+  // Its base destructor observes its own phase under the lifecycle-dispatch
+  // transition MIR records for it (owner decision, 2026-10-27).
+  expect(nestedAdmission.admitted() &&
              std::any_of(nestedAdmission.requirements().begin(),
                          nestedAdmission.requirements().end(),
                          [](const auto &use) {
@@ -793,10 +795,13 @@ void testStaticLifecycle() {
                                   use.entry->family == "Shape" &&
                                   use.entry->name ==
                                       "DestructorDispatchObservation" &&
-                                  !use.implementedShape;
+                                  use.implementedShape &&
+                                  use.implementedShape->name ==
+                                      "NativeLifecycleDispatch";
                          }),
-         "nested lifecycle fixture retains its independent pending "
-         "destructor-observation requirement");
+         "nested lifecycle fixture witnesses its destructor observation with "
+         "the recorded lifecycle-dispatch transition: " +
+             nestedAdmission.limitation());
   const auto &nestedContainer = named(nestedInput->program(), "Container");
   const auto &nestedTrivial = named(nestedInput->program(), "Trivial");
   bool nestedRecipe = false;
@@ -886,8 +891,10 @@ int main() { return evaluate(2) - 2; }
     throw std::runtime_error("static lifecycle source seal failed");
   Session session(*input, {});
   const auto admission = planLlvmAdmission(*input);
-  expect(!admission.admitted(),
-         "static lifecycle IR does not widen public admission");
+  expect(admission.admitted(),
+         "static lifecycle IR is admitted under its destructors' recorded "
+         "lifecycle-dispatch transitions: " +
+             admission.limitation());
   {
     // No Failures instance or emitting Lifetimes object exists in this scope.
     // Use actual plan-bound dispatch in otherwise cold sessions.
@@ -2889,8 +2896,10 @@ void testGeneratedEmpty() {
     throw std::runtime_error("generated-empty source seal failed");
   Session session(*input, {});
   const auto admission = planLlvmAdmission(*input);
-  expect(!admission.admitted(),
-         "generated-empty private IR does not widen polymorphic admission");
+  expect(admission.admitted(),
+         "generated-empty IR is admitted under its destructors' recorded "
+         "lifecycle-dispatch transitions: " +
+             admission.limitation());
   {
     // These calls need neither Failures nor an emitting Lifetimes instance.
     Dispatch checkedDispatch(session, admission);

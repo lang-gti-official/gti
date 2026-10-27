@@ -20975,6 +20975,27 @@ verifyMirProgramContracts(const MirProgram &program) {
            .message = "bodyless destructor declaration has noncanonical MIR "
                       "body"});
     }
+    // The lifecycle-dispatch contract: a polymorphic class's source
+    // destructor runs as its own class, and only such a destructor records it.
+    {
+      const auto *owner = instance.owner != 0 &&
+                                  instance.owner <=
+                                      program.classInstances().size()
+                              ? program.findClassInstance(instance.owner)
+                              : nullptr;
+      const bool expected = owner && owner->polymorphic &&
+                            instance.definitionKind ==
+                                MirDefinitionKind::Source;
+      if (expected != instance.dispatchState.has_value() ||
+          (instance.dispatchState &&
+           instance.dispatchState->activeClass != instance.owner)) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::Destructor,
+             .owner = instance.id,
+             .message = "destructor dispatch state is not exactly its "
+                        "polymorphic owner's own class"});
+      }
+    }
     if (instance.id != 0 &&
         instance.id <= derivedFailureEffects.destructors.size() &&
         !instance.mayRaiseDefinedFailure &&

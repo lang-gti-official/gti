@@ -81,9 +81,22 @@ for what minor and patch releases mean.
   global, a field read through a selected member of a C union global, and the
   address of a C function-pointer variable. The native callback-slots and
   variable-bindings examples now build with LLVM.
-- C++ remains the production default. Polymorphic ownership, dynamic dispatch
-  transfer and erased callables (`std::function`, `std::transfer_function`)
-  remain rejected on the native backend.
+- Compile inheritance and dynamic dispatch on the native backend:
+  - virtual and interface calls;
+  - polymorphic `std::unique_ptr` and `std::shared_ptr` owners and their
+    upcasts;
+  - `std::function`, `std::move_only_function` and other erased callables
+    held in `std::inline_polymorphic`;
+  - polymorphic objects passed and returned by value, assigned as whole
+    objects, held in fixed arrays, and declared as globals or static fields.
+
+  A destructor that calls a virtual method on its own object now runs the
+  destructor's own class's override; it never reaches a derived part that is
+  already destroyed. The C++ backend still calls the most-derived override
+  there, which is a known C++ backend defect. Payload enums such as
+  `std::optional` holding polymorphic values, and erased callables moved
+  into threads, remain rejected on the native backend. C++ remains the
+  production default.
 
 ## 0.480.1 — Lambda argument formatting
 
