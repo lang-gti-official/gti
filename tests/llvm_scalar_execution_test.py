@@ -182,6 +182,14 @@ int only_default(uint8_t selector) {
   default: return 20;
   }
 }
+int signed_route(int32_t value) {
+  switch (value) {
+  case -7: return 1;
+  case -1: return 2;
+  case 5: return 3;
+  default: return 4;
+  }
+}
 int main() {
   if (pick(uint8_t(0)) != 100) { return 1; }
   if (pick(uint8_t(1)) != 101) { return 2; }
@@ -204,18 +212,33 @@ int main() {
   default: taken = 2; break;
   }
   if (taken != 2) { return 9; }
+  // Negative case labels are canonical constants at the selector's width.
+  if (signed_route(-7) != 1) { return 10; }
+  if (signed_route(-1) != 2) { return 11; }
+  if (signed_route(5) != 3) { return 12; }
+  if (signed_route(-6) != 4) { return 13; }
   return 0;
 }
 ''',
-            # Enumerators stay nonnegative here: a negative enumerator crossing
-            # a function argument is answered wrongly at O1 and above by a
-            # separate defect that predates this case, and this case covers the
-            # underlying-value read rather than that argument path.
+            # Negative enumerators cross function arguments and select switch
+            # arms: their constants must be canonical at the storage width, or
+            # O3 interprocedural propagation answers the comparison wrongly.
             'integral-enum-underlying': '''
 enum class Opcode : uint8_t { halt = 0, load = 7, store = 9 };
 enum class Wide : int32_t { low = 5, high = 1000 };
+enum class Signed : int32_t { low = -5, high = 1000 };
+enum class Tiny : int8_t { least = -128, minus = -1, most = 127 };
 uint8_t opcode(Opcode value) { return std::to_underlying<uint8_t, Opcode>(value); }
 int32_t wide(Wide value) { return std::to_underlying<int32_t, Wide>(value); }
+int32_t is_low(Signed value) { if (value == Signed::low) { return 1; } return 2; }
+int route(Signed value) {
+  switch (value) {
+  case Signed::low: return 10;
+  case Signed::high: return 20;
+  default: return 30;
+  }
+}
+int8_t tiny(Tiny value) { return std::to_underlying<int8_t, Tiny>(value); }
 int main() {
   if (opcode(Opcode::halt) != uint8_t(0)) { return 1; }
   if (opcode(Opcode::load) != uint8_t(7)) { return 2; }
@@ -225,6 +248,14 @@ int main() {
   mut Opcode selected = Opcode::store;
   selected = Opcode::load;
   if (opcode(selected) != uint8_t(7)) { return 6; }
+  if (is_low(Signed::low) != 1) { return 7; }
+  if (is_low(Signed::high) != 2) { return 8; }
+  if (route(Signed::low) != 10) { return 9; }
+  if (route(Signed::high) != 20) { return 10; }
+  if (std::to_underlying<int32_t, Signed>(Signed::low) != -5) { return 11; }
+  if (tiny(Tiny::least) != int8_t(-128)) { return 12; }
+  if (tiny(Tiny::minus) != int8_t(-1)) { return 13; }
+  if (tiny(Tiny::most) != int8_t(127)) { return 14; }
   return 0;
 }
 ''',

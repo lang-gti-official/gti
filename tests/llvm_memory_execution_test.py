@@ -38,6 +38,66 @@ EXPECTED_STDOUT = {
 # pass: the fixture independently checks values and exactly-once destruction.
 NATIVE_ONLY = {"relocation-composition"}
 INLINE_CASES = {
+    # Restoring swap, exchange and indexed swap relocate between disjoint
+    # initialized places without copying or running cleanup. Each live object
+    # must be destroyed exactly once afterwards, whole arrays swap as one
+    # object, and swapping an element with itself must change nothing.
+    "restoring-exchanges": r'''
+#include <std/array>
+#include <std/string>
+#include <std/utility>
+
+mut int destroyed = 0;
+
+struct Asset {
+  std::string name;
+  int id;
+  Asset(std::string name, int id) : name(std::move(name)), id(id) {}
+  Asset(Asset& other) = delete;
+  ~Asset() { destroyed += 1; }
+};
+
+int exchanges() {
+  mut Asset first = Asset(std::string("alpha"), 1);
+  mut Asset second = Asset(std::string("beta"), 2);
+  std::swap(first, second);
+  if (first.id != 2 || second.id != 1) { return 1; }
+  if (first.name != "beta" || second.name != "alpha") { return 2; }
+  if (destroyed != 0) { return 3; }
+  Asset old = std::exchange(first, Asset(std::string("gamma"), 3));
+  if (first.id != 3 || first.name != "gamma") { return 4; }
+  if (old.id != 2 || old.name != "beta") { return 5; }
+  if (destroyed != 0) { return 6; }
+  return 0;
+}
+
+int main() {
+  int status = exchanges();
+  if (status != 0) { return status; }
+  // first, second and old are each destroyed exactly once.
+  if (destroyed != 3) { return 7; }
+
+  mut std::array<std::string, 3> words = std::array<std::string, 3>(
+      {std::string("one"), std::string("two"), std::string("three")});
+  words.swap_elements(std::size_t(0), std::size_t(2));
+  if (words[0] != "three" || words[2] != "one") { return 8; }
+  words.swap_elements(std::size_t(1), std::size_t(1));
+  if (words[1] != "two") { return 9; }
+
+  mut std::array<std::string, 2> day = std::array<std::string, 2>(
+      {std::string("dawn"), std::string("noon")});
+  mut std::array<std::string, 2> night = std::array<std::string, 2>(
+      {std::string("dusk"), std::string("midnight")});
+  day.swap(night);
+  if (day[0] != "dusk" || day[1] != "midnight") { return 10; }
+  if (night[0] != "dawn" || night[1] != "noon") { return 11; }
+
+  mut int counter = 5;
+  int previous = std::exchange(counter, 8);
+  if (previous != 5 || counter != 8) { return 12; }
+  return 0;
+}
+''',
     "address-conversion": r'''
 struct Reading { int value = 42; };
 using Erased = void*;

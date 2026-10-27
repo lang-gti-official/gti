@@ -372,6 +372,30 @@ private:
                                   const SemanticType &type) {
     return memory.load(address, type);
   }
+  // The replacement is already prepared by its own instructions. The old
+  // object relocates into the result's storage, then the replacement
+  // relocates into the vacated place, so the place stays initialized and the
+  // result owns the old value. Both transfers use the one typed relocation
+  // rule and no failure point lies between them.
+  [[nodiscard]] llvm::Value *
+  restoringExchange(const MirInstruction &instruction) {
+    if (!instruction.result || instruction.operands.size() != 2)
+      throw std::logic_error(
+          "LLVM restoring exchange lost its exact place and replacement");
+    const auto &type = instruction.info.type;
+    auto *place = operand(instruction.operands[0]);
+    auto *replacement = operand(instruction.operands[1]);
+    if (addressValue(session.program().mir(), type)) {
+      auto *result = destination(*instruction.result);
+      objectMemory.transfer(result, place, type);
+      objectMemory.transfer(place, replacement, type);
+      return result;
+    }
+    auto *old = objectMemory.held(type);
+    objectMemory.transfer(old, place, type);
+    store(replacement, place, type);
+    return load(old, type);
+  }
   // A counted text view is a body value, not an object with identity. A place
   // or loan receiver names storage holding one, so its view is loaded from
   // that address; an already evaluated receiver is the view itself and has no
@@ -845,6 +869,8 @@ private:
           inputs.push_back(operand(value));
         return polymorphicStorage.emit(ir, input, instruction, inputs);
       }
+      if (instruction.intrinsic == IntrinsicKind::RestoringExchange)
+        return restoringExchange(instruction);
       if (Memory::handles(instruction.intrinsic)) {
         std::vector<llvm::Value *> inputs;
         for (const auto &value : instruction.operands)
@@ -1806,10 +1832,9 @@ private:
       for (const auto &target : term.switchTargets)
         if (target.value) {
           const auto &constant = target.value->value;
-          auto *bits = llvm::ConstantInt::get(
+          auto *bits = integerConstant(
               llvm::cast<llvm::IntegerType>(value->getType()),
-              constant.negative ? uint64_t(0) - constant.magnitude
-                                : constant.magnitude);
+              constant.negative, constant.magnitude);
           output->addCase(bits, edge(target.target, target.arguments));
         }
       break;

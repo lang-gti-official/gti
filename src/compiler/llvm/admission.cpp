@@ -320,6 +320,19 @@ public:
     const auto found = bodies.find({address.kind, address.owner});
     return found == bodies.end() ? nullptr : &found->second;
   }
+  // Whether the generated typed relocation accepts this complete layout and
+  // dispatch graph. The preflight publishes no helper and no declaration.
+  bool generatedRelocation(const SemanticType &type) {
+    if (!planner())
+      return false;
+    try {
+      native_llvm::Lifetimes::preflightGeneratedRelocation(*session, *dispatch,
+                                                           type);
+      return true;
+    } catch (const BackendUnsupportedError &) {
+      return false;
+    }
+  }
   std::optional<Shape> metadata(const SemanticType &type) {
     const auto &selected = referent(type) ? type.arguments.front() : type;
     if (selected.kind != SemanticType::Class || !contains(selected))
@@ -1218,6 +1231,45 @@ public:
       return valid;
     };
     return supported(supported, type);
+  }
+  // The restoring exchanges move objects between disjoint initialized places
+  // of one type without copying or running cleanup, so each is a sequence of
+  // typed relocations of an admitted native value shape. The verifier proves
+  // the exact places, indices and result. Admission additionally requires
+  // what emission relies on: an available, failure-free relocation of an
+  // admitted value shape and, when that relocation is structural, a complete
+  // layout the generated relocation accepts.
+  bool restoringRelocation(const MirInstruction &stage) {
+    const bool indexed =
+        stage.intrinsic == IntrinsicKind::RestoringIndexedSwap;
+    if ((stage.intrinsic != IntrinsicKind::RestoringSwap &&
+         stage.intrinsic != IntrinsicKind::RestoringExchange && !indexed) ||
+        stage.kind != MirInstructionKind::Call || stage.receiver ||
+        stage.functionTarget || stage.constructorTarget || stage.lambdaTarget ||
+        stage.bodyTarget || stage.callableInvocation ||
+        stage.parameterTypes.empty() ||
+        stage.operands.size() != stage.parameterTypes.size())
+      return false;
+    const auto &reference = stage.parameterTypes.front();
+    if (reference.kind != SemanticType::Reference ||
+        reference.referenceAccess != AccessMode::Mutable ||
+        reference.arguments.size() != 1)
+      return false;
+    auto type = reference.arguments.front();
+    if (indexed) {
+      if (type.kind != SemanticType::Array || type.arguments.size() != 1 ||
+          !type.arrayLength || type.arrayLengthParameterId)
+        return false;
+      auto element = type.arguments.front();
+      type = std::move(element);
+    }
+    const auto relocation = mirTypeRelocationKind(program, type);
+    if (relocation == RelocationKind::Unavailable ||
+        !mirTypeRelocationIsDefinedFailureFree(program, type) ||
+        !nativeValue(type))
+      return false;
+    return relocation == RelocationKind::Bitwise ||
+           dispatchProofs.generatedRelocation(type);
   }
   // Exactly one sealed integral enum operand read into that enum's own
   // declared underlying integer type. No conversion, widening or payload
@@ -2767,6 +2819,7 @@ public:
           add(Shape::UnstagedConstructorFieldPublication,
               unstagedPublicationShape(mir, stage));
         const bool typedMemory = memoryOperation(stage);
+        const bool restoring = restoringRelocation(stage);
         const bool nativeFunctionBorrow =
             native_llvm::nativeCFunctionBorrowInputContract(
                 program, nativeTarget, mir, stage);
@@ -2779,8 +2832,9 @@ public:
         const bool rawClassStage = extendedRaw && validRaw;
         const bool classArithmetic = nativePointerArithmetic(stage) && validRaw;
         std::optional<Shape> storageShape =
-            typedMemory ? std::optional(Shape::NativeMemoryOperation)
-                        : std::nullopt;
+            typedMemory || restoring
+                ? std::optional(Shape::NativeMemoryOperation)
+                : std::nullopt;
         const bool mutex = native_llvm::nativeMutexCall(program, mir, stage) ||
                            native_llvm::nativeMutexLockFailure(program, stage);
         if (mutex)
@@ -2945,7 +2999,8 @@ public:
                   ? std::optional(Shape::NativeAtomicWaitingOperation)
               : mutex ? std::optional(Shape::NativeMutexOperation)
               : callableIntrinsic ? callableIntrinsic
-              : typedMemory       ? std::optional(Shape::NativeMemoryOperation)
+              : typedMemory || restoring
+                  ? std::optional(Shape::NativeMemoryOperation)
               : nativeAddressConversion(stage) && validRaw
                   ? std::optional(Shape::NativeObjectAddress)
               : erasedReference(stage) ? std::optional(Shape::ErasedReference)

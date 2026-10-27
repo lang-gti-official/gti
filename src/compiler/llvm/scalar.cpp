@@ -8,6 +8,14 @@
 #include <llvm/IR/Intrinsics.h>
 
 namespace lang::native_llvm {
+
+llvm::ConstantInt *integerConstant(llvm::IntegerType *type, bool negative,
+                                   std::uint64_t magnitude) {
+  auto bits = llvm::APInt(64, magnitude).zextOrTrunc(type->getBitWidth());
+  if (negative)
+    bits.negate();
+  return llvm::ConstantInt::get(type->getContext(), bits);
+}
 namespace {
 bool floating(const SemanticType &type) {
   return type == SemanticType::Float || type == SemanticType::Double;
@@ -77,9 +85,8 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
   if (const auto *text = std::get_if<std::string>(&value))
     return llvm::cast<llvm::Constant>(literal(*text, type));
   if (const auto *integer = std::get_if<ConstantInteger>(&value))
-    return llvm::ConstantInt::get(
-        storage, integer->negative ? uint64_t(0) - integer->magnitude
-                                   : integer->magnitude);
+    return integerConstant(llvm::cast<llvm::IntegerType>(storage),
+                           integer->negative, integer->magnitude);
   if (const auto *enumerator = std::get_if<ConstantEnum>(&value)) {
     if (const auto *payload = session.program().mir().findPayloadEnum(type)) {
       const auto variant = enumerator->value.magnitude;
@@ -92,10 +99,9 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
           layout.type.fieldOffsets.at(layout.tagIndex), ir.getInt32(variant)}};
       return constantStorage(layout.type, fragments);
     }
-    return llvm::ConstantInt::get(storage, enumerator->value.negative
-                                               ? uint64_t(0) -
-                                                     enumerator->value.magnitude
-                                               : enumerator->value.magnitude);
+    return integerConstant(llvm::cast<llvm::IntegerType>(storage),
+                           enumerator->value.negative,
+                           enumerator->value.magnitude);
   }
   if (const auto *floating = std::get_if<BinaryFloat>(&value))
     return llvm::cast<llvm::Constant>(literal(*floating, type));
@@ -246,8 +252,11 @@ llvm::Value *Scalars::literal(const Literal &literal,
   auto *output = session.layouts().get(type).value;
   if (std::holds_alternative<std::nullptr_t>(literal))
     return llvm::ConstantPointerNull::get(session.layouts().pointer());
-  if (const auto *integer = std::get_if<uint64_t>(&literal))
+  if (const auto *integer = std::get_if<uint64_t>(&literal)) {
+    if (auto *integral = llvm::dyn_cast<llvm::IntegerType>(output))
+      return integerConstant(integral, false, *integer);
     return llvm::ConstantInt::get(output, *integer);
+  }
   if (const auto *boolean = std::get_if<bool>(&literal))
     return llvm::ConstantInt::get(output, *boolean);
   if (const auto *character = std::get_if<CharacterLiteral>(&literal))
@@ -506,9 +515,9 @@ llvm::Value *Scalars::compute(const MirInstruction &instruction,
   if (instruction.operation == MirOperation::EnumConstant &&
       instruction.enumValue) {
     auto *type = session.layouts().get(instruction.info.type).value;
-    auto bits = instruction.enumValue->magnitude;
-    return llvm::ConstantInt::get(
-        type, instruction.enumValue->negative ? uint64_t(0) - bits : bits);
+    return integerConstant(llvm::cast<llvm::IntegerType>(type),
+                           instruction.enumValue->negative,
+                           instruction.enumValue->magnitude);
   }
   if (instruction.operation == MirOperation::Identity ||
       instruction.operation == MirOperation::Comma)

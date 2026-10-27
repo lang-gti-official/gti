@@ -35,6 +35,14 @@ public:
   [[nodiscard]] Result emit(const MirInstruction &instruction,
                             std::span<llvm::Value *const> inputs,
                             llvm::Value *failureChannel, bool duringFailure);
+  // The one typed relocation of a single live object: a byte transfer for a
+  // bitwise-relocatable type, otherwise the verified structural relocation.
+  // Either way the source is retired and must be refilled or abandoned, never
+  // destroyed.
+  void transfer(llvm::Value *destination, llvm::Value *source,
+                const SemanticType &type);
+  // Private storage for one object held during a restoring exchange.
+  [[nodiscard]] llvm::Value *held(const SemanticType &type);
 
 private:
   Session &session;

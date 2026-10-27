@@ -44,4 +44,13 @@ private:
                                         const SemanticType &result);
 };
 
+// The canonical LLVM constant for a sign-magnitude GTI integer at the type's
+// width. ConstantInt::get requires its uint64_t payload to fit the type unless
+// truncation is explicit, and release LLVM builds do not check that contract:
+// a negative value's 64-bit two's complement keeps its high bits, prints as
+// the intended value, and miscompiles once optimizers compare it.
+[[nodiscard]] llvm::ConstantInt *integerConstant(llvm::IntegerType *type,
+                                                 bool negative,
+                                                 std::uint64_t magnitude);
+
 } // namespace lang::native_llvm

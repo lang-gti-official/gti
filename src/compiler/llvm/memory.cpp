@@ -510,6 +510,8 @@ bool Memory::handles(IntrinsicKind intrinsic) {
   case IntrinsicKind::ObjectDestroy:
   case IntrinsicKind::ObjectRelocate:
   case IntrinsicKind::ObjectRelocateRange:
+  case IntrinsicKind::RestoringSwap:
+  case IntrinsicKind::RestoringIndexedSwap:
   case IntrinsicKind::StorageBoundsCheck:
   case IntrinsicKind::UniqueOwnerBorrow:
   case IntrinsicKind::UniqueOwnerBorrowMut:
@@ -528,6 +530,31 @@ bool Memory::handles(IntrinsicKind intrinsic) {
   }
 }
 
+void Memory::transfer(llvm::Value *destination, llvm::Value *source,
+                      const SemanticType &type) {
+  if (mirTypeRelocationKind(session.program().mir(), type) !=
+      RelocationKind::Bitwise) {
+    if (!relocateObject)
+      throw std::logic_error(
+          "LLVM structural relocation lost its typed transfer");
+    relocateObject(destination, source, type);
+    return;
+  }
+  const auto layout = session.layouts().get(type);
+  ir.CreateMemCpy(destination, llvm::Align(layout.alignment), source,
+                  llvm::Align(layout.alignment), layout.size);
+}
+
+llvm::Value *Memory::held(const SemanticType &type) {
+  auto *function = ir.GetInsertBlock()->getParent();
+  llvm::IRBuilder<> entry(&function->getEntryBlock(),
+                          function->getEntryBlock().begin());
+  const auto layout = session.layouts().get(type);
+  auto *slot = entry.CreateAlloca(layout.storage);
+  slot->setAlignment(llvm::Align(layout.alignment));
+  return slot;
+}
+
 void Memory::relocate(const MirInstruction &instruction,
                       std::span<llvm::Value *const> inputs) {
   if (!mir_detail::objectRelocate(session.program().mir(), instruction))
@@ -538,10 +565,10 @@ void Memory::relocate(const MirInstruction &instruction,
       instruction.intrinsic == IntrinsicKind::ObjectRelocateRange;
   if (mirTypeRelocationKind(session.program().mir(), type) !=
       RelocationKind::Bitwise) {
-    if (range || !relocateObject)
+    if (range)
       throw std::logic_error(
           "LLVM structural relocation lost its typed transfer");
-    relocateObject(inputs[0], inputs[1], type);
+    transfer(inputs[0], inputs[1], type);
     return;
   }
   auto *function = ir.GetInsertBlock()->getParent();
@@ -619,6 +646,59 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
   case IntrinsicKind::ObjectRelocateRange:
     relocate(instruction, inputs);
     return {true};
+  case IntrinsicKind::RestoringSwap: {
+    // Two disjoint initialized places exchange representations through one
+    // held object. Each transfer retires its source and every retired place
+    // is refilled at once, so both places end initialized and the held object
+    // ends retired and is never destroyed. No user code or failure point lies
+    // between the three transfers.
+    if (inputs.size() != 2 || instruction.parameterTypes.size() != 2 ||
+        instruction.parameterTypes[0].arguments.size() != 1)
+      throw std::logic_error("LLVM restoring swap lost its exact places");
+    const auto &type = instruction.parameterTypes[0].arguments.front();
+    auto *slot = held(type);
+    transfer(slot, inputs[0], type);
+    transfer(inputs[0], inputs[1], type);
+    transfer(inputs[1], slot, type);
+    return {true};
+  }
+  case IntrinsicKind::RestoringIndexedSwap: {
+    if (inputs.size() != 3 || instruction.parameterTypes.size() != 3 ||
+        instruction.parameterTypes[0].arguments.size() != 1)
+      throw std::logic_error("LLVM indexed swap lost its exact storage");
+    const auto &storage = instruction.parameterTypes[0].arguments.front();
+    if (storage.kind != SemanticType::Array ||
+        storage.arguments.size() != 1 || !inputs[1]->getType()->isIntegerTy(64) ||
+        !inputs[2]->getType()->isIntegerTy(64))
+      throw std::logic_error("LLVM indexed swap lost its fixed array");
+    const auto &element = storage.arguments.front();
+    auto *extent = ir.getInt64(storage.arrayLength);
+    guard(ir.CreateOr(ir.CreateICmpUGE(inputs[1], extent),
+                      ir.CreateICmpUGE(inputs[2], extent)),
+          {DefinedFailureCode::IndexOutOfBounds,
+           DefinedFailureDetail::PrivateStorage});
+    // Exchanging an element with itself changes nothing. Skip the transfers
+    // rather than relocate a place onto itself.
+    auto *function = ir.GetInsertBlock()->getParent();
+    auto *exchange =
+        llvm::BasicBlock::Create(session.context(), "swap.distinct", function);
+    auto *done =
+        llvm::BasicBlock::Create(session.context(), "swap.done", function);
+    ir.CreateCondBr(ir.CreateICmpEQ(inputs[1], inputs[2]), done, exchange);
+    ir.SetInsertPoint(exchange);
+    auto *array = session.layouts().get(storage).storage;
+    auto *left = ir.CreateInBoundsGEP(array, inputs[0],
+                                      {ir.getInt64(0), inputs[1]});
+    auto *right = ir.CreateInBoundsGEP(array, inputs[0],
+                                       {ir.getInt64(0), inputs[2]});
+    auto *slot = held(element);
+    transfer(slot, left, element);
+    transfer(left, right, element);
+    transfer(right, slot, element);
+    ir.CreateBr(done);
+    ir.SetInsertPoint(done);
+    return {true};
+  }
   case IntrinsicKind::ObjectDestroy: {
     if (!mir_detail::objectDestroy(session.program().mir(), instruction))
       throw std::logic_error("LLVM object destruction lost its exact cleanup");
