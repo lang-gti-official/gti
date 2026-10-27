@@ -5142,6 +5142,19 @@ call are fresh producers that publish into their destination. This lets
 alternatives moved out, and payload values returned by value stay
 `PolymorphicTransfer`.
 
+Hierarchy metadata also covers classes that hold borrowed state, such as a
+reference field beside an inline polymorphic object. A reference or view is an
+address, and its loans are MIR facts with no runtime state beside the dispatch
+metadata. A construction that stores a borrow is still a fresh object, so it
+publishes in place. A carrier received by reference has a parameter loan with a
+stored dependency, and the dependency has no representation, as for a call
+result. The carrier's entry record of the borrow in its fields is borrow
+metadata. A destructor that writes through its borrow runs as any other
+cleanup. MIR's relocation contract keeps borrowed state in place
+(`mirTypeRelocationKind` is unavailable for it). Moving such an object, for
+example a scoped thread task passed by value, therefore stays
+`PolymorphicTransfer` until MIR gives carriers a relocation.
+
 `NativeProgramHierarchyStorage` admits a hierarchy object in namespace or
 static-field storage that its program initialization step constructs in
 place. Code borrows that complete object through its symbol. Program storage

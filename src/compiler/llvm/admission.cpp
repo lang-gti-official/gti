@@ -1072,10 +1072,12 @@ private:
         owner.cAbiRecord || owner.cAbiLayout || owner.cOpaqueHandle ||
         owner.unionLayout ||
         owner.compilerCapability != CompilerCapabilityTypeKind::None ||
-        owner.traits.containsBorrowedState || !path.insert(owner.id).second)
+        !path.insert(owner.id).second)
       return false;
     // Inline hierarchy fields keep this exact metadata proof; every other
-    // field uses its ordinary native value representation.
+    // field uses its ordinary native value representation. Borrowed state
+    // is such a field: a reference or view is an address, and its loans are
+    // MIR facts with no runtime state beside the dispatch metadata.
     bool valid =
         std::all_of(owner.declaredFields.begin(), owner.declaredFields.end(),
                     [&](const auto &field) {
@@ -1835,6 +1837,14 @@ private:
   }
   bool supportedLoan(const MirBody &body, const MirLoan &loan) const {
     if (simpleLoan(loan))
+      return true;
+    // A borrow carrier received by reference: the parameter's stored
+    // dependency only protects the external owners the carrier borrows and
+    // has no representation, as for a call result.
+    if (loan.kind == MirLoanKind::Parameter && loan.entry &&
+        loan.storedDependency && !loan.referenceSelection &&
+        loan.additionalDependencies.empty() && loan.conditions.empty() &&
+        !loan.lifecycleBound && !loan.twoPhase && !loan.escapes)
       return true;
     if (loan.referenceSelection || !loan.additionalDependencies.empty() ||
         !loan.conditions.empty() || loan.lifecycleBound || loan.entry)
@@ -4572,8 +4582,24 @@ public:
       // the pointer's own storage is an ordinary native borrow.
       const bool hierarchy = origin && dispatchProofs.related(origin->type) &&
                              origin->type.kind != SemanticType::RawPointer;
+      // An entry record that a referenced carrier stores a borrow in its
+      // fields names that external referent; like other borrow metadata it
+      // has no representation beside the carrier's own layout.
+      const bool storedRecord =
+          hierarchy && loan.kind == MirLoanKind::Stored && loan.entry &&
+          !loan.storedDependency && !loan.designatedFields.empty() &&
+          !loan.referenceSelection && loan.additionalDependencies.empty() &&
+          loan.conditions.empty() && !loan.twoPhase &&
+          dispatchProofs
+              .metadata(origin->type.kind == SemanticType::Reference &&
+                                origin->type.arguments.size() == 1
+                            ? origin->type.arguments.front()
+                            : origin->type)
+              .has_value();
       const auto view =
-          hierarchy ? dispatchProofs.loan(mir, loan) : std::nullopt;
+          storedRecord ? std::optional(Shape::NativeBorrowMetadata)
+          : hierarchy  ? dispatchProofs.loan(mir, loan)
+                       : std::nullopt;
       add(loan.kind, hierarchy     ? (view || !mutexShellLoan(mir, loan.id)
                                           ? view
                                           : std::optional(

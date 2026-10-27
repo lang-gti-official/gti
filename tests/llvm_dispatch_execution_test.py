@@ -73,6 +73,7 @@ SUCCESS_FILES = {
     "generated-empty-former-reject": "tests/fixtures/llvm_dispatch_generated_empty.gti",
     "hierarchy-payloads": "tests/fixtures/llvm_dispatch_hierarchy_payloads.gti",
     "payload-moves": "tests/fixtures/llvm_dispatch_payload_moves.gti",
+    "borrowed-carriers": "tests/fixtures/llvm_dispatch_borrowed_carriers.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -348,6 +349,19 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     "reject-payload-copy": PLAIN + "enum Mark { none, held(Plain value) };\nint main() { Mark first = Mark::held(Plain()); Mark second = first; switch (second) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-payload-return": PLAIN + "enum Mark { none, held(Plain value) };\nMark make() { return Mark::held(Plain()); }\nint main() { Mark mark = make(); switch (mark) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
+    # MIR keeps borrow carriers in place, so moving a hierarchy object that
+    # holds a reference stays gated; move this control to another refused
+    # construct as LLVM coverage grows.
+    "reject-moved-borrow-carrier": """interface Gauge { int read(); };
+class Scaled : public Gauge {
+  int value;
+  int& scale;
+public:
+  Scaled(int value, int& scale) : value(value), scale(scale) {}
+  int read() override { return this.value * this.scale; }
+};
+int main() { int scale = 3; Scaled first{2, scale}; Scaled moved = std::move(first); return moved.read(); }
+""",
     # MIR leaves a base initializer unstaged when an argument owns cleanup: no
     # InitializeBase runs the base constructor, so LLVM refuses the constructor
     # instead of leaving its base unconstructed. Each control must become an
@@ -1271,7 +1285,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1760,7 +1774,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "mut-borrow-scalar-bool": ("borrowed-dispatch", "borrowed-mut-reference-chain",
                                   "hierarchy-reference-results", "owner-reference-failure",
                                   "owner-reference-wrong-cleanup", "shared-owner-reference",
-                                  "owner-failure-before-reference", "replacements"),
+                                  "owner-failure-before-reference", "replacements",
+                                  "borrowed-carriers"),
         "virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
                                "static-dispatch", "dispatch-cost-correctness",
                                "virtual-signatures", "virtual-signature-failure",

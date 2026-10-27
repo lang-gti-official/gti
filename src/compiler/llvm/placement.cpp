@@ -19,9 +19,10 @@ bool isFreshObjectProducer(const MirProgram &program,
       producer.info.type.kind != SemanticType::Class ||
       producer.info.category != ValueCategory::Value)
     return false;
+  // A construction's loan is the borrow its new object stores; the object
+  // itself is still fresh.
   if (producer.kind == MirInstructionKind::Construct)
-    return producer.constructorKind == ConstructorKind::Ordinary &&
-           !producer.loan;
+    return producer.constructorKind == ConstructorKind::Ordinary;
   // A taken thread result is relocated out of its runtime box into the
   // destination its operation is given, like a by-value call result.
   if (producer.kind == MirInstructionKind::Call &&
@@ -1844,6 +1845,8 @@ private:
         owner.compilerCapability != CompilerCapabilityTypeKind::None ||
         owner.traits.containsBorrowedState ||
         owner.lifecycleBoundBorrowCarrier)
+      // MIR's relocation contract keeps borrowed state in place; such an
+      // object is constructed, borrowed and dropped where it lives.
       unsupported("LLVM transfer requires a borrow-free ordinary hierarchy");
     if (owner.moveConstructor != SpecialMemberStatus::Generated ||
         !owner.traits.movable ||

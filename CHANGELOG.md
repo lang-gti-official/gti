@@ -122,7 +122,10 @@ for what minor and patch releases mean.
   - payload enums holding them moved between variables, moved out by a
     consuming `std::move(made).value()` or a by-move `switch` binding, and
     `std::thread_result` of a polymorphic value joined back through
-    `std::expected`.
+    `std::expected`;
+  - classes holding a polymorphic object beside a reference field,
+    constructed in place, passed by reference and destroyed. Moving such an
+    object is still rejected on the native backend.
 
   A destructor that calls a virtual method on its own object now runs the
   destructor's own class's override; it never reaches a derived part that is
