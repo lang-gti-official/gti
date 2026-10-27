@@ -1841,6 +1841,52 @@ public:
         stage.operands.begin(), stage.operands.end(),
         [&](const auto &operand) { return field(operand.place); });
   }
+  // A method reached through a raw pointer is the same member access as a
+  // field read through it: its receiver is staged as a borrow of the
+  // dereferenced native raw place, and the call consuming that staged
+  // receiver shares the access. Either stage is admitted exactly when the
+  // dereferenced place is.
+  bool nativeRawReceiverStage(const MirBody &mir,
+                              const MirInstruction &stage) const {
+    const auto staged = [&](const MirInstruction &input) {
+      const bool mutableInput =
+          input.callInputKind == HirCallInputKind::MutableBorrow;
+      if (input.kind != MirInstructionKind::CallInput ||
+          input.callInputRole != MirCallInputRole::Receiver ||
+          (input.callInputKind != HirCallInputKind::ReadBorrow &&
+           !mutableInput) ||
+          input.operands.size() != 1 ||
+          input.operands.front().kind !=
+              (mutableInput ? MirOperandKind::BorrowWrite
+                            : MirOperandKind::BorrowRead))
+        return false;
+      const auto *place = mir.findPlace(input.operands.front().place);
+      return place && !place->projections.empty() &&
+             place->projections.back().kind ==
+                 MirProjectionKind::RawDereference &&
+             nativeRawPlace(mir, *place);
+    };
+    if (stage.kind == MirInstructionKind::CallInput)
+      return staged(stage);
+    if (stage.kind != MirInstructionKind::Call || !stage.receiver ||
+        stage.receiver->kind != MirOperandKind::Value ||
+        !stage.functionTarget || stage.intrinsic != IntrinsicKind::None)
+      return false;
+    const auto *value = mir.findValue(stage.receiver->value);
+    const auto *block = value ? mir.findBlock(value->definitionBlock) : nullptr;
+    if (!block)
+      return false;
+    const auto input = std::find_if(
+        block->instructions.begin(), block->instructions.end(),
+        [&](const MirInstruction &candidate) {
+          return candidate.id == value->definition &&
+                 candidate.result == stage.receiver->value;
+        });
+    return input != block->instructions.end() && !input->tombstone &&
+           input->unsafeOperation == stage.unsafeOperation &&
+           input->callSite != 0 && input->callSite == stage.callSite &&
+           staged(*input);
+  }
   bool nativeAddressConversion(const MirInstruction &stage) const {
     if (!mir_detail::rawPointerConversion(stage))
       return false;
@@ -3316,6 +3362,8 @@ public:
               : extendedRaw
                   ? (validRaw ? std::optional(Shape::NativeClassRawAccess)
                               : std::nullopt)
+              : nativeRawReceiverStage(mir, stage)
+                  ? std::optional(Shape::NativeClassRawAccess)
               : rawAccess ? std::optional(Shape::PrimitiveRawAccess)
                           : std::nullopt);
         // Lifecycle marks repeat the source unsafe context but execute no
@@ -3411,9 +3459,9 @@ public:
               : rawReference && stage.unsafeOperation ==
                                     UnsafeOperationKind::RawDereference
                   ? rawReferenceShape
-              : rawClassStage &&
-                      stage.unsafeOperation == UnsafeOperationKind::RawMember &&
-                      nativeRawFieldStage(mir, stage)
+              : stage.unsafeOperation == UnsafeOperationKind::RawMember &&
+                      ((rawClassStage && nativeRawFieldStage(mir, stage)) ||
+                       nativeRawReceiverStage(mir, stage))
                   ? std::optional(Shape::NativeClassRawAccess)
               : stagedPointerArithmetic ? stagedPointerArithmetic
               : (rawClassStage || classArithmetic) &&

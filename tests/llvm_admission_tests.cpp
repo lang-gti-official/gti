@@ -2480,13 +2480,24 @@ int main() {
 class Slot { public: int value = 7; int read() { return this.value; } };
 int main() { Slot object{}; unsafe { const Slot* pointer = &object; return pointer->read(); } }
 )"));
-  bool methodRejected = false;
+  bool methodWitnessed = false;
   for (const auto &use : method.requirements())
-    methodRejected |= use.required &&
-                      use.entry->family == "UnsafeOperationKind" &&
-                      use.entry->name == "RawMember" && !use.implementedShape;
-  expect(methodRejected,
-         "a supported raw field path does not authorize member invocation");
+    if (use.required && use.entry->family == "UnsafeOperationKind" &&
+        use.entry->name == "RawMember") {
+      methodWitnessed = true;
+      expect(use.implementedShape &&
+                 use.implementedShape->name == "NativeClassRawAccess",
+             "a raw method receiver requires the dereferenced place witness");
+    }
+  expect(method.admitted() && methodWitnessed,
+         "a method reached through a raw pointer to a native class is the "
+         "same raw member access as a field");
+  const auto virtualMethod = lang::planLlvmAdmission(lower(R"(
+class Dynamic { public: int value = 7; virtual int read() { return this.value; } };
+int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->read(); } }
+)"));
+  expect(!virtualMethod.admitted(),
+         "a virtual method reached through a raw pointer stays refused");
   const auto unsupported = lang::planLlvmAdmission(lower(R"(
 class Dynamic { public: int value = 7; virtual int read() { return this.value; } };
 int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->value; } }

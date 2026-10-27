@@ -319,6 +319,28 @@ int main() {
   return events == 789 ? 0 : 4;
 }
 ''',
+    # Methods reached through raw pointers stage read and mutable receivers.
+    "raw-pointer-method-receivers": r'''
+class Node {
+public:
+  mut int value;
+  Node(int initial) : value(initial) {}
+  int read() { return this.value; }
+  void add(int amount) mut { this.value += amount; }
+};
+int main() {
+  mut Node node = Node(5);
+  Node* pointer = &node;
+  const Node* view = &node;
+  mut int total = 0;
+  unsafe {
+    total = view->read();
+    pointer->add(3);
+    total += pointer->read();
+  }
+  return total == 13 && node.value == 8 ? 0 : 1;
+}
+''',
     # A stored borrow carrier returned by value only states its provenance.
     "returned-view-provenance": r'''
 class IntView {
