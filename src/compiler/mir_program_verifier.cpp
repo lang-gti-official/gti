@@ -3021,6 +3021,31 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
   };
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
+      // A reference to a borrow carrier, of the carrier's own type or a base
+      // or interface type, borrows the carrier object. The carrier's Stored
+      // loan designates its external referent, not the carrier, so it cannot
+      // stand for that reference's loan.
+      if (instruction.kind == MirInstructionKind::Initialize &&
+          instruction.destination && instruction.operands.size() == 1) {
+        const MirOperand &operand = instruction.operands.front();
+        const MirPlace *destination = body.findPlace(*instruction.destination);
+        const MirLoan *loan = operand.kind == MirOperandKind::Loan
+                                  ? body.findLoan(operand.loan)
+                                  : nullptr;
+        const MirPlace *referenced =
+            operand.place != 0 ? body.findPlace(operand.place) : nullptr;
+        if (destination != nullptr &&
+            destination->type.kind == SemanticType::Reference &&
+            loan != nullptr && loan->kind == MirLoanKind::Stored &&
+            referenced != nullptr &&
+            referenced->type.kind == SemanticType::Class &&
+            referenced->traits.containsBorrowedState &&
+            loan->source != referenced->id)
+          return verificationFailure(body, owner,
+                                     "reference to a borrow carrier is not "
+                                     "backed by a loan on the carrier",
+                                     block.id, instruction.id);
+      }
       if (instruction.intrinsic == IntrinsicKind::ThreadScope) {
         if (instruction.scopedThreadTasks.size() != instruction.operands.size())
           return verificationFailure(body, owner,

@@ -1,0 +1,52 @@
+// A reference of a base or interface type to a borrow carrier borrows the
+// carrier object: a local view, a call relaying an upcast argument and an
+// upcast return each end before the carrier moves, which is valid.
+#include <std/utility>
+
+interface Gauge { int32_t read(); };
+
+class Scaled : public Gauge {
+  int32_t value;
+  int32_t& scale;
+public:
+  Scaled(int32_t v, int32_t& s) : value(v), scale(s) {}
+  int32_t read() override { return this.value * this.scale; }
+};
+
+class Base {
+public:
+  int32_t value;
+  Base(int32_t v) : value(v) {}
+  int32_t get() { return this.value; }
+};
+
+class Plain : public Base {
+  int32_t& scale;
+public:
+  Plain(int32_t v, int32_t& s) : Base(v), scale(s) {}
+  int32_t read() { return this.value * this.scale; }
+};
+
+Gauge& pick(Gauge& gauge) { return gauge; }
+Gauge& up(Scaled& scaled) { return scaled; }
+int32_t sample(Gauge& gauge) { return gauge.read(); }
+
+int main() {
+  int32_t scale = 3;
+  Scaled direct{2, scale};
+  Gauge& local = direct;
+  std::println(local.read());
+  Gauge& relayed = pick(direct);
+  std::println(relayed.read());
+  Gauge& returned = up(direct);
+  std::println(returned.read());
+  std::println(sample(direct));
+  Scaled moved = std::move(direct);
+  std::println(moved.read());
+  Plain plain{5, scale};
+  Base& base = plain;
+  std::println(base.get());
+  Plain kept = std::move(plain);
+  std::println(kept.read());
+  return 0;
+}

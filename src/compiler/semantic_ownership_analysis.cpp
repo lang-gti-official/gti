@@ -4410,6 +4410,42 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     return std::nullopt;
   };
   for (const auto &initializer : constructor->initializers()) {
+    // A base initializer that passes a formal to a base constructor storing
+    // that parameter stores the formal's text in the base's field. A class
+    // with a base keeps its text fields ownerless (textPublicationOwner), so
+    // every caller supplies that formal ownerless text (L-OWN-02).
+    if (owner->members.find(initializer.target.name.last().lexeme) ==
+        owner->members.end()) {
+      for (const ClassBaseTypeInfo &base : owner->bases) {
+        const SemanticType baseType =
+            substituteType(base.type, classSubstitution(type));
+        const ClassInfo *baseClass = classInfo(baseType);
+        if (base.interface || baseClass == nullptr ||
+            baseClass->name.lexeme != initializer.target.name.last().lexeme)
+          continue;
+        const GenericSubstitution substitution = classSubstitution(baseType);
+        for (const ConstructorInfo &candidate : baseClass->constructors) {
+          if (candidate.declaration == nullptr ||
+              initializer.arguments.size() < candidate.requiredParameterCount ||
+              initializer.arguments.size() > candidate.parameterTypes.size())
+            continue;
+          std::vector<SemanticType> baseParameters;
+          for (const SemanticType &parameter : candidate.parameterTypes)
+            baseParameters.push_back(substituteType(parameter, substitution));
+          for (const auto &input : ownerlessTextConstructorInputs(
+                   baseType, candidate.declaration, baseParameters))
+            if (input.sourceField == 0 && !input.wholeValue &&
+                input.payload == 0 &&
+                input.parameter < initializer.arguments.size())
+              if (const auto index =
+                      formalOf(initializer.arguments[input.parameter],
+                               baseParameters[input.parameter]))
+                result.push_back(
+                    {.parameter = *index, .initializer = &initializer});
+        }
+      }
+      continue;
+    }
     if (initializer.target.name.segments.size() != 1 ||
         !initializer.target.arguments.empty() ||
         initializer.arguments.size() != 1)
@@ -11404,11 +11440,37 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       semanticModel.recordBindingLoan(binding, child);
       return;
     }
+    // A reference of a base or interface type to a borrow carrier designates
+    // the carrier object exactly as one of the carrier's own type does: the
+    // base type hides the stored references, not the object's lifetime. The
+    // object is the initializer's, or the binding a relaying call returns.
+    const auto upcastCarrier = [&] {
+      if (carrier->type.kind != SemanticType::Reference ||
+          carrier->type.arguments.size() != 1)
+        return false;
+      const SemanticType &referent = carrier->type.arguments.front();
+      const auto designates = [&](SemanticType object) {
+        if (object.kind == SemanticType::Reference &&
+            object.arguments.size() == 1)
+          object = SemanticType(object.arguments.front());
+        return object.kind == SemanticType::Class && object != referent &&
+               typeTraits(object).containsBorrowedState &&
+               isPublicBaseConversion(object, referent);
+      };
+      if (info != nullptr && designates(info->type))
+        return true;
+      const SemanticLoanPlace shell = retainedLoanPlace(expression);
+      const SymbolRecord *root =
+          shell.root != 0 && !shell.receiver && shell.projections.empty()
+              ? semanticModel.database().findSymbol(shell.root)
+              : nullptr;
+      return root != nullptr && designates(root->type);
+    };
     if (((carrier->type.kind == SemanticType::Reference &&
           carrier->type.arguments.size() == 1 &&
           (typeTraits(carrier->type.arguments.front()).containsBorrowedState ||
            isBorrowedCarrierReference(carrier->type) ||
-           receiverStorageBorrow(expression)) &&
+           receiverStorageBorrow(expression) || upcastCarrier()) &&
           sourceLoan->kind == SemanticLoanKind::StoredValue) ||
          (storedReceiverShell &&
           (sourceLoan->kind == SemanticLoanKind::StoredValue ||

@@ -2638,7 +2638,10 @@ private:
             instruction.functionTarget && *instruction.functionTarget != 0 &&
             *instruction.functionTarget <= requirements.size())
           required = &requirements[*instruction.functionTarget - 1];
-        if (instruction.kind == MirInstructionKind::Construct &&
+        // A base initialization passes its operands to the base constructor
+        // as a construction does.
+        if ((instruction.kind == MirInstructionKind::Construct ||
+             instruction.kind == MirInstructionKind::InitializeBase) &&
             instruction.constructorTarget &&
             *instruction.constructorTarget != 0 &&
             *instruction.constructorTarget <= constructorRequirements.size())
@@ -2885,6 +2888,32 @@ auto TextContracts::initializerTextInputs(
                        TextFieldPath{initializer.field}, inputs, fieldUses);
       continue;
     }
+    // A base initializer passes its arguments to the base constructor, which
+    // requires ownerless text where it stores a formal, so this constructor
+    // requires it of each formal it passes there (L-OWN-02).
+    if (initializer.kind == ConstructorInitializerTargetKind::Base &&
+        initializer.constructorTarget && *initializer.constructorTarget != 0 &&
+        *initializer.constructorTarget <= constructorRequirements.size()) {
+      for (const auto index :
+           constructorRequirements[*initializer.constructorTarget - 1]) {
+        if (index >= initializer.arguments.size())
+          continue;
+        const auto found = std::find_if(
+            constructor.body.values.begin(), constructor.body.values.end(),
+            [&](const auto &value) {
+              return value.sourceValue == initializer.arguments[index] &&
+                     textType(value.info.type);
+            });
+        if (found == constructor.body.values.end())
+          continue;
+        const auto source = sources(context, {.kind = MirOperandKind::Value,
+                                              .value = found->id,
+                                              .type = found->info.type});
+        inputs.requirements.insert(source.parameters.begin(),
+                                   source.parameters.end());
+      }
+      continue;
+    }
     if (initializer.kind != ConstructorInitializerTargetKind::Field ||
         !textType(initializer.targetType) || initializer.arguments.size() != 1)
       continue;
@@ -2943,7 +2972,21 @@ MirVerificationResult TextContracts::verify() {
   constructorFieldRelays.resize(program.constructorInstances().size());
   constructorRelayProducers.resize(program.constructorInstances().size());
   constructorPublishedFields.resize(program.constructorInstances().size());
-  for (const auto &constructor : program.constructorInstances()) {
+  // A base initializer's requirements follow its base constructor's, so a
+  // base constructor's inputs are derived before any constructor over it.
+  std::vector<bool> derived(program.constructorInstances().size());
+  const auto derive = [&](const auto &self,
+                          const MirConstructorInstance &constructor) -> void {
+    if (constructor.id == 0 || constructor.id > derived.size() ||
+        derived[constructor.id - 1])
+      return;
+    derived[constructor.id - 1] = true;
+    for (const auto &initializer : constructor.initializers)
+      if (initializer.kind == ConstructorInitializerTargetKind::Base &&
+          initializer.constructorTarget)
+        if (const auto *base =
+                program.findConstructorInstance(*initializer.constructorTarget))
+          self(self, *base);
     auto inputs = initializerTextInputs(constructor, true);
     auto &published = constructorPublishedFields[constructor.id - 1];
     for (const auto &[formal, path] : inputs.fields)
@@ -2958,7 +3001,9 @@ MirVerificationResult TextContracts::verify() {
     constructorFieldRelays[constructor.id - 1] = std::move(inputs.fieldRelays);
     constructorRelayProducers[constructor.id - 1] =
         std::move(inputs.wholeRelayProducers);
-  }
+  };
+  for (const auto &constructor : program.constructorInstances())
+    derive(derive, constructor);
   relays.resize(program.functionInstances().size());
   const auto functionContext = [&](const MirFunctionInstance &function) {
     return TextBody{
@@ -3198,6 +3243,31 @@ bool dependentTextCarrierField(const MirBody &body, const MirPlace &place) {
 }
 } // namespace
 
+namespace {
+// The declared type of `field` in a base class of `owner`, through each
+// non-interface base instance.
+std::optional<SemanticType> inheritedFieldType(const MirProgram &program,
+                                               const MirClassInstance &owner,
+                                               SymbolId field,
+                                               std::size_t depth) {
+  if (depth > 64)
+    return std::nullopt;
+  for (const auto &base : owner.bases) {
+    const MirClassInstance *instance =
+        base.interface ? nullptr : program.findClassInstance(base.instance);
+    if (instance == nullptr)
+      continue;
+    for (const auto &declared : instance->declaredFields)
+      if (declared.symbol == field)
+        return declared.type;
+    if (auto inherited =
+            inheritedFieldType(program, *instance, field, depth + 1))
+      return inherited;
+  }
+  return std::nullopt;
+}
+} // namespace
+
 bool isOwnerlessTextStorageProjection(const MirProgram &program,
                                       const MirBody &body,
                                       const MirPlace &place) {
@@ -3244,6 +3314,16 @@ bool isOwnerlessTextStorageProjection(const MirProgram &program,
         if (owner.type == *current)
           for (const auto &field : owner.declaredFields)
             if (field.symbol == projection.field && !accept(field.type))
+              return false;
+      // A field a base class declares is the derived value's field too: a
+      // class with a base keeps its text fields ownerless, and the base's
+      // checked constructors and stores write it.
+      if (!fieldType)
+        for (const auto &owner : program.classInstances())
+          if (owner.type == *current)
+            if (const auto inherited =
+                    inheritedFieldType(program, owner, projection.field, 0);
+                inherited && !accept(*inherited))
               return false;
       if (const auto *enumeration = program.findPayloadEnum(*current))
         for (const auto &variant : enumeration->variants)
