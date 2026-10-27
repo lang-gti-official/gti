@@ -99,6 +99,19 @@ void checkHierarchyContracts(const std::filesystem::path &root) {
     require(rejected, "duplicate capability identity rejects before emission");
   }
   require(checked == 3, "atomic, mutex storage and token proofs all exercised");
+  // The protected hierarchy payload is constructed, guarded and retired
+  // natively under its own witness rather than refused as a transfer.
+  const auto admission = planLlvmAdmission(*input);
+  if (!admission.admitted())
+    throw std::runtime_error(admission.limitation());
+  require(std::any_of(admission.requirements().begin(),
+                      admission.requirements().end(),
+                      [](const auto &use) {
+                        return use.implementedShape &&
+                               use.implementedShape->name ==
+                                   "NativeHierarchyMutexStorage";
+                      }),
+          "a mutex protecting a hierarchy payload has its own witness");
   std::cout << "private capability inline hierarchy and malformed controls PASS\n";
 }
 

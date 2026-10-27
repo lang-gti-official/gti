@@ -2,6 +2,7 @@
 
 #include "layout.h"
 
+#include <functional>
 #include <llvm/IR/IRBuilder.h>
 
 namespace lang::native_llvm {
@@ -11,6 +12,18 @@ namespace lang::native_llvm {
 [[nodiscard]] std::optional<SemanticType>
 nativeMutexElement(const MirProgram &program, const SemanticType &type,
                    CompilerCapabilityTypeKind kind);
+// An inline composition holding exact mutex storage or a lock token: the
+// storage itself, or ordinary records, arrays, payload enums, references and
+// closures whose by-value captures compose. Every other leaf, including each
+// mutex payload, must satisfy `leaf`; a closure `leaf` accepts is itself a
+// leaf. Representation only: operations keep their own proofs.
+struct MutexComposition final {
+  // A closure environment carries the storage by value.
+  bool closure = false;
+};
+[[nodiscard]] std::optional<MutexComposition>
+mutexComposition(const MirProgram &program, const SemanticType &type,
+                 const std::function<bool(const SemanticType &)> &leaf);
 [[nodiscard]] std::optional<SemanticType>
 nativeMutexConstructor(const MirProgram &program,
                        const MirConstructorInstance &constructor);

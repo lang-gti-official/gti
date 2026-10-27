@@ -348,7 +348,7 @@ public:
       : plan(plan), input(std::move(input)), program(plan.program().mir()),
         natives(plan.program().mir(), plan.program().target(),
                 [this](const SemanticType &pointee) {
-                  return pointeeMetadata(pointee);
+                  return pointeeMetadata(pointee) || mutexPointee(pointee);
                 }) {
     for (const auto address : plan.requiredBodies()) {
       const auto &body = *findMirBody(program, address);
@@ -906,6 +906,24 @@ private:
     pointeeVisits.pop_back();
     return result;
   }
+  // An owner's pointee may be exact mutex storage, or an inline composition
+  // containing it, whose leaves are native values or hierarchy storage with
+  // metadata. The owner moves only its handle; the pointee is constructed,
+  // borrowed and retired in place under the inventory's own mutex proofs.
+  bool mutexPointee(const SemanticType &pointee) {
+    if (std::find(pointeeVisits.begin(), pointeeVisits.end(), pointee) !=
+        pointeeVisits.end())
+      return false;
+    pointeeVisits.push_back(pointee);
+    const bool result =
+        native_llvm::mutexComposition(
+            program, pointee, [this](const SemanticType &leaf) {
+              return natives(leaf) || metadata(leaf).has_value();
+            })
+            .has_value();
+    pointeeVisits.pop_back();
+    return result;
+  }
   bool metadataClass(const MirClassInstance &owner,
                      std::set<HirClassInstanceId> &path) const {
     // A compiler-bound inline slot holds at most one object whose dynamic
@@ -915,6 +933,28 @@ private:
       if (!interface.polymorphic || !path.insert(owner.id).second)
         return false;
       const bool valid = metadataClass(interface, path);
+      path.erase(owner.id);
+      return valid;
+    }
+    // Exact mutex storage inlines its payload behind the native shell. A
+    // hierarchy payload keeps this exact metadata proof; any other payload
+    // uses its ordinary native value representation.
+    if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+      const auto payload = native_llvm::nativeMutexElement(
+          program, owner.type, owner.compilerCapability);
+      if (!payload || !path.insert(owner.id).second)
+        return false;
+      bool valid = false;
+      if (contains(*payload)) {
+        const auto *leaf = &*payload;
+        while (leaf->kind == SemanticType::Array &&
+               leaf->arguments.size() == 1 && !leaf->arrayLengthParameterId)
+          leaf = &leaf->arguments.front();
+        valid = leaf->kind == SemanticType::Class &&
+                metadataClass(instance(*leaf), path);
+      } else {
+        valid = natives(*payload);
+      }
       path.erase(owner.id);
       return valid;
     }
@@ -1613,6 +1653,9 @@ private:
               stage.intrinsic == IntrinsicKind::SharedOwnerBorrow ||
               stage.intrinsic == IntrinsicKind::PolymorphicStorageRead ||
               stage.intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
+              // A guard read selects the complete payload inside the shell.
+              stage.intrinsic == IntrinsicKind::MutexGuardRead ||
+              stage.intrinsic == IntrinsicKind::MutexGuardReadMut ||
               ((stage.intrinsic == IntrinsicKind::RawBorrow ||
                 stage.intrinsic == IntrinsicKind::RawBorrowMut) &&
                mir_detail::rawBorrowResultLoan(body, stage) == loan));
@@ -1902,8 +1945,23 @@ private:
       if (freshTransfer(body, stage)) {
         if (!metadata(stage.info.type))
           return {};
-        static_cast<void>(native_llvm::Lifetimes::preflightFreshTransfer(
-            *session, *dispatch, body, stage));
+        const auto transfer = native_llvm::Lifetimes::preflightFreshTransfer(
+            *session, *dispatch, body, stage);
+        // A task the spawn relocates into its runtime box is proved with
+        // that exact native thread operation and adapter.
+        if (transfer.publishes == native_llvm::FreshHierarchyPublication::Task) {
+          const auto &spawn = *transfer.publication;
+          const auto *adapter =
+              spawn.threadTaskAdapter
+                  ? program.findThreadTaskAdapter(*spawn.threadTaskAdapter)
+                  : nullptr;
+          if (!adapter || adapter->taskType != stage.info.type ||
+              !native_llvm::nativeThreadCall(program, address, body, spawn) ||
+              !native_llvm::hierarchyThreadTask(program, *adapter) ||
+              !generatedRelocation(stage.info.type))
+            return {};
+          return Shape::NativeHierarchyThreadTask;
+        }
         return Shape::NativeFreshHierarchyTransfer;
       }
       if (freshTransferInitialization(body, stage) &&
@@ -2243,6 +2301,29 @@ public:
     ownedMutexPointees.pop_back();
     return valid;
   }
+  // A loan of exact mutex storage as a whole object: the native shell's own
+  // address, which only the guard intrinsics open to the payload. A
+  // hierarchy payload keeps its view proofs at those payload accesses, so
+  // such a loan needs no dispatch view of its own.
+  bool mutexShellLoan(const MirBody &mir, MirLoanId id) const {
+    const auto *loan = mir.findLoan(id);
+    const auto *origin = loan ? mir.findPlace(loan->source) : nullptr;
+    if (!origin || origin->type.kind != SemanticType::Class)
+      return false;
+    const MirClassInstance *owner = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == origin->type) {
+        if (owner)
+          return false;
+        owner = &candidate;
+      }
+    return owner &&
+           owner->compilerCapability ==
+               CompilerCapabilityTypeKind::MutexStorage &&
+           native_llvm::nativeMutexElement(program, origin->type,
+                                           owner->compilerCapability) &&
+           dispatchProofs.metadata(origin->type).has_value();
+  }
   // A sealed integral enum is stored exactly as its fixed-width underlying
   // integer, so raw access through a pointer to one is primitive raw access to
   // that integer's representation. A payload enum carries a tag and stays
@@ -2470,84 +2551,15 @@ public:
                [&](const auto &operand) { return operand.type == element; });
   }
   std::optional<Shape> mutexShape(const SemanticType &type) const {
-    if (program.executionProfile() != ExecutionProfile::Concurrent ||
-        !program.target().runtimeCapabilities.threads)
-      return {};
-    std::vector<SemanticType> visiting;
-    bool mutex = false;
-    bool closure = false;
-    const auto represented = [&](const auto &self,
-                                 const SemanticType &selected) -> bool {
-      if (std::find(visiting.begin(), visiting.end(), selected) != visiting.end())
-        return false;
-      visiting.push_back(selected);
-      bool valid = false;
-      if (selected.kind == SemanticType::Reference &&
-          selected.arguments.size() == 1)
-        valid = self(self, selected.arguments[0]);
-      else if (selected.kind == SemanticType::Array &&
-               selected.arguments.size() == 1 &&
-               !selected.arrayLengthParameterId)
-        valid = self(self, selected.arguments[0]);
-      else if (const auto *payload = program.findPayloadEnum(selected)) {
-        valid = true;
-        for (const auto &variant : payload->variants)
-          for (const auto &element : variant.payloadTypes)
-            valid &= self(self, element);
-      } else if (selected.kind == SemanticType::Lambda &&
-                 !nativeValue(selected)) {
-        // A closure environment is an inline aggregate of its captures, so a
-        // capture taken by value may hold mutex storage. A borrowing capture
-        // stores only an address and stays an ordinary native value.
-        const auto environment =
-            native_llvm::closureEnvironmentLayout(program, selected);
-        valid = environment &&
-                environment->captureTypes.size() ==
-                    environment->captureModes.size() &&
-                environment->captureTypes.size() ==
-                    environment->captureRequiresActiveCleanup.size();
-        for (std::size_t index = 0;
-             valid && index < environment->captureTypes.size(); ++index)
-          valid = isBorrowingCapture(environment->captureModes[index])
-                      ? nativeValue(environment->captureTypes[index])
-                      : self(self, environment->captureTypes[index]);
-        closure |= valid;
-      } else if (selected.kind == SemanticType::Class) {
-        const MirClassInstance *owner = nullptr;
-        for (const auto &candidate : program.classInstances())
-          if (candidate.type == selected) {
-            if (owner)
-              return false;
-            owner = &candidate;
-          }
-        if (owner &&
-            (owner->compilerCapability ==
-                 CompilerCapabilityTypeKind::MutexStorage ||
-             owner->compilerCapability ==
-                 CompilerCapabilityTypeKind::MutexLockToken)) {
-          const auto element = native_llvm::nativeMutexElement(
-              program, selected, owner->compilerCapability);
-          valid = element && self(self, *element);
-          mutex |= valid;
-        } else if (owner && owner->compilerCapability ==
-                                CompilerCapabilityTypeKind::None &&
-                   !owner->abstract && !owner->polymorphic &&
-                   !owner->cOpaqueHandle && !owner->cAbiLayout &&
-                   !owner->unionLayout && owner->bases.empty() &&
-                   owner->structuralBases.empty()) {
-          valid = true;
-          for (const auto &field : owner->declaredFields)
-            valid &= self(self, field.type);
-        } else
-          valid = nativeValue(selected);
-      } else
-        valid = nativeValue(selected);
-      visiting.pop_back();
-      return valid;
-    };
-    if (!represented(represented, type) || !mutex)
+    // A payload or other leaf may be hierarchy storage with exact dispatch
+    // metadata; its operations keep their own hierarchy proofs.
+    const auto composition = native_llvm::mutexComposition(
+        program, type,
+        [this](const SemanticType &leaf) { return representedValue(leaf); });
+    if (!composition)
       return std::nullopt;
-    return closure ? Shape::NativeMutexClosure : Shape::NativeMutexStorage;
+    return composition->closure ? Shape::NativeMutexClosure
+                                : Shape::NativeMutexStorage;
   }
   std::optional<Shape> classShape(const SemanticType &type) const {
     // References previously borrowed this ordinary-storage witness while the
@@ -4139,8 +4151,15 @@ public:
          operand.kind == MirOperandKind::BorrowRead ||
          operand.kind == MirOperandKind::BorrowWrite ||
          operand.kind == MirOperandKind::Loan);
+    // A carrier's loan of exact mutex storage keeps the carrier's own
+    // representation; it is not a dispatch view of the payload.
+    const bool shellLoan = currentBody &&
+                           operand.kind == MirOperandKind::Loan &&
+                           !dispatchProofs.related(operand.type) &&
+                           mutexShellLoan(*currentBody, operand.loan);
     const bool borrowedUse =
-        currentBody && dispatchProofs.borrowedUse(*currentBody, operand);
+        currentBody && !shellLoan &&
+        dispatchProofs.borrowedUse(*currentBody, operand);
     const auto view = currentBody
                           ? dispatchProofs.borrowed(*currentBody, operand)
                           : std::nullopt;
@@ -4263,7 +4282,9 @@ public:
         add(Shape::MutexInitialization,
             native_llvm::nativeMutexConstructor(program, *constructor) &&
                     mutexShape(owner->type)
-                ? std::optional(Shape::NativeMutexStorage)
+                ? std::optional(dispatchProofs.contains(owner->type)
+                                    ? Shape::NativeHierarchyMutexStorage
+                                    : Shape::NativeMutexStorage)
                 : std::nullopt);
     }
     type(mir.returnType);
@@ -4354,7 +4375,10 @@ public:
                              origin->type.kind != SemanticType::RawPointer;
       const auto view =
           hierarchy ? dispatchProofs.loan(mir, loan) : std::nullopt;
-      add(loan.kind, hierarchy     ? view
+      add(loan.kind, hierarchy     ? (view || !mutexShellLoan(mir, loan.id)
+                                          ? view
+                                          : std::optional(
+                                                Shape::NativeHierarchyMutexStorage))
                      : borrowShape ? borrowShape
                      : selected    ? std::optional(Shape::PassiveReference)
                      : origin      ? placeClassShape(*origin)
@@ -4486,14 +4510,23 @@ public:
           storageShape = classShape(stage.replacementCleanup->type);
         if (dispatchOperation && dispatchOperation->shape)
           storageShape = dispatchOperation->shape;
+        // Forwarding a carrier's loan of exact mutex storage is an ordinary
+        // borrow of that carrier, not a dispatch view.
+        const bool shellForward =
+            stage.kind == MirInstructionKind::Borrow &&
+            !dispatchProofs.related(stage.info.type) &&
+            stage.operands.size() == 1 &&
+            stage.operands.front().kind == MirOperandKind::Loan &&
+            mutexShellLoan(mir, stage.operands.front().loan);
         add(stage.kind,
             stage.kind == MirInstructionKind::Borrow
                 ? (passiveReference(stage.info.type)
                        ? std::optional(Shape::PassiveReference)
-                   : dispatchProofs.related(stage.info.type) ||
-                           (!stage.operands.empty() &&
-                            dispatchProofs.borrowedUse(mir,
-                                                       stage.operands.front()))
+                   : !shellForward &&
+                           (dispatchProofs.related(stage.info.type) ||
+                            (!stage.operands.empty() &&
+                             dispatchProofs.borrowedUse(
+                                 mir, stage.operands.front())))
                        ? (dispatchOperation ? dispatchOperation->shape
                                             : std::nullopt)
                        : classShape(stage.info.type))
@@ -4713,12 +4746,17 @@ public:
                                                        mir, stage)
                   ? std::optional(Shape::NativeCCallback)
                   : std::nullopt);
+        const auto taskShape = [&](MirThreadTaskAdapterId id) {
+          const auto *adapter = program.findThreadTaskAdapter(id);
+          return !thread || !adapter ? std::nullopt
+                 : native_llvm::hierarchyThreadTask(program, *adapter)
+                     ? std::optional(Shape::NativeHierarchyThreadTask)
+                     : std::optional(Shape::NativeThreadTask);
+        };
         if (stage.threadTaskAdapter)
-          add(Shape::ThreadTask,
-              thread ? std::optional(Shape::NativeThreadTask) : std::nullopt);
-        if (!stage.scopedThreadTasks.empty())
-          add(Shape::ScopedThreadTasks,
-              thread ? std::optional(Shape::NativeThreadTask) : std::nullopt);
+          add(Shape::ThreadTask, taskShape(*stage.threadTaskAdapter));
+        for (const auto &task : stage.scopedThreadTasks)
+          add(Shape::ScopedThreadTasks, taskShape(task.adapter));
         if (stage.preparedParameterDrop) {
           const auto &prepared =
               mir.findDropObligation(*stage.preparedParameterDrop)->dropType;
@@ -5350,7 +5388,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
           inventory.relocatableRepresentation(task->adapter.taskType) &&
           (task->adapter.resultType == SemanticType::Void ||
            inventory.relocatableRepresentation(task->adapter.resultType)))
-        shape = Shape::NativeThreadTask;
+        shape = native_llvm::hierarchyThreadTask(mir, task->adapter)
+                    ? Shape::NativeHierarchyThreadTask
+                    : Shape::NativeThreadTask;
     if (item.identity.kind == LoweredGeneratedItemKind::ThreadLocalStorage)
       if (const auto *storage = mir.findThreadLocalStorage(item.identity.owner))
         if (inventory.nativeValue(storage->type))

@@ -2,7 +2,8 @@
 """Managed and scoped workers on LLVM, differentially against the C++ oracle.
 
 Every case uses user-defined task, capture, result and mutex payload types,
-including mutex storage held by closures and owner pointees. The C++ backend
+including mutex storage held by closures and owner pointees, and tasks and
+mutex payloads that hold hierarchy storage. The C++ backend
 supplies the oracle observable (exit status, stdout and stderr, including the
 exact defined-failure reports); native LLVM must reproduce it at O0-O3 under
 the concurrent execution profile.
@@ -63,9 +64,29 @@ def mutex_composition_fixtures():
     }
 
 
+# Tasks holding hierarchy storage inline (polymorphic objects, inline slots,
+# erased transferable callables) in managed task boxes and scoped groups.
+def hierarchy_task_fixtures():
+    return {
+        "hierarchy-tasks": "llvm_thread_hierarchy_tasks.gti",
+        "transfer-function-tasks": "transfer_function_threads.gti",
+        "scoped-erased-tasks": "scoped_parallel_threads.gti",
+    }
+
+
+# Mutex storage protecting hierarchy payloads, including moves and a shared
+# owner carried to a worker.
+def hierarchy_mutex_fixtures():
+    return {
+        "hierarchy-mutexes": "llvm_thread_hierarchy_mutexes.gti",
+        "mutex-hierarchy-contract": "llvm_mutex_hierarchy_contract.gti",
+    }
+
+
 def fixtures():
     return {**managed_fixtures(), **cthread_fixtures(),
-            **mutex_composition_fixtures()}
+            **mutex_composition_fixtures(), **hierarchy_task_fixtures(),
+            **hierarchy_mutex_fixtures()}
 
 
 # Cases that link a test-only native helper; they run as controls because the
@@ -113,7 +134,9 @@ def evidence_profiles(root):
     del root
     return {"threads.managed": tuple(managed_fixtures()),
             "cthread.manual": tuple(cthread_fixtures()),
-            "threads.mutex-composition": tuple(mutex_composition_fixtures())}
+            "threads.mutex-composition": tuple(mutex_composition_fixtures()),
+            "threads.hierarchy-tasks": tuple(hierarchy_task_fixtures()),
+            "threads.hierarchy-mutexes": tuple(hierarchy_mutex_fixtures())}
 
 
 def evidence_manifest(root):
@@ -122,7 +145,9 @@ def evidence_manifest(root):
         {name: f"tests/fixtures/{fixture}" for name, fixture in fixtures().items()},
         execution_profiles={"threads.managed": "concurrent",
                             "cthread.manual": "concurrent",
-                            "threads.mutex-composition": "concurrent"})
+                            "threads.mutex-composition": "concurrent",
+                            "threads.hierarchy-tasks": "concurrent",
+                            "threads.hierarchy-mutexes": "concurrent"})
 
 
 def native_helper_controls(gti, root, work, environment, cxx):

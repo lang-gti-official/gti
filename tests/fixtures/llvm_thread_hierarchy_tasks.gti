@@ -1,0 +1,125 @@
+#include <std/thread>
+#include <std/functional>
+#include <std/polymorphic>
+#include <std/mutex>
+#include <std/string>
+
+// Managed and scoped workers whose tasks hold hierarchy storage inline: a
+// polymorphic object, an inline polymorphic slot and an erased transferable
+// callable. Each crosses a runtime task box
+// through its generated relocation, which rebuilds its dispatch state; every
+// object is destroyed exactly once by its final owner.
+std::mutex<int32_t> retired{0};
+
+void retire(int32_t id) {
+  mut auto guard = retired.lock();
+  mut int32_t& count = guard.get();
+  count = count * 10 + id;
+}
+
+int32_t retirements() {
+  auto guard = retired.lock();
+  return guard.get();
+}
+
+[[transfer]] interface Gauge {
+  int32_t read();
+};
+
+[[transfer]] interface Tagged {
+  int32_t tag();
+};
+
+// Tagged precedes Gauge, so the Gauge view has a nonzero offset. The
+// destructor's effect is a synchronized counter, so transfer is asserted.
+[[unsafe_transfer]] class Meter : public Tagged, public Gauge {
+  std::string label;
+  int32_t value;
+public:
+  Meter(std::string label, int32_t value)
+      : label(std::move(label)), value(value) {}
+  ~Meter() { retire(this.value); }
+  int32_t tag() override { return 7; }
+  int32_t read() override { return this.value * 10 + int32_t(this.label.size()); }
+};
+
+class Small : public Gauge {
+  int32_t value;
+public:
+  Small(int32_t value) : value(value) {}
+  int32_t read() override { return this.value; }
+};
+
+int32_t sample(Gauge& gauge) { return gauge.read(); }
+
+// Tasks holding a polymorphic object by value: one records its reading and
+// one returns it.
+class MeterRecord {
+  Meter meter;
+public:
+  MeterRecord(Meter meter) : meter(std::move(meter)) {}
+  void operator()() { retire(sample(this.meter) + this.meter.tag()); }
+};
+
+class MeterTask {
+  Meter meter;
+public:
+  MeterTask(Meter meter) : meter(std::move(meter)) {}
+  int32_t operator()() mut { return sample(this.meter) + this.meter.tag(); }
+};
+
+// A task holding an inline polymorphic slot whose small model lives inline.
+class SlotTask {
+  mut std::inline_polymorphic<Gauge, 32, 8> slot{};
+  int32_t scale;
+public:
+  SlotTask(int32_t value, int32_t scale) : scale(scale) {
+    this.slot.replace(Small(value));
+  }
+  int32_t operator()() mut { return this.slot.get().read() * this.scale; }
+};
+
+int main() {
+  {
+    auto started = std::thread::start(MeterRecord(Meter(std::string("ab"), 4)));
+    if (!started) return 1;
+    mut auto worker = std::move(started).value();
+    if (!worker.join()) return 2;
+  }
+  std::println(retirements());
+
+  mut std::thread_result<int32_t> meter_result{};
+  if (!meter_result.start(MeterTask(Meter(std::string("xyz"), 3)))) return 3;
+  auto meter_value = meter_result.join();
+  if (!meter_value) return 4;
+  std::println(std::move(meter_value).value());
+
+  mut std::thread_result<int32_t> slot_result{};
+  if (!slot_result.start(SlotTask(5, 3))) return 5;
+  auto slot_value = slot_result.join();
+  if (!slot_value) return 6;
+  std::println(std::move(slot_value).value());
+
+  std::transfer_function<int32_t() mut> counting{SlotTask(9, 2)};
+  mut std::thread_result<int32_t> erased_result{};
+  if (!erased_result.start(std::move(counting))) return 7;
+  auto erased_value = erased_result.join();
+  if (!erased_value) return 8;
+  std::println(std::move(erased_value).value());
+
+  // A scoped group runs each hierarchy task in place in the caller's storage
+  // and destroys the remaining tasks in reverse order after join-all.
+  {
+    mut auto reset = retired.lock();
+    reset.get() = 0;
+  }
+  if (!std::parallel_invoke(MeterRecord(Meter(std::string("c"), 8)),
+                            MeterRecord(Meter(std::string("de"), 9))))
+    return 9;
+  int32_t recorded = retirements();
+  // Worker order is unspecified; the reverse-order cleanup is not.
+  std::println(recorded % 100);
+  int32_t readings = recorded / 100;
+  std::println(readings == 979 || readings == 1078 ? 1 : 0);
+  return 0;
+}

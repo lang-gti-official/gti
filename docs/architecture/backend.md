@@ -4552,6 +4552,19 @@ that enclosing check, so recursive nodes owning their successors terminate.
 `llvm_thread_execution`'s `threads.mutex-composition` profile compares
 user-defined closure, owner, shared-worker, worker-failure and passive-payload
 cases with the C++ oracle at O0-O3.
+
+A mutex may also protect a payload holding hierarchy storage
+(`NativeHierarchyMutexStorage`). Dispatch metadata covers exact mutex storage
+through its payload. Construction relocates the payload into the shell, and a
+move into a fresh shell, with the payload's generated relocation, which
+rebuilds its dispatch state. A guard's loan of the shell is the native
+capability's own address, not a dispatch view; a guard read selects the
+complete payload as a checked address whose views keep their own proofs.
+Cleanup retires the payload's exact hierarchy recipe before the shell. The
+sealed storage constructor of a passive payload needs no effect summary: its
+body holds no loans or values and its drop runs no code.
+`threads.hierarchy-mutexes` compares a polymorphic payload, a record holding
+one, an inline slot, moves and a shared owner carried to a worker.
 The public O0-O3 service harness additionally requires normal, rollback,
 first/emergency failure and moved-guard execution. The inline hierarchy query
 validates canonical atomic/mutex capabilities through their representation
@@ -4607,6 +4620,16 @@ quarantines the coherent state and originates the MIR-selected `GTI-R0012`
 outcome. A scope borrows each consumed task in its verified caller slot, passes
 stack descriptors and scratch to `gti_rt_thread_scope_v1`, treats a worker
 envelope as terminal, then cleans every task in reverse order on the caller.
+A task holding hierarchy storage (a polymorphic object, an inline polymorphic
+slot or an erased transferable callable) uses the same paths
+(`NativeHierarchyThreadTask`). The moved owned binding waits in its own value
+storage until the spawn relocates it with the generated relocation, which
+rebuilds its dispatch state, and takes over its value obligation; task cleanup
+runs its exact hierarchy recipe. A scoped hierarchy task runs in place. A
+result holding hierarchy storage still crosses `std::expected` by value and
+stays a `PolymorphicTransfer` refusal. `threads.hierarchy-tasks` compares
+user-defined polymorphic and inline-slot tasks, `transfer_function_threads`
+and `scoped_parallel_threads` with the C++ oracle at O0-O3.
 The first failing worker supplies the primary record; otherwise the first task
 cleanup failure does, and later cleanup inherits it like any failure chain.
 

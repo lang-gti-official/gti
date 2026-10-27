@@ -5456,6 +5456,10 @@ private:
   // Set while the synthesized projection of a reflected field access is
   // analysed: a `[[reflect_private]]` owner then admits its private fields.
   bool analyzingReflectedFieldAccess = false;
+  // Set while a lambda's capture list is analysed. A borrowing capture
+  // borrows a named local or parameter; an enclosing closure's capture is
+  // neither, so it is no place a capture initializer can borrow from.
+  bool analyzingCaptureList = false;
   // ---- Declared attributes ----
   // Evaluates every `[[ns::name(args)]]` application once per declaration at
   // the start of the body phase, before any body can query it.

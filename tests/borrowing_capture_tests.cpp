@@ -737,6 +737,103 @@ int main() {
 }
 )",
            "GTI-S2017");
+  // Inside a lambda body a by-reference capture follows the same place-overlap
+  // rules as a reference parameter: an access through it conflicts with a live
+  // overlapping alias, and disjoint fields stay independent.
+  negative("capture-write-while-alias-live", R"(
+int main() {
+  mut int count = 4;
+  mut auto step = [mut &count]() -> int {
+    int& seen = count;
+    count += 1;
+    return seen;
+  };
+  return step();
+}
+)",
+           "GTI-S2017");
+  negative("capture-field-write-while-whole-alias-live", R"(
+class Pair {
+public:
+  mut int left = 2;
+  mut int right = 3;
+  Pair() {}
+};
+int main() {
+  mut Pair pair{};
+  mut auto touch = [mut &pair]() -> void {
+    mut Pair& whole = pair;
+    pair.left = 1;
+    whole.right = 2;
+  };
+  touch();
+  return pair.left;
+}
+)",
+           "GTI-S2017");
+  positive("capture-disjoint-field-alias", R"(
+class Pair {
+public:
+  mut int left = 2;
+  mut int right = 3;
+  Pair() {}
+};
+int main() {
+  mut Pair pair{};
+  {
+    mut auto swap = [mut &pair]() -> void {
+      mut int& left = pair.left;
+      int saved = left;
+      left = pair.right;
+      pair.right = saved;
+    };
+    swap();
+  }
+  return pair.left == 3 && pair.right == 2 ? 0 : 1;
+}
+)");
+  // A capture list borrows a named local or parameter; an enclosing closure's
+  // capture is neither, so capturing it by reference stays rejected.
+  negative("capture-of-enclosing-capture", R"(
+int main() {
+  int base = 10;
+  auto outer = [&base]() -> int {
+    auto inner = [&base]() -> int { return base + 1; };
+    return inner();
+  };
+  return outer() == 11 ? 0 : 1;
+}
+)",
+           "GTI-S2045");
+  // Such a closure lowers: its environment is a cleanup-bound carrier whose
+  // borrow ends when the closure is destroyed, so the owner may change after
+  // the closure's scope.
+  const auto boundClosure = positive("bound-carrier-capture-lowers", R"(
+class Watcher {
+  int& target;
+public:
+  Watcher(int& target) : target(target) {}
+  int read() { return this.target; }
+  ~Watcher() { std::println(this.target); }
+};
+int main() {
+  mut int base = 4;
+  mut int first = 0;
+  {
+    Watcher watcher = Watcher(base);
+    auto reader = [held = std::move(watcher)]() -> int { return held.read(); };
+    first = reader();
+  }
+  base = 10;
+  return first == 4 && base == 10 ? 0 : 1;
+}
+)");
+  expect(lang::verifyMirProgram(boundClosure.mir).valid(),
+         "a cleanup-bound closure verifies as a whole program");
+  bool boundLambda = false;
+  for (const auto &lambda : boundClosure.mir.lambdaInstances())
+    boundLambda = boundLambda || lambda.lifecycleBoundBorrowCarrier;
+  expect(boundLambda, "the closure records its cleanup-bound carrier decision");
   // A local reference alias of a by-reference capture borrows below the
   // capture's entry loan. The closure environment, not a binding, holds that
   // entry for the whole call, so no alias joins it as a carrier and a later

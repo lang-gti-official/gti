@@ -2047,6 +2047,13 @@ copy/move captures of borrowed carriers retain their nested dependency paths.
 Multiple independent parents are represented explicitly, rather than collapsing
 all captures onto one parent. Global/field capture spelling and general init
 captures remain rejected; a named local reference may select a field first.
+Inside the lambda body a by-reference capture symbol is a flow place rooted at
+the capture, like a reference parameter: its loan places keep their field
+projections, and every access through it is checked against live overlapping
+loans, so a write through the capture conflicts with a live alias of it while
+disjoint fields stay independent. A capture list still resolves its
+initializers in the enclosing scope, where an enclosing closure's capture is
+not a place; capturing it by reference therefore remains rejected.
 
 ## Confined Callable Contracts
 

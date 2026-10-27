@@ -612,10 +612,12 @@ private:
       return memory.selected(transfer.source);
     }
     if (transfer.publishes == FreshHierarchyPublication::Receiver ||
-        transfer.publishes == FreshHierarchyPublication::Replacement) {
+        transfer.publishes == FreshHierarchyPublication::Replacement ||
+        transfer.publishes == FreshHierarchyPublication::Task) {
       // The moved object lives in this value's own storage, which the
-      // consuming call receives or the replacing assignment relocates, and
-      // the value obligation otherwise drops.
+      // consuming call receives, the replacing assignment relocates or the
+      // spawn relocates into its task box, and the value obligation
+      // otherwise drops.
       if (target || transfer.source != instruction.operands.front())
         throw BackendUnsupportedError("LLVM consumed receiver lost its exact "
                                       "source/publication placement");
@@ -2415,8 +2417,16 @@ private:
       Mutexes(session, ir).initializeShell(thisAddress, owner->type);
       auto *destination = ir.CreateStructGEP(layout.object.storage, thisAddress,
                                              layout.payloadIndex);
-      if (!lifetimes.transferMutexes(ir, destination, source, *payload))
+      if (lifetimes.transferMutexes(ir, destination, source, *payload)) {
+      } else if (containsHierarchyStorage(session.program().mir(), *payload)) {
+        // A hierarchy payload is relocated by its generated relocation,
+        // which rebuilds its dispatch state inside the shell; object bytes
+        // never move.
+        ir.CreateCall(lifetimes.generatedRelocation(*payload),
+                      {destination, source});
+      } else {
         store(load(source, *payload), destination, *payload);
+      }
       lifetimes.moved(ir, source, *payload);
       ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive | MutexStorageLayout::payloadLive),
                      ir.CreateStructGEP(layout.object.storage, thisAddress, layout.payloadActiveIndex));
