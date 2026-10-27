@@ -230,6 +230,16 @@ public:
           "parameter_pack<" + std::to_string(value.arguments.size()) + ">",
           nullptr, 0, offsets.back(), 8, llvm::DINode::FlagArtificial, nullptr,
           builder.getOrCreateArray(elements));
+    } else if (value.kind == SemanticType::NullPtr) {
+      result = builder.createUnspecifiedType("nullptr_t");
+    } else if (value.kind == SemanticType::UniqueOwner) {
+      const auto layout = session.layouts().get(value);
+      if (value.arguments.size() != 1 || !layout.storage->isPointerTy())
+        throw std::logic_error("LLVM debug owner lost its typed pointer layout");
+      // Describe the existing private handle, not a second pointee object or
+      // an owning source reference. Source wrappers retain their own members.
+      result = builder.createPointerType(type(value.arguments.front()),
+                                         layout.size * 8, layout.alignment * 8);
     } else if (value.kind == SemanticType::RawPointer ||
                value.kind == SemanticType::Reference) {
       llvm::DIType *pointee =
@@ -989,9 +999,14 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
                  : &*ir.GetInsertPoint()))
       physical.pendingEnd->eraseFromParent();
     physical.pendingEnd = nullptr;
-    auto *expression = impl->builder.createExpression(
-        {llvm::dwarf::DW_OP_LLVM_fragment, offsets.at(element),
-         offsets.at(element + 1) - offsets.at(element)});
+    // LLVM requires a fragment to be a strict subset of the variable. A
+    // singleton pack is still a logical group, but its lane is the whole value.
+    auto *expression =
+        offsets.at(element) == 0 && offsets.at(element + 1) == offsets.back()
+            ? impl->builder.createExpression()
+            : impl->builder.createExpression(
+                  {llvm::dwarf::DW_OP_LLVM_fragment, offsets.at(element),
+                   offsets.at(element + 1) - offsets.at(element)});
     auto *location = llvm::DILocation::get(
         impl->session.context(), begin ? local.variable->getLine() : 0, 0,
         local.variable->getScope());
@@ -1063,8 +1078,10 @@ void DebugInfo::point(llvm::IRBuilder<> &ir, MirDebugPoint point,
           "LLVM debug fragment has no exact existing SSA value");
     impl->builder.insertDbgValueIntrinsic(
         begin ? value : llvm::PoisonValue::get(leaf.value), local.variable,
-        impl->builder.createExpression(
-            {llvm::dwarf::DW_OP_LLVM_fragment, offset * 8, leaf.size * 8}),
+        offset == 0 && leaf.size == layout.size
+            ? impl->builder.createExpression()
+            : impl->builder.createExpression(
+                  {llvm::dwarf::DW_OP_LLVM_fragment, offset * 8, leaf.size * 8}),
         llvm::DILocation::get(impl->session.context(), 0, 0,
                               local.variable->getScope()),
         ir.GetInsertBlock());

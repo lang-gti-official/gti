@@ -4449,6 +4449,13 @@ membership or untracked storage does not acquire positive availability. A move
 followed by reinitialization cannot be bridged by a single readable range.
 The LLVM debug consumer builds scopes from those identities and exposes boundary
 events for existing storage and values, without requesting a new execution slot.
+The private unique-owner handle is described as a pointer to its exact lowered
+pointee type using the existing target pointer size/alignment; source-defined
+wrappers keep their declared members. The null literal type retains its distinct
+`nullptr_t` debug identity. Neither type description supplies readability or
+relaxes ownership. A singleton pack lane or receiver field that covers the whole
+variable uses a whole-value expression, not LLVM's strict-subset fragment form;
+the same expression choice applies to availability ends.
 The body emitter registers existing storage and passes a read-only view of its
 already-emitted SSA values at verified boundaries. Debug value lookup validates
 the concrete type and owning LLVM function; it never resolves an operand,

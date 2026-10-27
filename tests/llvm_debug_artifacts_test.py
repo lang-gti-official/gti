@@ -175,6 +175,65 @@ def main():
             assert 'main.gti' in run(['readelf', '--debug-dump=decodedline', moved]).stdout
         run([moved], 17)
         assert not list((root / 'build').rglob('*.gti-stage-*'))
+        if args.backend == 'llvm':
+            owner_source = root / 'owner.gti'
+            owner_output = root / 'owner'
+            owner_cases = [
+                '#include <std/memory>\nint main() { auto value = '
+                'std::make_unique<int>(17); return *value == 17 ? 0 : 1; }\n',
+                (Path(__file__).parent / 'fixtures/llvm_memory_empty_unique.gti').read_text(),
+                '''#include <std/memory>
+mut int released = 0;
+struct Value {
+  int number;
+  Value(int input) : number(input) {}
+  ~Value() { released += 1; }
+};
+int main() {
+  mut auto owner = std::make_unique<Value>(17);
+  mut auto moved = std::move(owner);
+  if (moved->number != 17) { return 1; }
+  moved.reset(); moved.reset();
+  return released == 1 ? 0 : 2;
+}
+''',
+            ]
+            for level in (0, 3):
+                for text in owner_cases:
+                    owner_source.write_text(text)
+                    run([gti, owner_source, '--backend', 'llvm', '-g',
+                         f'-O{level}', '--progress', 'never', '-o', owner_output])
+                    run([owner_output])
+                previous = owner_output.read_bytes()
+                owner_bundle = Path(str(owner_output) + '.dSYM')
+                previous_symbols = tree_bytes(owner_bundle) if sys.platform == 'darwin' else None
+                owner_source.write_text('''#include <std/memory>
+int main() {
+  auto owner = std::make_unique<int>(17);
+  auto moved = std::move(owner);
+  return *owner;
+}
+''')
+                failures = []
+                for debug in (False, True):
+                    argv = [gti, owner_source, '--backend', 'llvm', f'-O{level}',
+                            '--progress', 'never', '-o', owner_output]
+                    if debug:
+                        argv.append('-g')
+                    denied = run(argv, 65)
+                    assert 'error[' in denied.stderr and 'GTI-B' not in denied.stderr
+                    assert owner_output.read_bytes() == previous
+                    if previous_symbols is not None:
+                        assert tree_bytes(owner_bundle) == previous_symbols
+                    failures.append(denied.stderr)
+                assert failures[0] == failures[1], 'debug changed move rejection'
+                owner_source.write_text('''#include <std/memory>
+int main() { std::unique_ptr<int> owner{nullptr}; return *owner; }
+''')
+                run([gti, owner_source, '--backend', 'llvm', '-g', f'-O{level}',
+                     '--progress', 'never', '-o', owner_output])
+                failed = run([owner_output], 70)
+                assert 'GTI-R0008' in failed.stderr and not failed.stdout
         print(f'{args.backend}: real debug object, source metadata, cold/warm/restoration, '
               'companion rejection/recovery passed; compiler sha256=' +
               hashlib.sha256(gti.read_bytes()).hexdigest())

@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--lldb", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--optimization", choices=(0, 3), type=int, default=0)
-    parser.add_argument("--case", choices=("basic", "lexical", "inlined", "receiver", "masked", "pack", "owned-pack", "failure", "lambda", "callback", "callback-failure"), default="basic")
+    parser.add_argument("--case", choices=("basic", "lexical", "inlined", "receiver", "masked", "pack", "owned-pack", "owner", "failure", "lambda", "callback", "callback-failure"), default="basic")
     parser.add_argument("--cc", default="clang")
     args = parser.parse_args()
     failure = args.case in ("failure", "callback-failure")
@@ -54,6 +54,8 @@ def main():
         fixture = "native_debug_pack.gti"
     elif args.case == "owned-pack":
         fixture = "native_debug_owned_pack.gti"
+    elif args.case == "owner":
+        fixture = "native_debug_owner.gti"
     elif args.case == "failure":
         fixture = "native_debug_failure.gti"
     elif args.case == "lambda":
@@ -88,7 +90,7 @@ def main():
         manifest["lldb_version"] = run([args.lldb, "--version"]).stdout.strip()
         binary = output / "native-debug"
         native = []
-        if args.optimization == 3 or callback or args.case in ("receiver", "pack", "owned-pack", "failure", "lambda"):
+        if args.optimization == 3 or callback or args.case in ("receiver", "pack", "owned-pack", "owner", "failure", "lambda"):
             provider = root / "tests/fixtures/llvm_optimization" / (
                 "native_debug_callback.c" if callback else "native_debug_probe.c")
             manifest["native_probe_sha256"] = hashlib.sha256(provider.read_bytes()).hexdigest()
@@ -110,6 +112,10 @@ def main():
             assert symbols.is_file(), "Darwin production debug companion is missing"
         line = (8 if callback else 6 if args.case == "lambda" else 5 if failure else 4 if args.case in ("pack", "owned-pack") else 7 if args.case == "receiver" else 6 if args.case == "lexical"
                 else 5 if args.optimization == 3 else 4)
+        if args.case == "owner":
+            marker = ("  debug_checkpoint(owner->value);" if args.optimization == 0
+                      else "  debug_checkpoint(local);")
+            line = source.read_text().splitlines().index(marker) + 1
         command = [str(args.lldb), "--no-lldbinit", "--batch", str(binary),
                    "-o", f"breakpoint set --file native_debug.gti --line {line}",
                    "-o", "run", "-o", "frame info",
@@ -120,7 +126,9 @@ def main():
             command += ["-o", "breakpoint set --file native_debug.gti --line 8",
                         "-o", "continue", "-o", "frame info",
                         "-o", "frame variable -- input local"]
-        elif args.optimization == 0 and not callback and args.case not in ("receiver", "pack", "owned-pack", "failure", "lambda"):
+        elif args.case == "owner" and args.optimization == 0:
+            command += ["-o", "frame variable owner.owner->value"]
+        elif args.optimization == 0 and not callback and args.case not in ("receiver", "pack", "owned-pack", "owner", "failure", "lambda"):
             command += ["-o", "thread step-over", "-o", "frame info",
                         "-o", "frame variable -- input local"]
         command += ["-o", "continue"]
@@ -142,9 +150,11 @@ def main():
             assert re.search(r"\binput = 0\b", transcript), transcript
             assert re.search(r"\blocal = 9\b", transcript), transcript
             assert 'GTI-R0002' in transcript and f'native_debug.gti:{failure_line}' in transcript
-        elif args.case == "lambda" or callback:
+        elif args.case in ("lambda", "owner") or callback:
             assert re.search(r"\binput = 4\b", transcript), transcript
             assert re.search(r"\blocal = 4\b", transcript), transcript
+            if args.case == "owner" and args.optimization == 0:
+                assert re.search(r"owner\.owner->value = 4\b", transcript), transcript
         elif args.case == "owned-pack":
             assert re.search(r"\binput = 4\b", transcript), transcript
             assert re.search(r"\brest =", transcript), transcript
