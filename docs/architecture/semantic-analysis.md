@@ -877,6 +877,27 @@ ordinary body lookup and return-borrow validation must confirm the actual
 origin, rejecting local shadowing and unrelated borrowed call results. HIR/MIR
 and the LSP consume the same validated receiver/argument summary.
 
+A virtual call's text result is its root's contract. An override's summary is
+its root's summary in the override's own instance of the root's class, whose
+signature is the override's: a generic root whose result its instance makes
+text is summarized with those types. MIR's dispatch table verification
+requires the two to agree, and body analysis validates the override's returns
+against that summary, so an override of a root that relays nothing returns
+ownerless text, and an override of a root relaying a parameter relays it or
+returns ownerless text. Predeclaration finds a member call's receiver type
+through formals, fields and the declared results of the accessors that reach
+it (accessors differing only in receiver access agree). A virtual method whose
+root has no body, or whose root's returns in the receiver's instance have no
+dependency, then nominates no relay, rather than the receiver-rooted candidate
+an unknown member call takes. A generic method whose result type becomes text
+in an instance relays at each member or operator call as that instance's own
+analysis derives, so the call's borrow facts equal the instance summary MIR
+checks them against. `classifyExpression` gives an overloaded operator's text
+result the owner its relay summary names, as it does a call's: the result is
+owner dependent unless the relayed operand, or the receiver field a field
+relay reads, holds ownerless text, so the binding retains the loan
+`operatorBorrowSource` names.
+
 `FunctionInfo::completeReturnBorrow` is a separate complete result contract,
 not an inferred owner for an empty alternative. The current dependency-free
 enum slice collects every structurally reachable explicit return and demands

@@ -6459,6 +6459,39 @@ auto SemanticVisitor::Impl::resolveOperator(
     operatorBorrowParameter = contract.parameter;
     operatorBorrowAccess = contract.access;
   }
+  // A generic operator whose result this call's types make text relays as
+  // its instance's own analysis derives, as an ordinary method call does
+  // (L-OWN-02).
+  std::vector<std::size_t> operatorBorrowParameters =
+      selected.returnBorrowParameters;
+  std::vector<BorrowedFieldOrigin> operatorBorrowFields =
+      selected.returnBorrowFields;
+  if (operatorBorrowOrigin == BorrowOriginKind::None &&
+      (selected.returnType.kind == SemanticType::StringView ||
+       selected.returnType.kind == SemanticType::CString)) {
+    const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+    const FunctionInfo *declaration = semanticModel.findFunction(selected.id);
+    if (declaration == nullptr && instanceBaseModel != nullptr)
+      declaration = instanceBaseModel->findFunction(selected.id);
+    if (declaration != nullptr && !declaration->explicitReturnBorrowOrigin &&
+        declaration->returnType != selected.returnType) {
+      FunctionInfo concrete = *declaration;
+      concrete.returnType = selected.returnType;
+      concrete.parameterTypes = selected.parameterTypes;
+      if (const auto text = dynamicTextReturnBorrowSummary(
+              concrete, selected.dispatchOwner.kind == SemanticType::Class
+                            ? selected.dispatchOwner
+                            : receiverType)) {
+        operatorBorrowOrigin = text->origin;
+        operatorBorrowParameter = text->parameter;
+        operatorBorrowAccess = text->access;
+        if (!text->fields.empty()) {
+          operatorBorrowParameters = text->parameters;
+          operatorBorrowFields = text->fields;
+        }
+      }
+    }
+  }
   ResolvedOperatorInfo resolved{
       .function = selected.id,
       .declaration = selected.declaration,
@@ -6473,8 +6506,8 @@ auto SemanticVisitor::Impl::resolveOperator(
       .borrowOrigin = operatorBorrowOrigin,
       .borrowArgument = operatorBorrowParameter,
       .borrowAccess = operatorBorrowAccess,
-      .borrowArguments = selected.returnBorrowParameters,
-      .borrowFields = selected.returnBorrowFields,
+      .borrowArguments = std::move(operatorBorrowParameters),
+      .borrowFields = std::move(operatorBorrowFields),
       .capability = callableInvocationCapability(selected.receiverMutability),
       .boundary = boundary,
       .receiverInfo = [&]() {
@@ -7064,17 +7097,27 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       concreteDeclaration->returnBorrowPlace = fields->place;
       declarationInfo = &*concreteDeclaration;
     } else if (const auto text = dynamicTextReturnBorrowSummary(
-                   *concreteDeclaration, textRelayOwner);
-               text && !text->fields.empty()) {
-      // A generic class method relays a receiver field that this call's
-      // types make text (L-OWN-02).
-      concreteDeclaration->returnBorrowOrigin = text->origin;
-      concreteDeclaration->returnBorrowParameter = text->parameter;
-      concreteDeclaration->returnBorrowAccess = text->access;
-      concreteDeclaration->returnBorrowParameters = text->parameters;
-      concreteDeclaration->returnBorrowFields = text->fields;
-      concreteDeclaration->returnBorrowPlace = text->place;
-      declarationInfo = &*concreteDeclaration;
+                   *concreteDeclaration, textRelayOwner)) {
+      if (!text->fields.empty()) {
+        // A generic class method relays a receiver field that this call's
+        // types make text (L-OWN-02).
+        concreteDeclaration->returnBorrowOrigin = text->origin;
+        concreteDeclaration->returnBorrowParameter = text->parameter;
+        concreteDeclaration->returnBorrowAccess = text->access;
+        concreteDeclaration->returnBorrowParameters = text->parameters;
+        concreteDeclaration->returnBorrowFields = text->fields;
+        concreteDeclaration->returnBorrowPlace = text->place;
+        declarationInfo = &*concreteDeclaration;
+      } else if (text->origin != BorrowOriginKind::None &&
+                 !concreteDeclaration->explicitReturnBorrowOrigin) {
+        // A result type this call's types make text relays an argument or
+        // the receiver as the instance's own analysis derives (L-OWN-02).
+        concreteDeclaration->returnBorrowOrigin = text->origin;
+        concreteDeclaration->returnBorrowParameter = text->parameter;
+        concreteDeclaration->returnBorrowAccess = text->access;
+        concreteDeclaration->returnBorrowPlace = text->place;
+        declarationInfo = &*concreteDeclaration;
+      }
     }
     concreteDeclaration->returnedTextReference =
         textReferenceReturnSummary(*concreteDeclaration, textRelayOwner);

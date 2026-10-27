@@ -3126,6 +3126,43 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
         return expressionInfo(std::move(type), ValueCategory::Place,
                               resolved->returnType.referenceAccess);
       }
+      // A text result relays the operator's receiver or argument as its
+      // summary says, as a call's text result does (L-OWN-02): it holds that
+      // operand's owner unless the operand holds ownerless text.
+      if (borrowedTextType(type) &&
+          resolved->borrowOrigin != BorrowOriginKind::None) {
+        if (const auto field =
+                operatorFieldSourcedTextResult(expr, *resolved)) {
+          const ExpressionInfo *sourceInfo =
+              semanticModel.findExpression(**field->origin);
+          std::vector<SymbolId> held;
+          if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
+            held = textDependentFields(**field->origin);
+          if (fieldSourcedTextFormal(*field) ||
+              std::find(held.begin(), held.end(), field->field) != held.end())
+            return ownerDependentTextInfo(std::move(type));
+          return expressionInfo(std::move(type));
+        }
+        const ExprPtr *argument =
+            resolved->borrowOrigin == BorrowOriginKind::Argument
+                ? operatorRelayOperand(expr, *resolved, resolved->borrowOrigin,
+                                       resolved->borrowArgument)
+                : nullptr;
+        const ExpressionInfo *sourceInfo =
+            argument != nullptr && *argument
+                ? semanticModel.findExpression(**argument)
+                : nullptr;
+        const bool ownerlessCStringSource =
+            type.kind == SemanticType::CString && sourceInfo != nullptr &&
+            (sourceInfo->type.kind == SemanticType::CString ||
+             sourceInfo->type.kind == SemanticType::StringView ||
+             sourceInfo->type.kind == SemanticType::NullPtr);
+        if (sourceInfo != nullptr &&
+            (sourceInfo->type.kind == type.kind || ownerlessCStringSource) &&
+            !sourceInfo->traits.containsBorrowedState)
+          return expressionInfo(std::move(type));
+        return ownerDependentTextInfo(std::move(type));
+      }
       return expressionInfo(std::move(type));
     }
   }

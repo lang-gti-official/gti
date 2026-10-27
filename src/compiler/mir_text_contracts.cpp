@@ -887,6 +887,18 @@ private:
           instruction->borrowOrigin == BorrowOriginKind::None &&
           instruction->borrowFields.empty()) {
         answer.known = true;
+      } else if (target && textType(target->returnType) &&
+                 instruction->dispatch == CallDispatch::Virtual &&
+                 target->virtualMethod &&
+                 target->returnBorrowOrigin == BorrowOriginKind::None &&
+                 target->returnBorrowFields.empty() &&
+                 !target->completeReturnBorrow && !instruction->loan &&
+                 instruction->borrowOrigin == BorrowOriginKind::None) {
+        // A virtual call returns what one of its root's overrides returns,
+        // and each keeps the root's contract: a root without a result
+        // dependency yields text that each source override's returns prove
+        // ownerless below.
+        answer.known = true;
       } else if (target && textType(target->returnType)) {
         answer = callResultSources(context, *instruction, active);
       }

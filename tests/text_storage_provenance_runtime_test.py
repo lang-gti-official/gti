@@ -4,8 +4,11 @@
 A view copied out of an array of views holds the ownerless text the array
 holds, a C string loaded through a raw pointer is the inert native address the
 caller stored there, and a callable's text result is what its target returns.
-MIR proves each result ownerless, as it does a reassigned local's text and a
-method's call result through its receiver's field. A lambda's view over its
+MIR proves each result ownerless, as it does a reassigned local's text, a
+method's call result through its receiver's field, and an erased callable's
+result through a virtual root or std::function. An override keeps its root's
+relay in its own instance of the root's class, and an overloaded operator's
+text result keeps its relayed owner borrowed. A lambda's view over its
 captured text is used only locally and keeps the captured view's owner
 borrowed. Each program must build and behave identically on C++ and LLVM at
 -O0 and -O2.
@@ -307,6 +310,144 @@ int main() {
 }
 '''
 
+ERASED_TEXT_RESULTS = r'''
+#include <std/functional>
+#include <std/polymorphic>
+#include <std/string>
+// A virtual text result follows its root's contract, a lambda's result is
+// what its returns hold, and a generic result its instance makes text relays
+// at the call: an erased callable over a literal lambda returns ownerless text
+// through a user-defined interface and through std::function.
+interface Labeler {
+  std::string_view label();
+};
+class Fixed : public Labeler {
+public:
+  Fixed() {}
+  std::string_view label() override { return "fixed"; }
+};
+class Wrapped<F> : public Labeler {
+  F fn;
+public:
+  Wrapped(F fn) : fn(fn) {}
+  std::string_view label() override { return this.fn(); }
+};
+class Erased {
+  mut std::inline_polymorphic<Labeler, 32, 8> target{};
+public:
+  Erased() {}
+  void set<F>(F fn) mut { this.target.replace(Wrapped<F>(fn)); }
+  std::string_view operator()() { return this.target.get().label(); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R same(R text) { return text; }
+};
+mut std::string_view kept = "";
+int main() {
+  auto lit = []() -> std::string_view { return "lit"; };
+  mut Erased erased{};
+  erased.set(std::move(lit));
+  kept = erased();
+  std::println(kept);
+  mut std::inline_polymorphic<Labeler, 32, 8> slot{};
+  slot.replace(Fixed());
+  std::println(slot.get().label());
+  auto word = []() -> std::string_view { return "word"; };
+  std::function<std::string_view()> fn{word};
+  std::println(fn());
+  std::string_view held = fn();
+  Echo<std::string_view> echo{};
+  mut std::string owner{"echoed"};
+  std::string_view relayed = echo.same(owner.view());
+  std::println(relayed);
+  owner.append("!");
+  std::println(held);
+  return kept == "lit" ? 0 : 1;
+}
+'''
+
+VIRTUAL_ROOT_INSTANCES = r'''
+#include <std/string>
+// An override's text result keeps its root's contract in the override's
+// instance of the root's class: under a generic root that relays its
+// argument, an override relays it or returns a literal.
+class Picker<T> {
+public:
+  int n;
+  Picker() : n(0) {}
+  virtual T pick(T a) { return a; }
+};
+class Literal : public Picker<std::string_view> {
+public:
+  Literal() : Picker<std::string_view>() {}
+  std::string_view pick(std::string_view a) override { return "literal"; }
+};
+class Same<T> : public Picker<T> {
+public:
+  Same() : Picker<T>() {}
+  T pick(T a) override { return a; }
+};
+int main() {
+  std::string owner{"owned"};
+  Picker<std::string_view> base{};
+  Literal literal{};
+  Same<std::string_view> same{};
+  Picker<std::string_view>& first = base;
+  Picker<std::string_view>& second = literal;
+  Picker<std::string_view>& third = same;
+  std::println(first.pick(owner.view()));
+  std::println(second.pick(owner.view()));
+  std::println(third.pick(owner.view()));
+  return 0;
+}
+'''
+
+OPERATOR_TEXT_RELAYS = r'''
+#include <std/string>
+// An overloaded operator's text result relays its receiver or an argument as
+// its summary says, as a method's does: the relayed owner stays borrowed
+// while the result is used, and ownerless text relays nothing.
+class Same {
+public:
+  Same() {}
+  std::string_view operator()(std::string_view s) { return s; }
+  std::string_view operator[](std::string_view s) { return s; }
+};
+class Plain {
+  mut std::string s;
+public:
+  Plain() : s("plain") {}
+  std::string_view operator()() { return this.s.view(); }
+  void grow() mut { this.s.append("!"); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R operator()(R text) { return text; }
+};
+int main() {
+  Same same{};
+  mut Plain plain{};
+  Echo<std::string_view> echo{};
+  mut std::string owner{"owned"};
+  std::println(same(owner.view()));
+  std::println(same[owner.view()]);
+  std::println(echo(owner.view()));
+  std::string_view literal = same("literal");
+  owner.append("!");
+  std::println(literal);
+  std::println(plain());
+  plain.grow();
+  std::println(plain());
+  std::println(owner);
+  return 0;
+}
+'''
+
 CASES = {
     'array-elements': (ARRAY_ELEMENTS, (0, 'cde\nab\ntwo\nright\nplaced\n', '')),
     'array-fields-and-lambdas': (ARRAY_FIELDS_AND_LAMBDAS, (0, 'yz\nlabel\n', '')),
@@ -321,6 +462,12 @@ CASES = {
         0, 'second\nfirst\nloop\nafter\ny\n', '')),
     'receiver-field-call-returns': (RECEIVER_FIELD_CALL_RETURNS, (
         0, 'small\nlarge\ninner-text\n', '')),
+    'erased-text-results': (ERASED_TEXT_RESULTS, (
+        0, 'lit\nfixed\nword\nechoed\nword\n', '')),
+    'virtual-root-instances': (VIRTUAL_ROOT_INSTANCES, (
+        0, 'owned\nliteral\nowned\n', '')),
+    'operator-text-relays': (OPERATOR_TEXT_RELAYS, (
+        0, 'owned\nowned\nowned\nliteral\nplain\nplain!\nowned!\n', '')),
 }
 
 ENDPOINTS = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
