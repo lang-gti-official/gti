@@ -430,6 +430,91 @@ int main() {
   return copy.read() == 41 ? 0 : 1;
 }
 ''',
+    # A by-value parameter formed from a named place is the callee's own copy: moving or reassigning it leaves the caller's object intact.
+    "by-value-place-parameters": r'''
+enum Token { word(int value), stop };
+enum Slot { ready(int& value), empty };
+int peek(Token token) {
+  switch (token) {
+  case Token::word(auto& value): return value;
+  case Token::stop: return -1;
+  }
+}
+int take(Token token) { Token kept = std::move(token); return peek(kept); }
+int reset(mut Token token) { token = Token::stop; return peek(token); }
+int weigh(Slot slot) {
+  switch (slot) {
+  case Slot::ready(auto& value): return value;
+  case Slot::empty: return 0;
+  }
+}
+class Holder {
+  Token token;
+public:
+  Holder(Token token) : token(std::move(token)) {}
+  int read() { return peek(this.token); }
+  Holder clone() { return Holder(this.token); }
+};
+class Shelf {
+  Slot slot;
+public:
+  Shelf(Slot slot) : slot(std::move(slot)) {}
+  int get() { return weigh(this.slot); }
+};
+int main() {
+  Token named = Token::word(7);
+  Holder holder = Holder(named);
+  if (peek(named) != 7 || holder.read() != 7) { return 1; }
+  if (take(named) != 7 || peek(named) != 7) { return 2; }
+  if (reset(named) != -1 || peek(named) != 7) { return 3; }
+  Holder second = holder.clone();
+  if (holder.read() != 7 || second.read() != 7) { return 4; }
+  int owner = 3;
+  Slot slot = Slot::ready(owner);
+  Shelf shelf = Shelf(slot);
+  if (weigh(slot) != 3 || shelf.get() != 3) { return 5; }
+  return 0;
+}
+''',
+    # A consumed receiver selected by a conditional is destroyed exactly once: a fresh one at the full-expression end, a moved one through its moved-from owner.
+    "consuming-conditional-receivers": r'''
+mut int log = 0;
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { log = log * 10 + this.id; }
+  int read() { return this.id; }
+};
+class Single {
+  mut Tracked item;
+public:
+  Single(int value) : item(Tracked(value)) {}
+  Tracked release() && { return std::move(this.item); }
+  int take() && { return this.item.read(); }
+};
+Single make(int value) { return Single(value); }
+int fresh(bool left) {
+  log = 0;
+  int taken = (left ? make(1) : Single(2)).take();
+  return taken * 100 + log;
+}
+int named(bool left) {
+  log = 0;
+  {
+    Single a{3};
+    Single b{4};
+    Tracked chosen = left ? std::move(a).release() : std::move(b).release();
+    if (chosen.read() != (left ? 3 : 4)) { return -1; }
+  }
+  return log;
+}
+int main() {
+  if (fresh(true) != 101 || fresh(false) != 202) { return 1; }
+  if (named(true) != 34 || named(false) != 43) { return 2; }
+  return 0;
+}
+''',
 }
 
 FAILURES = {

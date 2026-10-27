@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <optional>
 #include <llvm/Support/Alignment.h>
 
 namespace lang::native_llvm {
@@ -719,14 +720,25 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
         ir.CreateCall(cleanup(*instruction.elementCleanup),
                       {inputs[0], failureChannel, ir.getInt1(duringFailure)})};
   }
-  case IntrinsicKind::StorageBoundsCheck:
+  case IntrinsicKind::StorageBoundsCheck: {
     if (inputs.size() != 2 || !inputs[0]->getType()->isIntegerTy(64) ||
         !inputs[1]->getType()->isIntegerTy(64))
       throw std::logic_error("LLVM storage bounds lost its index and extent");
-    guard(ir.CreateICmpUGE(inputs[0], inputs[1]),
-          {DefinedFailureCode::IndexOutOfBounds,
-           DefinedFailureDetail::PrivateStorage});
+    // The detail names the owning container (vector, string or private
+    // storage), so the check reports the outcome MIR recorded for it.
+    std::optional<DefinedFailureOutcome> outcome;
+    for (const auto &origin : instruction.definedFailure.localOrigins)
+      for (const auto &recorded : origin.outcomes)
+        if (recorded.code == DefinedFailureCode::IndexOutOfBounds) {
+          if (outcome && *outcome != recorded)
+            throw std::logic_error(
+                "LLVM storage bounds lost its single recorded detail");
+          outcome = recorded;
+        }
+    if (outcome)
+      guard(ir.CreateICmpUGE(inputs[0], inputs[1]), *outcome);
     return {true};
+  }
   default:
     return {};
   }

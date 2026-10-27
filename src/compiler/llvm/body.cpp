@@ -368,6 +368,38 @@ private:
     return entry->second;
   }
 
+  // The hidden temporary a Move or Load of that same temporary materializes,
+  // when the moved type lives in memory.
+  [[nodiscard]] const MirPlace *
+  materializedTemporary(const MirInstruction &instruction) const {
+    if (!instruction.result || instruction.operands.size() != 1 ||
+        !addressValue(session.program().mir(), instruction.info.type))
+      return nullptr;
+    const auto *slot = input.findPlace(instruction.operands.front().place);
+    if (!slot || slot->root != MirPlaceRootKind::Temporary ||
+        !slot->projections.empty())
+      return nullptr;
+    const auto materialization =
+        findMirTemporaryMaterialization(input, *slot, slot->sourceValue);
+    return materialization && materialization.producer == &instruction
+               ? slot
+               : nullptr;
+  }
+  // A by-value call input formed from a place observation. The parameter is
+  // the callee's own object, which it may move from or mutate, so the input
+  // needs its own copy rather than the observed place's address.
+  [[nodiscard]] bool observedParameter(const MirInstruction &instruction) const {
+    if (instruction.kind != MirInstructionKind::CallInput ||
+        instruction.destination || instruction.operands.size() != 1 ||
+        instruction.info.category != ValueCategory::Value ||
+        !addressValue(session.program().mir(), instruction.info.type))
+      return false;
+    const auto &source = instruction.operands.front();
+    const auto *observed = source.kind == MirOperandKind::Value && source.value
+                               ? input.findValue(source.value)
+                               : nullptr;
+    return observed && observed->info.category == ValueCategory::Place;
+  }
   // An array element initialized from a differently typed scalar applies the
   // implicit initialization conversion MIR leaves to element formation, as an
   // Initialize of the element's place would.
@@ -633,8 +665,20 @@ private:
     }
     // An absent outcome is either statically infallible or discharged by
     // verified MIR proof. It does not authorize originating a different record.
-    if (!authorized)
+    // A live outcome of the same code under another detail means the lowering
+    // lost the recorded outcome; dropping the check would remove a live one.
+    if (!authorized) {
+      for (std::size_t index = 0;
+           index < stage->definedFailure.localOrigins.size(); ++index)
+        for (const auto &recorded :
+             stage->definedFailure.localOrigins[index].outcomes)
+          if (recorded.code == outcome.code &&
+              recorded.detail != outcome.detail &&
+              !isMirFailureOutcomeDischarged(*stage, index, recorded))
+            throw std::logic_error(
+                "LLVM checked operation lost its recorded failure detail");
       return;
+    }
     if (const auto *constant = llvm::dyn_cast<llvm::ConstantInt>(condition);
         constant && constant->isZero())
       return;
@@ -1517,6 +1561,13 @@ private:
     }
     case MirInstructionKind::Load:
     case MirInstructionKind::Move:
+      if (const auto *slot = materializedTemporary(instruction)) {
+        // MIR names a branch-produced object in its hidden temporary through
+        // this Move or Load: the value is that object in place, not a copy, and
+        // the temporary keeps its live state and cleanup.
+        result = memory.address(slot->id);
+        break;
+      }
       if (isFreshHierarchyTransferProducer(instruction) &&
           containsHierarchyStorage(session.program().mir(),
                                    instruction.info.type)) {
@@ -1548,7 +1599,25 @@ private:
                DefinedFailureDetail::NegativeArgumentCount});
         break;
       }
-      result = operand(instruction.operands.at(0), publishedAddress);
+      {
+        // A Move into a destination publishes the moved object there, and
+        // that object is the Move's value: one live object, not a copy.
+        llvm::Value *moveDestination =
+            instruction.kind == MirInstructionKind::Move &&
+                    instruction.destination && !publishedAddress &&
+                    addressValue(session.program().mir(), instruction.info.type)
+                ? memory.address(*instruction.destination)
+                : nullptr;
+        result = operand(instruction.operands.at(0),
+                         moveDestination ? moveDestination : publishedAddress);
+      }
+      if (observedParameter(instruction)) {
+        auto *copy = publishedAddress
+                         ? publishedAddress
+                         : memory.temporary(instruction.info.type);
+        store(result, copy, instruction.info.type);
+        result = copy;
+      }
       if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.info.type == SemanticType::CString &&
           instruction.operands[0].type == SemanticType::StringView) {
@@ -1559,9 +1628,14 @@ private:
         result = ir.CreateExtractValue(result, 0);
       }
       if (instruction.kind == MirInstructionKind::Move &&
-          instruction.destination)
-        store(result, memory.address(*instruction.destination),
-              input.findPlace(*instruction.destination)->type);
+          instruction.destination) {
+        const auto &place = *input.findPlace(*instruction.destination);
+        auto *destination = memory.address(place.id);
+        if (result != destination)
+          store(result, destination, place.type);
+        if (addressValue(session.program().mir(), place.type))
+          result = destination;
+      }
       if (instruction.kind == MirInstructionKind::CallInput &&
           instruction.destination) {
         const auto &place = *input.findPlace(*instruction.destination);

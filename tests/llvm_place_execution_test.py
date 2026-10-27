@@ -491,6 +491,10 @@ def failure_cases() -> dict[str, str]:
         'text-empty': '#include <std/string_view>\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("", 0); return 0; }',
         'text-negative': '#include <std/string_view>\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("ab", -1); return 0; }',
         'reference-failure': 'mut int& get(mut int& v, int n) { v = v / n; return v; } int main() { mut int x = 2; get(x, 0) = 4; return 0; }',
+        # Container checks report the container MIR recorded for the check.
+        'vector-index-high': '#include <std/vector>\nint get(std::vector<int>& values, uint64_t i) { return values[i]; } int main() { mut std::vector<int> values = std::vector<int>(); values.push_back(1); return get(values, uint64_t(1)); }',
+        'string-index-high': '#include <std/string>\nchar get(std::string& text, uint64_t i) { return text[i]; } int main() { std::string text = std::string("ab"); [[discard]] get(text, uint64_t(2)); return 0; }',
+        'string-position-high': '#include <std/string>\nint main() { std::string text = std::string("abc"); [[discard]] text.substr(text.size() + uint64_t(1)); return 0; }',
     }
 
 
