@@ -33,6 +33,11 @@ for what minor and patch releases mean.
 - Fix consuming (`&&`) calls on a receiver chosen by a conditional on the
   native backend. A fresh receiver from either arm was never destroyed, and a
   receiver moved out of a variable was destroyed twice.
+- Native debug builds (`-g`, or `debug-info = true` in a profile) no longer
+  fail on payload enums. Debug info now describes a payload enum by its active
+  alternative and each alternative's fields, and a debug record after an
+  inactive `std::optional` or `std::expected` access no longer invalidates the
+  module, so debug builds that format text or read optional values compile.
 - `std::mutex<T>` is now `std::relocatable` exactly when `T` is. Relocation
   builds a fresh native mutex and moves the protected value, so mutexes can
   be swapped and held in relocating containers; a held mutex still cannot
