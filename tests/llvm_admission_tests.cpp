@@ -234,6 +234,11 @@ void testPlacementPlan() {
        .kind = MirInstructionKind::Call,
        .result = 9,
        .loan = 1,
+       .info = {.type = object, .category = ValueCategory::Place}},
+      {.id = 10,
+       .kind = MirInstructionKind::Call,
+       .result = 10,
+       .loan = 2,
        .info = {.type = object}}};
   block.terminator = {.kind = MirTerminatorKind::Return,
                       .value = MirOperand{.kind = MirOperandKind::Value,
@@ -251,6 +256,8 @@ void testPlacementPlan() {
          "explicit array copies never become fresh destination aliases");
   expect(!placement.fresh(8) && !placement.fresh(9),
          "intrinsic transfers and borrowed call results are not fresh objects");
+  expect(placement.fresh(10),
+         "a by-value call result carrying borrowed state is a fresh object");
   body.blocks[0].instructions.push_back(
       {.id = 10,
        .kind = MirInstructionKind::Initialize,
@@ -900,7 +907,7 @@ int main() {
             ownerMir, constructor.body, constructor.id, instruction);
         if (candidate.matched() &&
             candidate.transport ==
-                UnstagedConstructorFieldPublicationTransport::NullUniqueOwner) {
+                UnstagedConstructorFieldPublicationTransport::NullPointer) {
           ownerConstructor = &constructor;
           ownerInstruction = &instruction;
           ownerPublication = candidate;

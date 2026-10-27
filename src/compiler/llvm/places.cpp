@@ -62,6 +62,35 @@ std::optional<std::size_t> Places::packElement(const MirPlace &place) const {
         "LLVM PackElement projection lost its exact parameter root");
   return index;
 }
+llvm::GlobalVariable *Places::enumeratorStorage(const MirPlace &place) {
+  const auto *symbol = session.program().findSymbol(place.symbol);
+  const auto *declaration =
+      symbol && symbol->kind == SymbolKind::Enumerator &&
+              place.access == AccessMode::ReadOnly && place.projections.empty()
+          ? session.program().findEnumDeclaration(place.type)
+          : nullptr;
+  if (!declaration || declaration->payload ||
+      !session.program().mir().findIntegralEnum(place.type))
+    return nullptr;
+  const auto enumerator = std::find_if(
+      declaration->enumerators.begin(), declaration->enumerators.end(),
+      [&](const auto &candidate) { return candidate.name == symbol->name; });
+  auto *storage = llvm::dyn_cast<llvm::IntegerType>(
+      session.layouts().get(place.type).storage);
+  if (enumerator == declaration->enumerators.end() || !storage)
+    return nullptr;
+  const auto name = "__gti_native_v1_enumerator" + std::to_string(place.symbol);
+  if (auto *existing = session.module().getNamedGlobal(name))
+    return existing;
+  auto *global = new llvm::GlobalVariable(
+      session.module(), storage, true, llvm::GlobalValue::InternalLinkage,
+      integerConstant(storage, enumerator->value.negative,
+                      enumerator->value.magnitude),
+      name);
+  global->setAlignment(
+      llvm::Align(session.layouts().get(place.type).alignment));
+  return global;
+}
 void Places::allocate(
     const std::map<SymbolId, llvm::GlobalVariable *> &globals) {
   for (const auto &place : body.places) {
@@ -92,9 +121,16 @@ void Places::allocate(
       continue;
     }
     if (place.root == MirPlaceRootKind::Symbol &&
-        !globals.contains(place.symbol))
-      throw BackendUnsupportedError(
-          "LLVM symbol place requires declared global storage");
+        !globals.contains(place.symbol)) {
+      // A place rooted at an integral enumerator designates that named
+      // constant; it is read-only storage holding the enumerator's value.
+      auto *constant = enumeratorStorage(place);
+      if (!constant)
+        throw BackendUnsupportedError(
+            "LLVM symbol place requires declared global storage");
+      roots.try_emplace(key(place), Root{constant, place.type});
+      continue;
+    }
     auto *storage = globals.contains(place.symbol) &&
                             (place.root == MirPlaceRootKind::Symbol ||
                              body.kind == MirBodyKind::Module)

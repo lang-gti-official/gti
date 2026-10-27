@@ -11912,6 +11912,29 @@ negative constants that LLVM 23 does not canonicalize; the record is with the
 remaining work below. Fixed, with negative enumerators and negative case labels
 added to the `integral-enum-underlying` and `switch-default` execution cases.
 
+**Corpus sweep (2026-10-27).** The measure was widened from the shipped
+examples to every single-file program in the gti-lang organization: this
+repository's examples and tests and the other organization repositories,
+compared on both backends at native O0 and O2. It found silent wrong answers
+that no gate covered, each fixed as a general rule with a registered case:
+
+- Native lowering raised every container bounds check under the private
+  storage detail, while MIR records `std::vector` and `std::string` checks
+  under their own details. The guard treats an unrecorded outcome as
+  discharged, so an out-of-range vector index, string index or `substr`
+  position read past the container. The lowering now uses the recorded
+  outcome (`vector-index-high`, `string-index-high`, `string-position-high`),
+  and a guard whose code is recorded under another detail now fails closed.
+- A by-value call input formed from a place observation passed the observed
+  place's address, so a callee that moved from or reassigned its parameter
+  changed the caller's variable (`by-value-place-parameters`).
+- A consumed receiver chosen by a conditional was copied out of its hidden
+  temporary, losing the fresh receiver's destructor and destroying a moved
+  receiver twice (`consuming-conditional-receivers`).
+- A by-value call result carrying a loan was not treated as fresh, which
+  crashed placement, and array elements skipped the implicit scalar
+  initialization conversion MIR leaves to element formation.
+
 #### Remaining Executable Gaps (2026-10-27)
 
 Grouped by what actually blocks each, not by the reported kind. Several

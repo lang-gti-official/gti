@@ -341,6 +341,74 @@ int main() {
   return total == 13 && node.value == 8 ? 0 : 1;
 }
 ''',
+    # By-value borrow carriers produced inside conditional operands are built in their hidden temporaries.
+    "conditional-carrier-temporaries": r'''
+mut int destroyed = 0;
+class Counter {
+  mut int value;
+public:
+  Counter(int initial) : value(initial) {}
+  int read() { return this.value; }
+  void bump() mut { this.value += 1; }
+};
+class Note {
+  int tag;
+public:
+  Note(int value) : tag(value) {}
+  int read() { return this.tag; }
+  ~Note() { destroyed += 1; }
+};
+class View {
+  Counter& source;
+  Note label;
+public:
+  View(Counter& counter, int tag) : source(counter), label(Note(tag)) {}
+  int sum() { return this.source.read() + this.label.read(); }
+};
+class Writer {
+  mut Counter& target;
+public:
+  Writer(mut Counter& counter) : target(counter) {}
+  int bump() mut { this.target.bump(); return this.target.read(); }
+};
+class Hub {
+  mut Counter counter;
+public:
+  Hub() : counter(Counter(10)) {}
+  View view(int tag) { return View(this.counter, tag); }
+  Writer writer() mut { return Writer(this.counter); }
+};
+int main() {
+  mut Hub hub{};
+  bool early = false;
+  if (early || hub.view(5).sum() != 15) { return 1; }
+  if (!early && hub.view(2).sum() != 12) { return 2; }
+  int chosen = early ? 0 : hub.view(1).sum();
+  if (chosen != 11) { return 3; }
+  if (early || hub.writer().bump() != 11) { return 4; }
+  return destroyed == 3 ? 0 : 5;
+}
+''',
+    # Array elements take the implicit scalar initialization conversion from differently typed values.
+    "aggregate-element-conversions": r'''
+double third(double values[3]) { return values[2]; }
+class Mix {
+  double values[3];
+public:
+  Mix(double initial[3]) : values(initial) {}
+  double at(uint64_t index) { return this.values[index]; }
+};
+int main() {
+  double floats[3] = {1.0, -0.0, 3.0};
+  if (floats[0] != double(1.0) || floats[2] != double(3.0)) { return 1; }
+  int64_t widened[2] = {int32_t(-5), uint8_t(200)};
+  if (widened[0] != int64_t(-5) || widened[1] != int64_t(200)) { return 3; }
+  if (third(floats) != double(3.0)) { return 4; }
+  Mix mix = Mix(floats);
+  if (mix.at(uint64_t(0)) != double(1.0)) { return 5; }
+  return 0;
+}
+''',
     # A stored borrow carrier returned by value only states its provenance.
     "returned-view-provenance": r'''
 class IntView {
@@ -360,6 +428,175 @@ int main() {
   Holder holder = Holder(value);
   IntView copy = holder.get();
   return copy.read() == 41 ? 0 : 1;
+}
+''',
+    # A by-value parameter formed from a named place is the callee's own copy: moving or reassigning it leaves the caller's object intact.
+    "by-value-place-parameters": r'''
+enum Token { word(int value), stop };
+enum Slot { ready(int& value), empty };
+int peek(Token token) {
+  switch (token) {
+  case Token::word(auto& value): return value;
+  case Token::stop: return -1;
+  }
+}
+int take(Token token) { Token kept = std::move(token); return peek(kept); }
+int reset(mut Token token) { token = Token::stop; return peek(token); }
+int weigh(Slot slot) {
+  switch (slot) {
+  case Slot::ready(auto& value): return value;
+  case Slot::empty: return 0;
+  }
+}
+class Holder {
+  Token token;
+public:
+  Holder(Token token) : token(std::move(token)) {}
+  int read() { return peek(this.token); }
+  Holder clone() { return Holder(this.token); }
+};
+class Shelf {
+  Slot slot;
+public:
+  Shelf(Slot slot) : slot(std::move(slot)) {}
+  int get() { return weigh(this.slot); }
+};
+int main() {
+  Token named = Token::word(7);
+  Holder holder = Holder(named);
+  if (peek(named) != 7 || holder.read() != 7) { return 1; }
+  if (take(named) != 7 || peek(named) != 7) { return 2; }
+  if (reset(named) != -1 || peek(named) != 7) { return 3; }
+  Holder second = holder.clone();
+  if (holder.read() != 7 || second.read() != 7) { return 4; }
+  int owner = 3;
+  Slot slot = Slot::ready(owner);
+  Shelf shelf = Shelf(slot);
+  if (weigh(slot) != 3 || shelf.get() != 3) { return 5; }
+  return 0;
+}
+''',
+    # An unsafe call's by-value result moves into its consumer, and a fallible unsafe call's reference result is read and passed on in its success block.
+    "unsafe-result-staging": r'''
+mut int32_t divisor = 1;
+class Window {
+  int32_t& value;
+public:
+  Window(int32_t& value) : value(value) {}
+  int32_t read() { return this.value; }
+};
+unsafe Window open(int32_t& value) { return Window(value); }
+unsafe Window checked(int32_t& value) {
+  int32_t guard = 10 / divisor;
+  return Window(value);
+}
+int32_t consume(Window window) { return window.read(); }
+class Slots {
+  mut int32_t values[3];
+public:
+  Slots() : values({1, 2, 3}) {}
+  unsafe int32_t& at(uint64_t index) { return this.values[index]; }
+};
+int32_t twice(int32_t& value) { return value * 2; }
+int main() {
+  int32_t value = 7;
+  mut Slots slots{};
+  unsafe {
+    if (consume(open(value)) != 7) { return 1; }
+    if (consume(checked(value)) != 7) { return 2; }
+    if (slots.at(uint64_t(1)) != 2) { return 3; }
+    if (twice(slots.at(uint64_t(2))) != 6) { return 4; }
+  }
+  return 0;
+}
+''',
+    # Field initializers publish null addresses, address values and whole array values directly into their fields.
+    "field-publication-values": r'''
+enum class Mode : int32_t { off = 0, on = 1 };
+class Defaults {
+public:
+  c_string native = nullptr;
+  int32_t* cursor = nullptr;
+  std::string_view names[2] = {"first", "second"};
+  int32_t values[3] = {1, 2, 3};
+  Mode modes[2] = {Mode::on, Mode::off};
+  Defaults() = default;
+};
+class Tagged {
+public:
+  c_string tag;
+  c_string kept;
+  Tagged(c_string tag, c_string kept) : tag(tag), kept(std::move(kept)) {}
+};
+int main() {
+  Defaults defaults{};
+  if (defaults.native != nullptr || defaults.cursor != nullptr) { return 1; }
+  if (defaults.names[1] != "second" || defaults.values[2] != 3) { return 2; }
+  if (defaults.modes[0] != Mode::on || defaults.modes[1] != Mode::off) { return 3; }
+  Tagged tagged{"alpha", "beta"};
+  if (tagged.tag == nullptr || tagged.kept == nullptr) { return 4; }
+  return 0;
+}
+''',
+    # Unqualified fields in a constructor body are the constructed object's fields, exactly like this.field.
+    "implicit-constructor-fields": r'''
+mut int32_t seen = 0;
+class Meter {
+  mut int32_t level;
+  mut int32_t peak = 1;
+  int32_t limit;
+public:
+  Meter(int32_t start, int32_t cap) : level(start), limit(cap) {
+    if (level > limit) { level = limit; }
+    peak += level;
+    seen = peak * 10 + level;
+  }
+  int32_t read() { return this.level + this.peak; }
+};
+int main() {
+  Meter low{3, 5};
+  Meter high{9, 4};
+  if (low.read() != 7 || high.read() != 9) { return 1; }
+  return seen == 54 ? 0 : 2;
+}
+''',
+    # A consumed receiver selected by a conditional is destroyed exactly once: a fresh one at the full-expression end, a moved one through its moved-from owner.
+    "consuming-conditional-receivers": r'''
+mut int log = 0;
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { log = log * 10 + this.id; }
+  int read() { return this.id; }
+};
+class Single {
+  mut Tracked item;
+public:
+  Single(int value) : item(Tracked(value)) {}
+  Tracked release() && { return std::move(this.item); }
+  int take() && { return this.item.read(); }
+};
+Single make(int value) { return Single(value); }
+int fresh(bool left) {
+  log = 0;
+  int taken = (left ? make(1) : Single(2)).take();
+  return taken * 100 + log;
+}
+int named(bool left) {
+  log = 0;
+  {
+    Single a{3};
+    Single b{4};
+    Tracked chosen = left ? std::move(a).release() : std::move(b).release();
+    if (chosen.read() != (left ? 3 : 4)) { return -1; }
+  }
+  return log;
+}
+int main() {
+  if (fresh(true) != 101 || fresh(false) != 202) { return 1; }
+  if (named(true) != 34 || named(false) != 43) { return 2; }
+  return 0;
 }
 ''',
 }

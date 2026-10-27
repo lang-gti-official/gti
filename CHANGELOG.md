@@ -21,17 +21,38 @@ for what minor and patch releases mean.
   negative enumerator passed to a function could take the wrong branch.
 - Share one constant per text literal, so identical literals observe one
   address as the C++ backend already does.
+- Fix native `std::vector` and `std::string` bounds checks being dropped. The
+  native lowering reported every container bounds check as private storage,
+  so the checks recorded for vectors and strings were treated as absent: an
+  out-of-range `values[i]`, `text[i]` or `text.substr(position)` read past the
+  container instead of failing with `index_out_of_bounds`. A check whose
+  recorded failure no longer matches its lowering now stops compilation.
+- Fix a copyable enum passed by value from a variable on the native backend.
+  The callee received the caller's object rather than a copy, so moving from
+  or reassigning the parameter changed the caller's variable.
+- Fix consuming (`&&`) calls on a receiver chosen by a conditional on the
+  native backend. A fresh receiver from either arm was never destroyed, and a
+  receiver moved out of a variable was destroyed twice.
+- Native debug builds (`-g`, or `debug-info = true` in a profile) no longer
+  fail on payload enums. Debug info now describes a payload enum by its active
+  alternative and each alternative's fields, and a debug record after an
+  inactive `std::optional` or `std::expected` access no longer invalidates the
+  module, so debug builds that format text or read optional values compile.
 - `std::mutex<T>` is now `std::relocatable` exactly when `T` is. Relocation
   builds a fresh native mutex and moves the protected value, so mutexes can
   be swapped and held in relocating containers; a held mutex still cannot
   move.
 - Compile on the native backend: destructuring declarations, reads of an
   integral enum's underlying value, counted text views held as values,
-  constructions and call receivers under declared `unsafe` permission,
-  constant-folded raw field indexing, native function values published into
-  constructor fields, borrows reached through a carrier's stored reference,
-  and restoring swaps and exchanges (`std::swap`, `std::exchange`,
-  `std::array::swap` and `swap_elements`).
+  arrays of `std::string_view` or `c_string`, `c_string` values read and
+  written through `c_string*`, range `for` over arrays of views or integral
+  enums, constructions, call receivers and call results under declared
+  `unsafe` permission, constant-folded raw field indexing, native function
+  values, C strings, null pointers and array values published into
+  constructor fields, unqualified field names in constructor bodies,
+  enumerators passed to reference parameters, borrows reached through a
+  carrier's stored reference, and restoring swaps and exchanges
+  (`std::swap`, `std::exchange`, `std::array::swap` and `swap_elements`).
 - C++ remains the production default. Polymorphic ownership, dynamic dispatch
   transfer and thread-handle construction remain rejected on the native
   backend.
