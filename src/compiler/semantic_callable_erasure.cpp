@@ -357,6 +357,79 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
         return;
       }
     }
+    // An invocation pointer's text result is ownerless: its signature names
+    // no origin for text, so no erased call could keep a relayed argument's
+    // owner borrowed (owner decision 2026-10-27, L-OWN-02). A target whose
+    // text result depends on a parameter is rejected where the pointer is
+    // formed; a target returning ownerless text is accepted.
+    if ((result.kind == SemanticType::StringView ||
+         result.kind == SemanticType::CString) &&
+        !containsOpenTypeParameter(target)) {
+      const FunctionInfo *declaration =
+          function == 0 ? nullptr : semanticModel.findFunction(function);
+      if (function != 0 && declaration == nullptr &&
+          instanceBaseModel != nullptr)
+        declaration = instanceBaseModel->findFunction(function);
+      bool dependent = false;
+      std::optional<std::size_t> relayed;
+      if (declaration != nullptr) {
+        // The target's summary under this signature's types, as a generic
+        // target's instance derives it.
+        FunctionInfo concrete = *declaration;
+        concrete.returnType = result;
+        concrete.parameterTypes = parameters;
+        const auto text = dynamicTextReturnBorrowSummary(concrete);
+        const BorrowOriginKind origin =
+            text ? text->origin : declaration->returnBorrowOrigin;
+        const auto &fields =
+            text ? text->fields : declaration->returnBorrowFields;
+        dependent = origin != BorrowOriginKind::None || !fields.empty();
+        if (!fields.empty()) {
+          if (fields.front().origin == BorrowOriginKind::Argument)
+            relayed = fields.front().parameter;
+        } else if (origin == BorrowOriginKind::Argument) {
+          relayed = text ? text->parameter : declaration->returnBorrowParameter;
+        }
+      } else if (lambda != 0) {
+        const LambdaInfo *info = semanticModel.findLambda(lambda);
+        if (info == nullptr && instanceBaseModel != nullptr)
+          info = instanceBaseModel->findLambda(lambda);
+        dependent = info != nullptr &&
+                    info->returnBorrowOrigin != BorrowOriginKind::None;
+        if (dependent && info->returnBorrowOrigin == BorrowOriginKind::Argument)
+          relayed = info->returnBorrowParameter;
+      }
+      if (dependent) {
+        const FunctionDecl *api =
+            declaration != nullptr ? declaration->declaration : nullptr;
+        const bool named =
+            api != nullptr && relayed && *relayed < api->parameters().size() &&
+            std::none_of(
+                api->parameters().begin(), api->parameters().end(),
+                [](const auto &parameter) { return parameter.pack; });
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2045", DiagnosticPhase::Semantics,
+            expressionToken(expr.arguments().front()),
+            std::string("A GTI invocation pointer's ") +
+                (result.kind == SemanticType::CString ? "c_string"
+                                                      : "std::string_view") +
+                " result is ownerless, but this target returns text from " +
+                (named ? "its parameter '" +
+                             api->parameters()[*relayed].name.lexeme + "'."
+                       : "an argument."));
+        diagnostic.hints.emplace_back(
+            "Form the pointer from a function or lambda that returns "
+            "ownerless text, such as a literal-backed view, or call the "
+            "target directly so its argument's owner stays borrowed.");
+        if (named)
+          diagnostic.related.push_back(
+              {tokenSpan(api->parameters()[*relayed].name),
+               "The target's result relays this parameter's text."});
+        diagnostics.emplace_back(std::move(diagnostic));
+        currentType = SemanticType::Unknown;
+        return;
+      }
+    }
     // The target's own result-origin contract must name the signature's
     // origin parameter: the erased invocation relays exactly that borrow.
     if (resultOrigin && !containsOpenTypeParameter(target)) {

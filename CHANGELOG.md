@@ -9,6 +9,29 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.2 - Text and borrow soundness fixes
+
+- Fix a use-after-move through an interface or base-class reference. `Gauge&
+  view = direct;` over a class that holds a reference did not keep `direct`
+  borrowed, so `std::move(direct)` while `view` was still used compiled and
+  read the moved-from object. It now reports `GTI-S2017`, as `Scaled& view =
+  direct;` does, also through a call that returns the reference. Passing such
+  a class to a `Gauge&` parameter and returning one as `Gauge&` now compile on
+  the C++ backend instead of failing with an internal compiler error.
+- Fix a dynamic `std::string_view` reaching a base class that stores it. A
+  derived class's constructor that passes a view it received to a base
+  constructor storing that view now reports `GTI-S2045`, as storing a dynamic
+  view in any class with a base does, instead of compiling and reading the
+  text after its owner was gone.
+- A derived method, virtual or not, that returns a `std::string_view` field
+  its base class declares now compiles on both backends instead of failing
+  with an internal compiler error.
+- A `std::function_ptr` whose result is `std::string_view` or `c_string`
+  returns ownerless text. Forming one from a function that returns text from
+  its parameter now reports `GTI-S2045` where the pointer is formed instead of
+  an internal compiler error; a function returning ownerless text is
+  accepted.
+
 ## 0.484.1 - Native moves of polymorphic payloads and borrow carriers
 
 - The native backend now builds programs that previously failed with
@@ -61,6 +84,19 @@ for what minor and patch releases mean.
   negative enumerator passed to a function could take the wrong branch.
 - Share one constant per text literal, so identical literals observe one
   address as the C++ backend already does.
+- Fix safe code reading text after its owner changed through an overloaded
+  operator. A `std::string_view` that an overloaded call operator or
+  `operator[]` returns from its receiver or an argument, as in
+  `std::string_view v = holder(owner.view());`, now keeps that owner borrowed
+  as a method's result does, so changing the owner while `v` is used reports
+  `GTI-S2017`.
+- Text results through virtual methods, erased callables and generic classes
+  now compile on both backends instead of failing with an internal compiler
+  error. This covers `std::function<std::string_view()>` over a lambda
+  returning literals, interface overrides returning literals, and a generic
+  root such as `virtual T pick(T a)` instantiated with `std::string_view`. An
+  override keeps its root's text contract, so returning a view of an owned
+  string from an override of an interface method reports `GTI-S2045`.
 - Fix native `std::vector` and `std::string` bounds checks being dropped. The
   native lowering reported every container bounds check as private storage,
   so the checks recorded for vectors and strings were treated as absent: an

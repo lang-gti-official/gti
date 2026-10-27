@@ -1,0 +1,49 @@
+// The upcast carrier forms the native backend runs as well: an upcast
+// argument and a call relaying an interface view, each ending before the
+// carrier moves. A local base or interface view bound to the carrier, an
+// upcast return and a relay through a base-class reference are
+// native-unsupported (GTI-B0003), as their same-class forms are.
+#include <std/utility>
+
+interface Gauge { int32_t read(); };
+
+class Scaled : public Gauge {
+  int32_t value;
+  int32_t& scale;
+public:
+  Scaled(int32_t v, int32_t& s) : value(v), scale(s) {}
+  int32_t read() override { return this.value * this.scale; }
+};
+
+class Base {
+public:
+  int32_t value;
+  Base(int32_t v) : value(v) {}
+  int32_t get() { return this.value; }
+};
+
+class Plain : public Base {
+  int32_t& scale;
+public:
+  Plain(int32_t v, int32_t& s) : Base(v), scale(s) {}
+  int32_t read() { return this.value * this.scale; }
+};
+
+Gauge& pick(Gauge& gauge) { return gauge; }
+int32_t sample(Gauge& gauge) { return gauge.read(); }
+int32_t sampleBase(Base& base) { return base.get(); }
+
+int main() {
+  int32_t scale = 3;
+  Scaled direct{2, scale};
+  Gauge& relayed = pick(direct);
+  std::println(relayed.read());
+  std::println(sample(direct));
+  Scaled moved = std::move(direct);
+  std::println(moved.read());
+  Plain plain{5, scale};
+  std::println(sampleBase(plain));
+  Plain kept = std::move(plain);
+  std::println(kept.read());
+  return 0;
+}
