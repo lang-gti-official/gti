@@ -1426,7 +1426,20 @@ relocated as independent objects.
 The restrictions last through the last proven use, or through cleanup when
 the stored type's destructor needs the dependency. An ordinary nested block
 can be the final-use endpoint after its cleanup. Loop backedges and later uses
-keep the dependency live. Concrete generic parameters and user-defined fields
+keep the dependency live.
+
+Owner decision (2026-10-27): a closure environment follows the same structural
+rule as a class. It is an aggregate of its captures with no source destructor:
+its generated cleanup destroys the owned captures and never uses a borrowing
+capture. Moving an owner with a destructor into a closure therefore does not
+extend its borrowing captures to the closure's destruction.
+`[cell = std::move(kept), &base]` borrows `base` only through the closure's last
+use, exactly as a class holding `int& base` beside an owned field does. A
+closure stays a cleanup-bound carrier only when a capture is itself
+cleanup-bound, such as a moved-in guard whose destructor reads its reference;
+that dependency then lasts until the closure is destroyed. Before this decision
+every closure that held borrowed state and needed cleanup was treated as
+cleanup-bound. Concrete generic parameters and user-defined fields
 can store these environments, but cannot let them escape their owners. The
 owning `std::function` family does not acquire permission to erase borrowed
 state, nor can a borrowed environment cross a managed-thread boundary.
@@ -2500,24 +2513,38 @@ closure copied, and a capture is never a lifetime origin. A lambda that returns
 such text, directly, through a local view, through a call that relays it or
 through another lambda over it, therefore produces text whose owner the
 compiler cannot name, whether the captured view was dynamic or literal-backed.
-Callers use that result locally: in an expression, a local binding, an
-assignment to a local view or by-value text parameter, and a call that only
-reads it or relays it back for the same local use.
+Callers use that result locally: in an expression, a local binding or a copy
+of one, and a call that only reads it or relays it back for the same local
+use.
+
+A closure over a dynamic view keeps that view's owner borrowed for each use of
+the closure, and so does each call result, local or copy that holds its
+captured text, exactly as a copy of the view itself would. The owner may
+change once the last of those uses is done; changing, moving or replacing it
+while one is still used reports `GTI-S2017`. Like a dynamic view, such text
+cannot be assigned into an existing binding (`GTI-S2045`), so it can never
+outlive its owner through a binding of a wider scope. Text captured from a
+literal-backed view has no owner to keep borrowed and may be reassigned
+locally.
 
 ```gti
-std::string owner{"dynamic"};
+mut std::string owner{"dynamic"};
 std::string_view view = owner.view();
 auto name = [view]() -> std::string_view { return view; };
 std::println(name());                  // valid: used in an expression
-std::string_view local = name();       // valid: a local binding
+std::string_view local = name();       // valid: keeps owner borrowed
 mut std::string_view other = "";
-other = name();                        // valid: assigned to a local view
+other = name();                        // GTI-S2045: not reassignable
+owner.append("!");                     // GTI-S2017: local is used below
+std::println(local);
 
 std::string_view leak(std::string_view input) {
   auto copy = [input]() -> std::string_view { return input; };
   return copy();                       // GTI-S2045: no owner to relay
 }
 ```
+
+Appending after the last use of `local` and of `name` is valid.
 
 Returning it from a function, storing it in a field, an array element
 (`{name()}` included), a payload alternative, an optional, a global or
@@ -2532,6 +2559,13 @@ text holds it for its whole scope, so an escape of that view is rejected even
 where it precedes the assignment. A lambda that returns a literal or other
 ownerless text, such as a captured record's text field, stays storable and
 returnable.
+
+Owner decision (2026-10-27): a lambda's result over a captured view keeps that
+capture's owner borrowed, with the non-lexical extent the view itself has, so
+local use stays sound after the owner changes. A reference or callable view
+of the closure, such as `std::function_ref`, keeps the owner borrowed too. A
+closure copied into owning erased storage, such as `std::function`, a
+container or a field, does not yet keep it borrowed; that remains future work.
 
 ### Owner-tracked view fields
 

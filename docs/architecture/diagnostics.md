@@ -445,6 +445,10 @@ return, store, argument or invocation-pointer formation that would let it
 escape, with a hint that the lambda's text has an owner the compiler cannot
 name. A local view's escape decided when its body completes is reported at
 that escape, not at the later assignment that gave the view captured text.
+Changing, moving or replacing a dynamic view's owner while a closure over the
+view, or a local holding its call result, is still used reports the ordinary
+`GTI-S2017` loan conflict at that operation, related to the view's origin and
+the later use.
 
 `GTI-I0012` owns invalid source-module headers and imports: placement, syntax,
 missing registration, name mismatch, duplicate interfaces, package escapes,

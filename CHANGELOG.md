@@ -38,6 +38,17 @@ for what minor and patch releases mean.
   alternative and each alternative's fields, and a debug record after an
   inactive `std::optional` or `std::expected` access no longer invalidates the
   module, so debug builds that format text or read optional values compile.
+- A reference variable inside a lambda that aliases a by-reference capture,
+  a field reached through it, the reference one of its methods returns, or
+  another such variable now compiles on both backends; it previously failed
+  with an internal compiler error. The lambda can still use the capture after
+  the alias's last use.
+- A lambda that moves in a value with a destructor and also captures a
+  variable by reference now borrows that variable only until the lambda's last
+  use, as an equivalent class does, rather than until the lambda is destroyed.
+  Such lambdas previously failed with an internal compiler error. A lambda
+  that moves in a value whose own destructor uses a borrow still keeps that
+  borrow until it is destroyed.
 - Fix internal compiler errors on both backends when a value that borrows
   and has a destructor is returned by a method called through a by-reference
   lambda capture (for example locking a captured `std::mutex`), when a mutex
@@ -73,6 +84,13 @@ for what minor and patch releases mean.
   condition services, mutexes held by value in lambda captures, and mutexes
   protecting class values that need no cleanup. Worker failures re-raise at
   join and cleanup failures report exactly as on the C++ backend.
+- Debug builds (`-g`) of a class whose default constructor is generated and
+  whose base is polymorphic no longer fail with an internal error on either
+  backend.
+- Native debug builds (`-g`) of programs using a library macro, such as
+  `std::testing::check_eq` in a `[[test]]` suite, no longer fail with an
+  internal error. A scope the macro opened was recorded under the macro's own
+  file while pointing at the caller's lines.
 - Native builds accept a C record or union passed by value straight from a C
   global, a field read through a selected member of a C union global, and the
   address of a C function-pointer variable. The native callback-slots and

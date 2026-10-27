@@ -1525,11 +1525,112 @@ int main() {
   (void)session.emitObject();
 }
 
+// A library macro expands within its own unit, while a scope it opens may
+// take its extent from the expansion site in the caller's file. Each debug
+// scope's unit must name the file its extent is in, or native debug metadata
+// sees one file under two logical names.
+void libraryMacroScopes(LlvmCodegenOptimization optimization) {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend({.requireEntryPoint = true,
+                .lowerReachableOnly = true,
+                .lowerLibraryReachableOnly = true,
+                .trustedBodies = TrustedBodyAnalysis::Reachable,
+                .sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("macro-debug.gti", R"gti(
+#include <std/testing>
+int32_t twice(int32_t value) { return value * 2; }
+int main() {
+  std::testing::check_eq(twice(2), 4);
+  std::testing::check_ne(twice(3), 5);
+  return 0;
+}
+)gti",
+                   {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("macro debug source failed analysis");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  if (!lowered.valid())
+    throw std::runtime_error("macro debug source failed lowering");
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
+  if (!input)
+    throw std::runtime_error("macro debug source lost its seal");
+  Session session(*input, {.optimization = optimization, .debugInfo = true});
+  std::size_t scopes = 0;
+  for (const auto &body : session.program().bodies())
+    if (body.sourceDebug.tables)
+      for (const auto &scope : body.sourceDebug.tables->scopes) {
+        const auto unit =
+            frontend.sourceGraph.sourceUnitForPath(scope.source.source);
+        if (scope.source.source.empty() || unit == 0)
+          continue;
+        if (unit != scope.sourceUnit)
+          throw std::runtime_error(
+              "a debug scope's unit does not name its extent's file");
+        ++scopes;
+      }
+  if (scopes == 0)
+    throw std::runtime_error("macro debug source recorded no scopes");
+  lowerScalarProgram(session, planLlvmAdmission(*input, session.options()));
+  session.debugInfo()->finalize();
+  session.verify();
+  (void)session.emitObject();
+}
+
+// A generated default constructor of a class with a state-bearing
+// polymorphic base executes, to install its dispatch state, yet has no written
+// body: HIR collects no lexical facts for it, and lowering must accept that.
+void generatedConstructorDebug(LlvmCodegenOptimization optimization) {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend({.requireEntryPoint = true,
+                .lowerReachableOnly = true,
+                .lowerLibraryReachableOnly = true,
+                .trustedBodies = TrustedBodyAnalysis::Reachable,
+                .sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("generated-debug.gti", R"gti(
+class Solo {
+public:
+  virtual int read() { return 3; }
+};
+class Stateful : public Solo {};
+int main() {
+  Stateful stateful{};
+  return stateful.read() == 3 ? 0 : 1;
+}
+)gti",
+                   {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("generated constructor source failed analysis");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  if (!lowered.valid())
+    throw std::runtime_error(
+        "generated constructor without lexical facts failed lowering");
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
+  if (!input)
+    throw std::runtime_error("generated constructor source lost its seal");
+  Session session(*input, {.optimization = optimization, .debugInfo = true});
+  lowerScalarProgram(session, planLlvmAdmission(*input, session.options()));
+  session.debugInfo()->finalize();
+  session.verify();
+  (void)session.emitObject();
+}
+
 int main(int argc, char **argv) {
   ownerPointerMetadata(LlvmCodegenOptimization::None);
   ownerPointerMetadata(LlvmCodegenOptimization::Aggressive);
   payloadEnumMetadata(LlvmCodegenOptimization::None);
   payloadEnumMetadata(LlvmCodegenOptimization::Aggressive);
+  libraryMacroScopes(LlvmCodegenOptimization::None);
+  libraryMacroScopes(LlvmCodegenOptimization::Aggressive);
+  generatedConstructorDebug(LlvmCodegenOptimization::None);
+  generatedConstructorDebug(LlvmCodegenOptimization::Aggressive);
   if (metadata("/checkout-one/debug.gti") !=
       metadata("/other-checkout/debug.gti"))
     throw std::runtime_error(

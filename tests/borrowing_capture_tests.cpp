@@ -678,6 +678,138 @@ int main() {
 }
 )",
            "GTI-S2017");
+  // Owner decision 2026-10-27: a closure environment is an aggregate of its
+  // captures, as for a class. Moving in an owner with a destructor does not
+  // make a borrowing capture last until the closure is destroyed; only a
+  // capture that is itself a cleanup-bound carrier keeps it bound.
+  positive("cleanup-capture-borrow-ends-at-last-use", R"(
+class Audited {
+public:
+  Audited() {}
+  ~Audited() {}
+  int read() { return 1; }
+};
+int main() {
+  mut int base = 4;
+  Audited kept{};
+  auto reader = [cell = std::move(kept), &base]() -> int {
+    return cell.read() + base;
+  };
+  int first = reader();
+  base = 10;
+  return first == 5 && base == 10 ? 0 : 1;
+}
+)");
+  negative("cleanup-capture-borrow-live-until-later-use", R"(
+class Audited {
+public:
+  Audited() {}
+  ~Audited() {}
+  int read() { return 1; }
+};
+int main() {
+  mut int base = 4;
+  Audited kept{};
+  auto reader = [cell = std::move(kept), &base]() -> int {
+    return cell.read() + base;
+  };
+  int first = reader();
+  base = 10;
+  return reader() + first;
+}
+)",
+           "GTI-S2017");
+  negative("bound-carrier-capture-keeps-closure-bound", R"(
+class Watcher {
+  int& target;
+public:
+  Watcher(int& target) : target(target) {}
+  int read() { return this.target; }
+  ~Watcher() { std::println(this.target); }
+};
+int main() {
+  mut int base = 4;
+  Watcher watcher = Watcher(base);
+  auto reader = [held = std::move(watcher)]() -> int { return held.read(); };
+  int first = reader();
+  base = 10;
+  return first;
+}
+)",
+           "GTI-S2017");
+  // A local reference alias of a by-reference capture borrows below the
+  // capture's entry loan. The closure environment, not a binding, holds that
+  // entry for the whole call, so no alias joins it as a carrier and a later
+  // use of the capture after an alias's last use stays valid.
+  const auto captureAliases = positive("capture-reference-aliases", R"(
+class Box {
+  int value;
+public:
+  Box(int value) : value(value) {}
+  int& get() { return this.value; }
+};
+class Pair {
+public:
+  mut int left = 2;
+  mut int right = 3;
+  Pair() {}
+};
+int main() {
+  Box box{5};
+  Pair pair{};
+  mut int count = 1;
+  mut int bumped = 0;
+  auto read = [&box, &pair]() -> int {
+    int& accessor = box.get();
+    int& again = accessor;
+    Pair& whole = pair;
+    int& left = whole.left;
+    int& right = pair.right;
+    return accessor + again + left + right;
+  };
+  {
+    mut auto bump = [mut &count]() -> int {
+      mut int& alias = count;
+      alias += 1;
+      int& seen = count;
+      int before = seen;
+      count += 1;
+      return before;
+    };
+    bumped = bump();
+  }
+  return read() == 15 && count == 3 && bumped == 2 ? 0 : 1;
+}
+)");
+  expect(lang::verifyMirProgram(captureAliases.mir).valid(),
+         "capture reference aliases verify as a whole program");
+  std::size_t capturedAliasLoans = 0;
+  bool carrierFreeEntries = true;
+  for (const auto &lambda : captureAliases.mir.lambdaInstances())
+    for (const auto &loan : lambda.body.loans) {
+      const auto capturedEntry = [&](const lang::MirLoan &candidate) {
+        const auto *slot = lambda.body.findPlace(candidate.source);
+        return candidate.entry &&
+               candidate.kind == lang::MirLoanKind::Parameter && slot &&
+               slot->root == lang::MirPlaceRootKind::Symbol &&
+               slot->capture != 0 && slot->projections.empty();
+      };
+      if (capturedEntry(loan)) {
+        carrierFreeEntries = carrierFreeEntries && loan.carriers.empty();
+        continue;
+      }
+      if (loan.entry || loan.carriers.empty())
+        continue;
+      const auto *root = &loan;
+      while (root != nullptr && root->parent != 0)
+        root = lambda.body.findLoan(root->parent);
+      if (root != nullptr && root != &loan && capturedEntry(*root))
+        ++capturedAliasLoans;
+    }
+  // `accessor` and `again` share the accessor result's loan; `whole`,
+  // `left`, `right`, `alias` and `seen` each hold their own.
+  expect(carrierFreeEntries && capturedAliasLoans == 6,
+         "each capture alias carries a physical loan below the capture entry");
   negative("exclusive-capture-alias", R"(
 int main() {
   mut int value = 0;

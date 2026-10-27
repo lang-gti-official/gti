@@ -62,6 +62,23 @@ int main() {
     if (relocated() + relocated() != 18) return 4;
     std::println("closure scope ends");
   }
+  // Borrowing captures stay native addresses beside a by-value mutex capture;
+  // the mutable one is written through while the closure is used.
+  mut int32_t reads = 0;
+  int32_t offset = 30;
+  {
+    std::mutex<ledger> counted{ledger(1)};
+    auto counter = [cell = std::move(counted), mut &reads, &offset]() -> int32_t {
+      mut auto guard = cell.lock();
+      guard.get().add(1);
+      reads += 1;
+      return guard.get().read() + offset;
+    };
+    mut auto moved_counter = std::move(counter);
+    if (moved_counter() + moved_counter() != 65) return 9;
+  }
+  if (reads != 2) return 10;
+  std::println("borrowing captures done");
 
   // A worker task closure carries its mutex into the runtime task box.
   mut std::thread_result<int32_t> worker{};

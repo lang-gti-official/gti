@@ -3281,6 +3281,23 @@ it captured text again. Forming a GTI invocation pointer from such a lambda is
 `GTI-S2045` too: the erased invocation has no result-origin contract that
 could carry the text to its callers.
 
+A closure over a dynamic view keeps that view's loan, as a copy of the view
+would. `capturedTextLoans` names the loans an expression's value carries: a
+lambda expression's copy and move captures of a view with a retained loan,
+and through a lambda call whose result is captured text, a relaying call, a
+conditional or a local, what its closure carries. `recordCapturedTextCarriers`
+makes each such local binding, and each binding that borrows such a carrier
+(a reference or callable view of the closure), a loan-flow carrier of those
+loans in `LoanFlowState::capturedTextCarriers`. These carriers have no
+retained-loan binding of their own: each use extends the view's loan, a
+carrier in a nested region keeps it to the region's end, and the loan ends
+after the last use, so a later change, move or replacement of the owner is
+`GTI-S2017` exactly where it would be for a copy of the view. HIR and MIR keep
+the view's own loan with that endpoint, and MIR's loan flow checks the owner's
+later accesses against it. Assigning such text into an existing binding is
+`GTI-S2045`, as assigning a dynamic view is. A closure copied into owning
+erased storage does not carry the loans yet.
+
 For a bounded exclusive reborrow, semantics records a distinct child loan and
 its mutable parent. The accepted source place has one stable symbol or receiver
 root and named-field, fixed-array index, or checked-dereference projections.

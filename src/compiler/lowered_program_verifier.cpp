@@ -798,9 +798,16 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                body.identity.address);
     }
     const auto &debug = body.sourceDebug;
+    // A generated default constructor keeps its source definition kind, but
+    // like HIR it has no written body to describe.
+    const MirConstructorInstance *constructor =
+        body.identity.address.kind == MirBodyKind::Constructor
+            ? program.mir_.findConstructorInstance(body.identity.address.owner)
+            : nullptr;
     const bool generated = body.identity.definition ==
                                LoweredBodyDefinitionKind::CompilerGenerated ||
-                           body.role != LoweredBodyRole::SourceExecutable;
+                           body.role != LoweredBodyRole::SourceExecutable ||
+                           (constructor && constructor->generatedDefault);
     if (!isValidSourceDebugRecord(debug) ||
         !isValidSourceDebugProfile(program.sourceDebugProfile()) ||
         (program.sourceDebugProfile() == SourceDebugProfile::None &&

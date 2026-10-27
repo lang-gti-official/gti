@@ -4,9 +4,11 @@
 A view copied out of an array of views holds the ownerless text the array
 holds, a C string loaded through a raw pointer is the inert native address the
 caller stored there, and a callable's text result is what its target returns.
-MIR proves each result ownerless. A lambda's view over its captured text has
-no owner to name and is used only locally. Each program must build and behave
-identically on C++ and LLVM at -O0 and -O2.
+MIR proves each result ownerless, as it does a reassigned local's text and a
+method's call result through its receiver's field. A lambda's view over its
+captured text is used only locally and keeps the captured view's owner
+borrowed. Each program must build and behave identically on C++ and LLVM at
+-O0 and -O2.
 
     python3 tests/text_storage_provenance_runtime_test.py <gti> <repo-root>
 """
@@ -174,10 +176,11 @@ int main() {
 
 CAPTURED_TEXT_LOCAL_USE = r'''
 #include <std/string>
-// A lambda's view over its captured text has an owner the compiler cannot
-// name, so callers use it locally: in an expression, a local binding, an
-// assignment to a local view or a by-value parameter, a call that only reads
-// or relays it, and another lambda over it.
+// A lambda's view over its captured text keeps the captured view's owner
+// borrowed for each use, as the view itself does: callers use it in an
+// expression, a local binding or a copy of one, a call that only reads or
+// relays it, and another lambda over the closure, and may change the owner
+// once the last of those uses is done.
 class Printer {
 public:
   mut int printed;
@@ -190,31 +193,117 @@ public:
 };
 uint64_t measure(std::string_view text) { return text.size(); }
 std::string_view same(std::string_view text) { return text; }
-std::string_view rebind(mut std::string_view text) {
+std::string_view keepLocal(std::string_view text) {
   auto keep = [text]() -> std::string_view { return text; };
-  text = keep();
-  std::println(text);
-  return "rebound";
+  std::string_view held = keep();
+  std::println(held);
+  return "kept";
 }
 mut std::string_view kept = "";
 int main() {
-  std::string owner{"dynamic"};
+  mut std::string owner{"dynamic"};
   std::string_view view = owner.view();
   auto captured = [view]() -> std::string_view { return view; };
   std::println(captured());
   std::string_view bound = captured();
-  mut std::string_view assigned = "";
-  for (mut int i = 0; i < 2; i += 1) { assigned = captured(); }
-  std::string_view copied = assigned;
+  std::string_view copied = bound;
   std::println(same(captured()));
-  auto nested = [captured]() -> std::string_view { return captured(); };
+  auto again = captured;
+  auto nested = [again]() -> std::string_view { return again(); };
   mut Printer printer{};
   printer.show(nested);
-  std::println(rebind(owner.view()));
+  uint64_t size = measure(copied);
+  owner.append("!");
+  std::println(owner.view());
+  std::println(keepLocal(owner.view()));
+  std::string_view fixedText = "fixed";
+  auto fixed = [fixedText]() -> std::string_view { return fixedText; };
+  mut std::string_view reassigned = "";
+  reassigned = fixed();
   auto literal = []() -> std::string_view { return "literal"; };
   kept = literal();
+  std::println(reassigned);
   std::println(kept);
-  return measure(copied) == uint64_t(7) && printer.printed == 1 ? 0 : 1;
+  return size == uint64_t(7) && printer.printed == 1 ? 0 : 1;
+}
+'''
+
+REASSIGNED_TEXT_LOCALS = r'''
+#include <std/string>
+// A local text binding holds what any of its writes stored, including a
+// store through a mutable borrow of it: each holds ownerless text here.
+struct Note {
+  std::string_view text;
+  int line;
+};
+void setTo(mut std::string_view& out, std::string_view value) { out = value; }
+std::string_view pick(bool c) {
+  mut std::string_view v = "first";
+  if (c) { v = "second"; }
+  return v;
+}
+std::string_view looped(int n) {
+  mut std::string_view current = "start";
+  mut std::string_view previous = "none";
+  for (mut int i = 0; i < n; i += 1) {
+    previous = current;
+    current = "loop";
+  }
+  return previous;
+}
+std::string_view through() {
+  mut std::string_view v = "before";
+  setTo(v, "after");
+  return v;
+}
+mut std::string_view kept = "";
+int main() {
+  mut std::string_view w = "x";
+  w = "y";
+  kept = w;
+  Note note{.text = w, .line = 1};
+  std::println(pick(true));
+  std::println(pick(false));
+  std::println(looped(2));
+  std::println(through());
+  std::println(note.text);
+  return kept == "y" ? 0 : 1;
+}
+'''
+
+RECEIVER_FIELD_CALL_RETURNS = r'''
+#include <std/string_view>
+// A method whose relay its body never uses returns an ownerless call result
+// through its receiver's field or a nested one.
+class Inner {
+public:
+  int n;
+  std::string_view text;
+  Inner(int n) : n(n), text("inner-text") {}
+  std::string_view label() { return this.n < 10 ? "small" : "large"; }
+  std::string_view field() { return this.text; }
+};
+class Middle {
+public:
+  Inner inner;
+  Middle(int n) : inner(Inner(n)) {}
+};
+class Box {
+  Inner inner;
+  Middle middle;
+public:
+  Box(int n) : inner(Inner(n)), middle(Middle(n)) {}
+  std::string_view name() { return this.inner.label(); }
+  std::string_view deep() { return this.middle.inner.label(); }
+  std::string_view relay() { return this.inner.field(); }
+};
+int main() {
+  Box small = Box(3);
+  Box large = Box(30);
+  std::println(small.name());
+  std::println(large.deep());
+  std::println(small.relay());
+  return small.name() == "small" ? 0 : 1;
 }
 '''
 
@@ -226,7 +315,12 @@ CASES = {
     'raw-c-strings': (RAW_C_STRINGS, (0, '', '')),
     'raw-text-views': (RAW_TEXT_VIEWS, (0, 'beta\nalpha\nentry\nc\n', '')),
     'captured-text-local-use': (CAPTURED_TEXT_LOCAL_USE, (
-        0, 'dynamic\ndynamic\ndynamic\ndynamic\nrebound\nliteral\n', '')),
+        0, 'dynamic\ndynamic\ndynamic\ndynamic!\ndynamic!\nkept\nfixed\n'
+        'literal\n', '')),
+    'reassigned-text-locals': (REASSIGNED_TEXT_LOCALS, (
+        0, 'second\nfirst\nloop\nafter\ny\n', '')),
+    'receiver-field-call-returns': (RECEIVER_FIELD_CALL_RETURNS, (
+        0, 'small\nlarge\ninner-text\n', '')),
 }
 
 ENDPOINTS = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
@@ -248,7 +342,7 @@ def main() -> None:
                 if result.error or result.observable != expected:
                     raise AssertionError(f'{name} {endpoint}: {result}')
             print(f'{name}: C++ and LLVM at O0/O2 agree', flush=True)
-    print('array-element, raw-memory, callable and captured text passed')
+    print('array-element, raw-memory, callable, captured and local text passed')
 
 
 if __name__ == '__main__':

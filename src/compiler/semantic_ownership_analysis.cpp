@@ -3361,6 +3361,155 @@ auto SemanticVisitor::Impl::finalizeCapturedText() -> bool {
   return lambdaReturn;
 }
 
+auto SemanticVisitor::Impl::capturedTextLoans(const Expr *expression) const
+    -> std::vector<SemanticLoanId> {
+  std::vector<SemanticLoanId> loans;
+  const auto add = [&](SemanticLoanId loan) {
+    if (loan != 0 && loanFlow.records.contains(loan) &&
+        std::find(loans.begin(), loans.end(), loan) == loans.end())
+      loans.push_back(loan);
+  };
+  const auto carried = [&](const Symbol &symbol) {
+    if (const auto found = loanFlow.capturedTextCarriers.find(
+            symbolForDeclaration(symbol.declaration));
+        found != loanFlow.capturedTextCarriers.end())
+      for (const auto loan : found->second)
+        add(loan);
+  };
+  while (const auto *group = exprAs<Grouping>(expression))
+    expression = group->expression().get();
+  if (expression == nullptr)
+    return loans;
+  if (const auto *binary = exprAs<Binary>(expression);
+      binary != nullptr && binary->oper().kind == TokenKind::COMMA)
+    return capturedTextLoans(binary->right().get());
+  if (const auto *conditional = exprAs<ConditionalExpr>(expression)) {
+    for (const ExprPtr *arm :
+         {&conditional->thenExpression(), &conditional->elseExpression()})
+      for (const auto loan : capturedTextLoans(arm->get()))
+        add(loan);
+    return loans;
+  }
+  if (const auto *variable = exprAs<Variable>(expression)) {
+    if (const Symbol *symbol = resolve(variable->name()))
+      carried(*symbol);
+    return loans;
+  }
+  // A closure keeps each view it copied or moved in, and what a captured
+  // closure or carrier keeps.
+  if (const auto *lambda = exprAs<Lambda>(expression)) {
+    for (const LambdaCapture &capture : lambda->captures()) {
+      if (capture.borrow || !capture.initializer)
+        continue;
+      const Expr *source = capture.initializer.get();
+      if (const auto *move = exprAs<Call>(source);
+          move != nullptr && move->arguments().size() == 1 &&
+          resolvedIntrinsicKind(*move) == IntrinsicKind::Move)
+        source = move->arguments().front().get();
+      const auto *variable = exprAs<Variable>(source);
+      const Symbol *symbol = variable ? resolve(variable->name()) : nullptr;
+      if (symbol == nullptr)
+        continue;
+      carried(*symbol);
+      if (symbol->type.kind == SemanticType::StringView ||
+          symbol->type.kind == SemanticType::CString)
+        add(symbol->retainedLoan);
+    }
+    return loans;
+  }
+  if (const auto *call = exprAs<Call>(expression)) {
+    if (call->arguments().size() == 1 &&
+        resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+      return capturedTextLoans(call->arguments().front().get());
+    // A call of a lambda returning its captured text keeps what the closure
+    // keeps; a call that relays one argument's or its receiver's text keeps
+    // what that text keeps.
+    if (const auto *lambdaCall = semanticModel.findLambdaCall(*call)) {
+      const LambdaInfo *lambda = semanticModel.findLambda(lambdaCall->lambda);
+      return lambda != nullptr && lambda->capturedTextResult
+                 ? capturedTextLoans(call->callee().get())
+                 : loans;
+    }
+    if (const ResolvedCallInfo *resolved = semanticModel.findCall(*call)) {
+      if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+          resolved->borrowFields.empty() &&
+          resolved->borrowArgument < resolvedCallArgumentCount(*call, resolved))
+        if (const ExprPtr *argument =
+                resolvedCallArgument(*call, resolved, resolved->borrowArgument))
+          return capturedTextLoans(argument->get());
+      if (resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+          resolved->borrowFields.empty())
+        if (const auto *member = exprAs<Get>(call->callee().get()))
+          return capturedTextLoans(member->object().get());
+    }
+  }
+  return loans;
+}
+
+auto SemanticVisitor::Impl::recordCapturedTextCarriers(
+    const VariableDecl &declaration) -> void {
+  const ExprPtr &initializer = declaration.initializer();
+  const Symbol *declared =
+      initializer && functionDepth > 0 ? resolve(declaration.name()) : nullptr;
+  if (declared == nullptr ||
+      declared->bindingKind != SemanticBindingKind::LocalVariable)
+    return;
+  // The binding carries those views' loans like a copy of the view: each
+  // use keeps the owner borrowed, and a carrier in a nested region keeps the
+  // loan to its region's end (L-OWN-02). A binding that borrows a carrier,
+  // as a checked reference or callable view of a closure does, keeps what
+  // that carrier keeps.
+  auto loans = capturedTextLoans(initializer.get());
+  if (const SemanticLoanInfo *borrow =
+          semanticModel.findLoan(declared->retainedLoan)) {
+    const auto borrowed = [&](SymbolId root) {
+      const auto found = loanFlow.capturedTextCarriers.find(root);
+      if (found == loanFlow.capturedTextCarriers.end())
+        return;
+      for (const auto loan : found->second)
+        if (std::find(loans.begin(), loans.end(), loan) == loans.end())
+          loans.push_back(loan);
+    };
+    borrowed(borrow->place.root);
+    for (const auto &dependency : borrow->additionalDependencies)
+      borrowed(dependency.place.root);
+  }
+  const SymbolId carrier = toolingSymbolFor(*declared);
+  for (const auto loan : loans) {
+    LoanFlowRecord &flow = loanFlow.records.at(loan);
+    if (loanFlow.currentRegion != 0 && loanFlow.currentRegion != flow.region)
+      flow.confinedToRegion = false;
+    if (!flow.carriers.empty())
+      flow.hasAliases = true;
+    flow.carriers.insert(carrier);
+    auto &loans = loanFlow.capturedTextCarriers[carrier];
+    if (std::find(loans.begin(), loans.end(), loan) == loans.end())
+      loans.push_back(loan);
+  }
+}
+
+auto SemanticVisitor::Impl::removeCapturedTextCarrier(const Symbol &carrier)
+    -> void {
+  const SymbolId id = toolingSymbolFor(carrier);
+  const auto found = loanFlow.capturedTextCarriers.find(id);
+  if (found == loanFlow.capturedTextCarriers.end())
+    return;
+  for (const auto loan : found->second) {
+    const auto record = loanFlow.records.find(loan);
+    if (record == loanFlow.records.end())
+      continue;
+    record->second.carriers.erase(id);
+    if (!record->second.carriers.empty())
+      continue;
+    record->second.active = false;
+    for (Scope &scope : scopes)
+      for (auto &[_, symbol] : scope)
+        std::erase(symbol.storageLoans, loan);
+    std::erase(loanFlow.receiverStorageLoans, loan);
+  }
+  loanFlow.capturedTextCarriers.erase(found);
+}
+
 auto SemanticVisitor::Impl::ownerlessTextForwardingParameter(
     const ExprPtr &expression) const -> std::optional<std::size_t> {
   const auto *function = currentFunctionInfo();
@@ -3912,6 +4061,23 @@ auto SemanticVisitor::Impl::lifecycleBoundBorrowCarrierFor(
         for (const auto &field : variant.payloadTypes)
           bound =
               bound || field.kind == SemanticType::Unknown || self(self, field);
+      visiting.pop_back();
+      return bound;
+    }
+    // A closure environment is an aggregate of its captures with no source
+    // destructor: generated cleanup destroys each owned capture in order and
+    // never reads a borrowing capture. Only a capture that is itself bound
+    // keeps the environment bound.
+    if (current.kind == SemanticType::Lambda) {
+      if (!current.hasLambdaShape() ||
+          std::find(visiting.begin(), visiting.end(), current) !=
+              visiting.end())
+        return true;
+      visiting.push_back(current);
+      bool bound = false;
+      for (const auto &capture : current.lambdaCaptureTypes())
+        bound = bound || capture.kind == SemanticType::Unknown ||
+                self(self, capture);
       visiting.pop_back();
       return bound;
     }
@@ -11733,6 +11899,10 @@ auto SemanticVisitor::Impl::recordSemanticLoanUseForLoan(SemanticLoanId loan)
 }
 
 auto SemanticVisitor::Impl::recordSemanticLoanUse(SymbolId carrier) -> void {
+  if (const auto captured = loanFlow.capturedTextCarriers.find(carrier);
+      captured != loanFlow.capturedTextCarriers.end())
+    for (const auto loan : captured->second)
+      recordSemanticLoanAuthorityUse(loan);
   const auto retained = loanFlow.carrierLoans.find(carrier);
   if (retained == loanFlow.carrierLoans.end()) {
     return;

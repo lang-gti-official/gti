@@ -6708,8 +6708,41 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           definition->result == returned->id && !definition->loan &&
           !definition->dependentTextPublication &&
           !definition->info.traits.containsBorrowedState;
+      // A view or C string returned by a static call of a source function
+      // that has no result dependency holds text that function's own returns
+      // prove ownerless (TextContracts), an alternative as a literal is. So
+      // does a text field relay whose result carries no loan: the field it
+      // reads holds ownerless text.
+      const MirFunctionInstance *ownerlessTextTarget =
+          definition && definition->kind == MirInstructionKind::Call &&
+                  definition->functionTarget && !definition->lambdaTarget &&
+                  definition->intrinsic == IntrinsicKind::None &&
+                  definition->dispatch == CallDispatch::Static
+              ? program.findFunctionInstance(*definition->functionTarget)
+              : nullptr;
+      const bool ownerlessTextCall =
+          ownerlessTextTarget != nullptr &&
+          (instance.returnType.kind == SemanticType::StringView ||
+           instance.returnType.kind == SemanticType::CString) &&
+          ownerlessTextTarget->definitionKind == MirDefinitionKind::Source &&
+          ownerlessTextTarget->linkage == LanguageLinkage::Gti &&
+          !ownerlessTextTarget->virtualMethod &&
+          ownerlessTextTarget->returnType == instance.returnType &&
+          ((ownerlessTextTarget->returnBorrowOrigin == BorrowOriginKind::None &&
+            ownerlessTextTarget->returnBorrowFields.empty() &&
+            !ownerlessTextTarget->completeReturnBorrow) ||
+           mir_detail::textFieldResult(
+               ownerlessTextTarget->returnType,
+               ownerlessTextTarget->returnBorrowOrigin,
+               ownerlessTextTarget->returnBorrowParameter,
+               ownerlessTextTarget->returnBorrowFields)) &&
+          returned->info.type == instance.returnType &&
+          !returned->info.traits.containsBorrowedState &&
+          definition->result == returned->id && !definition->loan &&
+          !definition->dependentTextPublication &&
+          !definition->info.traits.containsBorrowedState;
       if (independentTextLiteral || independentStoredText ||
-          ownerlessFieldText || ownerlessDependentResult ||
+          ownerlessFieldText || ownerlessDependentResult || ownerlessTextCall ||
           ((instance.returnType.kind == SemanticType::Enum ||
             instance.returnType.kind == SemanticType::Class) &&
            emptyReturn && emptyReturn(block.id))) {

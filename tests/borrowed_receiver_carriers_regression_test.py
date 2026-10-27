@@ -2,10 +2,11 @@
 """Cleanup-bound carriers borrowed through captures, formals and accessors.
 
 Each fixture once failed MIR construction on both backends: a carrier made by
-a method of a by-reference capture's referent or of an accessor's result, and
-a synchronized guard taken through a shared or mutable formal. The C++ oracle
-and native LLVM must both build it and agree on exit status, stdout and
-stderr at O0 and O2.
+a method of a by-reference capture's referent or of an accessor's result, a
+synchronized guard taken through a shared or mutable formal, a closure
+holding an owner with a destructor beside a by-reference capture, and a local
+reference alias of a by-reference capture. The C++ oracle and native LLVM must
+both build it and agree on exit status, stdout and stderr at O0 and O2.
 """
 
 import pathlib
@@ -19,6 +20,10 @@ FIXTURES = {
         "capture guards done\n",
     "borrowed_carrier_accessor_receiver.gti":
         "view released\naccessor carriers done\n",
+    "closure_cleanup_capture_borrow.gti":
+        "closure still in scope\naudited released\n1\nclosure released\n",
+    "capture_reference_aliases.gti":
+        "read 48\nbump 11\nbump 23\ncount 5\ncell 19\nsum 17\nnested 16\n",
 }
 
 

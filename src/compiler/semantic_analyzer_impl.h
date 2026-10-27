@@ -1241,6 +1241,12 @@ private:
     std::unordered_set<SymbolId> capturedTextLocals;
     std::vector<std::pair<SymbolId, SymbolId>> localTextFlows;
     std::vector<LocalTextEscape> localTextEscapes;
+    // Closures over a dynamic view, and local views given a call result
+    // returning such a capture's text, with the views' loans each carries:
+    // a use of the carrier keeps those owners borrowed, as a copy of the view
+    // would (L-OWN-02).
+    std::unordered_map<SymbolId, std::vector<SemanticLoanId>>
+        capturedTextCarriers;
     // A symbolic constexpr branch has unknown control/ownership effects.
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
@@ -2219,6 +2225,13 @@ private:
                            std::string destination = {});
   void noteLocalTextFlow(const ExprPtr &value, SymbolId target);
   [[nodiscard]] bool finalizeCapturedText();
+  // The loans of the dynamic views whose text an expression's value carries
+  // through copy or move captures: a closure over such a view, a call of a
+  // lambda that returns its captured text, and a local holding either.
+  [[nodiscard]] std::vector<SemanticLoanId>
+  capturedTextLoans(const Expr *expression) const;
+  void recordCapturedTextCarriers(const VariableDecl &declaration);
+  void removeCapturedTextCarrier(const Symbol &carrier);
 
   // A value of a class or payload enum whose type has no borrowed state but
   // whose direct text field holds owner-dependent text (L-OWN-02). The

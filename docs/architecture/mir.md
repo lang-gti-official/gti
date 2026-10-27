@@ -1980,10 +1980,15 @@ witness: semantics rejects storing a dynamic view in a field or fixed-array
 element, so one exact `Load` copying a place whose final `Field` or `Index`
 projection has the returned view type, with no borrowed state, loan,
 destination, receiver or lifecycle events, is also lifetime independent. A
-reference field ends in a dereference and never qualifies. Clearing a
-borrowed-state flag or a return loan does not establish either witness. A
-function whose returns are all stored views or literals summarizes no owner
-dependency at all. All dynamic alternatives still
+reference field ends in a dereference and never qualifies. A third witness
+is the result of a static call of a source text function that has no result
+dependency, or of a text field relay, carrying no loan and no borrowed state:
+the callee's own returns are proven ownerless, and a field relay without a
+loan reads a field that holds ownerless text. A method whose predeclared
+receiver relay its body never uses therefore returns `this.inner.label()` as
+it returns a literal. Clearing a borrowed-state flag or a return loan does not
+establish any witness. A function whose returns are all stored views or
+literals summarizes no owner dependency at all. All dynamic alternatives still
 publish and verify their exact escaping loan, and callers conservatively retain
 the function's owner dependency regardless of the runtime branch.
 A dynamic alternative may also return another text relay's result, such as
@@ -2016,7 +2021,11 @@ fixed point through calls and constructions and must equal the semantic
 `ownerlessTextParameters` exactly. Virtual, override or native dispatch,
 function items, lambdas and native exports cannot carry a nonempty
 requirement. A local text binding is not text storage and may hold dynamic
-text; a reader traces its one initializer instead. Semantics never nests
+text; a reader traces every write of it instead: its initialization and each
+assignment, in any order and in a loop. A local already being traced on that
+path adds nothing new, and a store through a mutable borrow of the local is a
+checked text store, which holds ownerless text or text its function requires
+ownerless. Semantics never nests
 dynamic text in an array (`L-OWN-02`), and every safe element write is a
 checked text store here, so an array element is ownerless text storage
 wherever the array lives: a by-value array formal holds what its caller's
@@ -4219,6 +4228,24 @@ a root loan, as it is when the formal has no entry loan. A carrier returned by
 a method of an accessor's result keeps that transient accessor chain alive,
 child-first, up to the semantic owner, exactly as an accessor result passed to
 a constructor does.
+
+The closure environment, not a binding, holds a capture's entry loan for the
+whole call, so that loan has no carriers and a body-local reference alias never
+joins it as a formal's alias joins the formal's entry. The alias carries its
+own physical loan below the entry instead: the call-result loan of an accessor
+on the capture's referent, a fresh `Local` loan of the referent place it names
+through the capture or through another such alias, or the loan of the alias it
+copies. The semantic identity stays on the entry loan, and releasing a finished
+alias never folds the entry in as a transient link, so the body can still use
+the capture after the alias's last use.
+
+Semantics decides structurally whether a closure is a cleanup-bound carrier
+(owner decision 2026-10-27): its environment is an aggregate of its captures,
+so moving in an owner with a destructor beside a borrowing capture leaves an
+ordinary loan that ends at the closure's last use. Only a capture that is
+itself cleanup-bound makes the closure bound. MIR's cleanup-bound carriers are
+still classes, so a closure bound that way, by moving in a guard that reads its
+reference on destruction, is not yet lowered.
 
 A body-local reference may share an existing semantic owner identity while
 capturing an accessor's different runtime referent. Lowering accepts that
