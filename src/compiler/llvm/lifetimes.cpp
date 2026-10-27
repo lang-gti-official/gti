@@ -801,6 +801,19 @@ void Lifetimes::freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
     ir.CreateCall(generatedRelocation(owner.type), {destination, source});
     return;
   }
+  generatedCopy(ir, destination, source, owner.type);
+}
+
+void Lifetimes::generatedCopy(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                              llvm::Value *source, const SemanticType &type) {
+  if (!destination || !source || !destination->getType()->isPointerTy() ||
+      !source->getType()->isPointerTy() || destination == source)
+    throw std::invalid_argument(
+        "LLVM generated copy requires distinct object addresses");
+  preflightGeneratedHierarchyCopy(session.program().mir(), type);
+  const auto &owner = session.layouts().instance(type);
+  if (owner.polymorphic)
+    dispatch.preflightState(owner.id);
   // Generated inert copy has no source callback or runtime failure point.
   // Copy logical fields only. Even a byte-identical static layout does not
   // authorize transporting source vptrs, padding, or active-state bytes.

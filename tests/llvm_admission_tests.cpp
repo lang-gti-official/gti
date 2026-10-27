@@ -2502,13 +2502,18 @@ int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return
 class Dynamic { public: int value = 7; virtual int read() { return this.value; } };
 int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->value; } }
 )"));
-  bool unsupportedRejected = false;
+  // Exact hierarchy metadata now supplies the static field layout of the
+  // pointee; only the virtual call above still needs a dispatch view.
+  bool fieldWitnessed = false;
   for (const auto &use : unsupported.requirements())
-    unsupportedRejected |=
+    fieldWitnessed |=
         use.required && use.entry->family == "UnsafeOperationKind" &&
-        use.entry->name == "RawMember" && !use.implementedShape;
-  expect(unsupportedRejected,
-         "unknown dynamic owner layout cannot borrow the field witness");
+        use.entry->name == "RawMember" && use.implementedShape &&
+        use.implementedShape->name == "NativeClassRawAccess";
+  expect(unsupported.admitted() && fieldWitnessed,
+         "a raw field read of hierarchy storage uses its exact metadata "
+         "layout: " +
+             unsupported.limitation());
   for (const auto &invalid :
        {"class Slot { public: mut int value = 0; }; int main() { Slot "
         "object{}; unsafe { const Slot* pointer = &object; pointer->value = 1; "
@@ -3187,7 +3192,7 @@ void testDispatchPerUseWitnesses() {
   )");
   const auto plan = planLlvmAdmission(input);
   bool goodConstruct = false, goodFreshCopy = false, badTransfer = false,
-       badConstruct = false;
+       goodArgument = false;
   for (const auto &use : plan.requirements()) {
     if (!use.required)
       continue;
@@ -3198,15 +3203,18 @@ void testDispatchPerUseWitnesses() {
       goodFreshCopy |=
           use.implementedShape &&
           use.implementedShape->name == "NativeFreshHierarchyTransfer";
-      badConstruct |= !use.implementedShape;
+      goodArgument |=
+          use.implementedShape &&
+          use.implementedShape->name == "NativeFreshHierarchyPublication";
     }
     badTransfer |= use.entry->key() == "Shape.PolymorphicTransfer" &&
                    !use.implementedShape && use.instruction != 0;
   }
-  expect(!plan.admitted() && goodConstruct && goodFreshCopy && badConstruct &&
+  expect(!plan.admitted() && goodConstruct && goodFreshCopy && goodArgument &&
              badTransfer,
-         "fresh-local copy and prepared by-value construction in one body keep "
-         "distinct witnesses and explicit pending transfer requirements");
+         "fresh-local copy, a by-value argument published in its prepared "
+         "storage and whole-object assignment in one body keep distinct "
+         "witnesses and explicit pending transfer requirements");
   const auto copyInput = lower(R"(
     class P {
     public:

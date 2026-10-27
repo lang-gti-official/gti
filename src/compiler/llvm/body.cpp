@@ -327,9 +327,14 @@ private:
       if (target->place) {
         if (hierarchy) {
           bool exactProducer =
-              stage && freshConstructionDestination(session.program().mir(),
-                                                    address, input, placement,
-                                                    *stage) == target->place;
+              stage &&
+              (freshConstructionDestination(session.program().mir(), address,
+                                            input, placement,
+                                            *stage) == target->place ||
+               (stage->result == value &&
+                freshObjectStorage(session.program().mir(), address, input,
+                                   placement, *stage) ==
+                    FreshObjectStorage::Argument));
           if (stage && isFreshHierarchyTransferProducer(*stage)) {
             const auto transfer = planFreshHierarchyTransfer(
                 session.program().mir(), input, *stage);
@@ -524,11 +529,17 @@ private:
     const auto transfer = Lifetimes::preflightFreshTransfer(session, dispatch,
                                                             input, instruction);
     const auto *target = placement.target(*instruction.result);
-    if (!target || target->place != transfer.destination || target->aggregate ||
-        target->returned || transfer.source != instruction.operands.front())
+    const bool returned =
+        transfer.publishes == FreshHierarchyPublication::Returned;
+    if (!target || target->aggregate || target->returned != returned ||
+        (!returned && target->place != transfer.destination) ||
+        transfer.source != instruction.operands.front())
       throw BackendUnsupportedError("LLVM hierarchy transfer lost its exact "
                                     "source/publication placement");
-    auto *address = destination(*instruction.result);
+    auto *address = returned ? returnDestination
+                             : destination(*instruction.result);
+    if (!address)
+      throw std::logic_error("LLVM returned transfer lost its ABI destination");
     // Selecting the sealed source view does not materialize an object snapshot
     // or suppress its cleanup. The typed transfer commits source state last.
     auto *source = memory.selected(transfer.source);
@@ -833,6 +844,18 @@ private:
       argumentOffset = 1;
       if (!instruction.constructorTarget) {
         const auto &type = instruction.parameterTypes[0].arguments[0];
+        if (instruction.operands.size() == 2 &&
+            containsHierarchyStorage(session.program().mir(), type)) {
+          // A moved owned argument relocates with its exact cleanup state; a
+          // copy writes logical fields and installs its own dispatch state.
+          auto *value = operand(instruction.operands[1]);
+          if (instruction.constructorKind == ConstructorKind::Move)
+            ir.CreateCall(lifetimes.generatedRelocation(type),
+                          {constructed, value});
+          else
+            lifetimes.generatedCopy(ir, constructed, value, type);
+          return nullptr;
+        }
         if (instruction.operands.size() == 2) {
           auto *value = operand(instruction.operands[1]);
           store(value, constructed, type);
@@ -869,9 +892,21 @@ private:
       }
       if (!instruction.constructorTarget) {
         if (type.kind == SemanticType::Class &&
-            session.layouts().instance(type).polymorphic) {
-          // Installs the exact active dispatch state and arms cleanup.
-          lifetimes.generatedEmpty(ir, constructed, input, instruction);
+            containsHierarchyStorage(session.program().mir(), type) &&
+            (session.layouts().instance(type).polymorphic ||
+             !instruction.operands.empty())) {
+          if (instruction.constructorKind == ConstructorKind::Copy)
+            // Copies logical fields from the checked source view, then
+            // installs the allocation's own dispatch state.
+            lifetimes.generatedCopy(ir, constructed,
+                                    operand(instruction.operands.at(0)), type);
+          else if (instruction.constructorKind == ConstructorKind::Move)
+            // Relocates the moved owned argument with its cleanup state.
+            ir.CreateCall(lifetimes.generatedRelocation(type),
+                          {constructed, operand(instruction.operands.at(0))});
+          else
+            // Installs the exact active dispatch state and arms cleanup.
+            lifetimes.generatedEmpty(ir, constructed, input, instruction);
           return constructed;
         }
         if (instruction.operands.empty()) {

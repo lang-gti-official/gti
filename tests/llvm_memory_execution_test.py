@@ -98,6 +98,55 @@ int main() {
   return 0;
 }
 ''',
+    # Typed storage of hierarchy elements: by-value push relocates each
+    # argument into raw element storage, growth relocates elements with their
+    # dispatch headers and owned text, element views dispatch through raw
+    # references, and destruction runs each exact recipe once in reverse.
+    "hierarchy-element-storage": r'''
+#include <std/string>
+#include <std/vector>
+
+mut int destroyed = 0;
+mut int trace = 0;
+
+interface Shape { int area(); };
+interface Marker { int mark(); };
+
+class Square : public Marker, public Shape {
+  int side;
+  std::string label;
+public:
+  Square(int side) : side(side), label(std::string("sq")) {}
+  ~Square() {
+    destroyed += 1;
+    trace = trace * 10 + this.side;
+  }
+  int mark() override { return this.side; }
+  int area() override { return this.side * this.side + int(this.label.size()); }
+};
+
+int total(std::vector<Square>& shapes) {
+  mut int sum = 0;
+  for (mut std::size_t index = 0; index < shapes.size(); index++) {
+    Shape& view = shapes[index];
+    sum += view.area();
+  }
+  return sum;
+}
+
+int main() {
+  {
+    mut std::vector<Square> shapes{};
+    for (mut int side = 1; side <= 5; side++) {
+      shapes.push_back(Square(side));
+    }
+    if (total(shapes) != 65) { return 1; }
+    // Relocation during growth ends no element lifetime.
+    if (destroyed != 0) { return 2; }
+  }
+  return destroyed == 5 && trace == 54321 ? 0 : 3;
+}
+''',
     "address-conversion": r'''
 struct Reading { int value = 42; };
 using Erased = void*;

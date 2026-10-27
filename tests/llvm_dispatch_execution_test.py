@@ -56,6 +56,7 @@ SUCCESS_FILES = {
     "polymorphic-owners": "tests/fixtures/llvm_dispatch_polymorphic_owners.gti",
     "virtual-signatures": "tests/fixtures/llvm_dispatch_virtual_signatures.gti",
     "fresh-publication": "tests/fixtures/llvm_dispatch_fresh_publication.gti",
+    "owned-transfers": "tests/fixtures/llvm_dispatch_owned_transfers.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -133,7 +134,9 @@ TRANSFER_SUCCESS_SOURCES = {
     "generated-move-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second = std::move(first); return second.read(); }\n", 1),
     "fresh-copy-former-cli-control": ("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", 0),
     "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain(); };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
+    "fresh-value-argument-former-reject": (PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n", 0),
     "fresh-return-former-reject": (PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n", 1),
+    "local-return-former-reject": (PLAIN + "Plain make() { Plain local{}; return local; }\nint main() { Plain value = make(); return value.read(); }\n", 1),
     "heap-polymorphic-owner-former-reject": ("""#include <std/memory>
 mut int dropped = 0;
 class HeapValue {
@@ -159,8 +162,6 @@ REJECTIONS = {
 void replace(mut Plain& destination, Plain& source) { destination = source; }
 int main() { mut Derived first{}; Derived second{}; replace(first, second); return first.read(); }
 """,
-    "reject-fresh-value-argument": PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n",
-    "reject-local-return": PLAIN + "Plain make() { Plain local{}; return local; }\nint main() { Plain value = make(); return value.read(); }\n",
     "reject-array": PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n",
     "reject-global": PLAIN + "Plain value{};\nint main() { return value.read(); }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
@@ -1058,7 +1059,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "owned-transfers"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1257,6 +1258,24 @@ int main() {
 }
 """, "defined-failure", expected_exit=70, failure_needle="payload(12 / payload)",
         endpoints=TRANSFER_ENDPOINTS)
+    owned = (root / SUCCESS_FILES["owned-transfers"]).read_text(encoding="utf-8")
+    owned_marker = "// OWNED_TRANSFERS_MAIN\n"
+    if owned.count(owned_marker) != 1:
+        raise AssertionError("owned transfer main marker is not unique")
+    owned_failure = owned.split(owned_marker, 1)[0] + """int main() {
+  expected_cleanup = 54;
+  Guard guard{};
+  Badge held = Badge(std::string("x"), 4);
+  return divide(Badge(std::string("yy"), 5), 0) + held.code();
+}
+"""
+    owned_needle = "int divide(Badge badge, int divisor) { return badge.code() / divisor; }"
+    add("owned-transfer-failure", owned_failure, "defined-failure",
+        expected_exit=70, failure_needle=owned_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("owned-transfer-wrong-cleanup",
+        owned_failure.replace("expected_cleanup = 54;", "expected_cleanup = 55;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=owned_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -1288,9 +1307,12 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "fresh-hierarchy-transfer", "fresh-hierarchy-copy-view",
             "nested-hierarchy-transfer", "nested-transfer-failure", "nested-transfer-wrong-cleanup",
             "generated-copy-former-reject", "generated-move-former-reject",
-            "fresh-copy-former-cli-control", "generated-move-virtual-failure"),
+            "fresh-copy-former-cli-control", "generated-move-virtual-failure",
+            "owned-transfers", "owned-transfer-failure", "owned-transfer-wrong-cleanup",
+            "local-return-former-reject"),
         "fresh-publication": (
             "fresh-publication", "fresh-return-former-reject",
+            "fresh-value-argument-former-reject",
             "fresh-temporary-virtual-failure", "fresh-temporary-wrong-cleanup",
             "fresh-return-constructor-rollback"),
         "polymorphic-ownership": (
@@ -1341,6 +1363,7 @@ def main() -> None:
              "virtual-signature-failure", "virtual-signature-wrong-cleanup",
              "fresh-temporary-virtual-failure", "fresh-temporary-wrong-cleanup",
              "fresh-return-constructor-rollback",
+             "owned-transfer-failure", "owned-transfer-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

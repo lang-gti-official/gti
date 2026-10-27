@@ -41,10 +41,16 @@ namespace lang::native_llvm {
 [[nodiscard]] bool
 isFreshHierarchyTransferProducer(const MirInstruction &instruction);
 
+// Where a planned hierarchy transfer publishes its fresh object: a whole fresh
+// local (Initialize), a prepared by-value argument (CallInput) or the body's
+// ABI return destination.
+enum class FreshHierarchyPublication { Local, Argument, Returned };
+
 struct FreshHierarchyTransfer {
   MirOperand source;
   MirPlaceId destination = 0;
   const MirInstruction *publication = nullptr;
+  FreshHierarchyPublication publishes = FreshHierarchyPublication::Local;
   ConstructorKind kind = ConstructorKind::Copy;
   HirClassInstanceId owner = 0;
   MirDropObligationId sourceDrop = 0;
@@ -54,6 +60,12 @@ struct FreshHierarchyTransfer {
 [[nodiscard]] FreshHierarchyTransfer
 planFreshHierarchyTransfer(const MirProgram &program, const MirBody &body,
                            const MirInstruction &producer);
+
+// The generated copy of a concrete hierarchy class whose typed field copy is
+// implemented: borrow-free ordinary storage with generated copy members and
+// no active cleanup, recursively through scalar and record fields.
+void preflightGeneratedHierarchyCopy(const MirProgram &program,
+                                     const SemanticType &type);
 
 // Fresh values have one physical destination. This plan follows only verified
 // value transport; it never elides a MIR Copy/Move or aliases a named local to
@@ -101,9 +113,10 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
 
 // Every final storage a fresh producer may publish into without a transfer:
 // a whole fresh local or constructor field, the body's own ABI return
-// destination, or the producer's own full-expression temporary, which is
-// only borrowed through its value-rooted places and dropped there.
-enum class FreshObjectStorage { Local, Returned, Temporary };
+// destination, the producer's own full-expression temporary, which is only
+// borrowed through its value-rooted places and dropped there, or the exact
+// prepared storage of a by-value argument whose ownership the callee takes.
+enum class FreshObjectStorage { Local, Returned, Temporary, Argument };
 [[nodiscard]] std::optional<FreshObjectStorage>
 freshObjectStorage(const MirProgram &program, MirBodyAddress address,
                    const MirBody &body, const Placement &placement,

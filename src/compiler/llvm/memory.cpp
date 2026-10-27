@@ -489,13 +489,29 @@ bool nativeUniqueConstructionShape(const MirProgram &program,
   // A concrete polymorphic object is constructed through its selected source
   // constructor or the exact generated empty default; either installs its
   // exact active dispatch state in the allocation.
-  if (found->polymorphic && !instruction.constructorTarget)
-    return instruction.constructorKind == ConstructorKind::Ordinary &&
-           instruction.operands.empty() &&
-           mir_detail::generatedUniqueConstruction(instruction) &&
-           found->defaultConstructor == SpecialMemberStatus::Generated &&
-           !found->generatedDefaultRequiresSchedule &&
-           found->declaredFields.empty();
+  if (found->polymorphic && !instruction.constructorTarget) {
+    if (!mir_detail::generatedUniqueConstruction(instruction))
+      return false;
+    if (instruction.constructorKind == ConstructorKind::Ordinary)
+      return instruction.operands.empty() &&
+             found->defaultConstructor == SpecialMemberStatus::Generated &&
+             !found->generatedDefaultRequiresSchedule &&
+             found->declaredFields.empty();
+    // A generated copy from an exact checked source view, or the generated
+    // move of an owned by-value argument.
+    if (instruction.constructorKind == ConstructorKind::Move)
+      return found->moveConstructor == SpecialMemberStatus::Generated &&
+             instruction.operands.size() == 1 &&
+             instruction.parameterTypes == std::vector<SemanticType>{type} &&
+             instruction.operands.front().type == type;
+    return instruction.constructorKind == ConstructorKind::Copy &&
+           found->copyConstructor == SpecialMemberStatus::Generated &&
+           instruction.operands.size() == 1 &&
+           instruction.parameterTypes ==
+               std::vector<SemanticType>{SemanticType::referenceTo(type)} &&
+           instruction.operands.front().type ==
+               instruction.parameterTypes.front();
+  }
   if (instruction.constructorTarget) {
     const auto *target =
         program.findConstructorInstance(*instruction.constructorTarget);

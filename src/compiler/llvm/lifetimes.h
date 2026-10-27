@@ -36,6 +36,11 @@ public:
   void freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
                      llvm::Value *source, const MirBody &body,
                      const MirInstruction &instruction);
+  // The exact generated copy of a scalar/record hierarchy into fresh storage:
+  // logical fields only, then the destination's own dispatch state. Callers
+  // must already own MIR authority for the copy and its fresh destination.
+  void generatedCopy(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                     llvm::Value *source, const SemanticType &type);
   // Representation mechanism for an already-authorized generated relocation
   // into fresh storage. This is not source move/copy admission. Inert records
   // and arrays rebuild destination dispatch state without source callbacks;
