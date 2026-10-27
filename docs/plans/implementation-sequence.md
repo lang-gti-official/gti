@@ -11801,8 +11801,21 @@ integration prerequisites.
   join quarantine; examples 076 and 175 match. Manual C-thread create/join,
   once, mutex and condition services execute through their exact trusted C
   declarations; the C-thread fixtures, including terminal and linked-helper
-  cases, match the oracle at O0-O3. Remaining: erased transfer callables
-  (066, O-LLVM-10), Linux execution evidence,
+  cases, match the oracle at O0-O3. Mutex storage held by value in a closure
+  environment or as a unique/shared owner's pointee, and a passive class mutex
+  payload, lower natively with their own witnesses (`threads.mutex-composition`,
+  including a payload cleanup failure on a worker re-raised at join); a
+  program without task adapters joins a never-started handle without worker
+  containment. Of the 47 recorded threading programs, 43 match the oracle at
+  O0 and O2; the remaining four (066, `scoped_parallel_threads`,
+  `transfer_function_threads`, `panic_runtime`) are refused only at erased
+  `std::transfer_function`/`std::function` storage and match with that use
+  removed. Known non-semantic divergences: the C++-only nothrow-`operator new`
+  allocation oracle (`scoped_parallel_allocations`) does not observe native
+  task boxes, which use the process memory provider, and a wrong-thread
+  confined-callback binding calls `abort` where C++ calls `std::terminate`,
+  observable only through an installed C++ terminate handler. Remaining:
+  erased transfer callables (O-LLVM-10), Linux execution evidence,
   generated-code TSan, the terminal containment of a defined failure inside an
   unattached native callback invoked on a managed worker (it still calls the
   legacy runtime endpoint), and the workload/synchronization cost report.
@@ -11946,7 +11959,7 @@ not size the work.
 | O-LLVM-10 public polymorphic-storage admission | 086, 135 | milestone; `nativeValue` refuses any capability-bearing type, and the inline slot's public admission waits on boxed-owner dynamic cleanup |
 | O-LLVM-10 polymorphic transfer and virtual-call shapes | 071, 025 | milestone |
 | O-LLVM-07/10 hierarchy containment on a receiver stage | 149 | milestone; the receiver's type merely contains hierarchy storage |
-| O-LLVM-10 erased transfer callable and shared-owner mutex receiver | 066 | 076 and 175 now execute with native managed workers; 066 still needs `std::transfer_function` (inline polymorphic storage and virtual invocation) and a `shared_ptr<mutex<T>>` receiver, whose owner-held mutex has no representation witness. With both removed, 066 matches the C++ oracle at O0-O3 |
+| O-LLVM-10 erased transfer callable | 066 | 076 and 175 now execute with native managed workers, and owner-held mutex storage has its own witness, so the `shared_ptr<mutex<T>>` receiver and its empty-owner field default now lower; 066 still needs `std::transfer_function` (inline polymorphic storage and virtual invocation). With that use removed, 066 matches the C++ oracle at O0-O3 |
 | element and pointee eligibility | 127, 129, 142 | admission only; the emitters are element-agnostic. `ArraySize`/`ArrayRangeBegin` return constants yet demand a passive element; a payload-enum pointee and an array of sealed integral enums have implemented shapes that the eligibility predicates do not reach |
 | unsafe receiver on a `Call` stage | 121 | admission only; a receiver-role `Call` with a mutable-temporary-borrow input kind and no call target |
 | remaining field projection | 042 | admission only; progressed from the earlier reference-adjustment refusal |

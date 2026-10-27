@@ -1,5 +1,6 @@
 #include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/layout.h"
+#include "../src/compiler/llvm/mutexes.h"
 #include "../src/compiler/llvm/thread_lifecycle.h"
 #include "../src/compiler/llvm/threads.h"
 #include "../src/compiler/llvm/runtime_abi.h"
@@ -275,6 +276,72 @@ void checkManagedThreads(const std::filesystem::path &root) {
           "fixtures exercise every managed-thread operation family");
 }
 
+// Mutex storage held by value in a closure environment or as an owner's
+// pointee is admitted through its own witnesses. A passive payload keeps the
+// parameter's passive drop; any other recipe on that obligation rejects.
+void checkMutexComposition(const std::filesystem::path &root) {
+  FrontendOptions options;
+  options.target.executionProfile = ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  options.requireEntryPoint = true;
+  options.requireFunctionDefinitions = true;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  std::set<std::string_view> witnesses;
+  std::size_t passive = 0;
+  for (const auto *fixture :
+       {"llvm_thread_mutex_closures.gti", "llvm_thread_owned_mutexes.gti"}) {
+    const auto frontend = Frontend(options).analyze(
+        root / "tests/fixtures" / fixture, std::nullopt,
+        {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+    require(frontend.canGenerateCode(), "mutex composition source reaches MIR");
+    std::vector<LoweredProgramIssue> issues;
+    const auto input = verifiedLoweredProgram(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
+                               options.target),
+        issues);
+    require(input.has_value(), "mutex composition source is verified");
+    const auto &program = input->program().mir();
+    const auto admission = planLlvmAdmission(*input);
+    if (!admission.admitted())
+      throw std::runtime_error(admission.limitation());
+    for (const auto &use : admission.requirements())
+      if (use.implementedShape)
+        witnesses.insert(use.implementedShape->name);
+    for (const auto &constructor : program.constructorInstances()) {
+      const auto *owner = program.findClassInstance(constructor.owner);
+      if (!owner ||
+          owner->compilerCapability != CompilerCapabilityTypeKind::MutexStorage ||
+          constructor.body.dropObligations.size() != 1 ||
+          constructor.body.dropObligations.front().dropType.requiresActiveCleanup ||
+          constructor.parameterTypes.size() != 1 ||
+          constructor.parameterTypes.front().kind != SemanticType::Class)
+        continue;
+      require(nativeMutexConstructor(program, constructor).has_value(),
+              "a passive class payload initializes its mutex natively");
+      ++passive;
+      const auto reject = [&](auto mutate, const char *message) {
+        auto bad = constructor;
+        mutate(bad.body.dropObligations.front().dropType);
+        require(!nativeMutexConstructor(program, bad), message);
+      };
+      reject([](auto &drop) { drop.requiresActiveCleanup = true; },
+             "a passive parameter drop cannot claim active cleanup");
+      reject([](auto &drop) { drop.destructor = 1; },
+             "a passive parameter drop runs no destructor");
+      reject([](auto &drop) { drop.type = SemanticType::Int32; },
+             "a passive parameter drop keeps the payload type");
+      reject([](auto &drop) { drop.aggregate.emplace_back(); },
+             "a passive parameter drop has no subobject schedule");
+    }
+  }
+  require(witnesses.contains("NativeMutexClosure"),
+          "a closure holding mutex storage by value has its own witness");
+  require(witnesses.contains("NativeOwnedMutexStorage"),
+          "an owner of mutex storage has its own witness");
+  require(passive >= 1, "fixtures exercise a passive class mutex payload");
+}
+
 // Manual C-thread services bind only their exact trusted C declarations.
 void checkManualCThreadBindings(const std::filesystem::path &root) {
   FrontendOptions options;
@@ -360,6 +427,7 @@ int main(int argc, char **argv) {
       throw std::runtime_error("expected repository root");
     check(argv[1]);
     checkManagedThreads(argv[1]);
+    checkMutexComposition(argv[1]);
     checkManualCThreadBindings(argv[1]);
     std::cout << "C-thread startup and managed-thread contracts passed\n";
     return 0;

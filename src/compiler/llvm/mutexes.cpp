@@ -79,11 +79,24 @@ nativeMutexConstructor(const MirProgram &program,
       parameter.type != *payload || !parameter.initiallyAvailable ||
       !parameter.projections.empty())
     return {};
+  // A payload with active cleanup carries its exact unique recipe. One
+  // without keeps MIR's passive binding obligation: the consumed parameter's
+  // Drop then has nothing to retire, whatever the payload's source type.
   const auto parameterRecipe = mirUniqueCleanupType(program, *payload);
+  const auto passive = [&](const MirDropType &drop) {
+    return !parameterRecipe && drop.type == *payload &&
+           !drop.requiresActiveCleanup && !drop.destructor &&
+           !drop.fixedArray && !drop.uniquePointeeClass &&
+           !drop.polymorphicCleanup && !drop.uniqueOwnerField &&
+           !drop.uniqueOwnerBase && !drop.captureIndex &&
+           !drop.payloadVariant && !drop.payloadField &&
+           !drop.recursiveCleanup && drop.aggregate.empty();
+  };
   for (const auto &drop : body.dropObligations) {
     if (drop.kind != MirDropObligationKind::Binding ||
         drop.place != parameter.id || drop.binding != parameter.binding ||
-        !parameterRecipe || drop.dropType != *parameterRecipe ||
+        !(parameterRecipe ? drop.dropType == *parameterRecipe
+                          : passive(drop.dropType)) ||
         !drop.initiallyActive)
       return {};
   }

@@ -1223,7 +1223,8 @@ public:
         payloads = std::move(inlinePayloads);
         crossed = enclosingClasses;
         crossedPayloads = enclosingPayloads;
-        return valid || dispatchProofs.metadata(pointee).has_value();
+        return valid || dispatchProofs.metadata(pointee).has_value() ||
+               ownedMutexPointee(pointee);
       }
       if (selected.kind != SemanticType::Class)
         return false;
@@ -1274,6 +1275,20 @@ public:
       return valid;
     };
     return supported(supported, type);
+  }
+  // An owner's pointee may also be exact mutex storage or an inline
+  // composition containing it. The owner moves only its handle; the pointee
+  // is constructed, borrowed and retired in place, under the same independent
+  // use proofs as any other pointee. A pointee already being decided beneath
+  // an enclosing owner is decided by that enclosing check.
+  bool ownedMutexPointee(const SemanticType &pointee) const {
+    if (std::find(ownedMutexPointees.begin(), ownedMutexPointees.end(),
+                  pointee) != ownedMutexPointees.end())
+      return true;
+    ownedMutexPointees.push_back(pointee);
+    const bool valid = mutexShape(pointee).has_value();
+    ownedMutexPointees.pop_back();
+    return valid;
   }
   // A sealed integral enum is stored exactly as its fixed-width underlying
   // integer, so raw access through a pointer to one is primitive raw access to
@@ -1487,6 +1502,7 @@ public:
       return {};
     std::vector<SemanticType> visiting;
     bool mutex = false;
+    bool closure = false;
     const auto represented = [&](const auto &self,
                                  const SemanticType &selected) -> bool {
       if (std::find(visiting.begin(), visiting.end(), selected) != visiting.end())
@@ -1505,6 +1521,24 @@ public:
         for (const auto &variant : payload->variants)
           for (const auto &element : variant.payloadTypes)
             valid &= self(self, element);
+      } else if (selected.kind == SemanticType::Lambda &&
+                 !nativeValue(selected)) {
+        // A closure environment is an inline aggregate of its captures, so a
+        // capture taken by value may hold mutex storage. A borrowing capture
+        // stores only an address and stays an ordinary native value.
+        const auto environment =
+            native_llvm::closureEnvironmentLayout(program, selected);
+        valid = environment &&
+                environment->captureTypes.size() ==
+                    environment->captureModes.size() &&
+                environment->captureTypes.size() ==
+                    environment->captureRequiresActiveCleanup.size();
+        for (std::size_t index = 0;
+             valid && index < environment->captureTypes.size(); ++index)
+          valid = isBorrowingCapture(environment->captureModes[index])
+                      ? nativeValue(environment->captureTypes[index])
+                      : self(self, environment->captureTypes[index]);
+        closure |= valid;
       } else if (selected.kind == SemanticType::Class) {
         const MirClassInstance *owner = nullptr;
         for (const auto &candidate : program.classInstances())
@@ -1538,9 +1572,9 @@ public:
       visiting.pop_back();
       return valid;
     };
-    return represented(represented, type) && mutex
-               ? std::optional(Shape::NativeMutexStorage)
-               : std::nullopt;
+    if (!represented(represented, type) || !mutex)
+      return std::nullopt;
+    return closure ? Shape::NativeMutexClosure : Shape::NativeMutexStorage;
   }
   std::optional<Shape> classShape(const SemanticType &type) const {
     // References previously borrowed this ordinary-storage witness while the
@@ -1561,7 +1595,9 @@ public:
     if (native_llvm::nativeThreadHandle(program, *leaf) && nativeValue(type))
       return Shape::NativeThreadHandle;
     if (leaf->kind == SemanticType::UniqueOwner && nativeValue(type))
-      return Shape::NativeUniqueOwnership;
+      return leaf->arguments.size() == 1 && mutexShape(leaf->arguments[0])
+                 ? Shape::NativeOwnedMutexStorage
+                 : Shape::NativeUniqueOwnership;
     if (leaf->kind == SemanticType::Enum && program.findPayloadEnum(*leaf) &&
         nativeValue(type))
       return Shape::NativePayloadStorage;
@@ -2866,7 +2902,8 @@ public:
                                         plan.targetType.arguments.front()))
       return std::nullopt;
     const auto storage = classShape(plan.targetType);
-    if (storage && *storage == Shape::NativeUniqueOwnership)
+    if (storage && (*storage == Shape::NativeUniqueOwnership ||
+                    *storage == Shape::NativeOwnedMutexStorage))
       return storage;
     return std::nullopt;
   }
@@ -3889,6 +3926,8 @@ private:
   StaticDispatchProofs &dispatchProofs;
   const TargetInfo &nativeTarget;
   std::map<Key, std::size_t> indices;
+  // Owner pointees whose mutex-storage representation is being decided.
+  mutable std::vector<SemanticType> ownedMutexPointees;
 };
 
 } // namespace

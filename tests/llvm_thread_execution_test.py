@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Managed and scoped workers on LLVM, differentially against the C++ oracle.
 
-Every case uses user-defined task, capture and result types. The C++ backend
+Every case uses user-defined task, capture, result and mutex payload types,
+including mutex storage held by closures and owner pointees. The C++ backend
 supplies the oracle observable (exit status, stdout and stderr, including the
 exact defined-failure reports); native LLVM must reproduce it at O0-O3 under
 the concurrent execution profile.
@@ -50,8 +51,21 @@ def cthread_fixtures():
     }
 
 
+# Mutex storage composed into closure environments taken by value and into
+# unique/shared owner pointees, with passive and cleanup-bearing payloads.
+def mutex_composition_fixtures():
+    return {
+        "mutex-closures": "llvm_thread_mutex_closures.gti",
+        "owned-mutexes": "llvm_thread_owned_mutexes.gti",
+        "owned-mutex-failure": "llvm_thread_owned_mutex_failure.gti",
+        "shared-mutex-workers": "shared_mutex_threads.gti",
+        "passive-mutex-payload": "mutex_move_only.gti",
+    }
+
+
 def fixtures():
-    return {**managed_fixtures(), **cthread_fixtures()}
+    return {**managed_fixtures(), **cthread_fixtures(),
+            **mutex_composition_fixtures()}
 
 
 # Cases that link a test-only native helper; they run as controls because the
@@ -91,7 +105,8 @@ def evidence_cases(root):
 def evidence_profiles(root):
     del root
     return {"threads.managed": tuple(managed_fixtures()),
-            "cthread.manual": tuple(cthread_fixtures())}
+            "cthread.manual": tuple(cthread_fixtures()),
+            "threads.mutex-composition": tuple(mutex_composition_fixtures())}
 
 
 def evidence_manifest(root):
@@ -99,7 +114,8 @@ def evidence_manifest(root):
         "llvm_thread_execution", evidence_cases(root), evidence_profiles(root),
         {name: f"tests/fixtures/{fixture}" for name, fixture in fixtures().items()},
         execution_profiles={"threads.managed": "concurrent",
-                            "cthread.manual": "concurrent"})
+                            "cthread.manual": "concurrent",
+                            "threads.mutex-composition": "concurrent"})
 
 
 def native_helper_controls(gti, root, work, environment, cxx):

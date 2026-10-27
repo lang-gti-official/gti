@@ -53,9 +53,16 @@ for what minor and patch releases mean.
   enumerators passed to reference parameters, borrows reached through a
   carrier's stored reference, and restoring swaps and exchanges
   (`std::swap`, `std::exchange`, `std::array::swap` and `swap_elements`).
+- Compile threads on the native backend: `std::thread` and
+  `std::thread_result` start, join, automatic join and result take, scoped
+  `std::parallel_invoke`, manual C-thread create/join, once, mutex and
+  condition services, and mutexes held by value in lambda captures or behind
+  `std::unique_ptr`/`std::shared_ptr`, including payloads with deleted copy
+  constructors. Worker failures re-raise at join and cleanup failures report
+  exactly as on the C++ backend.
 - C++ remains the production default. Polymorphic ownership, dynamic dispatch
-  transfer and thread-handle construction remain rejected on the native
-  backend.
+  transfer and erased callables (`std::function`, `std::transfer_function`)
+  remain rejected on the native backend.
 
 ## 0.480.1 — Lambda argument formatting
 

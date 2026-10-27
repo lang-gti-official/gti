@@ -4530,6 +4530,26 @@ source-shutdown policy; borrowed global carriers remain rejected.
 Mutex admission has its own exact representation/operation witnesses, including
 constructor payload transfer, guard loans and native-only hosted retirement.
 It does not broaden the generic native-value or native-cleanup predicates.
+A payload without active cleanup keeps MIR's passive binding obligation for
+the consumed constructor parameter; the transferred payload leaves that Drop
+nothing to retire, whatever the payload's source type.
+
+Mutex storage also composes into closure environments and owner pointees, each
+with its own witness. A capture taken by value may hold mutex storage or an
+admitted composition of it (`NativeMutexClosure`): the environment stays
+address-valued, formation and every move use the typed mutex transfer that
+rebuilds the native identity, and cleanup follows the closure's verified
+capture recipe. A borrowing capture remains an ordinary native address. A
+unique or shared owner's pointee may be mutex storage or a composition holding
+it (`NativeOwnedMutexStorage`). Only the owner handle becomes a native value,
+because a move transfers the pointer; the pointee is built in place by the
+sealed storage constructor, borrowed through the owner, and retired by its
+recipe at the last release, which may run on a worker during task cleanup.
+An owner pointee already being decided beneath an enclosing owner is decided by
+that enclosing check, so recursive nodes owning their successors terminate.
+`llvm_thread_execution`'s `threads.mutex-composition` profile compares
+user-defined closure, owner, shared-worker, worker-failure and passive-payload
+cases with the C++ oracle at O0-O3.
 The public O0-O3 service harness additionally requires normal, rollback,
 first/emergency failure and moved-guard execution. The inline hierarchy query
 validates canonical atomic/mutex capabilities through their representation
