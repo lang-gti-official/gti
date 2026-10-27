@@ -11929,15 +11929,41 @@ the optimizer: the same shape with both enumerators positive, with a
 `uint8_t` underlying type, compared in `main` without a call, or with a plain
 `int32_t` parameter is correct at every level.
 
-Ruled out: both enumerators materialize correctly in `Scalars::constant`;
-`Scalars::domain` returns the sealed underlying type so the compare is a
-signed `i32` compare; `layouts().get` delegates an enum to that integer; the
-private call ABI sets no extension attribute and the native-C `extension()`
-only widens 8/16-bit C scalars and is not on this path; and the module passes
-LLVM verification before and after optimization. The optimizer is therefore
-acting on a promise the emitter makes rather than on malformed IR. Next step
-is to compare the emitted `f` at O0 against O1 for the argument's stored width
-and any range metadata on the parameter or the compare.
+**The emitted IR is correct and the fault is inside the compiler's own
+pipeline run.** Dumping the module immediately before optimization shows
+exactly what it should:
+
+```llvm
+define internal i32 @__gti_native_v2_f4(i32 %0) { ... %3 = icmp eq i32 %2, -5 ... }
+...
+  %2 = call i32 @__gti_native_v2_f4(i32 -5)    ; expects 1
+  %4 = call i32 @__gti_native_v2_f4(i32 1000)  ; expects 2
+```
+
+Dumping the same module immediately after `pipeline.run` shows
+`store i32 20` where the only correct fold is `store i32 0`. Feeding that
+byte-identical pre-optimization module to `opt --passes='default<O1>'` from
+the same LLVM 23.1.2 yields `store i32 0`, and the two optimized modules are
+otherwise identical, including every inferred attribute.
+
+Ruled out by direct experiment, each reproducing the correct fold on the same
+module: the printed IR itself; the LLVM version; linking the shared
+`libLLVM` or the static archives; GTI's exact `TargetMachine`, built from the
+default triple with CPU `generic`, no features, PIC and
+`CodeGenOptLevel::Less`; a consumer compiled as C++17 or as C++20; and
+loading `libclang`, so the second LLVM copy that `libclang` brings into the
+process is not the cause. Also ruled out by reading: both enumerators
+materialize correctly in `Scalars::constant`; `Scalars::domain` returns the
+sealed underlying type, so the compare is a signed `i32` compare;
+`layouts().get` delegates an enum to that integer; the private call ABI sets
+no extension attribute, and the native-C `extension()` only widens 8/16-bit C
+scalars and is not on this path.
+
+So an identical pipeline over an identical module behaves differently inside
+`gti` than outside it. The next step is to bisect inside the process, printing
+the module after each pass through `PassInstrumentation`, and identify the
+pass whose result differs. The backend has no IR dump option, which is what
+made this expensive to localize.
 
 **Not on this path.** The C04 failure-transport comparison recommends native
 unwinding as a proposal to the ABI owner and states that production keeps
