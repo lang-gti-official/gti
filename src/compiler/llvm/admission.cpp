@@ -502,6 +502,8 @@ public:
           if (stage.replacementCleanup &&
               contains(stage.replacementCleanup->type) && !replaced)
             proof.transfer = true;
+          if (restoringBaseView(body, stage))
+            proof.transfer = true;
           // A typed destruction runs the element's exact recipe in place;
           // only other element-cleanup consumers would transport the object.
           if (stage.elementCleanup && contains(stage.elementCleanup->type) &&
@@ -1470,6 +1472,36 @@ private:
     }
     return false;
   }
+  // A restoring swap or exchange relocates whole objects between its places.
+  // Like a replacement, it needs a complete polymorphic object: relocating
+  // through a base view would replace the dispatch state of the object that
+  // encloses it. A generic body sees only its reference parameter's referent,
+  // which is complete when nothing in the sealed program derives from it.
+  bool restoringBaseView(const MirBody &body,
+                         const MirInstruction &stage) const {
+    const bool swap = stage.intrinsic == IntrinsicKind::RestoringSwap;
+    if (stage.kind != MirInstructionKind::Call ||
+        (!swap && stage.intrinsic != IntrinsicKind::RestoringExchange))
+      return false;
+    const std::size_t places = swap ? 2 : 1;
+    if (stage.operands.size() < places)
+      return true;
+    for (std::size_t index = 0; index != places; ++index) {
+      const auto &operand = stage.operands[index];
+      const auto &type = unreference(operand.type);
+      if (type.kind != SemanticType::Class || !contains(type))
+        continue;
+      const auto *loan = operand.loan ? body.findLoan(operand.loan) : nullptr;
+      const auto *place = body.findPlace(operand.place ? operand.place
+                                         : loan        ? loan->source
+                                                       : 0);
+      if (!place || place->type != type ||
+          (instance(type).polymorphic &&
+           !native_llvm::completeObjectPlace(program, *place)))
+        return true;
+    }
+    return false;
+  }
   // A place observation of a checked view whose only use is one
   // replacement's generated copy source.
   bool copiedView(const MirBody &body, const MirInstruction &producer,
@@ -2129,6 +2161,13 @@ private:
             return {};
           return Shape::NativeHierarchyThreadTask;
         }
+        // The replacement a restoring exchange relocates into the place it
+        // vacates moves with this type's generated relocation.
+        if (transfer.publishes ==
+            native_llvm::FreshHierarchyPublication::Exchange)
+          return generatedRelocation(stage.info.type)
+                     ? std::optional(Shape::NativeFreshHierarchyTransfer)
+                     : std::nullopt;
         // A payload enum moved whole, or a hierarchy field moved out of its
         // payload alternative, relocates under the payload contract.
         if (transfer.type.kind == SemanticType::Enum || transfer.sourceVariant)

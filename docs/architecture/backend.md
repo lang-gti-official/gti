@@ -5094,7 +5094,16 @@ these destinations:
 - an inline polymorphic slot (`NativeInlinePolymorphicSlot`);
 - the caller's return destination;
 - a constructor field, through its exact field initializer;
-- its slot in a fresh array or payload alternative that is itself published.
+- its slot in a fresh array or payload alternative that is itself published;
+- the place a restoring exchange vacates, from the value's own storage.
+
+A cleanup that can fail may run between a returned binding's move and the
+return, such as the destructor of a sibling local. MIR then reparents the
+moved value's obligation once, unconditionally, into the body's return-result
+obligation on the same value place. The planner accepts exactly that handoff
+and the return's release of the return-result obligation. The object is
+already in the caller's destination; when the sibling's cleanup fails, the
+callee's failure path destroys it there, once.
 
 `NativeConsumingHierarchyReceiver` admits several consuming-call receivers: a
 moved binding relocated into its own value storage, a retained owned field
@@ -5111,6 +5120,24 @@ or an object of a class nothing derives from. An accessor result reserved by a
 two-phase borrow store qualifies on the same terms. Replacing a base view
 inside a larger object could change that object's dynamic type and stays
 `PolymorphicTransfer`.
+
+A restoring exchange or swap of objects containing hierarchy storage relocates
+each whole object with the type's generated relocation, which rebuilds the
+dispatch state in its destination. The moved replacement of `std::exchange`
+waits in its own value storage until the exchange relocates it into the place
+the exchange vacates, and the exchange takes over its value obligation. The
+previous object is a fresh producer, relocated directly into the local the
+exchange result initializes, as a taken thread result is. As for replacement,
+each polymorphic place must be a complete object. Inside the generic
+`std::exchange` and `std::swap` bodies a place is the referent of a reference
+parameter, which is complete only when nothing in the sealed program derives
+from its class. Exchanging or swapping an object of a class with derived
+classes, including a base view inside a larger object, stays
+`PolymorphicTransfer`. Semantics currently accepts such a base view, and the
+C++ backend cannot represent it (`GTI-B0001`). `dispatch.exchanged-transfers`
+compares vector elements, fields and inline slots of user-defined hierarchy
+classes, and erased transferable callables holding owned state, with the C++
+oracle at O0-O3.
 
 `NativeHierarchyArray` admits fixed arrays of hierarchy storage held in a whole
 local or a class field. Each element is a fresh construction or by-value result

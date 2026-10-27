@@ -9,13 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.484.2 - Native text returned through virtual calls
+## 0.484.4 - Native virtual text relays, returned siblings and exchanges
 
-- A function returning the view a virtual call returns, such as
-  `std::string_view call(Base& n) { return n.name(); }` with `name` virtual,
-  now builds on the native backend and matches the C++ backend. It previously
-  failed with `GTI-B0003`. The view keeps its owner borrowed exactly as a
-  static call's view does.
+- The native backend now builds these programs, which previously failed with
+  `GTI-B0003`, and matches the C++ backend:
+  - a function returning the view a virtual call returns, such as
+    `std::string_view call(Base& n) { return n.name(); }` with `name`
+    virtual. The view keeps its owner borrowed exactly as a static call's
+    view does;
+  - a derived or polymorphic local returned by value beside a sibling local
+    that is destroyed at the return, including when that destructor fails;
+  - `std::exchange` of objects holding polymorphic state, such as a
+    `std::transfer_function<int64_t()>` with owned state in a vector element
+    or a field, or a class with virtual methods.
+- `std::swap` of a polymorphic class that has derived classes now fails with
+  `GTI-B0003` on the native backend, as `std::exchange` of one does. Through
+  a base view it replaced the derived object's dispatch state, so later
+  virtual calls on that object ran the base methods.
 
 ## 0.484.1 - Native moves of polymorphic payloads and borrow carriers
 

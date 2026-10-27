@@ -59,8 +59,9 @@ isFreshHierarchyTransferProducer(const MirInstruction &instruction);
 // whose construction relocates the moved object itself, or the value's own
 // storage as the receiver of one consuming call, as the replacement an
 // assignment relocates into its destination, in its slot of a fresh array
-// or payload alternative that is itself published, or as the task a
-// managed-thread spawn relocates into its runtime task box.
+// or payload alternative that is itself published, as the task a
+// managed-thread spawn relocates into its runtime task box, or as the
+// replacement a restoring exchange relocates into the place it vacates.
 enum class FreshHierarchyPublication {
   Local,
   Argument,
@@ -69,7 +70,8 @@ enum class FreshHierarchyPublication {
   Receiver,
   Replacement,
   Element,
-  Task
+  Task,
+  Exchange
 };
 
 struct FreshHierarchyTransfer {
@@ -131,8 +133,11 @@ private:
 };
 
 // A class object produced directly in its own storage: an ordinary
-// construction, or a by-value GTI call whose callee publishes the object in
-// the ABI result destination. Copies, moves and loaded values never qualify.
+// construction, a by-value GTI call whose callee publishes the object in the
+// ABI result destination, or an object an operation relocates out of storage
+// it owns into the destination it is given: a taken thread result, or the
+// previous object of a restoring exchange. Copies, moves and loaded values
+// never qualify.
 [[nodiscard]] bool isFreshObjectProducer(const MirProgram &program,
                                          const MirInstruction &producer);
 

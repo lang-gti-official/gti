@@ -11734,9 +11734,21 @@ under `mirTypeMoveRelocationKind`, while `std::relocatable` is unchanged
 view waits on a MIR soundness fix: such a borrow takes no `Local` loan on the
 carrier.
 
-Base-view replacement, enum copies, enums moved into arguments or returns,
-payload values returned by value, thread-local hierarchy objects and
-observable pure phases stay `PolymorphicTransfer` or `PureDispatchState`.
+Three C++/LLVM parity gaps found by the wrong-code matrices closed on
+2026-10-28. Each has a user-defined `llvm_dispatch_execution` case, and the
+last two also have failure and wrong-trace variants:
+- text a virtual call returns, relayed by value;
+- a local returned beside a sibling whose cleanup can fail;
+- restoring exchanges of objects containing hierarchy storage, including an
+  erased transferable callable with owned state in a vector element or a
+  field.
+
+Base-view replacement, exchange and swap, enum copies, enums moved into
+arguments or returns, payload values returned by value, thread-local
+hierarchy objects and observable pure phases stay `PolymorphicTransfer` or
+`PureDispatchState`. Exchange and swap of a polymorphic class with derived
+classes are refused even for complete objects, because the generic bodies
+cannot tell them from base views.
 A derived constructor whose base initializer MIR leaves unstaged, such as
 one passing an owned value to its base constructor, is refused as
 `UnstagedBaseInitializer`. Until 2026-10-27 LLVM lowered it without its base.
