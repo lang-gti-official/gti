@@ -2813,7 +2813,9 @@ void testNestedFreshTransferPlanning() {
           else if (mutation == 1)
             field.moveConstructor = SpecialMemberStatus::Declared;
           else if (mutation == 2)
-            field.traits.containsBorrowedState = true;
+            // Borrowed state alone no longer blocks a generated value move
+            // (owner decision 2026-10-28); an immovable field still does.
+            field.traits.movable = false;
           else {
             auto &drop = const_cast<MirDropObligation &>(
                 *body.findDropObligation(transfer.sourceDrop));

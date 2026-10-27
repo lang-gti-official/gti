@@ -827,6 +827,23 @@ Lifetimes::preflightFreshTransfer(Session &session, Dispatch &dispatch,
         "LLVM fresh transfer uses a foreign dispatch session");
   auto transfer =
       planFreshHierarchyTransfer(session.program().mir(), body, instruction);
+  if (!transfer.owner) {
+    // A payload enum relocates through its generated relocation, which
+    // rebuilds each hierarchy field's state in the destination.
+    if (transfer.kind != ConstructorKind::Move ||
+        transfer.type.kind != SemanticType::Enum)
+      throw std::logic_error("LLVM payload transfer lost its relocation");
+    static_cast<void>(session.layouts().payload(transfer.type));
+    preflightGeneratedRelocation(session, dispatch, transfer.type);
+    for (const auto identity : {transfer.sourceDrop, transfer.valueDrop})
+      if (identity) {
+        const auto *drop = body.findDropObligation(identity);
+        if (!drop)
+          throw std::logic_error("LLVM fresh transfer lost its sealed cleanup");
+        preflightCleanup(session, dispatch, drop->dropType);
+      }
+    return transfer;
+  }
   const auto &owner =
       *session.program().mir().findClassInstance(transfer.owner);
   // This performs all dispatch/ABI checks without publishing a table/helper or
@@ -884,6 +901,10 @@ void Lifetimes::freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
         "LLVM fresh transfer requires distinct object addresses");
   const auto transfer =
       preflightFreshTransfer(session, dispatch, body, instruction);
+  if (!transfer.owner) {
+    ir.CreateCall(generatedRelocation(transfer.type), {destination, source});
+    return;
+  }
   const auto &owner =
       *session.program().mir().findClassInstance(transfer.owner);
   if (transfer.kind == ConstructorKind::Move) {
@@ -994,11 +1015,14 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
         path.pop_back();
         return;
       }
+      // A generated value move relocates a borrow carrier as the addresses
+      // it holds; an inert relocation stays borrow-free.
       if (owner.compilerCapability != CompilerCapabilityTypeKind::None ||
           (inert &&
            (owner.requiresActiveCleanup || owner.requiresActiveDropState)) ||
-          owner.traits.containsBorrowedState ||
-          owner.lifecycleBoundBorrowCarrier || owner.unionLayout ||
+          (inert && (owner.traits.containsBorrowedState ||
+                     owner.lifecycleBoundBorrowCarrier)) ||
+          owner.unionLayout ||
           owner.cOpaqueHandle || (!base && owner.abstract) ||
           (!base && owner.moveConstructor != SpecialMemberStatus::Generated))
         throw BackendUnsupportedError("LLVM relocation requires an implemented "
@@ -1063,6 +1087,12 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
         throw BackendUnsupportedError(
             "LLVM owner relocation requires its sealed pointee identity");
       static_cast<void>(session.layouts().get(selected));
+    } else if (!inert && selected.kind == SemanticType::Reference) {
+      // A carrier's reference relocates as its address.
+      if (mirTypeMoveRelocationKind(program, selected) !=
+          RelocationKind::Bitwise)
+        throw std::logic_error("LLVM relocation lost its reference identity");
+      static_cast<void>(session.layouts().get(selected));
     } else {
       // Other structural representations need a typed relocation schedule.
       // Never silently byte-copy a self-relative representation.
@@ -1075,7 +1105,9 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
     }
     path.pop_back();
   };
-  if (mirTypeRelocationKind(program, type) == RelocationKind::Unavailable)
+  if ((inert ? mirTypeRelocationKind(program, type)
+             : mirTypeMoveRelocationKind(program, type)) ==
+      RelocationKind::Unavailable)
     throw BackendUnsupportedError(
         "LLVM inert relocation requires a sealed generated relocation");
   visit(visit, type, false);

@@ -2228,8 +2228,13 @@ mirDropDestructorTargets(const MirDropType &type) {
   return result;
 }
 
-RelocationKind mirTypeRelocationKind(const MirProgram &program,
-                                     const SemanticType &type) {
+namespace {
+
+// `carriers` selects the generated value move rather than source-visible
+// relocation: a reference or borrowed field then relocates as the address it
+// is, and the loans it names follow the carrier as for any value move.
+RelocationKind relocationKind(const MirProgram &program,
+                              const SemanticType &type, bool carriers) {
   std::unordered_set<HirClassInstanceId> visiting;
   // One declaration family may occur repeatedly along a finite layout path
   // with distinct arguments. Only revisiting the same exact type is a cycle.
@@ -2272,6 +2277,9 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
         return result;
       }
     }
+    if (carriers && candidate.kind == SemanticType::Reference)
+      return candidate.arguments.size() == 1 ? RelocationKind::Bitwise
+                                             : RelocationKind::Unavailable;
     if (candidate.kind != SemanticType::Class)
       return semanticTraits(candidate).relocation;
     const MirClassInstance *owner = nullptr;
@@ -2315,8 +2323,9 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
     } else if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
                owner->moveConstructor != SpecialMemberStatus::Generated ||
                owner->abstract || owner->cOpaqueHandle ||
-               owner->lifecycleBoundBorrowCarrier ||
-               owner->traits.containsBorrowedState) {
+               (!carriers && (owner->lifecycleBoundBorrowCarrier ||
+                              owner->traits.containsBorrowedState)) ||
+               (carriers && !owner->traits.movable)) {
       result = RelocationKind::Unavailable;
     } else {
       if (owner->destructor || owner->polymorphic || !owner->bases.empty() ||
@@ -2337,6 +2346,18 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
     return result;
   };
   return derive(derive, type);
+}
+
+} // namespace
+
+RelocationKind mirTypeRelocationKind(const MirProgram &program,
+                                     const SemanticType &type) {
+  return relocationKind(program, type, false);
+}
+
+RelocationKind mirTypeMoveRelocationKind(const MirProgram &program,
+                                         const SemanticType &type) {
+  return relocationKind(program, type, true);
 }
 
 bool mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,

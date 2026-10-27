@@ -9,6 +9,23 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.1 - Native moves of polymorphic payloads and borrow carriers
+
+- The native backend now builds programs that previously failed with
+  `GTI-B0003`:
+  - payload enums holding polymorphic objects moved between variables, or
+    moved out by a consuming `std::move(made).value()` on `std::expected` or
+    `std::optional` or by a by-move `switch` binding;
+  - `std::thread_result` of a polymorphic value, joined back through
+    `std::expected`;
+  - classes holding a polymorphic object beside a reference field,
+    constructed in place, moved, passed by reference or by value, and
+    destroyed, including scoped thread tasks such as
+    `std::parallel_invoke(Job(3, first), Job(4, second))`.
+- Moving a class that holds a reference relocates it with the addresses it
+  holds, as its generated move does. `std::relocatable` and relocating swaps
+  still exclude such classes; the language is unchanged.
+
 ## 0.484.0 - Native LLVM correctness and broader language coverage
 
 - On macOS arm64, `gti` now builds with the native LLVM backend by default.

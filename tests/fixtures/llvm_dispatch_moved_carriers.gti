@@ -1,0 +1,47 @@
+// Borrow carriers holding hierarchy storage move by relocation (owner
+// decision 2026-10-28): a moved object keeps the addresses it holds and its
+// loans follow it, into a local or a by-value parameter. A carrier whose
+// destructor writes through its borrow is destroyed once, where it ends.
+interface Gauge {
+  int32_t read();
+};
+
+class Scaled : public Gauge {
+  int32_t value;
+  int32_t& scale;
+public:
+  Scaled(int32_t value, int32_t& scale) : value(value), scale(scale) {}
+  int32_t read() override { return this.value * this.scale; }
+};
+
+class Small : public Gauge {
+  int32_t value;
+public:
+  Small(int32_t value) : value(value) {}
+  int32_t read() override { return this.value; }
+};
+
+class Tally {
+  Small small;
+  mut int32_t& total;
+public:
+  Tally(int32_t value, mut int32_t& total)
+      : small(Small(value)), total(total) {}
+  ~Tally() { this.total = this.total * 10 + this.small.read(); }
+};
+
+int32_t consume(Scaled scaled) { return scaled.read(); }
+
+int main() {
+  int32_t scale = 3;
+  Scaled first{2, scale};
+  Scaled moved = std::move(first);
+  Scaled second{4, scale};
+  int32_t passed = consume(std::move(second));
+  mut int32_t total = 1;
+  {
+    Tally tally{5, total};
+    Tally kept = std::move(tally);
+  }
+  return moved.read() == 6 && passed == 12 && total == 15 ? 0 : 1;
+}

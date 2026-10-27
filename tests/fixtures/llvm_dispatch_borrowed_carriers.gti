@@ -1,0 +1,52 @@
+// Hierarchy storage beside borrowed state: a class holding a polymorphic
+// object and a reference is constructed in place, borrowed by reference and
+// dispatched through, and dropped by a destructor that writes through its
+// borrow. Its loans name external referents and carry no runtime state.
+interface Gauge {
+  int32_t read();
+};
+
+class Small : public Gauge {
+  int32_t value;
+public:
+  Small(int32_t value) : value(value) {}
+  int32_t read() override { return this.value; }
+};
+
+class Holder {
+  Small small;
+  int32_t& scale;
+public:
+  Holder(int32_t value, int32_t& scale) : small(Small(value)), scale(scale) {}
+  int32_t total() { return this.small.read() * this.scale; }
+  Gauge& gauge() { return this.small; }
+};
+
+class Tally {
+  Small small;
+  mut int32_t& total;
+public:
+  Tally(int32_t value, mut int32_t& total)
+      : small(Small(value)), total(total) {}
+  ~Tally() { this.total = this.total * 10 + this.small.read(); }
+};
+
+int32_t sample(Gauge& gauge) { return gauge.read(); }
+
+int32_t viaParameter(Holder& holder) {
+  return holder.total() + sample(holder.gauge());
+}
+
+int main() {
+  int32_t scale = 3;
+  Holder first{4, scale};
+  Holder second{5, scale};
+  int32_t borrowed = viaParameter(first) * 10 + second.total();
+  mut int32_t left = 1;
+  mut int32_t right = 2;
+  {
+    Tally a{3, left};
+    Tally b{4, right};
+  }
+  return borrowed == 175 && left == 13 && right == 24 ? 0 : 1;
+}
