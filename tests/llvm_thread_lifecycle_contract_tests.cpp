@@ -7,6 +7,7 @@
 #include "gti/runtime_thread.h"
 
 #include <cstddef>
+#include <set>
 
 #include <iostream>
 #include <tuple>
@@ -274,6 +275,83 @@ void checkManagedThreads(const std::filesystem::path &root) {
           "fixtures exercise every managed-thread operation family");
 }
 
+// Manual C-thread services bind only their exact trusted C declarations.
+void checkManualCThreadBindings(const std::filesystem::path &root) {
+  FrontendOptions options;
+  options.target.executionProfile = ExecutionProfile::Concurrent;
+  options.target.runtimeCapabilities.threads = true;
+  options.requireEntryPoint = true;
+  options.requireFunctionDefinitions = true;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  std::set<CThreadRuntimeOperation> bound;
+  for (const auto *fixture : {"cthread_create_join.gti", "cthread_mutex.gti",
+                              "cthread_condition.gti"}) {
+    const auto frontend = Frontend(options).analyze(
+        root / "tests/fixtures" / fixture, std::nullopt,
+        {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+    require(frontend.canGenerateCode(), "manual C-thread source reaches MIR");
+    std::vector<LoweredProgramIssue> issues;
+    const auto input = verifiedLoweredProgram(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
+                               options.target),
+        issues);
+    require(input.has_value(), "manual C-thread source is verified");
+    const auto &program = input->program().mir();
+    for (const auto &function : program.functionInstances()) {
+      if (function.cThreadOperation == CThreadRuntimeOperation::None)
+        continue;
+      const bool lifecycle =
+          function.cThreadOperation == CThreadRuntimeOperation::Begin ||
+          function.cThreadOperation == CThreadRuntimeOperation::End;
+      require(nativeCThreadOperationBinding(program, function) != lifecycle,
+              "each trusted C-thread declaration has exactly one binding");
+      if (lifecycle)
+        continue;
+      bound.insert(function.cThreadOperation);
+      const auto reject = [&](auto mutate, const char *message) {
+        auto bad = function;
+        mutate(bad);
+        require(!nativeCThreadOperationBinding(program, bad), message);
+      };
+      reject([](auto &row) { row.externalSymbol += "_shadow"; },
+             "an operation tag cannot authorize another native symbol");
+      reject([](auto &row) { row.linkage = LanguageLinkage::Gti; },
+             "the operation is a C declaration");
+      reject([](auto &row) { row.parameterTypes.push_back(SemanticType::Int32); },
+             "the exact C signature is required");
+      reject([](auto &row) {
+        row.cThreadOperation = row.cThreadOperation ==
+                                       CThreadRuntimeOperation::Create
+                                   ? CThreadRuntimeOperation::Join
+                                   : CThreadRuntimeOperation::Create;
+      }, "a declaration cannot be rebound to another operation");
+      reject([](auto &row) { row.definitionKind = MirDefinitionKind::Source; },
+             "a source body is not the runtime service");
+    }
+  }
+  for (const auto operation :
+       {CThreadRuntimeOperation::Create, CThreadRuntimeOperation::Join,
+        CThreadRuntimeOperation::MutexInit, CThreadRuntimeOperation::MutexLock,
+        CThreadRuntimeOperation::MutexUnlock,
+        CThreadRuntimeOperation::ConditionInit,
+        CThreadRuntimeOperation::ConditionWait})
+    require(bound.contains(operation),
+            "fixtures exercise the manual C-thread service families");
+  require(cThreadOperationSynchronization(CThreadRuntimeOperation::Create) ==
+                  SynchronizationOperationKind::ThreadSpawn &&
+              cThreadOperationSynchronization(
+                  CThreadRuntimeOperation::MutexTimedLock) ==
+                  SynchronizationOperationKind::MutexLock &&
+              cThreadOperationSynchronization(
+                  CThreadRuntimeOperation::ConditionBroadcast) ==
+                  SynchronizationOperationKind::ConditionNotify &&
+              cThreadOperationSynchronization(
+                  CThreadRuntimeOperation::MutexInit) ==
+                  SynchronizationOperationKind::None,
+          "C-thread synchronization records match semantic resolution");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -282,6 +360,7 @@ int main(int argc, char **argv) {
       throw std::runtime_error("expected repository root");
     check(argv[1]);
     checkManagedThreads(argv[1]);
+    checkManualCThreadBindings(argv[1]);
     std::cout << "C-thread startup and managed-thread contracts passed\n";
     return 0;
   } catch (const std::exception &error) {

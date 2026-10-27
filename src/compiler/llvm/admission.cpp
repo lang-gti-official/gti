@@ -3150,6 +3150,22 @@ public:
         const bool thread = nativeThreadStage(stage);
         if (thread)
           storageShape = Shape::NativeThreadOperation;
+        const auto *nativeCallee =
+            stage.functionTarget
+                ? program.findFunctionInstance(*stage.functionTarget)
+                : nullptr;
+        // A manual C-thread service carries the synchronization record its
+        // trusted declaration implies; the runtime provides the edge.
+        const bool cthread =
+            nativeCallee &&
+            native_llvm::nativeCThreadOperationBinding(program,
+                                                       *nativeCallee) &&
+            native_llvm::nativeCDirectCallContract(program, nativeTarget, mir,
+                                                   stage) &&
+            stage.synchronization.kind ==
+                native_llvm::cThreadOperationSynchronization(
+                    nativeCallee->cThreadOperation) &&
+            !stage.synchronization.order && !stage.synchronization.failureOrder;
         if (stage.kind == MirInstructionKind::RetireProgramStorage &&
             body->kind == MirBodyKind::HostedStartup &&
             program.hostedStartupPlan())
@@ -3609,6 +3625,8 @@ public:
                                    ? std::optional(Shape::NativeMutexOperation)
                                : thread
                                    ? std::optional(Shape::NativeThreadOperation)
+                               : cthread
+                                   ? std::optional(Shape::NativeCThreadOperation)
                                    : std::nullopt;
           add(stage.synchronization.kind, witness);
           if (stage.synchronization.order)
@@ -3825,6 +3843,8 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
             ? std::optional(Shape::NativeProcessMemory)
         : native_llvm::nativeCThreadLifecycleBinding(mir, function)
             ? std::optional(Shape::NativeCThreadLifecycle)
+        : native_llvm::nativeCThreadOperationBinding(mir, function)
+            ? std::optional(Shape::NativeCThreadOperation)
             : std::nullopt;
     const auto nativeImport =
         nativeBinding ? nativeBinding

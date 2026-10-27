@@ -1,4 +1,5 @@
 #include "native_c_abi.h"
+#include "thread_lifecycle.h"
 #include "debug_info.h"
 #include "failure.h"
 #include "native_c_contract.h"
@@ -160,7 +161,8 @@ bool nativeCDeclarationContract(const MirProgram &program,
       !function.typeArguments.empty() || !function.valueArguments.empty() ||
       function.virtualMethod ||
       function.processMemoryOperation != ProcessMemoryRuntimeOperation::None ||
-      function.cThreadOperation != CThreadRuntimeOperation::None ||
+      (function.cThreadOperation != CThreadRuntimeOperation::None &&
+       !nativeCThreadOperationBinding(program, function)) ||
       !function.callableParameters.empty() ||
       !nativeCValueContract(program, target, function.returnType,
                             NativeCValueRole::Result))

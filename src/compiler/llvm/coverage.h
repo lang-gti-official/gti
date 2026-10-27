@@ -91,6 +91,7 @@ enum class Shape {
   NativeMemoryOperation,
   NativeProcessMemory,
   NativeCThreadLifecycle,
+  NativeCThreadOperation,
   NativeUniqueOwnership,
   NativeSharedOwnership,
   NativeClassRawAccess,

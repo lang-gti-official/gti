@@ -11798,9 +11798,11 @@ integration prerequisites.
   abandoned by status instead of reaching the throwing legacy endpoint.
   `llvm_thread_execution` matches the C++ oracle at O0-O3 on macOS arm64 for
   user-defined tasks, results, scopes, failures, envelopes, TLS drain and
-  join quarantine; examples 076 and 175 match. Remaining: manual C-thread
-  create/join (`thrd_create`/`thrd_join` and their `ThreadEntry` callbacks),
-  erased transfer callables (066, O-LLVM-10), Linux execution evidence,
+  join quarantine; examples 076 and 175 match. Manual C-thread create/join,
+  once, mutex and condition services execute through their exact trusted C
+  declarations; the C-thread fixtures, including terminal and linked-helper
+  cases, match the oracle at O0-O3. Remaining: erased transfer callables
+  (066, O-LLVM-10), Linux execution evidence,
   generated-code TSan, the terminal containment of a defined failure inside an
   unattached native callback invoked on a managed worker (it still calls the
   legacy runtime endpoint), and the workload/synchronization cost report.

@@ -4630,7 +4630,13 @@ operation. It does not grant arbitrary native declarations or source-level
 access to runtime lifecycle control. The source-selected no-argument and TLS
 drain cases execute those real services; generated-entry checks require exactly
 one non-unwinding begin and end call. This lifecycle witness does not admit
-manual worker creation, managed callbacks or embedding initialization. Public
+managed callbacks or embedding initialization. Manual C-thread create/join,
+once invocation and manual mutex/condition services have a separate exact
+binding: the trusted `cthread.h` declaration that semantics classified, with
+its exact symbol and C signature, called through the ordinary native C ABI and
+carrying the synchronization record semantics derived from that operation.
+Their entry and once callbacks keep the sealed attachment adapters. The runtime
+supplies every edge; no source-level runtime control is exposed. Public
 native callback evidence requires composition with the separately owned O11
 callback boundary, not a synthetic attachment oracle.
 
