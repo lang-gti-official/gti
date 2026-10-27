@@ -64,6 +64,10 @@ struct FrontendWorkMetrics {
   // Time spent looking up, validating and copying reusable entries (part of
   // HIR time, like the analyses they replace).
   std::size_t semanticInstanceReuseMicroseconds = 0;
+  // Requirements answered from, and proofs added to, the adopted preamble's
+  // shared concept proofs (see SemanticPreamble::ConceptProofKey).
+  std::size_t semanticConceptProofReuses = 0;
+  std::size_t semanticConceptProofRecords = 0;
   // Instance bodies HIR omitted as library-only; see
   // FrontendOptions::lowerLibraryOnlyInstanceBodies.
   std::size_t hirOmittedInstanceBodies = 0;
@@ -109,6 +113,8 @@ struct FrontendWorkMetrics {
     semanticInstanceReuseIneligible = 0;
     semanticInstanceReuseStores = 0;
     semanticInstanceReuseMicroseconds = 0;
+    semanticConceptProofReuses = 0;
+    semanticConceptProofRecords = 0;
     hirOmittedInstanceBodies = 0;
     semanticBorrowSummaryCandidateInspections = 0;
     semanticBorrowSummaryFunctions = 0;

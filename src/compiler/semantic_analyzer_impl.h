@@ -18,6 +18,7 @@
 #include <deque>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <set>
 #include <span>
 #include <tuple>
@@ -3306,6 +3307,14 @@ private:
       const ConstraintExpression &expression, std::size_t root) const;
 
   [[nodiscard]] std::optional<ConstraintFailure> firstConceptApplicationFailure(
+      const AppliedConceptRequirement &requirement) const;
+  [[nodiscard]] std::optional<ConstraintFailure> evaluateConceptApplication(
+      const AppliedConceptRequirement &requirement) const;
+  // Whether `requirement` may use the adopted preamble's shared concept
+  // proofs: closed arguments built only from the preamble's declarations,
+  // and either a named preamble concept or a requirement written in a
+  // preamble declaration and queried with that declaration's lookup scope.
+  [[nodiscard]] bool preambleConceptProofApplies(
       const AppliedConceptRequirement &requirement) const;
 
   [[nodiscard]] static bool
@@ -7323,7 +7332,47 @@ public:
   Program prefix;
   std::unique_ptr<SemanticVisitor::Impl> state;
 
+  // Requirements proved of argument types built only from this preamble's own
+  // declarations, shared by every analysis that adopts it. A named concept,
+  // or a requirement written in a preamble declaration and queried with that
+  // declaration's lookup scope, is evaluated in its declaring unit, which
+  // sees only its direct includes, never a later program's units. Only
+  // satisfied requirements are recorded.
+  struct ConceptProofKey {
+    ConceptId conceptId = 0;
+    const ConceptApplication *syntax = nullptr;
+    const ConstraintExpression *expression = nullptr;
+    std::size_t expressionApplication = 0;
+    bool trustedMemberAccess = false;
+    std::optional<std::vector<std::string>> lookupScope;
+    std::vector<SemanticType> arguments;
+    friend bool operator==(const ConceptProofKey &,
+                           const ConceptProofKey &) = default;
+  };
+  [[nodiscard]] bool provedConcept(const ConceptProofKey &key) const {
+    const std::lock_guard lock(conceptProofMutex);
+    const auto found = conceptProofs.find({key.conceptId, key.syntax});
+    return found != conceptProofs.end() &&
+           std::find(found->second.begin(), found->second.end(), key) !=
+               found->second.end();
+  }
+  void recordConceptProof(ConceptProofKey key) const {
+    const std::lock_guard lock(conceptProofMutex);
+    if (conceptProofCount >= 65536)
+      return;
+    auto &proved = conceptProofs[{key.conceptId, key.syntax}];
+    if (std::find(proved.begin(), proved.end(), key) == proved.end()) {
+      proved.push_back(std::move(key));
+      ++conceptProofCount;
+    }
+  }
+
 private:
+  mutable std::mutex conceptProofMutex;
+  mutable std::map<std::pair<ConceptId, const ConceptApplication *>,
+                   std::vector<ConceptProofKey>>
+      conceptProofs;
+  mutable std::size_t conceptProofCount = 0;
   std::uint64_t identity_ = nextIdentity();
   static std::uint64_t nextIdentity();
 };

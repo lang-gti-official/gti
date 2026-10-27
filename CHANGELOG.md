@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.480.3 — Faster editor analysis with standard-library concepts
+
+- `gti_lsp` proves each standard-library concept for standard-library types
+  once per include graph instead of on every edit, so source-defined concepts
+  such as those behind `std::vector` and ranges no longer slow typing. On an
+  eight-include file the analysis of each edit's function bodies drops from
+  about 410 ms to about 30 ms. Diagnostics are unchanged; `gti check` and
+  builds are not affected.
+
 ## 0.480.1 — Lambda argument formatting
 
 - Keep lambda captures adjacent to opening call parentheses (`start([]()...)`)

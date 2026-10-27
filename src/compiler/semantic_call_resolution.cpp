@@ -1775,7 +1775,141 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
   return failure;
 }
 
+auto SemanticVisitor::Impl::preambleConceptProofApplies(
+    const AppliedConceptRequirement &requirement) const -> bool {
+  if (adoptedPreamble == nullptr || adoptedPreamble->state == nullptr ||
+      requirement.conceptId > adoptedPreamble->state->concepts.size())
+    return false;
+  if (requirement.syntax == nullptr) {
+    // A named concept leaf: caller-independent by construction.
+    if (requirement.conceptId == 0 || requirement.expression != nullptr ||
+        requirement.lookupScope || requirement.trustedMemberAccess)
+      return false;
+  } else {
+    // Written syntax is caller-independent only as a declaration query, and
+    // its node identity is stable only in the preamble's own source.
+    const SourceUnit *unit = sourceGraph == nullptr
+                                 ? nullptr
+                                 : sourceGraph->findUnit(sourceUnitFor(
+                                       requirement.syntax->name.last()));
+    if (!requirement.lookupScope || unit == nullptr || !trustedUnit(unit->id) ||
+        unit->declarationStart + unit->declarationCount >
+            adoptedPrefixDeclarations)
+      return false;
+  }
+  const Impl &preamble = *adoptedPreamble->state;
+  const auto preambleType = [&](const auto &self,
+                                const SemanticType &type) -> bool {
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Double:
+    case SemanticType::Bool:
+    case SemanticType::Char:
+    case SemanticType::Void:
+    case SemanticType::StringView:
+    case SemanticType::CString:
+    case SemanticType::NullPtr:
+      break;
+    case SemanticType::Class:
+      if (type.classId == 0 || type.classId > preamble.classes.size())
+        return false;
+      break;
+    case SemanticType::Enum:
+      if (type.enumId == 0 || type.enumId > preamble.enums.size())
+        return false;
+      break;
+    case SemanticType::Reference:
+    case SemanticType::RawPointer:
+    case SemanticType::UniqueOwner:
+    case SemanticType::SharedPointer:
+      break;
+    case SemanticType::Array:
+      if (type.arrayLengthParameterId != 0)
+        return false;
+      break;
+    default:
+      return false;
+    }
+    return std::all_of(
+        type.arguments.begin(), type.arguments.end(),
+        [&](const SemanticType &argument) { return self(self, argument); });
+  };
+  return std::all_of(requirement.arguments.begin(), requirement.arguments.end(),
+                     [&](const SemanticType &argument) {
+                       return preambleType(preambleType, argument);
+                     });
+}
+
 auto SemanticVisitor::Impl::firstConceptApplicationFailure(
+    const AppliedConceptRequirement &requirement) const
+    -> std::optional<ConstraintFailure> {
+  // A concept proved of the adopted preamble's own types holds for every
+  // analysis adopting it, so an editor reuses it across snapshots.
+  const bool shared = preambleConceptProofApplies(requirement);
+  const auto proofKey = [&] {
+    return SemanticPreamble::ConceptProofKey{
+        .conceptId = requirement.conceptId,
+        .syntax = requirement.syntax,
+        .expression = requirement.expression,
+        .expressionApplication = requirement.expressionApplication,
+        .trustedMemberAccess = requirement.trustedMemberAccess,
+        .lookupScope = requirement.lookupScope,
+        .arguments = requirement.arguments};
+  };
+  if (shared && adoptedPreamble->provedConcept(proofKey())) {
+    if (workMetrics != nullptr)
+      ++workMetrics->semanticConceptProofReuses;
+    return std::nullopt;
+  }
+  if (shared) {
+    // An active requirement over closed arguments (a substituted instance's
+    // constraint, say) could satisfy the query by assumption rather than
+    // proof. Open assumptions cannot speak about these closed arguments, so a
+    // proof is recorded only from an evaluation without closed assumptions:
+    // when some are active, evaluate once without any. Assumptions only add
+    // satisfactions, so a failure here falls back to the ordinary query.
+    const auto openAssumption = [](const AppliedConceptRequirement &active) {
+      return std::any_of(active.arguments.begin(), active.arguments.end(),
+                         containsOpenTypeParameter);
+    };
+    const bool closedAssumptions = std::any_of(
+        requirementScopes.begin(), requirementScopes.end(),
+        [&](const auto &scope) {
+          return !std::all_of(scope.begin(), scope.end(), openAssumption);
+        });
+    std::optional<ConstraintFailure> proof;
+    if (closedAssumptions) {
+      struct RestoreScopes {
+        std::vector<std::vector<AppliedConceptRequirement>> &scopes;
+        std::vector<std::vector<AppliedConceptRequirement>> held;
+        ~RestoreScopes() { scopes = std::move(held); }
+      } restore{requirementScopes, std::move(requirementScopes)};
+      requirementScopes.clear();
+      proof = evaluateConceptApplication(requirement);
+    } else {
+      proof = evaluateConceptApplication(requirement);
+    }
+    if (!proof) {
+      adoptedPreamble->recordConceptProof(proofKey());
+      if (workMetrics != nullptr)
+        ++workMetrics->semanticConceptProofRecords;
+      return std::nullopt;
+    }
+    if (!closedAssumptions)
+      return proof;
+  }
+  return evaluateConceptApplication(requirement);
+}
+
+auto SemanticVisitor::Impl::evaluateConceptApplication(
     const AppliedConceptRequirement &requirement) const
     -> std::optional<ConstraintFailure> {
   if (requirement.syntax && requirement.syntax->predicate) {

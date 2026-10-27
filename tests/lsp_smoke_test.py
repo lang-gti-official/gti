@@ -988,6 +988,81 @@ def test_analysis_pool_runs_one_analysis_per_document(executable, root):
             session.close()
 
 
+def test_preamble_concept_proofs_across_snapshots(executable, root):
+    # A concept proved of standard-library types in one snapshot is reused by
+    # the next snapshot that adopts the same preamble, and the reuse does not
+    # change what the edit reports.
+    path = root / "concept-proofs.gti"
+    source = (
+        "#include <std/string>\n#include <std/vector>\n"
+        "int count(std::vector<std::string>& names) {\n"
+        "  return int(names.size());\n}\n"
+        "int main() {\n  mut std::vector<std::string> names{};\n"
+        "  names.push_back(std::string(\"a\"));\n  return count(names) - 1;\n}\n"
+    )
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    trace_path = root / "concept-proofs.jsonl"
+    trace_path.unlink(missing_ok=True)
+    session = LspSession(
+        executable,
+        environment=dict(
+            os.environ,
+            GTI_LSP_FRONTEND_TRACE=str(trace_path),
+            GTI_LSP_UPDATE_DEBOUNCE_MS="0",
+            GTI_LSP_ANALYSIS_WORKERS="1",
+        ),
+    )
+    closed = False
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+        for version, text, broken in (
+            (2, source + "int broken = missing_name;\n", True),
+            (3, source, False),
+        ):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": {"uri": uri, "version": version},
+                        "contentChanges": [{"text": text}],
+                    },
+                }
+            )
+            published = session.receive_until(
+                lambda message: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == version,
+                timeout=60,
+            )
+            assert has_error_diagnostics(published["params"]) == broken, published
+        session.close()
+        closed = True
+        records = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+            if json.loads(line)["kind"] == "analysis"
+        ]
+        assert len(records) >= 3, records
+        assert records[0]["conceptProofRecords"] > 0, records[0]
+        assert all(record["conceptProofReuses"] > 0 for record in records[1:]), records
+    finally:
+        if not closed:
+            session.close()
+
+
 def test_opening_unchanged_dependencies_keeps_dependants(executable, root):
     # Opening a file whose editor text is exactly what its dependants already
     # read from disk changes nothing they analysed. A burst of opens therefore
@@ -11343,6 +11418,10 @@ def main():
                 test_analysis_pool_runs_one_analysis_per_document(
                     sys.argv[1], pathlib.Path(root)
                 )
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-proofs-") as root:
+                test_preamble_concept_proofs_across_snapshots(
+                    sys.argv[1], pathlib.Path(root)
+                )
             with tempfile.TemporaryDirectory(prefix="gti-lsp-open-") as root:
                 test_opening_unchanged_dependencies_keeps_dependants(
                     sys.argv[1], pathlib.Path(root)
@@ -12336,6 +12415,7 @@ def main():
     test_unsaved_dependency_reanalysis(sys.argv[1], root)
     test_dependency_chain_reanalysis_count(sys.argv[1], root)
     test_analysis_pool_runs_one_analysis_per_document(sys.argv[1], root)
+    test_preamble_concept_proofs_across_snapshots(sys.argv[1], root)
     test_opening_unchanged_dependencies_keeps_dependants(sys.argv[1], root)
     test_duplicate_dependency_diagnostics_keep_include_context(sys.argv[1], root)
     test_direct_dependency_visibility(sys.argv[1], root)
