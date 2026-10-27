@@ -512,6 +512,26 @@ int main() {
 '''
 
 
+ENUMERATOR_REFERENCES = r'''
+enum class Mode : int8_t { idle = -1, ready = 2, done = 7 };
+bool is_ready(Mode& mode) { return mode == Mode::ready; }
+int32_t weight(Mode& mode) {
+  switch (mode) {
+  case Mode::idle: return 1;
+  case Mode::ready: return 10;
+  case Mode::done: return 100;
+  default: return 0;
+  }
+}
+T& pick<T>(T& value) { return value; }
+int main() {
+  if (!is_ready(Mode::ready) || is_ready(Mode::done)) { return 1; }
+  if (weight(Mode::idle) + weight(Mode::done) != 101) { return 2; }
+  return pick<Mode>(Mode::idle) == Mode::idle ? 0 : 3;
+}
+'''
+
+
 def successes(root: Path) -> dict[str, str]:
     cases = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS,
              'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES,
@@ -526,7 +546,8 @@ def successes(root: Path) -> dict[str, str]:
              'integral-enum-arrays': INTEGRAL_ENUM_ARRAYS,
              'integral-enum-pointers': INTEGRAL_ENUM_POINTERS,
              'text-view-arrays': TEXT_VIEW_ARRAYS,
-             'c-string-addresses': C_STRING_ADDRESSES}
+             'c-string-addresses': C_STRING_ADDRESSES,
+             'enumerator-references': ENUMERATOR_REFERENCES}
     cases['shipped-example'] = (
         root / 'examples/llvm/places-and-text.gti').read_text()
     cases['enum-references'] = (

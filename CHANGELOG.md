@@ -49,7 +49,8 @@ for what minor and patch releases mean.
   enums, constructions, call receivers and call results under declared
   `unsafe` permission, constant-folded raw field indexing, native function
   values, C strings, null pointers and array values published into
-  constructor fields, borrows reached through a
+  constructor fields, unqualified field names in constructor bodies,
+  enumerators passed to reference parameters, borrows reached through a
   carrier's stored reference, and restoring swaps and exchanges
   (`std::swap`, `std::exchange`, `std::array::swap` and `swap_elements`).
 - C++ remains the production default. Polymorphic ownership, dynamic dispatch

@@ -538,6 +538,28 @@ int main() {
   return 0;
 }
 ''',
+    # Unqualified fields in a constructor body are the constructed object's fields, exactly like this.field.
+    "implicit-constructor-fields": r'''
+mut int32_t seen = 0;
+class Meter {
+  mut int32_t level;
+  mut int32_t peak = 1;
+  int32_t limit;
+public:
+  Meter(int32_t start, int32_t cap) : level(start), limit(cap) {
+    if (level > limit) { level = limit; }
+    peak += level;
+    seen = peak * 10 + level;
+  }
+  int32_t read() { return this.level + this.peak; }
+};
+int main() {
+  Meter low{3, 5};
+  Meter high{9, 4};
+  if (low.read() != 7 || high.read() != 9) { return 1; }
+  return seen == 54 ? 0 : 2;
+}
+''',
     # A consumed receiver selected by a conditional is destroyed exactly once: a fresh one at the full-expression end, a moved one through its moved-from owner.
     "consuming-conditional-receivers": r'''
 mut int log = 0;

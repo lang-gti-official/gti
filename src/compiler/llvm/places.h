@@ -45,6 +45,7 @@ public:
                                         const SemanticType &pointee);
 
 private:
+  [[nodiscard]] llvm::GlobalVariable *enumeratorStorage(const MirPlace &place);
   using Key = std::tuple<MirPlaceRootKind, std::size_t, std::size_t>;
   struct Root {
     llvm::Value *address = nullptr;
