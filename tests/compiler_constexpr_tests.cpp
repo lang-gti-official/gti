@@ -2137,6 +2137,31 @@ int main() {
                      "int main() { return 0; }");
   expect(independent.canGenerateCode() && independent.diagnostics.empty(),
          "independent constant requests each receive a fresh work budget");
+  // A proved staged success is replayed wherever the same call meets the
+  // same available definitions: in later constant requests, and in each
+  // concrete instance semantics and HIR analyse. The shared-budget case below
+  // keeps replays charging the steps they stand for.
+  lang::FrontendWorkMetrics reuseMetrics;
+  const auto reused =
+      lang::Frontend({.workMetrics = &reuseMetrics})
+          .analyze("reused-constexpr-results.gti",
+                   budgetHelper +
+                       "static_assert(cost<1>() == 100);\n"
+                       "static_assert(cost<2>() == 100);\n"
+                       "static_assert(cost<1>() == 100);\n"
+                       "struct Box { int value; };\n"
+                       "int measure<T>() {\n"
+                       "  if constexpr (cost<3>() == 100) { return 1; }\n"
+                       "  else { return 0; }\n}\n"
+                       "int main() { return measure<Box>() + measure<int>() - "
+                       "2; }");
+  if (!reused.canGenerateCode() || reuseMetrics.constexprStagedReuses < 3)
+    std::cerr << "Staged executions " << reuseMetrics.constexprMirExecutions
+              << ", reuses " << reuseMetrics.constexprStagedReuses << '\n';
+  expect(reused.canGenerateCode() && reused.diagnostics.empty() &&
+             reuseMetrics.constexprStagedReuses >= 3,
+         "identical staged constant calls execute once per available "
+         "definition set and are replayed elsewhere");
   const std::string sharedSource =
       budgetHelper +
       "constexpr int nested<uint64_t N>() {\n"
@@ -3411,14 +3436,16 @@ void testConstexprReadOnlyReferences() {
   const auto result = lang::Frontend({.workMetrics = &metrics})
                           .analyze(fixture, source, {standardLibraryPrelude()},
                                    {}, {standardLibraryRoot()});
-  if (!result.canGenerateCode() || metrics.constexprMirExecutions != 14) {
+  if (!result.canGenerateCode() ||
+      metrics.constexprMirExecutions + metrics.constexprStagedReuses != 14) {
     std::cerr << "Read-only MIR executions: " << metrics.constexprMirExecutions
               << '\n';
     for (const auto &d : result.diagnostics)
       std::cerr << d.primary.line << ": " << d.message << '\n';
   }
   expect(!source.empty() && result.canGenerateCode() &&
-             metrics.constexprMirExecutions == 14,
+             metrics.constexprMirExecutions + metrics.constexprStagedReuses ==
+                 14,
          "read-only reference calls, returns, rebinding across loop iterations "
          "and std::array/string-view observers execute canonical MIR");
 
@@ -3621,14 +3648,18 @@ void testConstexprReadOnlyReferences() {
   // The passive record-array constructor now has an explicit field-write
   // stage and executes through MIR too, instead of the AST fallback.
   if (!assetTable.canGenerateCode() ||
-      assetMetrics.constexprMirExecutions != 10) {
+      assetMetrics.constexprMirExecutions +
+              assetMetrics.constexprStagedReuses !=
+          10) {
     std::cerr << "Asset table MIR executions: "
               << assetMetrics.constexprMirExecutions << '\n';
     for (const auto &diagnostic : assetTable.diagnostics)
       std::cerr << diagnostic.message << '\n';
   }
   expect(!assetSource.empty() && assetTable.canGenerateCode() &&
-             assetMetrics.constexprMirExecutions == 10,
+             assetMetrics.constexprMirExecutions +
+                     assetMetrics.constexprStagedReuses ==
+                 10,
          "compile-time asset metadata composes text inspection, record "
          "construction, fixed-array storage and checked reference traversal");
 }
@@ -3843,7 +3874,10 @@ int selected() {
   else { return discarded_invalid_name; }
 }
 )");
-  if (!observers.semanticValid || observerMetrics.constexprMirExecutions != 9) {
+  if (!observers.semanticValid ||
+      observerMetrics.constexprMirExecutions +
+              observerMetrics.constexprStagedReuses !=
+          9) {
     std::cerr << "Direct method MIR executions: "
               << observerMetrics.constexprMirExecutions << '\n';
     for (const auto &diagnostic : observers.diagnostics)
@@ -3851,7 +3885,9 @@ int selected() {
                 << '\n';
   }
   expect(observers.semanticValid && !observers.hirValid &&
-             observerMetrics.constexprMirExecutions == 9,
+             observerMetrics.constexprMirExecutions +
+                     observerMetrics.constexprStagedReuses ==
+                 9,
          "direct generic instance/static method roots use staged MIR for "
          "assertions, array extents and branch conditions");
   lang::FrontendWorkMetrics libraryMetrics;
