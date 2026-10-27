@@ -2251,6 +2251,11 @@ public:
         return std::nullopt;
       if (isPassiveScalarValueType(plan.targetType))
         return Shape::SuccessResultPublication;
+      // A counted byte view is a passive aggregate body value with an
+      // implemented layout, load and store. Publishing one into a field
+      // carries no ownership and borrows no owning text storage.
+      if (plan.targetType == SemanticType::StringView)
+        return Shape::CountedText;
       const auto storage = classShape(plan.targetType);
       return storage && *storage != Shape::CallableMetadata ? storage
                                                             : std::nullopt;

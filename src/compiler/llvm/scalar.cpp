@@ -261,11 +261,7 @@ llvm::Value *Scalars::literal(const Literal &literal,
                       llvm::APInt(wide ? 64 : 32, number->bits)));
   }
   if (const auto *text = std::get_if<std::string>(&literal)) {
-    auto *data =
-        llvm::ConstantDataArray::getString(session.context(), *text, true);
-    auto *storage = new llvm::GlobalVariable(
-        session.module(), data->getType(), true,
-        llvm::GlobalValue::PrivateLinkage, data, "gti.text");
+    auto *storage = session.textLiteral(*text);
     if (type.kind == SemanticType::CString)
       return storage;
     return llvm::ConstantStruct::get(session.abi().textView(),

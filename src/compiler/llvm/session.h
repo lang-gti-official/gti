@@ -7,8 +7,10 @@
 #include <llvm/Target/TargetMachine.h>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lang::native_llvm {
@@ -55,6 +57,13 @@ public:
                                llvm::Function &function);
   [[nodiscard]] bool hasSourceDefinition(HirFunctionInstanceId id,
                                          const llvm::Function &function) const;
+  // One shared private constant per distinct text literal in this module.
+  // Identical source literals must observe one address, as the retained C++
+  // representation does, and no optimization level may change that: constant
+  // merging does not run at O0 and only applies to address-insignificant
+  // globals. The storage is always NUL terminated so a counted view and a C
+  // string share it.
+  [[nodiscard]] llvm::GlobalVariable *textLiteral(std::string_view text);
   // Rejects unresolved GTI definitions, then verifies before and after the
   // selected LLVM pipeline. Never returns partial object bytes on failure.
   [[nodiscard]] BackendArtifact emitObject();
@@ -74,6 +83,7 @@ private:
   std::unique_ptr<DebugInfo> debugInfo_;
   std::vector<std::pair<HirFunctionInstanceId, llvm::Function *>>
       sourceDefinitions_;
+  std::map<std::string, llvm::GlobalVariable *> textLiterals_;
 };
 
 // Kept separate so target-contract mutations can be tested before any body

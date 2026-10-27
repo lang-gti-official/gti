@@ -6,7 +6,9 @@
 #include <llvm/CodeGen/TargetLowering.h>
 #include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/Config/llvm-config.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/DiagnosticInfo.h>
+#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/DiagnosticPrinter.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
@@ -253,6 +255,22 @@ void Session::requireSourceDefinition(HirFunctionInstanceId id,
     }
   }
   sourceDefinitions_.emplace_back(id, &function);
+}
+
+llvm::GlobalVariable *Session::textLiteral(std::string_view text) {
+  const std::string key(text);
+  if (const auto found = textLiterals_.find(key); found != textLiterals_.end())
+    return found->second;
+  auto *data = llvm::ConstantDataArray::getString(context_, text, true);
+  auto *storage =
+      new llvm::GlobalVariable(module_, data->getType(), true,
+                               llvm::GlobalValue::PrivateLinkage, data,
+                               "gti.text");
+  // The address of a text literal is not source-observable beyond this shared
+  // identity, so later constant merging may fold it with an equal constant.
+  storage->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+  textLiterals_.emplace(key, storage);
+  return storage;
 }
 
 bool Session::hasSourceDefinition(HirFunctionInstanceId id,
