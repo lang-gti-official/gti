@@ -397,7 +397,10 @@ def live_native_probe(gti, root, env):
         assert "warning[GTI-S2096]" in rejected.stderr
         assert "error[GTI-B2003]" in rejected.stderr
         assert "native probe failure" not in rejected.stderr
-        assert "Backend 'c++' representation saved at " in rejected.stderr
+        # The retained representation is named by its format: generated C++
+        # or an LLVM object, whichever backend builds the script.
+        assert any(f"Backend '{name}' representation saved at " in rejected.stderr
+                   for name in ("c++", "llvm")), rejected.stderr
         assert "Backend diagnostics saved at " in rejected.stderr
     finally:
         release.touch()

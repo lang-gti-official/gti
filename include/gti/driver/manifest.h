@@ -235,7 +235,9 @@ struct ProjectProfile {
   ConfigurationFlags defines;
   std::vector<SourceSpan> defineDeclarations;
   ProjectNativeSettings native;
-  BackendKind backend = BackendKind::Cpp;
+  // Unset selects the target's default backend unless the profile retains
+  // C++ output, which configures the C++ backend.
+  std::optional<BackendKind> backend;
 };
 
 struct ProjectBuildSettings {

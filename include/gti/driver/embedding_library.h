@@ -16,6 +16,7 @@ struct EmbeddingLibraryRequest {
   std::string name;
   NativeInputs nativeInputs;
   bool debugInfo = false;
+  std::optional<ForwardedSourcePolicy> forwardedSources;
 };
 
 struct EmbeddingLibraryResult {

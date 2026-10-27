@@ -5,7 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import platform
 import subprocess
+import sys
+
+
+def host_default_backend() -> str:
+    """The backend `gti` builds with on this host when none is selected."""
+    machine = platform.machine().lower()
+    return ("llvm" if sys.platform == "darwin" and machine in {"arm64", "aarch64"}
+            else "cpp")
 
 
 @dataclass(frozen=True)

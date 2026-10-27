@@ -3966,6 +3966,30 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         return result;
       }
     }
+    // A managed build that keeps no C++ representation leaves none behind.
+    // One that an earlier C++ build kept beside this target's intermediate no
+    // longer describes the executable once another backend builds it.
+    if (!request.keepGeneratedSource() &&
+        request.compilation().backend() != BackendKind::Cpp) {
+      std::filesystem::path retained = request.generatedSource();
+      retained.replace_extension(".cpp");
+      if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
+              *request.managedOutput(), retained, false)) {
+        result.status = ExecutableBuildStatus::OutputDirectoryFailure;
+        result.driverDiagnostic = diagnostic;
+        return result;
+      }
+      std::error_code removeError;
+      std::filesystem::remove(retained, removeError);
+      if (removeError) {
+        result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
+        result.driverDiagnostic =
+            "gti: failed to remove a stale C++ representation: " +
+            removeError.message();
+        result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
+        return result;
+      }
+    }
   }
 
   CompilationInputs compilationInputs =
@@ -4546,7 +4570,10 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
                  .generationDirectory = stagedGeneration,
                  .name = embeddingName(request),
                  .nativeInputs = effectiveInputs,
-                 .debugInfo = request.compilation().debugInfo()});
+                 .debugInfo = request.compilation().debugInfo(),
+                 .forwardedSources = ForwardedSourcePolicy{
+                     request.compilation().cppStandard(),
+                     request.compilation().optimization()}});
     result.nativeCommand = published.command;
     result.nativeProcess = published.process;
     if (!published.succeeded()) {
@@ -4572,7 +4599,9 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   } else {
     const NativeLinkRequest nativeRequest(
         request.nativeCompiler(), request.generatedSource(), stagedOutput,
-        effectiveInputs, request.compilation().debugInfo());
+        effectiveInputs, request.compilation().debugInfo(),
+        ForwardedSourcePolicy{request.compilation().cppStandard(),
+                              request.compilation().optimization()});
     result.nativeCommand = nativeToolchain.command(nativeRequest);
     result.nativeProcess = nativeToolchain.invoke(
         nativeRequest,
