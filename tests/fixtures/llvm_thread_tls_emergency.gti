@@ -1,0 +1,28 @@
+#include <std/thread>
+
+// A worker failure is pending while the worker drains its thread-local
+// objects; a failing destructor there completes the exact GTI-R0014 envelope.
+class fragile {
+public:
+  int32_t touch() { return 1; }
+  ~fragile() {
+    int32_t zero = 0;
+    int32_t value = 9 / zero;
+  }
+};
+
+thread_local fragile slot{};
+
+void body() {
+  if (slot.touch() != 1) { return; }
+  int32_t zero = 0;
+  int32_t value = 4 / zero;
+}
+
+int main() {
+  auto started = std::thread::start(body);
+  if (!started) { return 1; }
+  mut std::thread worker = std::move(started).value();
+  [[discard]] worker.join();
+  return 0;
+}

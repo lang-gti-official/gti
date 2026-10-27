@@ -2056,6 +2056,13 @@ if(Python3_Interpreter_FOUND)
   gti_register_llvm_evidence_manifest(
     llvm_cthread_startup_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_cthread_startup_execution_test.py")
+  add_test(NAME llvm_thread_execution
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_thread_execution_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_thread_execution PROPERTIES TIMEOUT 1200)
+  gti_register_llvm_evidence_manifest(
+    llvm_thread_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_thread_execution_test.py")
 endif()
 add_executable(gti_llvm_tls_contract_tests llvm_tls_contract_tests.cpp)
 target_include_directories(gti_llvm_tls_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})

@@ -17,6 +17,7 @@
 #include "reachability.h"
 #include "text.h"
 #include "thread_lifecycle.h"
+#include "threads.h"
 
 #include <iomanip>
 #include <map>
@@ -1241,6 +1242,11 @@ public:
         visiting.erase(owner->id);
         return valid;
       }
+      if (const auto handle =
+              native_llvm::nativeThreadHandle(program, selected))
+        // The handle stores runtime pointers only; a joined result lives in
+        // its runtime box until take, so its type must itself be native.
+        return !handle->resultBearing || self(self, handle->result);
       if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
           owner->polymorphic || owner->abstract || owner->cOpaqueHandle ||
           !owner->bases.empty() || !owner->structuralBases.empty())
@@ -1441,6 +1447,8 @@ public:
       leaf = &leaf->arguments[0];
     if (native_llvm::nativeAtomicElement(program, *leaf) && nativeValue(type))
       return Shape::NativeAtomicStorage;
+    if (native_llvm::nativeThreadHandle(program, *leaf) && nativeValue(type))
+      return Shape::NativeThreadHandle;
     if (leaf->kind == SemanticType::UniqueOwner && nativeValue(type))
       return Shape::NativeUniqueOwnership;
     if (leaf->kind == SemanticType::Enum && program.findPayloadEnum(*leaf) &&
@@ -1903,6 +1911,34 @@ public:
            (target.arguments[0] == SemanticType::Void ||
             nativeValue(target.arguments[0]));
   }
+  // Exact staged managed-thread operation whose handle, task and result
+  // values all have admitted native representations.
+  bool nativeThreadStage(const MirInstruction &stage) const {
+    if (!body || !currentBody ||
+        !native_llvm::nativeThreadCall(program, *body, *currentBody, stage))
+      return false;
+    for (const auto &operand : stage.operands) {
+      const auto &type = operand.type.kind == SemanticType::Reference
+                             ? operand.type.arguments.front()
+                             : operand.type;
+      if (!relocatableRepresentation(type))
+        return false;
+    }
+    if (stage.result && !relocatableRepresentation(stage.info.type))
+      return false;
+    const auto adapter = [&](MirThreadTaskAdapterId id) {
+      const auto *selected = program.findThreadTaskAdapter(id);
+      return selected && relocatableRepresentation(selected->taskType) &&
+             (selected->resultType == SemanticType::Void ||
+              relocatableRepresentation(selected->resultType));
+    };
+    if (stage.threadTaskAdapter && !adapter(*stage.threadTaskAdapter))
+      return false;
+    for (const auto &task : stage.scopedThreadTasks)
+      if (!adapter(task.adapter))
+        return false;
+    return true;
+  }
   std::optional<Shape> representationShape(const SemanticType &type) {
     return dispatchProofs.related(type) ? dispatchProofs.metadata(type)
                                         : classShape(type);
@@ -1988,9 +2024,24 @@ public:
     }
     if (currentBody)
       for (const auto &root : currentBody->places)
-        if (sameStorageRoot(root, place))
+        if (sameStorageRoot(root, place)) {
           if (const auto selected = representationShape(root.type))
             return selected;
+          // A concrete parameter pack has no storage of its own: each
+          // constant element is an independent parameter object, so a
+          // projection through one is witnessed by that element's storage.
+          const auto &front = place.projections.empty()
+                                  ? MirPlaceProjection{}
+                                  : place.projections.front();
+          if (root.type.kind == SemanticType::TypePack &&
+              root.type.concretePack && !place.projections.empty() &&
+              front.kind == MirProjectionKind::PackElement &&
+              front.constantIndex &&
+              *front.constantIndex < root.type.arguments.size() &&
+              concretePackParameter(root))
+            return representationShape(
+                root.type.arguments[*front.constantIndex]);
+        }
     if (place.root == MirPlaceRootKind::Loan && currentBody)
       if (const auto root = loanRootType(*currentBody, place.loan))
         return representationShape(*root);
@@ -3096,6 +3147,9 @@ public:
                            native_llvm::nativeMutexLockFailure(program, stage);
         if (mutex)
           storageShape = Shape::NativeMutexOperation;
+        const bool thread = nativeThreadStage(stage);
+        if (thread)
+          storageShape = Shape::NativeThreadOperation;
         if (stage.kind == MirInstructionKind::RetireProgramStorage &&
             body->kind == MirBodyKind::HostedStartup &&
             program.hostedStartupPlan())
@@ -3259,6 +3313,7 @@ public:
               : atomicWaiting
                   ? std::optional(Shape::NativeAtomicWaitingOperation)
               : mutex ? std::optional(Shape::NativeMutexOperation)
+              : thread ? std::optional(Shape::NativeThreadOperation)
               : callableIntrinsic ? callableIntrinsic
               : typedMemory || restoring
                   ? std::optional(Shape::NativeMemoryOperation)
@@ -3338,9 +3393,11 @@ public:
                   ? std::optional(Shape::NativeCCallback)
                   : std::nullopt);
         if (stage.threadTaskAdapter)
-          add(Shape::ThreadTask);
+          add(Shape::ThreadTask,
+              thread ? std::optional(Shape::NativeThreadTask) : std::nullopt);
         if (!stage.scopedThreadTasks.empty())
-          add(Shape::ScopedThreadTasks);
+          add(Shape::ScopedThreadTasks,
+              thread ? std::optional(Shape::NativeThreadTask) : std::nullopt);
         if (stage.preparedParameterDrop)
           add(Shape::PreparedOwnerInput,
               classShape(mir.findDropObligation(*stage.preparedParameterDrop)
@@ -3550,6 +3607,8 @@ public:
                                    ? std::optional(Shape::NativeAtomicWaitingOperation)
                                : mutex
                                    ? std::optional(Shape::NativeMutexOperation)
+                               : thread
+                                   ? std::optional(Shape::NativeThreadOperation)
                                    : std::nullopt;
           add(stage.synchronization.kind, witness);
           if (stage.synchronization.order)
@@ -3929,6 +3988,16 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
           native_llvm::nativeCCallbackContract(mir, input.target(),
                                              callback->adapter))
         shape = Shape::NativeCCallback;
+    if (const auto *task =
+            std::get_if<LoweredThreadTaskAdapterItem>(&item.payload))
+      if (item.identity.kind == LoweredGeneratedItemKind::ThreadTaskAdapter &&
+          item.identity.owner == task->adapter.id &&
+          item.sourceBody == task->adapter.sourceBody &&
+          native_llvm::nativeThreadTaskAdapter(mir, task->adapter) &&
+          inventory.relocatableRepresentation(task->adapter.taskType) &&
+          (task->adapter.resultType == SemanticType::Void ||
+           inventory.relocatableRepresentation(task->adapter.resultType)))
+        shape = Shape::NativeThreadTask;
     if (item.identity.kind == LoweredGeneratedItemKind::ThreadLocalStorage)
       if (const auto *storage = mir.findThreadLocalStorage(item.identity.owner))
         if (inventory.nativeValue(storage->type))

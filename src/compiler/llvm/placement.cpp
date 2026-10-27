@@ -6,6 +6,7 @@
 #include "gti/mir_effects.h"
 #include "memory_types.h"
 #include "mutexes.h"
+#include "threads.h"
 
 #include <algorithm>
 #include <set>
@@ -333,6 +334,12 @@ bool containsHierarchyStorage(const MirProgram &program,
         return owner->compilerCapability ==
                    CompilerCapabilityTypeKind::MutexStorage &&
                self(self, *payload);
+      }
+      if (owner->compilerCapability ==
+          CompilerCapabilityTypeKind::ThreadHandle) {
+        if (!nativeThreadHandle(program, selected))
+          reject("LLVM hierarchy exclusion requires an exact thread handle");
+        return false;
       }
       if (owner->compilerCapability != CompilerCapabilityTypeKind::None)
         reject(

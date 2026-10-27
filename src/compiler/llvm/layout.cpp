@@ -4,6 +4,7 @@
 #include "memory_types.h"
 #include "mutexes.h"
 #include "placement.h"
+#include "threads.h"
 
 #include <algorithm>
 #include <limits>
@@ -302,6 +303,18 @@ TypeLayout Layouts::record(const SemanticType &type) {
       entry.building = false;
       throw;
     }
+  }
+  if (instance.compilerCapability == CompilerCapabilityTypeKind::ThreadHandle) {
+    const auto shape = nativeThreadHandle(session.program().mir(), type);
+    if (!shape)
+      throw BackendUnsupportedError(
+          "LLVM thread handle requires its exact trusted capability");
+    // The runtime join-obligation state, followed for a result handle by the
+    // joined result context and its take/abandon callbacks. Private only.
+    std::vector<llvm::Type *> fields(shape->resultBearing ? 4 : 1, pointer());
+    entry.storage->setBody(fields);
+    entry.layout = describe(entry.storage, true, pointer());
+    return *entry.layout;
   }
   if (instance.compilerCapability ==
       CompilerCapabilityTypeKind::AtomicStorage) {
