@@ -151,14 +151,18 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
     const SemanticType &type, ActiveCleanupQuery &query) const -> bool {
   if (type.kind == SemanticType::Class) {
     const ClassInfo *owner = classInfo(type);
-    if (owner != nullptr &&
-        owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
+    if (owner != nullptr && owner->compilerCapability ==
+                                CompilerCapabilityTypeKind::SharedOwner) {
       return true;
     }
-    if (owner != nullptr && (owner->compilerCapability ==
-                                 CompilerCapabilityTypeKind::MutexStorage ||
-                             owner->compilerCapability ==
-                                 CompilerCapabilityTypeKind::OptionalStorage)) {
+    if (owner != nullptr && owner->compilerCapability ==
+                                CompilerCapabilityTypeKind::MutexStorage) {
+      return !query.excludeNativeRetirement ||
+             (type.arguments.size() == 1 &&
+              requiresActiveCleanup(type.arguments.front(), query));
+    }
+    if (owner != nullptr && owner->compilerCapability ==
+                                CompilerCapabilityTypeKind::OptionalStorage) {
       return type.arguments.size() == 1 &&
              requiresActiveCleanup(type.arguments.front(), query);
     }
@@ -294,6 +298,13 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
   return result;
 }
 
+bool SemanticVisitor::Impl::requiresSourceCleanupFor(
+    const SemanticType &type) const {
+  ActiveCleanupQuery query;
+  query.excludeNativeRetirement = true;
+  return requiresActiveCleanup(type, query);
+}
+
 auto SemanticVisitor::Impl::activeCleanupCause(const SemanticType &type) const
     -> std::optional<ActiveCleanupCause> {
   if (type.kind != SemanticType::Class || type.classId == 0 ||
@@ -309,6 +320,7 @@ auto SemanticVisitor::Impl::activeCleanupCause(const SemanticType &type) const
   }
   const GenericSubstitution substitution = classSubstitution(type);
   ActiveCleanupQuery query;
+  query.excludeNativeRetirement = true;
   if (const ClassBaseTypeInfo *base = concreteBase(owner); base != nullptr) {
     if (requiresActiveCleanup(substituteType(base->type, substitution),
                               query) &&
@@ -770,14 +782,18 @@ auto SemanticVisitor::Impl::typeTraits(
             : SemanticTypeTraits{};
     visiting.pop_back();
     return SemanticTypeTraits{.ownership = OwnershipKind::Value,
-                              .drop = element.drop,
+                              .drop = DropKind::Lexical,
                               .copyable = false,
                               .movable = true,
                               .copyAssignable = false,
                               .moveAssignable = false,
                               .containsBorrowedState = false,
                               .transferCapable = element.transferCapable,
-                              .shareCapable = element.transferCapable};
+                              .shareCapable = element.transferCapable,
+                              .relocation =
+                                  element.relocation != RelocationKind::Unavailable
+                                      ? RelocationKind::Structural
+                                      : RelocationKind::Unavailable};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::OptionalStorage) {
     const bool relocatable =
@@ -8648,8 +8664,30 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
       // but a selected child still suspends its checked parent's exclusive
       // authority over the external referent. This is permission conflict,
       // not a new claim that the referent lives inside the carrier.
+      const bool publishedExternalExclusion = [&] {
+        if (loan->entry || loan->kind != SemanticLoanKind::StoredValue ||
+            !loan->lifecycleBound || loan->access != AccessMode::Mutable ||
+            access != AccessMode::Mutable || protectsStorage ||
+            !loan->designatedFields.empty() || !loan->conditions.empty() ||
+            !loan->additionalDependencies.empty())
+          return false;
+        const auto *lifetimeParent = semanticModel.findLoan(loan->parent);
+        if (lifetimeParent == nullptr || !lifetimeParent->entry ||
+            lifetimeParent->kind != SemanticLoanKind::StoredValue ||
+            lifetimeParent->access != AccessMode::ReadOnly ||
+            lifetimeParent->protectsStorage)
+          return false;
+        const auto selected =
+            projectedStoredDependency(*lifetimeParent, source.projections);
+        return selected && selected->access == AccessMode::ReadOnly &&
+               selected->conditions.empty() && selected->place == source;
+      }();
+      // A checked result can retain exclusive external permission while its
+      // shared entry parent supplies only an address and lifetime. That does
+      // not make the external referent part of the carrier's physical bytes.
       const bool protectsPermission =
-          loan->referenceSelection && suspendedParentUse;
+          (loan->referenceSelection && suspendedParentUse) ||
+          publishedExternalExclusion;
       return (protectsStorage || protectsPermission) && overlaps &&
              ((suspendedParentUse && !sharedReferenceAccess) ||
               requested == AccessMode::Mutable ||
@@ -11095,9 +11133,80 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     }
     if (sourceLoan->access == AccessMode::ReadOnly &&
         carrierAccess == AccessMode::Mutable) {
-      // validateReferenceBinding owns the single actionable upgrade
-      // diagnostic. Avoid emitting a second S2017 while constructing the
-      // loan graph for the same declaration.
+      const auto sharedArgument = [](const auto &record) {
+        return record.borrowOrigin == BorrowOriginKind::Argument &&
+               record.borrowArgument < record.parameterTypes.size() &&
+               record.parameterTypes[record.borrowArgument].kind ==
+                   SemanticType::Reference &&
+               record.parameterTypes[record.borrowArgument].referenceAccess ==
+                   AccessMode::ReadOnly;
+      };
+      const bool ordinaryCall =
+          resolved != nullptr && resolved->function != 0 &&
+          resolved->declaration != nullptr && resolved->declaration->body() &&
+          !resolved->declaration->isVirtual() &&
+          !resolved->declaration->runtimeBinding() &&
+          !resolved->nativeCalleeType && !resolved->callableBoundary &&
+          resolved->intrinsic == IntrinsicKind::None &&
+          resolved->returnType == carrier->type &&
+          resolved->borrowAccess == AccessMode::Mutable &&
+          resolved->borrowArguments.empty() && resolved->borrowFields.empty() &&
+          ((resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+            resolved->declaration->receiverMutability() ==
+                ReceiverMutability::ReadOnly) ||
+           sharedArgument(*resolved));
+      const bool ordinaryConstruction =
+          construction != nullptr && construction->constructor != 0 &&
+          construction->declaration != nullptr &&
+          construction->declaration->body() &&
+          construction->constructedType == carrier->type &&
+          construction->borrowAccess == AccessMode::Mutable &&
+          construction->borrowArguments.empty() &&
+          construction->borrowFields.empty() && sharedArgument(*construction);
+      const bool publishedExternalExclusion =
+          retainedStoredBorrow && sourceLoan->entry &&
+          sourceLoan->kind == SemanticLoanKind::StoredValue &&
+          !sourceLoan->protectsStorage && storedPath &&
+          storedPath->conditions.empty() &&
+          lifecycleBoundBorrowCarrierFor(carrier->type) && source->dependency &&
+          source->dependency->access == AccessMode::ReadOnly &&
+          source->dependency->conditions.empty() &&
+          !source->dependency->designatedFields.empty() &&
+          (ordinaryCall || ordinaryConstruction);
+      if (publishedExternalExclusion) {
+        const auto parent = sourceLoan->id;
+        const auto place = source->dependency->place;
+        const auto token = expressionToken(expression);
+        auto conflicts = childConflicts(place);
+        // The selected call can already have reported this exact loan at
+        // this source token. Preserve that cause rather than duplicating it
+        // when its result is retained in the same statement.
+        std::erase_if(conflicts, [&](SemanticLoanId conflict) {
+          return std::any_of(
+              loanFlow.conflicts.begin(), loanFlow.conflicts.end(),
+              [&](const PendingBorrowConflict &pending) {
+                return pending.statement == loanFlow.currentStatement &&
+                       pending.region == loanFlow.currentRegion &&
+                       pending.order == loanFlow.currentOrder &&
+                       pending.diagnostic.primary == tokenSpan(token) &&
+                       std::find(pending.loans.begin(), pending.loans.end(),
+                                 conflict) != pending.loans.end();
+              });
+        });
+        reportBorrowConflict(
+            token, conflicts,
+            "Cannot retain this value while an overlapping borrow may still "
+            "be live.");
+        const auto child = createRetainedLoan(
+            *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
+            expression.get(), place, place.root, place.receiver,
+            AccessMode::Mutable, false, parent);
+        semanticModel.recordBindingLoan(binding, child);
+        recordSemanticLoanUseForLoan(parent);
+      }
+      // Ordinary reference upgrades remain owned by validateReferenceBinding.
+      // The checked stored result above has distinct callee-granted exclusion;
+      // its parent retains its actual shared input permission.
       return;
     }
     // A value containing a reference is a distinct carrier publication, not

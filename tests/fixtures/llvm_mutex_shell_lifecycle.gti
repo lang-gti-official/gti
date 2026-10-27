@@ -1,0 +1,30 @@
+#include <std/mutex>
+
+extern "C" {
+  void gti_test_record_payload(int32_t value);
+}
+
+class Payload {
+  int32_t value;
+public:
+  Payload(int32_t value) : value(value) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() {
+    gti_test_record_payload(this.value);
+    int32_t checked = 12 / this.value;
+  }
+};
+
+class Cell {
+  std::mutex<Payload> first;
+  std::mutex<Payload> last;
+public:
+  Cell() : first(std::mutex<Payload>(Payload(1))),
+           last(std::mutex<Payload>(Payload(2))) {}
+};
+
+int main() {
+  Cell value{};
+  return 0;
+}

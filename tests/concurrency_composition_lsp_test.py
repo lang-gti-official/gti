@@ -121,6 +121,67 @@ def main():
                            for d in diagnostics), diagnostics
             change(7, SOURCE)
             assert not errors(7)
+
+            version = 7
+            for nested in (False, True):
+                receiver = "this.holder.owner" if nested else "this.owner"
+                stored = """#include <std/mutex>
+void see(std::mutex<int32_t>& value) {}
+"""
+                if nested:
+                    stored += """class Holder { public:
+  std::mutex<int32_t>& owner;
+  Holder(std::mutex<int32_t>& owner) : owner(owner) {}
+};
+class User {
+  Holder& holder;
+public:
+  User(Holder& holder) : holder(holder) {}
+"""
+                else:
+                    stored += """class User {
+  std::mutex<int32_t>& owner;
+public:
+  User(std::mutex<int32_t>& owner) : owner(owner) {}
+"""
+                publication = "auto guard = " + receiver + ".lock();"
+                for second in (False, True):
+                    conflict = ("auto second = " + receiver + ".lock();" if second
+                                else "see(" + receiver + ");")
+                    bad = (stored + "  void use() { /*😀*/ " + publication +
+                           " /*😀*/ " + conflict + " }\n};\nint main() { return 0; }\n")
+                    version += 1
+                    change(version, bad)
+                    diagnostics = errors(version)
+                    assert len(diagnostics) == 1, diagnostics
+                    failure = diagnostics[0]
+                    assert failure.get("code") == "GTI-S2017", failure
+                    offset = (bad.index("();", bad.index(conflict)) + 1 if second
+                              else bad.index("owner", bad.index(conflict)))
+                    expected = {"start": lsp_position(bad, offset),
+                                "end": lsp_position(bad, offset + (1 if second else 5))}
+                    assert failure["range"] == expected, failure
+                    origin = bad.index("();", bad.index(publication)) + 1
+                    related = failure.get("relatedInformation", [])
+                    assert len(related) == 1, failure
+                    assert related[0]["location"] == {
+                        "uri": uri, "range": {"start": lsp_position(bad, origin),
+                                               "end": lsp_position(bad, origin + 1)}}, failure
+                    assert "borrow originates here" in related[0]["message"], failure
+                    assert "until its carrier is destroyed" in failure["message"], failure
+                    action_params = {"textDocument": {"uri": uri},
+                                     "range": failure["range"],
+                                     "context": {"diagnostics": [failure], "only": ["quickfix"]}}
+                    assert not request("textDocument/codeAction", action_params)
+                    fixed = bad.replace(publication, "{ " + publication + " }")
+                    version += 1
+                    change(version, fixed)
+                    assert not errors(version)
+                    assert not request("textDocument/codeAction", action_params), \
+                        "stale conflict must not edit the corrected document"
+                    change(version - 1, bad)
+                    # A stale didChange cannot replace the newer valid snapshot.
+                    assert not request("textDocument/codeAction", action_params)
         finally:
             session.close()
     print("shared/scoped jobs: transfer, borrow conflicts, navigation and recovery passed")

@@ -3277,6 +3277,18 @@ Semantics chooses all proven endpoints and reports invalidation conflicts. HIR
 and MIR preserve those choices; they do not recompute liveness from emitted
 C++ references.
 
+A checked ordinary call or constructor can publish a sole-origin,
+lifecycle-bound stored value with mutable exclusion even when its selected
+input is a shared stored reference. The input's abstract entry loan supplies
+the address and lifetime; it remains read-only. The result receives a distinct
+mutable child at the exact external projection, without claiming that the
+referent occupies the carrier's physical storage. This bounded publication
+requires the checked result summary and an unconditional single dependency;
+it does not permit ordinary read-only reference upgrades. While the result is
+live, overlapping ancestor reads and second publications report `GTI-S2017`.
+Disjoint stored projections remain independent, and destruction of the result
+ends its exclusion even if the result was never read.
+
 An unretained global-origin call loan is a temporary and receives the ordinary
 full-expression endpoint. Retaining a mutable result creates a symbol-rooted
 lexical loan that is deliberately not shortened by local last-use planning;
@@ -3359,10 +3371,16 @@ M-LIFE-01 adds the v1 restriction on cleanup-owning namespace globals and
 static fields after the existing more-specific unique-owner, storage, and
 borrowed-state checks. The recursive semantic trait follows arrays, aliases,
 bases, fields, captures, and concrete generic substitutions,
-and treats declared cleanup as an active obligation. `GTI-S2061` reports the
+and treats declared cleanup as an active obligation. A native resource shell
+is independently active even with a passive payload. Process storage permits
+only structural native retirement: the same recursive query excludes the shell
+itself but still follows its payload and every source base/field. Source
+destructors and owning allocation release remain forbidden even when failure
+free; no public type spelling grants an exception. `GTI-S2061` reports the
 outer declaration plus the first available declared-cleanup/base/field cause.
 HIR and MIR can therefore rely on the absence of source global/static drop
-obligations; this does not define global shutdown.
+obligations. The initialization plan marks native-retirement roots explicitly;
+this is not a general source-destructor shutdown policy.
 
 ## Bounded Aggregate Constant Evaluation
 

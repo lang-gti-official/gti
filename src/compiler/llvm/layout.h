@@ -19,6 +19,24 @@ struct TypeLayout {
   std::vector<std::uint64_t> fieldOffsets;
 };
 
+// Storage facts shared by initialization, atomic operations and host parking.
+// This private scalar representation is not a C/C++ atomic-object ABI.
+struct AtomicStorageLayout {
+  SemanticType element;
+  TypeLayout object;
+  llvm::IntegerType *lane = nullptr;
+};
+
+struct MutexStorageLayout {
+  SemanticType element;
+  TypeLayout object;
+  unsigned nativeIndex = 0;
+  unsigned payloadIndex = 1;
+  unsigned payloadActiveIndex = 2;
+  static constexpr unsigned shellLive = 1;
+  static constexpr unsigned payloadLive = 2;
+};
+
 struct PayloadLayout {
   TypeLayout type;
   llvm::StructType *storage = nullptr;
@@ -80,6 +98,8 @@ struct FieldSubobjectLayout {
 class Layouts final {
 public:
   [[nodiscard]] TypeLayout get(const SemanticType &type);
+  [[nodiscard]] AtomicStorageLayout atomicStorage(const SemanticType &type);
+  [[nodiscard]] MutexStorageLayout mutexStorage(const SemanticType &type);
   [[nodiscard]] const PayloadLayout &payload(const SemanticType &type);
   [[nodiscard]] llvm::PointerType *pointer() const;
   [[nodiscard]] const SharedOwnerLayout &sharedOwner();

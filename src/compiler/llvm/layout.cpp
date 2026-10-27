@@ -1,6 +1,8 @@
 #include "layout.h"
+#include "atomic_types.h"
 #include "closure_environment.h"
 #include "memory_types.h"
+#include "mutexes.h"
 #include "placement.h"
 
 #include <algorithm>
@@ -35,6 +37,20 @@ llvm::PointerType *Layouts::pointer() const {
   return llvm::PointerType::get(session.context(), 0);
 }
 
+AtomicStorageLayout Layouts::atomicStorage(const SemanticType &type) {
+  const auto element = nativeAtomicElement(session.program().mir(), type);
+  if (!element)
+    throw BackendUnsupportedError(
+        "LLVM atomic storage requires an exact trusted scalar capability");
+  const auto object = get(type);
+  auto *lane = llvm::dyn_cast<llvm::IntegerType>(object.storage);
+  if (!lane || !object.addressOnly || object.value != pointer() ||
+      lane->getBitWidth() != object.size * 8)
+    throw std::logic_error(
+        "LLVM atomic scalar layout lost its exact access width");
+  return {*element, object, lane};
+}
+
 const SharedOwnerLayout &Layouts::sharedOwner() {
   if (!sharedOwner_) {
     auto *handle =
@@ -48,6 +64,14 @@ const SharedOwnerLayout &Layouts::sharedOwner() {
         SharedOwnerLayout{describe(handle, true, pointer()), describe(block)};
   }
   return *sharedOwner_;
+}
+
+MutexStorageLayout Layouts::mutexStorage(const SemanticType &type) {
+  const auto element = nativeMutexElement(session.program().mir(), type,
+                                          CompilerCapabilityTypeKind::MutexStorage);
+  if (!element)
+    throw BackendUnsupportedError("LLVM mutex storage requires an exact trusted capability");
+  return {*element, get(type)};
 }
 
 PolymorphicStorageLayout Layouts::polymorphicStorage(const SemanticType &type) {
@@ -251,6 +275,41 @@ TypeLayout Layouts::record(const SemanticType &type) {
   if (entry.building)
     throw std::logic_error("recursive by-value LLVM record layout");
   const auto &instance = *entry.instance;
+  if (instance.compilerCapability == CompilerCapabilityTypeKind::MutexStorage ||
+      instance.compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
+    const auto element = nativeMutexElement(session.program().mir(), type, instance.compilerCapability);
+    if (!element)
+      throw BackendUnsupportedError("LLVM mutex capability lost its exact private shape");
+    if (instance.compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
+      entry.layout = describe(pointer(), true, pointer());
+      return *entry.layout;
+    }
+    entry.building = true;
+    try {
+      // Native pthread bytes never participate in ordinary aggregate copying.
+      // Admission stays closed until the owning shell lifecycle is represented.
+      const std::vector<llvm::Type *> fields{
+          llvm::ArrayType::get(llvm::Type::getInt64Ty(session.context()), 8),
+          get(*element).storage, llvm::Type::getInt8Ty(session.context())};
+      auto result = describe(llvm::StructType::get(session.context(), fields), true, pointer());
+      entry.storage->setBody(fields);
+      result.storage = entry.storage;
+      entry.layout = result;
+      entry.building = false;
+      return *entry.layout;
+    } catch (...) {
+      entry.building = false;
+      throw;
+    }
+  }
+  if (instance.compilerCapability ==
+      CompilerCapabilityTypeKind::AtomicStorage) {
+    const auto element = nativeAtomicElement(session.program().mir(), type);
+    if (!element)
+      throw BackendUnsupportedError("LLVM atomic storage lost its scalar plan");
+    entry.layout = describe(get(*element).storage, true, pointer());
+    return *entry.layout;
+  }
   if (instance.compilerCapability ==
       CompilerCapabilityTypeKind::FunctionPointer) {
     entry.building = true;

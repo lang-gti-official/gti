@@ -290,11 +290,12 @@ completion.
 
 In the concurrent profile, namespace globals and static fields must be
 immutable and share-capable. Ordinary mutable globals/static fields are
-ill-formed; synchronized mutation uses an immutable global atomic or future
-process-wide mutex value with a complete shutdown contract. The implemented
-`std::mutex<T>` remains a local cleanup-owning owner and therefore does not
-fill that global role. Borrowed-state and raw-pointer globals do not qualify
-merely by being immutable, and cleanup-owning process-wide values wait for a
+ill-formed; synchronized mutation uses an immutable share-capable global atomic
+or a value whose cleanup is structurally limited to native resource retirement.
+A mutex with a passive payload, including one inside an ordinary wrapper,
+qualifies without permitting source destructors or owning allocation release.
+Borrowed-state and raw-pointer globals do not qualify
+merely by being immutable, and source-cleanup-owning process-wide values wait for a
 complete shutdown/foreign-thread contract. These restrictions do not change
 current single-threaded mutable globals. The reference compiler reports
 `GTI-S2060` at the process-wide binding when concurrent selection rejects
@@ -1963,12 +1964,19 @@ from selecting a direct reference field; it needs its own transfer/retirement
 proof. Neither this boundary nor the source-defined propagation protocol is a
 special rule for a standard-library type.
 
-The semantic `GTI-S2061` check implements the recursive active-cleanup
+The semantic `GTI-S2061` check implements the recursive source/owning-cleanup
 restriction after the more-specific unique-owner, private-storage, and
 borrowed-state global diagnostics. Its related information identifies a
 declared cleanup body, cleanup-owning base, or cleanup-owning field when one is
-available. This rule prevents source global/static drop obligations; it does
-not add process-shutdown cleanup.
+available. This rule prevents source global/static drop obligations, including
+infallible source destructors. A native-only root instead retains an exact
+program-retirement recipe. Successfully initialized roots retire in reverse
+order after TLS drain and C-thread shutdown on ordinary hosted exits, including
+ordinary failure. Partial initialization publishes only completed roots;
+constructor rollback still owns incomplete objects. Cleanup emergency/abort
+abandons further cleanup. Unsafe foreign execution must be quiescent before
+module unload; this is not general source-destructor shutdown or a new foreign
+thread attachment permission.
 
 The C++ backend emits generated operations explicitly as `= default`,
 `= delete`, or an active-state move implementation. Its hidden active flag is a

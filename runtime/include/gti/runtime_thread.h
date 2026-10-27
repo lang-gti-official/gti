@@ -10,6 +10,9 @@
 typedef struct gti_thread_state_v1 gti_thread_state_v1;
 typedef void (*gti_thread_task_entry_v1)(void *context);
 typedef void (*gti_thread_task_destroy_v1)(void *context);
+/* Completion consumes the task exactly once. A null result is permitted only
+ * after publishing a worker failure, with no live result left to abandon.
+ * A non-null result on failure is abandoned by the runtime before TLS drain. */
 typedef void *(*gti_thread_task_complete_v1)(void *context);
 typedef void (*gti_thread_task_abandon_v1)(void *context);
 typedef void (*gti_thread_result_take_v1)(void *context, void *destination);
@@ -82,6 +85,38 @@ typedef struct gti_thread_value_join_result_v2 {
   gti_thread_result_abandon_v1 abandon_result;
 } gti_thread_value_join_result_v2;
 
+#define GTI_THREAD_FAILURE_VIEW_ABI_VERSION_V1 UINT32_C(1)
+#define GTI_THREAD_FAILURE_SINK_ABI_VERSION_V1 UINT32_C(1)
+
+/* A borrowed failure view is valid only for publication. A sink must copy the
+ * owned records before returning; artifact descriptors retain their existing
+ * generated-program pinning obligation. No exception may cross publication.
+ * Exactly one of ordinary/cleanup is non-null, according to failure_kind. */
+typedef struct gti_thread_failure_view_v1 {
+  uint32_t abi_version;
+  gti_thread_worker_failure_kind_v1 failure_kind;
+  const gti_failure_record_v2 *ordinary;
+  const gti_failure_emergency_v2 *cleanup;
+  const gti_failure_artifact_descriptor_v1 *primary_artifact;
+  const gti_failure_artifact_descriptor_v1 *secondary_artifact;
+} gti_thread_failure_view_v1;
+
+typedef void (*gti_thread_failure_publish_v1)(
+    void *context, const gti_thread_failure_view_v1 *failure);
+
+/* Caller-owned, address-stable and thread-confined between enter/leave. Start
+ * with ABI version 1 and all other fields zero. Nested scopes restore the exact
+ * previous sink. Publication callbacks cannot re-enter or alter this stack.
+ * The descriptor itself allocates nothing and owns no failure record. */
+typedef struct gti_thread_failure_sink_v1 {
+  uint32_t abi_version;
+  uint32_t reserved;
+  struct gti_thread_failure_sink_v1 *previous;
+  gti_thread_failure_publish_v1 publish;
+  void *context;
+  const void *owner;
+} gti_thread_failure_sink_v1;
+
 /* A synchronous scope borrows its task contexts. It does not destroy or retain
  * them. The caller supplies distinct scratch slots; no task-box or handle-array
  * allocation is needed in addition to the native workers' own state. */
@@ -102,6 +137,50 @@ typedef struct gti_thread_scope_result_v1 {
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#ifdef __cplusplus
+#define GTI_THREAD_SINK_NOEXCEPT noexcept
+#else
+#define GTI_THREAD_SINK_NOEXCEPT
+#endif
+
+/* Generated adapters catch their private GTI transport before calling publish.
+ * The runtime installs a worker sink around entry, task/result cleanup and TLS
+ * drain. A generated caller installs its own sink around synchronous launch
+ * rollback or post-join take/abandon. A nested caller sink takes precedence over
+ * the worker sink; publishing does not perform a control transfer. Missing,
+ * malformed, cross-thread or reentrant use terminates. */
+void gti_rt_thread_failure_sink_enter_v1(
+    gti_thread_failure_sink_v1 *sink, gti_thread_failure_publish_v1 publish,
+    void *context) GTI_THREAD_SINK_NOEXCEPT;
+void gti_rt_thread_failure_sink_leave_v1(gti_thread_failure_sink_v1 *sink)
+    GTI_THREAD_SINK_NOEXCEPT;
+void gti_rt_thread_failure_publish_v1(const gti_thread_failure_view_v1 *failure)
+    GTI_THREAD_SINK_NOEXCEPT;
+
+/* These queries expose only the runtime-owned cleanup phase of the current
+ * worker sink. Outside that exact phase they return NONE/0 and do not modify
+ * output storage. A nested caller sink does not inherit worker publication.
+ * Successful copy preserves the original record and pinned artifact exactly. */
+gti_thread_worker_failure_kind_v1 gti_rt_thread_cleanup_failure_kind_v1(void)
+    GTI_THREAD_SINK_NOEXCEPT;
+uint32_t gti_rt_thread_cleanup_primary_copy_v2(
+    gti_failure_record_v2 *record,
+    const gti_failure_artifact_descriptor_v1 **artifact) GTI_THREAD_SINK_NOEXCEPT;
+
+/* Only terminal automatic-join failure may transfer a coherent joinable state
+ * here. This clears the owned handle, but neither joins nor detaches the worker.
+ * A quarantined worker can still access process storage: retirement readiness
+ * becomes permanently false, including after that worker finishes. Hosted
+ * terminal failure must leave native roots live; a host must reject unload or
+ * context shutdown while readiness is false. Readiness is not a substitute for
+ * the host's ordinary quiescence obligation for foreign/manual callers. */
+void gti_rt_thread_quarantine_v1(gti_thread_state_v1 **state)
+    GTI_THREAD_SINK_NOEXCEPT;
+uint32_t gti_rt_thread_program_storage_retirement_ready_v1(void)
+    GTI_THREAD_SINK_NOEXCEPT;
+
+#undef GTI_THREAD_SINK_NOEXCEPT
 
 /*
  * On entry, task_context is owned by this call. Success transfers that owner

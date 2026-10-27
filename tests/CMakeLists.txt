@@ -383,6 +383,16 @@ target_include_directories("gti_runtime_cthread_tests"
 target_compile_features("gti_runtime_cthread_tests" PRIVATE cxx_std_20)
 target_link_libraries("gti_runtime_cthread_tests" PRIVATE gti_runtime)
 add_test(NAME cthread_runtime_boundary COMMAND gti_runtime_cthread_tests)
+add_executable(gti_runtime_thread_outcome_tests runtime_thread_outcome_tests.cpp
+               fixtures/runtime_thread_outcome_c.c)
+target_compile_features(gti_runtime_thread_outcome_tests PRIVATE cxx_std_20 c_std_17)
+target_link_libraries(gti_runtime_thread_outcome_tests PRIVATE gti_runtime)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME runtime_thread_outcome_boundary
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runtime_thread_outcome_test.py"
+            "$<TARGET_FILE:gti_runtime_thread_outcome_tests>")
+  set_tests_properties(runtime_thread_outcome_boundary PROPERTIES TIMEOUT 120)
+endif()
 set_tests_properties(cthread_runtime_boundary PROPERTIES TIMEOUT 60)
 
 add_executable(gti_runtime_cthread_sleep_tests
@@ -1631,6 +1641,7 @@ add_executable("gti_mutex_tests"
                "${PROJECT_SOURCE_DIR}/tests/mutex_tests.cpp")
 target_link_libraries("gti_mutex_tests" PRIVATE gti_cpp_backend)
 add_test(NAME mutex_semantic_ir COMMAND gti_mutex_tests)
+add_test(NAME mutex_shell_recipes COMMAND gti_mutex_tests --shell-recipes)
 
 add_executable(gti_source_location_tests source_location_tests.cpp)
 target_link_libraries(gti_source_location_tests PRIVATE gti_cpp_backend)
@@ -1718,6 +1729,16 @@ add_executable("gti_llvm_admission_tests"
 target_link_libraries("gti_llvm_admission_tests" PRIVATE gti_llvm_backend)
 add_test(NAME llvm_admission COMMAND gti_llvm_admission_tests)
 
+add_executable(gti_llvm_atomic_contract_tests llvm_atomic_contract_tests.cpp)
+target_include_directories(gti_llvm_atomic_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_atomic_contract_tests PRIVATE gti_llvm_backend gti_driver)
+add_test(NAME llvm_atomic_contracts COMMAND gti_llvm_atomic_contract_tests "${PROJECT_SOURCE_DIR}")
+add_executable(gti_llvm_mutex_contract_tests llvm_mutex_contract_tests.cpp)
+target_include_directories(gti_llvm_mutex_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_mutex_contract_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
+add_test(NAME llvm_mutex_contracts COMMAND gti_llvm_mutex_contract_tests "${PROJECT_SOURCE_DIR}")
+add_test(NAME llvm_mutex_hierarchy_contracts
+  COMMAND gti_llvm_mutex_contract_tests "${PROJECT_SOURCE_DIR}" --hierarchy-contracts)
 add_executable("gti_llvm_coverage_evidence"
                "${PROJECT_SOURCE_DIR}/tests/llvm_coverage_evidence.cpp")
 target_link_libraries("gti_llvm_coverage_evidence" PRIVATE gti_llvm_backend gti_driver)
@@ -2036,6 +2057,18 @@ if(Python3_Interpreter_FOUND)
     llvm_cthread_startup_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_cthread_startup_execution_test.py")
 endif()
+add_executable(gti_llvm_tls_contract_tests llvm_tls_contract_tests.cpp)
+target_include_directories(gti_llvm_tls_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_tls_contract_tests PRIVATE gti_llvm_backend)
+add_test(NAME llvm_tls_contracts
+         COMMAND gti_llvm_tls_contract_tests "${PROJECT_SOURCE_DIR}")
+set_tests_properties(llvm_tls_contracts PROPERTIES TIMEOUT 180)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME llvm_tls_cleanup_context
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_tls_cleanup_context_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_tls_cleanup_context PROPERTIES TIMEOUT 300)
+endif()
 
 add_executable(gti_llvm_clang_coexistence_smoke llvm_clang_coexistence_smoke.cpp)
 target_link_libraries(gti_llvm_clang_coexistence_smoke PRIVATE gti_llvm_backend gti_bindgen)
@@ -2057,9 +2090,44 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_scalar_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(llvm_scalar_execution PROPERTIES TIMEOUT 1200)
+  add_test(NAME llvm_atomic_execution
+           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_atomic_execution_test.py"
+                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+  set_tests_properties(llvm_atomic_execution PROPERTIES TIMEOUT 600)
+  if(GTI_NATIVE_SYNCHRONIZATION_SERVICES)
+    add_test(NAME runtime_synchronization
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runtime_synchronization_test.py"
+              "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/runtime-synchronization-evidence"
+              --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(runtime_synchronization PROPERTIES TIMEOUT 180)
+    find_program(GTI_LLVM_TEST_CLANG NAMES clang HINTS "${LLVM_TOOLS_BINARY_DIR}" NO_DEFAULT_PATH)
+    if(GTI_LLVM_TEST_CLANG)
+      add_test(NAME llvm_atomic_wait_service
+        COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_atomic_wait_service_test.py"
+                "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:gti_llvm_atomic_contract_tests>"
+                "${CMAKE_BINARY_DIR}/atomic-wait-service-evidence"
+                --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+                --llvm-cc "${GTI_LLVM_TEST_CLANG}")
+      set_tests_properties(llvm_atomic_wait_service PROPERTIES TIMEOUT 240)
+      add_test(NAME llvm_mutex_service
+        COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_mutex_service_test.py"
+                "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:gti_llvm_mutex_contract_tests>"
+                "${CMAKE_BINARY_DIR}/mutex-service-evidence"
+                --public-gti "$<TARGET_FILE:gti>"
+                --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+                --llvm-cc "${GTI_LLVM_TEST_CLANG}")
+      set_tests_properties(llvm_mutex_service PROPERTIES TIMEOUT 240)
+      gti_register_llvm_evidence_manifest(
+        llvm_mutex_service "${PROJECT_SOURCE_DIR}/tests/llvm_mutex_service_test.py")
+    endif()
+  endif()
   gti_register_llvm_evidence_manifest(
     llvm_scalar_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_scalar_execution_test.py"
+  )
+  gti_register_llvm_evidence_manifest(
+    llvm_atomic_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_atomic_execution_test.py"
   )
   add_test(NAME llvm_place_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_place_execution_test.py"
@@ -4178,6 +4246,13 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(mutex_cleanup_failure_runtime PROPERTIES TIMEOUT 600)
+  add_test(
+    NAME mutex_move_cleanup_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/mutex_move_cleanup_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(mutex_move_cleanup_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME function_item_runtime
     COMMAND "${Python3_EXECUTABLE}"

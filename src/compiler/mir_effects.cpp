@@ -91,6 +91,10 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
     unknownEffects(), // EnsureThreadLocal invokes the exact initializer once.
     unknownEffects(), // DrainThreadLocals runs exact initialized TLS cleanup.
     unknownEffects(), // BeginThreadLocals attaches the hosted thread lifetime.
+    MirEffectTraits{.writesUnknownMemory = true,
+                    .invokesRuntime = true,
+                    .mayTrap = true,
+                    .dropsValue = true}, // RetireProgramStorage is native-only.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -525,6 +529,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "ensure-thread-local",
     "drain-thread-locals",
     "begin-thread-locals",
+    "retire-program-storage",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({
@@ -1998,15 +2003,50 @@ std::optional<MirDropType> mirUniqueCleanupType(const MirProgram &program,
       if (selected.arguments.size() != 1 || !owner->requiresActiveCleanup)
         return std::nullopt;
       auto payload = self(self, selected.arguments.front());
-      if (!payload || !payload->requiresActiveCleanup)
+      const bool shell = owner->compilerCapability ==
+                         CompilerCapabilityTypeKind::MutexStorage;
+      if (!shell && (!payload || !payload->requiresActiveCleanup))
         return std::nullopt;
+      if (shell && !payload) {
+        const auto passive = [&](const auto &check,
+                                 const SemanticType &value) -> bool {
+          if (value.kind == SemanticType::Array)
+            return value.arguments.size() == 1 &&
+                   check(check, value.arguments.front());
+          if (value.kind == SemanticType::Class) {
+            const auto *instance = classFor(value);
+            return instance && !instance->requiresActiveCleanup;
+          }
+          if (value.kind == SemanticType::Enum) {
+            const auto *enumeration = program.findPayloadEnum(value);
+            return !enumeration || !enumeration->requiresActiveCleanup;
+          }
+          if (value.kind == SemanticType::Lambda)
+            return std::any_of(program.lambdaInstances().begin(),
+                               program.lambdaInstances().end(),
+                               [&](const auto &lambda) {
+                                 return lambda.type == value &&
+                                        std::none_of(
+                                            lambda.captureRequiresActiveCleanup.begin(),
+                                            lambda.captureRequiresActiveCleanup.end(),
+                                            [](bool active) { return active; });
+                               });
+          return value.kind != SemanticType::UniqueOwner &&
+                 value.kind != SemanticType::SharedPointer &&
+                 value != SemanticType::Unknown;
+        };
+        if (!passive(passive, selected.arguments.front()))
+          return std::nullopt;
+      }
       // These private inline capabilities own a conditionally live payload
       // rather than a source-visible field. Preserve that
       // ownership edge explicitly so an enclosing aggregate or shared owner
-      // can discharge the payload before leaving the native shell empty.
+      // can discharge the payload before retiring the native shell. A mutex
+      // shell has its own endpoint even when the payload needs no cleanup.
       return MirDropType{.type = selected,
                          .classInstance = owner->id,
-                         .aggregate = {*payload},
+                         .aggregate = payload ? std::vector<MirDropType>{*payload}
+                                              : std::vector<MirDropType>{},
                          .requiresActiveCleanup = true};
     }
     if (selected.kind == SemanticType::Enum) {
@@ -2258,7 +2298,9 @@ RelocationKind mirTypeRelocationKind(const MirProgram &program,
       // generated move; it is never a byte copy of a polymorphic object.
       result = RelocationKind::Structural;
     } else if (owner->compilerCapability ==
-               CompilerCapabilityTypeKind::OptionalStorage) {
+                   CompilerCapabilityTypeKind::OptionalStorage ||
+               owner->compilerCapability ==
+                   CompilerCapabilityTypeKind::MutexStorage) {
       result = candidate.arguments.size() == 1
                    ? merge(RelocationKind::Structural,
                            self(self, candidate.arguments.front()))
@@ -2393,6 +2435,106 @@ bool mirDropHasPolymorphicCleanup(const MirDropType &type) {
   return type.polymorphicCleanup ||
          std::any_of(type.aggregate.begin(), type.aggregate.end(),
                      mirDropHasPolymorphicCleanup);
+}
+
+std::optional<MirOwnedStoragePayloadInitialization>
+mirOwnedStoragePayloadInitialization(const MirProgram &program,
+                                     const MirConstructorInstance &constructor) {
+  const auto *owner = program.findClassInstance(constructor.owner);
+  const auto &body = constructor.body;
+  if (!owner || owner->compilerCapability != CompilerCapabilityTypeKind::MutexStorage ||
+      owner->type.kind != SemanticType::Class || owner->type.arguments.size() != 1 ||
+      owner->destructor || owner->abstract || owner->polymorphic || owner->unionLayout ||
+      owner->cAbiRecord || owner->cAbiLayout || owner->cOpaqueHandle ||
+      owner->requiresActiveDropState || !owner->requiresActiveCleanup ||
+      !owner->declaredFields.empty() || !owner->fields.empty() ||
+      !owner->fieldDropOrder.empty() || !owner->bases.empty() || !owner->structuralBases.empty() ||
+      constructor.definitionKind != MirDefinitionKind::Source ||
+      constructor.parameterTypes != owner->type.arguments ||
+      constructor.parameterBindings.size() != 1 || !constructor.parameterBindings[0] ||
+      !constructor.initializers.empty() || !constructor.typeArguments.empty() ||
+      !constructor.valueArguments.empty() || constructor.requiresUnsafe ||
+      constructor.borrowOrigin != BorrowOriginKind::None ||
+      body.kind != MirBodyKind::Constructor ||
+      body.returnType != SemanticType::Void || !body.values.empty() ||
+      !body.loans.empty() || !body.fullExpressions.empty() ||
+      !body.rangeIterations.empty() || !body.programConstantSubstitutions.empty() ||
+      body.places.size() != 1 || body.dropObligations.size() != 1 ||
+      !verifyMirBody(body, constructor.id).valid())
+    return std::nullopt;
+  const auto &parameter = body.places.front();
+  const auto &drop = body.dropObligations.front();
+  const auto &payload = owner->type.arguments.front();
+  const auto recipe = mirUniqueCleanupType(program, payload);
+  if (parameter.root != MirPlaceRootKind::Binding ||
+      parameter.binding != constructor.parameterBindings[0] || parameter.type != payload ||
+      !parameter.initiallyAvailable || !parameter.projections.empty() ||
+      parameter.traits.containsBorrowedState ||
+      mirTypeRelocationKind(program, payload) == RelocationKind::Unavailable ||
+      !recipe || !recipe->requiresActiveCleanup || drop.dropType != *recipe ||
+      drop.kind != MirDropObligationKind::Binding || drop.place != parameter.id ||
+      drop.binding != parameter.binding || !drop.initiallyActive)
+    return std::nullopt;
+  unsigned drops = 0;
+  for (const auto &block : body.blocks) {
+    if (!block.parameters.empty() ||
+        (block.terminator.kind != MirTerminatorKind::Return &&
+         block.terminator.kind != MirTerminatorKind::Invoke &&
+         block.terminator.kind != MirTerminatorKind::PropagateFailure))
+      return std::nullopt;
+    for (const auto &instruction : block.instructions) {
+      if (instruction.kind == MirInstructionKind::Drop) {
+        ++drops;
+        if (instruction.destination != parameter.id || instruction.lifecycle.size() != 1 ||
+            instruction.lifecycle.front().kind != MirLifecycleEventKind::Drop ||
+            instruction.lifecycle.front().source != drop.id ||
+            instruction.lifecycle.front().target || instruction.lifecycle.front().conditional ||
+            instruction.lifecycle.front().failureCleanup)
+          return std::nullopt;
+      } else if (instruction.kind != MirInstructionKind::Lifecycle ||
+                 !instruction.cleanupBoundaryEnd || !instruction.lifecycle.empty()) {
+        return std::nullopt;
+      }
+    }
+  }
+  if (drops != 1)
+    return std::nullopt;
+  return MirOwnedStoragePayloadInitialization{payload, parameter.id, drop.id};
+}
+
+bool mirDropIsNativeRetirement(const MirProgram &program,
+                               const MirDropType &type) {
+  const auto exact = mirUniqueCleanupType(program, type.type);
+  if (!exact || *exact != type)
+    return false;
+  const auto native = [&](const auto &self, const MirDropType &drop) -> bool {
+    if (!drop.requiresActiveCleanup || drop.destructor ||
+        drop.recursiveCleanup || drop.polymorphicCleanup ||
+        drop.uniquePointeeClass ||
+        drop.type.kind == SemanticType::UniqueOwner ||
+        drop.type.kind == SemanticType::SharedPointer)
+      return false;
+    bool shell = false;
+    if (drop.type.kind == SemanticType::Class) {
+      const auto *owner = drop.classInstance
+                              ? program.findClassInstance(*drop.classInstance)
+                              : nullptr;
+      if (!owner || owner->destructor || owner->traits.containsBorrowedState ||
+          (owner->compilerCapability != CompilerCapabilityTypeKind::None &&
+           owner->compilerCapability != CompilerCapabilityTypeKind::MutexStorage &&
+           owner->compilerCapability != CompilerCapabilityTypeKind::OptionalStorage))
+        return false;
+      shell = owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage;
+    } else if (drop.type.kind != SemanticType::Array &&
+               drop.type.kind != SemanticType::Enum &&
+               drop.type.kind != SemanticType::Lambda) {
+      return false;
+    }
+    return (shell || !drop.aggregate.empty()) &&
+           std::all_of(drop.aggregate.begin(), drop.aggregate.end(),
+                       [&](const auto &child) { return self(self, child); });
+  };
+  return native(native, type);
 }
 
 bool mirDropMayRaiseDefinedFailure(const MirProgram &program,

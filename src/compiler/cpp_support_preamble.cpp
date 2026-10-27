@@ -508,6 +508,8 @@ void writeCppSupportPreamble(std::ostream &output,
   }
   if (usesManagedThreads || features.threadLocalStorage) {
     output << "#include <gti/runtime_thread.hpp>\n";
+  } else if (usesMutexes) {
+    output << "#include <gti/runtime_thread.h>\n";
   }
   const bool usesCAbiTextView = features.cAbiTextView;
   if (usesCAbiTextView) {
@@ -2454,7 +2456,11 @@ public:
       ::gti_failure_record_v2 *record, bool unwinding,
       Cleanup &&cleanup) {
     if (!value_.has_value()) {
-      std::terminate();
+      // Moving retires the payload, not the engaged native mutex shell. Its
+      // later MIR drop must still destroy that shell, without a second T drop
+      // or any change to an incoming primary/cleanup failure record.
+      mutex_.destroy_if_engaged();
+      return true;
     }
     bool success = false;
     try {
@@ -2470,6 +2476,7 @@ public:
       return false;
     }
     value_.reset();
+    mutex_.destroy_if_engaged();
     return success;
   }
 
@@ -2623,7 +2630,7 @@ public:
     state_ = state;
   }
   void quarantine_for_terminal_failure() noexcept {
-    ::gti_runtime_detail::quarantine_managed_thread_state(&state_);
+    ::gti_rt_thread_quarantine_v1(&state_);
   }
 
   // A successful typed join stores the worker's result here; the take

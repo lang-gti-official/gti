@@ -509,6 +509,26 @@ def execution_profile_controls(evidence: Path, root: Path) -> None:
         require(default.returncode == 0 and
                 "ExecutionProfile.SingleThreaded" in default.stdout.splitlines(),
                 "default probe changed its execution profile")
+        source.write_text("#include <std/atomic>\nint main() { "
+                          "std::atomic<int> value{0}; return value.load(); }\n",
+                          encoding="utf-8")
+        for arguments in ([], ["single-threaded"]):
+            rejected = run([str(evidence), "--probe", str(root), str(source), *arguments])
+            require(rejected.returncode == 1 and "GTI-S2084" in rejected.stderr,
+                    "single-threaded atomic probe lost its source rejection")
+        concurrent = run([str(evidence), "--probe", str(root), str(source), "concurrent"])
+        require(concurrent.returncode == 0 and {
+                    "ExecutionProfile.Concurrent", "Shape.NativeAtomicOperation"
+                }.issubset(set(concurrent.stdout.splitlines())),
+                "explicit concurrent atomic probe lost its exact witness")
+        downgraded = build_manifest("atomic-profile-control", {"basic": source.read_text()},
+                                   profiles, execution_profiles={"basic": "concurrent"})
+        downgraded["profiles"]["basic"]["execution-profile"] = "single-threaded"
+        validate_manifest(downgraded, "atomic-profile-control", {"basic": source.read_text()}, profiles)
+        rejected = run([str(evidence), "--probe", str(root), str(source),
+                        downgraded["profiles"]["basic"]["execution-profile"]])
+        require(rejected.returncode == 1 and "GTI-S2084" in rejected.stderr,
+                "atomic evidence inferred concurrency after metadata downgrade")
         invalid = run([str(evidence), "--probe", str(root), str(source), "unknown"])
         require(invalid.returncode == 2 and "GTI-" not in invalid.stderr,
                 "invalid profile reached source analysis")

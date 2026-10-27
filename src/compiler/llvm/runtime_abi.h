@@ -17,9 +17,23 @@ enum class RuntimeService {
   AbortAllocation,
   ValidateFailure,
   CapturePanic,
+  AtomicWait,
+  AtomicNotify,
+  MutexInitialize,
+  MutexDestroy,
+  MutexLock,
+  MutexUnlock,
   EnterFailureCleanup,
   LeaveFailureCleanup,
   CheckFailureCleanup,
+  EnterThreadFailureSink,
+  LeaveThreadFailureSink,
+  PublishThreadFailure,
+  ThreadCleanupFailureKind,
+  CopyThreadCleanupPrimary,
+  QuarantineThread,
+  ProgramStorageRetirementReady,
+  AtomicNotifyRegistered,
 };
 
 // Only real C symbols with explicitly modeled signatures enter the module.

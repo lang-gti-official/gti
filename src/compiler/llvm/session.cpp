@@ -3,6 +3,8 @@
 #include "debug_info.h"
 #include "instrumentation.h"
 
+#include <llvm/CodeGen/TargetLowering.h>
+#include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/DiagnosticInfo.h>
 #include <llvm/IR/DiagnosticPrinter.h>
@@ -15,6 +17,7 @@
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
 
+#include <bit>
 #include <mutex>
 #include <set>
 #include <stdexcept>
@@ -192,6 +195,18 @@ Session::Session(VerifiedLoweredProgram program, LlvmBackendOptions options)
 
 Session::~Session() = default;
 const LoweredProgram &Session::program() const { return input_.program(); }
+bool Session::supportsNativeAtomic(const llvm::Function &function,
+                                   unsigned bits,
+                                   std::uint64_t alignment) const {
+  if (function.getParent() != &module_ ||
+      (bits != 8 && bits != 16 && bits != 32 && bits != 64) ||
+      !std::has_single_bit(alignment) || alignment < bits / 8)
+    return false;
+  const auto *subtarget = machine_->getSubtargetImpl(function);
+  const auto *lowering = subtarget ? subtarget->getTargetLowering() : nullptr;
+  return lowering && bits <= lowering->getMaxAtomicSizeInBitsSupported() &&
+         bits >= lowering->getMinCmpXchgSizeInBits();
+}
 const llvm::DataLayout &Session::dataLayout() const {
   return module_.getDataLayout();
 }

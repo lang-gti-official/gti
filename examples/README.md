@@ -277,7 +277,7 @@ is a teaching helper, not a production server.
 | `063-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
 | `064-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
 | `065-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
-| `066-managed-threads.gti` | move-only threads, transfer-qualified erased jobs, shared mutex state, scoped disjoint borrows, explicit join, and mandatory autojoin |
+| `066-managed-threads.gti` | move-only threads, transfer-qualified erased jobs, shared mutex state, native-only process mutex retirement, scoped disjoint borrows, explicit join, and mandatory autojoin |
 | `067-forward-iterators.gti` | copied owner-tied read cursors, temporary end-sentinel loops, `std::next`, and forward-iterator binary search |
 | `068-static-assertions.gti` | package, class-dependent, and block-scope compile-time assertions |
 | `069-mutable-field-groups.gti` | grouped mutable fields inside an otherwise immutable-by-default class |

@@ -970,6 +970,24 @@ GTI's documented wait contract, not semantic authority from the C++ spelling.
 No mutex-loan suspension, public-name exception, new syntax or LSP inference
 path is introduced. Ordinary application wrappers compose the same calls.
 
+LLVM notification uses the versioned final-image runtime enrollment domain,
+not a second parking table or a per-object extension. Its 256 buckets have
+128-byte stride and 64-byte alignment; two fixed 32-bit metadata words precede
+120 opaque native bytes. The native provider checks its actual pthread layout
+fits, begins the native object lifetime once and never tears the domain down.
+The domain occupies 32 KiB of static storage (previous private Linux buckets
+occupied 24 KiB); this does not measure pthread/libc internal allocation.
+The x86-64 path retains the acquire/release wake-bit RMW chain; arm64 retains
+the sequentially-consistent fence and relaxed waiter-count test. Only a
+registered notification calls the nonthrowing native broadcast/rearm service,
+which does not consume a second wake bit. Direct C wait/notify services keep
+their full input validation and share the identical domain. Typed code obtains
+lane width/alignment from verified MIR and layout, without rediscovering source
+ownership or weakening the synchronization contract. Independent unloadable
+providers remain unsupported, as before. The identical-source wait cost oracle
+compares optimized public LLVM and C++20/23 execution and retains their build,
+memory and binary-size observations separately from raw C-service cost.
+
 Fixed-width integer `fetch_add`, `fetch_sub`, `fetch_and`, `fetch_or`, and
 `fetch_xor` remain source-library policy: private generic update helpers form
 strong compare/exchange loops from those same exact declarations. Consequently
@@ -1034,7 +1052,85 @@ remain `expected` results; an incoherent native join state is an integrity
 termination rather than a forgeable recoverable handle. An automatic-join
 host failure transfers its still-coherent state into a private terminal
 quarantine and raises `GTI-R0012`; this is neither detach nor a resumable
-ownership state.
+ownership state. `gti_rt_thread_quarantine_v1` exposes that same terminal-only
+ownership transfer to nonthrowing generated adapters. It permanently pins
+native process storage: the worker may still use share-capable globals, and
+the manual C-thread registry does not track managed workers. The nonthrowing
+`gti_rt_thread_program_storage_retirement_ready_v1` query returns zero after
+quarantine, even if the worker subsequently finishes. Hosted failure preserves
+the original record while leaving native roots live until terminal process
+exit. A native module-unload hook rejects live pinned roots rather than
+destroying or unmapping them. An embedding context must consult the same query
+and refuse shutdown/unload when pinned; normal foreign-caller quiescence remains
+a separate host obligation. There is no asynchronous cleanup or retry policy.
+
+The versioned nonthrowing worker seam is declared in `runtime_thread.h`.
+`gti_thread_failure_view_v1` borrows one exact v2 ordinary or cleanup record
+plus its pinned artifact descriptors for the duration of publication. A sink
+must copy the record before returning. The runtime installs a default worker
+sink around entry, task/result cleanup and TLS drain. Publication records an
+outcome but performs no control transfer: generated adapters must catch their
+selected internal GTI transport before returning through any C callback.
+No C service or callback receives permission to unwind.
+
+A typed completion callback consumes its task exactly once. Null is accepted
+only after an outcome failure has been published and no live result remains;
+a non-null result on failure is abandoned by the runtime. Successful null
+completion remains an integrity termination. This lets a nonthrowing adapter
+finish failed task/capture cleanup without manufacturing an owned result.
+
+Synchronous launch rollback and post-join result take/abandon instead need a
+caller-owned `gti_thread_failure_sink_v1`. Enter/leave nest address-stable,
+thread-confined descriptors in strict LIFO order; an inner caller sink takes
+precedence even when its caller is a managed worker. The descriptor allocates
+no memory and owns no mandatory success-path failure buffer. Publication is
+cold, rejects malformed records/reentry/descriptor mutation and terminates if
+a sink throws. Worker task-cleanup queries expose the pending primary only
+while that exact default sink is active. A second cleanup failure preserves
+the primary in the emergency envelope; a third failure terminates.
+
+`runtime_thread_outcome_boundary` tests the C17 layout/signatures, copied
+records, nested caller scopes, launch rollback, worker and post-join result
+cleanup, TLS-before-result cleanup and isolated integrity deaths. A real join
+failure also checks sticky retirement pinning after worker cleanup. These are
+isolated terminal-retention checks; only that subprocess disables TSan's
+unjoined-thread exit report, while race detection and all ordinary shutdown
+leak reports remain enabled. This is
+runtime containment evidence, not generated LLVM worker admission or a C04
+transport selection. The generated entry/cleanup/result adapters remain a
+separate integration prerequisite.
+
+The O13 mutex service oracle also lowers an unmodified sealed MIR program
+through the production body lowerer before public admission is opened. It
+executes source constructors, partial rollback, TLS and native process
+retirement at O0-O3, with failures before initialization, in either constructor,
+after publication and in the source entry. C observers count real native shell
+initialization/retirement, verify TLS still sees both live roots and inspect the
+original record at the real failure terminator. This is source-composition
+evidence, not a public mutex/worker profile or a C04 transport decision. Separate
+kernel cases check repeated teardown and unpublished-prefix handling. A real
+quarantined worker keeps locking a published native root through explicit
+hosted retirement; the original ordinary failure is preserved and both roots
+remain live. The unload endpoint rejects those pinned roots without retiring
+them. These are terminal, isolated processes, not leaked normal-shutdown tests.
+
+An additional source-composition fixture uses the actual fallible GTI payload
+destructor, rather than the kernel's explicit C destructor double. A source
+record owns two mutexes; an unrelated owning sum carries another mutex inside
+an outer mutex payload. Normal and first-failure traces require three exact
+payload destructions in reverse order and one retirement per initialized native
+identity, including identities created by payload transfer. A second destructor
+failure requires the real emergency record and stops before retiring the final
+native shell, matching terminal cleanup abandonment. Native O0-O3 and sanitizer
+execution remain distinct from public admission.
+
+The optional `llvm_mutex_service_test.py --gti` differential checks those actual
+source destructor traces through C++20/O0 and C++23/O3. The current C++ backend
+rejects the public wrapper constructor's fallible moved-parameter cleanup as
+outside its complete text vocabulary. That failed comparator is a recorded
+backend gap, not a pass or a reason to weaken the native oracle; existing C++
+mutex regression families remain required. No C++ feature catch-up or failure
+transport change is supplied to make this new composition comparable.
 
 ### Scoped-worker execution
 

@@ -193,6 +193,7 @@ LLVM_COVERAGE_ENTRY(RestoreRangeCursor, 5, VerifiedNonExecuting, VerifiedMetadat
 LLVM_COVERAGE_ENTRY(EnsureThreadLocal, 6, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(DrainThreadLocals, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_class_execution", "tls-passive-dynamic"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
 LLVM_COVERAGE_ENTRY(BeginThreadLocals, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_class_execution", "tls-passive-dynamic"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
+LLVM_COVERAGE_ENTRY(RetireProgramStorage, 13, Pending, None, "exact native-only process storage retirement")
 LLVM_COVERAGE_SENTINEL(Count)
 LLVM_COVERAGE_END()
 
@@ -363,6 +364,7 @@ LLVM_COVERAGE_ENTRY(BeginCThreadRuntime, 4, Pending, None, "all represented shap
 LLVM_COVERAGE_ENTRY(EndCThreadRuntime, 4, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(DrainThreadLocals, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_class_execution", "tls-passive-dynamic"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
 LLVM_COVERAGE_ENTRY(BeginThreadLocals, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_class_execution", "tls-passive-dynamic"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
+LLVM_COVERAGE_ENTRY(RetireProgramStorage, 13, Pending, None, "exact native-only process storage retirement")
 LLVM_COVERAGE_SENTINEL(Count)
 LLVM_COVERAGE_END()
 
@@ -853,6 +855,14 @@ LLVM_COVERAGE_ENTRY(Library, 11, Pending, None, "all represented shapes remain p
 LLVM_COVERAGE_END()
 
 LLVM_COVERAGE_BEGIN(Shape)
+LLVM_COVERAGE_ENTRY(NativeAtomicStorage, 13, LLVM_COVERAGE_IMPLEMENTED("llvm_atomic_execution", "atomic.scalar-core"), None, "exact trusted bool/fixed-integer capability, target scalar storage/alignment and exclusive initialization; contract cases storage-domain and constructor; no wait or workers")
+LLVM_COVERAGE_ENTRY(NativeAtomicOperation, 13, LLVM_COVERAGE_IMPLEMENTED("llvm_atomic_execution", "atomic.scalar-core"), None, "exact staged atomic load/store/exchange/strong-CAS with verified legal orders, system scope, target-supported width/alignment and observed output; cases scalar-orders and cas-observed")
+LLVM_COVERAGE_ENTRY(NativeAtomicWaitingOperation, 13, LLVM_COVERAGE_IMPLEMENTED("llvm_atomic_execution", "atomic.wait-ready"), None, "exact executable-image bool/fixed-integer wait/notify with verified load orders and canonical same-width old bits; process-lifetime blocking service, ready-path lane/order execution and separate runtime synchronization litmus; worker adapters independently gated")
+LLVM_COVERAGE_ENTRY(AtomicInitialization, 13, Pending, None, "requires exact trusted storage constructor, scalar ABI lane, empty source body/effects and exclusive pre-publication destination")
+LLVM_COVERAGE_ENTRY(NativeMutexStorage, 13, LLVM_COVERAGE_IMPLEMENTED("llvm_mutex_service", "mutex.public-lifecycle"), None, "exact trusted mutex shell/token, inline ordinary record/array/payload composition and verified borrow/cleanup recipes; no generic native-value permission")
+LLVM_COVERAGE_ENTRY(NativeMutexOperation, 13, LLVM_COVERAGE_IMPLEMENTED("llvm_mutex_service", "mutex.public-lifecycle"), None, "exact staged lock/unlock/guard access or original mutex-lock defined failure; matching private payload and token identities, access and synchronization")
+LLVM_COVERAGE_ENTRY(MutexInitialization, 13, Pending, None, "requires exact trusted storage constructor and verified exclusive payload transfer before publication")
+LLVM_COVERAGE_ENTRY(NativeProgramRetirement, 13, LLVM_COVERAGE_IMPLEMENTED("llvm_mutex_service", "mutex.public-lifecycle"), None, "exact hosted native-only root retirement after source/TLS cleanup; completed roots only, reverse order, and terminal worker quarantine pins roots")
 LLVM_COVERAGE_ENTRY(NativeCScalarImport, 11, LLVM_COVERAGE_IMPLEMENTED("llvm_native_c_scalar_execution", "direct-imports"), None, "exact canonical non-provider C declaration and staged direct scalar/pointer call; no aggregate, native function value, callback, runtime binding or C04 transport admission")
 LLVM_COVERAGE_ENTRY(NativeCScalarValue, 11, LLVM_COVERAGE_IMPLEMENTED("llvm_native_c_scalar_execution", "native-scalars"), None, "native C scalar identity and numeric domain exactly matching the canonical target query; storage/value representation only, no independent foreign call admission")
 LLVM_COVERAGE_ENTRY(NativeCCountedInput, 11, LLVM_COVERAGE_IMPLEMENTED("llvm_native_c_counted_input", "counted-inputs"), None, "exact canonical C signature with immutable nonretained counted-text input records, scalar/pointer other lanes and scalar result; shared target C record transport, no text return, ownership transfer or arbitrary aggregate admission")

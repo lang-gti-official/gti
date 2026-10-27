@@ -1,4 +1,5 @@
 #include "body.h"
+#include "atomics.h"
 #include "../mir_verification_queries.h"
 #include "callables.h"
 #include "constructor_field_publication.h"
@@ -9,6 +10,7 @@
 #include "hosted.h"
 #include "lifetimes.h"
 #include "memory.h"
+#include "mutexes.h"
 #include "native_c_abi.h"
 #include "native_c_contract.h"
 #include "parameter_packs.h"
@@ -132,7 +134,8 @@ public:
                 [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
                   guard(condition, outcome);
                 }),
-        findFunction(std::move(findFunction)), values(body.values.size() + 1),
+        atomics(session, ir), findFunction(std::move(findFunction)),
+        values(body.values.size() + 1),
         memory(
             session, ir, body, values,
             [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
@@ -193,6 +196,7 @@ private:
   std::optional<SemanticType> receiverType;
   Callables &callables;
   Scalars scalars;
+  Atomics atomics;
   std::function<llvm::Function *(MirBodyAddress)> findFunction;
   std::vector<llvm::Value *> values;
   Places memory;
@@ -370,7 +374,8 @@ private:
   }
   void store(llvm::Value *value, llvm::Value *address,
              const SemanticType &type) {
-    memory.store(value, address, type);
+    if (!lifetimes.transferMutexes(ir, address, value, type))
+      memory.store(value, address, type);
   }
   [[nodiscard]] UnstagedConstructorFieldPublicationPlan
   recordPublication(const MirInstruction &instruction) const {
@@ -513,12 +518,20 @@ private:
     // verified MIR proof. It does not authorize originating a different record.
     if (!authorized)
       return;
+    if (const auto *constant = llvm::dyn_cast<llvm::ConstantInt>(condition);
+        constant && constant->isZero())
+      return;
     const auto &term = current->terminator;
     const bool terminalAllocation =
         outcome.code == DefinedFailureCode::AllocationFailure;
     if (!terminalAllocation && (term.kind != MirTerminatorKind::Invoke ||
                                 term.invokeInstruction != stage->id))
-      throw std::logic_error("LLVM checked operation lost its Invoke");
+      throw std::logic_error(
+          "LLVM checked operation lost its Invoke in body " +
+          std::to_string(static_cast<unsigned>(address.kind)) + "/" +
+          std::to_string(address.owner) + " block " +
+          std::to_string(current->id) + " instruction " +
+          std::to_string(stage->id));
     auto *failed =
         llvm::BasicBlock::Create(session.context(), "check.failed", &function);
     auto *normal =
@@ -667,7 +680,8 @@ private:
     if (instruction.intrinsic == IntrinsicKind::Panic ||
         instruction.intrinsic == IntrinsicKind::FailEmptyOwner ||
         instruction.intrinsic == IntrinsicKind::FailInactiveValue ||
-        instruction.intrinsic == IntrinsicKind::FailInactiveError) {
+        instruction.intrinsic == IntrinsicKind::FailInactiveError ||
+        instruction.intrinsic == IntrinsicKind::MutexLockFailure) {
       const auto &term = current->terminator;
       if (instruction.definedFailure.localOrigins.size() != 1 ||
           instruction.definedFailure.localOrigins[0].outcomes.size() != 1)
@@ -769,6 +783,18 @@ private:
         return outcome;
       }
 #endif
+      if (Atomics::handles(instruction.intrinsic)) {
+        std::vector<llvm::Value *> inputs;
+        for (const auto &source : instruction.operands)
+          inputs.push_back(operand(source));
+        return atomics.emit(input, instruction, inputs);
+      }
+      if (Mutexes::handles(instruction.intrinsic)) {
+        std::vector<llvm::Value *> inputs;
+        for (const auto &source : instruction.operands)
+          inputs.push_back(operand(source));
+        return Mutexes(session, ir).emit(input, instruction, inputs);
+      }
       if (instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem)
         return formFunctionPointer(instruction);
       if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke)
@@ -1371,6 +1397,16 @@ private:
         result = freshTransfer(instruction);
         break;
       }
+      if (instruction.kind == MirInstructionKind::Load &&
+          instruction.info.category == ValueCategory::Place &&
+          addressValue(session.program().mir(), instruction.info.type) &&
+          !containsHierarchyStorage(session.program().mir(),
+                                    instruction.info.type)) {
+        // A place observation preserves identity; only value materialization
+        // may copy/transfer its representation into another storage slot.
+        result = memory.selected(instruction.operands.at(0));
+        break;
+      }
       [[fallthrough]];
     case MirInstructionKind::CallInput:
       if (hosted) {
@@ -1618,10 +1654,15 @@ private:
            channel ? failures.origin(ir, channel) : null});
       break;
     }
+    case MirInstructionKind::RetireProgramStorage:
+      lifetimes.retireProgramStorage(ir);
+      break;
     default:
       throw BackendUnsupportedError(
           "LLVM instruction shape is not implemented");
     }
+    if (address.kind == MirBodyKind::Module)
+      lifetimes.publishProgramStorage(ir, instruction.id);
     // A constructed borrowed carrier publishes its own address, not the
     // referent that provides the result's lifetime dependency.
     if ((instruction.kind == MirInstructionKind::Call ||
@@ -1854,6 +1895,7 @@ private:
                       })))
       throw std::logic_error(
           "LLVM incoming ABI arguments differ from sealed parameter bindings");
+    llvm::Value *atomicArgument = nullptr;
     for (std::size_t index = 0; index < abi.parameters.size(); ++index) {
       auto *argument = function.getArg(index);
       const auto &parameter = abi.parameters[index];
@@ -1890,6 +1932,8 @@ private:
         memory.parameter(lane, argument, parameter.indirect);
         if (auto *debug = session.debugInfo())
           debug->parameter(ir, *argument);
+        if (parameter.sourceIndex == 0 && !parameter.indirect)
+          atomicArgument = argument;
         // Only ordinary prefix lanes have a one-to-one source parameter.
         // Expanded packs and hidden ABI channels do not acquire fake names.
         if (auto *debug = session.debugInfo();
@@ -1918,6 +1962,43 @@ private:
               debug->local(ir, place, argument);
         break;
       }
+    }
+    if (input.kind == MirBodyKind::Constructor && owner &&
+        owner->compilerCapability ==
+            CompilerCapabilityTypeKind::AtomicStorage) {
+      const auto *constructor =
+          session.program().mir().findConstructorInstance(address.owner);
+      if (address.kind != MirBodyKind::Constructor || !constructor ||
+          &constructor->body != &input || !thisAddress || !atomicArgument ||
+          parameters.size() != 1 || !parameters[0].materialized ||
+          parameters[0].packElement ||
+          constructor->parameterBindings.size() != 1 ||
+          constructor->parameterTypes.size() != 1 ||
+          parameters[0].binding != constructor->parameterBindings[0] ||
+          parameters[0].type != constructor->parameterTypes[0])
+        throw BackendUnsupportedError(
+            "LLVM atomic initialization lost its exact constructor ABI lane");
+      atomics.initialize(*constructor, thisAddress, atomicArgument);
+    }
+    if (input.kind == MirBodyKind::Constructor && owner &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+      const auto *constructor = session.program().mir().findConstructorInstance(address.owner);
+      const auto payload = constructor ? nativeMutexConstructor(session.program().mir(), *constructor)
+                                       : std::nullopt;
+      if (!payload || !thisAddress || parameters.size() != 1 ||
+          parameters[0].binding != constructor->parameterBindings[0] ||
+          parameters[0].type != *payload || !parameters[0].materialized)
+        throw BackendUnsupportedError("LLVM mutex initialization lost its sealed payload constructor");
+      const auto layout = session.layouts().mutexStorage(owner->type);
+      auto *source = memory.address(input.places.front().id);
+      Mutexes(session, ir).initializeShell(thisAddress, owner->type);
+      auto *destination = ir.CreateStructGEP(layout.object.storage, thisAddress,
+                                             layout.payloadIndex);
+      if (!lifetimes.transferMutexes(ir, destination, source, *payload))
+        store(load(source, *payload), destination, *payload);
+      lifetimes.moved(ir, source, *payload);
+      ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive | MutexStorageLayout::payloadLive),
+                     ir.CreateStructGEP(layout.object.storage, thisAddress, layout.payloadActiveIndex));
     }
     if (input.kind == MirBodyKind::HostedStartup &&
         session.program().mir().hostedStartupPlan()->kind ==
@@ -2183,6 +2264,7 @@ void Bodies::lower(const LlvmAdmissionPlan &admission) {
     globals.emplace(step.symbol, global);
   }
   declareNativeCStorage(session, globals);
+  lifetimes.prepareProgramStorage(globals);
   for (auto address : admission.requiredBodies())
     static_cast<void>(function(address));
   std::vector<MirNativeCallbackAdapterId> callbacks;

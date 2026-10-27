@@ -1,4 +1,6 @@
+#include "atomic_types.h"
 #include "gti/llvm_admission.h"
+#include "gti/mir_effects.h"
 
 #include "../mir_verification_queries.h"
 #include "closure_environment.h"
@@ -8,6 +10,7 @@
 #include "embedding.h"
 #include "lifetimes.h"
 #include "memory_types.h"
+#include "mutexes.h"
 #include "native_c_contract.h"
 #include "parameter_packs.h"
 #include "placement.h"
@@ -1173,6 +1176,8 @@ public:
             return false;
           owner = &candidate;
         }
+      if (native_llvm::nativeAtomicElement(program, selected))
+        return true;
       if (!owner)
         return false;
       if (owner->compilerCapability ==
@@ -1202,18 +1207,83 @@ public:
     };
     return supported(supported, type);
   }
+  std::optional<Shape> mutexShape(const SemanticType &type) const {
+    if (program.executionProfile() != ExecutionProfile::Concurrent ||
+        !program.target().runtimeCapabilities.threads)
+      return {};
+    std::vector<SemanticType> visiting;
+    bool mutex = false;
+    const auto represented = [&](const auto &self,
+                                 const SemanticType &selected) -> bool {
+      if (std::find(visiting.begin(), visiting.end(), selected) != visiting.end())
+        return false;
+      visiting.push_back(selected);
+      bool valid = false;
+      if (selected.kind == SemanticType::Reference &&
+          selected.arguments.size() == 1)
+        valid = self(self, selected.arguments[0]);
+      else if (selected.kind == SemanticType::Array &&
+               selected.arguments.size() == 1 &&
+               !selected.arrayLengthParameterId)
+        valid = self(self, selected.arguments[0]);
+      else if (const auto *payload = program.findPayloadEnum(selected)) {
+        valid = true;
+        for (const auto &variant : payload->variants)
+          for (const auto &element : variant.payloadTypes)
+            valid &= self(self, element);
+      } else if (selected.kind == SemanticType::Class) {
+        const MirClassInstance *owner = nullptr;
+        for (const auto &candidate : program.classInstances())
+          if (candidate.type == selected) {
+            if (owner)
+              return false;
+            owner = &candidate;
+          }
+        if (owner &&
+            (owner->compilerCapability ==
+                 CompilerCapabilityTypeKind::MutexStorage ||
+             owner->compilerCapability ==
+                 CompilerCapabilityTypeKind::MutexLockToken)) {
+          const auto element = native_llvm::nativeMutexElement(
+              program, selected, owner->compilerCapability);
+          valid = element && self(self, *element);
+          mutex |= valid;
+        } else if (owner && owner->compilerCapability ==
+                                CompilerCapabilityTypeKind::None &&
+                   !owner->abstract && !owner->polymorphic &&
+                   !owner->cOpaqueHandle && !owner->cAbiLayout &&
+                   !owner->unionLayout && owner->bases.empty() &&
+                   owner->structuralBases.empty()) {
+          valid = true;
+          for (const auto &field : owner->declaredFields)
+            valid &= self(self, field.type);
+        } else
+          valid = nativeValue(selected);
+      } else
+        valid = nativeValue(selected);
+      visiting.pop_back();
+      return valid;
+    };
+    return represented(represented, type) && mutex
+               ? std::optional(Shape::NativeMutexStorage)
+               : std::nullopt;
+  }
   std::optional<Shape> classShape(const SemanticType &type) const {
     // References previously borrowed this ordinary-storage witness while the
     // recursive referent requirement kept hierarchy execution closed. New
     // hierarchy metadata must never turn that into an operation permission.
     if (dispatchProofs.related(type))
       return {};
+    if (const auto mutex = mutexShape(type))
+      return mutex;
     const auto *leaf = &type;
     while ((leaf->kind == SemanticType::Array ||
             leaf->kind == SemanticType::Reference ||
             leaf->kind == SemanticType::RawPointer) &&
            leaf->arguments.size() == 1)
       leaf = &leaf->arguments[0];
+    if (native_llvm::nativeAtomicElement(program, *leaf) && nativeValue(type))
+      return Shape::NativeAtomicStorage;
     if (leaf->kind == SemanticType::UniqueOwner && nativeValue(type))
       return Shape::NativeUniqueOwnership;
     if (leaf->kind == SemanticType::Enum && program.findPayloadEnum(*leaf) &&
@@ -1595,6 +1665,36 @@ public:
   std::optional<Shape> representationShape(const SemanticType &type) {
     return dispatchProofs.related(type) ? dispatchProofs.metadata(type)
                                         : classShape(type);
+  }
+  bool nativeRetirement(const MirHostedStartupOperation &operation) const {
+    const auto &plan = program.hostedStartupPlan();
+    if (!plan || operation.kind !=
+                     MirHostedStartupOperationKind::RetireProgramStorage ||
+        operation.failureBehavior != MirHostedStartupFailureBehavior::None ||
+        operation.terminator || operation.place || operation.value ||
+        operation.dropObligation || operation.failureRecord ||
+        operation.cleanupBoundary)
+      return false;
+    const auto *startup = findMirBody(
+        program, {MirBodyKind::HostedStartup, plan->entry});
+    const auto *owner = startup ? startup->findBlock(operation.block) : nullptr;
+    const MirInstruction *stage = nullptr;
+    if (owner)
+      for (const auto &candidate : owner->instructions)
+        if (candidate.id == operation.instruction)
+          stage = &candidate;
+    if (!stage || stage->hostedStartupOperation != operation.id ||
+        stage->kind != MirInstructionKind::RetireProgramStorage)
+      return false;
+    bool found = false;
+    for (const auto &step : program.programInitializationPlan().steps)
+      if (step.nativeRetirement) {
+        if (!mirDropIsNativeRetirement(program, *step.nativeRetirement) ||
+            !mutexShape(step.nativeRetirement->type))
+          return false;
+        found = true;
+      }
+    return found;
   }
   const MirClassInstance *bodyClass() const {
     if (!body)
@@ -2438,6 +2538,24 @@ public:
     if (row.role != LoweredBodyRole::SourceExecutable)
       return;
     executable = true;
+    if (body && body->kind == MirBodyKind::Constructor) {
+      const auto *constructor = program.findConstructorInstance(body->owner);
+      const auto *owner =
+          constructor ? program.findClassInstance(constructor->owner) : nullptr;
+      if (owner && owner->compilerCapability ==
+                       CompilerCapabilityTypeKind::AtomicStorage)
+        add(Shape::AtomicInitialization,
+            native_llvm::nativeAtomicConstructor(program, *constructor)
+                ? std::optional(Shape::NativeAtomicStorage)
+                : std::nullopt);
+      if (owner && owner->compilerCapability ==
+                       CompilerCapabilityTypeKind::MutexStorage)
+        add(Shape::MutexInitialization,
+            native_llvm::nativeMutexConstructor(program, *constructor) &&
+                    mutexShape(owner->type)
+                ? std::optional(Shape::NativeMutexStorage)
+                : std::nullopt);
+    }
     type(mir.returnType);
     add(mir.returnType.kind == SemanticType::Reference ? Shape::BorrowReturn
         : mir.returnType.kind == SemanticType::Class ||
@@ -2597,6 +2715,18 @@ public:
         std::optional<Shape> storageShape =
             typedMemory ? std::optional(Shape::NativeMemoryOperation)
                         : std::nullopt;
+        const bool mutex = native_llvm::nativeMutexCall(program, mir, stage) ||
+                           native_llvm::nativeMutexLockFailure(program, stage);
+        if (mutex)
+          storageShape = Shape::NativeMutexOperation;
+        if (stage.kind == MirInstructionKind::RetireProgramStorage &&
+            body->kind == MirBodyKind::HostedStartup &&
+            program.hostedStartupPlan())
+          for (const auto &operation : program.hostedStartupPlan()->operations)
+            if (operation.id == stage.hostedStartupOperation &&
+                operation.block == block && operation.instruction == stage.id &&
+                nativeRetirement(operation))
+              storageShape = Shape::NativeProgramRetirement;
         if (stage.kind == MirInstructionKind::EnsureThreadLocal)
           if (const auto *storage =
                   program.findThreadLocalStorage(stage.threadLocalStorage))
@@ -2723,6 +2853,9 @@ public:
                   ? placeClassShape(*addressPlace)
                   : std::nullopt);
         }
+        const bool atomic = native_llvm::nativeAtomicCall(program, mir, stage);
+        const bool atomicWaiting =
+            native_llvm::nativeAtomicWaitingCall(program, mir, stage);
         if (stage.intrinsic != IntrinsicKind::None) {
           const bool textQuery =
               stage.receiver &&
@@ -2741,8 +2874,12 @@ public:
               callableIntrinsic = classShape(receiver.arguments.front());
           }
           add(stage.intrinsic,
-              callableIntrinsic ? callableIntrinsic
-              : typedMemory     ? std::optional(Shape::NativeMemoryOperation)
+              atomic              ? std::optional(Shape::NativeAtomicOperation)
+              : atomicWaiting
+                  ? std::optional(Shape::NativeAtomicWaitingOperation)
+              : mutex ? std::optional(Shape::NativeMutexOperation)
+              : callableIntrinsic ? callableIntrinsic
+              : typedMemory       ? std::optional(Shape::NativeMemoryOperation)
               : nativeAddressConversion(stage) && validRaw
                   ? std::optional(Shape::NativeObjectAddress)
               : erasedReference(stage) ? std::optional(Shape::ErasedReference)
@@ -2997,11 +3134,18 @@ public:
                   : std::nullopt);
         }
         if (stage.synchronization.kind != SynchronizationOperationKind::None) {
-          add(stage.synchronization.kind);
+          const auto witness = atomic
+                                   ? std::optional(Shape::NativeAtomicOperation)
+                               : atomicWaiting
+                                   ? std::optional(Shape::NativeAtomicWaitingOperation)
+                               : mutex
+                                   ? std::optional(Shape::NativeMutexOperation)
+                                   : std::nullopt;
+          add(stage.synchronization.kind, witness);
           if (stage.synchronization.order)
-            add(*stage.synchronization.order);
+            add(*stage.synchronization.order, witness);
           if (stage.synchronization.failureOrder)
-            add(*stage.synchronization.failureOrder);
+            add(*stage.synchronization.failureOrder, witness);
         }
         if (!stage.definedFailure.empty()) {
           add(Shape::CheckedFailure);
@@ -3172,7 +3316,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     if (instance.compilerCapability != CompilerCapabilityTypeKind::None)
       inventory.add(
           instance.compilerCapability,
-          native_llvm::uninitializedStorageRepresentation(mir, instance) &&
+          native_llvm::nativeAtomicElement(mir, instance.type)
+              ? std::optional(Shape::NativeAtomicStorage)
+          : native_llvm::uninitializedStorageRepresentation(mir, instance) &&
                   inventory.nativeValue(instance.type)
               ? std::optional(Shape::NativeMemoryOperation)
           : native_llvm::sharedOwnerRepresentation(mir, instance) &&
@@ -3339,6 +3485,8 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       inventory.add(operation.kind,
                     native_llvm::nativeCThreadLifecycleOperation(mir, operation)
                         ? std::optional(Shape::NativeCThreadLifecycle)
+                    : inventory.nativeRetirement(operation)
+                        ? std::optional(Shape::NativeProgramRetirement)
                         : std::nullopt);
       inventory.add(operation.failureBehavior);
     }

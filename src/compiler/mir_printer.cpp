@@ -270,6 +270,8 @@ hostedStartupOperationName(MirHostedStartupOperationKind kind) {
     return "drain-thread-locals";
   case MirHostedStartupOperationKind::BeginThreadLocals:
     return "begin-thread-locals";
+  case MirHostedStartupOperationKind::RetireProgramStorage:
+    return "retire-program-storage";
   }
   return "invalid";
 }
@@ -962,6 +964,7 @@ private:
              << " role=" << programInitializationRoleName(step.role)
              << " symbol=" << step.symbol << " owner-class=" << step.ownerClass
              << " active-cleanup=" << step.requiresActiveCleanup
+             << " native-retirement=" << step.nativeRetirement.has_value()
              << " binding=" << step.binding << " place=p" << step.storagePlace
              << " entry=bb" << step.entryBlock << " initialize=i"
              << step.storageInitialization << " data-kind="
@@ -986,6 +989,8 @@ private:
       output << "] nested-full-expressions=[";
       list(step.nestedFullExpressions);
       output << "]\n";
+      if (step.nativeRetirement)
+        dropObligation(MirDropObligation{.dropType = *step.nativeRetirement});
     }
   }
 

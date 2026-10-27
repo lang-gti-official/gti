@@ -673,6 +673,7 @@ struct ProgramInitializationStep {
   SymbolId symbol = 0;
   ClassId ownerClass = 0;
   bool requiresActiveCleanup = false;
+  bool requiresNativeRetirement = false;
   bool threadLocal = false;
   FunctionId ownerFunction = 0;
   DefinedFailureOperation ensureFailure;
@@ -685,6 +686,7 @@ struct ProgramInitializationStep {
            left.declaration == right.declaration &&
            left.symbol == right.symbol && left.ownerClass == right.ownerClass &&
            left.requiresActiveCleanup == right.requiresActiveCleanup &&
+           left.requiresNativeRetirement == right.requiresNativeRetirement &&
            left.threadLocal == right.threadLocal &&
            left.ownerFunction == right.ownerFunction &&
            left.ensureFailure == right.ensureFailure &&

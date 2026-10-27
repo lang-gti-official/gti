@@ -3,6 +3,8 @@
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 
+#include <functional>
+
 namespace lang {
 bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                                     const FailureMetadata &failureMetadata,
@@ -33,6 +35,12 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
       program.programInitializationPlan().steps.end(), [](const auto &step) {
         return step.role == ProgramInitializationStepRole::Initializer;
       });
+  const bool retiresProgramStorage = std::any_of(
+      program.programInitializationPlan().steps.begin(),
+      program.programInitializationPlan().steps.end(),
+      [](const auto &step) { return step.nativeRetirement.has_value(); });
+  bool cThreadStarted = false;
+  std::function<void(MirBlock &)> finishNativeFailure;
 
   MirHostedStartupPlan plan;
   plan.kind = hirPlan->kind;
@@ -325,6 +333,8 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
                             {.kind = MirInstructionKind::Lifecycle,
                              .cleanupBoundaryEnd = boundary});
         }
+        if (retiresProgramStorage)
+          finishNativeFailure(*cleanup);
         const MirHostedStartupOperationId containOperation =
             beginOperation(MirHostedStartupOperationKind::ContainFailure,
                            MirHostedStartupFailureBehavior::None, cleanup->id);
@@ -393,6 +403,8 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     if (!program.requiresCThreadRuntime()) {
       return;
     }
+    if (begin)
+      cThreadStarted = true;
     const auto operation = beginOperation(
         begin ? MirHostedStartupOperationKind::BeginCThreadRuntime
               : MirHostedStartupOperationKind::EndCThreadRuntime,
@@ -402,6 +414,22 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     call.functionTarget = begin ? plan.cThreadBegin : plan.cThreadEnd;
     call.info = generatedInfo(SemanticType::Void);
     appendInstruction(operation, block, std::move(call));
+  };
+  const auto retireProgramStorage = [&](MirBlock &block) {
+    if (!retiresProgramStorage)
+      return;
+    const auto operation = beginOperation(
+        MirHostedStartupOperationKind::RetireProgramStorage,
+        MirHostedStartupFailureBehavior::None, block.id);
+    appendInstruction(operation, block,
+                      {.kind = MirInstructionKind::RetireProgramStorage,
+                       .info = generatedInfo(SemanticType::Void)});
+  };
+  finishNativeFailure = [&](MirBlock &block) {
+    drainThreadLocals(block);
+    if (cThreadStarted)
+      cThreadBoundary(block, false);
+    retireProgramStorage(block);
   };
 
   if (hirPlan->kind == ProgramEntryKind::NoArguments) {
@@ -453,6 +481,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
 
     drainThreadLocals(*startupBlock);
     cThreadBoundary(*startupBlock, false);
+    retireProgramStorage(*startupBlock);
 
     const MirHostedStartupOperationId returnOperation =
         beginOperation(MirHostedStartupOperationKind::ReturnEntry,
@@ -975,6 +1004,7 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
 
     drainThreadLocals(*finalBlock);
     cThreadBoundary(*finalBlock, false);
+    retireProgramStorage(*finalBlock);
 
     const MirHostedStartupOperationId returnOperation =
         beginOperation(MirHostedStartupOperationKind::ReturnEntry,

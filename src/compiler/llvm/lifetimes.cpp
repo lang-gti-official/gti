@@ -2,11 +2,14 @@
 #include "closure_environment.h"
 #include "gti/mir_effects.h"
 #include "memory.h"
+#include "mutexes.h"
 #include "payloads.h"
 #include "polymorphic_storage.h"
+#include "runtime_abi.h"
 
 #include <algorithm>
 #include <llvm/IR/Intrinsics.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <set>
 
 namespace lang::native_llvm {
@@ -164,6 +167,297 @@ llvm::Function *Lifetimes::cleanupObservation(const MirDropType &recipe) {
     }
   }
   ir.CreateRet(ir.getFalse());
+  return function;
+}
+
+void Lifetimes::prepareProgramStorage(
+    const std::map<SymbolId, llvm::GlobalVariable *> &globals) {
+  if (programRetirement || !programStorage.empty())
+    throw std::logic_error("LLVM program retirement prepared twice");
+  for (const auto &step : session.program().mir().programInitializationPlan().steps) {
+    if (!step.nativeRetirement)
+      continue;
+    if (!mirDropIsNativeRetirement(session.program().mir(), *step.nativeRetirement))
+      throw std::logic_error("LLVM program retirement lost its exact native recipe");
+    auto *live = new llvm::GlobalVariable(
+        session.module(), llvm::Type::getInt1Ty(session.context()), false,
+        llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::getFalse(session.context()),
+        "__gti_program_storage_live_" + std::to_string(step.id));
+    programStorage.push_back({step.storageInitialization, globals.at(step.symbol),
+                              live, *step.nativeRetirement});
+  }
+  if (programStorage.empty())
+    return;
+  programRetirement = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
+      llvm::GlobalValue::InternalLinkage, "__gti_program_retire_native",
+      session.module());
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", programRetirement));
+  auto *run = llvm::BasicBlock::Create(session.context(), "ready", programRetirement);
+  auto *done = llvm::BasicBlock::Create(session.context(), "done", programRetirement);
+  auto *ready = ir.CreateCall(declareRuntimeService(
+      session, RuntimeService::ProgramStorageRetirementReady));
+  ir.CreateCondBr(ir.CreateICmpNE(ready, ir.getInt32(0)), run, done);
+  ir.SetInsertPoint(run);
+  auto *failure = ir.CreateAlloca(session.abi().failureChannel());
+  for (auto item = programStorage.rbegin(); item != programStorage.rend(); ++item) {
+    auto *run = llvm::BasicBlock::Create(session.context(), "retire", programRetirement);
+    auto *next = llvm::BasicBlock::Create(session.context(), "next", programRetirement);
+    ir.CreateCondBr(ir.CreateLoad(ir.getInt1Ty(), item->live), run, next);
+    ir.SetInsertPoint(run);
+    ir.CreateStore(ir.getFalse(), item->live);
+    ir.CreateCall(cleanup(item->recipe), {item->storage, failure, ir.getFalse()});
+    ir.CreateBr(next);
+    ir.SetInsertPoint(next);
+  }
+  ir.CreateBr(done);
+  ir.SetInsertPoint(done);
+  ir.CreateRetVoid();
+  // Module lifetime also has an endpoint when a native host unloads a library.
+  // Unlike terminal hosted failure, unloading cannot leave live roots behind.
+  auto *unload = llvm::Function::Create(
+      programRetirement->getFunctionType(), llvm::GlobalValue::InternalLinkage,
+      "__gti_program_unload_native", session.module());
+  ir.SetInsertPoint(llvm::BasicBlock::Create(session.context(), "entry", unload));
+  ir.CreateCall(programRetirement);
+  llvm::Value *live = ir.getFalse();
+  for (const auto &storage : programStorage)
+    live = ir.CreateOr(live, ir.CreateLoad(ir.getInt1Ty(), storage.live));
+  auto *pinned = llvm::BasicBlock::Create(session.context(), "pinned", unload);
+  auto *retired = llvm::BasicBlock::Create(session.context(), "retired", unload);
+  ir.CreateCondBr(live, pinned, retired);
+  ir.SetInsertPoint(pinned);
+  ir.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(&session.module(),
+                                                      llvm::Intrinsic::trap));
+  ir.CreateUnreachable();
+  ir.SetInsertPoint(retired);
+  ir.CreateRetVoid();
+  llvm::appendToGlobalDtors(session.module(), unload, 65535);
+}
+
+void Lifetimes::publishProgramStorage(llvm::IRBuilder<> &ir,
+                                     MirInstructionId instruction) {
+  for (const auto &storage : programStorage)
+    if (storage.initialization == instruction)
+      ir.CreateStore(ir.getTrue(), storage.live);
+}
+
+void Lifetimes::retireProgramStorage(llvm::IRBuilder<> &ir) {
+  if (!programRetirement)
+    throw std::logic_error("LLVM retirement has no sealed process storage");
+  ir.CreateCall(programRetirement);
+}
+
+bool Lifetimes::containsMutex(const SemanticType &type) const {
+  if (type.kind == SemanticType::Array)
+    return containsMutex(type.arguments.at(0));
+  if (type.kind == SemanticType::Enum) {
+    const auto *enumeration = session.program().mir().findPayloadEnum(type);
+    if (enumeration)
+      for (const auto &variant : enumeration->variants)
+        for (const auto &payload : variant.payloadTypes)
+          if (containsMutex(payload))
+            return true;
+    return false;
+  }
+  if (type.kind == SemanticType::Lambda) {
+    const auto environment =
+        closureEnvironmentLayout(session.program().mir(), type);
+    if (!environment)
+      return false;
+    for (std::size_t index = 0; index < environment->captureTypes.size();
+         ++index)
+      if (!isBorrowingCapture(environment->captureModes[index]) &&
+          containsMutex(environment->captureTypes[index]))
+        return true;
+    return false;
+  }
+  if (type.kind != SemanticType::Class)
+    return false;
+  const auto &owner = session.layouts().instance(type);
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage)
+    return true;
+  // Pointer-owning and other private capabilities do not inline source fields.
+  if (owner.compilerCapability != CompilerCapabilityTypeKind::None)
+    return false;
+  for (const auto &field : owner.declaredFields)
+    if (containsMutex(field.type))
+      return true;
+  for (const auto &base : owner.bases)
+    if (!base.interface && containsMutex(base.type))
+      return true;
+  return false;
+}
+
+bool Lifetimes::transferMutexes(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                                llvm::Value *source, const SemanticType &type) {
+  if (!containsMutex(type))
+    return false;
+  if (destination != source)
+    ir.CreateCall(mutexTransfer(type), {destination, source});
+  return true;
+}
+
+llvm::Function *Lifetimes::mutexTransfer(const SemanticType &type) {
+  const auto layout = session.layouts().get(type);
+  if (const auto found = mutexTransfers.find(layout.storage);
+      found != mutexTransfers.end())
+    return found->second;
+  auto *function = llvm::Function::Create(
+      llvm::FunctionType::get(
+          llvm::Type::getVoidTy(session.context()),
+          {session.layouts().pointer(), session.layouts().pointer()}, false),
+      llvm::GlobalValue::InternalLinkage,
+      "__gti_native_mutex_transfer_" + std::to_string(mutexTransfers.size()),
+      session.module());
+  mutexTransfers.emplace(layout.storage, function);
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  auto *destination = function->getArg(0);
+  auto *source = function->getArg(1);
+  auto *done = llvm::BasicBlock::Create(session.context(), "done", function);
+  auto *run = llvm::BasicBlock::Create(session.context(), "transfer", function);
+  ir.CreateCondBr(ir.CreateICmpEQ(destination, source), done, run);
+  ir.SetInsertPoint(run);
+  const auto transfer = [&](const SemanticType &part, llvm::Value *to,
+                            llvm::Value *from) {
+    if (!transferMutexes(ir, to, from, part)) {
+      const auto child = session.layouts().get(part);
+      ir.CreateMemCpy(to, llvm::MaybeAlign(child.alignment), from,
+                      llvm::MaybeAlign(child.alignment), child.size);
+    }
+  };
+  if (nativeMutexElement(session.program().mir(), type,
+                         CompilerCapabilityTypeKind::MutexStorage)) {
+    const auto mutex = session.layouts().mutexStorage(type);
+    auto *state =
+        ir.CreateStructGEP(layout.storage, source, mutex.payloadActiveIndex);
+    auto *bits = ir.CreateLoad(ir.getInt8Ty(), state);
+    auto *toState = ir.CreateStructGEP(layout.storage, destination,
+                                       mutex.payloadActiveIndex);
+    ir.CreateStore(ir.getInt8(0), toState);
+    auto *live =
+        llvm::BasicBlock::Create(session.context(), "shell.live", function);
+    ir.CreateCondBr(
+        ir.CreateICmpNE(
+            ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::shellLive)),
+            ir.getInt8(0)),
+        live, done);
+    ir.SetInsertPoint(live);
+    Mutexes mutexes(session, ir);
+    mutexes.initializeShell(destination, type);
+    auto *payload =
+        llvm::BasicBlock::Create(session.context(), "payload.live", function);
+    auto *retire =
+        llvm::BasicBlock::Create(session.context(), "shell.retire", function);
+    ir.CreateCondBr(
+        ir.CreateICmpNE(
+            ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::payloadLive)),
+            ir.getInt8(0)),
+        payload, retire);
+    ir.SetInsertPoint(payload);
+    auto *fromPayload =
+        ir.CreateStructGEP(layout.storage, source, mutex.payloadIndex);
+    transfer(
+        mutex.element,
+        ir.CreateStructGEP(layout.storage, destination, mutex.payloadIndex),
+        fromPayload);
+    moved(ir, fromPayload, mutex.element);
+    ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive |
+                              MutexStorageLayout::payloadLive),
+                   toState);
+    ir.CreateBr(retire);
+    ir.SetInsertPoint(retire);
+    ir.CreateStore(ir.getInt8(0), state);
+    mutexes.destroyShell(source, type);
+  } else if (type.kind == SemanticType::Array && type.arrayLength) {
+    auto *entry = ir.GetInsertBlock();
+    auto *loop =
+        llvm::BasicBlock::Create(session.context(), "elements", function);
+    auto *end =
+        llvm::BasicBlock::Create(session.context(), "elements.done", function);
+    ir.CreateBr(loop);
+    ir.SetInsertPoint(loop);
+    auto *index = ir.CreatePHI(ir.getInt64Ty(), 2);
+    index->addIncoming(ir.getInt64(0), entry);
+    transfer(type.arguments.at(0),
+             ir.CreateGEP(layout.storage, destination, {ir.getInt64(0), index}),
+             ir.CreateGEP(layout.storage, source, {ir.getInt64(0), index}));
+    auto *next = ir.CreateAdd(index, ir.getInt64(1));
+    index->addIncoming(next, ir.GetInsertBlock());
+    ir.CreateCondBr(ir.CreateICmpULT(next, ir.getInt64(type.arrayLength)), loop,
+                    end);
+    ir.SetInsertPoint(end);
+  } else if (type.kind == SemanticType::Class) {
+    const auto &owner = session.layouts().instance(type);
+    if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+      // transferMutexes already retired the consumed native identity.
+      ir.CreateRetVoid();
+      return function;
+    }
+    for (const auto &base : owner.bases) {
+      if (base.interface)
+        continue;
+      const auto index = session.layouts().baseIndex(type, base.instance);
+      transfer(base.type,
+               ir.CreateStructGEP(layout.storage, destination, index),
+               ir.CreateStructGEP(layout.storage, source, index));
+    }
+    for (const auto &field : owner.declaredFields) {
+      const auto index = session.layouts().fieldIndex(type, field.symbol);
+      transfer(field.type,
+               ir.CreateStructGEP(layout.storage, destination, index),
+               ir.CreateStructGEP(layout.storage, source, index));
+    }
+    if (const auto index = session.layouts().activeIndex(type))
+      ir.CreateStore(
+          ir.CreateLoad(ir.getInt8Ty(),
+                        ir.CreateStructGEP(layout.storage, source, *index)),
+          ir.CreateStructGEP(layout.storage, destination, *index));
+  } else if (type.kind == SemanticType::Lambda) {
+    const auto environment =
+        closureEnvironmentLayout(session.program().mir(), type);
+    for (std::size_t index = 0; index < environment->captureTypes.size();
+         ++index) {
+      auto *to = ir.CreateStructGEP(layout.storage, destination, index);
+      auto *from = ir.CreateStructGEP(layout.storage, source, index);
+      if (isBorrowingCapture(environment->captureModes[index]))
+        ir.CreateStore(ir.CreateLoad(session.layouts().pointer(), from), to);
+      else
+        transfer(environment->captureTypes[index], to, from);
+    }
+  } else if (type.kind == SemanticType::Enum) {
+    const auto &payload = session.layouts().payload(type);
+    const auto *enumeration = session.program().mir().findPayloadEnum(type);
+    auto *tag =
+        ir.CreateLoad(ir.getInt32Ty(), payloadTagAddress(ir, payload, source));
+    ir.CreateStore(tag, payloadTagAddress(ir, payload, destination));
+    auto *dispatch = ir.CreateSwitch(tag, done);
+    for (const auto &variant : enumeration->variants) {
+      auto *block =
+          llvm::BasicBlock::Create(session.context(), "variant", function);
+      dispatch->addCase(ir.getInt32(variant.variantIndex), block);
+      ir.SetInsertPoint(block);
+      for (std::size_t index = 0; index < variant.payloadTypes.size(); ++index)
+        transfer(variant.payloadTypes[index],
+                 payloadFieldAddress(ir, payload, destination,
+                                     variant.variantIndex, index),
+                 payloadFieldAddress(ir, payload, source, variant.variantIndex,
+                                     index));
+      ir.CreateBr(done);
+    }
+    ir.SetInsertPoint(done);
+    ir.CreateRetVoid();
+    return function;
+  } else {
+    throw std::logic_error(
+        "LLVM native mutex transfer lost its structural owner");
+  }
+  ir.CreateBr(done);
+  ir.SetInsertPoint(done);
+  ir.CreateRetVoid();
   return function;
 }
 
@@ -785,6 +1079,13 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
     ir.SetInsertPoint(done);
   } else if (type.kind == SemanticType::Class) {
     const auto &owner = session.layouts().instance(type);
+    if (owner.compilerCapability ==
+        CompilerCapabilityTypeKind::MutexLockToken) {
+      ir.CreateStore(
+          llvm::ConstantPointerNull::get(session.layouts().pointer()), address);
+      ir.CreateRetVoid();
+      return function;
+    }
     if (sharedOwnerRepresentation(session.program().mir(), owner)) {
       ir.CreateStore(llvm::Constant::getNullValue(storage), address);
       ir.CreateRetVoid();
@@ -866,6 +1167,9 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
   if (type.kind != SemanticType::Class)
     return false;
   const auto &owner = session.layouts().instance(type);
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexLockToken ||
+      owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage)
+    return true;
   if (sharedOwnerRepresentation(session.program().mir(), owner))
     return true;
   if (owner.requiresActiveDropState)
@@ -1341,6 +1645,42 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       child(recipe.aggregate[0], sharedPointee);
       Memory memory(session, ir, {}, {}, {});
       memory.releaseBytes(sharedBlock);
+    } else if (nativeMutexElement(program, recipe.type,
+                                   CompilerCapabilityTypeKind::MutexStorage)) {
+      const auto expected = mirUniqueCleanupType(program, recipe.type);
+      if (!expected || !recipe.requiresActiveCleanup ||
+          recipe.classInstance != expected->classInstance ||
+          recipe.aggregate != expected->aggregate || recipe.destructor ||
+          recipe.fixedArray)
+        throw std::logic_error(
+            "LLVM mutex cleanup lost its sealed shell/payload recipe");
+      const auto layout = session.layouts().mutexStorage(recipe.type);
+      auto *state = ir.CreateStructGEP(layout.object.storage, address,
+                                       layout.payloadActiveIndex);
+      auto *bits = ir.CreateLoad(ir.getInt8Ty(), state);
+      auto *live = llvm::BasicBlock::Create(session.context(), "mutex.live", function);
+      auto *done = llvm::BasicBlock::Create(session.context(), "mutex.done", function);
+      ir.CreateCondBr(
+          ir.CreateICmpNE(ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::shellLive)),
+                           ir.getInt8(0)), live, done);
+      ir.SetInsertPoint(live);
+      ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive), state);
+      if (!recipe.aggregate.empty()) {
+        auto *payload = llvm::BasicBlock::Create(session.context(), "mutex.payload", function);
+        auto *retire = llvm::BasicBlock::Create(session.context(), "mutex.retire", function);
+        ir.CreateCondBr(
+            ir.CreateICmpNE(ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::payloadLive)),
+                             ir.getInt8(0)), payload, retire);
+        ir.SetInsertPoint(payload);
+        child(recipe.aggregate.front(),
+              ir.CreateStructGEP(layout.object.storage, address, layout.payloadIndex));
+        ir.CreateBr(retire);
+        ir.SetInsertPoint(retire);
+      }
+      ir.CreateStore(ir.getInt8(0), state);
+      Mutexes(session, ir).destroyShell(address, recipe.type);
+      ir.CreateBr(done);
+      ir.SetInsertPoint(done);
     } else if (recipe.type.kind == SemanticType::Enum &&
                session.program().mir().findPayloadEnum(recipe.type)) {
       const auto &layout = session.layouts().payload(recipe.type);

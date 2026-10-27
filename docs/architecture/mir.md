@@ -734,6 +734,23 @@ field publication must agree; matching forged call/field metadata cannot invent
 or erase the original owner authority. Each local value copy attached to an entry requires
 an independently proven, dominating same-type initialization; merely adding a
 binding to the carrier list grants no authority.
+A lifecycle-bound stored result may obtain exclusive owner dependency from
+its verified callee while accepting a shared address. Its incoming carrier
+parent supplies the selected address permission and lifetime; it does not
+supply mutable referent permission. For this sole-origin publication, body
+verification retains the exact staged input, live parent, source containment,
+Mutable result exclusion and cleanup endpoint. Program verification reconstructs
+the parent from independently checked stored entry paths and binds publication
+to the exact callee/constructor contract. Clearing that parent, changing the
+input/target/access, or using the readonly ancestor while the exclusive child
+is live remains invalid. Ordinary reborrows retain their existing permission
+rule. Every finite normal return and constructor publication is checked,
+including the structural trusted capability construction base; legal recursive
+relays require no termination proof or new certificate subsystem.
+Some invalid ancestor uses through stored readonly receivers still reach the
+MIR safety firewall instead of a semantic source diagnostic; that diagnostic
+frontier remains pending and is not satisfactory user-facing rejection.
+
 Checked references to primitive text views use the same two-dependency model.
 Their abstract `Stored` entry has no nominal field path: it represents the
 opaque caller-owned text and grants read-only access only. Semantic analysis
@@ -2824,6 +2841,52 @@ is an explicit hosted-exit operation, not an emitter-added source call. Passive
 data storage uses native per-thread literal-initialized data without dynamic guard or
 registration; owning storage uses a byte slot and explicit object lifetime so
 emergency abandonment cannot accidentally run a native destructor.
+
+Process storage with native-only cleanup retains an exact optional
+`MirProgramInitializationStep::nativeRetirement` recipe. It must equal the
+unique structural cleanup recipe for that root and contain no source
+destructor, owning allocation release, borrowed state, polymorphic cleanup or
+recursive cleanup. This authority composes through ordinary aggregates; it is
+not a named-library exception. Process roots do not acquire lexical drops.
+Publication follows the exact recorded final storage initializer, so failure
+leaves only the successfully constructed prefix live.
+
+`RetireProgramStorage` is a generated hosted-only operation with runtime,
+unknown-write and drop effects, but no user-code or defined-failure effect.
+Normal hosted teardown drains TLS, ends the C-thread runtime, then retires
+native process roots in reverse initialization order. An ordinary failure
+first finishes source cleanup, then drains TLS with the original primary,
+ends the C-thread runtime only if begun, retires native roots and contains the
+failure. Module-initialization failure uses that outer endpoint because TLS
+cleanup may still access already-published globals. Cleanup emergency and
+abort intentionally abandon further teardown. The closed program verifier
+checks this exact schedule and C-thread target; body-local suffix acceptance
+does not authorize an arbitrary call during failure cleanup.
+
+LLVM uses one publication bit per root and a reverse-order helper, clearing
+each bit before native cleanup. Hosted exit and the module unload destructor
+share the idempotent helper. The helper first queries managed-worker retirement
+readiness: terminal automatic-join quarantine pins all native roots and leaves
+their publication bits intact. Explicit hosted failure can then contain its
+original record without invalidating storage still accessible to that worker.
+The unload wrapper rejects any remaining live roots after the helper, rather
+than unmapping pinned storage. C-thread end requires the manual-worker registry
+to be empty, which alone does not prove managed-worker quiescence. Embedding
+shutdown must reject pinned storage; unsafe hosts must independently ensure no
+foreign execution can access unloading storage. This does not enable general source global
+destructors or change embedding activation/context lifetime rules.
+
+`mirOwnedStoragePayloadInitialization` proves the existing compiler-private
+opaque-storage constructor mechanism: one exact owned parameter becomes its
+payload, followed only by that parameter's moved-from cleanup. It requires the
+trusted capability identity, concrete parameter/place, unique active cleanup
+recipe and independently valid cleanup-only body. Extra source code, borrowed
+state, wrong recipes or inactive input cleanup reject. The query does not
+weaken verification, change declared effects or select failure transport.
+Conservative destructor effects remain conservative even though this particular
+parameter cleanup observes moved-from representation state. LLVM consumes the
+witness and uses structural fresh-shell transfer when the payload itself
+contains native mutexes, including selected owning-sum alternatives.
 
 Ambient persistent-storage effects are independently derived from executable
 MIR, not trusted frontend summary claims. `mir_storage_effects.cpp` reuses the

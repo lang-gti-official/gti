@@ -54,6 +54,16 @@ public:
               const SemanticType &type, bool value);
   void moved(llvm::IRBuilder<> &ir, llvm::Value *address,
              const SemanticType &type);
+  // Native identity cannot be transported by an aggregate byte copy.
+  [[nodiscard]] bool transferMutexes(llvm::IRBuilder<> &ir,
+                                     llvm::Value *destination,
+                                     llvm::Value *source,
+                                     const SemanticType &type);
+  void prepareProgramStorage(
+      const std::map<SymbolId, llvm::GlobalVariable *> &globals);
+  void publishProgramStorage(llvm::IRBuilder<> &ir,
+                              MirInstructionId instruction);
+  void retireProgramStorage(llvm::IRBuilder<> &ir);
   void generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
                       const MirBody &body, const MirInstruction &instruction,
                       const MirConstructorInstance *constructor = nullptr);
@@ -67,6 +77,17 @@ private:
   FindBody findBody;
   std::vector<std::pair<MirDropType, llvm::Function *>> cleanups;
   std::map<llvm::Type *, llvm::Function *> moves;
+  std::map<llvm::Type *, llvm::Function *> mutexTransfers;
+  struct ProgramStorage {
+    MirInstructionId initialization = 0;
+    llvm::GlobalVariable *storage = nullptr;
+    llvm::GlobalVariable *live = nullptr;
+    MirDropType recipe;
+  };
+  std::vector<ProgramStorage> programStorage;
+  llvm::Function *programRetirement = nullptr;
+  [[nodiscard]] bool containsMutex(const SemanticType &type) const;
+  [[nodiscard]] llvm::Function *mutexTransfer(const SemanticType &type);
   std::vector<std::pair<SemanticType, llvm::Function *>> relocations;
   std::vector<std::pair<MirDropType, llvm::Function *>> observations;
   [[nodiscard]] llvm::Function *cleanupObservation(const MirDropType &recipe);

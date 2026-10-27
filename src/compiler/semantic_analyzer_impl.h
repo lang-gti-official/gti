@@ -2129,6 +2129,7 @@ private:
   struct ActiveCleanupQuery {
     std::vector<ActiveCleanupEntry> entries;
     std::vector<SemanticType> activeTypes;
+    bool excludeNativeRetirement = false;
   };
 
   [[nodiscard]] static std::size_t
@@ -2143,6 +2144,7 @@ private:
 
   [[nodiscard]] bool requiresActiveCleanup(const SemanticType &type,
                                            ActiveCleanupQuery &query) const;
+  [[nodiscard]] bool requiresSourceCleanupFor(const SemanticType &type) const;
 
   [[nodiscard]] std::optional<ActiveCleanupCause>
   activeCleanupCause(const SemanticType &type) const;

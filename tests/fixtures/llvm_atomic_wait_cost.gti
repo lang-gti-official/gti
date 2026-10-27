@@ -1,0 +1,16 @@
+#include <std/atomic>
+
+constexpr int32_t operation = 0;
+
+int main() {
+  std::atomic<uint64_t> value{uint64_t(1)};
+  for (mut int32_t index = 0; index < 200000000; ++index) {
+    if constexpr (operation == 0)
+      value.notify_one();
+    else if constexpr (operation == 1)
+      value.notify_all();
+    else
+      value.wait(uint64_t(0), std::memory_order_acquire());
+  }
+  return value.load() == uint64_t(1) ? 0 : 1;
+}

@@ -4610,6 +4610,94 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                 expected + ", found " + std::to_string(loan->source) + ")",
             block.id, instruction.id);
       }
+      const MirOperand *publicationInput =
+          instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+                  instruction.receiver
+              ? &*instruction.receiver
+          : instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                  instruction.borrowArgument < instruction.operands.size()
+              ? &instruction.operands[instruction.borrowArgument]
+              : nullptr;
+      const auto *publicationStage =
+          publicationInput && publicationInput->kind == MirOperandKind::Value
+              ? definitionFor(body, publicationInput->value)
+              : nullptr;
+      const MirLoan *lifetimeParent = nullptr;
+      if (loan->kind == MirLoanKind::Stored && loan->lifecycleBound &&
+          loan->access == AccessMode::Mutable && publicationStage &&
+          publicationStage->operands.size() == 1 &&
+          publicationStage->operands.front().kind ==
+              MirOperandKind::BorrowRead) {
+        // Reconstruct ancestry from checked entry paths, not the child's
+        // claim: deleting its parent must not erase the lifetime dependency.
+        for (const auto &entry : body.loans) {
+          if (!entry.entry || entry.escapes ||
+              entry.kind != MirLoanKind::Stored ||
+              entry.access != AccessMode::ReadOnly)
+            continue;
+          const auto paths = concreteDependencies(entry, true);
+          if (std::none_of(paths.begin(), paths.end(), [&](const auto &path) {
+                return path.source != 0 && mirCanonicalPlaceContains(
+                                               body, path.source, loan->source);
+              }))
+            continue;
+          if (lifetimeParent && lifetimeParent->id != entry.id)
+            return verificationFailure(
+                body, owner,
+                "exclusive stored publication has ambiguous "
+                "shared lifetime ancestry",
+                block.id, instruction.id);
+          lifetimeParent = &entry;
+        }
+      }
+      if (lifetimeParent) {
+        const auto *stage = publicationStage;
+        const auto selectedOrigin = selectedSource(*publicationInput);
+        // The parent proves the selected shared address and its lifetime,
+        // not mutable referent permission. Result exclusion is the exact
+        // callee postcondition checked above. Every finite normal return and
+        // constructor publication is independently checked below, including
+        // the trusted structural capability base; recursion needs no separate
+        // termination claim and matching summaries alone create no value.
+        const auto *constructed = instruction.constructorTarget
+                                      ? program.findConstructorInstance(
+                                            *instruction.constructorTarget)
+                                      : nullptr;
+        const bool exactCallee =
+            (instruction.kind == MirInstructionKind::Call && target &&
+             instruction.intrinsic == IntrinsicKind::None &&
+             target->returnType == instruction.info.type &&
+             target->returnBorrowAccess == AccessMode::Mutable) ||
+            (instruction.kind == MirInstructionKind::Construct && constructed &&
+             constructed->borrowAccess == AccessMode::Mutable);
+        if (!exactCallee || loan->parent != lifetimeParent->id ||
+            !resultValue || resultValue->definition != instruction.id ||
+            resultValue->info.type != instruction.info.type || loan->entry ||
+            loan->escapes || loan->twoPhase ||
+            loan->producedBy != instruction.hirValue ||
+            !loan->additionalDependencies.empty() ||
+            !loan->designatedFields.empty() ||
+            !instruction.borrowArguments.empty() ||
+            !instruction.borrowFields.empty() || !stage ||
+            stage->kind != MirInstructionKind::CallInput ||
+            stage->callSite != instruction.callSite ||
+            stage->callInputKind != HirCallInputKind::ReadBorrow ||
+            stage->operands.size() != 1 ||
+            stage->operands.front().kind != MirOperandKind::BorrowRead ||
+            !selectedOrigin || *selectedOrigin != loan->source ||
+            !mirCanonicalPlaceContains(body, lifetimeParent->source,
+                                       loan->source) ||
+            (instruction.borrowOrigin == BorrowOriginKind::Receiver
+                 ? stage->callInputRole != MirCallInputRole::Receiver ||
+                       stage->callInputIndex != 0
+                 : stage->callInputRole != MirCallInputRole::Argument ||
+                       stage->callInputIndex != instruction.borrowArgument))
+          return verificationFailure(
+              body, owner,
+              "exclusive stored publication lacks its exact shared input, "
+              "lifetime parent, and checked callee contract",
+              block.id, instruction.id);
+      }
       // Physical source and inherited stored authority were verified
       // independently. Do not flatten the latter into a homogeneous source
       // list and thereby erase shell identity or mix permissions.
@@ -9369,7 +9457,11 @@ verifyMirProgramInitialization(const MirProgram &program) {
         !symbolSteps.emplace(step.symbol, step.id).second ||
         !storagePlaces.insert(step.storagePlace).second ||
         !storageInitializations.insert(step.storageInitialization).second ||
-        step.requiresActiveCleanup || storage == nullptr ||
+        step.requiresActiveCleanup != step.nativeRetirement.has_value() ||
+        (step.nativeRetirement &&
+         (!storage || step.nativeRetirement->type != storage->type ||
+          !mirDropIsNativeRetirement(program, *step.nativeRetirement))) ||
+        storage == nullptr ||
         storage->root != MirPlaceRootKind::Binding ||
         storage->binding != step.binding || storage->symbol != step.symbol ||
         storage->capture != 0 || storage->temporary != 0 ||
@@ -10565,6 +10657,7 @@ verifyMirHostedStartup(const MirProgram &program) {
     }
   }
   for (const MirBlock &block : body->blocks) {
+    MirHostedStartupOperationId previousOperation = 0;
     for (const MirInstruction &instruction : block.instructions) {
       const MirHostedStartupOperation *operation =
           plan.findOperation(instruction.hostedStartupOperation);
@@ -10574,6 +10667,12 @@ verifyMirHostedStartup(const MirProgram &program) {
             "owned",
             block.id, instruction.id);
       }
+      if (instruction.hostedStartupOperation <= previousOperation) {
+        add("hosted-startup executable stage order differs from its canonical "
+            "operation sequence",
+            block.id, instruction.id);
+      }
+      previousOperation = instruction.hostedStartupOperation;
       for (const DefinedFailureOrigin &origin :
            instruction.definedFailure.localOrigins) {
         if (std::any_of(origin.outcomes.begin(), origin.outcomes.end(),
@@ -10746,6 +10845,12 @@ verifyMirHostedStartup(const MirProgram &program) {
         }
       };
   MirBlockId nextGeneratedBlock = 2;
+  const bool retiresProgramStorage = std::any_of(
+      program.programInitializationPlan().steps.begin(),
+      program.programInitializationPlan().steps.end(),
+      [](const auto &step) { return step.nativeRetirement.has_value(); });
+  bool cThreadStarted = false;
+  std::function<void(MirBlockId)> takeNativeFailureTail;
   const auto destructorMayRaise = [&](MirDropObligationId obligation) {
     const MirDropObligation *drop = body->findDropObligation(obligation);
     return drop != nullptr &&
@@ -10840,6 +10945,8 @@ verifyMirHostedStartup(const MirProgram &program) {
                        {.kind = MirInstructionKind::Lifecycle,
                         .cleanupBoundaryEnd = end.expected.cleanupBoundary});
     }
+    if (retiresProgramStorage)
+      takeNativeFailureTail(cleanupBlock);
     const TakenOperation contain =
         take(MirHostedStartupOperationKind::ContainFailure,
              MirHostedStartupFailureBehavior::None, cleanupBlock, false, false,
@@ -10868,6 +10975,8 @@ verifyMirHostedStartup(const MirProgram &program) {
       }
       return;
     }
+    if (begin)
+      cThreadStarted = true;
     const MirFunctionInstance *target = program.findFunctionInstance(targetId);
     if (target == nullptr ||
         target->cThreadOperation != (begin ? CThreadRuntimeOperation::Begin
@@ -10883,6 +10992,22 @@ verifyMirHostedStartup(const MirProgram &program) {
     exactInstruction(call, {.kind = MirInstructionKind::Call,
                             .functionTarget = targetId,
                             .info = generatedInfo(SemanticType::Void)});
+  };
+  const auto takeNativeRetirement = [&](MirBlockId block) {
+    if (!retiresProgramStorage)
+      return;
+    const auto retirement = take(
+        MirHostedStartupOperationKind::RetireProgramStorage,
+        MirHostedStartupFailureBehavior::None, block, true, false, false, false);
+    exactInstruction(retirement,
+                     {.kind = MirInstructionKind::RetireProgramStorage,
+                      .info = generatedInfo(SemanticType::Void)});
+  };
+  takeNativeFailureTail = [&](MirBlockId block) {
+    takeThreadLocalDrain(block);
+    if (cThreadStarted)
+      takeCThreadBoundary(block, false);
+    takeNativeRetirement(block);
   };
 
   if (!program.threadLocalStorage().empty()) {
@@ -10936,6 +11061,7 @@ verifyMirHostedStartup(const MirProgram &program) {
     }
     takeThreadLocalDrain(currentBlock);
     takeCThreadBoundary(currentBlock, false);
+    takeNativeRetirement(currentBlock);
     const TakenOperation returnEntry =
         take(MirHostedStartupOperationKind::ReturnEntry,
              MirHostedStartupFailureBehavior::None, currentBlock, false, false,
@@ -11487,6 +11613,7 @@ verifyMirHostedStartup(const MirProgram &program) {
     }
     takeThreadLocalDrain(finalBlock);
     takeCThreadBoundary(finalBlock, false);
+    takeNativeRetirement(finalBlock);
     const TakenOperation returnEntry =
         take(MirHostedStartupOperationKind::ReturnEntry,
              MirHostedStartupFailureBehavior::None, finalBlock, false, false,
@@ -18600,14 +18727,20 @@ verifyMirProgramContracts(const MirProgram &program) {
           instance.traits.transferCapable == mayCrossThreads &&
           instance.traits.shareCapable == mayCrossThreads &&
           payloadRequiresActiveCleanup &&
-          instance.requiresActiveCleanup ==
-              (storageCapability && *payloadRequiresActiveCleanup);
+          instance.requiresActiveCleanup == storageCapability &&
+          (!storageCapability ||
+           (instance.traits.drop == DropKind::Lexical &&
+            instance.traits.relocation ==
+                (mirTypeRelocationKind(program, instance.type.arguments.front()) ==
+                         RelocationKind::Unavailable
+                     ? RelocationKind::Unavailable
+                     : RelocationKind::Structural)));
       if (!exactMutexCapability) {
         result.errors.push_back(
             {.bodyKind = MirBodyKind::FieldInitializers,
              .owner = instance.id,
              .message = "compiler-owned mutex capability class does not "
-                        "retain its exact passive native-storage shape"});
+                        "retain its exact native-storage lifecycle shape"});
       }
     }
     if (instance.compilerCapability ==
@@ -18957,10 +19090,10 @@ verifyMirProgramContracts(const MirProgram &program) {
         instance.destructor.has_value() ||
         instance.compilerCapability ==
             CompilerCapabilityTypeKind::SharedOwner ||
-        ((instance.compilerCapability ==
-              CompilerCapabilityTypeKind::MutexStorage ||
-          instance.compilerCapability ==
-              CompilerCapabilityTypeKind::OptionalStorage) &&
+        instance.compilerCapability ==
+            CompilerCapabilityTypeKind::MutexStorage ||
+        (instance.compilerCapability ==
+             CompilerCapabilityTypeKind::OptionalStorage &&
          instance.type.arguments.size() == 1 &&
          typeRequiresActiveCleanup(instance.type.arguments.front(),
                                    typeRequiresActiveCleanup)

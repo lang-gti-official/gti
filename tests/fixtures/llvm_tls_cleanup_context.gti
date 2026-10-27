@@ -1,0 +1,63 @@
+#include <std/panic>
+
+mut int divisor = 1;
+mut int outer_divisor = 1;
+mut int events = 0;
+mut bool forbid_local = false;
+mut bool forbid_outer_local = false;
+
+class Marker {
+  int code;
+public:
+  Marker(int code) : code(code) {}
+  ~Marker() {
+    events = events * 10 + this.code;
+    if ((this.code == 3 && forbid_local) ||
+        (this.code == 5 && forbid_outer_local)) {
+      std::panic("cleanup continued after secondary failure");
+    }
+    if (this.code == 5 && events != 12345) {
+      std::panic("incorrect TLS cleanup order");
+    }
+  }
+};
+
+void nested(int value) {
+  Marker local{3};
+  int secondary = 10 / value;
+}
+
+class Outer {
+public:
+  Outer() {}
+  ~Outer() {
+    events = events * 10 + 4;
+    Marker local{5};
+    int outer_secondary = 10 / outer_divisor;
+  }
+  int read() { return 1; }
+};
+
+class Action {
+public:
+  Action() {}
+  ~Action() {
+    events = events * 10 + 2;
+    nested(divisor);
+  }
+  int read() { return 1; }
+};
+
+thread_local Outer outer{};
+thread_local Action action{};
+
+int main() {
+  if (outer.read() != 1 || action.read() != 1) { return 1; }
+  Marker local{1};
+  divisor = 1; // CASE_DIVISOR
+  outer_divisor = 1; // CASE_OUTER_DIVISOR
+  forbid_local = false; // CASE_FORBID_LOCAL
+  forbid_outer_local = false; // CASE_FORBID_OUTER
+  int primary = 10 / 1; // CASE_PRIMARY
+  return 0;
+}

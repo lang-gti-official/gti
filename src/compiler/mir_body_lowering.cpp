@@ -1251,11 +1251,51 @@ private:
       if (type.arguments.size() != 1 || !owner->requiresActiveCleanup)
         return std::nullopt;
       auto payload = uniqueCleanupType(type.arguments.front(), visiting);
-      if (!payload || !payload->requiresActiveCleanup)
+      const bool shell = owner->compilerCapability ==
+                         CompilerCapabilityTypeKind::MutexStorage;
+      if (!shell && (!payload || !payload->requiresActiveCleanup))
         return std::nullopt;
+      if (shell && !payload) {
+        const auto passive = [&](const auto &self,
+                                 const SemanticType &value) -> bool {
+          if (value.kind == SemanticType::Array)
+            return value.arguments.size() == 1 &&
+                   self(self, value.arguments.front());
+          if (value.kind == SemanticType::Class)
+            return std::any_of(program.classInstances().begin(),
+                               program.classInstances().end(),
+                               [&](const auto &instance) {
+                                 return instance.type == value &&
+                                        !instance.requiresActiveCleanup;
+                               });
+          if (value.kind == SemanticType::Enum)
+            return std::any_of(program.enumDeclarations().begin(),
+                               program.enumDeclarations().end(),
+                               [&](const auto &enumeration) {
+                                 return enumeration.type == value &&
+                                        !enumeration.requiresActiveCleanup;
+                               });
+          if (value.kind == SemanticType::Lambda)
+            return std::any_of(program.lambdaInstances().begin(),
+                               program.lambdaInstances().end(),
+                               [&](const auto &lambda) {
+                                 return lambda.type == value &&
+                                        std::none_of(
+                                            lambda.captureRequiresActiveCleanup.begin(),
+                                            lambda.captureRequiresActiveCleanup.end(),
+                                            [](bool active) { return active; });
+                               });
+          return value.kind != SemanticType::UniqueOwner &&
+                 value.kind != SemanticType::SharedPointer &&
+                 value != SemanticType::Unknown;
+        };
+        if (!passive(passive, type.arguments.front()))
+          return std::nullopt;
+      }
       return MirDropType{.type = type,
                          .classInstance = owner->id,
-                         .aggregate = {*payload},
+                         .aggregate = payload ? std::vector<MirDropType>{*payload}
+                                              : std::vector<MirDropType>{},
                          .requiresActiveCleanup = true};
     }
     if (owner != program.classInstances().end() && owner->destructor &&
@@ -12886,11 +12926,15 @@ private:
                                            .ownerClass = step.ownerClass,
                                            .requiresActiveCleanup =
                                                step.requiresActiveCleanup,
+                                           .nativeRetirement = step.nativeRetirement
+                                               ? std::optional{lowerDropType(*step.nativeRetirement)}
+                                               : std::nullopt,
                                            .binding = step.binding,
                                            .storagePlace = storagePlace,
                                            .entryBlock = entryBlock};
       if (binding == nullptr || binding->info.symbol != step.symbol ||
-          storagePlace == 0 || step.requiresActiveCleanup) {
+          storagePlace == 0 ||
+          step.requiresActiveCleanup != step.nativeRetirement.has_value()) {
         valid = false;
       }
 

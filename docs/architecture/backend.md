@@ -2771,6 +2771,15 @@ TransferOut must agree in type, place, order, and identity. The carrier adds no
 observable cleanup; its initialization and handoff are still mandatory MIR
 events. This proof does not generalize to active-cleanup payloads or arbitrary
 constructor argument expressions.
+Native shell retirement is distinct from payload cleanup: a passive payload's
+prepared argument still transfers out at invocation, while its result shell
+activates only at construction success. The C++ compatibility proof consumes
+that exact success-edge activation (or the failure-free inline activation),
+the source-derived empty-payload shell recipe, value-to-field reparenting and
+rollback transfer. Erased or conditional publication, a fabricated payload
+drop and duplicate argument handoff reject. The destination's native shell no
+longer makes an otherwise passive argument ineligible for the existing native
+initializer spelling.
 Ordinary source constructors may use the same prepared-input schedule for a
 passive generated class (see below) with generated copy, move, and
 destruction, no state-bearing base, and no active cleanup. Every prepared
@@ -4247,6 +4256,13 @@ that record. It never inspects a public `std::atomic` method, order-tag source
 expression, or native overload to reconstruct semantics. Strong CAS emits both
 verified success and failure orders, including the exact nine legal pairs.
 
+The retained C++ mutex representation distinguishes its engaged native lock
+shell from its optional owned payload. A move creates a fresh unlocked native
+lock and retires the source payload; the later source MIR drop still ends the
+native shell but performs no payload cleanup and does not modify an incoming
+failure record. Unconstructed outer lifetime-slot drops, empty payload access
+and move-from-empty remain rejected. This representation repair does not admit
+native LLVM mutex storage or change source ownership policy.
 ## Native Infallible Embedding
 
 The LLVM embedding profile consumes the verified `LoweredEmbeddingPlan` and
@@ -4400,6 +4416,157 @@ govern remaining work. Those accepted implementation constraints do not expand
 the currently admitted execution profiles described below.
 
 ### LLVM Target, Layout And Execution ABI
+
+The native scalar-atomic core represents the identity-bound private atomic
+storage capability as one naturally aligned integer lane for `bool` and the
+eight fixed-width integer domains. Boolean storage is an explicit canonical
+byte, distinct from the body's boolean value. Exclusive construction initializes
+that lane before publication; verified load, store, exchange and strong
+compare-exchange operations preserve their exact system-scope memory orders.
+Compare-exchange publishes the observed value on both success and failure.
+Admission checks the actual function's target lowering and rejects unsupported
+width/alignment combinations before producing an artifact. Object-symbol checks
+exclude unintended `libatomic` calls, but do not establish a lock-free or
+performance guarantee. Checked arithmetic fetch operations remain source-defined
+CAS loops: overflow must fail before modifying shared storage. The focused
+checked-fetch matrix exercises all five operations and order overloads, plus
+destructor observation that a failing checked addition did not update the lane.
+Platform-wide acceptance, mutex lifecycle and managed-worker integration remain
+pending O-LLVM-13 work; these profiles are not whole-milestone acceptance.
+
+Native wait/notify has a separate structural admission witness for concurrent
+executables on reviewed Darwin arm64 and Linux x86_64 targets. It consumes the
+same exact scalar storage identity and verified load order. The versioned C
+boundary receives the zero-extended same-width old representation (including
+signed lanes); booleans use their canonical byte lane. The private service
+uses same-width native atomic loads and a process-lifetime pthread parking
+domain. An already-changed lane returns before domain initialization or locking.
+An unchanged lane receives at most 8192 processor-hinted probes, then enters the
+native blocking protocol. After the first 64 probes, a 50-microsecond deadline
+checked every 64 probes also bounds active waiting on slower targets; this is
+not a real-time scheduling guarantee. Blocking checks and enrollment share the notification lock, and every
+wake rechecks the value. Hash collisions require broadcast even for notify-one;
+notifications carry neither saved credit nor a source memory-order edge. No
+unbounded polling, GTI allocation, callback, or C++ exception transport implements
+this operation. The probe is a latency/CPU tradeoff, not a progress substitute.
+
+Each bucket counts registered waiters. On ARM, registration precedes an SC fence and
+the under-lock lane check; notification places an SC fence after the caller's
+lane publication and before checking that count. The two fences cannot both
+precede the other's preceding atomic write in coherence order: that would
+require each fence to precede the other in the SC order. Thus notification may
+skip locking when it observes zero; either it sees registration, or the waiter
+sees the lane publication before sleeping. The mutex closes the remaining
+check-to-sleep window. This uses the reviewed raw-lane compiler profile and
+the fence/coherence rule in [the C++ memory model](https://eel.is/c++draft/atomics.order#4),
+not an inferred synchronization edge in GTI source. ABA remains allowed.
+
+On x86, an acquire/release `wakeNeeded` bit RMW folds notification's ordering
+and empty-domain test into one operation. Enrollment sets the bit under the bucket
+mutex before rechecking the lane. If notification precedes enrollment, the RMW
+chain carries its preceding lane publication into the waiter's recheck;
+otherwise notification observes enrollment and takes the bucket mutex. Every
+update, including last-waiter removal and notifier rearm, is an acquire/release
+RMW, preserving that chain across coalesced notifications. A notifier broadcasts
+and rearms under the mutex before any woken waiter can recheck and repark.
+Deterministic controls pause after broadcast while a second colliding-lane
+notification coalesces, then require both waiters to finish. This does not
+replace parking with spinning or weaken one/all notification semantics.
+Empty notification touches only the constant-initialized atomic enrollment
+state; it need not initialize native parking objects. A waiter initializes the
+domain before publishing enrollment. On x86 the acquire RMW observes that
+initialization; ARM enters the one-time initialization barrier before using a
+nonempty bucket. Ready waits and late empty notifications allocate no parking
+domain resources.
+
+All callers in an executable must share one final-image parking provider. This
+does not establish independently linked module attachment/unload support. The
+`atomic.wait-ready` profile exercises public lane/order conversion at LLVM
+O0-O3; `llvm_atomic_wait_service` joins actual source-verified emitter plans to
+the production service through test-only C-shaped adapters. Runtime controls
+separately cover enrollment races, spurious wakes, collisions, ABA/no credit,
+late first use, terminal native errors and a real parked thread's CPU budget.
+Neither those adapters nor this
+witness admits managed/scoped workers. Generated boundary sanitizer, platform,
+installed-consumer and runtime-cost evidence remain separate acceptance duties;
+the whole O-LLVM-13 milestone is not complete.
+
+The isolated mutex emitter consumes exact private storage/token capabilities
+and sealed lock, unlock, active and borrowed-read operations. Its reviewed
+native storage is a 64-byte, eight-aligned pthread slot followed by payload
+storage and a distinct state byte with separate shell/payload-live bits; a lock token is one owner identity
+pointer. Failed lock status leaves the token inert, transfer clears the old
+token, and unlock retires it. Defensive checks on malformed private token use
+trap in the test boundary; they do not define a new source failure convention.
+The production runtime explicitly initializes and destroys the native slot.
+Semantic cleanup facts and MIR recipes now retain shell retirement even with a
+passive payload; active payload recipes remain explicit children. Isolated LLVM
+lifecycle helpers initialize a fresh shell, transfer only payloads and retire
+the consumed native identity. Sealed cleanup disarms payload and shell state
+separately. The native-service test counts initialization/retirement and repeats
+cleanup of both moved-from and retired storage. Its active-payload kernel probe
+also consumes source-derived recipes for an unrelated two-field wrapper. A
+test-only observer replaces the selected destructor using its planned private
+signature, rather than synthesizing a drop recipe or claiming source-body
+execution. It observes payload-free shell rollback, fresh-shell transfer,
+replacement composition, reverse field cleanup after a first payload failure,
+original record/artifact preservation and exactly-once shell retirement at
+O0-O3. Separate source-composition oracles use real GTI constructors and
+destructors, not that destructor double: they cover nested payload shell moves,
+constructor rollback and ordinary/emergency failure cleanup. These do not
+select a different C04 failure transport.
+
+Native-only process retirement is distinct from general source shutdown.
+Semantics excludes shell-only cleanup from the source-destructor restriction;
+HIR/MIR retain each exact native recipe and its completed-storage publication.
+Hosted normal and ordinary-failure exits drain source obligations and TLS,
+leave an attached C-thread context, then retire completed native roots in
+reverse order. Roots are disarmed before cleanup. Emergency cleanup abandons
+later roots; terminal automatic-join quarantine permanently pins them, and an
+unload endpoint traps instead of unloading pinned storage. Source destructors
+and owning allocation release at process lifetime still require the separate
+source-shutdown policy; borrowed global carriers remain rejected.
+
+Mutex admission has its own exact representation/operation witnesses, including
+constructor payload transfer, guard loans and native-only hosted retirement.
+It does not broaden the generic native-value or native-cleanup predicates.
+The public O0-O3 service harness additionally requires normal, rollback,
+first/emergency failure and moved-guard execution. The inline hierarchy query
+validates canonical atomic/mutex capabilities through their representation
+predicates: atomic storage and a lock token contain no inline hierarchy, while
+mutex storage recursively includes its payload. A token's type argument does
+not place that payload inside the token. Malformed/ambiguous capabilities still
+reject in the non-emitting query. Non-hierarchy address-valued MIR place loads
+preserve the selected address instead of materializing a copy; borrowing a
+locked shell must not move or retire it. A statically false failure condition
+needs no emitted check, while runtime conditions retain their exact MIR failure
+edge and original cleanup/record. Public array tests exercise both cases.
+Kernel and earlier-source evidence remain distinct from public acceptance.
+The boundary cost probe distinguishes runtime-service cost from the token
+adapter; the public synchronization cost harness instead compiles identical
+GTI source for each explicitly recorded backend/standard and workload.
+
+Managed tasks retain the C runtime's entry/destroy, complete/abandon-task and
+take/abandon-result callbacks. Each generated callback must contain GTI failure
+before returning to the non-unwinding C service; an internal GTI call convention
+does not change that permission. Retained C++ adapters keep their private
+throwing handoff. Native adapters instead have a nonthrowing C outcome seam:
+a runtime-installed worker sink covers entry, task/result cleanup and TLS drain.
+Publication borrows an exact ordinary/emergency failure view and copies it
+synchronously without transferring control. The caller-owned, thread-confined
+sink descriptor is address-stable, 40 bytes on shipped targets, owns no record
+and allocates nothing; nested sinks restore their exact predecessor.
+Cleanup-state queries expose only the current worker cleanup phase and preserve
+the original pinned artifacts.
+Successful value join transfers result ownership and deletes the worker state,
+so later result take/abandon callbacks also require caller-side containment;
+they cannot publish into a no-longer-live worker. Generated callers install
+their own outcome sink around launch rollback and post-join take/abandon, then
+propagate only after the C service returns. TLS drain precedes join publication
+and abandons a pending result on failure. Generated adapters still require the
+coordinator's C04 containment integration: catch the selected private transport
+inside each GTI callback, publish the copied outcome, and return normally across
+the C boundary. No C service's unwind permission changes with that integration.
 
 Concurrent hosted programs also consume the sealed startup plan's exact
 C-thread begin/end declarations through their real `void()` C services.
@@ -5290,6 +5457,18 @@ the C layout and callback signature directly, with no C++ cleanup-entry API,
 exception transport, hidden allocation or native TLS destructor. A C17 oracle
 and target-layout assertions check this boundary independently.
 
+For active TLS cleanup, the LLVM callback scopes the registry's explicit
+borrowed primary record and artifact around its generated cleanup call. A
+secondary failure in a source destructor or a function it calls is therefore
+checked before that function's local cleanup. An existing incoming context is
+not replaced; returning callbacks leave only the context they acquired.
+The primary artifact is not inferred from the TLS registration artifact.
+Focused TLS execution checks cover ordinary cleanup, a first TLS failure,
+body-failure drain, and an earlier TLS failure entering a later callback.
+This is not managed-worker admission: the legacy runtime emergency handoff can
+unwind, and generated managed callbacks still require the C04 containment
+boundary.
+
 Stored reference fields consume either their entry capability or the address
 published by their non-entry MIR Borrow. The latter executes at its actual
 initializer stage, including after a reference-return call's success edge.
@@ -5718,9 +5897,15 @@ manufacturing evidence.
 `llvm_coverage_evidence` reconciles those claims with the configured CTest
 inventory and JSON evidence manifests derived from the execution tests' actual
 runnable case dictionaries. Manifest schema
-`gti.llvm.execution-evidence/v1` binds a test to named profiles, each profile to
-stable source IDs, and each source ID to its repository/inline origin and the
-SHA-256 of the exact UTF-8 text. Unknown fields, stale hashes and dangling
+`gti.llvm.execution-evidence/v2` binds a test to named profiles, each profile to
+stable source IDs and an explicit `execution-profile`, and each source ID to
+its repository/inline origin and the SHA-256 of the exact UTF-8 text. Producers
+default to `single-threaded`; concurrent profiles require an explicit
+`concurrent` override. The test-only probe models hosted execution, enabling
+thread capability only for a supported host target. It preserves that complete
+target and the selected execution profile through frontend analysis and
+lowering, and the audit checks the observed execution-profile key. Missing tags, unknown values (including `sequential`),
+unknown override keys, v1 manifests, unknown fields, stale hashes and dangling
 source IDs reject. Evidence producers register through the CMake-owned
 `gti_register_llvm_evidence_manifest` service. Its deferred writer emits one
 generated registry after the tests directory has declared every producer, so

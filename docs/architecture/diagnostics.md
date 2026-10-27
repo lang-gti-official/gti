@@ -313,6 +313,11 @@ related spans, and what intentional alternatives remain through hints:
   boundary. Advice distinguishes completing those uses from ending a
   resource-bound carrier's scope: a mutex guard remains live until destruction,
   not merely its last read. No edit automatically reorders effects.
+  This also covers a checked exclusive stored result whose abstract lifetime
+  parent is a shared stored reference. An overlapping ancestor read or second
+  publication reports one semantic diagnostic at the conflicting access, with
+  the first result publication as its related origin. Ending the result's
+  scope restores access; leaving an unused result alive does not.
 - Read-only field writes, fixed-array writes, and mutable method calls relate
   the restricting declaration when it is provable through ordinary named places.
   Hints distinguish an immutable owner, a read-only reference requiring exclusive
@@ -1144,7 +1149,9 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   value. Do not suggest an undocumented feature switch: activation is gated
   on the complete wrapper, runtime, publication, and dynamic-host evidence.
 - `GTI-S2061` owns a namespace global or static field whose resolved concrete
-  type requires active cleanup while GTI has no global/static shutdown plan.
+  type requires source or owning cleanup. Native-only resource retirement is
+  permitted by an exact structural recipe; it does not authorize source
+  destructors or allocation release, including infallible destructors.
   Point at the binding name, attach the first exact declared-cleanup, base, or
   field cause when available, suggest local storage or removing the owning
   component, and do not offer a mechanical fix-it. More-specific owner,

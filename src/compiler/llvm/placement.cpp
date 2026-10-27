@@ -1,9 +1,11 @@
 #include "placement.h"
 #include "../mir_verification_queries.h"
+#include "atomic_types.h"
 #include "closure_environment.h"
 #include "gti/backend.h"
 #include "gti/mir_effects.h"
 #include "memory_types.h"
+#include "mutexes.h"
 
 #include <algorithm>
 #include <set>
@@ -313,6 +315,24 @@ bool containsHierarchyStorage(const MirProgram &program,
           reject("LLVM hierarchy exclusion requires an exact function-pointer "
                  "handle");
         return false;
+      }
+      if (owner->compilerCapability ==
+          CompilerCapabilityTypeKind::AtomicStorage) {
+        if (!nativeAtomicElement(program, selected))
+          reject("LLVM hierarchy exclusion requires exact atomic storage");
+        return false;
+      }
+      if (owner->compilerCapability ==
+              CompilerCapabilityTypeKind::MutexStorage ||
+          owner->compilerCapability ==
+              CompilerCapabilityTypeKind::MutexLockToken) {
+        const auto payload =
+            nativeMutexElement(program, selected, owner->compilerCapability);
+        if (!payload)
+          reject("LLVM hierarchy exclusion requires exact mutex storage/token");
+        return owner->compilerCapability ==
+                   CompilerCapabilityTypeKind::MutexStorage &&
+               self(self, *payload);
       }
       if (owner->compilerCapability != CompilerCapabilityTypeKind::None)
         reject(

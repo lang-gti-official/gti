@@ -13,6 +13,48 @@ llvm::Function *declareRuntimeService(Session &session,
   bool noUnwind = false;
   bool cold = false;
   switch (service) {
+  case RuntimeService::AtomicNotifyRegistered:
+    noUnwind = true;
+    name = "gti_rt_atomic_notify_registered_v1";
+    parameters = {ptr, llvm::Type::getInt32Ty(context),
+                  llvm::Type::getInt32Ty(context)};
+    break;
+  case RuntimeService::QuarantineThread:
+    noUnwind = true;
+    name = "gti_rt_thread_quarantine_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::ProgramStorageRetirementReady:
+    noUnwind = true;
+    name = "gti_rt_thread_program_storage_retirement_ready_v1";
+    result = llvm::Type::getInt32Ty(context);
+    break;
+  case RuntimeService::EnterThreadFailureSink:
+    noUnwind = true;
+    name = "gti_rt_thread_failure_sink_enter_v1";
+    parameters = {ptr, ptr, ptr};
+    break;
+  case RuntimeService::LeaveThreadFailureSink:
+    noUnwind = true;
+    name = "gti_rt_thread_failure_sink_leave_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::PublishThreadFailure:
+    noUnwind = true;
+    name = "gti_rt_thread_failure_publish_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::ThreadCleanupFailureKind:
+    noUnwind = true;
+    name = "gti_rt_thread_cleanup_failure_kind_v1";
+    result = llvm::Type::getInt32Ty(context);
+    break;
+  case RuntimeService::CopyThreadCleanupPrimary:
+    noUnwind = true;
+    name = "gti_rt_thread_cleanup_primary_copy_v2";
+    result = llvm::Type::getInt32Ty(context);
+    parameters = {ptr, ptr};
+    break;
   case RuntimeService::BeginThreadLocals:
     name = "gti_rt_thread_locals_begin_v1";
     break;
@@ -56,12 +98,45 @@ llvm::Function *declareRuntimeService(Session &session,
     parameters = {ptr, ptr, llvm::Type::getInt64Ty(context)};
     result = llvm::Type::getInt32Ty(context);
     break;
+  case RuntimeService::AtomicWait:
+    noUnwind = true;
+    name = "gti_rt_atomic_wait_v1";
+    parameters = {ptr, llvm::Type::getInt64Ty(context),
+                  llvm::Type::getInt32Ty(context), llvm::Type::getInt32Ty(context)};
+    break;
   case RuntimeService::BeginCThreadRuntime:
   case RuntimeService::EndCThreadRuntime:
     noUnwind = true;
     name = service == RuntimeService::BeginCThreadRuntime
                ? "gti_rt_cthread_begin_v1"
                : "gti_rt_cthread_end_v1";
+    break;
+  case RuntimeService::AtomicNotify:
+    noUnwind = true;
+    name = "gti_rt_atomic_notify_v1";
+    parameters = {ptr, llvm::Type::getInt32Ty(context),
+                  llvm::Type::getInt32Ty(context)};
+    break;
+  case RuntimeService::MutexInitialize:
+    noUnwind = true;
+    name = "gti_rt_mutex_initialize_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::MutexDestroy:
+    noUnwind = true;
+    name = "gti_rt_mutex_destroy_v1";
+    parameters = {ptr};
+    break;
+  case RuntimeService::MutexLock:
+    noUnwind = true;
+    name = "gti_rt_mutex_lock_v1";
+    parameters = {ptr};
+    result = llvm::Type::getInt32Ty(context);
+    break;
+  case RuntimeService::MutexUnlock:
+    noUnwind = true;
+    name = "gti_rt_mutex_unlock_v1";
+    parameters = {ptr};
     break;
   case RuntimeService::EnterFailureCleanup:
     cold = true;
@@ -88,6 +163,8 @@ llvm::Function *declareRuntimeService(Session &session,
     if (!function || function->getFunctionType() != signature)
       throw std::logic_error("conflicting LLVM runtime service signature: " +
                              name);
+    if (noUnwind)
+      function->addFnAttr(llvm::Attribute::NoUnwind);
     return function;
   }
   auto *function = llvm::Function::Create(

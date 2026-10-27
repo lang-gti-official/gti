@@ -1,0 +1,26 @@
+#include <std/atomic>
+#include <std/mutex>
+
+class Base {
+public:
+  int32_t value;
+  Base(int32_t value) : value(value) {}
+};
+
+class Derived : public Base {
+public:
+  Derived() : Base(7) {}
+};
+
+class Envelope {
+  Derived payload;
+public:
+  Envelope() : payload(Derived()) {}
+};
+
+int main() {
+  std::atomic<int32_t> scalar{0};
+  std::mutex<Envelope> owner{Envelope()};
+  std::mutex_guard<Envelope> guard = owner.lock();
+  return 0;
+}
