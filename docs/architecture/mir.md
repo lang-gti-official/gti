@@ -2010,7 +2010,11 @@ fixed point through calls and constructions and must equal the semantic
 `ownerlessTextParameters` exactly. Virtual, override or native dispatch,
 function items, lambdas and native exports cannot carry a nonempty
 requirement. A local text binding is not text storage and may hold dynamic
-text; a reader traces its one initializer instead. Semantics never nests
+text; a reader traces every write of it instead: its initialization and each
+assignment, in any order and in a loop. A local already being traced on that
+path adds nothing new, and a store through a mutable borrow of the local is a
+checked text store, which holds ownerless text or text its function requires
+ownerless. Semantics never nests
 dynamic text in an array (`L-OWN-02`), and every safe element write is a
 checked text store here, so an array element is ownerless text storage
 wherever the array lives: a by-value array formal holds what its caller's

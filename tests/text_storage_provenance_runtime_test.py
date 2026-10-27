@@ -4,9 +4,10 @@
 A view copied out of an array of views holds the ownerless text the array
 holds, a C string loaded through a raw pointer is the inert native address the
 caller stored there, and a callable's text result is what its target returns.
-MIR proves each result ownerless. A lambda's view over its captured text is
-used only locally and keeps the captured view's owner borrowed. Each program
-must build and behave identically on C++ and LLVM at -O0 and -O2.
+MIR proves each result ownerless, as it does a reassigned local's text. A
+lambda's view over its captured text is used only locally and keeps the
+captured view's owner borrowed. Each program must build and behave identically
+on C++ and LLVM at -O0 and -O2.
 
     python3 tests/text_storage_provenance_runtime_test.py <gti> <repo-root>
 """
@@ -226,6 +227,49 @@ int main() {
 }
 '''
 
+REASSIGNED_TEXT_LOCALS = r'''
+#include <std/string>
+// A local text binding holds what any of its writes stored, including a
+// store through a mutable borrow of it: each holds ownerless text here.
+struct Note {
+  std::string_view text;
+  int line;
+};
+void setTo(mut std::string_view& out, std::string_view value) { out = value; }
+std::string_view pick(bool c) {
+  mut std::string_view v = "first";
+  if (c) { v = "second"; }
+  return v;
+}
+std::string_view looped(int n) {
+  mut std::string_view current = "start";
+  mut std::string_view previous = "none";
+  for (mut int i = 0; i < n; i += 1) {
+    previous = current;
+    current = "loop";
+  }
+  return previous;
+}
+std::string_view through() {
+  mut std::string_view v = "before";
+  setTo(v, "after");
+  return v;
+}
+mut std::string_view kept = "";
+int main() {
+  mut std::string_view w = "x";
+  w = "y";
+  kept = w;
+  Note note{.text = w, .line = 1};
+  std::println(pick(true));
+  std::println(pick(false));
+  std::println(looped(2));
+  std::println(through());
+  std::println(note.text);
+  return kept == "y" ? 0 : 1;
+}
+'''
+
 CASES = {
     'array-elements': (ARRAY_ELEMENTS, (0, 'cde\nab\ntwo\nright\nplaced\n', '')),
     'array-fields-and-lambdas': (ARRAY_FIELDS_AND_LAMBDAS, (0, 'yz\nlabel\n', '')),
@@ -236,6 +280,8 @@ CASES = {
     'captured-text-local-use': (CAPTURED_TEXT_LOCAL_USE, (
         0, 'dynamic\ndynamic\ndynamic\ndynamic!\ndynamic!\nkept\nfixed\n'
         'literal\n', '')),
+    'reassigned-text-locals': (REASSIGNED_TEXT_LOCALS, (
+        0, 'second\nfirst\nloop\nafter\ny\n', '')),
 }
 
 ENDPOINTS = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
@@ -257,7 +303,7 @@ def main() -> None:
                 if result.error or result.observable != expected:
                     raise AssertionError(f'{name} {endpoint}: {result}')
             print(f'{name}: C++ and LLVM at O0/O2 agree', flush=True)
-    print('array-element, raw-memory, callable and captured text passed')
+    print('array-element, raw-memory, callable, captured and local text passed')
 
 
 if __name__ == '__main__':

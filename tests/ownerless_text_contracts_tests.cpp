@@ -1888,6 +1888,83 @@ int main() { return sameScope("x") + outerScope(); }
       "cannot name");
 }
 
+// A local text binding holds what any of its writes stored: its
+// initialization, each assignment, in any order and in a loop, and a checked
+// store through a mutable borrow of it (MIR TextContracts). Semantics assigns
+// only ownerless text into an existing binding, so a reassigned local returns,
+// stores and fills a field as ownerless text. Were an assignment to store a
+// formal, a function without a relay would return unproven text.
+void testReassignedTextLocals() {
+  const auto result = analyzeText(R"gti(
+#include <std/string>
+struct Note {
+  std::string_view text;
+  int line;
+};
+void setTo(mut std::string_view& out, std::string_view value) { out = value; }
+std::string_view pick(std::string_view unused, bool c) {
+  std::string_view copy = unused;
+  mut std::string_view v = "first";
+  if (c) { v = "second"; }
+  return v;
+}
+std::string_view looped(std::string_view unused, int n) {
+  std::string_view copy = unused;
+  mut std::string_view current = "start";
+  mut std::string_view previous = "none";
+  for (mut int i = 0; i < n; i += 1) {
+    previous = current;
+    current = previous;
+    current = "loop";
+  }
+  return previous;
+}
+std::string_view through(std::string_view unused) {
+  mut std::string_view v = "before";
+  setTo(v, "after");
+  return v;
+}
+mut std::string_view kept = "";
+int main() {
+  mut std::string_view w = "x";
+  w = "y";
+  kept = w;
+  Note note{.text = w, .line = 1};
+  return pick("", true) == "second" && looped("", 2) == "loop" &&
+                 through("") == "after" && kept == "y" && note.text == "y"
+             ? 0
+             : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a reassigned local text binding holds ownerless text");
+  if (!result.canGenerateCode())
+    return;
+  for (const auto &[name, literal] :
+       {std::pair<std::string_view, std::string_view>{"pick", "second"},
+        std::pair<std::string_view, std::string_view>{"looped", "loop"}}) {
+    const auto *function = namedFunction(result, name);
+    expect(function != nullptr, "the function exists: " + std::string(name));
+    if (function == nullptr)
+      continue;
+    auto changed = result.mir;
+    expect(returnFirstFormal(changed, function->id, literal),
+           "an assignment stores the formal");
+    const auto verification = lang::verifyMirProgram(changed);
+    if (!functionError(verification, function->id,
+                       "ownerless text return has no independent result "
+                       "proof"))
+      for (const auto &error : verification.errors)
+        std::cerr << error.message << '\n';
+    expect(functionError(verification, function->id,
+                         "ownerless text return has no independent result "
+                         "proof"),
+           "every write of a returned local is traced: " + std::string(name));
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testArrayElementTextStorage", testArrayElementTextStorage},
     {"testArrayElementTextRejections", testArrayElementTextRejections},
@@ -1896,6 +1973,7 @@ constexpr NamedTest kTests[] = {
     {"testCapturedTextLocalUse", testCapturedTextLocalUse},
     {"testCapturedTextEscapes", testCapturedTextEscapes},
     {"testCapturedTextBorrowsOwner", testCapturedTextBorrowsOwner},
+    {"testReassignedTextLocals", testReassignedTextLocals},
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testAccessorSubjectRelays", testAccessorSubjectRelays},
     {"testAccessorFieldEscapes", testAccessorFieldEscapes},
