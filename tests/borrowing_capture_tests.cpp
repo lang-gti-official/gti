@@ -737,6 +737,74 @@ int main() {
 }
 )",
            "GTI-S2017");
+  // Inside a lambda body a by-reference capture follows the same place-overlap
+  // rules as a reference parameter: an access through it conflicts with a live
+  // overlapping alias, and disjoint fields stay independent.
+  negative("capture-write-while-alias-live", R"(
+int main() {
+  mut int count = 4;
+  mut auto step = [mut &count]() -> int {
+    int& seen = count;
+    count += 1;
+    return seen;
+  };
+  return step();
+}
+)",
+           "GTI-S2017");
+  negative("capture-field-write-while-whole-alias-live", R"(
+class Pair {
+public:
+  mut int left = 2;
+  mut int right = 3;
+  Pair() {}
+};
+int main() {
+  mut Pair pair{};
+  mut auto touch = [mut &pair]() -> void {
+    mut Pair& whole = pair;
+    pair.left = 1;
+    whole.right = 2;
+  };
+  touch();
+  return pair.left;
+}
+)",
+           "GTI-S2017");
+  positive("capture-disjoint-field-alias", R"(
+class Pair {
+public:
+  mut int left = 2;
+  mut int right = 3;
+  Pair() {}
+};
+int main() {
+  mut Pair pair{};
+  {
+    mut auto swap = [mut &pair]() -> void {
+      mut int& left = pair.left;
+      int saved = left;
+      left = pair.right;
+      pair.right = saved;
+    };
+    swap();
+  }
+  return pair.left == 3 && pair.right == 2 ? 0 : 1;
+}
+)");
+  // A capture list borrows a named local or parameter; an enclosing closure's
+  // capture is neither, so capturing it by reference stays rejected.
+  negative("capture-of-enclosing-capture", R"(
+int main() {
+  int base = 10;
+  auto outer = [&base]() -> int {
+    auto inner = [&base]() -> int { return base + 1; };
+    return inner();
+  };
+  return outer() == 11 ? 0 : 1;
+}
+)",
+           "GTI-S2045");
   // Such a closure lowers: its environment is a cleanup-bound carrier whose
   // borrow ends when the closure is destroyed, so the owner may change after
   // the closure's scope.

@@ -1414,7 +1414,12 @@ increment(2);
 
 These are checked references, not raw pointer captures. Each environment field
 retains its origin place, access mode and parent loan. Multiple captures and
-disjoint fields use the same place-overlap rules as ordinary references. Copy
+disjoint fields use the same place-overlap rules as ordinary references.
+Inside the lambda body a by-reference capture behaves as a reference
+parameter: using it while an overlapping reference taken from it is still
+live is rejected, while references to disjoint fields stay independent. A
+capture list borrows only a named local or parameter, not a capture of an
+enclosing lambda. Copy
 and move captures retain any checked dependencies already present in the
 captured value; a lambda's text over a captured view is for local use (see
 [Text a lambda captured](#text-a-lambda-captured)). Shared environments can

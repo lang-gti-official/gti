@@ -24,7 +24,8 @@ FIXTURES = {
     "closure_cleanup_capture_borrow.gti":
         "closure still in scope\naudited released\n1\nclosure released\n",
     "capture_reference_aliases.gti":
-        "read 48\nbump 11\nbump 23\ncount 5\ncell 19\nsum 17\nnested 16\n",
+        "read 48\nbump 11\nbump 23\ncount 5\ncell 19\nsum 17\nswapped 32\n"
+        "nested 16\n",
     "closure_bound_carrier_capture.gti":
         "closure still in scope\nwatcher 1 saw 4\nwatcher 2 saw 5\n"
         "watcher 3 saw 6\nafter consume\ntotal 157\n",

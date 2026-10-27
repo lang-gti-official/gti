@@ -43,6 +43,11 @@ for what minor and patch releases mean.
   another such variable now compiles on both backends; it previously failed
   with an internal compiler error. The lambda can still use the capture after
   the alias's last use.
+- Inside a lambda, a by-reference capture now follows the borrow rules of a
+  reference parameter: using it while an overlapping reference taken from it
+  is still live reports GTI-S2017, and references to different fields of a
+  captured object stay independent. Both cases previously failed with an
+  internal compiler error.
 - A lambda that moves in a value with a destructor and also captures a
   variable by reference now borrows that variable only until the lambda's last
   use, as an equivalent class does, rather than until the lambda is destroyed.

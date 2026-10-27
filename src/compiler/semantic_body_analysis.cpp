@@ -9834,6 +9834,14 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   std::vector<LambdaCaptureInfo> captures;
   std::vector<SemanticLoanDependency> captureDependencies;
   Scope captureScope;
+  // Capture initializers run in the enclosing scope, where an enclosing
+  // closure's captures are no places; this body's own captures are.
+  struct CaptureListScope {
+    bool &flag;
+    bool enclosing;
+    ~CaptureListScope() { flag = enclosing; }
+  } captureListScope{analyzingCaptureList, analyzingCaptureList};
+  analyzingCaptureList = true;
   for (const LambdaCapture &capture : expr.captures()) {
     if (!capturedNames.insert(capture.name.lexeme).second) {
       report(capture.name,
@@ -10045,6 +10053,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                .bindingKind = SemanticBindingKind::LambdaCapture,
                .toolingSymbol = bindingSymbol});
   }
+  analyzingCaptureList = false;
 
   // Lambda body analysis is isolated, so transfer the enclosing stack
   // after capture initializers have executed left-to-right in that stack.
