@@ -284,6 +284,38 @@ Dispatch::planAdjustment(HirClassInstanceId activeClass,
           .directResult = directResult};
 }
 
+bool Dispatch::pureState(HirClassInstanceId activeClass) {
+  for (const auto &view : views(activeClass))
+    for (const auto &slot : view.slots)
+      if (slot.pure)
+        return true;
+  return false;
+}
+
+bool Dispatch::abstractPhase(HirClassInstanceId activeClass) {
+  const auto *active = session.program().mir().findClassInstance(activeClass);
+  if (!active)
+    throw std::invalid_argument("LLVM dispatch phase has no sealed class");
+  if (!pureState(activeClass))
+    return false;
+  if (!active->abstract)
+    throw std::logic_error("LLVM dispatch phase selects a pure concrete state");
+  return true;
+}
+
+void Dispatch::preflightPhase(HirClassInstanceId activeClass) {
+  if (abstractPhase(activeClass))
+    preflightSourceBodies(activeClass);
+  else
+    preflightState(activeClass);
+}
+
+void Dispatch::installPhase(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
+                            HirClassInstanceId activeClass) {
+  if (!abstractPhase(activeClass))
+    install(ir, completeObject, activeClass);
+}
+
 void Dispatch::preflightState(HirClassInstanceId activeClass) {
   preflightSourceBodies(activeClass);
   const auto &active = *session.program().mir().findClassInstance(activeClass);

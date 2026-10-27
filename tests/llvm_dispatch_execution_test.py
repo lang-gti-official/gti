@@ -60,6 +60,7 @@ SUCCESS_FILES = {
     "owned-transfers": "tests/fixtures/llvm_dispatch_owned_transfers.gti",
     "consuming-receivers": "tests/fixtures/llvm_dispatch_consuming_receivers.gti",
     "closure-models": "tests/fixtures/llvm_dispatch_closure_models.gti",
+    "abstract-phases": "tests/fixtures/llvm_dispatch_abstract_phases.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -140,6 +141,19 @@ TRANSFER_SUCCESS_SOURCES = {
     "fresh-value-argument-former-reject": (PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n", 0),
     "fresh-return-former-reject": (PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n", 1),
     "local-return-former-reject": (PLAIN + "Plain make() { Plain local{}; return local; }\nint main() { Plain value = make(); return value.read(); }\n", 1),
+    # An abstract phase that nothing observes installs no pure state.
+    "pure-active-phase-former-reject": ("""class Base {
+public:
+  Base() {}
+  virtual int read() = 0;
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+  int read() override { return 1; }
+};
+int main() { Derived value{}; return value.read(); }
+""", 1),
     # A moved owned local with active cleanup leaves through the return edge.
     "returned-owned-move": ("""mut int dropped = 0;
 class Owned {
@@ -189,10 +203,13 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     "reject-array": PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n",
     "reject-global": PLAIN + "Plain value{};\nint main() { return value.read(); }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
-    "reject-pure-active-phase": """class Base {
+    # A pure member selected while a constructor that never hands the object to
+    # other code runs is unobservable; this phase is not, so it stays gated.
+    "reject-observed-pure-phase": """class Base {
 public:
-  Base() {}
+  Base() { int observed = this.describe(); }
   virtual int read() = 0;
+  virtual int describe() { return 2; }
 };
 class Derived : public Base {
 public:
@@ -391,7 +408,7 @@ def reject_case(gti: Path, root: Path, work: Path, name: str,
             if result.returncode != 65 or "GTI-B0003" not in result.stderr or not preserved:
                 raise AssertionError(f"{name} {mode} existing={existing}: {result}")
             expected = ("DestructorDispatchObservation" if "observation" in name
-                        else "PureDispatchState" if name == "reject-pure-active-phase"
+                        else "PureDispatchState" if name == "reject-observed-pure-phase"
                         else None if name in {"reject-global", "reject-thread-local"}
                         else "PolymorphicTransfer")
             if expected and f"Shape.{expected}" not in result.stderr:
@@ -1083,7 +1100,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1365,6 +1382,24 @@ int main() {
         closure_failure.replace("expected_cleanup = 748;", "expected_cleanup = 749;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=closure_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    phases = (root / SUCCESS_FILES["abstract-phases"]).read_text(encoding="utf-8")
+    phases_marker = "// ABSTRACT_PHASES_MAIN\n"
+    if phases.count(phases_marker) != 1:
+        raise AssertionError("abstract phase main marker is not unique")
+    phase_failure = phases.split(phases_marker, 1)[0] + """int main() {
+  expected_cleanup = 12384;
+  Guard guard{};
+  Square square = Square(3);
+  return square.ratio(0);
+}
+"""
+    phase_needle = "int ratio(int divisor) { return this.area() / divisor; }"
+    add("abstract-phase-failure", phase_failure, "defined-failure",
+        expected_exit=70, failure_needle=phase_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("abstract-phase-wrong-cleanup",
+        phase_failure.replace("expected_cleanup = 12384;", "expected_cleanup = 12385;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=phase_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -1381,7 +1416,10 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "base-interface-adjustments": ("static-dispatch", "shipped-example",
                                        "inline-hierarchy-fields", "nested-object-former-reject",
                                        "inline-field-virtual-failure", "inline-field-constructor-rollback",
-                                       "inline-field-wrong-cleanup-trace"),
+                                       "inline-field-wrong-cleanup-trace",
+                                       "abstract-phases", "abstract-phase-failure",
+                                       "abstract-phase-wrong-cleanup",
+                                       "pure-active-phase-former-reject"),
         "mut-borrow-scalar-bool": ("borrowed-dispatch", "borrowed-mut-reference-chain",
                                   "hierarchy-reference-results", "owner-reference-failure",
                                   "owner-reference-wrong-cleanup", "shared-owner-reference",
@@ -1462,6 +1500,7 @@ def main() -> None:
              "owned-transfer-failure", "owned-transfer-wrong-cleanup",
              "consuming-receiver-failure", "consuming-receiver-wrong-cleanup",
              "closure-model-failure", "closure-model-wrong-cleanup",
+             "abstract-phase-failure", "abstract-phase-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

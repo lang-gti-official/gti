@@ -73,6 +73,16 @@ public:
   // Validate the entire active state without declaring functions, demanding
   // source definitions, or publishing adapters/tables into the module.
   void preflightState(HirClassInstanceId activeClass);
+  // Whether an active state selects a pure member. Such a state has no
+  // executable table and is never installed.
+  [[nodiscard]] bool pureState(HirClassInstanceId activeClass);
+  // The state of a construction or cleanup phase. Only an abstract class's
+  // phase can select pure members, and admission proves that nothing running
+  // in such a phase observes it; that phase validates and installs nothing.
+  // Every other state is validated and installed exactly.
+  void preflightPhase(HirClassInstanceId activeClass);
+  void installPhase(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
+                    HirClassInstanceId activeClass);
   // Entry receivers are the physical dispatch-pointer owner, not the logical
   // source view. Public native polymorphism remains independently gated.
   [[nodiscard]] llvm::Function *adjustment(HirClassInstanceId activeClass,
@@ -115,6 +125,7 @@ private:
   friend struct DispatchStructuralTestAccess;
   explicit Dispatch(Session &session);
   void preflightSourceBodies(HirClassInstanceId activeClass) const;
+  [[nodiscard]] bool abstractPhase(HirClassInstanceId activeClass);
   [[nodiscard]] llvm::StructType *tableType(std::size_t slots) const;
   struct AdjustmentPlan {
     DispatchSlotPlan selected;

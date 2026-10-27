@@ -122,7 +122,7 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
         throw BackendUnsupportedError("LLVM polymorphic replacement requires a "
                                       "verified cleanup dispatch context");
       if (owner.polymorphic && selected.requiresActiveCleanup)
-        dispatch.preflightState(owner.id);
+        dispatch.preflightPhase(owner.id);
       path.push_back(owner.id);
     } else if (selected.requiresActiveCleanup &&
                selected.type.kind != SemanticType::Array) {
@@ -727,7 +727,7 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
           "LLVM generated-empty base lost its selected type or destination");
   }
   if (object.polymorphic)
-    dispatch.preflightState(object.id);
+    dispatch.preflightPhase(object.id);
   return object;
 }
 
@@ -745,12 +745,12 @@ void Lifetimes::generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
   // interface subobjects and private metadata exist here, never language
   // fields or existing assignment storage. Preflight every table before any
   // store; observable pure phases retain their separate rejection.
-  if (object.polymorphic)
+  if (object.polymorphic && !dispatch.pureState(object.id))
     for (const auto &view : dispatch.views(object.id))
       static_cast<void>(dispatch.table(object.id, view.viewClass));
   ir.CreateStore(llvm::Constant::getNullValue(storage), address);
   if (object.polymorphic)
-    dispatch.install(ir, address, object.id);
+    dispatch.installPhase(ir, address, object.id);
   active(ir, address, object.type, true);
 }
 
@@ -1716,7 +1716,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       ir.CreateCondBr(ir.CreateCall(cleanupObservation(recipe), {address}),
                       install, ready);
       ir.SetInsertPoint(install);
-      dispatch.install(ir, address, *recipe.classInstance);
+      dispatch.installPhase(ir, address, *recipe.classInstance);
       ir.CreateBr(ready);
       ir.SetInsertPoint(ready);
     }

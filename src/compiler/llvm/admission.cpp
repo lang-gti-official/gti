@@ -357,8 +357,11 @@ public:
       // owns and keeps for cleanup; the body's own operations carry proofs.
       if (address.kind == MirBodyKind::Constructor) {
         const auto &target = *program.findConstructorInstance(address.owner);
+        // An abstract phase state selects pure members; it is admitted only
+        // when nothing running in that phase can observe it.
         if (target.dispatchState)
-          bodyProof.pure = pureState(target.dispatchState->activeClass);
+          bodyProof.pure = pureState(target.dispatchState->activeClass) &&
+                           constructionObserves(address);
       }
       if (address.kind == MirBodyKind::Destructor) {
         const auto &target = *program.findDestructorInstance(address.owner);
@@ -446,8 +449,9 @@ public:
           if (stage.elementCleanup && contains(stage.elementCleanup->type) &&
               stage.intrinsic != IntrinsicKind::ObjectDestroy)
             proof.transfer = true;
-          if (stage.kind == MirInstructionKind::Construct ||
-              stage.kind == MirInstructionKind::InitializeBase)
+          // A base's phase belongs to its selected constructor's own proof;
+          // a generated empty base runs no code under its state.
+          if (stage.kind == MirInstructionKind::Construct)
             if (stage.info.type.kind == SemanticType::Class &&
                 contains(stage.info.type))
               proof.pure = pureState(instance(stage.info.type).id);
@@ -841,9 +845,12 @@ private:
         return true;
     return false;
   }
+  // Cleanup reinstalls an abstract base's phase only for its destructor;
+  // that phase is observable only when the destructor observes it.
   bool pureCleanup(const MirDropType &recipe) const {
     bool pure = recipe.requiresActiveCleanup && recipe.classInstance &&
-                pureState(*recipe.classInstance);
+                pureState(*recipe.classInstance) && recipe.destructor &&
+                observesDispatch({MirBodyKind::Destructor, *recipe.destructor});
     for (const auto &child : recipe.aggregate)
       pure |= pureCleanup(child);
     return pure;
@@ -858,8 +865,10 @@ private:
   }
   // Whether a body uses a view of its receiver object itself (the receiver
   // place or one of its base views, never a field) as any instruction or
-  // terminator input. Fields are complete objects that outlive the body.
-  bool receiverViewUsed(const MirBody &body) const {
+  // terminator input. Fields are complete objects that outlive the body. In
+  // a construction phase, initializing or rolling back a base subobject runs
+  // under that base's own state and does not use this phase's view.
+  bool receiverViewUsed(const MirBody &body, bool construction = false) const {
     const auto view = [&](const auto &self, MirPlaceId id) -> bool {
       const auto *place = body.findPlace(id);
       if (!place ||
@@ -896,9 +905,13 @@ private:
       for (const auto &stage : block.instructions) {
         if (stage.tombstone)
           continue;
+        const bool phaseDestination =
+            construction && (stage.kind == MirInstructionKind::InitializeBase ||
+                             stage.kind == MirInstructionKind::Drop);
         if (std::any_of(stage.operands.begin(), stage.operands.end(), input) ||
             (stage.receiver && input(*stage.receiver)) ||
-            (stage.destination && view(view, *stage.destination)) ||
+            (stage.destination && !phaseDestination &&
+             view(view, *stage.destination)) ||
             (stage.loan && loanView(*stage.loan)) ||
             (stage.retainedOwnerPlace &&
              view(view, *stage.retainedOwnerPlace)) ||
@@ -936,6 +949,21 @@ private:
           body && (!owner->polymorphic || !receiverViewUsed(*body)))
         return false;
     }
+    return reachesDispatch(root);
+  }
+  // Whether code running while a constructor's own phase state is installed
+  // can observe it: a use of a view of the object outside base
+  // initialization and rollback whose code may dispatch or escape.
+  bool constructionObserves(MirBodyAddress address) const {
+    const auto *row = plan.program().findBody(address);
+    const auto *body = findMirBody(program, address);
+    if (!row || row->role != LoweredBodyRole::SourceExecutable || !body)
+      return true;
+    return receiverViewUsed(*body, true) && reachesDispatch(address);
+  }
+  // Conservative transitive scan: any reachable dispatch, escape or
+  // unresolved call.
+  bool reachesDispatch(MirBodyAddress root) const {
     std::vector<MirBodyAddress> pending{root};
     std::set<BodyKey> visited;
     while (!pending.empty()) {
@@ -1500,7 +1528,7 @@ private:
             !target.dispatchState ||
             target.dispatchState->activeClass != owner->id)
           return {};
-        dispatch->preflightState(owner->id);
+        dispatch->preflightPhase(owner->id);
       }
       return Shape::NativeStaticDispatchStorage;
     } catch (const BackendUnsupportedError &) {

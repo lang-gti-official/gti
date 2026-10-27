@@ -1791,8 +1791,8 @@ private:
       // retains its own phase and cannot install any derived dispatch state.
       if (constructor->dispatchState &&
           constructor->dispatchState->afterBaseInitialization == instruction.id)
-        dispatch.install(ir, thisAddress,
-                         constructor->dispatchState->activeClass);
+        dispatch.installPhase(ir, thisAddress,
+                              constructor->dispatchState->activeClass);
       break;
     }
     case MirInstructionKind::Construct: {
@@ -2327,8 +2327,8 @@ private:
     }
     if (constructor && constructor->dispatchState &&
         constructor->dispatchState->afterBaseInitialization == 0)
-      dispatch.install(ir, thisAddress,
-                       constructor->dispatchState->activeClass);
+      dispatch.installPhase(ir, thisAddress,
+                            constructor->dispatchState->activeClass);
     // A constructor's entry Stored loans are the sealed field-publication
     // contract. Their referent address, not the Load of its scalar contents,
     // initializes the physical reference field.
