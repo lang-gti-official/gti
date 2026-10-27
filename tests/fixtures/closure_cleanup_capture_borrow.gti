@@ -1,0 +1,30 @@
+// A closure that moves in an owner with a destructor beside a by-reference
+// capture is not a cleanup-bound carrier: its generated cleanup never reads
+// the borrowed variable, so the borrow ends at the closure's last use, as for
+// an equivalent class (owner decision 2026-10-27).
+class audited {
+  int32_t id;
+public:
+  audited(int32_t id) : id(id) {}
+  int32_t read() { return this.id; }
+  ~audited() {
+    std::println("audited released");
+    std::println(this.id);
+  }
+};
+
+int main() {
+  mut int32_t base = 4;
+  {
+    audited kept{1};
+    auto reader = [cell = std::move(kept), &base]() -> int32_t {
+      return cell.read() + base;
+    };
+    int32_t first = reader();
+    base = 10;
+    if (first != 5 || base != 10) { return 1; }
+    std::println("closure still in scope");
+  }
+  std::println("closure released");
+  return 0;
+}

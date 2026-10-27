@@ -4406,7 +4406,13 @@ private:
       valid = false;
       return;
     }
+    // A by-reference capture's entry loan is held by the closure environment.
+    // Each local alias that semantics records as its carrier holds its own
+    // loan below that entry instead (see referenceOperand).
+    const bool capturedEntry = capturedReferenceEntry(lowered);
     for (const HirBindingId carrier : loan.carriers) {
+      if (capturedEntry)
+        break;
       // Semantic traversal carriers also express the element escape boundary.
       // Concrete cursor/proxy shells have their own producer-owned loans.
       // Re-recording an outer shared traversal for a nested loop must not
@@ -4424,7 +4430,7 @@ private:
         lowered.carriers.push_back(carrier);
       }
     }
-    if (binding != 0 &&
+    if (binding != 0 && !capturedEntry &&
         std::find(lowered.carriers.begin(), lowered.carriers.end(), binding) ==
             lowered.carriers.end()) {
       lowered.carriers.push_back(binding);
@@ -5599,6 +5605,38 @@ private:
           return loan.id;
       }
     return 0;
+  }
+
+  // A lambda body's entry loan for one by-reference capture.
+  [[nodiscard]] bool capturedReferenceEntry(const MirLoan &loan) const {
+    const MirPlace *slot = output.findPlace(loan.source);
+    return loan.entry && loan.kind == MirLoanKind::Parameter &&
+           loan.parent == 0 && slot != nullptr &&
+           slot->root == MirPlaceRootKind::Symbol && slot->capture != 0 &&
+           slot->projections.empty() &&
+           slot->type.kind == SemanticType::Reference;
+  }
+
+  // Whether `loan` is a local physical borrow below one by-reference
+  // capture's entry loan: a chain of active, non-escaping accessor-result or
+  // local links that reaches that entry and grants `access`.
+  [[nodiscard]] bool capturedEntryDescendant(MirLoanId loan, MirLoanId entry,
+                                             AccessMode access) const {
+    std::unordered_set<MirLoanId> visited;
+    MirLoanId link = loan;
+    while (link != entry) {
+      const MirLoan *record = output.findLoan(link);
+      if (record == nullptr || !visited.insert(link).second || record->entry ||
+          record->escapes ||
+          (record->kind != MirLoanKind::CallResult &&
+           record->kind != MirLoanKind::Local) ||
+          !loanIsActive(scopes, link) ||
+          (access == AccessMode::Mutable &&
+           record->access != AccessMode::Mutable))
+        return false;
+      link = record->parent;
+    }
+    return loan != entry && loan != 0;
   }
 
   // The exact place of a value read through a by-reference capture whose
@@ -9619,7 +9657,11 @@ private:
              std::find(result.begin(), result.end(), ancestor) ==
                  result.end()) {
         const MirLoan &candidate = output.loans[ancestor - 1];
+        // A by-reference capture's entry loan carries no binding because the
+        // closure environment holds it for the whole call; it is not a
+        // transient link.
         if (!candidate.carriers.empty() || candidate.escapes ||
+            capturedReferenceEntry(candidate) ||
             !loanIsActive(activeScopes, ancestor)) {
           break;
         }
@@ -11716,6 +11758,66 @@ private:
       }
       if (const auto found = semanticLoans.find(desired->semanticLoan);
           found != semanticLoans.end()) {
+        // A by-reference capture's entry loan is held by the closure
+        // environment, not by a binding, so a local alias never joins it as
+        // a carrier; it carries a physical loan below that entry instead.
+        if (const MirLoan *entry = output.findLoan(found->second);
+            binding != 0 && entry != nullptr &&
+            capturedReferenceEntry(*entry)) {
+          const MirLoanId entryId = entry->id;
+          // An accessor result or another alias already borrows below the
+          // entry; this alias carries that same physical loan.
+          if (existing != 0 &&
+              capturedEntryDescendant(existing, entryId, desired->access))
+            return {.kind = MirOperandKind::Loan,
+                    .loan = existing,
+                    .type = value->info.type};
+          // Otherwise the initializer names a referent reached through the
+          // capture itself, or through such an alias.
+          const MirPlaceId referent =
+              existing == 0 || existing == entryId ? placeForValue(valueId) : 0;
+          const MirPlace *place = output.findPlace(referent);
+          const MirPlace *slot = output.findPlace(entry->source);
+          MirLoanId parent = 0;
+          if (place != nullptr && slot != nullptr &&
+              !place->projections.empty() &&
+              place->projections.front().kind ==
+                  MirProjectionKind::Dereference &&
+              place->type == value->info.type) {
+            if (place->root == MirPlaceRootKind::Symbol &&
+                place->symbol == slot->symbol &&
+                place->capture == slot->capture)
+              parent = entryId;
+            else if (const auto carried = bindingLoans.find(place->binding);
+                     place->root == MirPlaceRootKind::Binding &&
+                     carried != bindingLoans.end() &&
+                     capturedEntryDescendant(carried->second, entryId,
+                                             desired->access))
+              parent = carried->second;
+          }
+          if (parent != 0 &&
+              (desired->access == AccessMode::ReadOnly ||
+               output.loans[parent - 1].access == AccessMode::Mutable)) {
+            const MirLoanId loan = createLoan(MirLoanKind::Local, referent,
+                                              desired->access, valueId, 0, 0,
+                                              parent);
+            (void)appendInstruction(
+                {.kind = MirInstructionKind::Borrow,
+                 .hirValue = valueId,
+                 .operands = {{.kind = MirOperandKind::Loan,
+                               .place = referent,
+                               .loan = parent,
+                               .type = value->info.type}},
+                 .loan = loan,
+                 .info = value->info});
+            scopes.back().loans.push_back(loan);
+            valueLoans.insert_or_assign(valueId, loan);
+            return {.kind = MirOperandKind::Loan,
+                    .place = referent,
+                    .loan = loan,
+                    .type = value->info.type};
+          }
+        }
         if (existing != 0 && existing != found->second) {
           const MirLoan *transient = output.findLoan(existing);
           const MirLoan *retained = output.findLoan(found->second);
@@ -13477,6 +13579,21 @@ private:
                 (sameBorrowSource(candidate->source, existing->source) ||
                  rangeCarrierReferent))
               candidate->parent = existing->id;
+          } else if (existing != nullptr && candidate != nullptr &&
+                     binding->info.type.kind == SemanticType::Reference &&
+                     capturedReferenceEntry(*existing) &&
+                     loanIsActive(scopes, existing->id) &&
+                     capturedEntryDescendant(
+                         candidate->id, existing->id,
+                         binding->info.type.referenceAccess)) {
+            // A by-reference capture's entry loan is held by the closure
+            // environment, which is not a binding, so a local reference alias
+            // cannot join it as a carrier the way a formal's alias joins the
+            // formal's entry. The alias instead carries its own physical loan
+            // below that entry (an accessor result's, a fresh local borrow's,
+            // or another such alias's), as a range cursor keeps its call's
+            // loan; the semantic identity stays on the entry loan.
+            physicalRangeLoan = true;
           } else if (consumesExistingCarrier) {
             // The semantic identity protects the same external owner, but a
             // consuming call publishes a new physical cleanup obligation.
