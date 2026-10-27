@@ -2323,6 +2323,41 @@ int main() {
     printDiagnostics(valid);
   expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
          "operator text relays lower through MIR");
+  // MIR requires a text call result that keeps a loan to carry borrowed
+  // state: without it the loan would end while the text is still read, as it
+  // did before an operator's relayed text was owner dependent.
+  const auto *caller = namedFunction(valid, "main");
+  const auto *callee = namedFunction(valid, "Same::__gti_operator_call");
+  expect(caller != nullptr && callee != nullptr,
+         "the caller and the call operator exist");
+  if (caller != nullptr && callee != nullptr) {
+    auto changed = valid.mir;
+    auto *function = const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(caller->id));
+    bool cleared = false;
+    for (auto &block : function->body.blocks)
+      for (auto &instruction : block.instructions)
+        if (!cleared && instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.functionTarget &&
+            *instruction.functionTarget == callee->id && instruction.loan &&
+            instruction.result) {
+          instruction.info.traits.containsBorrowedState = false;
+          for (auto &value : function->body.values)
+            if (value.id == *instruction.result)
+              value.info.traits.containsBorrowedState = false;
+          cleared = true;
+        }
+    expect(cleared, "the call operator's relayed result keeps a loan");
+    const auto verification = lang::verifyMirProgram(changed);
+    if (!functionError(verification, caller->id,
+                       "text call result keeps a loan without borrowed state"))
+      for (const auto &error : verification.errors)
+        std::cerr << error.message << '\n';
+    expect(functionError(verification, caller->id,
+                         "text call result keeps a loan without borrowed "
+                         "state"),
+           "a text call result that keeps a loan carries borrowed state");
+  }
   for (const auto &[use, mutation] :
        {std::pair<std::string_view, std::string_view>{
             "std::string_view kept = same(owner.view());",
@@ -2352,6 +2387,218 @@ int main() {
   }
 }
 
+// An invocation pointer's text result is ownerless (owner decision
+// 2026-10-27): its signature names no origin for text, so forming one from a
+// target whose text result depends on a parameter reports GTI-S2045 where it
+// is formed, naming that parameter. That holds for a returned parameter, a
+// view of a referenced owner, a referenced record's text field and a
+// c_string. A target returning ownerless text stays accepted, and its results
+// keep no argument's owner borrowed.
+void testInvocationPointerTextTargets() {
+  const auto accepted = analyzeText(R"gti(
+#include <std/functional>
+#include <std/string>
+std::string_view tag(std::string_view s) {
+  if (s.empty()) { return "empty"; }
+  return "full";
+}
+int main() {
+  auto quiet = [](std::string_view s) -> std::string_view {
+    return s.empty() ? "none" : "some";
+  };
+  std::function_ptr<std::string_view(std::string_view)> named{tag};
+  std::function_ptr<std::string_view(std::string_view)> lambda{quiet};
+  mut std::string owner{"owned"};
+  std::string_view first = named(owner.view());
+  std::string_view second = lambda(owner.view());
+  owner.append("!");
+  return first == "full" && second == "some" ? 0 : 1;
+}
+)gti");
+  if (!accepted.canGenerateCode())
+    printDiagnostics(accepted);
+  expect(accepted.canGenerateCode() &&
+             lang::verifyMirProgram(accepted.mir).valid(),
+         "an invocation pointer over an ownerless text target is accepted");
+  struct Case {
+    std::string_view declarations;
+    std::string_view signature;
+    std::string_view parameter;
+    std::string_view result;
+  };
+  for (const Case &target :
+       {Case{"std::string_view target(std::string_view s) {\n"
+             "  if (s.empty()) { return \"empty\"; }\n"
+             "  return s;\n"
+             "}\n",
+             "std::string_view(std::string_view)", "s", "std::string_view"},
+        Case{"std::string_view target(std::string& owner) {\n"
+             "  return owner.view();\n"
+             "}\n",
+             "std::string_view(std::string&)", "owner", "std::string_view"},
+        Case{"struct Label { std::string_view text = \"label\"; };\n"
+             "std::string_view target(Label& label) { return label.text; "
+             "}\n",
+             "std::string_view(Label&)", "label", "std::string_view"},
+        Case{"c_string target(c_string native) { return native; }\n",
+             "c_string(c_string)", "native", "c_string"}}) {
+    const std::string source =
+        "#include <std/functional>\n#include <std/string>\n" +
+        std::string(target.declarations) +
+        "int main() {\n  std::function_ptr<" + std::string(target.signature) +
+        "> pointer{target};\n  return 0;\n}\n";
+    const auto rejected = analyzeText(source);
+    const auto formed = source.find("pointer{target}");
+    const auto formal = source.find(" " + std::string(target.parameter) + ")");
+    const std::string reason =
+        "A GTI invocation pointer's " + std::string(target.result) +
+        " result is ownerless, but this target returns text from its "
+        "parameter '" +
+        std::string(target.parameter) + "'";
+    const auto *diagnostic =
+        findDiagnosticByCode(rejected.diagnostics, "GTI-S2045");
+    expect(
+        rejectedAtSource(rejected, "GTI-S2045") &&
+            formed != std::string::npos &&
+            hasDiagnosticAt(rejected.diagnostics, "GTI-S2045",
+                            "ownerless-text-contracts.gti",
+                            formed + std::string_view("pointer").size(),
+                            reason) &&
+            diagnostic != nullptr && formal != std::string::npos &&
+            std::any_of(diagnostic->related.begin(), diagnostic->related.end(),
+                        [&](const auto &related) {
+                          return related.span.start == formal + 1 &&
+                                 related.message.find(
+                                     "relays this parameter's text") !=
+                                     std::string::npos;
+                        }) &&
+            hasDiagnosticHint(rejected.diagnostics, "returns ownerless text"),
+        "a text-relaying invocation pointer target is rejected where it is "
+        "formed: " +
+            std::string(target.signature));
+  }
+}
+
+// A view field a base class declares is the derived value's field too. A
+// class with a base keeps its text fields ownerless, so a derived method,
+// virtual or not, returns an inherited view field as ownerless text, as a
+// root's own method returns its field (L-OWN-02). A derived constructor that
+// passes a formal to a base constructor storing it therefore requires
+// ownerless text there, at every construction and through a function that
+// forwards to it; MIR derives that requirement independently.
+const std::string kInheritedTextFields = R"gti(
+#include <std/string>
+class Base {
+public:
+  std::string_view text;
+  Base(std::string_view text) : text(text) {}
+  virtual std::string_view name() { return "base"; }
+};
+class Derived : public Base {
+public:
+  Derived(std::string_view text) : Base(text) {}
+  std::string_view name() override { return this.text; }
+  std::string_view plain() { return this.text; }
+};
+class Holder<T> {
+public:
+  std::string_view text;
+  T value;
+  Holder(std::string_view text, T value) : text(text), value(value) {}
+  virtual std::string_view name() { return this.text; }
+};
+class Special<T> : public Holder<T> {
+public:
+  Special(T value) : Holder<T>("special", value) {}
+  std::string_view name() override { return this.text; }
+};
+Derived make(std::string_view text) { return Derived(text); }
+)gti";
+
+void testInheritedTextFields() {
+  const auto valid = analyzeText(kInheritedTextFields + R"gti(
+int main() {
+  Derived derived = make("derived");
+  Base& base = derived;
+  Special<int> special{1};
+  Holder<int>& holder = special;
+  return base.name() == "derived" && derived.plain() == "derived" &&
+                 holder.name() == "special"
+             ? 0
+             : 1;
+}
+)gti");
+  if (!valid.canGenerateCode())
+    printDiagnostics(valid);
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "derived methods return inherited view fields as ownerless text");
+  // MIR derives the factory's requirement from the base constructor its
+  // derived constructor forwards to: without the declared contract, the
+  // derived requirement no longer matches.
+  if (valid.canGenerateCode())
+    if (const auto *factory = namedFunction(valid, "make")) {
+      auto changed = valid.mir;
+      auto *function = const_cast<lang::MirFunctionInstance *>(
+          changed.findFunctionInstance(factory->id));
+      expect(function->ownerlessTextParameters == std::vector<std::size_t>{0},
+             "the factory requires ownerless text for the forwarded formal");
+      function->ownerlessTextParameters.clear();
+      const auto verification = lang::verifyMirProgram(changed);
+      expect(functionError(verification, factory->id,
+                           "ownerless text input contract differs from "
+                           "independently derived storage and forwarding"),
+             "MIR derives a base initializer's ownerless text requirement");
+    }
+  // Dynamic text cannot reach an inherited field through a base constructor.
+  const std::string direct = kInheritedTextFields + R"gti(
+int main() {
+  std::string owner{"dynamic"};
+  Derived derived{owner.view()};
+  return int(derived.plain().size());
+}
+)gti";
+  const auto rejected = analyzeText(direct);
+  const auto argument = direct.find("derived{owner.view()}");
+  const auto base = direct.find("Base(text)");
+  const auto *diagnostic =
+      findDiagnosticByCode(rejected.diagnostics, "GTI-S2045");
+  expect(rejectedAtSource(rejected, "GTI-S2045") &&
+             argument != std::string::npos && base != std::string::npos &&
+             hasDiagnosticAt(
+                 rejected.diagnostics, "GTI-S2045",
+                 "ownerless-text-contracts.gti",
+                 argument + std::string_view("derived{owner.view()").size() - 1,
+                 "passed to a constructor that stores it in a field") &&
+             diagnostic != nullptr &&
+             std::any_of(diagnostic->related.begin(), diagnostic->related.end(),
+                         [&](const auto &related) {
+                           return related.span.start == base &&
+                                  related.message.find(
+                                      "base initializer passes the view") !=
+                                      std::string::npos;
+                         }) &&
+             hasDiagnosticHint(rejected.diagnostics,
+                               "a base class or virtual methods keeps its "
+                               "text fields ownerless"),
+         "a derived constructor's base initializer requires ownerless text");
+  const auto forwarded = analyzeText(kInheritedTextFields + R"gti(
+int main() {
+  std::string owner{"dynamic"};
+  Derived derived = make(owner.view());
+  return int(derived.plain().size());
+}
+)gti");
+  expect(rejectedAtSource(forwarded, "GTI-S2045") &&
+             std::any_of(forwarded.diagnostics.begin(),
+                         forwarded.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.message.find(
+                                      "requiring ownerless text input") !=
+                                  std::string::npos;
+                         }),
+         "a function forwarding to that constructor requires ownerless text");
+}
+
 constexpr NamedTest kTests[] = {
     {"testArrayElementTextStorage", testArrayElementTextStorage},
     {"testArrayElementTextRejections", testArrayElementTextRejections},
@@ -2365,6 +2612,8 @@ constexpr NamedTest kTests[] = {
     {"testVirtualAndErasedTextResults", testVirtualAndErasedTextResults},
     {"testGenericVirtualRootInstances", testGenericVirtualRootInstances},
     {"testOperatorTextRelays", testOperatorTextRelays},
+    {"testInvocationPointerTextTargets", testInvocationPointerTextTargets},
+    {"testInheritedTextFields", testInheritedTextFields},
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testAccessorSubjectRelays", testAccessorSubjectRelays},
     {"testAccessorFieldEscapes", testAccessorFieldEscapes},

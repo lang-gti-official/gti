@@ -2524,14 +2524,25 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
           continue;
         }
       }
+      // A base initializer passes the view to a base constructor that stores
+      // it in the base's field (ownerlessTextConstructorInputs).
+      const ClassInfo *constructedClass = classInfo(constructedType);
+      const bool baseInitializer =
+          constructedClass != nullptr &&
+          constructedClass->members.find(
+              initializer->target.name.last().lexeme) ==
+              constructedClass->members.end();
       reportOwnerDependentTextStorage(
           *argument, "passed to a constructor that stores it in a field");
       diagnostics.back().related.push_back(
           {tokenSpan(initializer->target.name.last()),
-           "This initializer stores the view by value and requires an "
-           "ownerless argument."});
+           baseInitializer
+               ? "This base initializer passes the view to a base constructor "
+                 "that stores it, so it requires an ownerless argument."
+               : "This initializer stores the view by value and requires an "
+                 "ownerless argument."});
       diagnostics.back().hints.clear();
-      if (restrictedOwner)
+      if (restrictedOwner || baseInitializer)
         diagnostics.back().hints.emplace_back(
             "A class with a destructor, a base class or virtual methods keeps "
             "its text fields ownerless, because that code reads them outside "

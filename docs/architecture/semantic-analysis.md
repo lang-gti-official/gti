@@ -898,6 +898,15 @@ owner dependent unless the relayed operand, or the receiver field a field
 relay reads, holds ownerless text, so the binding retains the loan
 `operatorBorrowSource` names.
 
+`ownerlessTextConstructorInputs`, the pre-body input contract checked at each
+construction, includes a base initializer that passes a formal to a base
+constructor storing that parameter. The derived class keeps its text fields
+ownerless (`textPublicationOwner`), so a dynamic argument there is
+`GTI-S2045`, related to the base initializer. A function that forwards to such
+a constructor inherits the requirement. Because no construction can then
+publish into an inherited field, a derived method reads one as ownerless
+text.
+
 `FunctionInfo::completeReturnBorrow` is a separate complete result contract,
 not an inferred owner for an empty alternative. The current dependency-free
 enum slice collects every structurally reachable explicit return and demands

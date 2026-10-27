@@ -1481,6 +1481,27 @@ int& front = first(values);   // borrows `values`, not the pointer
 An ambiguous signature (two eligible parameters), a mutable reference result
 and a borrowed-state class result are rejected before the view exists.
 
+A signature whose result is `std::string_view` or `c_string` names no origin,
+so an invocation through the pointer or view returns ownerless text and keeps
+no argument's owner borrowed. Owner decision (2026-10-27): invocation pointers
+are ownerless-only for text. Forming one, as `std::function_ptr` construction
+does, from a namespace function whose text result depends on a parameter
+reports `GTI-S2045` where the pointer is formed, related to that parameter. A
+target that returns a literal-backed view or other ownerless text is accepted.
+A lambda never relays a parameter's text, and the view a callable class's
+`std::function_ref` invokes through a captureless thunk follows the same rule:
+
+```gti
+std::string_view same(std::string_view s) { return s; }
+std::string_view tag(std::string_view s) { return s.empty() ? "empty" : "full"; }
+std::function_ptr<std::string_view(std::string_view)> bad{same};  // GTI-S2045
+std::function_ptr<std::string_view(std::string_view)> good{tag};  // ownerless
+```
+
+Carrying the signature's one text parameter as an origin, as reference
+results do, was the alternative not taken; a direct call of `same` still keeps
+its argument's owner borrowed.
+
 #### Lambda Reference Results
 
 A lambda may return a read-only reference. Its origin is inferred by the same
@@ -2744,7 +2765,10 @@ returned only over a reference parameter's referent (see
 [Conversions, field relays and returns](#conversions-field-relays-and-returns)).
 Each of the others is `GTI-S2045`. For the same reason a
 class with a destructor, a base or virtual methods keeps the ownerless field
-rule. So does a constructor with a non-empty body, which could read the
+rule. A derived constructor that passes a formal to a base constructor storing
+it therefore requires ownerless text for that formal (`GTI-S2045` where the
+derived class is constructed), and any method of a derived class, virtual or
+not, reads an inherited view field as ownerless text. So does a constructor with a non-empty body, which could read the
 published field back through `this` as ownerless text. A value holds dynamic
 text from at most one owner, and that owner must be a named place: a view of a
 temporary owner is rejected as before.

@@ -27,6 +27,27 @@ for what minor and patch releases mean.
   negative enumerator passed to a function could take the wrong branch.
 - Share one constant per text literal, so identical literals observe one
   address as the C++ backend already does.
+- Fix two ways safe code could read text after its owner changed. A
+  `std::string_view` that an overloaded call operator or `operator[]` returns
+  from its receiver or an argument, as in `std::string_view v =
+  holder(owner.view());`, now keeps that owner borrowed as a method's result
+  does, so changing the owner while `v` is used reports `GTI-S2017`. And a
+  dynamic view passed to a derived class's constructor that hands it to a
+  base constructor storing it now reports `GTI-S2045`, as it does for any
+  class with a base.
+- Text results through virtual methods, erased callables and generic classes
+  now compile on both backends instead of failing with an internal compiler
+  error. This covers `std::function<std::string_view()>` over a lambda
+  returning literals, interface overrides returning literals, a generic root
+  such as `virtual T pick(T a)` instantiated with `std::string_view`, and a
+  derived method returning a view field its base declares. An override keeps
+  its root's text contract, so returning a view of an owned string from an
+  override of an interface method reports `GTI-S2045`.
+- A `std::function_ptr` whose result is `std::string_view` or `c_string`
+  returns ownerless text. Forming one from a function that returns text from
+  its parameter now reports `GTI-S2045` where the pointer is formed instead of
+  an internal compiler error; a function returning ownerless text is
+  accepted.
 - Fix native `std::vector` and `std::string` bounds checks being dropped. The
   native lowering reported every container bounds check as private storage,
   so the checks recorded for vectors and strings were treated as absent: an

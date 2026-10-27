@@ -4410,6 +4410,42 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     return std::nullopt;
   };
   for (const auto &initializer : constructor->initializers()) {
+    // A base initializer that passes a formal to a base constructor storing
+    // that parameter stores the formal's text in the base's field. A class
+    // with a base keeps its text fields ownerless (textPublicationOwner), so
+    // every caller supplies that formal ownerless text (L-OWN-02).
+    if (owner->members.find(initializer.target.name.last().lexeme) ==
+        owner->members.end()) {
+      for (const ClassBaseTypeInfo &base : owner->bases) {
+        const SemanticType baseType =
+            substituteType(base.type, classSubstitution(type));
+        const ClassInfo *baseClass = classInfo(baseType);
+        if (base.interface || baseClass == nullptr ||
+            baseClass->name.lexeme != initializer.target.name.last().lexeme)
+          continue;
+        const GenericSubstitution substitution = classSubstitution(baseType);
+        for (const ConstructorInfo &candidate : baseClass->constructors) {
+          if (candidate.declaration == nullptr ||
+              initializer.arguments.size() < candidate.requiredParameterCount ||
+              initializer.arguments.size() > candidate.parameterTypes.size())
+            continue;
+          std::vector<SemanticType> baseParameters;
+          for (const SemanticType &parameter : candidate.parameterTypes)
+            baseParameters.push_back(substituteType(parameter, substitution));
+          for (const auto &input : ownerlessTextConstructorInputs(
+                   baseType, candidate.declaration, baseParameters))
+            if (input.sourceField == 0 && !input.wholeValue &&
+                input.payload == 0 &&
+                input.parameter < initializer.arguments.size())
+              if (const auto index =
+                      formalOf(initializer.arguments[input.parameter],
+                               baseParameters[input.parameter]))
+                result.push_back(
+                    {.parameter = *index, .initializer = &initializer});
+        }
+      }
+      continue;
+    }
     if (initializer.target.name.segments.size() != 1 ||
         !initializer.target.arguments.empty() ||
         initializer.arguments.size() != 1)
