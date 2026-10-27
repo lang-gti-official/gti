@@ -865,11 +865,14 @@ public:
         value->info.type != producer.info.type)
       malformed("LLVM transfer lost its exact result definition");
     // A payload enum's complete, empty dependency set may carry the evidence
-    // of its active alternative; it still names no loan.
+    // of its active alternative; it still names no loan. A moved carrier
+    // takes the loans it stores along: they name its external referents,
+    // which a relocation does not move.
     const bool relocating = isPayloadFieldMove(producer) ||
                             producer.info.type.kind == SemanticType::Enum;
+    const bool moving = relocating || producer.kind == MirInstructionKind::Move;
     if (value->borrowDependencies &&
-        (!value->borrowDependencies->dependencies.empty() ||
+        ((!moving && !value->borrowDependencies->dependencies.empty()) ||
          (!relocating &&
           !value->borrowDependencies->possibleAlternatives.empty())))
       unsupported("LLVM fresh hierarchy transfer excludes borrowed values");
@@ -1341,7 +1344,8 @@ private:
         (!extraction && producer.kind != MirInstructionKind::Move))
       unsupported("LLVM payload relocation excludes additional effects");
     if (!containsHierarchyStorage(program, type) ||
-        mirTypeRelocationKind(program, type) == RelocationKind::Unavailable ||
+        mirTypeMoveRelocationKind(program, type) ==
+            RelocationKind::Unavailable ||
         (type.kind == SemanticType::Enum && !program.findPayloadEnum(type)))
       unsupported(
           "LLVM payload relocation requires relocatable hierarchy storage");
@@ -1842,15 +1846,13 @@ private:
     if ((owner.kind != ClassKind::Class && owner.kind != ClassKind::Struct) ||
         owner.abstract || owner.cAbiRecord || owner.cAbiLayout ||
         owner.cOpaqueHandle || owner.unionLayout ||
-        owner.compilerCapability != CompilerCapabilityTypeKind::None ||
-        owner.traits.containsBorrowedState ||
-        owner.lifecycleBoundBorrowCarrier)
-      // MIR's relocation contract keeps borrowed state in place; such an
-      // object is constructed, borrowed and dropped where it lives.
-      unsupported("LLVM transfer requires a borrow-free ordinary hierarchy");
+        owner.compilerCapability != CompilerCapabilityTypeKind::None)
+      unsupported("LLVM transfer requires an ordinary hierarchy");
+    // A borrow carrier relocates as the addresses it holds; MIR's generated
+    // value move decides that, and its loans follow the moved object.
     if (owner.moveConstructor != SpecialMemberStatus::Generated ||
         !owner.traits.movable ||
-        mirTypeRelocationKind(program, owner.type) ==
+        mirTypeMoveRelocationKind(program, owner.type) ==
             RelocationKind::Unavailable ||
         !mirTypeRelocationIsDefinedFailureFree(program, owner.type))
       unsupported("LLVM move requires its verified generated relocation");

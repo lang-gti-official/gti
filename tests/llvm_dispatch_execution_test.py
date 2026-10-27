@@ -74,6 +74,7 @@ SUCCESS_FILES = {
     "hierarchy-payloads": "tests/fixtures/llvm_dispatch_hierarchy_payloads.gti",
     "payload-moves": "tests/fixtures/llvm_dispatch_payload_moves.gti",
     "borrowed-carriers": "tests/fixtures/llvm_dispatch_borrowed_carriers.gti",
+    "moved-carriers": "tests/fixtures/llvm_dispatch_moved_carriers.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -186,6 +187,18 @@ TRANSFER_SUCCESS_SOURCES = {
     "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain(); };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
     "fresh-value-argument-former-reject": (PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n", 0),
     "fresh-return-former-reject": (PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n", 1),
+    # Verbatim former rejection: a moved borrow carrier relocates as the
+    # addresses it holds (owner decision 2026-10-28).
+    "moved-borrow-carrier-former-reject": ("""interface Gauge { int read(); };
+class Scaled : public Gauge {
+  int value;
+  int& scale;
+public:
+  Scaled(int value, int& scale) : value(value), scale(scale) {}
+  int read() override { return this.value * this.scale; }
+};
+int main() { int scale = 3; Scaled first{2, scale}; Scaled moved = std::move(first); return moved.read(); }
+""", 6),
     "local-return-former-reject": (PLAIN + "Plain make() { Plain local{}; return local; }\nint main() { Plain value = make(); return value.read(); }\n", 1),
     # An abstract phase that nothing observes installs no pure state.
     "pure-active-phase-former-reject": ("""class Base {
@@ -349,19 +362,6 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     "reject-payload-copy": PLAIN + "enum Mark { none, held(Plain value) };\nint main() { Mark first = Mark::held(Plain()); Mark second = first; switch (second) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-payload-return": PLAIN + "enum Mark { none, held(Plain value) };\nMark make() { return Mark::held(Plain()); }\nint main() { Mark mark = make(); switch (mark) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
-    # MIR keeps borrow carriers in place, so moving a hierarchy object that
-    # holds a reference stays gated; move this control to another refused
-    # construct as LLVM coverage grows.
-    "reject-moved-borrow-carrier": """interface Gauge { int read(); };
-class Scaled : public Gauge {
-  int value;
-  int& scale;
-public:
-  Scaled(int value, int& scale) : value(value), scale(scale) {}
-  int read() override { return this.value * this.scale; }
-};
-int main() { int scale = 3; Scaled first{2, scale}; Scaled moved = std::move(first); return moved.read(); }
-""",
     # MIR leaves a base initializer unstaged when an argument owns cleanup: no
     # InitializeBase runs the base constructor, so LLVM refuses the constructor
     # instead of leaving its base unconstructed. Each control must become an
@@ -476,11 +476,52 @@ int main() { Wrong value{}; return 0; }
 class Missing : public Reader { public: int read() override; };
 int main() { Missing value{}; return value.read(); }
 """,
+    # A relocated carrier never holds a live borrow of its own storage: a
+    # carrier cannot borrow storage of the object it is built into, and a
+    # carrier's referent cannot move while the carrier lives.
+    "reject-source-self-borrowing-carrier": """interface Gauge { int read(); };
+class Scaled : public Gauge {
+  int value;
+  int& scale;
+public:
+  Scaled(int value, int& scale) : value(value), scale(scale) {}
+  int read() override { return this.value * this.scale; }
+};
+class Bundle {
+  int scale;
+  Scaled scaled;
+public:
+  Bundle() : scale(3), scaled(Scaled(2, this.scale)) {}
+};
+int main() { Bundle first{}; Bundle moved = std::move(first); return 0; }
+""",
+    "reject-source-moved-carrier-referent": """interface Gauge { int read(); };
+class Small : public Gauge {
+  int value;
+public:
+  Small(int value) : value(value) {}
+  int read() override { return this.value; }
+};
+class Viewer {
+  Gauge& gauge;
+public:
+  Viewer(Gauge& gauge) : gauge(gauge) {}
+  int read() { return this.gauge.read(); }
+};
+int main() {
+  mut Small small{4};
+  Viewer viewer{small};
+  Small moved = std::move(small);
+  return viewer.read();
+}
+""",
 }
 
 SOURCE_REJECTION_CODES = {
     "reject-source-deleted-copy": "GTI-S2020",
     "reject-source-use-after-move": "GTI-S2018",
+    "reject-source-self-borrowing-carrier": "GTI-S2045",
+    "reject-source-moved-carrier-referent": "GTI-S2017",
 }
 
 
@@ -1285,7 +1326,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1791,7 +1832,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "fresh-copy-former-cli-control", "generated-move-virtual-failure",
             "owned-transfers", "owned-transfer-failure", "owned-transfer-wrong-cleanup",
             "local-return-former-reject", "returned-owned-move",
-            "hierarchy-arrays", "hierarchy-payloads"),
+            "hierarchy-arrays", "hierarchy-payloads", "moved-carriers",
+            "moved-borrow-carrier-former-reject"),
         "fresh-publication": (
             "fresh-publication", "fresh-return-former-reject",
             "fresh-value-argument-former-reject",

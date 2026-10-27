@@ -124,8 +124,9 @@ for what minor and patch releases mean.
     `std::thread_result` of a polymorphic value joined back through
     `std::expected`;
   - classes holding a polymorphic object beside a reference field,
-    constructed in place, passed by reference and destroyed. Moving such an
-    object is still rejected on the native backend.
+    constructed in place, moved, passed by reference or by value, and
+    destroyed, including scoped thread tasks such as
+    `std::parallel_invoke(Job(3, first), Job(4, second))`.
 
   A destructor that calls a virtual method on its own object now runs the
   destructor's own class's override; it never reaches a derived part that is

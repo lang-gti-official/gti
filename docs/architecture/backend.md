@@ -5150,10 +5150,24 @@ publishes in place. A carrier received by reference has a parameter loan with a
 stored dependency, and the dependency has no representation, as for a call
 result. The carrier's entry record of the borrow in its fields is borrow
 metadata. A destructor that writes through its borrow runs as any other
-cleanup. MIR's relocation contract keeps borrowed state in place
-(`mirTypeRelocationKind` is unavailable for it). Moving such an object, for
-example a scoped thread task passed by value, therefore stays
-`PolymorphicTransfer` until MIR gives carriers a relocation.
+cleanup.
+
+A moved carrier relocates through the generated relocation, following an
+owner decision of 2026-10-28 taken as the recommended option while the owner
+was away. Each hierarchy field's state is rebuilt, and references and views
+copy as addresses. MIR's `mirTypeMoveRelocationKind` decides the move, and the
+moved value's loans follow it, so the transfer planner no longer excludes a
+moving carrier's dependencies. A scoped thread task passed by value is moved
+this way. Source-visible relocation (`std::relocatable` and relocating swaps)
+still excludes carriers. Variant A, letting carriers satisfy
+`std::relocatable`, would be a language change and was deliberately not taken.
+An inert relocation stays borrow-free.
+
+A carrier borrowed through an upcast interface view stays refused. Its MIR
+operand names the carrier's `Stored` loan instead of a `Local` loan on the
+carrier itself, and semantics then lets the carrier move while the view
+lives. That is a soundness defect, reported to the MIR owner on 2026-10-28.
+Those `Loan` operands wait for its fix.
 
 `NativeProgramHierarchyStorage` admits a hierarchy object in namespace or
 static-field storage that its program initialization step constructs in

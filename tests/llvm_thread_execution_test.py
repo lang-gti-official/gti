@@ -71,6 +71,7 @@ def hierarchy_task_fixtures():
     return {
         "hierarchy-tasks": "llvm_thread_hierarchy_tasks.gti",
         "hierarchy-results": "llvm_thread_hierarchy_results.gti",
+        "hierarchy-carrier-tasks": "llvm_thread_hierarchy_carrier_tasks.gti",
         "transfer-function-tasks": "transfer_function_threads.gti",
         "scoped-erased-tasks": "scoped_parallel_threads.gti",
     }

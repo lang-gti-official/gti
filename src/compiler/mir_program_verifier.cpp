@@ -18753,6 +18753,26 @@ verifyMirProgramContracts(const MirProgram &program) {
            .message = "class relocation traits do not match its structural "
                       "move, borrow, base, field, and cleanup metadata"});
     }
+    // A generated value move relocates a borrow carrier as the addresses it
+    // holds (owner decision 2026-10-28); any other class moves as it
+    // relocates. Only a movable ordinary record relocates that way.
+    const RelocationKind moveRelocation =
+        mirTypeMoveRelocationKind(program, instance.type);
+    const bool borrowCarrier = instance.traits.containsBorrowedState ||
+                               instance.lifecycleBoundBorrowCarrier;
+    // A compiler-owned capability keeps its own relocation rule.
+    if (!borrowCarrier ? moveRelocation != instance.traits.relocation
+        : instance.compilerCapability == CompilerCapabilityTypeKind::None &&
+            moveRelocation != RelocationKind::Unavailable &&
+            (!instance.traits.movable ||
+             instance.moveConstructor != SpecialMemberStatus::Generated ||
+             instance.abstract || instance.cOpaqueHandle)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "class value-move relocation does not match its "
+                      "relocation traits and borrow-carrier state"});
+    }
     if (instance.requiresActiveDropState && !instance.requiresActiveCleanup) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::FieldInitializers,

@@ -946,6 +946,25 @@ per-element relocation. Both preserve source/destination lifetime behavior.
 There is no backend-only relocation operation, and native representation traits
 never grant language eligibility.
 
+Borrow-carrier value moves follow an owner decision of 2026-10-28, taken as
+the recommended option while the owner was away.
+`mirTypeMoveRelocationKind` derives the relocation that a generated value move
+performs. It equals `mirTypeRelocationKind` except for borrow carriers. A
+carrier whose borrowed state is references and views into storage outside the
+object relocates structurally, as the addresses it holds, and its loans follow
+it as they follow any value move. No carrier holds a live borrow of its own
+storage, for two reasons. MIR forbids moving a borrowed place, and semantics
+never lets a carrier borrow storage of the object it is built into. The body
+verifier rejects a moved carrier that carries a non-entry `Stored` loan of its
+own binding. An opaque entry loan is exempt: it stands at a by-value
+parameter carrier for its caller's external referents. Program verification
+re-derives every class's move relocation. A class that is not a carrier must
+match its relocation trait. A carrier may relocate only when it is a movable
+ordinary record with a generated move. Source-visible relocation is unchanged:
+`traits.relocation`, `std::relocatable` and relocating swaps and exchanges
+still treat carriers as unavailable. The alternative, letting carriers satisfy
+`std::relocatable`, would be a language change and was deliberately not taken.
+
 Restoring exchange and swap are separate sealed call intrinsics, bound to
 private prelude declarations. Semantics requires exact matching relocatable
 types and initialized writable places. HIR/MIR retain the ordinary exclusive

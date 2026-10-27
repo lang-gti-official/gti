@@ -1015,11 +1015,14 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
         path.pop_back();
         return;
       }
+      // A generated value move relocates a borrow carrier as the addresses
+      // it holds; an inert relocation stays borrow-free.
       if (owner.compilerCapability != CompilerCapabilityTypeKind::None ||
           (inert &&
            (owner.requiresActiveCleanup || owner.requiresActiveDropState)) ||
-          owner.traits.containsBorrowedState ||
-          owner.lifecycleBoundBorrowCarrier || owner.unionLayout ||
+          (inert && (owner.traits.containsBorrowedState ||
+                     owner.lifecycleBoundBorrowCarrier)) ||
+          owner.unionLayout ||
           owner.cOpaqueHandle || (!base && owner.abstract) ||
           (!base && owner.moveConstructor != SpecialMemberStatus::Generated))
         throw BackendUnsupportedError("LLVM relocation requires an implemented "
@@ -1084,6 +1087,12 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
         throw BackendUnsupportedError(
             "LLVM owner relocation requires its sealed pointee identity");
       static_cast<void>(session.layouts().get(selected));
+    } else if (!inert && selected.kind == SemanticType::Reference) {
+      // A carrier's reference relocates as its address.
+      if (mirTypeMoveRelocationKind(program, selected) !=
+          RelocationKind::Bitwise)
+        throw std::logic_error("LLVM relocation lost its reference identity");
+      static_cast<void>(session.layouts().get(selected));
     } else {
       // Other structural representations need a typed relocation schedule.
       // Never silently byte-copy a self-relative representation.
@@ -1096,7 +1105,9 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
     }
     path.pop_back();
   };
-  if (mirTypeRelocationKind(program, type) == RelocationKind::Unavailable)
+  if ((inert ? mirTypeRelocationKind(program, type)
+             : mirTypeMoveRelocationKind(program, type)) ==
+      RelocationKind::Unavailable)
     throw BackendUnsupportedError(
         "LLVM inert relocation requires a sealed generated relocation");
   visit(visit, type, false);

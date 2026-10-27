@@ -11725,15 +11725,17 @@ task transfer of hierarchy storage merged (2026-10-27). One of them is a
 fixture since renamed into a refusal control; its former program still
 matches at O0-O3.
 
-Hierarchy storage beside borrowed state is admitted in place: constructed,
-borrowed by reference and destroyed. Moving it, as a scoped thread task that
-holds a reference and is passed by value does, waits on a MIR relocation
-contract for borrow carriers; `mirTypeRelocationKind` keeps them unavailable.
+Hierarchy storage beside borrowed state is admitted. It is constructed in
+place, borrowed by reference and destroyed. It also moves, including scoped
+thread tasks passed by value. A carrier's generated value move relocates it
+under `mirTypeMoveRelocationKind`, while `std::relocatable` is unchanged
+(owner decision 2026-10-28). A carrier borrowed through an upcast interface
+view waits on a MIR soundness fix: such a borrow takes no `Local` loan on the
+carrier.
 
 Base-view replacement, enum copies, enums moved into arguments or returns,
-payload values returned by value, moved borrow carriers, thread-local hierarchy
-objects and observable pure phases stay `PolymorphicTransfer` or
-`PureDispatchState`.
+payload values returned by value, thread-local hierarchy objects and
+observable pure phases stay `PolymorphicTransfer` or `PureDispatchState`.
 A derived constructor whose base initializer MIR leaves unstaged, such as
 one passing an owned value to its base constructor, is refused as
 `UnstagedBaseInitializer`. Until 2026-10-27 LLVM lowered it without its base.

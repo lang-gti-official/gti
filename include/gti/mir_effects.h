@@ -138,6 +138,17 @@ mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
 [[nodiscard]] RelocationKind mirTypeRelocationKind(const MirProgram &program,
                                                    const SemanticType &type);
 
+// The relocation a generated value move performs. It equals
+// mirTypeRelocationKind except for borrow carriers (owner decision
+// 2026-10-28): a carrier whose borrowed state is references and views into
+// storage outside the object relocates structurally, as the addresses it
+// holds, and its loans follow it as for any value move. MIR forbids moving a
+// borrowed place, so no carrier can hold a live borrow of its own storage.
+// Source-visible relocation (std::relocatable and relocating swaps) still
+// uses mirTypeRelocationKind.
+[[nodiscard]] RelocationKind
+mirTypeMoveRelocationKind(const MirProgram &program, const SemanticType &type);
+
 // Exact ordered class/unique-owner/collection cleanup: the class's guarded
 // source body, if any, precedes its active subobjects. All are represented;
 // recursive ownership uses exact class back-edges; unsupported subobjects
