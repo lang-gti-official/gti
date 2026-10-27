@@ -132,6 +132,25 @@ public:
 };
 """
 
+SUCCESS_SOURCES_CYCLE = """mut int observed = 0;
+class Numeric {
+  int value = 7;
+public:
+  Numeric() {}
+  virtual int read() { return this.value; }
+  int payload() { return this.value; }
+  static int first(Numeric& value, int remaining) {
+    if (remaining == 0) { return value.payload(); }
+    return Numeric::second(value, remaining - 1);
+  }
+  static int second(Numeric& value, int remaining) {
+    return Numeric::first(value, remaining);
+  }
+  ~Numeric() { observed = Numeric::first(this, 2); }
+};
+int main() { { Numeric value{}; } return observed == 7 ? 0 : 1; }
+"""
+
 TRANSFER_SUCCESS_SOURCES = {
     # Verbatim former rejections. Their normal exit1 is successful execution of
     # these source contracts, not a failed runtime check or a rewritten oracle.
@@ -155,6 +174,75 @@ public:
 };
 int main() { Derived value{}; return value.read(); }
 """, 1),
+    # A destructor of a class nothing derives from runs under the object's
+    # own complete state, so its dispatch observes nothing ambiguous.
+    "destructor-virtual-observation-former-reject": ("""class Observed {
+public:
+  Observed() {}
+  virtual int read() { return 1; }
+  ~Observed() { int observed = this.read(); }
+};
+int main() { Observed value{}; return value.read() - 1; }
+""", 0),
+    "destructor-helper-observation-former-reject": ("""class Observed {
+public:
+  Observed() {}
+  virtual int read() { return 1; }
+  int observe() { return this.read(); }
+  ~Observed() { int observed = this.observe(); }
+};
+int main() { Observed value{}; return value.read() - 1; }
+""", 0),
+    "read-borrow-cleanup-observation-former-reject": ("""class Observed {
+public:
+  Observed() {}
+  virtual int read() { return 1; }
+  static int through(Observed& value) { return value.read(); }
+  ~Observed() { int observed = Observed::through(this); }
+};
+int main() { Observed value{}; return 0; }
+""", 0),
+    "mut-borrow-cleanup-observation-former-reject": ("""class Observed {
+public:
+  mut int value = 0;
+  Observed() {}
+  virtual void touch() mut { this.value += 1; }
+  static void through(mut Observed& value) { value.touch(); }
+  ~Observed() { Observed::through(this); }
+};
+int main() { Observed value{}; return 0; }
+""", 0),
+    "owned-destructor-observation-former-reject": ("""#include <std/memory>
+class Observed {
+public:
+  Observed() {}
+  virtual int read() { return 1; }
+  ~Observed() { int observed = this.read(); }
+};
+int main() { auto owner = std::make_unique<Observed>(); return owner->read() - 1; }
+""", 0),
+    "cleanup-helper-cycle-observation-former-reject": (SUCCESS_SOURCES_CYCLE.replace(
+        "return value.payload();", "return value.read();"), 0),
+    # A constructor publishing an interface reference field stores the view.
+    "stored-interface-reference": ("""interface Widget { int width(); };
+class Button : public Widget {
+  int size;
+public:
+  Button(int size) : size(size) {}
+  int width() override { return this.size; }
+};
+class Measurer {
+  Widget& target;
+public:
+  Measurer(Widget& target) : target(target) {}
+  int twice() { return this.target.width() * 2; }
+};
+int main() {
+  Button button = Button(7);
+  Measurer measurer = Measurer(button);
+  return measurer.twice() == 14 ? 0 : 1;
+}
+""", 0),
     # A moved owned local with active cleanup leaves through the return edge.
     "returned-owned-move": ("""mut int dropped = 0;
 class Owned {
@@ -219,23 +307,6 @@ public:
 };
 int main() { Derived value{}; return value.read(); }
 """,
-    "reject-destructor-virtual-observation": """class Observed {
-public:
-  Observed() {}
-  virtual int read() { return 1; }
-  ~Observed() { int observed = this.read(); }
-};
-int main() { Observed value{}; return value.read() - 1; }
-""",
-    "reject-destructor-helper-observation": """class Observed {
-public:
-  Observed() {}
-  virtual int read() { return 1; }
-  int observe() { return this.read(); }
-  ~Observed() { int observed = this.observe(); }
-};
-int main() { Observed value{}; return value.read() - 1; }
-""",
     "reject-rollback-virtual-observation": """class Base {
 public:
   Base() {}
@@ -250,40 +321,46 @@ public:
 };
 int main() { Derived value{0}; return value.read(); }
 """,
-    "reject-read-borrow-cleanup-observation": """class Observed {
-public:
-  Observed() {}
-  virtual int read() { return 1; }
-  static int through(Observed& value) { return value.read(); }
-  ~Observed() { int observed = Observed::through(this); }
-};
-int main() { Observed value{}; return 0; }
-""",
-    "reject-mut-borrow-cleanup-observation": """class Observed {
-public:
-  mut int value = 0;
-  Observed() {}
-  virtual void touch() mut { this.value += 1; }
-  static void through(mut Observed& value) { value.touch(); }
-  ~Observed() { Observed::through(this); }
-};
-int main() { Observed value{}; return 0; }
-""",
-    "reject-owned-destructor-observation": """#include <std/memory>
-class Observed {
-public:
-  Observed() {}
-  virtual int read() { return 1; }
-  ~Observed() { int observed = this.read(); }
-};
-int main() { auto owner = std::make_unique<Observed>(); return owner->read() - 1; }
-""",
 }
 
-# The same terminating call cycle must not hide its reachable virtual observer.
+# The same terminating call cycle must not hide its reachable virtual
+# observer when the destructor runs as a base phase of a derived object.
 REJECTIONS["reject-cleanup-helper-cycle-observation"] = SUCCESS_SOURCES[
     "nonobserving-cleanup-helper-cycle"].replace(
-        "return value.payload();", "return value.read();")
+        "return value.payload();", "return value.read();").replace(
+        "int main() { { Numeric value{}; } return observed == 7 ? 0 : 1; }",
+        "class Wider : public Numeric {\npublic:\n  Wider() : Numeric() {}\n"
+        "  int read() override { return 8; }\n};\n"
+        "int main() { { Wider value{}; } return observed == 7 ? 0 : 1; }")
+# A base destructor observes the phase of a derived object directly or
+# through a helper; that phase rule stays gated.
+REJECTIONS["reject-base-destructor-observation"] = """class Base {
+public:
+  Base() {}
+  virtual int read() { return 1; }
+  ~Base() { int observed = this.read(); }
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+  int read() override { return 2; }
+};
+int main() { Derived value{}; return value.read() - 2; }
+"""
+REJECTIONS["reject-base-helper-observation"] = """class Base {
+public:
+  Base() {}
+  virtual int read() { return 1; }
+  static int through(Base& value) { return value.read(); }
+  ~Base() { int observed = Base::through(this); }
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+  int read() override { return 2; }
+};
+int main() { Derived value{}; return 0; }
+"""
 
 SOURCE_REJECTIONS = {
     "reject-source-return-local-view": PLAIN + "Plain& invalid() { Plain local{}; return local; }\nint main() { return invalid().read(); }\n",
@@ -1438,7 +1515,14 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
                                        "inline-field-wrong-cleanup-trace",
                                        "abstract-phases", "abstract-phase-failure",
                                        "abstract-phase-wrong-cleanup",
-                                       "pure-active-phase-former-reject"),
+                                       "pure-active-phase-former-reject",
+                                       "destructor-virtual-observation-former-reject",
+                                       "destructor-helper-observation-former-reject",
+                                       "read-borrow-cleanup-observation-former-reject",
+                                       "mut-borrow-cleanup-observation-former-reject",
+                                       "owned-destructor-observation-former-reject",
+                                       "cleanup-helper-cycle-observation-former-reject",
+                                       "stored-interface-reference"),
         "mut-borrow-scalar-bool": ("borrowed-dispatch", "borrowed-mut-reference-chain",
                                   "hierarchy-reference-results", "owner-reference-failure",
                                   "owner-reference-wrong-cleanup", "shared-owner-reference",

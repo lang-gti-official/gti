@@ -966,10 +966,24 @@ private:
       const auto *row = plan.program().findBody(root);
       const auto *body = findMirBody(program, root);
       if (owner && row && row->role == LoweredBodyRole::SourceExecutable &&
-          body && (!owner->polymorphic || !receiverViewUsed(*body)))
+          body &&
+          (!owner->polymorphic || !receiverViewUsed(*body) ||
+           !derivedFrom(owner->id)))
         return false;
     }
     return reachesDispatch(root);
+  }
+  // Whether any class of the sealed program has this class as a direct or
+  // transitive base. A class nothing derives from is always destroyed as
+  // the complete object: its destructor runs under its own concrete state,
+  // the state the object had throughout its lifetime.
+  bool derivedFrom(HirClassInstanceId base) const {
+    for (const auto &candidate : program.classInstances())
+      for (const auto *rows : {&candidate.bases, &candidate.structuralBases})
+        for (const auto &row : *rows)
+          if (row.instance == base)
+            return true;
+    return false;
   }
   // Whether code running while a constructor's own phase state is installed
   // can observe it: a use of a view of the object outside base
@@ -1153,11 +1167,13 @@ private:
         findMirTemporaryMaterialization(body, *place, place->sourceValue);
     return materialization && materialization.producer == &stage;
   }
+  // A place-category Load names its operand's address. Unused, or used only
+  // as an inline slot operand, it transports nothing.
   bool placeObservation(const MirBody &body,
                         const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Load || !stage.result ||
         stage.info.category != ValueCategory::Place ||
-        body.usesOf(*stage.result).empty())
+        stage.operands.size() != 1)
       return false;
     for (const auto &use : body.usesOf(*stage.result)) {
       const auto *block = body.findBlock(use.block);
@@ -1389,6 +1405,11 @@ private:
     // dependency only protects the external owners a borrow carrier inherited
     // (such as an iterator's container) and has no representation.
     if (!loan.escapes && callResult(body, loan))
+      return true;
+    // A constructor publishing a reference field stores the borrowed address
+    // itself; the field's Stored loan is that publication's provenance.
+    if (loan.kind == MirLoanKind::Stored && loan.storedField &&
+        loan.escapes && !loan.storedDependency)
       return true;
     if (loan.storedDependency)
       return false;
