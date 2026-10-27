@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Carrier references retain shell and external lifetimes through cleanup."""
+"""Carrier references retain shell and external lifetimes through cleanup.
+
+A reference of a base or interface type to a carrier borrows the carrier
+object as one of its own type does.
+"""
 
 import argparse
 import os
@@ -43,6 +47,11 @@ def main():
          (70, "90\n999\n", failure("// cleanup failure", "GTI-R0002",
                                     "division_by_zero in integer_division"))),
     ]
+    # A reference of a base or interface type to a carrier borrows the carrier
+    # object; each view here ends before the carrier moves.
+    upcasts = pathlib.Path(__file__).parent / "fixtures/carrier_upcast_references.gti"
+    cases.append(("upcast-views", upcasts.read_text(),
+                  (0, "6\n6\n6\n6\n6\n5\n15\n", "")))
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
              for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
     modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),

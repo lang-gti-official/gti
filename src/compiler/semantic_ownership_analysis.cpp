@@ -11440,11 +11440,37 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       semanticModel.recordBindingLoan(binding, child);
       return;
     }
+    // A reference of a base or interface type to a borrow carrier designates
+    // the carrier object exactly as one of the carrier's own type does: the
+    // base type hides the stored references, not the object's lifetime. The
+    // object is the initializer's, or the binding a relaying call returns.
+    const auto upcastCarrier = [&] {
+      if (carrier->type.kind != SemanticType::Reference ||
+          carrier->type.arguments.size() != 1)
+        return false;
+      const SemanticType &referent = carrier->type.arguments.front();
+      const auto designates = [&](SemanticType object) {
+        if (object.kind == SemanticType::Reference &&
+            object.arguments.size() == 1)
+          object = SemanticType(object.arguments.front());
+        return object.kind == SemanticType::Class && object != referent &&
+               typeTraits(object).containsBorrowedState &&
+               isPublicBaseConversion(object, referent);
+      };
+      if (info != nullptr && designates(info->type))
+        return true;
+      const SemanticLoanPlace shell = retainedLoanPlace(expression);
+      const SymbolRecord *root =
+          shell.root != 0 && !shell.receiver && shell.projections.empty()
+              ? semanticModel.database().findSymbol(shell.root)
+              : nullptr;
+      return root != nullptr && designates(root->type);
+    };
     if (((carrier->type.kind == SemanticType::Reference &&
           carrier->type.arguments.size() == 1 &&
           (typeTraits(carrier->type.arguments.front()).containsBorrowedState ||
            isBorrowedCarrierReference(carrier->type) ||
-           receiverStorageBorrow(expression)) &&
+           receiverStorageBorrow(expression) || upcastCarrier()) &&
           sourceLoan->kind == SemanticLoanKind::StoredValue) ||
          (storedReceiverShell &&
           (sourceLoan->kind == SemanticLoanKind::StoredValue ||

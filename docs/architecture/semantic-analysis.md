@@ -898,6 +898,11 @@ owner dependent unless the relayed operand, or the receiver field a field
 relay reads, holds ownerless text, so the binding retains the loan
 `operatorBorrowSource` names.
 
+`recordRetainedBorrow` gives a reference of a base or interface type to a
+borrowed carrier the same shell `Reference` loan, with the carrier's `Stored`
+loan as its stored dependency, that a reference of the carrier's own type gets,
+whether it binds the carrier or the result of a call relaying it.
+
 `ownerlessTextConstructorInputs`, the pre-body input contract checked at each
 construction, includes a base initializer that passes a formal to a base
 constructor storing that parameter. The derived class keeps its text fields

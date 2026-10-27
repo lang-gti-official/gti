@@ -946,6 +946,13 @@ when matching through that reference. The live payload borrow prevents moving
 or replacing the enum; selecting a stored reference instead retains its exact
 external owners under the separate checked selection rule.
 
+A reference of a base or interface type to a borrowed carrier references the
+carrier object exactly as a reference of the carrier's own type does: the base
+type hides the stored references, not the object's lifetime. `Gauge& view =
+direct;`, a call relaying such an argument and a function returning one each
+keep `direct` borrowed while the view is used, so moving or replacing `direct`
+then reports `GTI-S2017`, and doing so after the view's last use is valid.
+
 Reference access and stored-field access are independent. A mutable reference
 to a shared view can mutate its own eligible fields, but cannot turn a stored
 read-only reference into a mutable one. A read-only reference to an exclusive

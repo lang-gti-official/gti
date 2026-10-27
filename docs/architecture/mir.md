@@ -1970,6 +1970,16 @@ loan's pointer local; re-borrowing the provenance place would re-point the
 published reference at the receiver's storage instead of the returned
 element.
 
+A reference to a borrowed carrier, of the carrier's own type or a base or
+interface type, is initialized from a loan on the carrier object, as a `Borrow`
+of a same-class reference publishes it. `verifyMirBorrowProducers` rejects one
+backed only by the carrier's `Stored` loan (`reference to a borrow carrier is
+not backed by a loan on the carrier`), because that loan designates the
+external referent and leaves the carrier movable while the view lives. An
+upcast call argument borrows the carrier's place, a call relaying it borrows
+the carrier's shell, and an upcast reference return publishes the parameter's
+exact referent.
+
 A call that returns text by value under a loan, whatever it calls (a
 function, an overloaded operator, a lambda or an invocation pointer), carries
 borrowed state in its result. `verifyMirBorrowProducers` rejects such a result

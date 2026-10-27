@@ -27,6 +27,13 @@ for what minor and patch releases mean.
   negative enumerator passed to a function could take the wrong branch.
 - Share one constant per text literal, so identical literals observe one
   address as the C++ backend already does.
+- Fix a use-after-move through an interface or base-class reference. `Gauge&
+  view = direct;` over a class that holds a reference did not keep `direct`
+  borrowed, so `std::move(direct)` while `view` was still used compiled and
+  read the moved-from object. It now reports `GTI-S2017`, as `Scaled& view =
+  direct;` does, also through a call that returns the reference. Passing such
+  a class to a `Gauge&` parameter and returning one as `Gauge&` now compile on
+  the C++ backend instead of failing with an internal compiler error.
 - Fix two ways safe code could read text after its owner changed. A
   `std::string_view` that an overloaded call operator or `operator[]` returns
   from its receiver or an argument, as in `std::string_view v =

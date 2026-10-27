@@ -5706,6 +5706,21 @@ private:
     return resolved == nullptr ? 0 : resolved->source;
   }
 
+  // Whether class `derived` has `base` among its class and interface bases.
+  [[nodiscard]] bool hasBase(const SemanticType &derived,
+                             const SemanticType &base,
+                             std::size_t depth = 0) const {
+    if (depth > 64 || derived.kind != SemanticType::Class)
+      return false;
+    for (const HirClassInstance &instance : program.classInstances())
+      if (instance.type == derived)
+        for (const HirBaseInstance &candidate : instance.bases)
+          if (candidate.type == base ||
+              hasBase(candidate.type, base, depth + 1))
+            return true;
+    return false;
+  }
+
   [[nodiscard]] MirOperand argumentOperand(HirValueId id,
                                            const SemanticType &parameter) {
     if (parameter.kind != SemanticType::Reference) {
@@ -5724,8 +5739,16 @@ private:
       // alongside it for backend publication.
       MirPlaceId runtimePlace = placeForValue(id);
       const MirPlace *resolved = output.findPlace(runtimePlace);
-      if (parameter.arguments.size() != 1 || resolved == nullptr ||
-          resolved->type != parameter.arguments.front()) {
+      // A reference of a base or interface type to a borrowed carrier
+      // designates the same carrier object.
+      const bool upcastCarrier =
+          parameter.arguments.size() == 1 && resolved != nullptr &&
+          resolved->type != parameter.arguments.front() &&
+          resolved->traits.containsBorrowedState &&
+          hasBase(resolved->type, parameter.arguments.front());
+      if (!upcastCarrier &&
+          (parameter.arguments.size() != 1 || resolved == nullptr ||
+           resolved->type != parameter.arguments.front())) {
         runtimePlace = 0;
       }
       if (const MirLoan *loan = output.findLoan(existing);
@@ -5741,7 +5764,7 @@ private:
                 .type = parameter};
       }
       return {.kind = MirOperandKind::Loan,
-              .place = runtimePlace,
+              .place = upcastCarrier ? 0 : runtimePlace,
               .loan = existing,
               .type = parameter};
     }
@@ -6565,6 +6588,22 @@ private:
                               ? findValue(arguments[value.borrowArgument])
                               : nullptr;
       if (input && input->info.traits.containsBorrowedState)
+        return true;
+    }
+    // A base or interface view of a borrowed carrier hides the carrier's
+    // stored references, not its addressable shell: a call relaying such a
+    // reference argument borrows that carrier as one of its own type does.
+    if (value.info.type.kind == SemanticType::Class &&
+        value.borrowOrigin == BorrowOriginKind::Argument &&
+        value.borrowArgument < value.parameterTypes.size() &&
+        value.parameterTypes[value.borrowArgument].kind ==
+            SemanticType::Reference) {
+      const auto arguments = callArgumentValues(value);
+      const auto *input = value.borrowArgument < arguments.size()
+                              ? findValue(arguments[value.borrowArgument])
+                              : nullptr;
+      if (input && input->info.traits.containsBorrowedState &&
+          hasBase(input->info.type, value.info.type))
         return true;
     }
     // A reference returned from an ordinary receiver borrows its storage
@@ -15177,11 +15216,16 @@ private:
             const HirValue *value = findValue(*statement.value);
             const MirPlaceId runtimePlace = placeForValue(*statement.value);
             const MirPlace *runtime = output.findPlace(runtimePlace);
+            // An upcast return designates the same carrier as a base or
+            // interface view of it.
+            const auto designates = [&](const SemanticType &type) {
+              return type == output.returnType.arguments.front() ||
+                     hasBase(type, output.returnType.arguments.front());
+            };
             const bool exactRuntimeReferent =
                 value != nullptr && output.returnType.arguments.size() == 1 &&
-                runtime != nullptr &&
-                runtime->type == output.returnType.arguments.front() &&
-                value->info.type == output.returnType.arguments.front();
+                runtime != nullptr && designates(runtime->type) &&
+                designates(value->info.type);
             if (!exactRuntimeReferent) {
               valid = false;
             } else {
@@ -15217,8 +15261,12 @@ private:
             }
           } else if (referenceParameterEntry != 0) {
             const HirValue *value = findValue(*statement.value);
+            // An upcast return designates the same referent as a base or
+            // interface view of it.
             if (value == nullptr || output.returnType.arguments.size() != 1 ||
-                value->info.type != output.returnType.arguments.front()) {
+                (value->info.type != output.returnType.arguments.front() &&
+                 !hasBase(value->info.type,
+                          output.returnType.arguments.front()))) {
               valid = false;
             } else {
               // A read-only reference parameter's entry loan is seeded at the
