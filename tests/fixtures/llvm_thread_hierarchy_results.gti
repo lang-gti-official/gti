@@ -1,0 +1,85 @@
+#include <std/thread>
+#include <std/mutex>
+#include <std/string>
+
+// Managed workers return hierarchy storage. join() hands the result back in
+// std::expected, where it is borrowed or moved out by a consuming value(); an
+// unjoined result is abandoned by the automatic join. Every object, including
+// each result taken back from its worker, is destroyed exactly once.
+std::mutex<int32_t> retired{0};
+
+void retire(int32_t id) {
+  mut auto guard = retired.lock();
+  mut int32_t& count = guard.get();
+  count = count * 10 + id;
+}
+
+int32_t retirements() {
+  auto guard = retired.lock();
+  return guard.get();
+}
+
+[[transfer]] interface Gauge {
+  int32_t read();
+};
+
+[[transfer]] interface Tagged {
+  int32_t tag();
+};
+
+// Tagged precedes Gauge, so the Gauge view has a nonzero offset. The
+// destructor's effect is a synchronized counter, so transfer is asserted.
+[[unsafe_transfer]] class Meter : public Tagged, public Gauge {
+  std::string label;
+  int32_t value;
+public:
+  Meter(std::string label, int32_t value)
+      : label(std::move(label)), value(value) {}
+  ~Meter() { retire(this.value); }
+  int32_t tag() override { return 7; }
+  int32_t read() override {
+    return this.value * 10 + int32_t(this.label.size());
+  }
+};
+
+int32_t sample(Gauge& gauge) { return gauge.read(); }
+
+class MeterMaker {
+  int32_t value;
+public:
+  MeterMaker(int32_t value) : value(value) {}
+  Meter operator()() { return Meter(std::string("res"), this.value); }
+};
+
+int32_t taken(int32_t value) {
+  mut std::thread_result<Meter> made{};
+  if (!made.start(MeterMaker(value))) return -1;
+  auto result = made.join();
+  if (!result) return -2;
+  Meter meter = std::move(result).value();
+  return sample(meter);
+}
+
+int32_t borrowed(int32_t value) {
+  mut std::thread_result<Meter> made{};
+  if (!made.start(MeterMaker(value))) return -1;
+  auto result = made.join();
+  if (!result) return -2;
+  return sample(result.value());
+}
+
+int32_t abandoned(int32_t value) {
+  mut std::thread_result<Meter> made{};
+  if (!made.start(MeterMaker(value))) return -1;
+  return 0;
+}
+
+int main() {
+  std::println(taken(6));
+  std::println(retirements());
+  std::println(borrowed(4));
+  std::println(retirements());
+  std::println(abandoned(5));
+  std::println(retirements());
+  return 0;
+}

@@ -5122,7 +5122,24 @@ its own storage. Borrows of the enum select it, and its checked borrowing
 extractions select payloads as complete objects. Cleanup runs the active
 alternative's field cleanup. Every payload enum place is a complete object, so
 assigning a new alternative ends the old one exactly once and relocates the
-fresh value. Enum copies and payload values returned by value stay
+fresh value.
+
+A payload enum also moves as a whole value. The move may come from a whole
+binding or from a field of the receiver of a consuming method, whose body owns
+that receiver. A one-field alternative's field moves out by value from a whole
+enum binding. Each such relocation publishes into one fresh whole local. This
+covers `std::move(made).value()` on an `expected` or `optional` and by-move
+switch bindings. The type's generated relocation rebuilds each hierarchy
+field's state in the destination. MIR's ownership event and its lifecycle
+transition prove the source is neither used nor dropped again. That transition
+moves, starts or ends the obligation exactly as the source owned it. A payload
+enum's dependency set may record which alternative is active; it still names
+no loan. Extracting a field without hierarchy storage transports only that
+field. A by-value result taken from a thread result box and a consuming member
+call are fresh producers that publish into their destination. This lets
+`std::thread_result` of a hierarchy type join its result back through
+`expected`. Enum copies, enums moved into arguments or returns, multi-field
+alternatives moved out, and payload values returned by value stay
 `PolymorphicTransfer`.
 
 `NativeProgramHierarchyStorage` admits a hierarchy object in namespace or

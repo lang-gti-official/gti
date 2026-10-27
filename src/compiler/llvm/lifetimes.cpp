@@ -827,6 +827,23 @@ Lifetimes::preflightFreshTransfer(Session &session, Dispatch &dispatch,
         "LLVM fresh transfer uses a foreign dispatch session");
   auto transfer =
       planFreshHierarchyTransfer(session.program().mir(), body, instruction);
+  if (!transfer.owner) {
+    // A payload enum relocates through its generated relocation, which
+    // rebuilds each hierarchy field's state in the destination.
+    if (transfer.kind != ConstructorKind::Move ||
+        transfer.type.kind != SemanticType::Enum)
+      throw std::logic_error("LLVM payload transfer lost its relocation");
+    static_cast<void>(session.layouts().payload(transfer.type));
+    preflightGeneratedRelocation(session, dispatch, transfer.type);
+    for (const auto identity : {transfer.sourceDrop, transfer.valueDrop})
+      if (identity) {
+        const auto *drop = body.findDropObligation(identity);
+        if (!drop)
+          throw std::logic_error("LLVM fresh transfer lost its sealed cleanup");
+        preflightCleanup(session, dispatch, drop->dropType);
+      }
+    return transfer;
+  }
   const auto &owner =
       *session.program().mir().findClassInstance(transfer.owner);
   // This performs all dispatch/ABI checks without publishing a table/helper or
@@ -884,6 +901,10 @@ void Lifetimes::freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
         "LLVM fresh transfer requires distinct object addresses");
   const auto transfer =
       preflightFreshTransfer(session, dispatch, body, instruction);
+  if (!transfer.owner) {
+    ir.CreateCall(generatedRelocation(transfer.type), {destination, source});
+    return;
+  }
   const auto &owner =
       *session.program().mir().findClassInstance(transfer.owner);
   if (transfer.kind == ConstructorKind::Move) {

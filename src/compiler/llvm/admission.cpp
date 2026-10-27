@@ -299,8 +299,11 @@ public:
       if (const auto handle =
               native_llvm::nativeThreadHandle(program, selected))
         // The handle stores runtime pointers only; a joined result lives in
-        // its runtime box until take, so its type must itself be native.
-        return !handle->resultBearing || self(self, handle->result);
+        // its runtime box until take. Like an owner's pointee, the result is
+        // a native value or hierarchy storage with exact dispatch metadata;
+        // the box relocates and destroys it under independent use proofs.
+        return !handle->resultBearing || self(self, handle->result) ||
+               pointee(handle->result);
       if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
           owner->polymorphic || owner->abstract || owner->cOpaqueHandle ||
           !owner->bases.empty() || !owner->structuralBases.empty())
@@ -485,8 +488,13 @@ public:
           // A place-category Load that only names an inline slot for its
           // operations observes that slot's address, and a hidden temporary's
           // materialization names that object in place; nothing moves.
+          // Extracting a field without hierarchy storage from a payload
+          // enum transports only that field, never a hierarchy object.
+          const bool plainField =
+              stage.operation == MirOperation::PayloadExtract &&
+              !contains(stage.info.type);
           if (!placeObservation(body, stage) && !materialization && !replaced &&
-              !replacementCopy(address, body, placement, stage))
+              !replacementCopy(address, body, placement, stage) && !plainField)
             for (const auto &operand : stage.operands)
               proof.transfer |= transferred(operand) && !transfer;
           if (stage.receiver)
@@ -2111,6 +2119,12 @@ private:
             return {};
           return Shape::NativeHierarchyThreadTask;
         }
+        // A payload enum moved whole, or a hierarchy field moved out of its
+        // payload alternative, relocates under the payload contract.
+        if (transfer.type.kind == SemanticType::Enum || transfer.sourceVariant)
+          return generatedRelocation(transfer.type)
+                     ? std::optional(Shape::NativeHierarchyPayload)
+                     : std::nullopt;
         return Shape::NativeFreshHierarchyTransfer;
       }
       if (freshTransferInitialization(body, stage) &&

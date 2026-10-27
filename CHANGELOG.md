@@ -118,14 +118,17 @@ for what minor and patch releases mean.
     held in `std::inline_polymorphic`;
   - polymorphic objects passed and returned by value, assigned as whole
     objects, held in fixed arrays or in payload enums such as
-    `std::optional`, and declared as globals or static fields.
+    `std::optional`, and declared as globals or static fields;
+  - payload enums holding them moved between variables, moved out by a
+    consuming `std::move(made).value()` or a by-move `switch` binding, and
+    `std::thread_result` of a polymorphic value joined back through
+    `std::expected`.
 
   A destructor that calls a virtual method on its own object now runs the
   destructor's own class's override; it never reaches a derived part that is
   already destroyed. The C++ backend still calls the most-derived override
-  there, which is a known C++ backend defect. A polymorphic thread result
-  returned through `std::expected` remains rejected on the native backend.
-  C++ remains the production default.
+  there, which is a known C++ backend defect. C++ remains the production
+  default.
 
 ## 0.480.1 — Lambda argument formatting
 

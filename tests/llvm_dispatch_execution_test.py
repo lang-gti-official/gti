@@ -72,6 +72,7 @@ SUCCESS_FILES = {
     "lifecycle-phases": "tests/fixtures/llvm_dispatch_lifecycle_phases.gti",
     "generated-empty-former-reject": "tests/fixtures/llvm_dispatch_generated_empty.gti",
     "hierarchy-payloads": "tests/fixtures/llvm_dispatch_hierarchy_payloads.gti",
+    "payload-moves": "tests/fixtures/llvm_dispatch_payload_moves.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -1270,7 +1271,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1633,6 +1634,19 @@ int main() {
         payload_failure.replace("expected_cleanup = 45;", "expected_cleanup = 46;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=payload_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    moves = (root / SUCCESS_FILES["payload-moves"]).read_text(encoding="utf-8")
+    moves_marker = "// PAYLOAD_MOVES_MAIN\n"
+    if moves.count(moves_marker) != 1:
+        raise AssertionError("payload move main marker is not unique")
+    # A failure after a consuming value() moved its object out ends that
+    # object once on the failure path, after an earlier one was destroyed.
+    add("payload-move-failure", moves.split(moves_marker, 1)[0] + """int main() {
+  int32_t kept = present(3);
+  return unwrap(2, 0) + kept;
+}
+""", "defined-failure", expected_exit=70,
+        failure_needle="return sample(taken) / divisor;",
+        endpoints=TRANSFER_ENDPOINTS)
     lifecycle = (root / SUCCESS_FILES["lifecycle-phases"]).read_text(encoding="utf-8")
     lifecycle_marker = "// LIFECYCLE_MAIN\n"
     if lifecycle.count(lifecycle_marker) != 1:
@@ -1784,7 +1798,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "program-hierarchy-storage": (
             "program-storage", "program-storage-failure", "global-former-reject"),
         "hierarchy-payloads": (
-            "hierarchy-payloads", "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup"),
+            "hierarchy-payloads", "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup",
+            "payload-moves", "payload-move-failure"),
         "lifecycle-dispatch": (
             "lifecycle-phases", "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
             "generated-empty-former-reject", "base-destructor-observation-former-reject",
@@ -1856,6 +1871,7 @@ def main() -> None:
              *LIFECYCLE_FORMER_REJECTS, "rollback-virtual-observation-former-reject",
              "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
              "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup",
+             "payload-move-failure",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

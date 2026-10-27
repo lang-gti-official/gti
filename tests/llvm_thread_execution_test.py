@@ -65,10 +65,12 @@ def mutex_composition_fixtures():
 
 
 # Tasks holding hierarchy storage inline (polymorphic objects, inline slots,
-# erased transferable callables) in managed task boxes and scoped groups.
+# erased transferable callables) in managed task boxes and scoped groups, and
+# hierarchy results joined back through std::expected.
 def hierarchy_task_fixtures():
     return {
         "hierarchy-tasks": "llvm_thread_hierarchy_tasks.gti",
+        "hierarchy-results": "llvm_thread_hierarchy_results.gti",
         "transfer-function-tasks": "transfer_function_threads.gti",
         "scoped-erased-tasks": "scoped_parallel_threads.gti",
     }

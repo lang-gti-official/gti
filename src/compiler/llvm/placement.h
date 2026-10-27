@@ -49,6 +49,10 @@ namespace lang::native_llvm {
 [[nodiscard]] bool
 isFreshHierarchyTransferProducer(const MirInstruction &instruction);
 
+// The one field of a payload alternative moved out of its enum by a
+// by-value extraction. It is a transfer candidate like a moved class.
+[[nodiscard]] bool isPayloadFieldMove(const MirInstruction &instruction);
+
 // Where a planned hierarchy transfer publishes its fresh object: a whole fresh
 // local or constructor field (Initialize), a prepared by-value argument
 // (CallInput), the body's ABI return destination, an inline polymorphic slot
@@ -79,6 +83,12 @@ struct FreshHierarchyTransfer {
   MirDropObligationId valueDrop = 0;
   // An Element publication's slot in its fresh aggregate.
   std::size_t element = 0;
+  // The transferred object's type: the owner's class type, or the payload
+  // enum a relocation moves.
+  SemanticType type = SemanticType::Unknown;
+  // A field moved out of a payload alternative held in the source enum.
+  std::optional<std::size_t> sourceVariant;
+  std::size_t sourceField = 0;
 };
 
 [[nodiscard]] FreshHierarchyTransfer
