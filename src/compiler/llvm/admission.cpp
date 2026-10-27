@@ -1926,11 +1926,21 @@ public:
     }
     if (stage.result && !relocatableRepresentation(stage.info.type))
       return false;
+    // An unscoped task enters, and a result leaves, a runtime box through the
+    // one typed relocation; its generated form must accept the layout.
+    const auto boxed = [&](const SemanticType &type) {
+      const auto kind = mirTypeRelocationKind(program, type);
+      return kind == RelocationKind::Bitwise ||
+             (kind == RelocationKind::Structural &&
+              dispatchProofs.generatedRelocation(type));
+    };
     const auto adapter = [&](MirThreadTaskAdapterId id) {
       const auto *selected = program.findThreadTaskAdapter(id);
       return selected && relocatableRepresentation(selected->taskType) &&
+             (selected->scoped || boxed(selected->taskType)) &&
              (selected->resultType == SemanticType::Void ||
-              relocatableRepresentation(selected->resultType));
+              (relocatableRepresentation(selected->resultType) &&
+               boxed(selected->resultType)));
     };
     if (stage.threadTaskAdapter && !adapter(*stage.threadTaskAdapter))
       return false;

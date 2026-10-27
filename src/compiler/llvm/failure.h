@@ -49,7 +49,8 @@ public:
   void clearAbandoning(llvm::IRBuilder<> &ir);
   // Entry adapters mark their dedicated runtime-created worker thread.
   void markWorker(llvm::IRBuilder<> &ir);
-  // i1: the current thread is a native managed worker.
+  // i1: the current thread is a native managed worker; constant false in a
+  // program without managed task adapters.
   [[nodiscard]] llvm::Value *onWorker(llvm::IRBuilder<> &ir);
   // Suspend/restore worker routing around a terminal native callback.
   [[nodiscard]] llvm::Value *suspendWorker(llvm::IRBuilder<> &ir);

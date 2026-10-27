@@ -4613,7 +4613,9 @@ helper and TLS cleanup callback checks that request before reading a channel
 and returns failure status without further cleanup, up to the adapter or TLS
 callback boundary, which clears it. Off a worker the same helper takes the
 ordinary terminal path. Native callbacks suspend worker routing, keeping their
-terminal containment. Programs without adapters keep the runtime context.
+terminal containment. Programs without adapters keep the runtime context;
+they cannot run a native worker, so joining a handle that never started
+treats a worker envelope as terminal on the caller.
 Adapter reachability names each exact entry body and the task/result cleanup
 recipes, so worker programs keep a sealed dependency closure.
 `llvm_thread_execution` compares user-defined task, capture, result, scope,

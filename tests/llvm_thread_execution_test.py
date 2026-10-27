@@ -33,6 +33,7 @@ def managed_fixtures():
         "class-result": "managed_thread_class_result.gti",
         "scoped-cleanup": "scoped_parallel_cleanup.gti",
         "task-cleanup-failure": "panic_task_cleanup.gti",
+        "unstarted-handles": "llvm_thread_unstarted.gti",
     }
 
 

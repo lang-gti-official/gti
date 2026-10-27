@@ -119,6 +119,9 @@ void Failures::markWorker(llvm::IRBuilder<> &ir) {
 }
 
 llvm::Value *Failures::onWorker(llvm::IRBuilder<> &ir) {
+  // Without a verified task adapter no native managed worker can exist.
+  if (!containment_)
+    return ir.getFalse();
   return ir.CreateICmpNE(ir.CreateLoad(ir.getInt8Ty(), slot(ir, worker_)),
                          ir.getInt8(0));
 }

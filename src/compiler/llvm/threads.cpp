@@ -1185,7 +1185,10 @@ void ThreadTasks::workerFailure(llvm::IRBuilder<> &ir, const Stage &stage,
   copyRecord(secondary, 3, secondaryArtifact);
   failures.terminateCleanup(ir, primary, secondary);
   // Only a native worker returns here; its frames are abandoned by status.
-  stage.failed();
+  // Without containment (no native task in the program) the call is
+  // terminal and its block already ends.
+  if (failures.workerContainment())
+    stage.failed();
   ir.SetInsertPoint(ordinary);
   {
     auto *recordType = session.abi().failureRecord();
