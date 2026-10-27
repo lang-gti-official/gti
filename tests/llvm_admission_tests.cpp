@@ -907,7 +907,7 @@ int main() {
             ownerMir, constructor.body, constructor.id, instruction);
         if (candidate.matched() &&
             candidate.transport ==
-                UnstagedConstructorFieldPublicationTransport::NullUniqueOwner) {
+                UnstagedConstructorFieldPublicationTransport::NullPointer) {
           ownerConstructor = &constructor;
           ownerInstruction = &instruction;
           ownerPublication = candidate;

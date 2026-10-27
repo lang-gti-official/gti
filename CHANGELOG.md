@@ -47,7 +47,8 @@ for what minor and patch releases mean.
   arrays of `std::string_view`, range `for` over arrays of views or integral
   enums, constructions, call receivers and call results under declared
   `unsafe` permission, constant-folded raw field indexing, native function
-  values published into constructor fields, borrows reached through a
+  values, C strings, null pointers and array values published into
+  constructor fields, borrows reached through a
   carrier's stored reference, and restoring swaps and exchanges
   (`std::swap`, `std::exchange`, `std::array::swap` and `swap_elements`).
 - C++ remains the production default. Polymorphic ownership, dynamic dispatch

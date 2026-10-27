@@ -2772,15 +2772,32 @@ public:
       if (plan.targetType.kind == SemanticType::NativeFunction &&
           nativeValue(plan.targetType))
         return Shape::NativeCFunctionValue;
+      // A C string or primitive address is an inert address value.
+      if (plan.targetType.kind == SemanticType::CString ||
+          primitiveAddress(plan.targetType))
+        return Shape::PassiveAddressValue;
+      // An admitted array value is published by storing the whole array.
+      if (plan.targetType.kind == SemanticType::Array &&
+          passiveArrayElement(plan.targetType))
+        return Shape::PassiveArrayValue;
+      if (integralEnumArray(plan.targetType))
+        return Shape::IntegralEnumArrayValue;
+      if (textViewArray(plan.targetType))
+        return Shape::TextViewArrayValue;
       const auto storage = classShape(plan.targetType);
       return storage && *storage != Shape::CallableMetadata ? storage
                                                             : std::nullopt;
     }
     if (plan.transport !=
             native_llvm::UnstagedConstructorFieldPublicationTransport::
-                NullUniqueOwner ||
-        plan.sourceType != SemanticType::NullPtr ||
-        plan.targetType.kind != SemanticType::UniqueOwner ||
+                NullPointer ||
+        plan.sourceType != SemanticType::NullPtr)
+      return std::nullopt;
+    // A null address is inert whatever it would designate.
+    if (plan.targetType.kind == SemanticType::CString ||
+        plan.targetType.kind == SemanticType::RawPointer)
+      return Shape::PassiveAddressValue;
+    if (plan.targetType.kind != SemanticType::UniqueOwner ||
         plan.targetType.arguments.size() != 1 ||
         !mir_detail::completeObjectType(program,
                                         plan.targetType.arguments.front()))

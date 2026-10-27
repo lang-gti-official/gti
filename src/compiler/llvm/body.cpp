@@ -315,9 +315,9 @@ private:
             UnstagedConstructorFieldPublicationTransport::ExactValue)
           return publicationAddress(*publication.initializer);
         if (publication.transport ==
-            UnstagedConstructorFieldPublicationTransport::NullUniqueOwner)
+            UnstagedConstructorFieldPublicationTransport::NullPointer)
           throw std::logic_error(
-              "LLVM null owner publication requested source placement");
+              "LLVM null pointer publication requested source placement");
       }
     if (const auto *target = placement.target(value)) {
       if (target->place) {
@@ -1896,13 +1896,12 @@ private:
           UnstagedConstructorFieldPublicationTransport::ExactValue) {
         store(result, publishedAddress, published.targetType);
       } else if (published.transport ==
-                 UnstagedConstructorFieldPublicationTransport::
-                     NullUniqueOwner) {
+                 UnstagedConstructorFieldPublicationTransport::NullPointer) {
         auto *storage = llvm::dyn_cast<llvm::PointerType>(
             session.layouts().get(published.targetType).storage);
         if (!storage)
           throw std::logic_error(
-              "LLVM null owner publication lost its pointer storage");
+              "LLVM null pointer publication lost its pointer storage");
         store(llvm::ConstantPointerNull::get(storage), publishedAddress,
               published.targetType);
       } else {

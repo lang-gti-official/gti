@@ -12,7 +12,9 @@ namespace lang::native_llvm {
 enum class UnstagedConstructorFieldPublicationTransport {
   None,
   ExactValue,
-  NullUniqueOwner,
+  // A source null literal published into a field represented by one pointer:
+  // a unique owner of a complete object, a C string or a raw pointer.
+  NullPointer,
 };
 
 struct UnstagedConstructorFieldPublicationPlan final {

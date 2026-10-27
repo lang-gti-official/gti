@@ -510,6 +510,34 @@ int main() {
   return 0;
 }
 ''',
+    # Field initializers publish null addresses, address values and whole array values directly into their fields.
+    "field-publication-values": r'''
+enum class Mode : int32_t { off = 0, on = 1 };
+class Defaults {
+public:
+  c_string native = nullptr;
+  int32_t* cursor = nullptr;
+  std::string_view names[2] = {"first", "second"};
+  int32_t values[3] = {1, 2, 3};
+  Mode modes[2] = {Mode::on, Mode::off};
+  Defaults() = default;
+};
+class Tagged {
+public:
+  c_string tag;
+  c_string kept;
+  Tagged(c_string tag, c_string kept) : tag(tag), kept(std::move(kept)) {}
+};
+int main() {
+  Defaults defaults{};
+  if (defaults.native != nullptr || defaults.cursor != nullptr) { return 1; }
+  if (defaults.names[1] != "second" || defaults.values[2] != 3) { return 2; }
+  if (defaults.modes[0] != Mode::on || defaults.modes[1] != Mode::off) { return 3; }
+  Tagged tagged{"alpha", "beta"};
+  if (tagged.tag == nullptr || tagged.kept == nullptr) { return 4; }
+  return 0;
+}
+''',
     # A consumed receiver selected by a conditional is destroyed exactly once: a fresh one at the full-expression end, a moved one through its moved-from owner.
     "consuming-conditional-receivers": r'''
 mut int log = 0;
