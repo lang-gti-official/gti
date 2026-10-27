@@ -1974,10 +1974,15 @@ witness: semantics rejects storing a dynamic view in a field or fixed-array
 element, so one exact `Load` copying a place whose final `Field` or `Index`
 projection has the returned view type, with no borrowed state, loan,
 destination, receiver or lifecycle events, is also lifetime independent. A
-reference field ends in a dereference and never qualifies. Clearing a
-borrowed-state flag or a return loan does not establish either witness. A
-function whose returns are all stored views or literals summarizes no owner
-dependency at all. All dynamic alternatives still
+reference field ends in a dereference and never qualifies. A third witness
+is the result of a static call of a source text function that has no result
+dependency, or of a text field relay, carrying no loan and no borrowed state:
+the callee's own returns are proven ownerless, and a field relay without a
+loan reads a field that holds ownerless text. A method whose predeclared
+receiver relay its body never uses therefore returns `this.inner.label()` as
+it returns a literal. Clearing a borrowed-state flag or a return loan does not
+establish any witness. A function whose returns are all stored views or
+literals summarizes no owner dependency at all. All dynamic alternatives still
 publish and verify their exact escaping loan, and callers conservatively retain
 the function's owner dependency regardless of the runtime branch.
 A dynamic alternative may also return another text relay's result, such as

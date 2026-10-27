@@ -4,10 +4,11 @@
 A view copied out of an array of views holds the ownerless text the array
 holds, a C string loaded through a raw pointer is the inert native address the
 caller stored there, and a callable's text result is what its target returns.
-MIR proves each result ownerless, as it does a reassigned local's text. A
-lambda's view over its captured text is used only locally and keeps the
-captured view's owner borrowed. Each program must build and behave identically
-on C++ and LLVM at -O0 and -O2.
+MIR proves each result ownerless, as it does a reassigned local's text and a
+method's call result through its receiver's field. A lambda's view over its
+captured text is used only locally and keeps the captured view's owner
+borrowed. Each program must build and behave identically on C++ and LLVM at
+-O0 and -O2.
 
     python3 tests/text_storage_provenance_runtime_test.py <gti> <repo-root>
 """
@@ -270,6 +271,42 @@ int main() {
 }
 '''
 
+RECEIVER_FIELD_CALL_RETURNS = r'''
+#include <std/string_view>
+// A method whose relay its body never uses returns an ownerless call result
+// through its receiver's field or a nested one.
+class Inner {
+public:
+  int n;
+  std::string_view text;
+  Inner(int n) : n(n), text("inner-text") {}
+  std::string_view label() { return this.n < 10 ? "small" : "large"; }
+  std::string_view field() { return this.text; }
+};
+class Middle {
+public:
+  Inner inner;
+  Middle(int n) : inner(Inner(n)) {}
+};
+class Box {
+  Inner inner;
+  Middle middle;
+public:
+  Box(int n) : inner(Inner(n)), middle(Middle(n)) {}
+  std::string_view name() { return this.inner.label(); }
+  std::string_view deep() { return this.middle.inner.label(); }
+  std::string_view relay() { return this.inner.field(); }
+};
+int main() {
+  Box small = Box(3);
+  Box large = Box(30);
+  std::println(small.name());
+  std::println(large.deep());
+  std::println(small.relay());
+  return small.name() == "small" ? 0 : 1;
+}
+'''
+
 CASES = {
     'array-elements': (ARRAY_ELEMENTS, (0, 'cde\nab\ntwo\nright\nplaced\n', '')),
     'array-fields-and-lambdas': (ARRAY_FIELDS_AND_LAMBDAS, (0, 'yz\nlabel\n', '')),
@@ -282,6 +319,8 @@ CASES = {
         'literal\n', '')),
     'reassigned-text-locals': (REASSIGNED_TEXT_LOCALS, (
         0, 'second\nfirst\nloop\nafter\ny\n', '')),
+    'receiver-field-call-returns': (RECEIVER_FIELD_CALL_RETURNS, (
+        0, 'small\nlarge\ninner-text\n', '')),
 }
 
 ENDPOINTS = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),

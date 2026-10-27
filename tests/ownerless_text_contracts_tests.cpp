@@ -1965,6 +1965,70 @@ int main() {
   }
 }
 
+// A method's relay contract leaves room for ownerless alternatives, as a
+// literal is. A static call of a text function without a dependency, or of a
+// text field relay whose result carries no loan, returns ownerless text,
+// through the receiver's field or a nested one (MIR).
+void testReceiverFieldCallReturns() {
+  const auto result = analyzeText(R"gti(
+#include <std/string_view>
+class Inner {
+public:
+  int n;
+  std::string_view text;
+  Inner(int n) : n(n), text("inner-text") {}
+  std::string_view label() { return this.n < 10 ? "small" : "large"; }
+  std::string_view field() { return this.text; }
+};
+class Middle {
+public:
+  Inner inner;
+  Middle(int n) : inner(Inner(n)) {}
+};
+class Box {
+  Inner inner;
+  Middle middle;
+public:
+  Box(int n) : inner(Inner(n)), middle(Middle(n)) {}
+  std::string_view name() { return this.inner.label(); }
+  std::string_view deep() { return this.middle.inner.label(); }
+  std::string_view relay() { return this.inner.field(); }
+};
+int main() {
+  Box box = Box(3);
+  return box.name() == "small" && box.deep() == "small" &&
+                 box.relay() == "inner-text"
+             ? 0
+             : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a relay contract may return an ownerless call result");
+  if (!result.canGenerateCode())
+    return;
+  const auto *name = namedFunction(result, "Box::name");
+  const auto *label = namedFunction(result, "Inner::label");
+  expect(name != nullptr && label != nullptr, "the methods exist");
+  if (name == nullptr || label == nullptr)
+    return;
+  // Were the callee's result to depend on its receiver, the returned call
+  // would need the escaping loan that relays it.
+  auto changed = result.mir;
+  auto *target = const_cast<lang::MirFunctionInstance *>(
+      changed.findFunctionInstance(label->id));
+  target->returnBorrowOrigin = lang::BorrowOriginKind::Receiver;
+  const auto verification = lang::verifyMirProgram(changed);
+  if (!functionError(verification, name->id,
+                     "owner-dependent return is missing its escaping loan"))
+    for (const auto &error : verification.errors)
+      std::cerr << error.message << '\n';
+  expect(functionError(verification, name->id,
+                       "owner-dependent return is missing its escaping loan"),
+         "only a dependency-free result is an ownerless alternative");
+}
+
 constexpr NamedTest kTests[] = {
     {"testArrayElementTextStorage", testArrayElementTextStorage},
     {"testArrayElementTextRejections", testArrayElementTextRejections},
@@ -1974,6 +2038,7 @@ constexpr NamedTest kTests[] = {
     {"testCapturedTextEscapes", testCapturedTextEscapes},
     {"testCapturedTextBorrowsOwner", testCapturedTextBorrowsOwner},
     {"testReassignedTextLocals", testReassignedTextLocals},
+    {"testReceiverFieldCallReturns", testReceiverFieldCallReturns},
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testAccessorSubjectRelays", testAccessorSubjectRelays},
     {"testAccessorFieldEscapes", testAccessorFieldEscapes},
