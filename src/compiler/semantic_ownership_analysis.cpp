@@ -4064,6 +4064,23 @@ auto SemanticVisitor::Impl::lifecycleBoundBorrowCarrierFor(
       visiting.pop_back();
       return bound;
     }
+    // A closure environment is an aggregate of its captures with no source
+    // destructor: generated cleanup destroys each owned capture in order and
+    // never reads a borrowing capture. Only a capture that is itself bound
+    // keeps the environment bound.
+    if (current.kind == SemanticType::Lambda) {
+      if (!current.hasLambdaShape() ||
+          std::find(visiting.begin(), visiting.end(), current) !=
+              visiting.end())
+        return true;
+      visiting.push_back(current);
+      bool bound = false;
+      for (const auto &capture : current.lambdaCaptureTypes())
+        bound = bound || capture.kind == SemanticType::Unknown ||
+                self(self, capture);
+      visiting.pop_back();
+      return bound;
+    }
     const auto *owner = classInfo(current);
     // Unknown/recursive cleanup is conservative. Compiler-bound resources and
     // source destructors may use or release a declared dependency. Generated

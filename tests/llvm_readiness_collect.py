@@ -284,13 +284,18 @@ def run_probe(command: list[str], cwd: Path, directory: Path, *,
                 if status != "completed":
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
+                    except (ProcessLookupError, PermissionError):
+                        # macOS reports EPERM, not ESRCH, for a group whose
+                        # members have all exited but are not yet reaped.
                         pass
                 try:
                     process.wait(timeout=max(0.01, timeout - (time.monotonic() - started)))
                 except subprocess.TimeoutExpired:
                     status = "timeout"
-                    os.killpg(process.pid, signal.SIGKILL)
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
                     process.wait(timeout=5)
                 for stream in (process.stdout, process.stderr):
                     if stream is not None:

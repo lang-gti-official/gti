@@ -289,6 +289,7 @@ void checkMutexComposition(const std::filesystem::path &root) {
   options.lowerLibraryReachableOnly = true;
   std::set<std::string_view> witnesses;
   std::size_t passive = 0;
+  std::size_t borrowingMutexClosures = 0;
   for (const auto *fixture :
        {"llvm_thread_mutex_closures.gti", "llvm_thread_owned_mutexes.gti"}) {
     const auto frontend = Frontend(options).analyze(
@@ -308,6 +309,37 @@ void checkMutexComposition(const std::filesystem::path &root) {
     for (const auto &use : admission.requirements())
       if (use.implementedShape)
         witnesses.insert(use.implementedShape->name);
+    // An admitted environment holding mutex storage by value beside a
+    // borrowing capture: the borrowing capture stays an ordinary address.
+    const auto holdsMutexStorage = [&](const auto &self,
+                                       const SemanticType &type,
+                                       std::size_t depth) -> bool {
+      if (depth > 8)
+        return false;
+      for (const auto &candidate : program.classInstances())
+        if (candidate.type == type) {
+          if (candidate.compilerCapability ==
+              CompilerCapabilityTypeKind::MutexStorage)
+            return true;
+          for (const auto &field : candidate.declaredFields)
+            if (self(self, field.type, depth + 1))
+              return true;
+        }
+      return false;
+    };
+    for (const auto &lambda : program.lambdaInstances()) {
+      bool mutexCapture = false, borrowing = false;
+      for (std::size_t index = 0; index < lambda.captureTypes.size() &&
+                                  index < lambda.captureModes.size();
+           ++index) {
+        const bool borrowed = isBorrowingCapture(lambda.captureModes[index]);
+        borrowing |= borrowed;
+        mutexCapture |= !borrowed && holdsMutexStorage(holdsMutexStorage,
+                                                       lambda.captureTypes[index],
+                                                       0);
+      }
+      borrowingMutexClosures += mutexCapture && borrowing;
+    }
     for (const auto &constructor : program.constructorInstances()) {
       const auto *owner = program.findClassInstance(constructor.owner);
       if (!owner ||
@@ -340,6 +372,8 @@ void checkMutexComposition(const std::filesystem::path &root) {
   require(witnesses.contains("NativeOwnedMutexStorage"),
           "an owner of mutex storage has its own witness");
   require(passive >= 1, "fixtures exercise a passive class mutex payload");
+  require(borrowingMutexClosures >= 1,
+          "an admitted closure holds mutex storage beside a borrowing capture");
 }
 
 // Manual C-thread services bind only their exact trusted C declarations.

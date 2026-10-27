@@ -4223,6 +4223,24 @@ a method of an accessor's result keeps that transient accessor chain alive,
 child-first, up to the semantic owner, exactly as an accessor result passed to
 a constructor does.
 
+The closure environment, not a binding, holds a capture's entry loan for the
+whole call, so that loan has no carriers and a body-local reference alias never
+joins it as a formal's alias joins the formal's entry. The alias carries its
+own physical loan below the entry instead: the call-result loan of an accessor
+on the capture's referent, a fresh `Local` loan of the referent place it names
+through the capture or through another such alias, or the loan of the alias it
+copies. The semantic identity stays on the entry loan, and releasing a finished
+alias never folds the entry in as a transient link, so the body can still use
+the capture after the alias's last use.
+
+Semantics decides structurally whether a closure is a cleanup-bound carrier
+(owner decision 2026-10-27): its environment is an aggregate of its captures,
+so moving in an owner with a destructor beside a borrowing capture leaves an
+ordinary loan that ends at the closure's last use. Only a capture that is
+itself cleanup-bound makes the closure bound. MIR's cleanup-bound carriers are
+still classes, so a closure bound that way, by moving in a guard that reads its
+reference on destruction, is not yet lowered.
+
 A body-local reference may share an existing semantic owner identity while
 capturing an accessor's different runtime referent. Lowering accepts that
 address only when its live, nonescaping call-result chain reaches exactly the

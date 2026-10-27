@@ -38,6 +38,17 @@ for what minor and patch releases mean.
   alternative and each alternative's fields, and a debug record after an
   inactive `std::optional` or `std::expected` access no longer invalidates the
   module, so debug builds that format text or read optional values compile.
+- A reference variable inside a lambda that aliases a by-reference capture,
+  a field reached through it, the reference one of its methods returns, or
+  another such variable now compiles on both backends; it previously failed
+  with an internal compiler error. The lambda can still use the capture after
+  the alias's last use.
+- A lambda that moves in a value with a destructor and also captures a
+  variable by reference now borrows that variable only until the lambda's last
+  use, as an equivalent class does, rather than until the lambda is destroyed.
+  Such lambdas previously failed with an internal compiler error. A lambda
+  that moves in a value whose own destructor uses a borrow still keeps that
+  borrow until it is destroyed.
 - Fix internal compiler errors on both backends when a value that borrows
   and has a destructor is returned by a method called through a by-reference
   lambda capture (for example locking a captured `std::mutex`), when a mutex

@@ -1426,7 +1426,20 @@ relocated as independent objects.
 The restrictions last through the last proven use, or through cleanup when
 the stored type's destructor needs the dependency. An ordinary nested block
 can be the final-use endpoint after its cleanup. Loop backedges and later uses
-keep the dependency live. Concrete generic parameters and user-defined fields
+keep the dependency live.
+
+Owner decision (2026-10-27): a closure environment follows the same structural
+rule as a class. It is an aggregate of its captures with no source destructor:
+its generated cleanup destroys the owned captures and never uses a borrowing
+capture. Moving an owner with a destructor into a closure therefore does not
+extend its borrowing captures to the closure's destruction.
+`[cell = std::move(kept), &base]` borrows `base` only through the closure's last
+use, exactly as a class holding `int& base` beside an owned field does. A
+closure stays a cleanup-bound carrier only when a capture is itself
+cleanup-bound, such as a moved-in guard whose destructor reads its reference;
+that dependency then lasts until the closure is destroyed. Before this decision
+every closure that held borrowed state and needed cleanup was treated as
+cleanup-bound. Concrete generic parameters and user-defined fields
 can store these environments, but cannot let them escape their owners. The
 owning `std::function` family does not acquire permission to erase borrowed
 state, nor can a borrowed environment cross a managed-thread boundary.
