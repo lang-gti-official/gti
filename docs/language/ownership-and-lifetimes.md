@@ -2472,7 +2472,10 @@ A recursion that permutes its parameters, returning `s` beside
 `pick(t, s, n - 1)`, may return either one and relays neither: `return s`
 reports `GTI-S2045`. A dynamic view cannot escape a
 local owner, originate from temporary storage, be assigned into existing
-storage, or be nested in a global, static, array, or dynamic container. It
+storage, or be nested in a global, static, array, or dynamic container. An
+array therefore holds only ownerless views: a view copied out of an array
+element, including one of a by-value array parameter, is ownerless and may be
+returned or stored like a literal-backed view. A dynamic view
 reaches a field only through the owner-tracked view fields described below.
 Mutable, multiple-origin, nested, and reassignable view graphs remain
 deliberately unsupported. These restrictions are semantic and survive through
