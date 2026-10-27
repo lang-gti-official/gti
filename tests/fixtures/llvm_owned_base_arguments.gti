@@ -1,0 +1,166 @@
+// A derived constructor hands owned values to its base constructor, moved in
+// from its own parameters or created in place. MIR stages each owned argument
+// as a prepared parameter that the base initialization alone transfers to the
+// selected base constructor. `events` records construction and cleanup in the
+// order docs/language/execution.md 4.2.3 specifies; the C++ backend does not
+// represent this staging.
+mut int64_t events = 0;
+mut int live = 0;
+
+void note(int code) { events = events * 10 + int64_t(code); }
+
+class Mark {
+  int id;
+public:
+  Mark(int id) : id(id) { live += 1; }
+  Mark(Mark& other) = delete;
+  Mark(Mark&& other) = default;
+  ~Mark() { live -= 1; note(this.id); }
+  int value() { return this.id; }
+};
+
+Mark make(int id) { return Mark(id); }
+
+enum Parcel { empty, held(Mark mark), pair(Mark first, Mark second) };
+
+int parcel_value(Parcel& parcel) {
+  switch (parcel) {
+  case Parcel::empty: return 0;
+  case Parcel::held(auto& mark): return mark.value();
+  case Parcel::pair(auto& first, auto& second): return first.value() * 10 + second.value();
+  }
+}
+
+// Moved in, created in place and computed by a call, beside a scalar.
+class Base {
+public:
+  Mark first;
+  Parcel parcel;
+  int tag;
+  Base(Mark first, Parcel parcel, int tag)
+      : first(std::move(first)), parcel(std::move(parcel)), tag(tag) {}
+  ~Base() { note(9); }
+};
+
+class Moved : public Base {
+public:
+  Mark own;
+  Moved(Mark first, Parcel parcel, Mark own)
+      : Base(std::move(first), std::move(parcel), 1), own(std::move(own)) {}
+  ~Moved() { note(8); }
+};
+
+class Fresh : public Base {
+public:
+  Fresh(int id) : Base(make(id), Parcel::pair(Mark(id + 1), Mark(id + 2)), 2) {}
+};
+
+class Chosen : public Base {
+public:
+  Chosen(bool left) : Base(left ? Mark(1) : Mark(2), Parcel::empty, 3) {}
+};
+
+// A defaulted owned base parameter is created in place.
+class Defaulted {
+public:
+  Mark first;
+  Mark second;
+  Defaulted(Mark first, Mark second = Mark(6)) : first(std::move(first)), second(std::move(second)) {}
+};
+
+class UsesDefault : public Defaulted {
+public:
+  UsesDefault(Mark first) : Defaulted(std::move(first)) {}
+};
+
+// Each level forwards the owned values it received to the next.
+class Root {
+public:
+  Mark root;
+  Root(Mark root) : root(std::move(root)) {}
+  ~Root() { note(7); }
+};
+
+class Middle : public Root {
+public:
+  Mark middle;
+  Middle(Mark root, Mark middle) : Root(std::move(root)), middle(std::move(middle)) {}
+  ~Middle() { note(6); }
+};
+
+class Leaf : public Middle {
+public:
+  Mark leaf;
+  Leaf(Mark root, Mark middle, Mark leaf)
+      : Middle(std::move(root), std::move(middle)), leaf(std::move(leaf)) {}
+  ~Leaf() { note(5); }
+};
+
+// A generic base receives a type parameter's owned value, here a closure
+// that owns its capture.
+class Holder<T> {
+public:
+  T held;
+  Holder(T held) : held(std::move(held)) {}
+};
+
+class Wrapper<T> : public Holder<T> {
+public:
+  Wrapper(T held) : Holder<T>(std::move(held)) {}
+};
+
+Wrapper<T> wrap<T>(T held) { return Wrapper<T>(std::move(held)); }
+
+int check() {
+  {
+    Moved moved{Mark(1), Parcel::held(Mark(2)), Mark(3)};
+    if (moved.first.value() != 1 || parcel_value(moved.parcel) != 2 ||
+        moved.own.value() != 3 || moved.tag != 1 || live != 3 || events != 0)
+      return 1;
+  }
+  // ~Moved, its own field, ~Base, then the base fields in reverse order.
+  if (events != 83921 || live != 0)
+    return 2;
+  events = 0;
+  {
+    Fresh fresh{3};
+    Chosen left{true};
+    Chosen right{false};
+    if (fresh.first.value() != 3 || parcel_value(fresh.parcel) != 45 ||
+        left.first.value() != 1 || right.first.value() != 2 || live != 5)
+      return 3;
+  }
+  // Locals end in reverse order. Each runs ~Base, then its parcel, whose
+  // pair alternative ends its second field first, then its first mark.
+  if (events != 92919543 || live != 0)
+    return 4;
+  events = 0;
+  {
+    UsesDefault value{Mark(5)};
+    if (value.first.value() != 5 || value.second.value() != 6)
+      return 5;
+  }
+  if (events != 65 || live != 0)
+    return 6;
+  events = 0;
+  {
+    Leaf leaf{Mark(1), Mark(2), Mark(3)};
+    if (leaf.root.value() + leaf.middle.value() * 10 + leaf.leaf.value() * 100 != 321)
+      return 7;
+  }
+  if (events != 536271 || live != 0)
+    return 8;
+  events = 0;
+  {
+    Mark captured = Mark(4);
+    auto wrapped = wrap([held = std::move(captured)]() -> int { return held.value(); });
+    if (wrapped.held() != 4 || live != 1)
+      return 9;
+  }
+  if (events != 4 || live != 0)
+    return 10;
+  return 0;
+}
+
+// OWNED_BASE_MAIN
+int main() { return check(); }
