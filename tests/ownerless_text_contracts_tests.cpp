@@ -1401,10 +1401,89 @@ int main() { mut std::string_view v = "x"; return either("a", &v, true) == "a" ?
          "a formal returned beside a raw read still needs one owner");
 }
 
+// Invoking a callable whose result is text yields what the callee returns,
+// however the callee is reached. A GTI invocation pointer only comes from a
+// forming site that names one stateless function or lambda, so invoking it
+// yields what one of the program's targets of that pointer type returns: a
+// user-defined callable class viewed through `std::function_ref`, a lambda,
+// or a function item behind `std::function_ptr` all return ownerless text.
+void testCallableTextResults() {
+  const auto result = analyzeText(R"gti(
+#include <std/functional>
+class Greeter {
+public:
+  std::string_view greeting;
+  Greeter(std::string_view greeting) : greeting(greeting) {}
+  std::string_view operator()() { return this.greeting; }
+};
+std::string_view small(int n) { return n < 10 ? "small" : "large"; }
+std::string_view label(std::string_view unused) {
+  std::string_view copy = unused;
+  return "label";
+}
+std::string_view invoke(std::function_ptr<std::string_view(int)> pick, int n) {
+  return pick(n);
+}
+mut std::string_view kept = "";
+int main() {
+  Greeter hello = Greeter("hello");
+  std::function_ref<std::string_view()> greet{hello};
+  kept = greet();
+  if (kept != "hello") { return 1; }
+  auto lit = []() -> std::string_view { return "lit"; };
+  std::function_ref<std::string_view()> viewed{lit};
+  if (viewed() != "lit") { return 2; }
+  kept = invoke(std::function_ptr<std::string_view(int)>(small), 30);
+  auto zero = [](int n) -> std::string_view { return n == 0 ? "zero" : "other"; };
+  std::function_ptr<std::string_view(int)> viaLambda{zero};
+  std::function_ptr<std::string_view(std::string_view)> named{label};
+  return kept == "large" && viaLambda(0) == "zero" && named("x") == "label"
+             ? 0 : 3;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a callable's text result through an invocation pointer is ownerless");
+  if (!result.canGenerateCode())
+    return;
+  // Invocation methods: each returns what its pointer's targets return.
+  std::vector<lang::HirFunctionInstanceId> invokers;
+  for (const auto &function : result.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (textResult(function) &&
+            instruction.intrinsic ==
+                lang::IntrinsicKind::FunctionPointerInvoke &&
+            std::find(invokers.begin(), invokers.end(), function.id) ==
+                invokers.end())
+          invokers.push_back(function.id);
+  expect(invokers.size() >= 2,
+         "both callable views invoke through a pointer and return its text");
+  const auto *label = namedFunction(result, "label");
+  expect(label != nullptr, "the named target exists");
+  if (label == nullptr)
+    return;
+  // A target that returned its formal would make every invocation of its
+  // pointer type return unknown text: the invocation has no relay.
+  auto changed = result.mir;
+  expect(returnFirstFormal(changed, label->id, "label"),
+         "the target returns its formal");
+  const auto verification = lang::verifyMirProgram(changed);
+  expect(std::any_of(invokers.begin(), invokers.end(),
+                     [&](lang::HirFunctionInstanceId invoker) {
+                       return functionError(verification, invoker,
+                                            "ownerless text return has no "
+                                            "independent result proof");
+                     }),
+         "an invocation returns what its pointer's targets return");
+}
+
 constexpr NamedTest kTests[] = {
     {"testArrayElementTextStorage", testArrayElementTextStorage},
     {"testArrayElementTextRejections", testArrayElementTextRejections},
     {"testRawMemoryTextReads", testRawMemoryTextReads},
+    {"testCallableTextResults", testCallableTextResults},
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testAccessorSubjectRelays", testAccessorSubjectRelays},
     {"testAccessorFieldEscapes", testAccessorFieldEscapes},

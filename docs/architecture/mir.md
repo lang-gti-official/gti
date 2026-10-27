@@ -2047,7 +2047,12 @@ completes them all; a summary that read an unfinished one stays provisional
 until then. A recursive text result is therefore ownerless exactly when its
 other returns are. A lambda invocation's result holds what the lambda's
 returns hold in its own body; a lambda has no relay contract, so a returned
-formal or capture there is unknown text.
+formal or capture there is unknown text. An invocation through a GTI function
+pointer holds what one of its targets returns. A pointer value only comes
+from a forming site naming one stateless function or lambda, so the
+program's forming sites of the pointer's type are every target it can reach;
+a target's returned formal or field is unknown text there. This covers
+`std::function_ptr`, `std::function_ref` and any callable built on them.
 
 Text read through a reference that a source call returned is summarized the
 same way: the callee's Return loans name the referent, and its sources are

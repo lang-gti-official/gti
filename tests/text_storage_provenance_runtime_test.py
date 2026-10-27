@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Text read from array storage or raw memory runs alike on both backends.
+"""Text read from arrays, raw memory or callables runs alike on both backends.
 
 A view copied out of an array of views holds the ownerless text the array
-holds, and a C string loaded through a raw pointer is the inert native address
-the caller stored there. MIR proves both results ownerless; each program must
-build and behave identically on C++ and LLVM at -O0 and -O2.
+holds, a C string loaded through a raw pointer is the inert native address the
+caller stored there, and a callable's text result is what its target returns.
+MIR proves each result ownerless; each program must build and behave
+identically on C++ and LLVM at -O0 and -O2.
 
     python3 tests/text_storage_provenance_runtime_test.py <gti> <repo-root>
 """
@@ -81,6 +82,37 @@ int main() {
 }
 '''
 
+CALLABLE_RESULTS = r'''
+#include <std/functional>
+#include <std/string_view>
+// A callable's text result through a GTI invocation pointer is what its
+// target returns: a user-defined callable class, a lambda or a function item.
+class Greeter {
+public:
+  std::string_view greeting;
+  Greeter(std::string_view greeting) : greeting(greeting) {}
+  std::string_view operator()() { return this.greeting; }
+};
+std::string_view small(int n) { return n < 10 ? "small" : "large"; }
+std::string_view invoke(std::function_ptr<std::string_view(int)> pick, int n) { return pick(n); }
+mut std::string_view kept = "";
+int main() {
+  Greeter hello = Greeter("hello");
+  std::function_ref<std::string_view()> greet{hello};
+  kept = greet();
+  std::println(kept);
+  auto lit = []() -> std::string_view { return "lit"; };
+  std::function_ref<std::string_view()> viewed{lit};
+  std::println(viewed());
+  kept = invoke(std::function_ptr<std::string_view(int)>(small), 30);
+  std::println(kept);
+  auto zero = [](int n) -> std::string_view { return n == 0 ? "zero" : "other"; };
+  std::function_ptr<std::string_view(int)> viaLambda{zero};
+  std::println(viaLambda(1));
+  return kept == "large" ? 0 : 1;
+}
+'''
+
 RAW_C_STRINGS = r'''
 struct Slots {
   c_string* items = nullptr;
@@ -117,6 +149,7 @@ CASES = {
     'array-elements': (ARRAY_ELEMENTS, (0, 'cde\nab\ntwo\nright\nplaced\n', '')),
     'array-fields-and-lambdas': (ARRAY_FIELDS_AND_LAMBDAS, (0, 'yz\nlabel\n', '')),
     'element-references': (ELEMENT_REFERENCES, (0, 'zz\n', '')),
+    'callable-results': (CALLABLE_RESULTS, (0, 'hello\nlit\nlarge\nother\n', '')),
     'raw-c-strings': (RAW_C_STRINGS, (0, '', '')),
 }
 
@@ -139,7 +172,7 @@ def main() -> None:
                 if result.error or result.observable != expected:
                     raise AssertionError(f'{name} {endpoint}: {result}')
             print(f'{name}: C++ and LLVM at O0/O2 agree', flush=True)
-    print('array-element and raw-memory text returns passed')
+    print('array-element, raw-memory and callable text returns passed')
 
 
 if __name__ == '__main__':
