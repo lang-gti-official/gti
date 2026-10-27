@@ -44,12 +44,12 @@ for what minor and patch releases mean.
   move.
 - Compile on the native backend: destructuring declarations, reads of an
   integral enum's underlying value, counted text views held as values,
-  constructions, call receivers and call results under declared `unsafe`
-  permission,
-  constant-folded raw field indexing, native function values published into
-  constructor fields, borrows reached through a carrier's stored reference,
-  and restoring swaps and exchanges (`std::swap`, `std::exchange`,
-  `std::array::swap` and `swap_elements`).
+  arrays of `std::string_view`, range `for` over arrays of views or integral
+  enums, constructions, call receivers and call results under declared
+  `unsafe` permission, constant-folded raw field indexing, native function
+  values published into constructor fields, borrows reached through a
+  carrier's stored reference, and restoring swaps and exchanges
+  (`std::swap`, `std::exchange`, `std::array::swap` and `swap_elements`).
 - C++ remains the production default. Polymorphic ownership, dynamic dispatch
   transfer and thread-handle construction remain rejected on the native
   backend.

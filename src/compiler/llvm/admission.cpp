@@ -45,6 +45,16 @@ bool passiveArrayElement(const SemanticType &type) {
          (type.kind == SemanticType::RawPointer && type.arguments.size() == 1);
 }
 
+// A one-dimensional fixed array of counted text views. Each element is a
+// bitwise view, but element equality and hashing compare text, so only
+// storage, transport, complete formation and checked element selection use
+// this; it is not a passive array.
+bool textViewArray(const SemanticType &type) {
+  return type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+         !type.arrayLengthParameterId &&
+         type.arguments.front().kind == SemanticType::StringView;
+}
+
 bool passiveAddress(const SemanticType &type) {
   if (type.kind != SemanticType::RawPointer || type.arguments.size() != 1)
     return false;
@@ -1323,7 +1333,7 @@ public:
         type.kind == SemanticType::Reference && type.arguments.size() == 1
             ? type.arguments.front()
             : type;
-    if (!integralEnumArray(array))
+    if (!integralEnumArray(array) && !textViewArray(array))
       return false;
     for (const auto &projection : place.projections) {
       if (!((projection.kind == MirProjectionKind::Index &&
@@ -1451,6 +1461,17 @@ public:
     return std::all_of(
         stage.operands.begin(), stage.operands.end(),
         [&](const auto &operand) { return operand.type == element; });
+  }
+  // Complete element-wise formation of a text view array from exact views.
+  bool textViewArrayAggregate(const MirInstruction &stage) const {
+    return stage.kind == MirInstructionKind::Compute &&
+           stage.operation == MirOperation::Aggregate &&
+           textViewArray(stage.info.type) &&
+           stage.operands.size() == stage.info.type.arrayLength &&
+           std::all_of(stage.operands.begin(), stage.operands.end(),
+                       [&](const auto &operand) {
+                         return operand.type == SemanticType::StringView;
+                       });
   }
   std::optional<Shape> mutexShape(const SemanticType &type) const {
     if (program.executionProfile() != ExecutionProfile::Concurrent ||
@@ -2147,6 +2168,10 @@ public:
         type.kind == SemanticType::Reference && type.arguments.size() == 1
             ? type.arguments[0]
             : type;
+    // An admitted array value is selected by address like a passive array;
+    // its elements are reached only through checked array projection.
+    if (textViewArray(scalar) || integralEnumArray(scalar))
+      return true;
     return scalar.kind == SemanticType::Enum &&
            program.findIntegralEnum(scalar) &&
            !program.findPayloadEnum(scalar) && nativeValue(scalar);
@@ -2846,9 +2871,11 @@ public:
       const bool passiveArray =
           type.kind == SemanticType::Array && passiveArrayElement(type);
       const bool enumArray = !passiveArray && integralEnumArray(type);
-      const bool arrayAddress = type.kind == SemanticType::RawPointer &&
-                                type.arguments.size() == 1 &&
-                                passiveArrayElement(type.arguments.front());
+      const bool textArray = textViewArray(type);
+      const bool arrayAddress =
+          type.kind == SemanticType::RawPointer && type.arguments.size() == 1 &&
+          (passiveArrayElement(type.arguments.front()) ||
+           type.arguments.front().kind == SemanticType::StringView);
       const bool reference =
           type.kind == SemanticType::Reference && passiveReference(type);
       const bool address = primitiveAddress(type) ||
@@ -2868,6 +2895,7 @@ public:
               ? std::optional(Shape::NativeCSignature)
           : passiveArray ? std::optional(Shape::PassiveArrayValue)
           : enumArray    ? std::optional(Shape::IntegralEnumArrayValue)
+          : textArray    ? std::optional(Shape::TextViewArrayValue)
           : reference    ? std::optional(Shape::PassiveReference)
           : arrayAddress ? std::optional(Shape::CheckedArrayProjection)
                          : representationShape(type));
@@ -2883,6 +2911,7 @@ public:
         add(Shape::FixedArray,
             passiveArray ? std::optional(Shape::PassiveArrayValue)
             : enumArray  ? std::optional(Shape::IntegralEnumArrayValue)
+            : textArray  ? std::optional(Shape::TextViewArrayValue)
                          : representationShape(type));
       if (!type.arguments.empty())
         add(Shape::TypeArguments);
@@ -3352,6 +3381,8 @@ public:
               : arrayAggregate ? std::optional(Shape::PassiveArrayValue)
               : integralEnumArrayAggregate(stage)
                   ? std::optional(Shape::IntegralEnumArrayValue)
+              : textViewArrayAggregate(stage)
+                  ? std::optional(Shape::TextViewArrayValue)
               : stage.operation == MirOperation::Aggregate &&
                       stage.info.type.kind == SemanticType::Array
                   ? classShape(stage.info.type)

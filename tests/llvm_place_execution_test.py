@@ -451,6 +451,32 @@ int main() {
 '''
 
 
+TEXT_VIEW_ARRAYS = r'''
+#include <std/string_view>
+enum class Level : int32_t { low = 1, high = 9 };
+bool holds(std::string_view names[3], uint64_t index, std::string_view text) { return names[index] == text; }
+int32_t total(std::string_view names[3]) {
+  mut int32_t sum = 0;
+  for (std::string_view name : names) { sum += int32_t(name.size()); }
+  return sum;
+}
+int main() {
+  std::string_view names[3] = {"ab", "cde", ""};
+  std::string_view copy[3] = names;
+  if (!holds(copy, uint64_t(1), "cde") || !holds(names, uint64_t(0), "ab")) { return 1; }
+  if (total(names) != 5) { return 2; }
+  mut int32_t empty = 0;
+  for (std::string_view name : names) { if (name.empty()) { empty += 1; } }
+  if (empty != 1) { return 3; }
+  if (!names[2].empty() || names[1].size() != uint64_t(3)) { return 5; }
+  Level levels[3] = {Level::low, Level::high, Level::high};
+  mut int32_t high = 0;
+  for (Level level : levels) { if (level == Level::high) { high += 1; } }
+  return high == 2 ? 0 : 4;
+}
+'''
+
+
 def successes(root: Path) -> dict[str, str]:
     cases = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS,
              'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES,
@@ -463,7 +489,8 @@ def successes(root: Path) -> dict[str, str]:
              'conditional-references': CONDITIONAL_REFERENCES,
              'array-extent-queries': ARRAY_EXTENT_QUERIES,
              'integral-enum-arrays': INTEGRAL_ENUM_ARRAYS,
-             'integral-enum-pointers': INTEGRAL_ENUM_POINTERS}
+             'integral-enum-pointers': INTEGRAL_ENUM_POINTERS,
+             'text-view-arrays': TEXT_VIEW_ARRAYS}
     cases['shipped-example'] = (
         root / 'examples/llvm/places-and-text.gti').read_text()
     cases['enum-references'] = (
@@ -491,6 +518,7 @@ def failure_cases() -> dict[str, str]:
         'text-empty': '#include <std/string_view>\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("", 0); return 0; }',
         'text-negative': '#include <std/string_view>\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("ab", -1); return 0; }',
         'reference-failure': 'mut int& get(mut int& v, int n) { v = v / n; return v; } int main() { mut int x = 2; get(x, 0) = 4; return 0; }',
+        'text-array-high': '#include <std/string_view>\nuint64_t size(std::string_view names[2], uint64_t i) { return names[i].size(); } int main() { std::string_view names[2] = {"a", "b"}; [[discard]] size(names, uint64_t(2)); return 0; }',
         # Container checks report the container MIR recorded for the check.
         'vector-index-high': '#include <std/vector>\nint get(std::vector<int>& values, uint64_t i) { return values[i]; } int main() { mut std::vector<int> values = std::vector<int>(); values.push_back(1); return get(values, uint64_t(1)); }',
         'string-index-high': '#include <std/string>\nchar get(std::string& text, uint64_t i) { return text[i]; } int main() { std::string text = std::string("ab"); [[discard]] get(text, uint64_t(2)); return 0; }',
@@ -530,6 +558,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
     profiles = {name: (name,) for name in cases}
     profiles['primitive-pointers'] += ('integral-enum-pointers',)
     profiles['array-high'] += ('integral-enum-pointers',)
+    profiles['text-view-arrays'] += ('text-array-high',)
     assert all(case in cases for profile in profiles.values() for case in profile)
     return profiles
 
