@@ -202,6 +202,7 @@ Memory::SharedRelease Memory::releaseShared(llvm::Value *handle) {
   auto *value = ir.CreateLoad(layout.handle.storage, handle);
   ir.CreateStore(llvm::Constant::getNullValue(layout.handle.storage), handle);
   auto *block = ir.CreateExtractValue(value, layout.handleBlock);
+  auto *view = ir.CreateExtractValue(value, layout.handleView);
   auto *function = ir.GetInsertBlock()->getParent();
   auto *empty = ir.GetInsertBlock();
   auto *live =
@@ -232,7 +233,7 @@ Memory::SharedRelease Memory::releaseShared(llvm::Value *handle) {
   allocationResult->addIncoming(
       llvm::ConstantPointerNull::get(session.layouts().pointer()), empty);
   allocationResult->addIncoming(allocation, released);
-  return {lastResult, allocationResult, block};
+  return {lastResult, allocationResult, block, view};
 }
 
 llvm::Value *Memory::shared(const MirInstruction &instruction,
@@ -248,7 +249,8 @@ llvm::Value *Memory::shared(const MirInstruction &instruction,
   }
   const bool creates = intrinsic == IntrinsicKind::SharedOwnerEmpty ||
                        intrinsic == IntrinsicKind::SharedOwnerFromUnique ||
-                       intrinsic == IntrinsicKind::SharedOwnerClone;
+                       intrinsic == IntrinsicKind::SharedOwnerClone ||
+                       intrinsic == IntrinsicKind::SharedOwnerUpcast;
   llvm::Value *result = nullptr;
   if (creates) {
     llvm::IRBuilder<> entry(
@@ -259,6 +261,37 @@ llvm::Value *Memory::shared(const MirInstruction &instruction,
   }
   if (intrinsic == IntrinsicKind::SharedOwnerEmpty)
     return result;
+  if (intrinsic == IntrinsicKind::SharedOwnerUpcast) {
+    // The consumed handle keeps its control block and every alias; only its
+    // pointee view moves to the exact static base subobject. An empty handle
+    // stays empty. The last owner recovers the complete object and its
+    // cleanup from the installed dispatch descriptor, never from this view.
+    if (instruction.operands.size() != 1 ||
+        instruction.operands[0].type.kind != SemanticType::Class ||
+        instruction.operands[0].type.arguments.size() != 1 ||
+        instruction.info.type.kind != SemanticType::Class ||
+        instruction.info.type.arguments.size() != 1)
+      throw std::logic_error("LLVM shared upcast lost its sealed owner types");
+    const auto base = session.layouts().baseSubobject(
+        instruction.operands[0].type.arguments[0],
+        instruction.info.type.arguments[0], "memory.sharedOwnerUpcast");
+    llvm::Value *value = ir.CreateLoad(layout.handle.storage, inputs[0]);
+    if (base.offset != 0) {
+      auto *view = ir.CreateExtractValue(value, layout.handleView);
+      auto *adjusted =
+          ir.CreateGEP(ir.getInt8Ty(), view,
+                       ir.getInt64(static_cast<std::int64_t>(base.offset)));
+      value = ir.CreateInsertValue(
+          value,
+          ir.CreateSelect(ir.CreateIsNull(view),
+                          llvm::ConstantPointerNull::get(
+                              session.layouts().pointer()),
+                          adjusted),
+          layout.handleView);
+    }
+    ir.CreateStore(value, result);
+    return result;
+  }
   if (intrinsic == IntrinsicKind::SharedOwnerFromUnique) {
     auto *function = ir.GetInsertBlock()->getParent();
     auto *promote =
@@ -366,13 +399,32 @@ bool uninitializedStorageRepresentation(const MirProgram &program,
          !instance.unionLayout;
 }
 
+// A shared pointee is a complete object type, or a polymorphic class viewed
+// through one of its bases, whose last owner recovers the complete object and
+// cleanup from the installed dispatch descriptor as a unique owner does.
+static bool sharedPointee(const MirProgram &program,
+                          const SemanticType &type) {
+  if (mir_detail::completeObjectType(program, type))
+    return true;
+  const MirClassInstance *owner = nullptr;
+  for (const auto &candidate : program.classInstances())
+    if (candidate.type == type) {
+      if (owner)
+        return false;
+      owner = &candidate;
+    }
+  return type.kind == SemanticType::Class && owner && owner->polymorphic &&
+         !owner->cOpaqueHandle &&
+         owner->compilerCapability == CompilerCapabilityTypeKind::None;
+}
+
 bool sharedOwnerRepresentation(const MirProgram &program,
                                const MirClassInstance &instance) {
   return instance.compilerCapability ==
              CompilerCapabilityTypeKind::SharedOwner &&
          instance.type.kind == SemanticType::Class &&
          instance.type.arguments.size() == 1 &&
-         mir_detail::completeObjectType(program, instance.type.arguments[0]) &&
+         sharedPointee(program, instance.type.arguments[0]) &&
          instance.declaredFields.empty() && instance.bases.empty() &&
          instance.structuralBases.empty() && !instance.destructor &&
          instance.destructorStatus == SpecialMemberStatus::Generated &&
@@ -552,6 +604,7 @@ bool Memory::handles(IntrinsicKind intrinsic) {
   case IntrinsicKind::SharedOwnerIsNull:
   case IntrinsicKind::SharedOwnerUseCount:
   case IntrinsicKind::SharedOwnerSwap:
+  case IntrinsicKind::SharedOwnerUpcast:
     return true;
   default:
     return false;
@@ -636,6 +689,7 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
   case IntrinsicKind::SharedOwnerIsNull:
   case IntrinsicKind::SharedOwnerUseCount:
   case IntrinsicKind::SharedOwnerSwap:
+  case IntrinsicKind::SharedOwnerUpcast:
     return {true, shared(instruction, inputs)};
   case IntrinsicKind::UniqueOwnerBorrow:
   case IntrinsicKind::UniqueOwnerBorrowMut:

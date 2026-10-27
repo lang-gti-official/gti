@@ -68,6 +68,7 @@ SUCCESS_FILES = {
     # its instances agree on captures, so the model relocates into its slot.
     "field-default-closure-former-reject": "tests/fixtures/constructor_callback_field.gti",
     "program-storage": "tests/fixtures/llvm_dispatch_program_storage.gti",
+    "shared-polymorphic-owners": "tests/fixtures/llvm_dispatch_shared_owners.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -1189,7 +1190,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1527,6 +1528,26 @@ int main() {
         replacement_failure.replace("expected_cleanup = 72;", "expected_cleanup = 73;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=replacement_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    shared = (root / SUCCESS_FILES["shared-polymorphic-owners"]).read_text(encoding="utf-8")
+    shared_marker = "// SHARED_OWNERS_MAIN\n"
+    if shared.count(shared_marker) != 1:
+        raise AssertionError("shared owner main marker is not unique")
+    shared_failure = shared.split(shared_marker, 1)[0] + """int main() {
+  expected_cleanup = 76;
+  Guard guard{};
+  auto keep = std::make_shared<Square>(6);
+  std::shared_ptr<Shape> shape =
+      std::upcast_shared<Shape, Square>(std::make_shared<Square>(7));
+  return shape->area(0) + keep->code();
+}
+"""
+    shared_needle = "int area(int scale) override { return this.side * this.side / scale; }"
+    add("shared-polymorphic-owner-failure", shared_failure, "defined-failure",
+        expected_exit=70, failure_needle=shared_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("shared-polymorphic-owner-wrong-cleanup",
+        shared_failure.replace("expected_cleanup = 76;", "expected_cleanup = 77;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=shared_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     storage = (root / SUCCESS_FILES["program-storage"]).read_text(encoding="utf-8")
     storage_marker = "// PROGRAM_STORAGE_MAIN\n"
     if storage.count(storage_marker) != 1:
@@ -1641,7 +1662,9 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "polymorphic-owners", "heap-polymorphic-owner-former-reject",
             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
             "polymorphic-owner-constructor-rollback", "closure-models",
-            "closure-model-failure", "closure-model-wrong-cleanup"),
+            "closure-model-failure", "closure-model-wrong-cleanup",
+            "shared-polymorphic-owners", "shared-polymorphic-owner-failure",
+            "shared-polymorphic-owner-wrong-cleanup"),
     }
     cases = evidence_cases(root)
     if {name for members in profiles.values() for name in members} != set(cases):
@@ -1696,6 +1719,7 @@ def main() -> None:
              "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
              "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
              "program-storage-failure",
+             "shared-polymorphic-owner-failure", "shared-polymorphic-owner-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

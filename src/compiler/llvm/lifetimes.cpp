@@ -1705,8 +1705,12 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       ir.SetInsertPoint(done);
       ir.CreateRet(ir.getTrue());
       ir.SetInsertPoint(last);
+      // A polymorphic pointee is released through this handle's own view,
+      // from which its descriptor selects the complete object and cleanup.
       sharedPointee = ir.CreateAlloca(pointer);
-      ir.CreateStore(released.allocation, sharedPointee);
+      ir.CreateStore(recipe.aggregate[0].polymorphicCleanup ? released.view
+                                                            : released.allocation,
+                     sharedPointee);
     }
     llvm::Value *allocation = nullptr;
     if (unique) {

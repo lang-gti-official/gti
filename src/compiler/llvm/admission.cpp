@@ -2018,6 +2018,32 @@ private:
           return {};
         return Shape::NativePolymorphicOwnership;
       }
+      // A shared owner upcast keeps the control block and all aliases and
+      // selects the static base view of the same allocation.
+      if (stage.kind == MirInstructionKind::Call &&
+          stage.intrinsic == IntrinsicKind::SharedOwnerUpcast) {
+        const auto *derivedOwner =
+            stage.operands.size() == 1
+                ? program.findClassInstance(
+                      instance(stage.operands.front().type).id)
+                : nullptr;
+        const auto *baseOwner =
+            program.findClassInstance(instance(stage.info.type).id);
+        if (!derivedOwner || !baseOwner ||
+            !native_llvm::sharedOwnerRepresentation(program, *derivedOwner) ||
+            !native_llvm::sharedOwnerRepresentation(program, *baseOwner) ||
+            stage.operands.front().kind != MirOperandKind::Value ||
+            stage.parameterTypes != std::vector{stage.operands.front().type})
+          return {};
+        const auto &derived = stage.operands.front().type.arguments.front();
+        const auto &base = stage.info.type.arguments.front();
+        if (derived.kind != SemanticType::Class ||
+            base.kind != SemanticType::Class || !metadata(derived) ||
+            !metadata(base) || !instance(base).polymorphic || !planner() ||
+            !session->layouts().findBaseSubobject(derived, base))
+          return {};
+        return Shape::NativePolymorphicOwnership;
+      }
       if (stage.kind == MirInstructionKind::Drop)
         for (const auto &event : stage.lifecycle)
           if (const auto *drop = body.findDropObligation(event.source))
@@ -4584,6 +4610,7 @@ public:
                   ? std::optional(Shape::PassiveArrayValue)
               : arrayExtentQuery(stage) ? std::optional(Shape::ArrayExtentQuery)
               : (stage.intrinsic == IntrinsicKind::UniqueOwnerUpcast ||
+                 stage.intrinsic == IntrinsicKind::SharedOwnerUpcast ||
                  stage.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
                  native_llvm::PolymorphicStorage::handles(stage.intrinsic)) &&
                       dispatchOperation
