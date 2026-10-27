@@ -2242,6 +2242,33 @@ int main() {
     }
   expect(classExtents.admitted() && extentSize && extentBegin,
          "range-for and size() over class elements read no element");
+  // Raw payload access strides by the payload layout and transports the
+  // address; an element-count difference remains a separate operation.
+  const auto payloadDifference = lang::planLlvmAdmission(lower(R"(
+enum Plain { none, pair(int first, int second) };
+struct Window { mut Plain values[2] = {Plain::none, Plain::pair(1, 2)}; };
+int main() {
+  mut Window window{};
+  unsafe {
+    Plain* first = &window.values[0];
+    Plain* last = first + uint64_t(1);
+    return last - first == 1 ? 0 : 1;
+  }
+}
+)"));
+  bool payloadAdvance = false;
+  for (const auto &use : payloadDifference.requirements())
+    if (use.entry->family == "MirOperation" &&
+        use.entry->name == "PointerAdd") {
+      payloadAdvance = true;
+      expect(use.implementedShape &&
+                 use.implementedShape->name == "NativePayloadRawAccess",
+             "payload pointer advance uses the payload raw-access witness");
+    }
+  expect(payloadAdvance && !payloadDifference.admitted() &&
+             payloadDifference.firstUnsupported()->entry->key() ==
+                 "MirOperation.PointerDifference",
+         "payload raw access does not claim pointer difference");
   for (const auto &use : arrays.requirements())
     if (use.entry->family == "MirOperation" && use.entry->name == "Aggregate")
       expect(use.entry->state == lang::LlvmCoverageState::Pending &&

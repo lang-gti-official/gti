@@ -5685,6 +5685,14 @@ pointer coercion. Staging is transport, not a second pointer arithmetic operatio
 or an additional unsafe permission. Missing producers, changed pointee types
 and readonly-to-mutable coercions do not acquire that witness.
 
+`NativePayloadRawAccess` is the separate raw witness for an exact payload-enum
+pointee whose own storage is admitted as `NativePayloadStorage`. It covers
+pointer add/subtract by an exact integer offset, which strides by the sealed
+payload layout, its staged call argument, and checked `RawBorrow`/`RawBorrowMut`
+reference formation, which transports the unchanged address. Pointer difference
+and raw construction, extraction, relocation or cleanup through the pointer are
+not part of it, and the storage witness alone never grants raw access.
+
 `PolymorphicStorage` now implements private construct, has-value, read/read-mut,
 reset and relocation operations using instructions owned by the sealed session.
 Non-emitting preflight checks concrete relocation eligibility and exact interface

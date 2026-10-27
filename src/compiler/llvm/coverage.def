@@ -924,6 +924,7 @@ LLVM_COVERAGE_ENTRY(NativeUnion, 7, Pending, None, "sealed overlapping native st
 LLVM_COVERAGE_ENTRY(OpaqueNativeHandle, 11, Pending, None, "foreign incomplete object identity")
 LLVM_COVERAGE_ENTRY(PayloadEnum, 7, Pending, None, "tagged concrete enum payload storage and active cleanup")
 LLVM_COVERAGE_ENTRY(NativePayloadStorage, 7, LLVM_COVERAGE_IMPLEMENTED("llvm_payload_execution", "payload-core"), None, "exact concrete native payload layout, publication and active cleanup; fields require native storage witnesses")
+LLVM_COVERAGE_ENTRY(NativePayloadRawAccess, 7, LLVM_COVERAGE_IMPLEMENTED("llvm_payload_execution", "payload-raw-access"), None, "exact payload-enum pointee whose storage is admitted as NativePayloadStorage: raw pointer add/subtract of an exact integer offset at the payload layout stride and checked raw-reference formation transporting that address unchanged; no raw payload construction, extraction, relocation or cleanup, which remain independently gated")
 LLVM_COVERAGE_ENTRY(NativeUnionStorage, 7, LLVM_COVERAGE_IMPLEMENTED("llvm_payload_execution", "payload-core"), None, "exact overlapping native union storage; members retain lexical unsafe obligations and require native field witnesses")
 LLVM_COVERAGE_ENTRY(NativeBorrowMetadata, 7, LLVM_COVERAGE_IMPLEMENTED("llvm_payload_execution", "payload-core"), None, "verified dependency groups over native places; permissions erase while MIR-selected addresses remain executable")
 LLVM_COVERAGE_ENTRY(NativeCall, 11, Pending, None, "foreign call uses its declared native signature")

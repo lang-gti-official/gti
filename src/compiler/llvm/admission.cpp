@@ -1632,6 +1632,32 @@ public:
            constantIntegerDomain(stage.operands[reversed ? 0 : 1].type)
                .has_value();
   }
+  // An exact payload enum whose own storage is admitted as native payload
+  // storage. Raw access through it never reads the tag or a payload field:
+  // arithmetic strides by the payload layout and a raw reference transports
+  // the selected address unchanged. Hierarchy-related and capability
+  // payloads fail the storage witness and stay closed.
+  bool nativePayloadPointee(const SemanticType &type) const {
+    return type.kind == SemanticType::Enum && program.findPayloadEnum(type) &&
+           nativeValue(type) && classShape(type) == Shape::NativePayloadStorage;
+  }
+  bool payloadPointerArithmetic(const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Compute ||
+        stage.operands.size() != 2 ||
+        (stage.operation != MirOperation::PointerAdd &&
+         stage.operation != MirOperation::PointerSubtract))
+      return false;
+    const bool reversed =
+        stage.operation == MirOperation::PointerAdd &&
+        stage.operands[1].type.kind == SemanticType::RawPointer;
+    const auto &pointer = stage.operands[reversed ? 1 : 0].type;
+    return pointer.kind == SemanticType::RawPointer &&
+           pointer.arguments.size() == 1 &&
+           nativePayloadPointee(pointer.arguments[0]) &&
+           stage.info.type == pointer &&
+           constantIntegerDomain(stage.operands[reversed ? 0 : 1].type)
+               .has_value();
+  }
   std::optional<Shape> pointerArithmeticInput(const MirBlock &block,
                                               const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
@@ -1677,6 +1703,8 @@ public:
                    ? std::optional(Shape::NativeClassRawAccess)
                : primitivePointerArithmetic(producer)
                    ? std::optional(Shape::PrimitiveRawAccess)
+               : payloadPointerArithmetic(producer)
+                   ? std::optional(Shape::NativePayloadRawAccess)
                    : std::nullopt;
     }
     return std::nullopt;
@@ -1925,13 +1953,23 @@ public:
   bool representedRawReferenceTypes(const MirInstruction &stage) const {
     const auto &pointer = stage.operands[0].type;
     if (!(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
-        !ordinaryRawReferenceObject(pointer.arguments.front()))
+        !ordinaryRawReferenceObject(pointer.arguments.front()) &&
+        !payloadRawReferent(stage))
       return false;
     const auto &witness = stage.parameterTypes[1];
     // The verifier owns origin/access; the witness need not share the raw
     // pointer's type or address. Neither branch materializes or copies it.
     return passiveReferenceType(witness) ||
            ordinaryRawReferenceObject(witness.arguments.front());
+  }
+  // The raw-borrow call's result names exactly the pointer's payload-enum
+  // pointee; the reference is that unchanged address.
+  bool payloadRawReferent(const MirInstruction &stage) const {
+    const auto &pointer = stage.operands[0].type;
+    return pointer.kind == SemanticType::RawPointer &&
+           pointer.arguments.size() == 1 &&
+           nativePayloadPointee(pointer.arguments.front()) &&
+           stage.info.type == pointer.arguments.front();
   }
 
   bool representedTextAddress(const MirBody &body,
@@ -2789,10 +2827,14 @@ public:
             native_llvm::nativeCFunctionBorrowInputContract(
                 program, nativeTarget, mir, stage);
         const bool rawReference = representedRawReference(mir, mirBlock, stage);
+        // A payload referent is reached only through the raw-access witness;
+        // its storage witness does not itself grant raw reference formation.
         const auto rawReferenceShape =
-            rawReference ? std::optional(classShape(stage.info.type)
-                                             .value_or(Shape::PassiveReference))
-                         : std::nullopt;
+            !rawReference ? std::nullopt
+            : nativePayloadPointee(stage.info.type)
+                ? std::optional(Shape::NativePayloadRawAccess)
+                : std::optional(classShape(stage.info.type)
+                                    .value_or(Shape::PassiveReference));
         const auto [extendedRaw, validRaw] = nativeRawStage(mir, stage);
         const bool rawClassStage = extendedRaw && validRaw;
         const bool classArithmetic = nativePointerArithmetic(stage) && validRaw;
@@ -2923,6 +2965,8 @@ public:
               : scalarMutation ? std::optional(Shape::InPlaceScalarMutation)
               : primitiveRawIndex(stage) || primitivePointerArithmetic(stage)
                   ? std::optional(Shape::PrimitiveRawAccess)
+              : payloadPointerArithmetic(stage)
+                  ? std::optional(Shape::NativePayloadRawAccess)
               : arrayAggregate ? std::optional(Shape::PassiveArrayValue)
               : stage.operation == MirOperation::Aggregate &&
                       stage.info.type.kind == SemanticType::Array
@@ -3177,6 +3221,10 @@ public:
                        stage.unsafeOperation ==
                            UnsafeOperationKind::PointerArithmetic)
                   ? std::optional(Shape::NativeClassRawAccess)
+              : payloadPointerArithmetic(stage) &&
+                      stage.unsafeOperation ==
+                          UnsafeOperationKind::PointerArithmetic
+                  ? std::optional(Shape::NativePayloadRawAccess)
               : typedMemory && stage.unsafeOperation ==
                                    UnsafeOperationKind::ObjectLifetime
                   ? std::optional(Shape::NativeMemoryOperation)
