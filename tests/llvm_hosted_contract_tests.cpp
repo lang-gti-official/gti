@@ -722,13 +722,23 @@ int main() {
       issues);
   require(pending && !planLlvmAdmission(*pending).admitted(),
           "primitive pointee does not admit an unsupported owner layout");
+  // A referent whose layout native lowering does not represent: a payload
+  // enum holding a polymorphic object. Move this control to another
+  // unsupported layout as LLVM coverage grows.
   const auto unsupportedReferent =
       analyze("unsupported-referent-layout.gti", R"(
 #include <std/memory>
+interface Shape { int area(); };
+class Square : public Shape {
+  int side;
+public:
+  Square(int side) : side(side) {}
+  int area() override { return this.side; }
+};
+enum Slot { empty, held(Square value) };
 struct Referent {
   int value = 7;
-  virtual int observe() { return this.value; }
-  ~Referent() {}
+  Slot slot = Slot::empty;
 };
 struct Owner { int marker = 11; };
 int main() {

@@ -224,10 +224,14 @@ int main() { Value value{3}; return value.get() - 3; }
         assert checked["status"] == ("admitted-only" if artifact["uses"]["admitted"] else "unsupported")
     assert saw_sealed, "virtual-call control no longer seals its reachable call graph"
 
-    # An erased callable invocation has no statically named target, so
-    # production reachability falls back to the conservative union. This keeps
-    # the fallback observed through a real program rather than a forged plan.
-    # (Managed worker adapters now name their exact entry bodies.)
+    # An erased callable invocation is a sealed virtual call through its
+    # inline slot: production reachability names the interface root and
+    # retains every sealed implementation, so the erased lambda target stays in
+    # the sealed entry closure. Formerly this control observed the conservative
+    # union, which no executable program in the repository reaches any longer
+    # (managed workers and erased callables now name their exact bodies);
+    # llvm_admission keeps that fallback covered through rootless inventory.
+    # If erased invocation ever loses its sealed roots, this control must fail.
     worker_source = """#include <std/functional>
 int main() {
   std::function<int32_t()> callback{[]() -> int32_t { return 0; }};
@@ -247,15 +251,23 @@ int main() {
         [worker_key], ["single-threaded"], ["O0", "O3"], resume=False, scope="focused-controls")
     assert all(row["status"] in {"admitted-only", "unsupported"} for row in worker_summary["observations"])
     worker_manifest = collector.read_json(worker_run / "host-run.json")
-    saw_conservative = False
+    saw_erased = False
     for identity, observed_events in collector.event_history(worker_run).items():
         checked = collector.validate_host_attempt(worker_run, worker_manifest, identity, observed_events["finish"])
         artifact = collector.read_json(worker_run / "attempts" / identity / "observer.json")
         assert artifact["request"]["entry_required"] is True
         assert artifact["request"]["definition_closure_required"] is True
-        saw_conservative |= artifact["uses"]["closure"] == "all-executable-bodies"
-        assert checked["status"] == ("admitted-only" if artifact["uses"]["admitted"] else "unsupported")
-    assert saw_conservative, "erased-callable control no longer exercises conservative reachability"
+        uses = artifact["uses"]
+        assert checked["status"] == ("admitted-only" if uses["admitted"] else "unsupported")
+        lambda_retained = any(use["base"]["key"] == "MirBodyKind.Lambda" and
+                              use.get("body") and use["body"]["kind"] == 6
+                              for use in uses["uses"])
+        sealed_dispatch = any(use["base"]["key"] == "Shape.VirtualCall" and use.get("witness") and
+                              use["witness"]["key"] == "Shape.NativeVirtualInvocation"
+                              for use in uses["uses"])
+        saw_erased |= (uses["closure"] == "sealed-entry-dependencies" and
+                       lambda_retained and sealed_dispatch)
+    assert saw_erased, "erased-callable control no longer seals its erased target through dispatch"
 
     absent = evidence / "absent"
     env = dict(os.environ, GTI_RUNTIME_LIBRARY=str(absent / "runtime.a"),
