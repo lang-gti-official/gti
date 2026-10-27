@@ -1411,8 +1411,26 @@ void testPolymorphicStorageLayout(const std::filesystem::path &repository) {
   }
   expect(count == 26,
          "all capacities and supported alignment powers were tested");
-  expect(!planLlvmAdmission(*program).admitted(),
-         "layout alone does not admit unimplemented slot lifecycle operations");
+  // Empty slots are hierarchy storage. Each construction, slot constructor
+  // body and drop carries its own exact dispatch-storage witness; the
+  // representation layout checked above grants none of them.
+  const auto admission = planLlvmAdmission(*program);
+  std::size_t constructors = 0;
+  bool construct = false;
+  bool drop = false;
+  for (const auto &use : admission.requirements()) {
+    if (!use.required || !use.implementedShape ||
+        use.implementedShape->name != "NativeStaticDispatchStorage")
+      continue;
+    constructors += use.entry->key() == "MirBodyKind.Constructor";
+    construct |= use.entry->key() == "MirInstructionKind.Construct";
+    drop |= use.entry->key() == "MirInstructionKind.Drop";
+  }
+  if (!admission.admitted())
+    std::cerr << "slot layout admission: " << admission.limitation() << '\n';
+  expect(admission.admitted() && constructors == count && construct && drop,
+         "empty slot lifecycle is admitted by exact hierarchy-storage "
+         "witnesses");
 
   // Native representation oracle only, not an alternative GTI body emitter.
   // The external observer prevents alignment and payload accesses from being

@@ -56,6 +56,7 @@ SUCCESS_FILES = {
     "polymorphic-owners": "tests/fixtures/llvm_dispatch_polymorphic_owners.gti",
     "virtual-signatures": "tests/fixtures/llvm_dispatch_virtual_signatures.gti",
     "fresh-publication": "tests/fixtures/llvm_dispatch_fresh_publication.gti",
+    "inline-slots": "tests/fixtures/llvm_dispatch_inline_slots.gti",
     "owned-transfers": "tests/fixtures/llvm_dispatch_owned_transfers.gti",
 }
 
@@ -1059,7 +1060,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "owned-transfers"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1258,6 +1259,27 @@ int main() {
 }
 """, "defined-failure", expected_exit=70, failure_needle="payload(12 / payload)",
         endpoints=TRANSFER_ENDPOINTS)
+    slots = (root / SUCCESS_FILES["inline-slots"]).read_text(encoding="utf-8")
+    slots_marker = "// INLINE_SLOTS_MAIN\n"
+    if slots.count(slots_marker) != 1:
+        raise AssertionError("inline slot main marker is not unique")
+    slot_failure = slots.split(slots_marker, 1)[0] + """int main() {
+  expected_cleanup = 3;
+  Guard guard{};
+  mut GaugeSlot boxed{};
+  boxed.replace(Logged(std::string("ab"), 3));
+  mut GaugeSlot faulty{};
+  faulty.replace(Faulty(0));
+  return drive(faulty, 1) + drive(boxed, 1);
+}
+"""
+    slot_needle = "int sample(int tick) mut override { return 120 / this.divisor; }"
+    add("inline-slot-virtual-failure", slot_failure, "defined-failure",
+        expected_exit=70, failure_needle=slot_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("inline-slot-wrong-cleanup",
+        slot_failure.replace("expected_cleanup = 3;", "expected_cleanup = 4;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=slot_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     owned = (root / SUCCESS_FILES["owned-transfers"]).read_text(encoding="utf-8")
     owned_marker = "// OWNED_TRANSFERS_MAIN\n"
     if owned.count(owned_marker) != 1:
@@ -1315,6 +1337,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "fresh-value-argument-former-reject",
             "fresh-temporary-virtual-failure", "fresh-temporary-wrong-cleanup",
             "fresh-return-constructor-rollback"),
+        "inline-polymorphic-slot": (
+            "inline-slots", "inline-slot-virtual-failure", "inline-slot-wrong-cleanup"),
         "polymorphic-ownership": (
             "polymorphic-owners", "heap-polymorphic-owner-former-reject",
             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
@@ -1363,6 +1387,7 @@ def main() -> None:
              "virtual-signature-failure", "virtual-signature-wrong-cleanup",
              "fresh-temporary-virtual-failure", "fresh-temporary-wrong-cleanup",
              "fresh-return-constructor-rollback",
+             "inline-slot-virtual-failure", "inline-slot-wrong-cleanup",
              "owned-transfer-failure", "owned-transfer-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)

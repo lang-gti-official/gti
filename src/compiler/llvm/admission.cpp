@@ -14,6 +14,7 @@
 #include "native_c_contract.h"
 #include "parameter_packs.h"
 #include "placement.h"
+#include "polymorphic_storage.h"
 #include "reachability.h"
 #include "text.h"
 #include "thread_lifecycle.h"
@@ -387,7 +388,8 @@ public:
             if ((stage.kind == MirInstructionKind::Construct && !fresh &&
                  !published && !transfer) ||
                 (stage.kind == MirInstructionKind::Move && !transfer) ||
-                (stage.kind == MirInstructionKind::Load && !transfer) ||
+                (stage.kind == MirInstructionKind::Load && !transfer &&
+                 !placeObservation(body, stage)) ||
                 stage.kind == MirInstructionKind::Assign ||
                 (stage.kind == MirInstructionKind::CallInput &&
                  stage.callInputKind != HirCallInputKind::ReadBorrow &&
@@ -419,8 +421,11 @@ public:
                    (operand.kind == MirOperandKind::Copy ||
                     operand.kind == MirOperandKind::Move);
           };
-          for (const auto &operand : stage.operands)
-            proof.transfer |= transferred(operand) && !transfer;
+          // A place-category Load that only names an inline slot for its
+          // operations observes that slot's address; nothing is transported.
+          if (!placeObservation(body, stage))
+            for (const auto &operand : stage.operands)
+              proof.transfer |= transferred(operand) && !transfer;
           if (stage.receiver)
             proof.transfer |= transferred(*stage.receiver);
           if (stage.replacementCleanup &&
@@ -773,6 +778,16 @@ private:
   }
   bool metadataClass(const MirClassInstance &owner,
                      std::set<HirClassInstanceId> &path) const {
+    // A compiler-bound inline slot holds at most one object whose dynamic
+    // type implements its interface; payloads are proved where constructed.
+    if (native_llvm::polymorphicStorageRepresentation(program, owner)) {
+      const auto &interface = instance(owner.type.arguments.front());
+      if (!interface.polymorphic || !path.insert(owner.id).second)
+        return false;
+      const bool valid = metadataClass(interface, path);
+      path.erase(owner.id);
+      return valid;
+    }
     if ((owner.kind != ClassKind::Class && owner.kind != ClassKind::Struct &&
          owner.kind != ClassKind::Interface) ||
         owner.cAbiRecord || owner.cAbiLayout || owner.cOpaqueHandle ||
@@ -953,6 +968,70 @@ private:
       }
     return returned;
   }
+  bool placeObservation(const MirBody &body,
+                        const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Load || !stage.result ||
+        stage.info.category != ValueCategory::Place ||
+        body.usesOf(*stage.result).empty())
+      return false;
+    for (const auto &use : body.usesOf(*stage.result)) {
+      const auto *block = body.findBlock(use.block);
+      const MirInstruction *consumer = nullptr;
+      if (block)
+        for (const auto &candidate : block->instructions)
+          if (candidate.id == use.instruction)
+            consumer = &candidate;
+      if (use.kind != MirValueUseKind::InstructionOperand ||
+          use.operandIndex != 0 || !consumer ||
+          consumer->kind != MirInstructionKind::Call ||
+          !native_llvm::PolymorphicStorage::handles(consumer->intrinsic))
+        return false;
+    }
+    return true;
+  }
+  // One public operation of an exact inline polymorphic slot. Its slot
+  // operand is the slot's place; a construction consumes a planned move of
+  // an owned binding whose inert relocation the slot performs itself.
+  std::optional<Shape> inlineSlot(const MirBody &body,
+                                  const MirInstruction &stage) {
+    if (stage.operands.empty() || stage.parameterTypes.empty() ||
+        stage.parameterTypes.size() != stage.operands.size() ||
+        stage.functionTarget || stage.receiver || !planner())
+      return {};
+    // Verified MIR presents the slot operand as its place-category value.
+    const auto &slot = unreference(stage.parameterTypes.front());
+    if (slot.kind != SemanticType::Class ||
+        unreference(stage.operands.front().type) != slot)
+      return {};
+    const auto &owner = instance(slot);
+    if (!native_llvm::polymorphicStorageRepresentation(program, owner) ||
+        !metadata(slot))
+      return {};
+    static_cast<void>(session->layouts().polymorphicStorage(slot));
+    if (stage.intrinsic == IntrinsicKind::PolymorphicStorageConstruct) {
+      if (stage.operands.size() != 2 ||
+          stage.operands[1].kind != MirOperandKind::Value)
+        return {};
+      const MirInstruction *producer = nullptr;
+      for (const auto &block : body.blocks)
+        for (const auto &candidate : block.instructions)
+          if (!candidate.tombstone &&
+              candidate.result == stage.operands[1].value)
+            producer = &candidate;
+      if (!producer ||
+          plannedTransfer(body, *producer) !=
+              native_llvm::FreshHierarchyPublication::Slot ||
+          native_llvm::planFreshHierarchyTransfer(program, body, *producer)
+                  .publication != &stage)
+        return {};
+      const auto &model = stage.operands[1].type;
+      native_llvm::Lifetimes::preflightInertRelocation(*session, *dispatch,
+                                                       model);
+      if (!session->layouts().findBaseSubobject(model, slot.arguments.front()))
+        return {};
+    }
+    return Shape::NativeInlinePolymorphicSlot;
+  }
   // A read or mutable temporary borrow of a fresh hierarchy object's own
   // full-expression temporary: an address, never a transfer of its bytes.
   bool temporaryBorrow(const MirBody &body, const MirInstruction &stage) const {
@@ -1076,6 +1155,8 @@ private:
              (stage.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
               stage.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
               stage.intrinsic == IntrinsicKind::SharedOwnerBorrow ||
+              stage.intrinsic == IntrinsicKind::PolymorphicStorageRead ||
+              stage.intrinsic == IntrinsicKind::PolymorphicStorageReadMut ||
               ((stage.intrinsic == IntrinsicKind::RawBorrow ||
                 stage.intrinsic == IntrinsicKind::RawBorrowMut) &&
                mir_detail::rawBorrowResultLoan(body, stage) == loan));
@@ -1304,6 +1385,9 @@ private:
                                       const native_llvm::Placement &placement,
                                       const MirInstruction &stage) {
     try {
+      if (stage.kind == MirInstructionKind::Call &&
+          native_llvm::PolymorphicStorage::handles(stage.intrinsic))
+        return inlineSlot(body, stage);
       if (borrowedCallResult(body, stage) &&
           stage.dispatch == CallDispatch::Static &&
           metadata(stage.info.type) &&
@@ -3659,7 +3743,8 @@ public:
                   ? std::optional(Shape::PassiveArrayValue)
               : arrayExtentQuery(stage) ? std::optional(Shape::ArrayExtentQuery)
               : (stage.intrinsic == IntrinsicKind::UniqueOwnerUpcast ||
-                 stage.intrinsic == IntrinsicKind::AllocateUniqueOwner) &&
+                 stage.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
+                 native_llvm::PolymorphicStorage::handles(stage.intrinsic)) &&
                       dispatchOperation
                   ? dispatchOperation->shape
                   : std::nullopt);

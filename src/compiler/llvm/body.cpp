@@ -529,6 +529,14 @@ private:
     const auto transfer = Lifetimes::preflightFreshTransfer(session, dispatch,
                                                             input, instruction);
     const auto *target = placement.target(*instruction.result);
+    if (transfer.publishes == FreshHierarchyPublication::Slot) {
+      // The slot construction relocates the inert payload from the moved
+      // binding into its own storage; this value names that binding only.
+      if (target || transfer.source != instruction.operands.front())
+        throw BackendUnsupportedError("LLVM slot transfer lost its exact "
+                                      "source/publication placement");
+      return memory.selected(transfer.source);
+    }
     const bool returned =
         transfer.publishes == FreshHierarchyPublication::Returned;
     if (!target || target->aggregate || target->returned != returned ||
@@ -1558,17 +1566,19 @@ private:
     }
     case MirInstructionKind::Load:
     case MirInstructionKind::Move:
+      // Only a planned producer transfers; another place-category Load of
+      // hierarchy storage observes its address for a reference consumer.
       if (isFreshHierarchyTransferProducer(instruction) &&
           containsHierarchyStorage(session.program().mir(),
-                                   instruction.info.type)) {
+                                   instruction.info.type) &&
+          (instruction.info.category != ValueCategory::Place ||
+           placement.fresh(*instruction.result))) {
         result = freshTransfer(instruction);
         break;
       }
       if (instruction.kind == MirInstructionKind::Load &&
           instruction.info.category == ValueCategory::Place &&
-          addressValue(session.program().mir(), instruction.info.type) &&
-          !containsHierarchyStorage(session.program().mir(),
-                                    instruction.info.type)) {
+          addressValue(session.program().mir(), instruction.info.type)) {
         // A place observation preserves identity; only value materialization
         // may copy/transfer its representation into another storage slot.
         result = memory.selected(instruction.operands.at(0));

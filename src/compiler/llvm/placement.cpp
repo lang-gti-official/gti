@@ -490,6 +490,14 @@ bool containsHierarchyStorage(const MirProgram &program,
                    CompilerCapabilityTypeKind::MutexStorage &&
                self(self, *payload);
       }
+      // An inline polymorphic slot stores a self-relative payload view and
+      // dispatch-bearing object bytes: it is hierarchy storage itself.
+      if (owner->compilerCapability ==
+          CompilerCapabilityTypeKind::PolymorphicStorage) {
+        if (!polymorphicStorageRepresentation(program, *owner))
+          reject("LLVM hierarchy exclusion requires an exact inline slot");
+        return true;
+      }
       if (owner->compilerCapability != CompilerCapabilityTypeKind::None)
         reject(
             "LLVM hierarchy exclusion has no inline capability representation");
@@ -727,6 +735,15 @@ public:
             result.publication = &stage;
             result.destination = *stage.destination;
             result.publishes = FreshHierarchyPublication::Argument;
+          } else if (result.kind == ConstructorKind::Move &&
+                     stage.kind == MirInstructionKind::Call &&
+                     stage.intrinsic ==
+                         IntrinsicKind::PolymorphicStorageConstruct &&
+                     index == 1 && stage.operands.size() == 2 &&
+                     stage.parameterTypes.size() == 2 &&
+                     stage.parameterTypes[1] == owner.type) {
+            result.publication = &stage;
+            result.publishes = FreshHierarchyPublication::Slot;
           } else {
             unsupported("LLVM transfer requires one direct consumer");
           }
@@ -842,11 +859,13 @@ public:
       } else if (owner.requiresActiveCleanup && !bindingMove) {
         malformed("LLVM active move has no source-to-value lifecycle transfer");
       }
-      // A returned object leaves this invocation's ownership through the
-      // return edge.
+      // The slot relocates an inert payload itself. A returned object leaves
+      // this invocation's ownership through the return edge.
       if (!local && !argument &&
-          (owner.requiresActiveCleanup || result.valueDrop))
-        unsupported("LLVM transfer requires an inert returned object");
+          (owner.requiresActiveCleanup || result.valueDrop ||
+           (result.publishes == FreshHierarchyPublication::Slot &&
+            !result.publication->lifecycle.empty())))
+        unsupported("LLVM transfer requires an inert slot or return object");
     } else {
       // This scalar-only generated-copy profile has no active cleanup: source
       // destruction (including an active base) makes copying unavailable.
@@ -1202,9 +1221,10 @@ Placement::Placement(const MirProgram &program, const MirBody &body) {
       hierarchyTransfers.insert(*stage.result);
       // Bind only the exact proven publication. Do not replay the generic
       // CallInput/aggregate/return scan after enabling hierarchy freshness.
+      // A slot construction relocates from the moved binding itself.
       if (transfer->publishes == FreshHierarchyPublication::Returned)
         bind(*stage.result, {.returned = true});
-      else
+      else if (transfer->publishes != FreshHierarchyPublication::Slot)
         bind(*stage.result, {.place = transfer->destination});
     }
 }
