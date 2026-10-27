@@ -26,6 +26,13 @@ namespace lang::native_llvm {
 // A unique owner's pointee: a complete object type, or a polymorphic class
 // view (possibly an interface or abstract class) whose complete object the
 // owner's dispatch descriptor identifies. Either way the owner is one handle.
+// A place that always denotes a complete object of its class: a whole
+// binding, value or hidden temporary, a field, array or pack element, or any
+// place of a class nothing in the sealed program derives from. Replacing such
+// an object cannot change the dynamic type of an enclosing object.
+[[nodiscard]] bool completeObjectPlace(const MirProgram &program,
+                                       const MirPlace &place);
+
 [[nodiscard]] bool uniqueOwnerPointee(const MirProgram &program,
                                       const SemanticType &pointee);
 
@@ -42,16 +49,18 @@ namespace lang::native_llvm {
 isFreshHierarchyTransferProducer(const MirInstruction &instruction);
 
 // Where a planned hierarchy transfer publishes its fresh object: a whole fresh
-// local (Initialize), a prepared by-value argument (CallInput), the body's ABI
-// return destination, an inline polymorphic slot whose construction
-// relocates the moved object itself, or the value's own storage as the
-// receiver of one consuming call.
+// local or constructor field (Initialize), a prepared by-value argument
+// (CallInput), the body's ABI return destination, an inline polymorphic slot
+// whose construction relocates the moved object itself, or the value's own
+// storage as the receiver of one consuming call or as the replacement an
+// assignment relocates into its destination.
 enum class FreshHierarchyPublication {
   Local,
   Argument,
   Returned,
   Slot,
-  Receiver
+  Receiver,
+  Replacement
 };
 
 struct FreshHierarchyTransfer {

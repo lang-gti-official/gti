@@ -119,7 +119,9 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
           std::find(path.begin(), path.end(), owner.id) != path.end())
         throw std::logic_error(
             "LLVM static cleanup lost its finite class identity");
-      if (replacement && owner.polymorphic)
+      // Only the replaced object itself may be a view inside a larger
+      // object; its inline fields and bases are complete subobjects.
+      if (replacement && owner.polymorphic && &selected == &recipe)
         throw BackendUnsupportedError("LLVM polymorphic replacement requires a "
                                       "verified cleanup dispatch context");
       if (owner.polymorphic && selected.requiresActiveCleanup)

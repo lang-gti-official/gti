@@ -2368,8 +2368,9 @@ int main() { unsafe { return identity(0); } }
          "exact unsafe source calls keep ordinary body admission");
   const auto unsafeOwner = lang::planLlvmAdmission(lower(R"(
 class Owner { public: virtual int read() { return 0; } };
-unsafe int create() { mut Owner value{}; Owner other{}; value = other; return 0; }
-int main() { unsafe { return create(); } }
+class Derived : public Owner {};
+unsafe int create(mut Owner& value, Owner& other) { value = other; return 0; }
+int main() { mut Derived first{}; Derived second{}; unsafe { return create(first, second); } }
 )"));
   expect(!unsafeOwner.admitted() &&
              has(unsafeOwner, "Shape", "PolymorphicTransfer"),
@@ -3196,7 +3197,9 @@ void testDispatchPerUseWitnesses() {
       P() : value(1) {}
       virtual int read() { return this.value; }
     };
+    class Q : public P {};
     void take(P value) {}
+    void assign(mut P& target, P& source) { target = source; }
     int main() {
       mut P first{};
       P second{};
@@ -3204,12 +3207,14 @@ void testDispatchPerUseWitnesses() {
       P copied = P(first);
       take(P());
       first = second;
+      mut Q derived{};
+      assign(derived, second);
       return copied.read();
     }
   )");
   const auto plan = planLlvmAdmission(input);
   bool goodConstruct = false, goodFreshCopy = false, badTransfer = false,
-       goodArgument = false;
+       goodArgument = false, goodReplacement = false;
   for (const auto &use : plan.requirements()) {
     if (!use.required)
       continue;
@@ -3224,14 +3229,21 @@ void testDispatchPerUseWitnesses() {
           use.implementedShape &&
           use.implementedShape->name == "NativeFreshHierarchyPublication";
     }
+    goodReplacement |=
+        use.entry->key() == "MirInstructionKind.Assign" &&
+        use.implementedShape &&
+        use.implementedShape->name == "NativeHierarchyReplacement";
     badTransfer |= use.entry->key() == "Shape.PolymorphicTransfer" &&
                    !use.implementedShape && use.instruction != 0;
   }
+  // Replacing the complete local keeps its own witness; replacing an object
+  // through a base view could change an enclosing object's dynamic type.
   expect(!plan.admitted() && goodConstruct && goodFreshCopy && goodArgument &&
-             badTransfer,
+             goodReplacement && badTransfer,
          "fresh-local copy, a by-value argument published in its prepared "
-         "storage and whole-object assignment in one body keep distinct "
-         "witnesses and explicit pending transfer requirements");
+         "storage, complete-object replacement and base-view assignment in "
+         "one program keep distinct witnesses and explicit pending transfer "
+         "requirements");
   const auto copyInput = lower(R"(
     class P {
     public:
@@ -3335,15 +3347,19 @@ void testDispatchPerUseWitnesses() {
       P() : value(1) {}
       virtual int read() { return this.value; }
     };
-    int main() {
-      mut P first{}; P second{};
+    class Q : public P {};
+    int poke(mut P& view, P& source) {
+      mut P first{};
       first.value = 5;
-      first = second;
-      return first.read();
+      first = source;
+      view = source;
+      return first.read() + view.read();
     }
+    int main() { mut Q derived{}; P second{}; return poke(derived, second); }
   )");
   const auto mutationPlan = planLlvmAdmission(mutations);
-  bool scalarMutation = false, objectMutation = false, objectCopy = false;
+  bool scalarMutation = false, objectMutation = false, objectCopy = false,
+       objectReplacement = false;
   for (const auto address : mutationPlan.requiredBodies()) {
     const auto *body = findMirBody(mutations.program().mir(), address);
     std::size_t transfers = 0;
@@ -3368,13 +3384,25 @@ void testDispatchPerUseWitnesses() {
         const auto *place = body->findPlace(*stage.destination);
         if (place->type == SemanticType::Int32)
           scalarMutation |= !rejected;
-        if (place->type.kind == SemanticType::Class)
-          objectMutation |= transfers == 2;
+        if (place->type.kind != SemanticType::Class)
+          continue;
+        const bool replaced = std::any_of(
+            mutationPlan.requirements().begin(),
+            mutationPlan.requirements().end(), [&](const auto &use) {
+              return use.required && use.body == address &&
+                     use.block == block.id && use.instruction == stage.id &&
+                     use.implementedShape &&
+                     use.implementedShape->name ==
+                         "NativeHierarchyReplacement";
+            });
+        objectReplacement |= replaced && !rejected;
+        objectMutation |= !replaced && transfers == 2;
       }
   }
-  expect(scalarMutation && objectCopy && objectMutation,
-         "scalar writes remain distinct from the coalesced source copy and "
-         "whole-object assignment exclusions in the same body");
+  expect(scalarMutation && objectCopy && objectMutation && objectReplacement,
+         "scalar writes and a complete local's replacement remain distinct "
+         "from the base view's coalesced source copy and assignment "
+         "exclusions in the same body");
   const auto global = planLlvmAdmission(lower(R"(
     class P { public: P() {} virtual int read() { return 1; } };
     P value{};

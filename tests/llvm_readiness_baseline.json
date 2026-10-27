@@ -16,8 +16,8 @@
     {
       "id": "registered-llvm-evidence",
       "kind": "registered-evidence-manifests",
-      "member_count": 358,
-      "inventory_sha256": "e83880c31207d36a4fd0912df4d7668bf8c0a0c4d68d3b36a34be9c722ee02e5"
+      "member_count": 362,
+      "inventory_sha256": "0ad1145dd5e054f4ac0765c6043c9b4f1f0d5f095d350f0409adcf39bd238432"
     },
     {
       "id": "stdlib-surface",

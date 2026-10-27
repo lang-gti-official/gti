@@ -62,6 +62,7 @@ SUCCESS_FILES = {
     "closure-models": "tests/fixtures/llvm_dispatch_closure_models.gti",
     "abstract-phases": "tests/fixtures/llvm_dispatch_abstract_phases.gti",
     "temporary-receivers": "tests/fixtures/llvm_dispatch_temporary_receivers.gti",
+    "replacements": "tests/fixtures/llvm_dispatch_replacements.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -243,6 +244,8 @@ int main() {
   return measurer.twice() == 14 ? 0 : 1;
 }
 """, 0),
+    # Copy assignment of a complete inert polymorphic object.
+    "assignment-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second{}; first = second; return first.read(); }\n", 1),
     # A moved owned local with active cleanup leaves through the return edge.
     "returned-owned-move": ("""mut int dropped = 0;
 class Owned {
@@ -284,7 +287,6 @@ int main() {
 
 REJECTIONS = {
     "reject-move-construction": PLAIN + "int main() { mut Plain first{}; Plain second = Plain(std::move(first)); return second.read(); }\n",
-    "reject-assignment": PLAIN + "int main() { mut Plain first{}; Plain second{}; first = second; return first.read(); }\n",
     "reject-base-assignment": PLAIN + """class Derived : public Plain {};
 void replace(mut Plain& destination, Plain& source) { destination = source; }
 int main() { mut Derived first{}; Derived second{}; replace(first, second); return first.read(); }
@@ -1178,7 +1180,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1496,6 +1498,26 @@ int main() {
         temporary_failure.replace("expected_cleanup = 62;", "expected_cleanup = 63;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=temporary_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    replacements = (root / SUCCESS_FILES["replacements"]).read_text(encoding="utf-8")
+    replacements_marker = "// REPLACEMENTS_MAIN\n"
+    if replacements.count(replacements_marker) != 1:
+        raise AssertionError("replacement main marker is not unique")
+    replacement_failure = replacements.split(replacements_marker, 1)[0] + """int main() {
+  expected_cleanup = 72;
+  Guard guard{};
+  mut Square square = Square(2);
+  Square kept = Square(7);
+  square = make(0);
+  return square.area() + kept.area();
+}
+"""
+    replacement_needle = "Square make(int side) { return Square(12 / side); }"
+    add("replacement-failure", replacement_failure, "defined-failure",
+        expected_exit=70, failure_needle=replacement_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("replacement-wrong-cleanup",
+        replacement_failure.replace("expected_cleanup = 72;", "expected_cleanup = 73;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=replacement_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -1552,6 +1574,9 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "consuming-receivers": (
             "consuming-receivers", "consuming-receiver-failure",
             "consuming-receiver-wrong-cleanup"),
+        "hierarchy-replacement": (
+            "replacements", "replacement-failure", "replacement-wrong-cleanup",
+            "assignment-former-reject"),
         "polymorphic-ownership": (
             "polymorphic-owners", "heap-polymorphic-owner-former-reject",
             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
@@ -1607,6 +1632,7 @@ def main() -> None:
              "closure-model-failure", "closure-model-wrong-cleanup",
              "abstract-phase-failure", "abstract-phase-wrong-cleanup",
              "temporary-receiver-failure", "temporary-receiver-wrong-cleanup",
+             "replacement-failure", "replacement-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

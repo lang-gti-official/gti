@@ -171,6 +171,25 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
   return target->place;
 }
 
+// The assignment that relocates a replacing value into its destination after
+// the paired cleanup ends the destination's previous object.
+static const MirInstruction *replacementAssignment(const MirBody &body,
+                                            const MirValueUse &use) {
+  if (use.kind != MirValueUseKind::InstructionOperand || use.operandIndex != 0)
+    return nullptr;
+  const auto *block = body.findBlock(use.block);
+  if (!block)
+    return nullptr;
+  for (const auto &stage : block->instructions)
+    if (!stage.tombstone && stage.id == use.instruction)
+      return stage.kind == MirInstructionKind::Assign && stage.destination &&
+                     stage.operation == MirOperation::Assign &&
+                     stage.operands.size() == 1
+                 ? &stage
+                 : nullptr;
+  return nullptr;
+}
+
 std::optional<FreshObjectStorage>
 freshObjectStorage(const MirProgram &program, MirBodyAddress address,
                    const MirBody &body, const Placement &placement,
@@ -260,9 +279,16 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
     return FreshObjectStorage::Argument;
   }
   bool returned = false;
+  bool replacing = false;
   for (const auto &use : body.usesOf(value)) {
     if (use.kind == MirValueUseKind::PlaceRoot)
       continue;
+    // A replacing value lives in its own temporary until its assignment
+    // relocates it into the destination.
+    if (!replacing && replacementAssignment(body, use)) {
+      replacing = true;
+      continue;
+    }
     const auto *block = body.findBlock(use.block);
     if (use.kind != MirValueUseKind::Terminator || !block ||
         block->terminator.kind != MirTerminatorKind::Return ||
@@ -272,6 +298,8 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
       return {};
     returned = true;
   }
+  if (returned && replacing)
+    return {};
   if (returned) {
     if (!target || !target->returned || body.returnType != producer.info.type ||
         (address.kind != MirBodyKind::Function &&
@@ -279,9 +307,42 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
       return {};
     return FreshObjectStorage::Returned;
   }
-  if (target || !whole)
+  // A replacing value of an inert class may have no value place at all.
+  if (target || (!whole && !replacing))
     return {};
   return FreshObjectStorage::Temporary;
+}
+
+bool completeObjectPlace(const MirProgram &program, const MirPlace &place) {
+  if (place.type.kind != SemanticType::Class || place.capture ||
+      place.foreignStorage)
+    return false;
+  if (place.projections.empty() &&
+      (place.root == MirPlaceRootKind::Binding ||
+       place.root == MirPlaceRootKind::Temporary ||
+       place.root == MirPlaceRootKind::Value))
+    return true;
+  if (!place.projections.empty()) {
+    const auto kind = place.projections.back().kind;
+    if (kind == MirProjectionKind::Field || kind == MirProjectionKind::Index ||
+        kind == MirProjectionKind::PackElement)
+      return true;
+  }
+  const MirClassInstance *owner = nullptr;
+  for (const auto &candidate : program.classInstances())
+    if (candidate.type == place.type) {
+      if (owner)
+        return false;
+      owner = &candidate;
+    }
+  if (!owner)
+    return false;
+  for (const auto &candidate : program.classInstances())
+    for (const auto *rows : {&candidate.bases, &candidate.structuralBases})
+      for (const auto &row : *rows)
+        if (row.instance == owner->id)
+          return false;
+  return true;
 }
 
 bool uniqueOwnerPointee(const MirProgram &program,
@@ -843,6 +904,17 @@ public:
             // its value obligation through the full expression.
             result.publication = &stage;
             result.publishes = FreshHierarchyPublication::Receiver;
+          } else if (result.kind == ConstructorKind::Move && index == 0 &&
+                     stage.kind == MirInstructionKind::Assign &&
+                     stage.destination &&
+                     stage.operation == MirOperation::Assign &&
+                     stage.operands.size() == 1 &&
+                     stage.info.type == owner.type) {
+            // The moved object waits in its own value storage while the
+            // paired cleanup ends the destination's previous object; the
+            // assignment then relocates it into the destination.
+            result.publication = &stage;
+            result.publishes = FreshHierarchyPublication::Replacement;
           } else {
             unsupported("LLVM transfer requires one direct consumer");
           }
@@ -892,17 +964,21 @@ public:
           prepared->kind != MirDropObligationKind::PreparedParameter ||
           prepared->place != destination->id)
         unsupported("LLVM transfer argument is not its exact prepared slot");
-    } else if (local && (!wholeLocal(*destination) ||
-                         destination->type != owner.type ||
-                         destination->initiallyAvailable ||
-                         destination->binding == place->binding)) {
-      unsupported("LLVM transfer destination is not a fresh whole local");
     }
+    // A constructor publishes into its own field through the exact field
+    // initializer that names it.
+    const bool field = local && constructorField(*result.publication,
+                                                 *destination, owner);
+    if (local && !field &&
+        (!wholeLocal(*destination) || destination->type != owner.type ||
+         destination->initiallyAvailable ||
+         destination->binding == place->binding))
+      unsupported("LLVM transfer destination is not a fresh whole local");
     if (local || argument) {
       const auto &stage = *result.publication;
       if ((local && stage.result) || (argument && !stage.result) ||
           (local && stage.preparedParameterDrop) || stage.receiver ||
-          stage.loan || stage.constructorInitializer ||
+          stage.loan || (stage.constructorInitializer && !field) ||
           stage.constructorTarget || stage.functionTarget || stage.bodyTarget ||
           stage.intrinsic != IntrinsicKind::None ||
           stage.operation != MirOperation::None || stage.retainedOwnerPlace ||
@@ -965,8 +1041,10 @@ public:
         if (result.valueDrop && !returnedObligation(result.valueDrop))
           unsupported("LLVM returned transfer must release its value "
                       "obligation at the return");
-      } else if (result.publishes == FreshHierarchyPublication::Receiver) {
-        if (result.valueDrop && !droppedObligation(result.valueDrop))
+      } else if (result.publishes == FreshHierarchyPublication::Receiver ||
+                 result.publishes == FreshHierarchyPublication::Replacement) {
+        if (result.valueDrop &&
+            !droppedObligation(result.valueDrop, result.publication))
           unsupported("LLVM consumed receiver must keep its value obligation "
                       "until its drop");
       } else if (!local && !argument &&
@@ -1005,6 +1083,9 @@ public:
       if (argument ? published.kind != MirDropObligationKind::PreparedParameter ||
                          published.id !=
                              *result.publication->preparedParameterDrop ||
+                         published.place != destination->id
+          : field  ? published.kind !=
+                             MirDropObligationKind::ConstructionRollback ||
                          published.place != destination->id
                    : published.kind != MirDropObligationKind::Binding ||
                          published.place != destination->id ||
@@ -1119,6 +1200,28 @@ private:
       malformed("LLVM transfer lost its exact class instance");
     return *result;
   }
+  // The field a constructor's own field initializer stage completes.
+  bool constructorField(const MirInstruction &publication,
+                        const MirPlace &destination,
+                        const MirClassInstance &owner) const {
+    if (identity.kind != MirBodyKind::Constructor ||
+        publication.kind != MirInstructionKind::Initialize ||
+        !publication.constructorInitializer ||
+        destination.root != MirPlaceRootKind::This || destination.capture ||
+        destination.foreignStorage || destination.projections.size() != 1 ||
+        destination.projections.front().kind != MirProjectionKind::Field ||
+        destination.type != owner.type)
+      return false;
+    const auto *constructor = program.findConstructorInstance(identity.owner);
+    if (!constructor ||
+        publication.constructorInitializer > constructor->initializers.size())
+      return false;
+    const auto &selected =
+        constructor->initializers[publication.constructorInitializer - 1];
+    return selected.kind == ConstructorInitializerTargetKind::Field &&
+           selected.field == destination.projections.front().field &&
+           selected.targetType == destination.type && !selected.storesReference;
+  }
   // The moved value's obligation is created by the producer's move and ends
   // only through one unconditional TransferOut in the block whose terminator
   // returns it, or through a failure-path drop before that release.
@@ -1147,8 +1250,10 @@ private:
            release->terminator.value;
   }
   // The moved value's obligation is created by the producer's move and ends
-  // only through drops of its own value place.
-  bool droppedObligation(MirDropObligationId obligation) const {
+  // only through drops of its own value place, or through the replacement of
+  // the assignment that consumes it.
+  bool droppedObligation(MirDropObligationId obligation,
+                         const MirInstruction *replacement) const {
     for (const auto &block : body.blocks)
       for (const auto &stage : block.instructions) {
         if (stage.tombstone)
@@ -1158,8 +1263,12 @@ private:
               event.kind != MirLifecycleEventKind::Move)
             return false;
           if (event.source == obligation &&
-              (event.kind != MirLifecycleEventKind::Drop ||
-               stage.kind != MirInstructionKind::Drop))
+              !(event.kind == MirLifecycleEventKind::Drop &&
+                stage.kind == MirInstructionKind::Drop) &&
+              !(event.kind == MirLifecycleEventKind::Replace &&
+                &stage == replacement &&
+                stage.kind == MirInstructionKind::Assign &&
+                !event.conditional && !event.failureCleanup))
             return false;
         }
       }
@@ -1398,11 +1507,12 @@ Placement::Placement(const MirProgram &program, const MirBody &body) {
       // CallInput/aggregate/return scan after enabling hierarchy freshness.
       // A slot construction relocates from the moved binding itself.
       // A slot construction relocates from the moved binding itself, and a
-      // consumed receiver lives in its own value storage.
+      // consumed receiver or replacing value lives in its own value storage.
       if (transfer->publishes == FreshHierarchyPublication::Returned)
         bind(*stage.result, {.returned = true});
       else if (transfer->publishes != FreshHierarchyPublication::Slot &&
-               transfer->publishes != FreshHierarchyPublication::Receiver)
+               transfer->publishes != FreshHierarchyPublication::Receiver &&
+               transfer->publishes != FreshHierarchyPublication::Replacement)
         bind(*stage.result, {.place = transfer->destination});
     }
 }

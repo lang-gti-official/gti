@@ -591,9 +591,11 @@ private:
                                       "source/publication placement");
       return memory.selected(transfer.source);
     }
-    if (transfer.publishes == FreshHierarchyPublication::Receiver) {
+    if (transfer.publishes == FreshHierarchyPublication::Receiver ||
+        transfer.publishes == FreshHierarchyPublication::Replacement) {
       // The moved object lives in this value's own storage, which the
-      // consuming call receives and the value obligation later drops.
+      // consuming call receives or the replacing assignment relocates, and
+      // the value obligation otherwise drops.
       if (target || transfer.source != instruction.operands.front())
         throw BackendUnsupportedError("LLVM consumed receiver lost its exact "
                                       "source/publication placement");
@@ -1458,8 +1460,14 @@ private:
       ir.SetInsertPoint(done);
       return;
     }
+    // Replacing a complete object ends it like any other cleanup; only a
+    // possibly enclosed polymorphic view keeps the replacement restriction.
     auto *cleanup = lifetimes.cleanup(
-        *recipe, instruction.kind == MirInstructionKind::CleanupBeforeAssign);
+        *recipe,
+        instruction.kind == MirInstructionKind::CleanupBeforeAssign &&
+            !(instruction.destination &&
+              completeObjectPlace(session.program().mir(),
+                                  *input.findPlace(*instruction.destination))));
 #if defined(GTI_LLVM_C04_NATIVE_UNWIND)
     auto *status = evaluationCall(
         cleanup->getFunctionType(), cleanup,
@@ -1797,6 +1805,29 @@ private:
     case MirInstructionKind::Initialize:
     case MirInstructionKind::Assign: {
       const auto &place = *input.findPlace(*instruction.destination);
+      if (instruction.kind == MirInstructionKind::Assign &&
+          instruction.operation == MirOperation::Assign &&
+          instruction.operands.size() == 1 &&
+          addressValue(session.program().mir(), place.type) &&
+          containsHierarchyStorage(session.program().mir(), place.type)) {
+        // The paired cleanup, if any, ended the previous object. A replacing
+        // value relocates with its cleanup state; an observed checked view is
+        // copied by logical fields. Either installs the destination's state.
+        const auto &source = instruction.operands.front();
+        const auto *value = source.kind == MirOperandKind::Value
+                                ? input.findValue(source.value)
+                                : nullptr;
+        if (!value)
+          throw BackendUnsupportedError(
+              "LLVM hierarchy replacement requires a value or checked view");
+        auto *target = memory.address(place.id);
+        if (value->info.category == ValueCategory::Place)
+          lifetimes.generatedCopy(ir, target, operand(source), place.type);
+        else
+          ir.CreateCall(lifetimes.generatedRelocation(place.type),
+                        {target, operand(source)});
+        break;
+      }
       if (instruction.operands.empty()) {
         if (owner &&
             isMirDeclarationOnlyFieldInitialization(*owner, input, instruction))

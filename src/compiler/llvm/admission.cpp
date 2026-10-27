@@ -412,14 +412,21 @@ public:
               freshInitialization(address, body, placement, stage);
           const bool declaration = declarationOnlyField(address, body, stage);
           const bool materialization = materializedTemporary(body, stage);
+          // An assignment replacing a whole hierarchy object and its paired
+          // cleanup are one proved operation, not a byte transport.
+          const bool replaced =
+              replacement(address, body, placement, stage) ||
+              replacement(address, body, placement,
+                          pairedAssignment(body, stage));
           if (contains(stage.info.type)) {
             if ((stage.kind == MirInstructionKind::Construct && !fresh &&
                  !published && !transfer) ||
                 (stage.kind == MirInstructionKind::Move && !transfer &&
                  !materialization) ||
                 (stage.kind == MirInstructionKind::Load && !transfer &&
-                 !placeObservation(body, stage) && !materialization) ||
-                stage.kind == MirInstructionKind::Assign ||
+                 !placeObservation(body, stage) && !materialization &&
+                 !replacementCopy(address, body, placement, stage)) ||
+                (stage.kind == MirInstructionKind::Assign && !replaced) ||
                 (stage.kind == MirInstructionKind::CallInput &&
                  stage.callInputKind != HirCallInputKind::ReadBorrow &&
                  stage.callInputKind != HirCallInputKind::MutableBorrow &&
@@ -445,7 +452,8 @@ public:
                   stage.kind != MirInstructionKind::InitializeBase &&
                   !(stage.kind == MirInstructionKind::Initialize &&
                     (initialization || declaration)) &&
-                  !publishedArgument(address, body, placement, stage))
+                  !publishedArgument(address, body, placement, stage) &&
+                  !replaced)
                 proof.transfer = true;
           const auto transferred = [&](const MirOperand &operand) {
             return contains(operand.type) &&
@@ -455,13 +463,14 @@ public:
           // A place-category Load that only names an inline slot for its
           // operations observes that slot's address, and a hidden temporary's
           // materialization names that object in place; nothing moves.
-          if (!placeObservation(body, stage) && !materialization)
+          if (!placeObservation(body, stage) && !materialization && !replaced &&
+              !replacementCopy(address, body, placement, stage))
             for (const auto &operand : stage.operands)
               proof.transfer |= transferred(operand) && !transfer;
           if (stage.receiver)
             proof.transfer |= transferred(*stage.receiver);
           if (stage.replacementCleanup &&
-              contains(stage.replacementCleanup->type))
+              contains(stage.replacementCleanup->type) && !replaced)
             proof.transfer = true;
           // A typed destruction runs the element's exact recipe in place;
           // only other element-cleanup consumers would transport the object.
@@ -1104,6 +1113,114 @@ private:
                                                          producer)
                          .publication == &stage;
         }
+    return false;
+  }
+  // The assignment a cleanup-before-assign stage is paired with.
+  const MirInstruction &pairedAssignment(const MirBody &body,
+                                         const MirInstruction &stage) const {
+    if (stage.kind == MirInstructionKind::CleanupBeforeAssign &&
+        stage.replacementPair)
+      for (const auto &block : body.blocks)
+        for (const auto &candidate : block.instructions)
+          if (!candidate.tombstone && candidate.id == stage.replacementPair)
+            return candidate;
+    return stage;
+  }
+  // An assignment replacing a whole object of hierarchy storage: its paired
+  // cleanup ends the previous object, and the generated relocation of a
+  // fresh or moved value, or the generated copy of a checked view, publishes
+  // the new one. A polymorphic object must be complete: replacing a base view
+  // could change the dynamic type of an enclosing object.
+  bool replacement(MirBodyAddress address, const MirBody &body,
+                   const native_llvm::Placement &placement,
+                   const MirInstruction &stage) {
+    if (stage.kind != MirInstructionKind::Assign || !stage.destination ||
+        stage.operation != MirOperation::Assign ||
+        stage.operands.size() != 1 || stage.receiver || stage.loan)
+      return false;
+    const auto *place = body.findPlace(*stage.destination);
+    if (!place || place->type.kind != SemanticType::Class ||
+        place->type != stage.info.type || !contains(place->type))
+      return false;
+    // Structural only: this also runs while exclusions are gathered, before
+    // any target session exists. The operation proof adds the metadata.
+    if (instance(place->type).polymorphic &&
+        !native_llvm::completeObjectPlace(program, *place))
+      return false;
+    // An object with active cleanup is ended by its paired cleanup stage;
+    // an inert object has none.
+    if (stage.replacementPair) {
+      const MirInstruction *cleanup = nullptr;
+      for (const auto &block : body.blocks)
+        for (const auto &candidate : block.instructions)
+          if (!candidate.tombstone && candidate.id == stage.replacementPair)
+            cleanup = &candidate;
+      if (!cleanup ||
+          cleanup->kind != MirInstructionKind::CleanupBeforeAssign ||
+          cleanup->destination != stage.destination ||
+          cleanup->replacementPair != stage.id ||
+          !cleanup->replacementCleanup ||
+          cleanup->replacementCleanup->type != place->type)
+        return false;
+    } else if (instance(place->type).requiresActiveCleanup) {
+      return false;
+    }
+    const auto &source = stage.operands.front();
+    if (source.kind == MirOperandKind::Value) {
+      for (const auto &block : body.blocks)
+        for (const auto &producer : block.instructions)
+          if (!producer.tombstone && producer.result == source.value)
+            return copiedView(body, producer, place->type) ||
+                   freshStorage(address, body, placement, producer) ==
+                       native_llvm::FreshObjectStorage::Temporary ||
+                   (plannedTransfer(body, producer) ==
+                        native_llvm::FreshHierarchyPublication::Replacement &&
+                    native_llvm::planFreshHierarchyTransfer(program, body,
+                                                            producer)
+                            .publication == &stage);
+      return false;
+    }
+    return false;
+  }
+  // A place observation of a checked view whose only use is one
+  // replacement's generated copy source.
+  bool copiedView(const MirBody &body, const MirInstruction &producer,
+                  const SemanticType &type) const {
+    if (producer.kind != MirInstructionKind::Load || !producer.result ||
+        producer.info.category != ValueCategory::Place ||
+        producer.info.type != type || producer.operands.size() != 1 ||
+        producer.operands.front().kind != MirOperandKind::Copy ||
+        !producer.operands.front().place ||
+        body.usesOf(*producer.result).size() != 1)
+      return false;
+    try {
+      native_llvm::preflightGeneratedHierarchyCopy(program, type);
+    } catch (const BackendUnsupportedError &) {
+      return false;
+    }
+    const auto *from = body.findPlace(producer.operands.front().place);
+    return from && from->type == type &&
+           borrowedSource(body,
+                          {.kind = MirOperandKind::Address,
+                           .place = from->id,
+                           .type = SemanticType::referenceTo(type)})
+               .has_value();
+  }
+  // The place observation that one admitted replacement copies from.
+  bool replacementCopy(MirBodyAddress address, const MirBody &body,
+                       const native_llvm::Placement &placement,
+                       const MirInstruction &stage) {
+    if (stage.kind != MirInstructionKind::Load || !stage.result ||
+        body.usesOf(*stage.result).size() != 1)
+      return false;
+    const auto &use = body.usesOf(*stage.result).front();
+    const auto *block = body.findBlock(use.block);
+    if (use.kind != MirValueUseKind::InstructionOperand || !block)
+      return false;
+    for (const auto &consumer : block->instructions)
+      if (!consumer.tombstone && consumer.id == use.instruction)
+        return replacement(address, body, placement, consumer) &&
+               copiedView(body, stage, stage.info.type);
     return false;
   }
   // The receiver input of one consuming call: a planned move of an owned
@@ -1785,6 +1902,22 @@ private:
         return metadata(stage.info.type)
                    ? std::optional(Shape::NativeConsumingHierarchyReceiver)
                    : std::nullopt;
+      if (stage.kind == MirInstructionKind::Assign &&
+          replacement(address, body, placement, stage))
+        return metadata(stage.info.type)
+                   ? std::optional(Shape::NativeHierarchyReplacement)
+                   : std::nullopt;
+      if (stage.kind == MirInstructionKind::CleanupBeforeAssign &&
+          replacement(address, body, placement,
+                      pairedAssignment(body, stage))) {
+        // A complete object ends like any other cleanup.
+        const auto *place = body.findPlace(*stage.destination);
+        return place && cleanup(*stage.replacementCleanup,
+                                !native_llvm::completeObjectPlace(program,
+                                                                  *place))
+                   ? std::optional(Shape::NativeHierarchyReplacement)
+                   : std::nullopt;
+      }
       if (stage.kind == MirInstructionKind::CallInput &&
           stage.callInputKind == HirCallInputKind::RetainedReceiver) {
         if (!stagedBorrow(body, {.kind = MirOperandKind::Value,
