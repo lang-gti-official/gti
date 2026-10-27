@@ -284,6 +284,16 @@ int main() {
 )"),
          "the driver test source should be writable");
 
+  expect(lang::defaultBackend(
+             {.os = "macos", .vendor = "apple", .arch = "arm64"}) ==
+                 lang::BackendKind::Llvm &&
+             lang::defaultBackend(
+                 {.os = "macos", .vendor = "apple", .arch = "x86_64"}) ==
+                 lang::BackendKind::Cpp &&
+             lang::defaultBackend(
+                 {.os = "linux", .vendor = "unknown", .arch = "x86_64"}) ==
+                 lang::BackendKind::Cpp,
+         "LLVM is the default backend only on the promoted arm64 macOS target");
   const lang::TargetInfo target{
       .os = "linux", .vendor = "unknown", .arch = "x86_64"};
   const lang::driver::CompilationRequest request(
@@ -971,6 +981,55 @@ void testNativeCommandConstruction() {
   expect(objectCommand == expectedObjectCommand,
          "backend-produced objects should link under driver-owned target and "
          "dependency policy without inheriting C++ source flags");
+
+  // Forwarded arguments may name native sources the link compiles. They get
+  // the context generated C++ would give them; the object itself gets none.
+  lang::driver::NativeInputs forwardedInputs;
+  forwardedInputs.includeDirectories = {"runtime include"};
+  forwardedInputs.compilerArguments = {"-DSOURCE_ONLY=1"};
+  forwardedInputs.trailingArguments = {"companion.cpp"};
+  forwardedInputs.finalLibraryFiles = {"libgti_runtime.a"};
+  const lang::driver::ForwardedSourcePolicy forwardedPolicy{
+      lang::CppStandard::Cpp20, lang::OptimizationLevel::O2};
+  const std::vector<std::string> forwardedCommand =
+      lang::driver::NativeToolchain().command(lang::driver::NativeLinkRequest(
+          "custom-c++", "generated.o", "program", forwardedInputs, false,
+          forwardedPolicy));
+  std::vector<std::string> expectedForwardedCommand{
+      "custom-c++",
+      "-std=c++20",
+      "-O2",
+      "-Iruntime include",
+      "-DSOURCE_ONLY=1",
+      "generated.o",
+      "-o",
+      "program",
+      "companion.cpp",
+      "libgti_runtime.a",
+      "-fno-fast-math",
+      "-ffp-contract=off",
+      "-D__gti_strict_ieee754=1",
+  };
+#if defined(__APPLE__)
+  expectedForwardedCommand.emplace_back("-Wl,-reproducible");
+#endif
+  expect(forwardedCommand == expectedForwardedCommand,
+         "an object link should compile forwarded native sources with the "
+         "language level, optimization, include directories, compiler "
+         "arguments and strict floating point of a C++ backend invocation");
+  forwardedInputs.trailingArguments.clear();
+  const std::vector<std::string> linkOnlyCommand =
+      lang::driver::NativeToolchain().command(lang::driver::NativeLinkRequest(
+          "custom-c++", "generated.o", "program", forwardedInputs, false,
+          forwardedPolicy));
+  std::vector<std::string> expectedLinkOnlyCommand{
+      "custom-c++", "generated.o", "-o", "program", "libgti_runtime.a"};
+#if defined(__APPLE__)
+  expectedLinkOnlyCommand.emplace_back("-Wl,-reproducible");
+#endif
+  expect(linkOnlyCommand == expectedLinkOnlyCommand,
+         "an object link without forwarded arguments should add no source "
+         "flags");
 
   expect(lang::driver::isReservedNativeBuildArgument("-o") &&
              lang::driver::isReservedNativeBuildArgument(

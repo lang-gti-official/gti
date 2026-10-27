@@ -1,5 +1,8 @@
 #include "project_presentation.h"
 
+#include "gti/backend.h"
+#include "gti/target.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <iomanip>
@@ -345,7 +348,10 @@ void writeProjectMetadata(std::ostream &stream,
            << ", \"cppStandard\": ";
     writeJsonString(stream, cppStandardName(profile.cppStandard));
     stream << ", \"backend\": ";
-    writeJsonString(stream, backendKindName(profile.backend));
+    writeJsonString(stream,
+                    backendKindName(profile.backend.value_or(
+                        profile.keepCpp ? BackendKind::Cpp
+                                        : defaultBackend(TargetInfo::host()))));
     stream << ", \"executionProfile\": ";
     writeJsonString(stream, executionProfileName(profile.executionProfile));
     stream << ", \"rawPointerAudit\": ";

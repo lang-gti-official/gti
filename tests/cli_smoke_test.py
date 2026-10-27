@@ -2242,11 +2242,15 @@ def main():
         assert "refusing to overwrite loaded source" in source_collision.stderr
         assert optimization_source.read_text(encoding="utf-8") == source_before_collision
 
+        # The level reaches the C++ backend's native compile command; LLVM
+        # applies it in process, which its execution tests cover.
         optimization_executable = root / "optimization"
         optimized_build = run(
             [
                 gti,
                 str(optimization_source),
+                "--backend",
+                "cpp",
                 "-O2",
                 "--verbose",
                 "-o",
@@ -3168,15 +3172,26 @@ def main():
         diagnostics_log.parent.rmdir()
         assert failed_output.read_text(encoding="utf-8") == "previous artifact\n"
         assert not list(root.glob(".native-failure.gti-stage-*"))
-        retained_prefix = "gti: backend 'c++' representation saved at "
+        # The retained representation is named by its format: generated C++
+        # or an LLVM object, whichever backend is the default here.
+        retained_prefixes = tuple(
+            f"gti: backend '{name}' representation saved at "
+            for name in ("c++", "llvm")
+        )
         retained_line = next(
             line
             for line in native_failure.stderr.splitlines()
-            if line.startswith(retained_prefix)
+            if line.startswith(retained_prefixes)
         )
-        retained_cpp = pathlib.Path(retained_line.removeprefix(retained_prefix))
-        assert retained_cpp.is_file()
-        retained_cpp.unlink()
+        retained = pathlib.Path(
+            next(
+                retained_line.removeprefix(prefix)
+                for prefix in retained_prefixes
+                if retained_line.startswith(prefix)
+            )
+        )
+        assert retained.is_file()
+        retained.unlink()
 
         non_publishing_compiler = root / "non-publishing-compiler"
         non_publishing_compiler.write_text(
@@ -3207,13 +3222,17 @@ def main():
         publication_retained_line = next(
             line
             for line in publication_failure.stderr.splitlines()
-            if line.startswith(retained_prefix)
+            if line.startswith(retained_prefixes)
         )
-        publication_cpp = pathlib.Path(
-            publication_retained_line.removeprefix(retained_prefix)
+        publication_retained = pathlib.Path(
+            next(
+                publication_retained_line.removeprefix(prefix)
+                for prefix in retained_prefixes
+                if publication_retained_line.startswith(prefix)
+            )
         )
-        assert publication_cpp.is_file()
-        publication_cpp.unlink()
+        assert publication_retained.is_file()
+        publication_retained.unlink()
 
         invalid = root / "invalid.gti"
         invalid.write_text(

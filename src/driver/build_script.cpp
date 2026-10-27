@@ -198,6 +198,27 @@ scriptIdentity(const ProjectBuildPlan &project, const BuildScriptPlan &plan,
   return identity.finish();
 }
 
+std::optional<std::string> fileSha256(const std::filesystem::path &path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    return std::nullopt;
+  }
+  std::array<char, 64 * 1024> buffer{};
+  Sha256 content;
+  while (input) {
+    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const std::streamsize count = input.gcount();
+    if (count > 0) {
+      content.update(
+          std::string_view(buffer.data(), static_cast<std::size_t>(count)));
+    }
+  }
+  if (!input.eof()) {
+    return std::nullopt;
+  }
+  return content.finishHex();
+}
+
 bool writeState(const BuildScriptPlan &plan, std::string_view identity,
                 std::vector<Diagnostic> &diagnostics) {
   const std::filesystem::path state = plan.outputDirectory / stateFilename;
@@ -568,8 +589,12 @@ std::optional<std::vector<std::string>> buildScriptCommand(
     }
     Diagnostic &diagnostic = result.diagnostics.back();
     if (built.generatedSourceRetained) {
-      diagnostic.hints.push_back("Backend 'c++' representation saved at " +
-                                 built.generatedSource.string());
+      const bool object =
+          built.compilation.artifact &&
+          built.compilation.artifact->kind == BackendArtifactKind::Object;
+      diagnostic.hints.push_back(
+          std::string("Backend '") + (object ? "llvm" : "c++") +
+          "' representation saved at " + built.generatedSource.string());
     }
     if (built.backendDiagnosticLog) {
       diagnostic.hints.push_back(
@@ -628,20 +653,48 @@ executeBuildScripts(const ProjectBuildPlan &plan,
     const std::filesystem::path output =
         script.outputDirectory / outputFilename;
     const std::filesystem::path state = script.outputDirectory / stateFilename;
-    const std::string expectedState =
-        std::string(cacheSchema) + "\n" + *identity + "\n";
+    const auto reuse = [&](const std::string &stateIdentity) {
+      if (readFile(state) !=
+          std::string(cacheSchema) + "\n" + stateIdentity + "\n") {
+        return false;
+      }
+      std::vector<Diagnostic> staleDiagnostics;
+      std::optional<ScriptNativeOutput> native =
+          parseOutput(script, plan.target(), staleDiagnostics);
+      if (!native) {
+        return false;
+      }
+      appendOutput(inputs, script, std::move(*native));
+      result.outcomes.push_back(
+          {.packageIdentity = script.packageIdentity, .reused = true});
+      return true;
+    };
     // The legacy script-output state does not identify transitive GTI inputs
-    // and backend/runtime artifacts. Native host programs use the exact
-    // executable cache, but rerun rather than trust that older output state.
+    // and backend/runtime artifacts. A native host program comes from the
+    // exact executable cache, which does, so its output state is reused only
+    // together with the exact executable that produced it.
     const bool reusableState =
         !script.source || plan.backend() == BackendKind::Cpp;
-    if (reusableState && readFile(state) == expectedState) {
-      std::vector<Diagnostic> staleDiagnostics;
-      if (std::optional<ScriptNativeOutput> native =
-              parseOutput(script, plan.target(), staleDiagnostics)) {
-        appendOutput(inputs, script, std::move(*native));
-        result.outcomes.push_back(
-            {.packageIdentity = script.packageIdentity, .reused = true});
+    if (reusableState && reuse(*identity)) {
+      continue;
+    }
+    std::string stateIdentity = *identity;
+    std::optional<std::vector<std::string>> command;
+    if (!reusableState) {
+      command = buildScriptCommand(plan, script, options, output, result);
+      if (!command) {
+        return result;
+      }
+      const std::optional<std::string> host = fileSha256(command->front());
+      if (!host) {
+        result.diagnostics.push_back(scriptDiagnostic(
+            script, "GTI-B2003",
+            "Cannot fingerprint the build-script host program '" +
+                command->front() + "'."));
+        return result;
+      }
+      stateIdentity += "\nhost-executable-sha256 " + *host;
+      if (reuse(stateIdentity)) {
         continue;
       }
     }
@@ -663,10 +716,11 @@ executeBuildScripts(const ProjectBuildPlan &plan,
       return result;
     }
 
-    const std::optional<std::vector<std::string>> command =
-        buildScriptCommand(plan, script, options, output, result);
     if (!command) {
-      return result;
+      command = buildScriptCommand(plan, script, options, output, result);
+      if (!command) {
+        return result;
+      }
     }
     ProcessInvocationOptions processOptions{
         .outputMode = ProcessOutputMode::Capture,
@@ -708,7 +762,7 @@ executeBuildScripts(const ProjectBuildPlan &plan,
       return result;
     }
     appendOutput(inputs, script, std::move(*native));
-    if (!writeState(script, *identity, result.diagnostics)) {
+    if (!writeState(script, stateIdentity, result.diagnostics)) {
       return result;
     }
     result.outcomes.push_back({.packageIdentity = script.packageIdentity,
