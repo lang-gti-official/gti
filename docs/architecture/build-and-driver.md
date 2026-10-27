@@ -436,8 +436,9 @@ being silently lost or claiming a saved file. They may contain sensitive native
 arguments, so review them before including them in a bug report.
 
 A retained artifact is identified explicitly as `backend 'c++' representation
-saved at <path>`: its format is relevant when inspecting evidence, not as the
-language's public compilation model. That line is emitted only when retention
+saved at <path>`, or `backend 'llvm' representation` for a native object: its
+format is relevant when inspecting evidence, not as the language's public
+compilation model. That line is emitted only when retention
 actually occurred. An emitter failure before artifact construction reports a
 log, not a nonexistent representation. A native compilation/link failure is
 reported as a backend build failure, not automatically an internal compiler
@@ -503,14 +504,16 @@ requests and direct/project emit-only modes remain valid without an entry.
 Externally supplied native entry points are not a GTI executable contract.
 
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
-Its source graph produces one whole-program backend artifact and, for the
-default C++ backend, one native compiler invocation. `--backend cpp|llvm`
-selects the immutable executable backend; omission remains `cpp`. The LLVM
-choice emits native objects for the admitted profile documented in
-[backend architecture](backend.md#llvm-scalar-execution). Unsupported required
-shapes report `GTI-B0003` before publication, without a C++ fallback.
-`--std` and `--keep-cpp` are C++-only, and explicit emit modes keep
-their dedicated backend entry points rather than accepting `--backend`.
+Its source graph produces one whole-program backend artifact: a native object
+from LLVM, or generated C++ and one native compiler invocation from C++.
+`--backend cpp|llvm` selects the immutable executable backend. Without it the
+target's default applies, `defaultBackend(TargetInfo)`: LLVM on macOS arm64 and
+C++ elsewhere. The LLVM choice emits native objects for the admitted shapes
+documented in [backend architecture](backend.md#llvm-scalar-execution).
+Unsupported required shapes report `GTI-B0003` before publication, without a
+C++ fallback. `--std` and `--keep-cpp` are C++-only: without `--backend` they
+select C++, and with `--backend llvm` they are rejected. Explicit emit modes
+keep their dedicated backend entry points rather than accepting `--backend`.
 Repeatable `-D NAME` options seed valueless GTI configuration flags
 for the invocation. Repeatable `-Wno-<group>` options (or the equivalent
 `--disable-warning <group>`) add validated warning groups to the immutable
@@ -683,13 +686,17 @@ Syntax, ownership, LSP analysis, and runtime behavior are unchanged.
 ## Project Mode
 
 `build`, `run`, `test`, and `install` accept `--backend cpp|llvm`. Each profile
-may set `backend = "cpp"|"llvm"`; omission preserves the shipped `cpp` default,
-and an explicit command-line choice overrides the selected profile. The
-immutable build plan carries that choice into the same executable driver used
-by direct mode, including parallel `--all` children. LLVM intermediates use
-`.gti.o`, never `.gti.cpp`. C++ retention and an explicit `--std` are rejected
-for an effective LLVM plan. Backend selection is not a frontend analysis policy;
-`check` and emit-only commands do not accept the executable-backend override.
+may set `backend = "cpp"|"llvm"`, and an explicit command-line choice overrides
+the selected profile. With neither, C++ retention (`keep-cpp` or `--keep-cpp`)
+or an explicit `--std` selects C++, and otherwise the target's default applies:
+LLVM on macOS arm64 and C++ elsewhere. The immutable build plan carries that
+choice into the same executable driver used by direct mode, including parallel
+`--all` children. LLVM intermediates use `.gti.o`, never `.gti.cpp`. C++
+retention and an explicit `--std` are rejected for an explicitly selected LLVM
+plan. Backend selection is not a frontend analysis policy; `check` and
+emit-only commands do not accept the executable-backend override. The project
+cache keeps C++ and object artifacts under separate schemas, so a cached build
+from before the default changed is never restored for the other backend.
 
 Metadata schema 15 exposes profile/output `backend` and output
 `generatedArtifact`; the compatibility `generatedCpp` field is empty for LLVM.
@@ -697,9 +704,11 @@ Native C/C++ dependency objects and consumer-approved package build commands
 still join the normal native link and cache identity. GTI-authored host build
 programs use the effective backend too: an unsupported LLVM build program
 rejects rather than silently generating C++. LLVM host-program compilation uses
-the exact executable cache, but its execution conservatively bypasses the older
-script-output state cache, which does not identify transitive GTI/backend/runtime
-inputs. Command build programs retain their existing declared-input contract.
+the exact executable cache. The older script-output state does not identify
+transitive GTI, backend or runtime inputs, so an LLVM host program's output is
+reused only when its state also records the content digest of the exact host
+executable that produced it; any other host program reruns. Command build
+programs retain their existing declared-input contract.
 
 ### Raw pointer audit policy
 
@@ -884,9 +893,10 @@ an explicit C symbol. `ProjectTarget`, `ProjectBuildPlan`, `ProjectFacts`, and
 `CompilationRequest` retain that policy and all declaration spans; the build
 plan's model identity canonicalizes export rows by public symbol. Its planned
 output uses the target platform's library spelling inside a fresh immutable
-generation directory. `gti build <target> --backend llvm` uses the normal
-selected-backend pipeline and one loaded frontend snapshot. Unsupported targets,
-fallible closures and the C++ backend reject; no CLI default changes. A host
+generation directory. A library build uses the normal selected-backend
+pipeline and one loaded frontend snapshot; it needs the LLVM backend, which is
+the macOS arm64 default and `--backend llvm` elsewhere. Unsupported targets,
+fallible closures and the C++ backend reject. A host
 loads the printed library path and compiles against its adjacent generated
 header. Library targets cannot be run/tested as executables.
 

@@ -12,6 +12,7 @@
 namespace lang {
 
 class LoweredProgram;
+struct TargetInfo;
 
 enum class BackendKind {
   Cpp,
@@ -21,6 +22,10 @@ enum class BackendKind {
 [[nodiscard]] std::string_view backendKindName(BackendKind backend);
 [[nodiscard]] std::optional<BackendKind>
 parseBackendKind(std::string_view name);
+// The executable backend a build uses when none is selected: LLVM on the
+// promoted macOS arm64 target, C++ on targets the LLVM backend has not yet
+// been validated for.
+[[nodiscard]] BackendKind defaultBackend(const TargetInfo &target);
 
 enum class BackendArtifactKind {
   Source,

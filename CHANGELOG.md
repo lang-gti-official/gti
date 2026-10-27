@@ -11,6 +11,23 @@ for what minor and patch releases mean.
 
 ## 0.484.0 - Native LLVM correctness and broader language coverage
 
+- On macOS arm64, `gti` now builds with the native LLVM backend by default.
+  Other targets keep the C++ backend as their default. `--backend cpp`, or
+  `backend = "cpp"` in a profile, selects C++ on any target, and `--std`,
+  `--keep-cpp` and a profile's `keep-cpp` still select the C++ backend they
+  configure. A program LLVM does not support yet reports `GTI-B0003` instead
+  of falling back to C++.
+- Native C and C++ sources passed after `--` now build on the LLVM backend as
+  they do on C++: with GTI's include directory, so `<gti/c_abi.h>` resolves,
+  and with the selected C++ language level, optimization and strict floating
+  point.
+- A project build that keeps no C++ output now removes the C++ an earlier
+  build kept, even when the target now builds with LLVM. A failed native
+  build labels a retained LLVM object as an LLVM representation, not as C++,
+  and `gti build --verbose` names the backend a project target builds with.
+- A dependency's GTI build script built with LLVM reuses its previous output
+  when its cached host program is unchanged, instead of rerunning on every
+  build.
 - Fix silently wrong native code for a derived constructor that passes an
   owned value, such as a moved `std::string`, `std::vector`,
   `std::unique_ptr` or class with a destructor, to its base constructor
@@ -125,7 +142,6 @@ for what minor and patch releases mean.
   already destroyed. The C++ backend still calls the most-derived override
   there, which is a known C++ backend defect. A polymorphic thread result
   returned through `std::expected` remains rejected on the native backend.
-  C++ remains the production default.
 
 ## 0.480.5 — Faster compile-time requirement policies
 

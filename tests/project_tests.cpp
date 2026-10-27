@@ -3585,11 +3585,20 @@ void testBackendProfileAuthority() {
     return resolveProjectBuild(ProjectBuildRequest(
         temporary.root(), "app", "dev", TargetInfo::host(), overrides));
   };
-  const auto defaultCpp = resolve();
-  expect(defaultCpp.succeeded() &&
-             defaultCpp.plan->backend() == BackendKind::Cpp &&
-             defaultCpp.plan->generatedSource().extension() == ".cpp",
-         "omitted backend preserves the shipped C++ default and artifact kind");
+  // An omitted backend is the target's default: LLVM on arm64 macOS, C++
+  // elsewhere. Retaining C++ output configures the C++ backend instead.
+  const auto omitted = resolve();
+  const BackendKind hostDefault = defaultBackend(TargetInfo::host());
+  expect(omitted.succeeded() && omitted.plan->backend() == hostDefault &&
+             omitted.plan->generatedSource().extension() ==
+                 (hostDefault == BackendKind::Llvm ? ".o" : ".cpp"),
+         "omitted backend selects the target's default and its artifact kind");
+  expect(writeFile(manifest, prefix + "keep-cpp = true\n"),
+         "C++ retention profile is writable");
+  const auto retained = resolve();
+  expect(retained.succeeded() && retained.plan->backend() == BackendKind::Cpp &&
+             retained.plan->generatedSource().extension() == ".cpp",
+         "C++ retention without a backend keeps the C++ backend it configures");
   expect(writeFile(manifest, prefix + "backend = \"llvm\"\n"),
          "LLVM profile is writable");
   const auto profile = resolve();

@@ -162,7 +162,7 @@ publishEmbeddingLibrary(const LlvmEmbeddingArtifacts &artifacts,
                                    "@rpath/" + library.filename().string()});
   }
   const NativeLinkRequest link(request.compiler, object, library, inputs,
-                               request.debugInfo);
+                               request.debugInfo, request.forwardedSources);
   result.command = NativeToolchain().command(link);
   result.process =
       invokeProcess(result.command, {.captureSuccessfulOutput = true,
