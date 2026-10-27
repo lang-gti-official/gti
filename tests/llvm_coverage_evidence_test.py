@@ -864,9 +864,13 @@ def focused_use_probes(evidence: Path, root: Path, report: dict) -> dict[str, di
         unsupported = directory / "unsupported.gti"
         # Keep the real unsupported probe aligned with an existing admission
         # control, not a native import that now has an implemented ABI witness.
+        # Base-view replacement stays refused; move this control to another
+        # refused construct as LLVM coverage grows. Explicit constructors keep
+        # the probe clear of an unrelated source-debug lowering defect in
+        # generated derived default constructors.
         unsupported.write_text(
-            "class Owner { public: virtual int read() { return 0; } };\n"
-            "class Derived : public Owner {};\n"
+            "class Owner { public: Owner() {} virtual int read() { return 0; } };\n"
+            "class Derived : public Owner { public: Derived() : Owner() {} };\n"
             "unsafe int create(mut Owner& value, Owner& other) { "
             "value = other; return 0; }\n"
             "int main() { mut Derived first{}; Derived second{}; "

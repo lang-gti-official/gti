@@ -36,7 +36,14 @@ def main() -> int:
         run([sys.argv[1], str(source), "--backend", "llvm", "-o", str(output)], 0)
         run([str(output)], 0)
         output.unlink()
-        source.write_text("class Owner { public: virtual int read() { return 0; } }; int main() { mut Owner value{}; Owner copied{}; value = copied; return value.read(); }\n", encoding="utf-8")
+        # Replacing an object through a base view could change the dynamic type
+        # of the enclosing derived object, so admission refuses it. This
+        # control must move to a still-refused construct as LLVM coverage grows.
+        source.write_text("class Owner { public: Owner() {} virtual int read() { return 0; } }; "
+                          "class Derived : public Owner { public: Derived() : Owner() {} }; "
+                          "void replace(mut Owner& value, Owner& other) { value = other; } "
+                          "int main() { mut Derived value{}; Derived copied{}; replace(value, copied); return value.read(); }\n",
+                          encoding="utf-8")
         transfer_mir = root / "unsupported.mir"
         run([sys.argv[1], str(source), "-O0", "--emit-mir", "-o", str(transfer_mir)], 0)
         if not re.search(r"^\s+i\d+ load\b", transfer_mir.read_text(encoding="utf-8"), re.MULTILINE):
