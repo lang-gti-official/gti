@@ -61,6 +61,7 @@ SUCCESS_FILES = {
     "consuming-receivers": "tests/fixtures/llvm_dispatch_consuming_receivers.gti",
     "closure-models": "tests/fixtures/llvm_dispatch_closure_models.gti",
     "abstract-phases": "tests/fixtures/llvm_dispatch_abstract_phases.gti",
+    "temporary-receivers": "tests/fixtures/llvm_dispatch_temporary_receivers.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -1100,7 +1101,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1400,6 +1401,24 @@ int main() {
         phase_failure.replace("expected_cleanup = 12384;", "expected_cleanup = 12385;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=phase_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    temporaries = (root / SUCCESS_FILES["temporary-receivers"]).read_text(encoding="utf-8")
+    temporaries_marker = "// TEMPORARY_RECEIVERS_MAIN\n"
+    if temporaries.count(temporaries_marker) != 1:
+        raise AssertionError("temporary receiver main marker is not unique")
+    temporary_failure = temporaries.split(temporaries_marker, 1)[0] + """int main() {
+  expected_cleanup = 62;
+  Guard guard{};
+  Source kept = Source(2);
+  return joined(false, 0) + kept.share(1);
+}
+"""
+    temporary_needle = "virtual int share(int divisor) { return 60 / divisor; }"
+    add("temporary-receiver-failure", temporary_failure, "defined-failure",
+        expected_exit=70, failure_needle=temporary_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("temporary-receiver-wrong-cleanup",
+        temporary_failure.replace("expected_cleanup = 62;", "expected_cleanup = 63;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=temporary_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -1427,7 +1446,9 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
                                "static-dispatch", "dispatch-cost-correctness",
                                "virtual-signatures", "virtual-signature-failure",
-                               "virtual-signature-wrong-cleanup"),
+                               "virtual-signature-wrong-cleanup", "temporary-receivers",
+                               "temporary-receiver-failure",
+                               "temporary-receiver-wrong-cleanup"),
         "dispatch-lifecycle": ("virtual-failure-cleanup", "constructor-rollback",
                                "cleanup-oracle-wrong-trace", "nonobserving-cleanup-helper-cycle"),
         "fresh-local-generated-transfers": (
@@ -1501,6 +1522,7 @@ def main() -> None:
              "consuming-receiver-failure", "consuming-receiver-wrong-cleanup",
              "closure-model-failure", "closure-model-wrong-cleanup",
              "abstract-phase-failure", "abstract-phase-wrong-cleanup",
+             "temporary-receiver-failure", "temporary-receiver-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

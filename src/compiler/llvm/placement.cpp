@@ -44,12 +44,20 @@ std::optional<MirPlaceId>
 freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
                              const MirBody &body, const Placement &placement,
                              const MirInstruction &producer) {
+  // An ordinary construction may name the hidden temporary MIR materializes
+  // for its result as its own destination.
+  const bool materialized =
+      !producer.tombstone && producer.result && producer.destination &&
+      producer.kind == MirInstructionKind::Construct &&
+      producer.constructorKind == ConstructorKind::Ordinary && !producer.loan &&
+      producer.info.type.kind == SemanticType::Class &&
+      producer.info.category == ValueCategory::Value;
   if (findMirBody(program, address) != &body ||
       (address.kind != MirBodyKind::Function &&
        address.kind != MirBodyKind::Constructor &&
        address.kind != MirBodyKind::Destructor &&
        address.kind != MirBodyKind::FieldInitializers) ||
-      !isFreshObjectProducer(program, producer))
+      (!isFreshObjectProducer(program, producer) && !materialized))
     return {};
   const auto *target = placement.target(*producer.result);
   const auto *place =
@@ -58,6 +66,40 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
       place->capture || place->foreignStorage ||
       place->type != producer.info.type)
     return {};
+  // The hidden temporary MIR materializes for exactly this producer's result
+  // is that object's final storage. Only drops of that place end it.
+  const auto materialization =
+      place->root == MirPlaceRootKind::Temporary
+          ? findMirTemporaryMaterialization(body, *place, place->sourceValue)
+          : MirTemporaryMaterialization{};
+  if (materialized ||
+      (materialization && materialization.producer == &producer)) {
+    if (place->root != MirPlaceRootKind::Temporary ||
+        !place->projections.empty() || !materialization ||
+        materialization.producer != &producer ||
+        materialization.value->id != *producer.result ||
+        (producer.destination && *producer.destination != place->id))
+      return {};
+    for (const auto &event : producer.lifecycle) {
+      const auto *drop = body.findDropObligation(event.target);
+      if (event.kind != MirLifecycleEventKind::Initialize || event.source ||
+          event.conditional || event.failureCleanup || !drop ||
+          drop->place != place->id || drop->initiallyActive)
+        return {};
+    }
+    if (producer.successResultDrop) {
+      const auto *drop = body.findDropObligation(*producer.successResultDrop);
+      if (!drop || drop->place != place->id || drop->initiallyActive)
+        return {};
+    }
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && &stage != &producer && stage.destination &&
+            *stage.destination == place->id &&
+            stage.kind != MirInstructionKind::Drop)
+          return {};
+    return target->place;
+  }
   const MirInstruction *publication = nullptr;
   const MirBlock *definition = nullptr;
   for (const auto &block : body.blocks)
@@ -106,6 +148,11 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
       return {};
     return target->place;
   }
+  // A hidden temporary initialized from this producer, such as one arm of a
+  // conditional receiver, is published like a whole local.
+  if (place->root == MirPlaceRootKind::Temporary)
+    return place->projections.empty() ? std::optional(target->place)
+                                      : std::nullopt;
   if (place->root != MirPlaceRootKind::Binding || !place->binding ||
       !place->projections.empty())
     return {};

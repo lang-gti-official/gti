@@ -2503,8 +2503,18 @@ int main() { Slot object{}; unsafe { const Slot* pointer = &object; return point
 class Dynamic { public: int value = 7; virtual int read() { return this.value; } };
 int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->read(); } }
 )"));
-  expect(!virtualMethod.admitted(),
-         "a virtual method reached through a raw pointer stays refused");
+  // The pointee of a raw class pointer is a checked dispatch view under the
+  // program's unsafe obligation; the virtual call keeps its own witness.
+  bool rawVirtual = false;
+  for (const auto &use : virtualMethod.requirements())
+    rawVirtual |= use.required && use.implementedShape &&
+                  use.implementedShape->name == "NativeVirtualInvocation";
+  if (!virtualMethod.admitted())
+    std::cerr << "raw virtual admission: " << virtualMethod.limitation()
+              << '\n';
+  expect(virtualMethod.admitted() && rawVirtual,
+         "a virtual method reached through a raw pointer dispatches through "
+         "the pointee's checked view");
   const auto unsupported = lang::planLlvmAdmission(lower(R"(
 class Dynamic { public: int value = 7; virtual int read() { return this.value; } };
 int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->value; } }

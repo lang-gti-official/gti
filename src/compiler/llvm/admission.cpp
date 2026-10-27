@@ -340,12 +340,22 @@ public:
       const auto &body = *findMirBody(program, address);
       native_llvm::Placement placement(body);
       auto &freshTemporaries = temporaries[&body];
+      auto &hiddenTemporaries = hidden[&body];
       for (const auto &block : body.blocks)
-        for (const auto &stage : block.instructions)
-          if (!stage.tombstone && stage.result &&
-              freshStorage(address, body, placement, stage) ==
-                  native_llvm::FreshObjectStorage::Temporary)
+        for (const auto &stage : block.instructions) {
+          if (stage.tombstone || !stage.result)
+            continue;
+          if (freshStorage(address, body, placement, stage) ==
+              native_llvm::FreshObjectStorage::Temporary)
             freshTemporaries.insert(*stage.result);
+          // A fresh object published in the hidden temporary MIR
+          // materializes for it is borrowed through that place.
+          if (const auto place = native_llvm::freshConstructionDestination(
+                  program, address, body, placement, stage))
+            if (const auto *selected = body.findPlace(*place);
+                selected && selected->root == MirPlaceRootKind::Temporary)
+              hiddenTemporaries.insert(*place);
+        }
       auto &bodyProof = bodies[{address.kind, address.owner}];
       // A hierarchy result constructed directly in the caller's destination
       // by every return is publication, not a by-value transfer.
@@ -395,12 +405,14 @@ public:
           const bool initialization =
               freshInitialization(address, body, placement, stage);
           const bool declaration = declarationOnlyField(address, body, stage);
+          const bool materialization = materializedTemporary(body, stage);
           if (contains(stage.info.type)) {
             if ((stage.kind == MirInstructionKind::Construct && !fresh &&
                  !published && !transfer) ||
-                (stage.kind == MirInstructionKind::Move && !transfer) ||
+                (stage.kind == MirInstructionKind::Move && !transfer &&
+                 !materialization) ||
                 (stage.kind == MirInstructionKind::Load && !transfer &&
-                 !placeObservation(body, stage)) ||
+                 !placeObservation(body, stage) && !materialization) ||
                 stage.kind == MirInstructionKind::Assign ||
                 (stage.kind == MirInstructionKind::CallInput &&
                  stage.callInputKind != HirCallInputKind::ReadBorrow &&
@@ -435,8 +447,9 @@ public:
                     operand.kind == MirOperandKind::Move);
           };
           // A place-category Load that only names an inline slot for its
-          // operations observes that slot's address; nothing is transported.
-          if (!placeObservation(body, stage))
+          // operations observes that slot's address, and a hidden temporary's
+          // materialization names that object in place; nothing moves.
+          if (!placeObservation(body, stage) && !materialization)
             for (const auto &operand : stage.operands)
               proof.transfer |= transferred(operand) && !transfer;
           if (stage.receiver)
@@ -736,6 +749,7 @@ private:
   std::map<Key, Operation> operations;
   std::map<BodyKey, Operation> bodies;
   std::map<const MirBody *, std::set<MirValueId>> temporaries;
+  std::map<const MirBody *, std::set<MirPlaceId>> hidden;
   bool attempted = false;
   std::unique_ptr<native_llvm::Session> session;
   std::unique_ptr<native_llvm::Dispatch> dispatch;
@@ -1117,6 +1131,22 @@ private:
       }
     return returned;
   }
+  // A Move or Load that names a branch-produced object in the hidden
+  // temporary MIR materialized for it: that object in place.
+  bool materializedTemporary(const MirBody &body,
+                             const MirInstruction &stage) const {
+    if ((stage.kind != MirInstructionKind::Move &&
+         stage.kind != MirInstructionKind::Load) ||
+        !stage.result || stage.operands.size() != 1)
+      return false;
+    const auto *place = body.findPlace(stage.operands.front().place);
+    if (!place || place->root != MirPlaceRootKind::Temporary ||
+        !place->projections.empty() || place->type != stage.info.type)
+      return false;
+    const auto materialization =
+        findMirTemporaryMaterialization(body, *place, place->sourceValue);
+    return materialization && materialization.producer == &stage;
+  }
   bool placeObservation(const MirBody &body,
                         const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Load || !stage.result ||
@@ -1196,11 +1226,17 @@ private:
     const auto &input = stage.operands.front();
     const auto *place = body.findPlace(input.place);
     const auto found = temporaries.find(&body);
+    const auto materialized = hidden.find(&body);
+    const bool fresh =
+        place &&
+        ((place->root == MirPlaceRootKind::Value &&
+          found != temporaries.end() && found->second.contains(place->value)) ||
+         (place->root == MirPlaceRootKind::Temporary &&
+          place->projections.empty() && materialized != hidden.end() &&
+          materialized->second.contains(place->id)));
     return input.kind == (mutableInput ? MirOperandKind::BorrowWrite
                                        : MirOperandKind::BorrowRead) &&
-           !input.loan && !input.value && place &&
-           place->root == MirPlaceRootKind::Value &&
-           found != temporaries.end() && found->second.contains(place->value) &&
+           !input.loan && !input.value && fresh &&
            unreference(stage.info.type) == place->type;
   }
   bool freshConstruction(MirBodyAddress address, const MirBody &body,
@@ -1340,11 +1376,16 @@ private:
     if (simpleLoan(loan))
       return true;
     if (loan.referenceSelection || !loan.additionalDependencies.empty() ||
-        !loan.conditions.empty() || loan.storedDependency || loan.twoPhase ||
-        loan.lifecycleBound || loan.entry)
+        !loan.conditions.empty() || loan.twoPhase || loan.lifecycleBound ||
+        loan.entry)
       return false;
+    // A call result's address is the callee's checked result. A stored
+    // dependency only protects the external owners a borrow carrier inherited
+    // (such as an iterator's container) and has no representation.
     if (!loan.escapes && callResult(body, loan))
       return true;
+    if (loan.storedDependency)
+      return false;
     // The verifier-owned read-only loan of one fresh value argument: its
     // address is the fresh temporary's own storage, ended after the call.
     if (loan.kind == MirLoanKind::CallArgument && !loan.escapes &&
@@ -1450,13 +1491,32 @@ private:
              found != temporaries.end() &&
              found->second.contains(selected.value);
     };
+    // The pointee of a raw class pointer is an address the program asserts
+    // under its unsafe obligation; its raw access keeps its own proof.
+    const auto rawView = [&](const MirPlace &selected) {
+      if (selected.root != MirPlaceRootKind::Value ||
+          selected.projections.empty() ||
+          selected.projections.front().kind !=
+              MirProjectionKind::RawDereference)
+        return false;
+      const auto *value = body.findValue(selected.value);
+      return value && value->info.type.kind == SemanticType::RawPointer &&
+             value->info.type.arguments.size() == 1 &&
+             value->info.type.arguments.front().kind == SemanticType::Class;
+    };
     if (place) {
+      const bool raw = rawView(*place);
+      // A hidden temporary is the exact storage MIR materialized for one
+      // object; its producer and drops carry their own proofs.
+      const bool hidden = place->root == MirPlaceRootKind::Temporary &&
+                          !place->capture;
       if (place->foreignStorage ||
           (place->root != MirPlaceRootKind::Binding &&
            place->root != MirPlaceRootKind::This &&
-           place->root != MirPlaceRootKind::Loan && !freshTemporary(*place)) ||
-          std::any_of(place->projections.begin(), place->projections.end(),
-                      [](const auto &projection) {
+           place->root != MirPlaceRootKind::Loan && !freshTemporary(*place) &&
+           !raw && !hidden) ||
+          std::any_of(place->projections.begin() + (raw ? 1 : 0),
+                      place->projections.end(), [](const auto &projection) {
                         return projection.kind != MirProjectionKind::Base &&
                                projection.kind != MirProjectionKind::Field &&
                                projection.kind !=
@@ -1732,27 +1792,31 @@ private:
                              ->owner)
                     ->type)))) {
         // A consuming member receives a moved owned receiver in its own
-        // value storage or a retained receiver staged in place.
+        // value storage, a retained receiver staged in place, or a fresh
+        // full-expression temporary whose value obligation stays with the
+        // caller. A call operator is an ordinary member of its receiver.
         const auto *input = receiverInput(body, *stage.receiver);
         const bool moved = input && consumedReceiver(body, *input);
         const bool retained =
-            input &&
-            input->callInputKind == HirCallInputKind::RetainedReceiver;
+            input && input->callInputKind == HirCallInputKind::RetainedReceiver;
+        const bool temporary = input && temporaryBorrow(body, *input);
         if ((borrowedUse(body, *stage.receiver) && !moved &&
              !borrowed(body, *stage.receiver)) ||
             !stage.functionTarget || stage.nativeCalleeType ||
-            stage.nativeCallbackAdapter ||
-            (stage.callableInvocation && !moved && !retained) ||
-            stage.threadTaskAdapter || !stage.scopedThreadTasks.empty())
+            stage.nativeCallbackAdapter || stage.threadTaskAdapter ||
+            !stage.scopedThreadTasks.empty())
           return {};
         // The receiver and its dispatch are this proof's only obligations.
         // Arguments, results and their loans use the shared call contract
         // and are inventoried independently, including hierarchy transfer.
         const auto *target =
             program.findFunctionInstance(*stage.functionTarget);
+        const bool consuming =
+            target &&
+            target->receiverMutability == ReceiverMutability::Consuming;
         if (!target || target->linkage != LanguageLinkage::Gti ||
-            (target->receiverMutability == ReceiverMutability::Consuming) !=
-                (moved || retained) ||
+            (consuming ? !(moved || retained || temporary)
+                       : moved || retained) ||
             std::any_of(target->parameterTypes.begin(),
                         target->parameterTypes.end(), [](const auto &type) {
                           return type == SemanticType::Void;
@@ -3831,7 +3895,10 @@ public:
                                    : std::nullopt;
       const bool selected = origin && passiveReference(origin->type) &&
                             !loan.referenceSelection && loan.conditions.empty();
-      const bool hierarchy = origin && dispatchProofs.related(origin->type);
+      // A raw pointer to hierarchy storage is a passive address: borrowing
+      // the pointer's own storage is an ordinary native borrow.
+      const bool hierarchy = origin && dispatchProofs.related(origin->type) &&
+                             origin->type.kind != SemanticType::RawPointer;
       const auto view =
           hierarchy ? dispatchProofs.loan(mir, loan) : std::nullopt;
       add(loan.kind, hierarchy     ? view

@@ -599,6 +599,16 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
       instruction.info.type.arguments.size() == 1;
   const auto &objectType = allocation ? instruction.info.type.arguments.front()
                                       : instruction.info.type;
+  // A construction may name the hidden temporary MIR materializes for its
+  // result as its own destination; placement proves that exact publication.
+  const auto *materialized =
+      construct && instruction.destination
+          ? body.findPlace(*instruction.destination)
+          : nullptr;
+  const bool hidden = materialized &&
+                      materialized->root == MirPlaceRootKind::Temporary &&
+                      materialized->projections.empty() &&
+                      materialized->type == objectType;
   if ((!construct && !base && !allocation) || instruction.tombstone ||
       instruction.constructorTarget ||
       instruction.constructorKind != ConstructorKind::Ordinary ||
@@ -609,7 +619,8 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
       instruction.rawMemoryAccess || instruction.objectLayoutType ||
       (!allocation && instruction.intrinsic != IntrinsicKind::None) ||
       objectType.kind != SemanticType::Class ||
-      (construct && (!instruction.result || instruction.destination ||
+      (construct && (!instruction.result ||
+                     (instruction.destination && !hidden) ||
                      instruction.constructorInitializer != 0 || constructor)) ||
       (base && instruction.result))
     throw std::invalid_argument("LLVM generated-empty initialization requires "
