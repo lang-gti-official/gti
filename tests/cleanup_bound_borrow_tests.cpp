@@ -484,5 +484,66 @@ public:
 int main() { Resource owner{}; Bad guard{owner}; return 0; }
 )gti",
            "GTI-S2000");
+  // A method of a by-reference capture's referent or of an accessor's result
+  // produces a cleanup-bound carrier exactly as a reference formal's does.
+  const std::string station = R"gti(
+class Station {
+  Resource resource;
+public:
+  Station() {}
+  Guard watch() { return Guard(this.resource); }
+};
+class Depot {
+  mut Station station;
+public:
+  Depot() {}
+  mut Station& get() mut { return this.station; }
+};
+)gti";
+  {
+    const auto captured = analyze(station + R"gti(
+int main() {
+  Station station{};
+  auto observe = [&station]() -> int {
+    auto guard = station.watch();
+    return 1;
+  };
+  return observe() + observe() - 2;
+}
+)gti");
+    if (!captured.canGenerateCode())
+      show(captured);
+    expect(captured.canGenerateCode() &&
+               lang::verifyMirProgram(captured.mir).valid(),
+           "cleanup-bound carrier from a by-reference capture's referent");
+    // The carrier's loan is a child of the capture's entry loan and borrows
+    // the dereferenced capture, not the capture slot itself.
+    bool exact = false;
+    for (const auto &lambda : captured.mir.lambdaInstances())
+      for (const auto &loan : lambda.body.loans) {
+        const auto *parent = lambda.body.findLoan(loan.parent);
+        const auto *source = lambda.body.findPlace(loan.source);
+        const auto *slot =
+            parent != nullptr ? lambda.body.findPlace(parent->source) : nullptr;
+        exact = exact ||
+                (loan.kind == lang::MirLoanKind::Stored && loan.lifecycleBound &&
+                 parent != nullptr && parent->entry &&
+                 parent->kind == lang::MirLoanKind::Parameter && source &&
+                 slot && source->root == lang::MirPlaceRootKind::Symbol &&
+                 source->capture != 0 && source->capture == slot->capture &&
+                 !source->projections.empty() &&
+                 source->projections.front().kind ==
+                     lang::MirProjectionKind::Dereference);
+      }
+    expect(exact, "captured carrier keeps the capture entry loan as parent");
+  }
+  positive("cleanup-bound carrier from an accessor receiver of a mutable formal",
+           station + R"gti(
+int run(mut Depot& depot) {
+  auto guard = depot.get().watch();
+  return 0;
+}
+int main() { mut Depot depot{}; return run(depot); }
+)gti");
   return failures == 0 ? 0 : 1;
 }

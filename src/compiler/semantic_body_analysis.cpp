@@ -2303,6 +2303,12 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
         std::move(enclosingPayloadInputs);
     if (field != nullptr && initializer.arguments.size() == 1 &&
         (fieldType.kind == SemanticType::StringView ||
+         fieldType.kind == SemanticType::CString))
+      noteLocalTextEscape(initializer.arguments.front(),
+                          LocalTextEscapeKind::Storage,
+                          "stored in a constructor field");
+    if (field != nullptr && initializer.arguments.size() == 1 &&
+        (fieldType.kind == SemanticType::StringView ||
          fieldType.kind == SemanticType::CString) &&
         isOwnerDependentTextExpression(initializer.arguments.front()) &&
         std::none_of(ownerlessInputs.begin(), ownerlessInputs.end(),
@@ -6372,6 +6378,18 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
         target->completeBorrowSet = complete;
     }
   }
+  // A local view holds what its initializer's text came from: a capture's
+  // text, whose owner has no name, or another local view's (L-OWN-02).
+  if ((declaredType.kind == SemanticType::StringView ||
+       declaredType.kind == SemanticType::CString) &&
+      initializer) {
+    if (globalStorage)
+      noteLocalTextEscape(initializer, LocalTextEscapeKind::Storage,
+                          "given static storage duration");
+    else if (const Symbol *declared = resolve(stmt.name()))
+      if (const auto view = localTextView(*declared))
+        noteLocalTextFlow(initializer, *view);
+  }
   if (initializer && declaredType.kind == SemanticType::Reference &&
       exprAs<DirectInitializer>(initializer.get()) == nullptr) {
     validateReferenceBinding(declaredType, initializerType, initializer);
@@ -6644,6 +6662,15 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     valueType = simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                                  : analyze(expr.value());
   }
+  // A local view may take a capture's text, whose owner has no name; it
+  // then holds that text for its whole scope and cannot escape (L-OWN-02).
+  if (const auto targetView =
+          simpleAssignment ? localTextView(symbol) : std::nullopt)
+    noteLocalTextFlow(expr.value(), *targetView);
+  else if (simpleAssignment && (targetType.kind == SemanticType::StringView ||
+                                targetType.kind == SemanticType::CString))
+    noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
+                        "assigned into an existing binding");
   if (simpleAssignment &&
       (targetType.kind == SemanticType::StringView ||
        targetType.kind == SemanticType::CString) &&
@@ -6897,6 +6924,10 @@ auto SemanticVisitor::Impl::analyzeCollectionInitializer(
         isOwnerDependentTextExpression(element)) {
       reportOwnerDependentTextStorage(element, "stored in a collection");
       valid = false;
+    } else if (elementType.kind == SemanticType::StringView ||
+               elementType.kind == SemanticType::CString) {
+      noteLocalTextEscape(element, LocalTextEscapeKind::Storage,
+                          "stored in a collection");
     }
   }
   if (valid) {
@@ -6971,6 +7002,10 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
          elementType.kind == SemanticType::CString) &&
         isOwnerDependentTextExpression(element)) {
       reportOwnerDependentTextStorage(element, "nested in a fixed array");
+    } else if (elementType.kind == SemanticType::StringView ||
+               elementType.kind == SemanticType::CString) {
+      noteLocalTextEscape(element, LocalTextEscapeKind::Storage,
+                          "nested in a fixed array");
     }
     if (!isOwnershipAssignable(elementType, valueType, element)) {
       const auto *info = semanticModel.findExpression(*element);
@@ -8832,6 +8867,10 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
       valid = false;
     }
     const auto &member = owner->members.at(name.lexeme);
+    if (types[index].kind == SemanticType::StringView ||
+        types[index].kind == SemanticType::CString)
+      noteLocalTextEscape(expr.arguments()[i], LocalTextEscapeKind::Storage,
+                          "stored in a field");
     if ((types[index].kind == SemanticType::StringView ||
          types[index].kind == SemanticType::CString) &&
         isOwnerDependentTextExpression(expr.arguments()[i])) {
@@ -9057,6 +9096,11 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
   }
   if (simpleAssignment && ownerType.kind != SemanticType::RawPointer &&
       (valueTarget.kind == SemanticType::StringView ||
+       valueTarget.kind == SemanticType::CString))
+    noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
+                        "assigned through a checked reference");
+  if (simpleAssignment && ownerType.kind != SemanticType::RawPointer &&
+      (valueTarget.kind == SemanticType::StringView ||
        valueTarget.kind == SemanticType::CString) &&
       isOwnerDependentTextExpression(expr.value()) &&
       !requireOwnerlessTextParameter(expr.value())) {
@@ -9135,6 +9179,10 @@ auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
   const SemanticType valueType =
       simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                        : analyze(expr.value());
+  if (simpleAssignment && (targetType.kind == SemanticType::StringView ||
+                           targetType.kind == SemanticType::CString))
+    noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
+                        "assigned through a checked reference");
   if (simpleAssignment &&
       (targetType.kind == SemanticType::StringView ||
        targetType.kind == SemanticType::CString) &&
@@ -9615,6 +9663,11 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
   const bool valueAssignable =
       !simpleAssignment ||
       isOwnershipAssignment(elementType, valueType, expr.value(), targetPlace);
+  if (simpleAssignment && objectType.kind != SemanticType::RawPointer &&
+      (elementType.kind == SemanticType::StringView ||
+       elementType.kind == SemanticType::CString))
+    noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
+                        "assigned through a checked index");
   if (simpleAssignment && objectType.kind != SemanticType::RawPointer &&
       (elementType.kind == SemanticType::StringView ||
        elementType.kind == SemanticType::CString) &&
@@ -10135,6 +10188,10 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   const BorrowOriginKind lambdaReturnOrigin = currentLambdaReturn->origin;
   const std::size_t lambdaReturnParameter = currentLambdaReturn->parameter;
   const AccessMode lambdaReturnAccess = currentLambdaReturn->access;
+  // A return of text a capture provided, directly or through a local view
+  // that is ever given it, leaves the result for local use (L-OWN-02).
+  const bool lambdaCapturedText =
+      finalizeCapturedText() || currentLambdaReturn->capturedText;
   currentLambdaReturn = enclosingLambdaReturn;
   if (returnType != SemanticType::Void && returnType != SemanticType::Unknown &&
       summarizeFlow(expr.body()).canFallThrough &&
@@ -10214,6 +10271,9 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       functionTypeArguments, classValueArguments, functionValueArguments);
   semanticModel.recordCaptureBorrowDependencies(expr,
                                                 std::move(captureDependencies));
+  const bool capturedTextResult =
+      lambdaCapturedText && (returnType.kind == SemanticType::StringView ||
+                             returnType.kind == SemanticType::CString);
   semanticModel.record(
       expr,
       LambdaInfo{.id = id,
@@ -10231,7 +10291,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                  .rawAccessFreeType =
                      rawAccessFree && !containsOpenTypeParameter(currentType)
                          ? currentType
-                         : SemanticType::Unknown});
+                         : SemanticType::Unknown,
+                 .capturedTextResult = capturedTextResult});
 }
 
 auto SemanticVisitor::Impl::layoutScalarKind(const SemanticType &type)
@@ -11339,6 +11400,10 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
   const SemanticType valueType =
       simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                        : analyze(expr.value());
+  if (simpleAssignment && (targetType.kind == SemanticType::StringView ||
+                           targetType.kind == SemanticType::CString))
+    noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
+                        "stored in a field");
   if (simpleAssignment &&
       (targetType.kind == SemanticType::StringView ||
        targetType.kind == SemanticType::CString) &&

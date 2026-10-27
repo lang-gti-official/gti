@@ -151,12 +151,12 @@ auto SemanticVisitor::Impl::requiresActiveCleanup(
     const SemanticType &type, ActiveCleanupQuery &query) const -> bool {
   if (type.kind == SemanticType::Class) {
     const ClassInfo *owner = classInfo(type);
-    if (owner != nullptr && owner->compilerCapability ==
-                                CompilerCapabilityTypeKind::SharedOwner) {
+    if (owner != nullptr &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
       return true;
     }
-    if (owner != nullptr && owner->compilerCapability ==
-                                CompilerCapabilityTypeKind::MutexStorage) {
+    if (owner != nullptr &&
+        owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
       return !query.excludeNativeRetirement ||
              (type.arguments.size() == 1 &&
               requiresActiveCleanup(type.arguments.front(), query));
@@ -790,10 +790,10 @@ auto SemanticVisitor::Impl::typeTraits(
                               .containsBorrowedState = false,
                               .transferCapable = element.transferCapable,
                               .shareCapable = element.transferCapable,
-                              .relocation =
-                                  element.relocation != RelocationKind::Unavailable
-                                      ? RelocationKind::Structural
-                                      : RelocationKind::Unavailable};
+                              .relocation = element.relocation !=
+                                                    RelocationKind::Unavailable
+                                                ? RelocationKind::Structural
+                                                : RelocationKind::Unavailable};
   }
   if (owner.compilerCapability == CompilerCapabilityTypeKind::OptionalStorage) {
     const bool relocatable =
@@ -3203,6 +3203,164 @@ auto SemanticVisitor::Impl::isOwnerDependentTextExpression(
          info->traits.containsBorrowedState;
 }
 
+auto SemanticVisitor::Impl::localTextView(const Symbol &symbol) const
+    -> std::optional<SymbolId> {
+  if ((symbol.bindingKind != SemanticBindingKind::LocalVariable &&
+       symbol.bindingKind != SemanticBindingKind::Parameter) ||
+      (symbol.type.kind != SemanticType::StringView &&
+       symbol.type.kind != SemanticType::CString))
+    return std::nullopt;
+  // Thread-local storage outlives the body that names it.
+  const SymbolId identity = symbolForDeclaration(symbol.declaration);
+  if (identity == 0 ||
+      requestSession.threadLocalDeclarations.contains(identity))
+    return std::nullopt;
+  return identity;
+}
+
+auto SemanticVisitor::Impl::capturedTextSymbol(const Symbol &symbol) const
+    -> bool {
+  // A copy or move capture of text holds what its closure copied, whose
+  // owner the lambda body cannot name. A borrowing capture is a reference,
+  // whose referent rules apply instead.
+  if (symbol.lambdaCapture)
+    return symbol.type.kind == SemanticType::StringView ||
+           symbol.type.kind == SemanticType::CString;
+  const auto local = localTextView(symbol);
+  return local && loanFlow.capturedTextLocals.contains(*local);
+}
+
+auto SemanticVisitor::Impl::textValueSources(const Expr *expression) const
+    -> TextValueSources {
+  TextValueSources sources;
+  while (const auto *group = exprAs<Grouping>(expression))
+    expression = group->expression().get();
+  if (expression == nullptr)
+    return sources;
+  if (const auto *binary = exprAs<Binary>(expression);
+      binary != nullptr && binary->oper().kind == TokenKind::COMMA)
+    return textValueSources(binary->right().get());
+  if (const auto *conditional = exprAs<ConditionalExpr>(expression)) {
+    for (const ExprPtr *arm :
+         {&conditional->thenExpression(), &conditional->elseExpression()}) {
+      auto part = textValueSources(arm->get());
+      sources.captured = sources.captured || part.captured;
+      sources.locals.insert(sources.locals.end(), part.locals.begin(),
+                            part.locals.end());
+    }
+    return sources;
+  }
+  if (const auto *variable = exprAs<Variable>(expression)) {
+    if (const Symbol *symbol = resolve(variable->name())) {
+      if (capturedTextSymbol(*symbol)) {
+        sources.captured = true;
+      } else if (const auto local = localTextView(*symbol)) {
+        sources.locals.push_back(*local);
+      }
+    }
+  } else if (const auto *call = exprAs<Call>(expression)) {
+    // Moving a view yields that view; a call that relays one argument's or
+    // its receiver's text yields that text.
+    if (call->arguments().size() == 1 &&
+        resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+      return textValueSources(call->arguments().front().get());
+    if (const auto *lambdaCall = semanticModel.findLambdaCall(*call))
+      if (const LambdaInfo *lambda =
+              semanticModel.findLambda(lambdaCall->lambda);
+          lambda != nullptr && lambda->capturedTextResult) {
+        sources.captured = true;
+        return sources;
+      }
+    if (const ResolvedCallInfo *resolved = semanticModel.findCall(*call)) {
+      if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+          resolved->borrowFields.empty() &&
+          resolved->borrowArgument < resolvedCallArgumentCount(*call, resolved))
+        if (const ExprPtr *argument =
+                resolvedCallArgument(*call, resolved, resolved->borrowArgument))
+          return textValueSources(argument->get());
+      if (resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+          resolved->borrowFields.empty())
+        if (const auto *member = exprAs<Get>(call->callee().get()))
+          return textValueSources(member->object().get());
+    }
+  }
+  return sources;
+}
+
+auto SemanticVisitor::Impl::noteLocalTextEscape(const ExprPtr &value,
+                                                LocalTextEscapeKind kind,
+                                                std::string destination)
+    -> void {
+  // Owner-dependent text was reported or relayed at the site itself.
+  if (!value || isOwnerDependentTextExpression(value))
+    return;
+  // Text a capture provided escapes here (`local` 0); a local view escapes
+  // if it is ever given such text, which only the complete body decides.
+  const auto sources = textValueSources(value.get());
+  if (sources.captured)
+    loanFlow.localTextEscapes.push_back(
+        {.value = value.get(), .kind = kind, .destination = destination});
+  for (const auto local : sources.locals)
+    loanFlow.localTextEscapes.push_back({.local = local,
+                                         .value = value.get(),
+                                         .kind = kind,
+                                         .destination = destination});
+}
+
+auto SemanticVisitor::Impl::noteLocalTextFlow(const ExprPtr &value,
+                                              SymbolId target) -> void {
+  if (!value || target == 0)
+    return;
+  const auto sources = textValueSources(value.get());
+  if (sources.captured)
+    loanFlow.capturedTextLocals.insert(target);
+  for (const auto local : sources.locals)
+    loanFlow.localTextFlows.emplace_back(local, target);
+}
+
+auto SemanticVisitor::Impl::finalizeCapturedText() -> bool {
+  auto &state = loanFlow;
+  // A local view given a capture's text anywhere holds it everywhere, and
+  // so does each local view it is copied into.
+  for (bool grew = !state.capturedTextLocals.empty(); grew;) {
+    grew = false;
+    for (const auto &[from, to] : state.localTextFlows)
+      if (state.capturedTextLocals.contains(from) &&
+          state.capturedTextLocals.insert(to).second)
+        grew = true;
+  }
+  bool lambdaReturn = false;
+  std::set<std::pair<const Expr *, LocalTextEscapeKind>> reported;
+  for (const auto &escape : state.localTextEscapes) {
+    if ((escape.local != 0 &&
+         !state.capturedTextLocals.contains(escape.local)) ||
+        !reported.emplace(escape.value, escape.kind).second)
+      continue;
+    switch (escape.kind) {
+    case LocalTextEscapeKind::Storage:
+      reportOwnerDependentTextStorage(*escape.value, escape.destination);
+      break;
+    case LocalTextEscapeKind::Return:
+      reportCapturedTextReturn(*escape.value);
+      break;
+    case LocalTextEscapeKind::LambdaReturn:
+      lambdaReturn = true;
+      break;
+    case LocalTextEscapeKind::Argument:
+      for (auto &use : requestSession.ownerlessTextCallUses)
+        if (use.argument != nullptr && use.argument->get() == escape.value) {
+          use.ownerless = false;
+          use.capturedText = true;
+        }
+      break;
+    }
+  }
+  state.capturedTextLocals.clear();
+  state.localTextFlows.clear();
+  state.localTextEscapes.clear();
+  return lambdaReturn;
+}
+
 auto SemanticVisitor::Impl::ownerlessTextForwardingParameter(
     const ExprPtr &expression) const -> std::optional<std::size_t> {
   const auto *function = currentFunctionInfo();
@@ -3466,6 +3624,19 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
     // An open formal relays or requires here, so that callers of this generic
     // function see the composition; its text instances decide publication.
     const bool conditionalText = kind == SemanticType::TypeParameter;
+    if ((kind == SemanticType::StringView || kind == SemanticType::CString) &&
+        argument != nullptr &&
+        (provisional || std::any_of(callee.publishedTextFields.begin(),
+                                    callee.publishedTextFields.end(),
+                                    [&](const PublishedTextField &entry) {
+                                      return entry.parameter == parameter;
+                                    })))
+      noteLocalTextEscape(*argument, LocalTextEscapeKind::Storage,
+                          provisional
+                              ? "passed to a recursive call whose result may "
+                                "hold it"
+                              : "passed to a function that returns it in a "
+                                "field");
     if ((kind != SemanticType::StringView && kind != SemanticType::CString &&
          !conditionalText) ||
         argument == nullptr ||
@@ -3546,6 +3717,9 @@ auto SemanticVisitor::Impl::recordOwnerlessTextCall(
                       (info->type.kind == SemanticType::StringView ||
                        info->type.kind == SemanticType::CString) &&
                       !info->traits.containsBorrowedState});
+    // A local view passed here may yet be given a capture's text, which the
+    // callee's ownerless requirement would then reject.
+    noteLocalTextEscape(argument, LocalTextEscapeKind::Argument);
   }
 }
 
@@ -3619,7 +3793,8 @@ auto SemanticVisitor::Impl::finalizeOwnerlessTextContracts() -> void {
     if (use.argument) {
       const std::size_t before = diagnostics.size();
       reportOwnerDependentTextStorage(
-          *use.argument, "passed to a function requiring ownerless text input");
+          *use.argument, "passed to a function requiring ownerless text input",
+          use.capturedText);
       // Name the formal whose body stores or forwards the view, so the
       // obligation can be traced to its source.
       const auto *callee = semanticModel.findFunction(use.callee);
@@ -3647,9 +3822,16 @@ auto SemanticVisitor::Impl::finalizeOwnerlessTextContracts() -> void {
 }
 
 auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
-    const ExprPtr &expression, std::string_view destination) -> void {
-  const ExpressionInfo *info =
-      expression ? semanticModel.findExpression(*expression) : nullptr;
+    const ExprPtr &expression, std::string_view destination, bool capturedText)
+    -> void {
+  if (expression)
+    reportOwnerDependentTextStorage(*expression, destination, capturedText);
+}
+
+auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
+    const Expr &expression, std::string_view destination, bool capturedText)
+    -> void {
+  const ExpressionInfo *info = semanticModel.findExpression(expression);
   const bool cString =
       info != nullptr && info->type.kind == SemanticType::CString;
   Diagnostic diagnostic = makeDiagnostic(
@@ -3658,15 +3840,55 @@ auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
           std::string(" cannot be ") + std::string(destination) +
           (cString ? " in the single-owner text-borrow model."
                    : " in the single-owner view model."));
-  diagnostic.hints.emplace_back(cString
-                                    ? "Initialize a new local C-string binding "
-                                      "in a narrow lexical scope; stored and "
-                                      "reassignable dependency graphs are not "
-                                      "supported yet."
-                                    : "Initialize a new local view binding in "
-                                      "a narrow lexical scope; stored and "
-                                      "reassignable dependency graphs are not "
-                                      "supported yet.");
+  if (capturedText || capturedTextValue(expression))
+    diagnostic.hints.emplace_back(capturedTextHint(cString));
+  else
+    diagnostic.hints.emplace_back(
+        cString ? "Initialize a new local C-string binding "
+                  "in a narrow lexical scope; stored and "
+                  "reassignable dependency graphs are not "
+                  "supported yet."
+                : "Initialize a new local view binding in "
+                  "a narrow lexical scope; stored and "
+                  "reassignable dependency graphs are not "
+                  "supported yet.");
+  diagnostics.emplace_back(std::move(diagnostic));
+}
+
+auto SemanticVisitor::Impl::capturedTextValue(const Expr &expression) const
+    -> bool {
+  // An escape decided once its body was complete, or one checked now.
+  return std::any_of(
+             loanFlow.localTextEscapes.begin(), loanFlow.localTextEscapes.end(),
+             [&](const LocalTextEscape &escape) {
+               return escape.value == &expression &&
+                      (escape.local == 0 ||
+                       loanFlow.capturedTextLocals.contains(escape.local));
+             }) ||
+         textValueSources(&expression).captured;
+}
+
+auto SemanticVisitor::Impl::capturedTextHint(bool cString) -> std::string {
+  return cString ? "A lambda's C string over its captured text has an owner "
+                   "the compiler cannot name: use it in a local binding or "
+                   "expression, and return or store only an ownerless C "
+                   "string."
+                 : "A lambda's view over its captured text has an owner the "
+                   "compiler cannot name: use it in a local binding or "
+                   "expression, and return or store only an ownerless view.";
+}
+
+auto SemanticVisitor::Impl::reportCapturedTextReturn(const Expr &value)
+    -> void {
+  const ExpressionInfo *info = semanticModel.findExpression(value);
+  const bool cString =
+      info != nullptr && info->type.kind == SemanticType::CString;
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2045", DiagnosticPhase::Semantics, expressionToken(value),
+      std::string(cString ? "An owner-dependent c_string"
+                          : "A dynamic std::string_view") +
+          " cannot escape without one exact owner dependency.");
+  diagnostic.hints.emplace_back(capturedTextHint(cString));
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
@@ -12147,6 +12369,7 @@ auto SemanticVisitor::Impl::recordProvenLoanEndpoint(
 }
 
 auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
+  (void)finalizeCapturedText();
   recordProgramScopeBorrowCleanup();
   loanFlow.finalized = true;
   if (loanFlow.deferredGenericFlow) {
@@ -13986,6 +14209,8 @@ auto SemanticVisitor::Impl::analyzeRestoringIntrinsicCall(
       currentType = SemanticType::Unknown;
       return;
     }
+    noteLocalTextEscape(argument, LocalTextEscapeKind::Storage,
+                        "exchanged through a mutable reference");
   }
   for (std::size_t index = 0; index < (swap ? 2u : 1u); ++index) {
     const ExpressionInfo *place =
@@ -14314,6 +14539,10 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
           if (isOwnerDependentTextExpression(expr.arguments()[index])) {
             reportOwnerDependentTextStorage(expr.arguments()[index],
                                             "nested in raw storage");
+          } else {
+            noteLocalTextEscape(expr.arguments()[index],
+                                LocalTextEscapeKind::Storage,
+                                "nested in raw storage");
           }
         }
       }
@@ -15687,6 +15916,10 @@ auto SemanticVisitor::Impl::analyzeOptionalStorageIntrinsicCall(
         isOwnerDependentTextExpression(expr.arguments()[1])) {
       reportOwnerDependentTextStorage(expr.arguments()[1],
                                       "nested in optional storage");
+    } else if (elementType.kind == SemanticType::StringView ||
+               elementType.kind == SemanticType::CString) {
+      noteLocalTextEscape(expr.arguments()[1], LocalTextEscapeKind::Storage,
+                          "nested in optional storage");
     }
     if (elementType != SemanticType::Unknown &&
         elementType.kind != SemanticType::TypeParameter &&

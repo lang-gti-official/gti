@@ -88,6 +88,14 @@ llvm::Function *declareRuntimeService(Session &session,
     parameters = {ptr, ptr};
     neverReturns = true;
     break;
+  case RuntimeService::ContractTerminate:
+    // The generated C++ representation ends these with std::terminate; the
+    // runtime entry reaches the same host terminate handler.
+    name = "gti_rt_contract_terminate_v1";
+    neverReturns = true;
+    noUnwind = true;
+    cold = true;
+    break;
   case RuntimeService::ValidateFailure:
     name = "gti_rt_failure_validate_v2";
     parameters = {ptr, ptr};

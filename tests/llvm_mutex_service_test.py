@@ -97,7 +97,12 @@ def main():
         records.append({"name": name, "argv": [str(value) for value in argv],
                         "exit": result.returncode, "seconds": time.monotonic() - start})
         (evidence / "results.json").write_text(json.dumps(records, indent=2) + "\n")
-        valid = result.returncode in (-signal.SIGILL, -signal.SIGTRAP) if death else result.returncode == expected
+        # A malformed private token or retired storage ends through
+        # std::terminate, as the generated C++ representation does, which
+        # aborts without a host handler. A pinned unload remains a trap.
+        valid = (result.returncode == -signal.SIGABRT if death == "terminate"
+                 else result.returncode in (-signal.SIGILL, -signal.SIGTRAP) if death
+                 else result.returncode == expected)
         if not valid:
             detail = (result.stdout + result.stderr)[-8192:]
             raise AssertionError(f"{name}: see {evidence / (name + '.log')}\n{detail}")
@@ -286,7 +291,8 @@ def main():
         run(f"array-source-bounds-{mode}", [array_program],
             expected=70, failure_mode="array-bounds")
         for fault in ("active-lock", "wrong-owner", "inactive-read", "retired-lock", "quarantined-unload"):
-            run(f"{fault}-{mode}", [program, fault], death=True)
+            run(f"{fault}-{mode}", [program, fault],
+                death=True if fault == "quarantined-unload" else "terminate")
 
         if args.public_gti:
             for family, fixture, observer, runtime, failure, faults in (

@@ -1318,7 +1318,7 @@ void checkStorageImports(Session &session,
   std::map<SymbolId, llvm::GlobalVariable *> conflicting;
   rejects<std::logic_error>(
       [&] { declareNativeCStorage(collision, conflicting); });
-  unsigned loads = 0, assigns = 0, modifies = 0;
+  unsigned loads = 0, assigns = 0, modifies = 0, copiedArguments = 0;
   for (const auto &function : program.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &stage : block.instructions) {
@@ -1350,7 +1350,36 @@ void checkStorageImports(Session &session,
         require(
             accessContract(program, target, function.body, stage),
             "actual foreign storage stage must retain exact structural proof");
-        if (loads == 0 && assigns == 0) {
+        if (stage.kind == MirInstructionKind::CallInput) {
+          // A copied argument reads C storage as a load into the call's
+          // prepared temporary. No other input role or transfer does.
+          const auto rejected = [&](auto change, const char *message) {
+            auto body = function.body;
+            for (auto &block : body.blocks)
+              for (auto &candidate : block.instructions)
+                if (candidate.id == stage.id) {
+                  change(candidate);
+                  require(!accessContract(program, target, body, candidate),
+                          message);
+                }
+          };
+          rejected(
+              [](auto &value) {
+                value.callInputRole = MirCallInputRole::Receiver;
+              },
+              "a receiver input cannot copy C storage as an argument");
+          rejected(
+              [](auto &value) {
+                value.callInputKind = HirCallInputKind::MoveValue;
+              },
+              "C storage cannot be moved into an argument");
+          rejected(
+              [](auto &value) {
+                value.operands.front().kind = MirOperandKind::Move;
+              },
+              "a moved operand cannot read C storage as a copy");
+        }
+        if (loads == 0 && assigns == 0 && copiedArguments == 0) {
           const auto malformed = [&](auto change) {
             auto body = function.body;
             MirInstruction *selected = nullptr;
@@ -1473,6 +1502,7 @@ void checkStorageImports(Session &session,
         loads += stage.kind == MirInstructionKind::Load;
         assigns += stage.kind == MirInstructionKind::Assign;
         modifies += stage.kind == MirInstructionKind::Modify;
+        copiedArguments += stage.kind == MirInstructionKind::CallInput;
       }
   const auto admission = planLlvmAdmission(input, session.options());
   for (const auto &use : admission.requirements())
@@ -1484,7 +1514,7 @@ void checkStorageImports(Session &session,
   require(loads && assigns,
           "storage fixture needs actual verified loads and assignments");
   std::cout << "storage counts " << loads << '/' << assigns << '/' << modifies
-            << '\n';
+            << '/' << copiedArguments << '\n';
 }
 
 int main(int argc, char **argv) {

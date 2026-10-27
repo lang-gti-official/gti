@@ -5584,6 +5584,47 @@ private:
     }
   }
 
+  // The entry loan through which a lambda body holds one capture: the borrow
+  // a by-reference capture makes of its referent, or the retained authority
+  // of a by-value borrowed-state carrier. A capture is the lambda body's
+  // formal, so its places resolve through this loan as a binding's do through
+  // its binding loan.
+  [[nodiscard]] MirLoanId captureEntryLoan(SymbolId symbol) const {
+    for (const MirLoanKind kind : {MirLoanKind::Parameter, MirLoanKind::Stored})
+      for (const MirLoan &loan : output.loans) {
+        const MirPlace *origin = output.findPlace(loan.source);
+        if (loan.entry && loan.kind == kind && origin &&
+            origin->root == MirPlaceRootKind::Symbol && origin->capture != 0 &&
+            origin->symbol == symbol)
+          return loan.id;
+      }
+    return 0;
+  }
+
+  // The exact place of a value read through a by-reference capture whose
+  // entry loan names `slot`: the capture slot dereferenced.
+  [[nodiscard]] MirPlaceId captureReferentPlace(HirValueId id,
+                                                MirPlaceId slotId) {
+    const MirPlace *slot = output.findPlace(slotId);
+    const MirLoan *entry = output.findLoan(loanForValue(id));
+    if (slot == nullptr || entry == nullptr || entry->source != slotId ||
+        !entry->entry || entry->kind != MirLoanKind::Parameter ||
+        slot->root != MirPlaceRootKind::Symbol || slot->capture == 0 ||
+        !slot->projections.empty() ||
+        slot->type.kind != SemanticType::Reference)
+      return 0;
+    const MirPlaceId placeId = placeForValue(id);
+    const MirPlace *place = output.findPlace(placeId);
+    return place != nullptr && place->root == MirPlaceRootKind::Symbol &&
+                   place->symbol == slot->symbol &&
+                   place->capture == slot->capture &&
+                   !place->projections.empty() &&
+                   place->projections.front().kind ==
+                       MirProjectionKind::Dereference
+               ? placeId
+               : 0;
+  }
+
   [[nodiscard]] MirLoanId loanForValue(HirValueId id) const {
     if (const auto direct = valueLoans.find(id); direct != valueLoans.end()) {
       return direct->second;
@@ -5599,20 +5640,8 @@ private:
         const auto loan = bindingLoans.find(local->second);
         return loan == bindingLoans.end() ? 0 : loan->second;
       }
-      for (const MirLoan &loan : output.loans) {
-        const MirPlace *origin = output.findPlace(loan.source);
-        if (loan.entry && loan.kind == MirLoanKind::Parameter && origin &&
-            origin->root == MirPlaceRootKind::Symbol && origin->capture != 0 &&
-            origin->symbol == value->symbol)
-          return loan.id;
-      }
-      for (const MirLoan &loan : output.loans) {
-        const auto *origin = output.findPlace(loan.source);
-        if (loan.entry && loan.kind == MirLoanKind::Stored && origin &&
-            origin->root == MirPlaceRootKind::Symbol && origin->capture != 0 &&
-            origin->symbol == value->symbol)
-          return loan.id;
-      }
+      if (const MirLoanId captured = captureEntryLoan(value->symbol))
+        return captured;
       return 0;
     }
     if ((value->kind == HirValueKind::Grouping ||
@@ -6848,6 +6877,11 @@ private:
       if (const std::optional<HirValueId> receiver = receiverValue(value)) {
         if (const MirPlaceId source = borrowedSourcePlace(*receiver);
             source != 0) {
+          // A by-reference capture's entry loan names the capture slot. A
+          // receiver reached through it is the referent place itself, as a
+          // reference formal's dereferenced receiver is.
+          if (const MirPlaceId referent = captureReferentPlace(*receiver, source))
+            return referent;
           return canonicalBorrowSource(source);
         }
         if (call.receiver->place != 0) {
@@ -7784,6 +7818,8 @@ private:
           return found->second;
         }
       }
+      if (place->root == MirPlaceRootKind::Symbol && place->capture != 0)
+        return captureEntryLoan(place->symbol);
       if (place->root == MirPlaceRootKind::Value) {
         const MirValue *resolved = output.findValue(place->value);
         return resolved == nullptr ? MirLoanId{0}
@@ -7989,10 +8025,15 @@ private:
               value.borrowArgument < value.parameterTypes.size() &&
               value.parameterTypes[value.borrowArgument].kind !=
                   SemanticType::Reference) ||
+             // A read-only formal's entry loan parents only a read-only
+             // carrier. An exclusive borrow taken through shared access
+             // (synchronized storage) is a root loan, as it is when the
+             // formal has no entry loan at all.
              (output.loans[originLoan - 1].kind == MirLoanKind::Parameter &&
               isLifecycleBoundBorrowCarrier(value.info.type) &&
               value.borrowArguments.empty() &&
-              value.borrowFields.size() <= 1) ||
+              value.borrowFields.size() <= 1 &&
+              value.borrowAccess == AccessMode::ReadOnly) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::CallResult &&
               value.borrowAccess == AccessMode::ReadOnly));
         if ((derivedCallResult || derivedOriginCarrier) &&
@@ -8958,6 +8999,8 @@ private:
         const auto found = bindingLoans.find(place->binding);
         return found == bindingLoans.end() ? MirLoanId{0} : found->second;
       }
+      if (place->root == MirPlaceRootKind::Symbol && place->capture != 0)
+        return captureEntryLoan(place->symbol);
       if (place->root == MirPlaceRootKind::Value) {
         const MirValue *resolved = output.findValue(place->value);
         return resolved == nullptr ? MirLoanId{0}
@@ -13561,12 +13604,29 @@ private:
               retainableCallResultChain(retained.parent, accessorAncestor,
                                         arguments[initializer->borrowArgument],
                                         desired->access);
+          // A carrier returned by a method of an accessor's referent, such
+          // as `owner->lock()`, borrows that referent through the accessor
+          // result, exactly as a constructor argument does.
+          const auto accessorReceiver =
+              initializer != nullptr ? receiverValue(*initializer)
+                                     : std::nullopt;
+          const bool exactAccessorReceiverParent =
+              retained.kind == MirLoanKind::Stored && accessorReceiver &&
+              initializer->functionTarget &&
+              initializer->intrinsic == IntrinsicKind::None &&
+              initializer->borrowOrigin == BorrowOriginKind::Receiver &&
+              initializer->borrowFields.empty() &&
+              retained.parent == loanForValue(*accessorReceiver) &&
+              retainableCallResultChain(retained.parent, accessorAncestor,
+                                        *accessorReceiver, desired->access);
           // A stored reference may retain the exact accessor result passed
-          // to its constructor. Semantics records the stable owner; MIR also
-          // keeps the transient address-producing chain alive, child-first,
-          // for as long as the constructed adapter retains it.
+          // to its constructor or used as its producing receiver. Semantics
+          // records the stable owner; MIR also keeps the transient
+          // address-producing chain alive, child-first, for as long as the
+          // carrier retains it.
           if (retained.parent != expectedParent &&
-              !exactRuntimeTransferParent && !exactAccessorParent) {
+              !exactRuntimeTransferParent && !exactAccessorParent &&
+              !exactAccessorReceiverParent) {
             valid = false;
           }
           recordLoanIdentity(retainedLoan, *desired, *statement.binding);

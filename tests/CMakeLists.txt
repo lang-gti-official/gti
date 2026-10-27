@@ -4057,6 +4057,13 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(issues_212_214_regressions PROPERTIES TIMEOUT 300)
   add_test(
+    NAME borrowed_receiver_carriers_regressions
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrowed_receiver_carriers_regression_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures")
+  set_tests_properties(borrowed_receiver_carriers_regressions PROPERTIES TIMEOUT 600)
+  add_test(
     NAME issue_144_class_array_field_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/issue_144_class_array_field_runtime_test.py"

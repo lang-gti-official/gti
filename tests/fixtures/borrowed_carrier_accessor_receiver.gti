@@ -1,0 +1,82 @@
+#include <std/memory>
+#include <std/mutex>
+
+// Cleanup-bound carriers produced by a method of an accessor's result, and
+// synchronized guards taken through shared or mutable formals.
+class cell {
+  int32_t value;
+public:
+  cell(int32_t value) : value(value) {}
+  int32_t read() { return this.value; }
+};
+
+class view {
+  cell& target;
+public:
+  view(cell& target) : target(target) {}
+  int32_t read() { return this.target.read(); }
+  ~view() { std::println("view released"); }
+};
+
+class source {
+  cell item;
+public:
+  source(int32_t value) : item(cell(value)) {}
+  view open() { return view(this.item); }
+};
+
+class holder {
+  mut source inner;
+public:
+  holder(int32_t value) : inner(source(value)) {}
+  mut source& get() mut { return this.inner; }
+};
+
+int32_t peek(mut holder& h) {
+  auto opened = h.get().open();
+  return opened.read();
+}
+
+class bank {
+  mut std::unique_ptr<std::mutex<int32_t>> vault;
+public:
+  bank(int32_t start) : vault(std::make_unique<std::mutex<int32_t>>(start)) {}
+  int32_t deposit(int32_t amount) mut {
+    mut auto guard = this.vault->lock();
+    guard.get() += amount;
+    return guard.get();
+  }
+};
+
+int32_t drain(mut std::unique_ptr<std::mutex<int32_t>>& vault) {
+  mut auto guard = vault->lock();
+  int32_t value = guard.get();
+  guard.get() = 0;
+  return value;
+}
+
+std::mutex<int32_t>& touch(std::mutex<int32_t>& shared) {
+  {
+    auto guard = shared.lock();
+    if (guard.get() != 9) { std::println("unexpected"); }
+  }
+  return shared;
+}
+
+int main() {
+  mut holder h = holder(5);
+  if (peek(h) != 5) { return 1; }
+  mut bank account = bank(10);
+  if (account.deposit(5) != 15) { return 2; }
+  mut auto vault = std::make_unique<std::mutex<int32_t>>(7);
+  if (drain(vault) != 7) { return 3; }
+  {
+    auto guard = vault->lock();
+    if (guard.get() != 0) { return 4; }
+  }
+  std::mutex<int32_t> shared{9};
+  auto guard = touch(shared).lock();
+  if (guard.get() != 9) { return 5; }
+  std::println("accessor carriers done");
+  return 0;
+}

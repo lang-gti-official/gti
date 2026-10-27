@@ -11857,11 +11857,13 @@ C++ compiled and LLVM refused, 205 now match at O0 and O2. The remainder are:
   O0 and O2; the remaining four (066, `scoped_parallel_threads`,
   `transfer_function_threads`, `panic_runtime`) are refused only at erased
   `std::transfer_function`/`std::function` storage and match with that use
-  removed. Known non-semantic divergences: the C++-only nothrow-`operator new`
-  allocation oracle (`scoped_parallel_allocations`) does not observe native
-  task boxes, which use the process memory provider, and a wrong-thread
-  confined-callback binding calls `abort` where C++ calls `std::terminate`,
-  observable only through an installed C++ terminate handler. Remaining:
+  removed. Broken native or private runtime contracts (a foreign exception
+  at a callback boundary, a wrong-thread confined-callback binding, malformed
+  thread or mutex state) end through `std::terminate` as in C++, so a host
+  terminate handler observes both backends alike. Known non-semantic
+  divergence: the C++-only nothrow-`operator new` allocation oracle
+  (`scoped_parallel_allocations`) does not observe native task boxes, which
+  use the process memory provider. Remaining:
   erased transfer callables (O-LLVM-10), Linux execution evidence,
   generated-code TSan, the terminal containment of a defined failure inside an
   unattached native callback invoked on a managed worker (it still calls the

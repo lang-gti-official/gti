@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <iterator>
 #include <limits>
 #include <string_view>
@@ -1062,6 +1063,10 @@ extern "C" [[noreturn]] void gti_rt_failure_terminate_cleanup_v2(
   claimTerminalWinner();
   (void)writeCleanupNative(failure, primary_artifact, secondary_artifact);
   completeTerminal();
+}
+
+extern "C" [[noreturn]] void gti_rt_contract_terminate_v1(void) {
+  std::terminate();
 }
 
 extern "C" [[noreturn]] void gti_rt_failure_abort_allocation_v2(

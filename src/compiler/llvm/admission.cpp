@@ -45,19 +45,24 @@ bool passiveArrayElement(const SemanticType &type) {
   // Pointer storage is passive regardless of its referent. Accessing that
   // referent still requires its own typed projection and unsafe witness. A C
   // string is such an inert native address; it is compared only by address.
+  // So is a C function pointer: calling one is admitted separately, against
+  // its C signature.
   return (isPassiveScalarValueType(type) && type.kind != SemanticType::Void) ||
-         (type.kind == SemanticType::RawPointer && type.arguments.size() == 1) ||
-         type.kind == SemanticType::CString;
+         (type.kind == SemanticType::RawPointer &&
+          type.arguments.size() == 1) ||
+         type.kind == SemanticType::CString ||
+         type.kind == SemanticType::NativeFunction;
 }
 
-// A one-dimensional fixed array of counted text views. Each element is a
+// A fixed array of counted text views, or of such arrays. Each element is a
 // bitwise view, but element equality and hashing compare text, so only
-// storage, transport, complete formation and checked element selection use
-// this; it is not a passive array.
+// storage, transport, formation and checked element selection use this; it
+// is not a passive array.
 bool textViewArray(const SemanticType &type) {
   return type.kind == SemanticType::Array && type.arguments.size() == 1 &&
          !type.arrayLengthParameterId &&
-         type.arguments.front().kind == SemanticType::StringView;
+         (type.arguments.front().kind == SemanticType::StringView ||
+          textViewArray(type.arguments.front()));
 }
 
 bool passiveAddress(const SemanticType &type) {
@@ -2257,6 +2262,19 @@ public:
   bool primitiveAddress(const SemanticType &type) const {
     return passiveAddress(type) || integralEnumAddress(type);
   }
+  // A raw pointer to a counted text view. Raw access moves the whole view
+  // bitwise, as it moves a primitive; the bytes it designates stay where they
+  // are, so no access reaches them.
+  bool textViewAddress(const SemanticType &type) const {
+    return type.kind == SemanticType::RawPointer &&
+           type.arguments.size() == 1 &&
+           type.arguments.front().kind == SemanticType::StringView;
+  }
+  // A raw pointer whose pointee raw access moves as one scalar value: a
+  // sealed integral enum, stored as its underlying integer, or a text view.
+  bool scalarAddress(const SemanticType &type) const {
+    return integralEnumAddress(type) || textViewAddress(type);
+  }
   bool scalarPointerArithmetic(const MirInstruction &stage) const {
     if (primitivePointerArithmetic(stage))
       return true;
@@ -2266,7 +2284,7 @@ public:
         stage.operation == MirOperation::PointerAdd &&
         stage.operands[1].type.kind == SemanticType::RawPointer;
     const auto &pointer = stage.operands[reversed ? 1 : 0].type;
-    if (!integralEnumAddress(pointer))
+    if (!scalarAddress(pointer))
       return false;
     return stage.operation == MirOperation::PointerDifference
                ? stage.operands[1].type == pointer
@@ -2282,7 +2300,7 @@ public:
       return true;
     const auto *value = body.findValue(place.value);
     return place.root == MirPlaceRootKind::Value && value &&
-           integralEnumAddress(value->info.type) &&
+           scalarAddress(value->info.type) &&
            place.type == value->info.type.arguments.front() &&
            place.projections.size() == 1 &&
            (place.projections.front().kind == MirProjectionKind::RawIndex ||
@@ -2322,7 +2340,7 @@ public:
       return true;
     return stage.operation == MirOperation::Index &&
            stage.operands.size() == 2 &&
-           integralEnumAddress(stage.operands[0].type) &&
+           scalarAddress(stage.operands[0].type) &&
            stage.info.type == stage.operands[0].type.arguments.front() &&
            constantIntegerDomain(stage.operands[1].type).has_value();
   }
@@ -2436,16 +2454,20 @@ public:
         stage.operands.begin(), stage.operands.end(),
         [&](const auto &operand) { return operand.type == element; });
   }
-  // Complete element-wise formation of a text view array from exact views.
+  // Formation of a text view array: element-wise from exact elements, views
+  // or nested view arrays, or `{}`, whose every view is empty, as a
+  // value-initialized C++ view is.
   bool textViewArrayAggregate(const MirInstruction &stage) const {
-    return stage.kind == MirInstructionKind::Compute &&
-           stage.operation == MirOperation::Aggregate &&
-           textViewArray(stage.info.type) &&
-           stage.operands.size() == stage.info.type.arrayLength &&
-           std::all_of(stage.operands.begin(), stage.operands.end(),
-                       [&](const auto &operand) {
-                         return operand.type == SemanticType::StringView;
-                       });
+    if (stage.kind != MirInstructionKind::Compute ||
+        stage.operation != MirOperation::Aggregate ||
+        !textViewArray(stage.info.type))
+      return false;
+    const auto &element = stage.info.type.arguments.front();
+    return (stage.operands.empty() ||
+            stage.operands.size() == stage.info.type.arrayLength) &&
+           std::all_of(
+               stage.operands.begin(), stage.operands.end(),
+               [&](const auto &operand) { return operand.type == element; });
   }
   std::optional<Shape> mutexShape(const SemanticType &type) const {
     if (program.executionProfile() != ExecutionProfile::Concurrent ||
@@ -4027,7 +4049,8 @@ public:
       const bool arrayAddress =
           type.kind == SemanticType::RawPointer && type.arguments.size() == 1 &&
           (passiveArrayElement(type.arguments.front()) ||
-           type.arguments.front().kind == SemanticType::StringView);
+           type.arguments.front().kind == SemanticType::StringView ||
+           textViewArray(type.arguments.front()));
       const bool reference =
           type.kind == SemanticType::Reference && passiveReference(type);
       const bool address = primitiveAddress(type) ||

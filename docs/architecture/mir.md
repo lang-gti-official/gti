@@ -2053,7 +2053,14 @@ completes them all; a summary that read an unfinished one stays provisional
 until then. A recursive text result is therefore ownerless exactly when its
 other returns are. A lambda invocation's result holds what the lambda's
 returns hold in its own body; a lambda has no relay contract, so a returned
-formal or capture there is unknown text.
+formal or capture there is unknown text. Semantics rejects every escape of a
+capture's text (`L-OWN-02`), so such a result reaches only local uses, which
+need no proof. An invocation through a GTI function
+pointer holds what one of its targets returns. A pointer value only comes
+from a forming site naming one stateless function or lambda, so the
+program's forming sites of the pointer's type are every target it can reach;
+a target's returned formal or field is unknown text there. This covers
+`std::function_ptr`, `std::function_ref` and any callable built on them.
 
 Text read through a reference that a source call returned is summarized the
 same way: the callee's Return loans name the referent, and its sources are
@@ -4198,6 +4205,20 @@ are not admitted by this field-containment proof.
 Without an explicit runtime place, only the exact parameter referent type is
 valid. Carrier membership or a same-typed unrelated alias cannot substitute
 for this executable address evidence.
+
+A lambda body holds each by-reference capture through a `Parameter` entry loan
+on the capture slot, the closure-body analog of a reference formal's entry
+loan. Call and construction lowering resolve a capture-rooted operand through
+that loan exactly as a binding-rooted operand resolves through its binding
+loan. A carrier made by a method of the capture's referent is therefore a child
+of the capture entry, and it borrows the dereferenced capture slot, the
+referent place a reference formal's receiver supplies, not the slot itself. A
+read-only formal entry parents only read-only carriers: an exclusive borrow
+taken through shared access to synchronized storage, such as a mutex guard, is
+a root loan, as it is when the formal has no entry loan. A carrier returned by
+a method of an accessor's result keeps that transient accessor chain alive,
+child-first, up to the semantic owner, exactly as an accessor result passed to
+a constructor does.
 
 A body-local reference may share an existing semantic owner identity while
 capturing an accessor's different runtime referent. Lowering accepts that

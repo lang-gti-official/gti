@@ -1,0 +1,28 @@
+#include <std/cthread>
+#include <std/thread>
+
+// Binding a thread-confined callback on a second thread breaks its contract.
+// Both backends end the process through std::terminate, so the host's
+// terminate handler, not a bare abort, reports it.
+using Transform = (int32_t) -> int32_t;
+extern "C" {
+  void contract_terminate_install();
+  int32_t contract_invoke(Transform callback, int32_t value);
+}
+[[thread_confined_callback]] int32_t identity(int32_t value) { return value; }
+
+int main() {
+  unsafe { contract_terminate_install(); }
+  Transform callback = identity;
+  unsafe {
+    if (contract_invoke(callback, 3) != 3) { return 1; }
+  }
+  mut std::thread_result<int32_t> worker{};
+  auto started = worker.start([]() -> int32_t {
+    Transform wrong = identity;
+    return 3;
+  });
+  if (!started.has_value()) { return 2; }
+  auto joined = worker.join();
+  return joined.has_value() ? 3 : 4;
+}

@@ -7703,6 +7703,9 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
     const auto &field = enumerator.payloadTypes[index];
     // A constructor's text input formal is published by each call instead.
     const auto &inputs = requestSession.constructorTextPayloadArguments;
+    if (field == SemanticType::StringView || field == SemanticType::CString)
+      noteLocalTextEscape(call.arguments()[index], LocalTextEscapeKind::Storage,
+                          "stored in a payload-enum field");
     if ((field == SemanticType::StringView || field == SemanticType::CString) &&
         isOwnerDependentTextExpression(call.arguments()[index]) &&
         std::find(inputs.begin(), inputs.end(),

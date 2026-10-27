@@ -487,8 +487,10 @@ void ThreadTasks::require(llvm::IRBuilder<> &ir, llvm::Value *condition) {
       llvm::BasicBlock::Create(session.context(), "thread.invalid", function);
   ir.CreateCondBr(condition, valid, invalid);
   ir.SetInsertPoint(invalid);
-  // A malformed runtime result has no coherent ownership to report through.
-  ir.CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type *>{}, {});
+  // A malformed runtime result has no coherent ownership to report through;
+  // it terminates as the generated C++ representation does.
+  ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::ContractTerminate));
   ir.CreateUnreachable();
   ir.SetInsertPoint(valid);
 }
@@ -1150,7 +1152,9 @@ void ThreadTasks::workerFailure(llvm::IRBuilder<> &ir, const Stage &stage,
   select->addCase(ir.getInt32(failureCleanup), cleanup);
   select->addCase(ir.getInt32(failureOrdinary), ordinary);
   ir.SetInsertPoint(invalid);
-  ir.CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type *>{}, {});
+  // Neither an ordinary record nor an envelope: a malformed join result.
+  ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::ContractTerminate));
   ir.CreateUnreachable();
   ir.SetInsertPoint(cleanup);
   // The worker's exact GTI-R0014 envelope is terminal. A native worker joining

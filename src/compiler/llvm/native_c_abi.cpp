@@ -3,6 +3,7 @@
 #include "debug_info.h"
 #include "failure.h"
 #include "native_c_contract.h"
+#include "runtime_abi.h"
 
 #include <llvm/IR/Constants.h>
 #include <llvm/TargetParser/Triple.h>
@@ -627,7 +628,8 @@ namespace {
 
 // A representation query over verified places. Traversing an untagged union
 // does not prove native initialization or an active member; source unsafe
-// permission remains a separate requirement of the accessing instruction.
+// permission remains a separate requirement of the accessing instruction. The
+// result reports whether the final selection is a union member.
 std::optional<bool> nativeCStorageUnionProjection(const MirProgram &program,
                                                   const TargetInfo &target,
                                                   const MirBody &body,
@@ -674,7 +676,10 @@ std::optional<bool> nativeCStorageUnionProjection(const MirProgram &program,
         }
       if (!field)
         return std::nullopt;
-      unionMember |= record->unionLayout.has_value();
+      // MIR labels an access a union-member read exactly when its final
+      // selection is a union member; a field of a selected member, such as
+      // `storage.member.field`, is an ordinary foreign-storage access.
+      unionMember = record->unionLayout.has_value();
       if (field->access == AccessMode::ReadOnly)
         access = AccessMode::ReadOnly;
       type = field->type;
@@ -693,6 +698,7 @@ std::optional<bool> nativeCStorageUnionProjection(const MirProgram &program,
       }
       auto element = type.arguments.front();
       type = std::move(element);
+      unionMember = false;
     } else {
       return std::nullopt;
     }
@@ -710,6 +716,14 @@ bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
   const bool address = instruction.kind == MirInstructionKind::Compute &&
                        instruction.operation == MirOperation::AddressOf &&
                        !instruction.rawMemoryAccess;
+  // A by-value argument copied out of C storage reads the object exactly as a
+  // load does; its prepared temporary is an ordinary local destination.
+  const bool copiedArgument =
+      instruction.kind == MirInstructionKind::CallInput &&
+      instruction.callInputRole == MirCallInputRole::Argument &&
+      instruction.callInputKind == HirCallInputKind::CopyValue &&
+      instruction.operands.size() == 1 &&
+      instruction.operands.front().kind == MirOperandKind::Copy;
   if (instruction.tombstone || instruction.unsafeOperation != permission ||
       (!instruction.rawMemoryAccess && !address) || instruction.receiver ||
       instruction.intrinsic != IntrinsicKind::None ||
@@ -721,7 +735,8 @@ bool nativeCStorageAccess(const MirProgram &program, const TargetInfo &target,
       instruction.functionPointerLambdaTarget ||
       (instruction.kind != MirInstructionKind::Load &&
        instruction.kind != MirInstructionKind::Assign &&
-       instruction.kind != MirInstructionKind::Modify && !address))
+       instruction.kind != MirInstructionKind::Modify && !address &&
+       !copiedArgument))
     return false;
   bool selected = false;
   for (const auto &block : body.blocks)
@@ -1447,9 +1462,12 @@ llvm::Function *nativeService(Session &session, const char *name,
                                 session.module());
 }
 
-void abortNativeBoundary(Session &session, llvm::IRBuilder<> &ir) {
-  auto *abort = nativeService(session, "abort", ir.getVoidTy(), {});
-  ir.CreateCall(abort);
+// A foreign exception at a callback boundary or a confined callback bound on
+// a second thread ends the process through std::terminate, as the generated
+// C++ adapters do, so a host terminate handler observes it.
+void terminateNativeBoundary(Session &session, llvm::IRBuilder<> &ir) {
+  ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::ContractTerminate));
   ir.CreateUnreachable();
 }
 
@@ -1609,7 +1627,7 @@ void emitNativeCCallbacks(
                                 session.layouts().pointer(),
                                 {session.layouts().pointer()}),
                   {ir.CreateExtractValue(landing, 0)});
-    abortNativeBoundary(session, ir);
+    terminateNativeBoundary(session, ir);
     ir.SetInsertPoint(normal);
     if (gti.statusResult) {
       auto *success = llvm::BasicBlock::Create(session.context(),
@@ -1664,7 +1682,7 @@ llvm::Value *nativeCCallbackAddress(Session &session, llvm::IRBuilder<> &ir,
                   ir.CreateICmpEQ(ir.CreateExtractValue(claim, 0), current)),
       ready, invalid);
   ir.SetInsertPoint(invalid);
-  abortNativeBoundary(session, ir);
+  terminateNativeBoundary(session, ir);
   ir.SetInsertPoint(ready);
   return wrapper;
 }

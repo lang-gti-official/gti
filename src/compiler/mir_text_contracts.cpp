@@ -247,6 +247,14 @@ private:
   std::set<std::size_t> activeTemporaries;
   // Lambdas whose results are being summarized.
   std::set<HirLambdaId> activeLambdas;
+  // Per GTI function pointer type, the stateless targets of its forming
+  // sites, collected on first use (`pointerTargetsOf`).
+  struct PointerTargets {
+    SemanticType type;
+    std::set<HirFunctionInstanceId> functions;
+    std::set<HirLambdaId> lambdas;
+  };
+  std::optional<std::vector<PointerTargets>> pointerTargets;
 
   // Whether a Return of this body yields exactly `value`.
   static bool returnsValue(const MirBody &body, MirValueId value) {
@@ -876,6 +884,10 @@ private:
                instruction->lambdaTarget && !instruction->functionTarget &&
                textType(instruction->info.type)) {
       answer = lambdaResultSources(*instruction->lambdaTarget);
+    } else if (instruction && instruction->kind == MirInstructionKind::Call &&
+               instruction->intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+               textType(instruction->info.type)) {
+      answer = pointerResultSources(*instruction);
     } else if (!instruction) {
       answer = joinSources(context, operand.value, active);
     }
@@ -911,6 +923,88 @@ private:
     if (!returned || !answer.parameters.empty() || !answer.fields.empty())
       return {};
     return answer;
+  }
+
+  // What an invocation through a GTI function pointer returns: the text one
+  // of its targets returns. A pointer value only comes from a forming site,
+  // which names one stateless function or lambda, so the program's forming
+  // sites of the pointer's type are every target the invocation can reach. A
+  // target's returned formal or field has no relay through the pointer, and
+  // is unknown text, as it is for a lambda.
+  TextSources pointerResultSources(const MirInstruction &call) {
+    if (call.parameterTypes.empty() ||
+        call.parameterTypes.front().kind != SemanticType::Reference ||
+        call.parameterTypes.front().arguments.size() != 1)
+      return {};
+    const auto *targets =
+        pointerTargetsOf(call.parameterTypes.front().arguments.front());
+    if (targets == nullptr)
+      return {};
+    TextSources answer{.known = true};
+    for (const auto id : targets->functions) {
+      const auto *target = program.findFunctionInstance(id);
+      if (target == nullptr ||
+          target->definitionKind != MirDefinitionKind::Source)
+        return {};
+      const auto returned = returnSources(*target);
+      if (!returned.parameters.empty() || !returned.fields.empty())
+        return {};
+      answer.known = answer.known && returned.known;
+    }
+    for (const auto id : targets->lambdas)
+      answer.join(lambdaResultSources(id));
+    return answer;
+  }
+
+  // The targets the program forms GTI function pointers of `type` from, or
+  // null when it forms none.
+  const PointerTargets *pointerTargetsOf(const SemanticType &type) {
+    if (!pointerTargets) {
+      pointerTargets.emplace();
+      const auto visit = [&](const MirBody &body) {
+        for (const auto &block : body.blocks)
+          for (const auto &instruction : block.instructions) {
+            if (instruction.kind != MirInstructionKind::Call ||
+                instruction.intrinsic != IntrinsicKind::FunctionPointerFromItem)
+              continue;
+            auto entry =
+                std::find_if(pointerTargets->begin(), pointerTargets->end(),
+                             [&](const PointerTargets &candidate) {
+                               return candidate.type == instruction.info.type;
+                             });
+            if (entry == pointerTargets->end())
+              entry = pointerTargets->insert(
+                  pointerTargets->end(),
+                  PointerTargets{.type = instruction.info.type});
+            if (instruction.functionPointerFunctionTarget)
+              entry->functions.insert(
+                  *instruction.functionPointerFunctionTarget);
+            if (instruction.functionPointerLambdaTarget)
+              entry->lambdas.insert(*instruction.functionPointerLambdaTarget);
+          }
+      };
+      visit(program.module());
+      for (const auto &instance : program.classInstances()) {
+        visit(instance.fieldInitializers);
+        visit(instance.staticFieldInitializers);
+      }
+      for (const auto &function : program.functionInstances())
+        visit(function.body);
+      for (const auto &constructor : program.constructorInstances())
+        visit(constructor.body);
+      for (const auto &destructor : program.destructorInstances())
+        visit(destructor.body);
+      for (const auto &lambda : program.lambdaInstances())
+        visit(lambda.body);
+      for (const auto &storage : program.threadLocalStorage())
+        visit(storage.initializer);
+    }
+    const auto found =
+        std::find_if(pointerTargets->begin(), pointerTargets->end(),
+                     [&](const PointerTargets &candidate) {
+                       return candidate.type == type;
+                     });
+    return found == pointerTargets->end() ? nullptr : &*found;
   }
 
   // The instruction that produces `loan`: a Borrow or a Call.

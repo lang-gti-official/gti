@@ -1,0 +1,52 @@
+#include <std/mutex>
+
+// Cleanup-bound carriers produced by a method of a by-reference capture's
+// referent. The closure body borrows that referent through the capture's
+// entry loan, exactly as a function borrows through a reference formal.
+class cell {
+  int32_t value;
+public:
+  cell(int32_t value) : value(value) {}
+  int32_t read() { return this.value; }
+};
+
+class view {
+  cell& target;
+public:
+  view(cell& target) : target(target) {}
+  int32_t read() { return this.target.read(); }
+  ~view() { std::println("view released"); }
+};
+
+class source {
+  cell item;
+public:
+  source(int32_t value) : item(cell(value)) {}
+  view open() { return view(this.item); }
+};
+
+int main() {
+  source origin = source(4);
+  auto reader = [&origin]() -> int32_t {
+    auto opened = origin.open();
+    return opened.read();
+  };
+  if (reader() + reader() != 8) { return 1; }
+  std::println("capture carriers done");
+
+  // A synchronized guard is an exclusive borrow taken through shared access.
+  std::mutex<int32_t> passive{6};
+  {
+    auto locked = [&passive]() -> int32_t {
+      auto guard = passive.lock();
+      return guard.get();
+    };
+    if (locked() != 6) { return 2; }
+  }
+  {
+    auto guard = passive.lock();
+    if (guard.get() != 6) { return 3; }
+  }
+  std::println("capture guards done");
+  return 0;
+}

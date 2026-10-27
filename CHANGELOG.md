@@ -38,6 +38,17 @@ for what minor and patch releases mean.
   alternative and each alternative's fields, and a debug record after an
   inactive `std::optional` or `std::expected` access no longer invalidates the
   module, so debug builds that format text or read optional values compile.
+- Fix internal compiler errors on both backends when a value that borrows
+  and has a destructor is returned by a method called through a by-reference
+  lambda capture (for example locking a captured `std::mutex`), when a mutex
+  is locked through a mutable borrow of a `std::unique_ptr` (`this.vault->lock()`
+  in a `mut` method, or a `mut std::unique_ptr<std::mutex<T>>&` parameter),
+  and when a mutex is locked through a reference parameter that the function
+  also returns.
+- On the native backend, a foreign C++ exception reaching a GTI callback, a
+  thread-confined callback bound on another thread, and malformed internal
+  thread or mutex state now end through `std::terminate` as on the C++
+  backend, so a host's terminate handler observes them.
 - `std::mutex<T>` is now `std::relocatable` exactly when `T` is. Relocation
   builds a fresh native mutex and moves the protected value, so mutexes can
   be swapped and held in relocating containers; a held mutex still cannot
@@ -62,6 +73,10 @@ for what minor and patch releases mean.
   condition services, mutexes held by value in lambda captures, and mutexes
   protecting class values that need no cleanup. Worker failures re-raise at
   join and cleanup failures report exactly as on the C++ backend.
+- Native builds accept a C record or union passed by value straight from a C
+  global, a field read through a selected member of a C union global, and the
+  address of a C function-pointer variable. The native callback-slots and
+  variable-bindings examples now build with LLVM.
 - Compile inheritance and dynamic dispatch on the native backend:
   - virtual and interface calls;
   - polymorphic `std::unique_ptr` and `std::shared_ptr` owners and their
