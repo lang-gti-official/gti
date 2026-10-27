@@ -84,6 +84,7 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   // Request-local budgets and query states are never shared with the
   // preamble or with another resumed analysis.
   requestSession.constexprWork.reset();
+  requestSession.stagedConstants = std::make_shared<StagedConstantResults>();
   requestSession.programConcreteEffects =
       std::make_shared<ProgramConcreteEffectState>(
           *source.requestSession.programConcreteEffects);

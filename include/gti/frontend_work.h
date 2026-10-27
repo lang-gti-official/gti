@@ -70,6 +70,9 @@ struct FrontendWorkMetrics {
   std::size_t semanticBorrowSummaryCandidateInspections = 0;
   std::size_t semanticBorrowSummaryFunctions = 0;
   std::size_t constexprMirExecutions = 0;
+  // Staged constant evaluations replayed from an earlier success of the same
+  // request instead of executing again.
+  std::size_t constexprStagedReuses = 0;
   std::size_t semanticRawAuditQueries = 0;
 
   void clear() {
@@ -113,6 +116,7 @@ struct FrontendWorkMetrics {
     semanticBorrowSummaryCandidateInspections = 0;
     semanticBorrowSummaryFunctions = 0;
     constexprMirExecutions = 0;
+    constexprStagedReuses = 0;
     semanticRawAuditQueries = 0;
   }
 };

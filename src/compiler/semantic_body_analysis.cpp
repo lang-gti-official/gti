@@ -129,6 +129,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.programFailingEffects.clear();
   requestSession.programConcreteEffects =
       std::make_shared<ProgramConcreteEffectState>();
+  requestSession.stagedConstants = std::make_shared<StagedConstantResults>();
   requestSession.cThreadCallUses.clear();
   requestSession.rawBorrowCallUses.clear();
   requestSession.rawResultQueries.reset();

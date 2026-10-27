@@ -3455,6 +3455,26 @@ analysis. Tests retain enclosing locals and live loans across this boundary.
 Concrete semantic diagnostics are authoritative and cannot fall back to legacy
 execution.
 
+A staged evaluation is a pure function of its target (function, or the exact
+resolved construction), substitution, argument and receiver constants, and of
+its environment: whether a concrete reanalysis is open, the constexpr
+definitions and constructors its worker may execute (those declared before the
+current point) and those HIR may lower. One request therefore records each
+successful evaluation once (`StagedConstantResults`, shared like the work
+budget by the primary analysis, its reanalyses and every worker they stage
+through) and replays it wherever all of those match. A replay charges the steps
+the evaluation consumed and reports its warnings again, and is used only where
+the evaluation's limits still hold: the current steps plus that charge stay
+within the 4096-step budget, and the current staging plus call depth is no
+deeper than the one it succeeded at. Otherwise, and for every failure, the call
+executes as before, so exhaustion and failure diagnostics are unchanged.
+Results holding an executor-local transient owner are never recorded, and
+neither is a call made while the outer authority retains an invalid effect
+query. Requirement policies written with reflection repeat a few such calls
+across every instance that checks them; on the ordered-query fixtures this
+removes over 95% of staged executions. The record dies with the request,
+including in an editor snapshot that adopts a preamble.
+
 Unsupported closures/profile operations still use the existing AST driver;
 work already executed consumes the shared limit, and arithmetic/resource
 failures are authoritative. Direct semantic-only callers without source text

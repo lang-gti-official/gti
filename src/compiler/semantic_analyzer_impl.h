@@ -1862,6 +1862,61 @@ private:
     std::size_t stagingDepth = 0;
   };
 
+  // The successful staged evaluations of one request, shared like its work
+  // budget by the primary analysis, its concrete reanalyses and every worker
+  // they stage through. A staged evaluation is a pure function of its target,
+  // substitution, arguments and receiver and of the constexpr definitions and
+  // constructors it may execute (its environment), so a success is replayed
+  // wherever all of those match: the replay charges the steps the evaluation
+  // took, reports its warnings again, and is used only where the evaluation's
+  // step and depth limits still hold. Failures are never recorded; they run
+  // and report as before.
+  struct StagedConstantResults {
+    struct Key {
+      FunctionId function = 0;
+      ConstructorId constructor = 0;
+      const ConstructorDecl *declaration = nullptr;
+      SemanticType constructedType = SemanticType::Unknown;
+      std::vector<SemanticType> typeArguments;
+      std::vector<CompileTimeValue> valueArguments;
+      std::vector<SemanticType> parameterTypes;
+      std::vector<const Expr *> defaultArguments;
+      std::vector<const Expr *> designatedArguments;
+      ConstructorKind kind = ConstructorKind::Ordinary;
+      bool generatedDefault = false;
+      bool directInitialization = false;
+      GenericSubstitution substitution;
+      std::vector<ConstantValue> arguments;
+      std::optional<ConstantValue> receiver;
+      std::size_t environment = 0;
+    };
+    struct Result {
+      Key key;
+      ConstantValue value;
+      std::size_t steps = 0;
+      // The enclosing staging plus call depth the evaluation succeeded at; a
+      // shallower or equal depth leaves every nested limit at least as wide.
+      std::size_t depth = 0;
+      std::vector<Diagnostic> warnings;
+    };
+    static constexpr std::size_t capacity = 65536;
+    std::unordered_map<std::size_t, std::vector<Result>> results;
+    std::size_t size = 0;
+    // Interned environments: whether a concrete reanalysis is open, then the
+    // definitions and constructors a worker may execute and those HIR may
+    // lower, each sorted.
+    std::map<std::vector<std::uintptr_t>, std::size_t> environments;
+
+    [[nodiscard]] std::size_t environment(std::vector<std::uintptr_t> identity);
+    [[nodiscard]] static std::size_t hash(const Key &key);
+    [[nodiscard]] static bool same(const Key &left, const Key &right);
+    [[nodiscard]] const Result *find(const Key &key) const;
+    void record(Result result);
+    // Executor-local transient owners name allocations of one evaluation;
+    // neither a key nor a result may carry one.
+    [[nodiscard]] static bool reusable(const ConstantValue &value);
+  };
+
   struct ConstexprInterpreter {
     std::shared_ptr<ConstexprWorkBudget> work;
     std::size_t callDepth = 0;
@@ -1894,6 +1949,16 @@ private:
       const GenericSubstitution &substitution,
       const std::optional<ConstantValue> &receiver, const Token &callSite,
       ConstexprInterpreter &context);
+  // The reuse key of a staged evaluation, or none when it cannot be reused.
+  [[nodiscard]] std::optional<StagedConstantResults::Key> stagedConstantKey(
+      const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+          &target,
+      const FunctionInfo *function, const std::vector<ConstantValue> &arguments,
+      const GenericSubstitution &substitution,
+      const std::optional<ConstantValue> &receiver,
+      std::vector<FunctionId> completed,
+      std::vector<ConstructorId> constructors);
+  void appendStagedWarnings(const std::vector<Diagnostic> &warnings);
 
   [[nodiscard]] ConstexprInterpreter makeConstexprInterpreter() const;
 
@@ -6652,6 +6717,8 @@ private:
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
     // Only nested staging workers share the request's execution budget.
     std::shared_ptr<ConstexprWorkBudget> constexprWork;
+    // Every analyzer of the request shares its proved staged constants.
+    std::shared_ptr<StagedConstantResults> stagedConstants;
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
         deferredFlowOwners;
     std::unordered_map<std::string, std::vector<GenericDefaultConstant>>
