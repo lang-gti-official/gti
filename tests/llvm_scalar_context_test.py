@@ -20,10 +20,11 @@ import llvm_scalar_execution_test as scalar
 
 # Positive source/profile facts frozen before extraction, reconciled to v2's
 # explicit execution profile. This is a regression oracle, not a registry.
-FROZEN_MANIFEST = "a03c9ac03f0c0b471a1318aad91f8cecd70cfd7c68755acfeaa584cc71f852b8"
+FROZEN_MANIFEST = "4856654bbd1ba41c85a9db37824a148e4c14b35d777653754790985c69d75775"
 FROZEN_SUCCESSES = (
     'scalars', 'widths', 'coverage-constructions', 'shipped-example', 'globals',
-    'dormant-owner', 'numeric-intrinsics',
+    'switch-default', 'integral-enum-underlying', 'dormant-owner',
+    'numeric-intrinsics',
 )
 FROZEN_DIAGNOSTICS = {
     'signed-add': 'GTI-R0001', 'signed-sub': 'GTI-R0001', 'signed-mul': 'GTI-R0001',
