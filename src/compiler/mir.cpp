@@ -15469,6 +15469,42 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                      "call input");
     }
   }
+  // A moved borrow carrier relocates as the addresses it holds (owner
+  // decision 2026-10-28), so a loan it carries never borrows the carrier's
+  // own storage. An opaque entry loan stands at a by-value parameter carrier
+  // for its caller's external referents and is not such a borrow.
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.tombstone ||
+          instruction.kind != MirInstructionKind::Move ||
+          instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != MirOperandKind::Move ||
+          !instruction.info.traits.containsBorrowedState) {
+        continue;
+      }
+      const MirPlace *moved =
+          body.findPlace(instruction.operands.front().place);
+      if (moved == nullptr || moved->root != MirPlaceRootKind::Binding ||
+          moved->binding == 0) {
+        continue;
+      }
+      for (const MirLoan &loan : body.loans) {
+        if (loan.kind != MirLoanKind::Stored || loan.entry ||
+            std::find(loan.carriers.begin(), loan.carriers.end(),
+                      moved->binding) == loan.carriers.end()) {
+          continue;
+        }
+        const MirPlace *source = body.findPlace(loan.source);
+        if (source != nullptr && source->root == MirPlaceRootKind::Binding &&
+            source->binding == moved->binding) {
+          return failure(body, owner,
+                         "moved borrow carrier stores a loan of its own "
+                         "storage",
+                         block.id, instruction.id);
+        }
+      }
+    }
+  }
   const auto callInputFor =
       [&](const MirOperand &operand) -> const MirInstruction * {
     if (operand.kind != MirOperandKind::Value) {

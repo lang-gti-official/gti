@@ -669,7 +669,16 @@ private:
       throw std::logic_error("LLVM returned transfer lost its ABI destination");
     // Selecting the sealed source view does not materialize an object snapshot
     // or suppress its cleanup. The typed transfer commits source state last.
-    auto *source = memory.selected(transfer.source);
+    // A field moved out of a payload alternative starts at that field.
+    auto *source =
+        transfer.sourceVariant
+            ? payloadFieldAddress(
+                  ir,
+                  session.layouts().payload(
+                      input.findPlace(transfer.source.place)->type),
+                  memory.address(transfer.source.place),
+                  *transfer.sourceVariant, transfer.sourceField)
+            : memory.selected(transfer.source);
     lifetimes.freshTransfer(ir, address, source, input, instruction);
     return address;
   }
@@ -1612,6 +1621,15 @@ private:
         }
         ir.CreateStore(ir.getInt32(variant),
                        payloadTagAddress(ir, layout, result));
+        break;
+      }
+      if (instruction.operation == MirOperation::PayloadExtract &&
+          isFreshHierarchyTransferProducer(instruction) &&
+          containsHierarchyStorage(session.program().mir(),
+                                   instruction.info.type)) {
+        // A hierarchy field moved out of its alternative is relocated into
+        // the fresh local its planned publication names.
+        result = freshTransfer(instruction);
         break;
       }
       if (instruction.operation == MirOperation::PayloadExtract) {
