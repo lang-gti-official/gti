@@ -364,14 +364,9 @@ public:
         function.staticMember || function.linkage != LanguageLinkage::Gti ||
         !function.owner ||
         function.receiverMutability == ReceiverMutability::Consuming ||
-        (function.returnType != SemanticType::Void &&
-         !isPassiveScalarValueType(function.returnType)) ||
         std::any_of(function.parameterTypes.begin(),
                     function.parameterTypes.end(),
-                    [](const auto &type) {
-                      return type == SemanticType::Void ||
-                             !isPassiveScalarValueType(type);
-                    }) ||
+                    [](const auto &type) { return type == SemanticType::Void; }) ||
         !row || row->role != LoweredBodyRole::AbiDeclaration ||
         std::find(plan.requiredBodies().begin(), plan.requiredBodies().end(),
                   address) != plan.requiredBodies().end())
@@ -482,8 +477,16 @@ public:
     if (!source)
       return {};
     auto type = unreference(source->type);
-    if (const auto *producer = callResult(body, loan))
+    if (const auto *producer = callResult(body, loan)) {
+      // A member call on a proved dispatch view selected this non-hierarchy
+      // referent; the address is the callee's checked result, not a view.
+      if (!related(producer->info.type))
+        return producer->receiver && borrowedUse(body, *producer->receiver) &&
+                       borrowed(body, *producer->receiver)
+                   ? std::optional(Shape::NativeBorrowedDispatchView)
+                   : std::nullopt;
       type = producer->info.type;
+    }
     for (const auto &block : body.blocks)
       for (const auto &stage : block.instructions)
         if (!stage.tombstone && stage.loan == loan.id &&
@@ -739,8 +742,11 @@ private:
     if (stage.kind != MirInstructionKind::Call || stage.tombstone ||
         !stage.result || !stage.loan ||
         stage.info.category != ValueCategory::Place ||
-        stage.info.type.kind != SemanticType::Class ||
-        stage.dispatch != CallDispatch::Static || stage.destination ||
+        stage.info.type.kind == SemanticType::Unknown ||
+        stage.info.type.kind == SemanticType::Void ||
+        (stage.dispatch != CallDispatch::Static &&
+         stage.dispatch != CallDispatch::Virtual) ||
+        stage.destination ||
         stage.successResultDrop || stage.successResultDestination ||
         stage.constructorTarget || stage.lambdaTarget || stage.bodyTarget ||
         stage.nativeCalleeType || stage.nativeCallbackAdapter ||
@@ -763,6 +769,8 @@ private:
       // Verified MIR owns the capability's exact owner, access and failure
       // contract. Its result is a checked address, never pointee object bytes.
       return !stage.functionTarget &&
+             stage.dispatch == CallDispatch::Static &&
+             stage.info.type.kind == SemanticType::Class &&
              (stage.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
               stage.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
               stage.intrinsic == IntrinsicKind::SharedOwnerBorrow);
@@ -771,7 +779,14 @@ private:
         stage.functionTarget
             ? program.findFunctionInstance(*stage.functionTarget)
             : nullptr;
-    return target && target->definitionKind == MirDefinitionKind::Source &&
+    // A virtual call names its sealed root member, which may be a pure
+    // declaration; the selected source implementation returns the address.
+    // Its dispatch plan is proved with the call stage itself.
+    return target &&
+           (stage.dispatch == CallDispatch::Virtual
+                ? target->virtualMethod && target->owner &&
+                      !target->staticMember
+                : target->definitionKind == MirDefinitionKind::Source) &&
            target->linkage == LanguageLinkage::Gti &&
            target->returnType ==
                SemanticType::referenceTo(stage.info.type, stage.info.access);
@@ -964,7 +979,9 @@ private:
                                       const native_llvm::Placement &placement,
                                       const MirInstruction &stage) {
     try {
-      if (borrowedCallResult(body, stage) && metadata(stage.info.type) &&
+      if (borrowedCallResult(body, stage) &&
+          stage.dispatch == CallDispatch::Static &&
+          metadata(stage.info.type) &&
           (!stage.receiver || !borrowedUse(body, *stage.receiver) ||
            borrowed(body, *stage.receiver)))
         return Shape::NativeBorrowedDispatchView;
@@ -1121,16 +1138,16 @@ private:
             stage.nativeCallbackAdapter || stage.callableInvocation ||
             stage.threadTaskAdapter || !stage.scopedThreadTasks.empty())
           return {};
+        // The receiver and its dispatch are this proof's only obligations.
+        // Arguments, results and their loans use the shared call contract
+        // and are inventoried independently, including hierarchy transfer.
         const auto *target =
             program.findFunctionInstance(*stage.functionTarget);
         if (!target || target->linkage != LanguageLinkage::Gti ||
             target->receiverMutability == ReceiverMutability::Consuming ||
-            (target->returnType != SemanticType::Void &&
-             !isPassiveScalarValueType(target->returnType)) ||
             std::any_of(target->parameterTypes.begin(),
                         target->parameterTypes.end(), [](const auto &type) {
-                          return !isPassiveScalarValueType(type) ||
-                                 type == SemanticType::Void;
+                          return type == SemanticType::Void;
                         }))
           return {};
         if (!target->owner ||

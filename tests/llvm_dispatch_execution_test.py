@@ -54,6 +54,7 @@ SUCCESS_FILES = {
     "dispatch-cost-correctness": "tests/fixtures/llvm_dispatch_execution_cost.gti",
     "shipped-example": "examples/llvm/inheritance-and-dispatch.gti",
     "polymorphic-owners": "tests/fixtures/llvm_dispatch_polymorphic_owners.gti",
+    "virtual-signatures": "tests/fixtures/llvm_dispatch_virtual_signatures.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -1055,7 +1056,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1207,6 +1208,27 @@ int main() {
 }
 """, "defined-failure", expected_exit=70, failure_needle="payload(12 / payload)",
         endpoints=TRANSFER_ENDPOINTS)
+    signatures = (root / SUCCESS_FILES["virtual-signatures"]).read_text(encoding="utf-8")
+    signatures_marker = "// VIRTUAL_SIGNATURES_MAIN\n"
+    if signatures.count(signatures_marker) != 1:
+        raise AssertionError("virtual signature main marker is not unique")
+    signature_failure = signatures.split(signatures_marker, 1)[0] + """int main() {
+  expected_cleanup = 3;
+  Guard guard{};
+  mut Box box{};
+  Tracked held{3};
+  Shape& shape = box;
+  Point failed = shape.corner(0);
+  return failed.x;
+}
+"""
+    signature_needle = "return Point(this.origin.x * 12 / scale"
+    add("virtual-signature-failure", signature_failure, "defined-failure",
+        expected_exit=70, failure_needle=signature_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("virtual-signature-wrong-cleanup",
+        signature_failure.replace("expected_cleanup = 3;", "expected_cleanup = 4;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=signature_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -1228,8 +1250,10 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
                                   "hierarchy-reference-results", "owner-reference-failure",
                                   "owner-reference-wrong-cleanup", "shared-owner-reference",
                                   "owner-failure-before-reference"),
-        "scalar-virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
-                                      "static-dispatch", "dispatch-cost-correctness"),
+        "virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
+                               "static-dispatch", "dispatch-cost-correctness",
+                               "virtual-signatures", "virtual-signature-failure",
+                               "virtual-signature-wrong-cleanup"),
         "dispatch-lifecycle": ("virtual-failure-cleanup", "constructor-rollback",
                                "cleanup-oracle-wrong-trace", "nonobserving-cleanup-helper-cycle"),
         "fresh-local-generated-transfers": (
@@ -1282,6 +1306,7 @@ def main() -> None:
              "nested-transfer-failure", "nested-transfer-wrong-cleanup",
              "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
              "polymorphic-owner-constructor-rollback",
+             "virtual-signature-failure", "virtual-signature-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

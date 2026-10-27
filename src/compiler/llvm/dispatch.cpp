@@ -571,6 +571,12 @@ VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
       instruction.functionTarget
           ? program.findFunctionInstance(*instruction.functionTarget)
           : nullptr;
+  // A reference result is presented as a place of its referent type.
+  const auto resultContract =
+      instruction.info.category == ValueCategory::Place
+          ? SemanticType::referenceTo(instruction.info.type,
+                                      instruction.info.access)
+          : instruction.info.type;
   if (instruction.kind != MirInstructionKind::Call ||
       instruction.dispatch != CallDispatch::Virtual || !selected ||
       !selected->virtualMethod || selected->staticMember || !selected->owner ||
@@ -578,7 +584,7 @@ VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
       selected->requiresUnsafe != (instruction.unsafeOperation ==
                                    UnsafeOperationKind::DeclaredUnsafeCall) ||
       instruction.parameterTypes != selected->parameterTypes ||
-      instruction.info.type != selected->returnType ||
+      resultContract != selected->returnType ||
       instruction.definedFailure.propagation !=
           FailurePropagationKind::VirtualCall)
     throw std::invalid_argument(
