@@ -353,12 +353,8 @@ public:
           contains(body.returnType) && !freshReturns(address, body, placement);
       // A by-value hierarchy parameter is an object its caller published in
       // the indirect argument storage; each caller's argument is proved there.
-      if (const auto *target = function(address)) {
-        if (target->owner &&
-            contains(program.findClassInstance(*target->owner)->type) &&
-            target->receiverMutability == ReceiverMutability::Consuming)
-          bodyProof.transfer = true;
-      }
+      // A consuming receiver is likewise the address of an object its caller
+      // owns and keeps for cleanup; the body's own operations carry proofs.
       if (address.kind == MirBodyKind::Constructor) {
         const auto &target = *program.findConstructorInstance(address.owner);
         if (target.dispatchState)
@@ -407,7 +403,9 @@ public:
                  stage.callInputKind != HirCallInputKind::ReadBorrow &&
                  stage.callInputKind != HirCallInputKind::MutableBorrow &&
                  !temporaryBorrow(body, stage) &&
-                 !publishedArgument(address, body, placement, stage)) ||
+                 !publishedArgument(address, body, placement, stage) &&
+                 !consumedReceiver(body, stage) &&
+                 stage.callInputKind != HirCallInputKind::RetainedReceiver) ||
                 (stage.kind == MirInstructionKind::Call &&
                  !borrowedCallResult(body, stage) && !published) ||
                 stage.operation == MirOperation::Aggregate ||
@@ -575,7 +573,6 @@ public:
         !function.pureVirtual || !function.virtualMethod ||
         function.staticMember || function.linkage != LanguageLinkage::Gti ||
         !function.owner ||
-        function.receiverMutability == ReceiverMutability::Consuming ||
         std::any_of(function.parameterTypes.begin(),
                     function.parameterTypes.end(),
                     [](const auto &type) { return type == SemanticType::Void; }) ||
@@ -859,7 +856,86 @@ private:
         recipe.aggregate.begin(), recipe.aggregate.end(),
         [&](const auto &child) { return cleanupObserves(child); });
   }
+  // Whether a body uses a view of its receiver object itself (the receiver
+  // place or one of its base views, never a field) as any instruction or
+  // terminator input. Fields are complete objects that outlive the body.
+  bool receiverViewUsed(const MirBody &body) const {
+    const auto view = [&](const auto &self, MirPlaceId id) -> bool {
+      const auto *place = body.findPlace(id);
+      if (!place ||
+          std::any_of(place->projections.begin(), place->projections.end(),
+                      [](const auto &projection) {
+                        return projection.kind != MirProjectionKind::Base;
+                      }))
+        return false;
+      if (place->root == MirPlaceRootKind::This)
+        return true;
+      if (place->root != MirPlaceRootKind::Loan)
+        return false;
+      const auto *loan = body.findLoan(place->loan);
+      return loan && self(self, loan->source);
+    };
+    const auto loanView = [&](MirLoanId id) {
+      const auto *loan = body.findLoan(id);
+      if (!loan)
+        return false;
+      if (view(view, loan->source))
+        return true;
+      return std::any_of(loan->additionalDependencies.begin(),
+                         loan->additionalDependencies.end(),
+                         [&](const auto &dependency) {
+                           return dependency.source &&
+                                  view(view, dependency.source);
+                         });
+    };
+    const auto input = [&](const MirOperand &operand) {
+      return (operand.place && view(view, operand.place)) ||
+             (operand.loan && loanView(operand.loan));
+    };
+    for (const auto &block : body.blocks) {
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone)
+          continue;
+        if (std::any_of(stage.operands.begin(), stage.operands.end(), input) ||
+            (stage.receiver && input(*stage.receiver)) ||
+            (stage.destination && view(view, *stage.destination)) ||
+            (stage.loan && loanView(*stage.loan)) ||
+            (stage.retainedOwnerPlace &&
+             view(view, *stage.retainedOwnerPlace)) ||
+            (stage.successResultDestination &&
+             view(view, *stage.successResultDestination)))
+          return true;
+      }
+      const auto &term = block.terminator;
+      if ((term.value && input(*term.value)) ||
+          (term.returnLoan && loanView(*term.returnLoan)) ||
+          std::any_of(term.targetArguments.begin(), term.targetArguments.end(),
+                      input) ||
+          std::any_of(term.elseArguments.begin(), term.elseArguments.end(),
+                      input))
+        return true;
+      for (const auto &target : term.switchTargets)
+        if (std::any_of(target.arguments.begin(), target.arguments.end(),
+                        input))
+          return true;
+    }
+    return false;
+  }
   bool observesDispatch(MirBodyAddress root) const {
+    // Only the destroyed object's own dispatch state changes during its
+    // destruction. A class without dispatch state has nothing to observe, and
+    // a source destructor that never uses a view of the object cannot hand it
+    // to any code, whatever that code dispatches on other objects.
+    if (root.kind == MirBodyKind::Destructor) {
+      const auto *destructor = program.findDestructorInstance(root.owner);
+      const auto *owner =
+          destructor ? program.findClassInstance(destructor->owner) : nullptr;
+      const auto *row = plan.program().findBody(root);
+      const auto *body = findMirBody(program, root);
+      if (owner && row && row->role == LoweredBodyRole::SourceExecutable &&
+          body && (!owner->polymorphic || !receiverViewUsed(*body)))
+        return false;
+    }
     std::vector<MirBodyAddress> pending{root};
     std::set<BodyKey> visited;
     while (!pending.empty()) {
@@ -967,6 +1043,39 @@ private:
                          .publication == &stage;
         }
     return false;
+  }
+  // The receiver input of one consuming call: a planned move of an owned
+  // binding relocated into its own value storage.
+  bool consumedReceiver(const MirBody &body,
+                        const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::CallInput ||
+        stage.callInputKind != HirCallInputKind::MoveValue ||
+        stage.callInputRole != MirCallInputRole::Receiver ||
+        stage.operands.size() != 1 ||
+        stage.operands.front().kind != MirOperandKind::Value)
+      return false;
+    for (const auto &block : body.blocks)
+      for (const auto &producer : block.instructions)
+        if (!producer.tombstone &&
+            producer.result == stage.operands.front().value)
+          return plannedTransfer(body, producer) ==
+                     native_llvm::FreshHierarchyPublication::Receiver &&
+                 native_llvm::planFreshHierarchyTransfer(program, body,
+                                                         producer)
+                         .publication == &stage;
+    return false;
+  }
+  // The call input that staged a call's receiver value, if any.
+  const MirInstruction *receiverInput(const MirBody &body,
+                                      const MirOperand &receiver) const {
+    if (receiver.kind != MirOperandKind::Value || !receiver.value)
+      return nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.result == receiver.value)
+          return stage.kind == MirInstructionKind::CallInput ? &stage
+                                                             : nullptr;
+    return nullptr;
   }
   bool freshReturns(MirBodyAddress address, const MirBody &body,
                     const native_llvm::Placement &placement) const {
@@ -1258,12 +1367,18 @@ private:
         if (stage.tombstone || stage.result != operand.value ||
             stage.id != value->definition)
           continue;
+        // A retained receiver stages its owned field or owner pointee in
+        // place: the enclosing consuming receiver keeps its cleanup.
+        const bool retained =
+            stage.callInputKind == HirCallInputKind::RetainedReceiver &&
+            stage.callInputRole == MirCallInputRole::Receiver;
         if (stage.kind != MirInstructionKind::CallInput ||
             (stage.callInputKind != HirCallInputKind::ReadBorrow &&
              stage.callInputKind != HirCallInputKind::MutableBorrow &&
-             !temporaryBorrow(body, stage)) ||
+             !retained && !temporaryBorrow(body, stage)) ||
             stage.destination || stage.preparedParameterDrop ||
-            stage.retainedOwnerPlace || stage.successResultDrop ||
+            (stage.retainedOwnerPlace && !retained) ||
+            stage.successResultDrop ||
             stage.successResultDestination || stage.operands.size() != 1 ||
             stage.operands.front().kind == MirOperandKind::Value ||
             unreference(stage.info.type) != unreference(operand.type) ||
@@ -1551,6 +1666,19 @@ private:
           if (const auto *drop = body.findDropObligation(event.source))
             if (const auto shape = cleanup(drop->dropType))
               return shape;
+      if (consumedReceiver(body, stage))
+        return metadata(stage.info.type)
+                   ? std::optional(Shape::NativeConsumingHierarchyReceiver)
+                   : std::nullopt;
+      if (stage.kind == MirInstructionKind::CallInput &&
+          stage.callInputKind == HirCallInputKind::RetainedReceiver) {
+        if (!stagedBorrow(body, {.kind = MirOperandKind::Value,
+                                 .value = stage.result.value_or(0),
+                                 .type = stage.info.type}) ||
+            !borrowed(body, stage.operands.front()))
+          return {};
+        return Shape::NativeConsumingHierarchyReceiver;
+      }
       if ((stage.kind == MirInstructionKind::Borrow ||
            stage.kind == MirInstructionKind::CallInput) &&
           stage.operands.size() == 1 &&
@@ -1575,10 +1703,18 @@ private:
                         *program.findFunctionInstance(*stage.functionTarget)
                              ->owner)
                     ->type)))) {
-        if ((borrowedUse(body, *stage.receiver) &&
+        // A consuming member receives a moved owned receiver in its own
+        // value storage or a retained receiver staged in place.
+        const auto *input = receiverInput(body, *stage.receiver);
+        const bool moved = input && consumedReceiver(body, *input);
+        const bool retained =
+            input &&
+            input->callInputKind == HirCallInputKind::RetainedReceiver;
+        if ((borrowedUse(body, *stage.receiver) && !moved &&
              !borrowed(body, *stage.receiver)) ||
             !stage.functionTarget || stage.nativeCalleeType ||
-            stage.nativeCallbackAdapter || stage.callableInvocation ||
+            stage.nativeCallbackAdapter ||
+            (stage.callableInvocation && !moved && !retained) ||
             stage.threadTaskAdapter || !stage.scopedThreadTasks.empty())
           return {};
         // The receiver and its dispatch are this proof's only obligations.
@@ -1587,7 +1723,8 @@ private:
         const auto *target =
             program.findFunctionInstance(*stage.functionTarget);
         if (!target || target->linkage != LanguageLinkage::Gti ||
-            target->receiverMutability == ReceiverMutability::Consuming ||
+            (target->receiverMutability == ReceiverMutability::Consuming) !=
+                (moved || retained) ||
             std::any_of(target->parameterTypes.begin(),
                         target->parameterTypes.end(), [](const auto &type) {
                           return type == SemanticType::Void;

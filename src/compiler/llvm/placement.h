@@ -43,9 +43,16 @@ isFreshHierarchyTransferProducer(const MirInstruction &instruction);
 
 // Where a planned hierarchy transfer publishes its fresh object: a whole fresh
 // local (Initialize), a prepared by-value argument (CallInput), the body's ABI
-// return destination, or an inline polymorphic slot whose construction
-// relocates the moved object itself.
-enum class FreshHierarchyPublication { Local, Argument, Returned, Slot };
+// return destination, an inline polymorphic slot whose construction
+// relocates the moved object itself, or the value's own storage as the
+// receiver of one consuming call.
+enum class FreshHierarchyPublication {
+  Local,
+  Argument,
+  Returned,
+  Slot,
+  Receiver
+};
 
 struct FreshHierarchyTransfer {
   MirOperand source;

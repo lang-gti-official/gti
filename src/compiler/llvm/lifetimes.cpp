@@ -101,6 +101,12 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
       static_cast<void>(dynamicOwnerView(session, selected));
       return;
     }
+    // A subobject without inline hierarchy storage has an ordinary recipe:
+    // the shared cleanup planner proves and emits its owner, closure or
+    // payload schedule, and preflights hierarchy pointees at owned edges.
+    if (&selected != &recipe &&
+        !containsHierarchyStorage(session.program().mir(), selected.type))
+      return;
     if (selected.recursiveCleanup || selected.uniquePointeeClass ||
         selected.lambdaInstance || selected.payloadVariant ||
         selected.captureIndex || selected.payloadField)
@@ -187,6 +193,28 @@ llvm::Function *Lifetimes::cleanupObservation(const MirDropType &recipe) {
   // the original guarded bodies and complete child cleanup still run.
   if (!recipe.requiresActiveCleanup) {
     ir.CreateRet(ir.getFalse());
+    return function;
+  }
+  // Only ordinary class and fixed-array storage expose exact per-subobject
+  // active states. A live owner handle has cleanup to run; any other owned
+  // representation (closure, payload or capability storage) conservatively
+  // counts as observed, which only permits the enclosing header store.
+  const auto ordinaryClass = [&](const MirDropType &selected) {
+    if (selected.type.kind != SemanticType::Class || !selected.classInstance ||
+        selected.lambdaInstance)
+      return false;
+    const auto &owner = session.layouts().instance(selected.type);
+    return owner.id == *selected.classInstance &&
+           owner.compilerCapability == CompilerCapabilityTypeKind::None &&
+           !sharedOwnerRepresentation(session.program().mir(), owner);
+  };
+  if (!recipe.fixedArray && !ordinaryClass(recipe)) {
+    if (recipe.type.kind == SemanticType::UniqueOwner) {
+      ir.CreateRet(ir.CreateIsNotNull(
+          ir.CreateLoad(session.layouts().pointer(), address)));
+      return function;
+    }
+    ir.CreateRet(ir.getTrue());
     return function;
   }
   auto *observed =

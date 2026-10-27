@@ -1,0 +1,96 @@
+#include <std/memory>
+
+// User-defined erased callbacks: a model class implements an interface by
+// holding a closure. Boxing a model whose closure holds only scalars or a
+// function item copies it into the allocation by its generated copy. A model
+// whose closure owns a resource is boxed by move and destroyed through its
+// descriptor's complete cleanup, and a moved local model returns to its
+// caller with that cleanup. Destructors record explicit IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+interface Sink { void put(int value) mut; };
+
+class TraceSink : public Sink {
+public:
+  void put(int value) mut override { events = events * 10 + value; }
+};
+
+// Destructors report through a virtual call on a separate object; none hands
+// the object under destruction to it.
+void record(int value) {
+  mut TraceSink sink{};
+  mut Sink& view = sink;
+  view.put(value);
+}
+
+class Token {
+  int id;
+public:
+  Token(int id) : id(id) {}
+  ~Token() { record(this.id); }
+  int read() { return this.id; }
+};
+
+interface Callback {
+  int call(int input);
+};
+
+class Model<Callable> : public Callback {
+  Callable callable;
+public:
+  Model(Callable callable) : callable(std::move(callable)) {}
+  int call(int input) override { return this.callable(input); }
+};
+
+int twice(int input) { return input * 2; }
+
+// Boxes a local model; the allocation copies or relocates it.
+std::unique_ptr<Callback> boxed<Callable>(Callable callable) {
+  Model<Callable> local = Model<Callable>(std::move(callable));
+  auto owner = std::make_unique<Model<Callable>>(std::move(local));
+  return std::upcast_unique<Callback, Model<Callable>>(std::move(owner));
+}
+
+// Returns a moved local model with its cleanup.
+Model<Callable> retained<Callable>(Callable callable) {
+  mut Model<Callable> local = Model<Callable>(std::move(callable));
+  return std::move(local);
+}
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// CLOSURE_MODELS_MAIN
+int main() {
+  {
+    int offset = 5;
+    std::unique_ptr<Callback> shifted =
+        boxed([offset](int input) -> int { return input + offset; });
+    std::unique_ptr<Callback> doubled = boxed(twice);
+    if (shifted->call(1) != 6 || doubled->call(4) != 8) { return 1; }
+  }
+  {
+    auto token = std::make_unique<Token>(7);
+    std::unique_ptr<Callback> owning = boxed(
+        [owned = std::move(token)](int input) -> int { return input * owned->read(); });
+    if (owning->call(3) != 21 || events != 0) { return 2; }
+  }
+  if (events != 7) { return 3; }
+  events = 0;
+  {
+    auto token = std::make_unique<Token>(4);
+    auto held = retained(
+        [owned = std::move(token)](int input) -> int { return 840 / (input - owned->read()); });
+    Callback& view = held;
+    if (view.call(5) != 840 || events != 0) { return 4; }
+  }
+  return events == 4 ? 0 : 5;
+}

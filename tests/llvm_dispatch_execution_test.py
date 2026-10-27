@@ -58,6 +58,8 @@ SUCCESS_FILES = {
     "fresh-publication": "tests/fixtures/llvm_dispatch_fresh_publication.gti",
     "inline-slots": "tests/fixtures/llvm_dispatch_inline_slots.gti",
     "owned-transfers": "tests/fixtures/llvm_dispatch_owned_transfers.gti",
+    "consuming-receivers": "tests/fixtures/llvm_dispatch_consuming_receivers.gti",
+    "closure-models": "tests/fixtures/llvm_dispatch_closure_models.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -138,6 +140,27 @@ TRANSFER_SUCCESS_SOURCES = {
     "fresh-value-argument-former-reject": (PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n", 0),
     "fresh-return-former-reject": (PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n", 1),
     "local-return-former-reject": (PLAIN + "Plain make() { Plain local{}; return local; }\nint main() { Plain value = make(); return value.read(); }\n", 1),
+    # A moved owned local with active cleanup leaves through the return edge.
+    "returned-owned-move": ("""mut int dropped = 0;
+class Owned {
+  int id;
+public:
+  Owned(int id) : id(id) {}
+  ~Owned() { dropped = dropped * 10 + this.id; }
+  virtual int read() { return this.id; }
+};
+Owned relay(Owned value) {
+  mut Owned local = std::move(value);
+  return std::move(local);
+}
+int main() {
+  {
+    Owned kept = relay(Owned(4));
+    if (kept.read() != 4 || dropped != 0) { return 1; }
+  }
+  return dropped == 4 ? 0 : 2;
+}
+""", 0),
     "heap-polymorphic-owner-former-reject": ("""#include <std/memory>
 mut int dropped = 0;
 class HeapValue {
@@ -1060,7 +1083,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1298,6 +1321,50 @@ int main() {
         owned_failure.replace("expected_cleanup = 54;", "expected_cleanup = 55;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=owned_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    consuming = (root / SUCCESS_FILES["consuming-receivers"]).read_text(encoding="utf-8")
+    consuming_marker = "// CONSUMING_RECEIVERS_MAIN\n"
+    if consuming.count(consuming_marker) != 1:
+        raise AssertionError("consuming receiver main marker is not unique")
+    consuming_failure = consuming.split(consuming_marker, 1)[0] + """int main() {
+  expected_cleanup = 68991;
+  Guard guard{};
+  Task held = Task(1, std::string("x"), 1);
+  Runner runner = Runner(boxed(6, 0), 700);
+  return std::move(runner).run(8) + held.rank();
+}
+"""
+    consuming_needle = "return (input + taken.read() * 10 + int(this.label.size())) / this.divisor;"
+    add("consuming-receiver-failure", consuming_failure, "defined-failure",
+        expected_exit=70, failure_needle=consuming_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("consuming-receiver-wrong-cleanup",
+        consuming_failure.replace("expected_cleanup = 68991;", "expected_cleanup = 68992;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=consuming_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    closures = (root / SUCCESS_FILES["closure-models"]).read_text(encoding="utf-8")
+    closures_marker = "// CLOSURE_MODELS_MAIN\n"
+    if closures.count(closures_marker) != 1:
+        raise AssertionError("closure model main marker is not unique")
+    closure_failure = closures.split(closures_marker, 1)[0] + """int main() {
+  expected_cleanup = 748;
+  Guard guard{};
+  auto first = std::make_unique<Token>(8);
+  std::unique_ptr<Callback> kept = boxed(
+      [owned = std::move(first)](int input) -> int { return input + owned->read(); });
+  auto second = std::make_unique<Token>(4);
+  auto held = retained(
+      [owned = std::move(second)](int input) -> int { return 840 / (input - owned->read()); });
+  Token last = Token(7);
+  Callback& view = held;
+  return view.call(4) + kept->call(1) + last.read();
+}
+"""
+    closure_needle = "return 840 / (input - owned->read());"
+    add("closure-model-failure", closure_failure, "defined-failure",
+        expected_exit=70, failure_needle=closure_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("closure-model-wrong-cleanup",
+        closure_failure.replace("expected_cleanup = 748;", "expected_cleanup = 749;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=closure_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -1331,7 +1398,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "generated-copy-former-reject", "generated-move-former-reject",
             "fresh-copy-former-cli-control", "generated-move-virtual-failure",
             "owned-transfers", "owned-transfer-failure", "owned-transfer-wrong-cleanup",
-            "local-return-former-reject"),
+            "local-return-former-reject", "returned-owned-move"),
         "fresh-publication": (
             "fresh-publication", "fresh-return-former-reject",
             "fresh-value-argument-former-reject",
@@ -1339,10 +1406,14 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "fresh-return-constructor-rollback"),
         "inline-polymorphic-slot": (
             "inline-slots", "inline-slot-virtual-failure", "inline-slot-wrong-cleanup"),
+        "consuming-receivers": (
+            "consuming-receivers", "consuming-receiver-failure",
+            "consuming-receiver-wrong-cleanup"),
         "polymorphic-ownership": (
             "polymorphic-owners", "heap-polymorphic-owner-former-reject",
             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
-            "polymorphic-owner-constructor-rollback"),
+            "polymorphic-owner-constructor-rollback", "closure-models",
+            "closure-model-failure", "closure-model-wrong-cleanup"),
     }
     cases = evidence_cases(root)
     if {name for members in profiles.values() for name in members} != set(cases):
@@ -1389,6 +1460,8 @@ def main() -> None:
              "fresh-return-constructor-rollback",
              "inline-slot-virtual-failure", "inline-slot-wrong-cleanup",
              "owned-transfer-failure", "owned-transfer-wrong-cleanup",
+             "consuming-receiver-failure", "consuming-receiver-wrong-cleanup",
+             "closure-model-failure", "closure-model-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

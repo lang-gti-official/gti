@@ -576,6 +576,37 @@ const MirBody &ownedTransferBody(const MirProgram &program,
   return body;
 }
 
+// A value whose generated copy is exactly its bytes: passive scalars, raw
+// and C-string addresses, stateless function items, and arrays or closures
+// built from them by value without cleanup. Any other field keeps its own
+// class-level generated-member contract.
+bool bitwiseGeneratedCopy(const MirProgram &program, const SemanticType &type) {
+  if (isPassiveScalarValueType(type) || type == SemanticType::CString)
+    return true;
+  if (type.kind == SemanticType::FunctionItem)
+    return type.hasFunctionItemShape();
+  if (type.kind == SemanticType::RawPointer)
+    return type.arguments.size() == 1;
+  if (type.kind == SemanticType::Array)
+    return type.arguments.size() == 1 && !type.arrayLengthParameterId &&
+           bitwiseGeneratedCopy(program, type.arguments.front());
+  if (type.kind != SemanticType::Lambda)
+    return false;
+  const auto environment = closureEnvironmentLayout(program, type);
+  if (!environment ||
+      environment->captureTypes.size() != environment->captureModes.size() ||
+      environment->captureTypes.size() !=
+          environment->captureRequiresActiveCleanup.size())
+    return false;
+  for (std::size_t index = 0; index < environment->captureTypes.size();
+       ++index)
+    if (isBorrowingCapture(environment->captureModes[index]) ||
+        environment->captureRequiresActiveCleanup[index] ||
+        !bitwiseGeneratedCopy(program, environment->captureTypes[index]))
+      return false;
+  return true;
+}
+
 class FreshTransferQuery final {
 public:
   FreshTransferQuery(const MirProgram &program, const MirBody &body)
@@ -744,6 +775,20 @@ public:
                      stage.parameterTypes[1] == owner.type) {
             result.publication = &stage;
             result.publishes = FreshHierarchyPublication::Slot;
+          } else if (result.kind == ConstructorKind::Move &&
+                     stage.kind == MirInstructionKind::CallInput &&
+                     stage.callInputKind == HirCallInputKind::MoveValue &&
+                     stage.callInputRole == MirCallInputRole::Receiver &&
+                     !stage.destination && !stage.preparedParameterDrop &&
+                     stage.result && stage.lifecycle.empty() &&
+                     stage.operands.size() == 1 &&
+                     stage.info.type == owner.type &&
+                     consumingReceiver(*stage.result)) {
+            // The moved object is relocated into its own value storage and
+            // stays there as one consuming call's receiver; the caller keeps
+            // its value obligation through the full expression.
+            result.publication = &stage;
+            result.publishes = FreshHierarchyPublication::Receiver;
           } else {
             unsupported("LLVM transfer requires one direct consumer");
           }
@@ -859,13 +904,23 @@ public:
       } else if (owner.requiresActiveCleanup && !bindingMove) {
         malformed("LLVM active move has no source-to-value lifecycle transfer");
       }
-      // The slot relocates an inert payload itself. A returned object leaves
-      // this invocation's ownership through the return edge.
-      if (!local && !argument &&
-          (owner.requiresActiveCleanup || result.valueDrop ||
-           (result.publishes == FreshHierarchyPublication::Slot &&
-            !result.publication->lifecycle.empty())))
-        unsupported("LLVM transfer requires an inert slot or return object");
+      // A returned object leaves this invocation's ownership through the
+      // return edge: the moved value's obligation, if any, transfers out
+      // before that return. The slot relocates an inert payload itself.
+      if (result.publishes == FreshHierarchyPublication::Returned) {
+        if (result.valueDrop && !returnedObligation(result.valueDrop))
+          unsupported("LLVM returned transfer must release its value "
+                      "obligation at the return");
+      } else if (result.publishes == FreshHierarchyPublication::Receiver) {
+        if (result.valueDrop && !droppedObligation(result.valueDrop))
+          unsupported("LLVM consumed receiver must keep its value obligation "
+                      "until its drop");
+      } else if (!local && !argument &&
+                 (owner.requiresActiveCleanup || result.valueDrop ||
+                  (result.publishes == FreshHierarchyPublication::Slot &&
+                   !result.publication->lifecycle.empty()))) {
+        unsupported("LLVM transfer requires an inert slot object");
+      }
     } else {
       // This scalar-only generated-copy profile has no active cleanup: source
       // destruction (including an active base) makes copying unavailable.
@@ -1010,6 +1065,72 @@ private:
       malformed("LLVM transfer lost its exact class instance");
     return *result;
   }
+  // The moved value's obligation is created by the producer's move and ends
+  // only through one unconditional TransferOut in the block whose terminator
+  // returns it, or through a failure-path drop before that release.
+  bool returnedObligation(MirDropObligationId obligation) const {
+    const MirBlock *release = nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone)
+          continue;
+        for (const auto &event : stage.lifecycle) {
+          if (event.target == obligation &&
+              event.kind != MirLifecycleEventKind::Move)
+            return false;
+          if (event.source != obligation)
+            continue;
+          if (event.kind == MirLifecycleEventKind::Drop &&
+              stage.kind == MirInstructionKind::Drop)
+            continue;
+          if (release || event.kind != MirLifecycleEventKind::TransferOut ||
+              event.target || event.conditional || event.failureCleanup)
+            return false;
+          release = &block;
+        }
+      }
+    return release && release->terminator.kind == MirTerminatorKind::Return &&
+           release->terminator.value;
+  }
+  // The moved value's obligation is created by the producer's move and ends
+  // only through drops of its own value place.
+  bool droppedObligation(MirDropObligationId obligation) const {
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone)
+          continue;
+        for (const auto &event : stage.lifecycle) {
+          if (event.target == obligation &&
+              event.kind != MirLifecycleEventKind::Move)
+            return false;
+          if (event.source == obligation &&
+              (event.kind != MirLifecycleEventKind::Drop ||
+               stage.kind != MirInstructionKind::Drop))
+            return false;
+        }
+      }
+    return true;
+  }
+  // A receiver input used exactly once, as the receiver of a direct or
+  // virtual call to a consuming member of a class.
+  bool consumingReceiver(MirValueId value) const {
+    const MirInstruction *call = nullptr;
+    for (const auto &use : body.usesOf(value)) {
+      const auto *block = body.findBlock(use.block);
+      if (use.kind != MirValueUseKind::InstructionReceiver || !block || call)
+        return false;
+      for (const auto &stage : block->instructions)
+        if (!stage.tombstone && stage.id == use.instruction)
+          call = &stage;
+    }
+    if (!call || call->kind != MirInstructionKind::Call || !call->receiver ||
+        call->receiver->kind != MirOperandKind::Value ||
+        call->receiver->value != value || !call->functionTarget)
+      return false;
+    const auto *target = program.findFunctionInstance(*call->functionTarget);
+    return target && target->owner && !target->staticMember &&
+           target->receiverMutability == ReceiverMutability::Consuming;
+  }
   bool parameter(const MirPlace &place) const {
     const std::vector<HirBindingId> *formal = nullptr;
     if (identity.kind == MirBodyKind::Function)
@@ -1140,7 +1261,7 @@ public:
     for (const auto &row : owner.structuralBases)
       base(row);
     for (const auto &field : owner.declaredFields) {
-      if (isPassiveScalarValueType(field.type))
+      if (bitwiseGeneratedCopy(program, field.type))
         continue;
       if (field.type.kind != SemanticType::Class)
         unsupported("LLVM hierarchy transfer requires scalar or record fields");
@@ -1222,9 +1343,12 @@ Placement::Placement(const MirProgram &program, const MirBody &body) {
       // Bind only the exact proven publication. Do not replay the generic
       // CallInput/aggregate/return scan after enabling hierarchy freshness.
       // A slot construction relocates from the moved binding itself.
+      // A slot construction relocates from the moved binding itself, and a
+      // consumed receiver lives in its own value storage.
       if (transfer->publishes == FreshHierarchyPublication::Returned)
         bind(*stage.result, {.returned = true});
-      else if (transfer->publishes != FreshHierarchyPublication::Slot)
+      else if (transfer->publishes != FreshHierarchyPublication::Slot &&
+               transfer->publishes != FreshHierarchyPublication::Receiver)
         bind(*stage.result, {.place = transfer->destination});
     }
 }

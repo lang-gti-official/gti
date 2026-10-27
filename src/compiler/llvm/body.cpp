@@ -583,6 +583,17 @@ private:
                                       "source/publication placement");
       return memory.selected(transfer.source);
     }
+    if (transfer.publishes == FreshHierarchyPublication::Receiver) {
+      // The moved object lives in this value's own storage, which the
+      // consuming call receives and the value obligation later drops.
+      if (target || transfer.source != instruction.operands.front())
+        throw BackendUnsupportedError("LLVM consumed receiver lost its exact "
+                                      "source/publication placement");
+      auto *address = memory.temporary(instruction.info.type);
+      lifetimes.freshTransfer(ir, address, memory.selected(transfer.source),
+                              input, instruction);
+      return address;
+    }
     const bool returned =
         transfer.publishes == FreshHierarchyPublication::Returned;
     if (!target || target->aggregate || target->returned != returned ||

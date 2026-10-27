@@ -1,0 +1,123 @@
+#include <std/memory>
+#include <std/string>
+
+// Consuming members of hierarchy classes. A moved owned receiver lives in its
+// own value storage for the call, and the caller drops it at the end of the
+// full expression. Inside a consuming body, owned fields move out and the
+// receiver's later cleanup skips them. A consuming call on a unique owner's
+// pointee from consuming this stages that object in place and leaves its
+// cleanup with the owner. Destructors record explicit IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+interface Sink { void put(int value) mut; };
+
+class TraceSink : public Sink {
+public:
+  void put(int value) mut override { events = events * 10 + value; }
+};
+
+// Destructors report through a virtual call on a separate object; none hands
+// the object under destruction to it.
+void record(int value) {
+  mut TraceSink sink{};
+  mut Sink& view = sink;
+  view.put(value);
+}
+
+class Token {
+  int id;
+public:
+  Token(int id) : id(id) {}
+  ~Token() { record(this.id); }
+  int read() { return this.id; }
+};
+
+interface Job {
+  int operator()(int input) &&;
+};
+
+interface Ranked { int rank(); };
+
+// Ranked precedes Job, so the Job view has a nonzero offset.
+class Task : public Ranked, public Job {
+  mut Token token;
+  std::string label;
+  int divisor;
+public:
+  Task(int id, std::string label, int divisor)
+      : token(Token(id)), label(std::move(label)), divisor(divisor) {}
+  ~Task() { record(9); }
+  int rank() override { return 5; }
+  int operator()(int input) && override {
+    Token taken = std::move(this.token);
+    return (input + taken.read() * 10 + int(this.label.size())) / this.divisor;
+  }
+};
+
+// A consuming member that is not virtual, on a polymorphic class.
+class Ticket {
+  mut Token token;
+public:
+  Ticket(int id) : token(Token(id)) {}
+  virtual int peek() { return this.token.read(); }
+  int redeem() && {
+    Token taken = std::move(this.token);
+    return taken.read() * 100;
+  }
+};
+
+// Consumes its owned job pointee in place; the owner keeps its cleanup.
+class Runner {
+  mut std::unique_ptr<Job> job;
+  int bonus;
+public:
+  Runner(std::unique_ptr<Job> job, int bonus)
+      : job(std::move(job)), bonus(bonus) {}
+  ~Runner() { record(8); }
+  int run(int input) && { return std::move(*this.job)(input) + this.bonus; }
+};
+
+std::unique_ptr<Job> boxed(int id, int divisor) {
+  return std::upcast_unique<Job, Task>(
+      std::make_unique<Task>(id, std::string("ab"), divisor));
+}
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// CONSUMING_RECEIVERS_MAIN
+int main() {
+  {
+    Task task = Task(3, std::string("abc"), 1);
+    if (task.rank() != 5) { return 1; }
+    // The moved token dies in the callee; the moved task at the end of the
+    // full expression.
+    int value = std::move(task)(4);
+    if (value != 37 || events != 39) { return 2; }
+  }
+  if (events != 39) { return 3; }
+  events = 0;
+  {
+    Ticket ticket = Ticket(4);
+    int value = std::move(ticket).redeem();
+    if (value != 400 || events != 4) { return 4; }
+  }
+  if (events != 4) { return 5; }
+  events = 0;
+  {
+    Runner runner = Runner(boxed(6, 2), 700);
+    // The job's token dies in its consuming call; the moved runner, then
+    // its boxed job, die at the end of the full expression.
+    int value = std::move(runner).run(8);
+    if (value != 735 || events != 689) { return 6; }
+  }
+  return events == 689 ? 0 : 7;
+}
