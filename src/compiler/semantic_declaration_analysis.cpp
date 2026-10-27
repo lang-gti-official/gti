@@ -7329,48 +7329,42 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
   }
 }
 
-auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
-                                               const FunctionInfo &function,
-                                               SemanticType ownerType) -> bool {
-  // A dynamic view cannot be stored in a field or a fixed array, so reading
-  // that storage copies an ownerless view: like a literal, it carries no
-  // receiver or parameter dependency. Only a pure place path whose final
-  // field or element is declared as the view itself qualifies; a reference
-  // field may name a dependent view shell, and a call proves nothing here.
-  if (!expression || function.declaration == nullptr)
-    return false;
+auto SemanticVisitor::Impl::predeclaredPlace(const Expr *expression,
+                                             const FunctionInfo &function,
+                                             SemanticType ownerType)
+    -> std::optional<PredeclaredPlace> {
+  if (expression == nullptr || function.declaration == nullptr)
+    return std::nullopt;
   if (function.ownerClass != 0 && (ownerType.kind != SemanticType::Class ||
                                    ownerType.classId != function.ownerClass))
     ownerType = substituteType(openClassType(function.ownerClass),
                                instanceTypeSubstitution);
-  struct Path {
-    SemanticType type = SemanticType::Unknown;
-    bool stored = false;
-  };
   const auto referent = [](const SemanticType &type) {
     return type.kind == SemanticType::Reference && type.arguments.size() == 1
                ? SemanticType(type.arguments.front())
                : type;
   };
-  const auto field = [&](const Path &object,
-                         const Token &name) -> std::optional<Path> {
+  const auto field = [&](const PredeclaredPlace &object,
+                         const Token &name) -> std::optional<PredeclaredPlace> {
     const SemanticType owner = referent(object.type);
     const auto *member = findMember(owner, name);
     if (member == nullptr || member->symbol.variableDeclaration == nullptr ||
         member->symbol.staticMember)
       return std::nullopt;
-    return Path{
+    return PredeclaredPlace{
         .type = substituteType(member->symbol.type, classSubstitution(owner)),
         .stored = true};
   };
   const bool receiver = function.ownerClass != 0 && !function.staticMember;
   const auto &parameters = function.bodyDeclaration()->parameters();
-  const auto path = [&](const auto &self,
-                        const Expr *current) -> std::optional<Path> {
+  const auto path =
+      [&](const auto &self,
+          const Expr *current) -> std::optional<PredeclaredPlace> {
     if (const auto *group = exprAs<Grouping>(current))
       return self(self, group->expression().get());
     if (exprAs<This>(current) != nullptr)
-      return receiver ? std::optional<Path>{Path{.type = ownerType}}
+      return receiver ? std::optional<PredeclaredPlace>{PredeclaredPlace{
+                            .type = ownerType}}
                       : std::nullopt;
     if (const auto *variable = exprAs<Variable>(current)) {
       // Parameters take precedence over implicit instance fields, as in
@@ -7380,8 +7374,9 @@ auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
            index < parameters.size() && index < function.parameterTypes.size();
            ++index)
         if (parameters[index].name.lexeme == variable->name().lexeme)
-          return Path{.type = function.parameterTypes[index]};
-      return receiver ? field(Path{.type = ownerType}, variable->name())
+          return PredeclaredPlace{.type = function.parameterTypes[index]};
+      return receiver ? field(PredeclaredPlace{.type = ownerType},
+                              variable->name())
                       : std::nullopt;
     }
     if (const auto *member = exprAs<Get>(current)) {
@@ -7394,12 +7389,23 @@ auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
           object ? referent(object->type) : SemanticType::Unknown;
       if (array.kind != SemanticType::Array || array.arguments.size() != 1)
         return std::nullopt;
-      return Path{.type = SemanticType(array.arguments.front()),
-                  .stored = true};
+      return PredeclaredPlace{.type = SemanticType(array.arguments.front()),
+                              .stored = true};
     }
     return std::nullopt;
   };
-  const auto read = path(path, expression.get());
+  return path(path, expression);
+}
+
+auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
+                                               const FunctionInfo &function,
+                                               SemanticType ownerType) -> bool {
+  // A dynamic view cannot be stored in a field or a fixed array, so reading
+  // that storage copies an ownerless view: like a literal, it carries no
+  // receiver or parameter dependency. Only a pure place path whose final
+  // field or element is declared as the view itself qualifies; a reference
+  // field may name a dependent view shell, and a call proves nothing here.
+  const auto read = predeclaredPlace(expression.get(), function, ownerType);
   return read && read->stored &&
          (read->type.kind == SemanticType::StringView ||
           read->type.kind == SemanticType::CString);
@@ -7563,10 +7569,29 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return predeclaredTextBorrowSource(binary->right(), function, ownerType);
   }
+  // Text read through a raw pointer's index or `->` is raw memory under
+  // unsafe obligations, not storage of the pointer's origin: like text a raw
+  // dereference reads, it has no GTI owner and nominates no relay.
+  const auto rawPointee = [&](const ExprPtr &object) {
+    const auto place = predeclaredPlace(object.get(), function, ownerType);
+    if (!place)
+      return false;
+    const SemanticType &pointer =
+        place->type.kind == SemanticType::Reference &&
+                place->type.arguments.size() == 1
+            ? place->type.arguments.front()
+            : place->type;
+    return pointer.kind == SemanticType::RawPointer;
+  };
   if (const auto *member = exprAs<Get>(expression.get())) {
+    if (member->access().kind == TokenKind::ARROW &&
+        rawPointee(member->object()))
+      return {};
     return predeclaredTextBorrowSource(member->object(), function, ownerType);
   }
   if (const auto *index = exprAs<Index>(expression.get())) {
+    if (rawPointee(index->object()))
+      return {};
     // Like a field, an indexed receiver can nominate the enclosing source.
     // This is only the prospective relay contract: resolved body analysis
     // must still prove the selected access and returned view depend on it.

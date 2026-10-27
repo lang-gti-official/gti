@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Text read from array storage or raw memory runs alike on both backends.
+"""Text read from arrays, raw memory or callables runs alike on both backends.
 
 A view copied out of an array of views holds the ownerless text the array
-holds, and a C string loaded through a raw pointer is the inert native address
-the caller stored there. MIR proves both results ownerless; each program must
-build and behave identically on C++ and LLVM at -O0 and -O2.
+holds, a C string loaded through a raw pointer is the inert native address the
+caller stored there, and a callable's text result is what its target returns.
+MIR proves each result ownerless. A lambda's view over its captured text has
+no owner to name and is used only locally. Each program must build and behave
+identically on C++ and LLVM at -O0 and -O2.
 
     python3 tests/text_storage_provenance_runtime_test.py <gti> <repo-root>
 """
@@ -81,25 +83,138 @@ int main() {
 }
 '''
 
+CALLABLE_RESULTS = r'''
+#include <std/functional>
+#include <std/string_view>
+// A callable's text result through a GTI invocation pointer is what its
+// target returns: a user-defined callable class, a lambda or a function item.
+class Greeter {
+public:
+  std::string_view greeting;
+  Greeter(std::string_view greeting) : greeting(greeting) {}
+  std::string_view operator()() { return this.greeting; }
+};
+std::string_view small(int n) { return n < 10 ? "small" : "large"; }
+std::string_view invoke(std::function_ptr<std::string_view(int)> pick, int n) { return pick(n); }
+mut std::string_view kept = "";
+int main() {
+  Greeter hello = Greeter("hello");
+  std::function_ref<std::string_view()> greet{hello};
+  kept = greet();
+  std::println(kept);
+  auto lit = []() -> std::string_view { return "lit"; };
+  std::function_ref<std::string_view()> viewed{lit};
+  std::println(viewed());
+  kept = invoke(std::function_ptr<std::string_view(int)>(small), 30);
+  std::println(kept);
+  auto zero = [](int n) -> std::string_view { return n == 0 ? "zero" : "other"; };
+  std::function_ptr<std::string_view(int)> viaLambda{zero};
+  std::println(viaLambda(1));
+  return kept == "large" ? 0 : 1;
+}
+'''
+
 RAW_C_STRINGS = r'''
+struct Slots {
+  c_string* items = nullptr;
+  int32_t count = 0;
+};
 mut c_string kept = nullptr;
 void put(c_string* items, int32_t at, c_string value) { unsafe { items[at] = value; } }
 c_string second(c_string* items) { unsafe { c_string* next = items + 1; return *next; } }
-c_string at(c_string* items, int32_t index) {
+c_string at(c_string* items, int32_t index) { unsafe { return items[index]; } }
+c_string viaLocal(c_string* items, int32_t index) {
   unsafe {
     c_string* base = items;
     return base[index];
   }
 }
+c_string first(Slots slots) { unsafe { return slots.items[0]; } }
+c_string viaReference(c_string*& items) { unsafe { return items[1]; } }
 int main() {
   mut c_string slots[3] = {nullptr, nullptr, nullptr};
   if (second(&slots[0]) != nullptr) { return 1; }
   put(&slots[0], 1, "b");
   kept = second(&slots[0]);
   if (kept == nullptr || kept != slots[1] || at(&slots[0], 1) != kept) { return 2; }
-  if (at(&slots[0], 0) != nullptr || at(&slots[0], 2) != nullptr) { return 3; }
+  if (viaLocal(&slots[0], 0) != nullptr || at(&slots[0], 2) != nullptr) { return 3; }
+  mut c_string* base = &slots[0];
+  Slots view{.items = base, .count = 3};
+  if (first(view) != nullptr || viaReference(base) != kept) { return 4; }
   unsafe { slots[1] = nullptr; }
-  return second(&slots[0]) == nullptr ? 0 : 4;
+  return second(&slots[0]) == nullptr ? 0 : 5;
+}
+'''
+
+RAW_TEXT_VIEWS = r'''
+#include <std/string_view>
+// A view read through a raw pointer, its index or `->` is the view stored
+// there; the pointer formal is not its owner.
+struct Entry {
+  std::string_view name;
+  int id;
+};
+std::string_view viewAt(std::string_view* item) { unsafe { return *item; } }
+std::string_view wordAt(std::string_view* items, int32_t index) { unsafe { return items[index]; } }
+std::string_view nameAt(Entry* entry) { unsafe { return entry->name; } }
+mut std::string_view kept = "";
+int main() {
+  mut std::string_view words[2] = {"alpha", "beta"};
+  kept = wordAt(&words[0], 1);
+  std::println(kept);
+  std::println(viewAt(&words[0]));
+  mut Entry entry{.name = "entry", .id = 1};
+  std::println(nameAt(&entry));
+  std::string_view blank[2] = {};
+  std::string_view grid[2][2] = {{"a", "b"}, {"c", "d"}};
+  std::println(grid[1][0]);
+  return blank[1].empty() && kept == "beta" ? 0 : 1;
+}
+'''
+
+CAPTURED_TEXT_LOCAL_USE = r'''
+#include <std/string>
+// A lambda's view over its captured text has an owner the compiler cannot
+// name, so callers use it locally: in an expression, a local binding, an
+// assignment to a local view or a by-value parameter, a call that only reads
+// or relays it, and another lambda over it.
+class Printer {
+public:
+  mut int printed;
+  Printer() : printed(0) {}
+  void show<F>(F view) mut {
+    std::string_view shown = view();
+    std::println(shown);
+    this.printed += 1;
+  }
+};
+uint64_t measure(std::string_view text) { return text.size(); }
+std::string_view same(std::string_view text) { return text; }
+std::string_view rebind(mut std::string_view text) {
+  auto keep = [text]() -> std::string_view { return text; };
+  text = keep();
+  std::println(text);
+  return "rebound";
+}
+mut std::string_view kept = "";
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view view = owner.view();
+  auto captured = [view]() -> std::string_view { return view; };
+  std::println(captured());
+  std::string_view bound = captured();
+  mut std::string_view assigned = "";
+  for (mut int i = 0; i < 2; i += 1) { assigned = captured(); }
+  std::string_view copied = assigned;
+  std::println(same(captured()));
+  auto nested = [captured]() -> std::string_view { return captured(); };
+  mut Printer printer{};
+  printer.show(nested);
+  std::println(rebind(owner.view()));
+  auto literal = []() -> std::string_view { return "literal"; };
+  kept = literal();
+  std::println(kept);
+  return measure(copied) == uint64_t(7) && printer.printed == 1 ? 0 : 1;
 }
 '''
 
@@ -107,7 +222,11 @@ CASES = {
     'array-elements': (ARRAY_ELEMENTS, (0, 'cde\nab\ntwo\nright\nplaced\n', '')),
     'array-fields-and-lambdas': (ARRAY_FIELDS_AND_LAMBDAS, (0, 'yz\nlabel\n', '')),
     'element-references': (ELEMENT_REFERENCES, (0, 'zz\n', '')),
+    'callable-results': (CALLABLE_RESULTS, (0, 'hello\nlit\nlarge\nother\n', '')),
     'raw-c-strings': (RAW_C_STRINGS, (0, '', '')),
+    'raw-text-views': (RAW_TEXT_VIEWS, (0, 'beta\nalpha\nentry\nc\n', '')),
+    'captured-text-local-use': (CAPTURED_TEXT_LOCAL_USE, (
+        0, 'dynamic\ndynamic\ndynamic\ndynamic\nrebound\nliteral\n', '')),
 }
 
 ENDPOINTS = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
@@ -129,7 +248,7 @@ def main() -> None:
                 if result.error or result.observable != expected:
                     raise AssertionError(f'{name} {endpoint}: {result}')
             print(f'{name}: C++ and LLVM at O0/O2 agree', flush=True)
-    print('array-element and raw-memory text returns passed')
+    print('array-element, raw-memory, callable and captured text passed')
 
 
 if __name__ == '__main__':

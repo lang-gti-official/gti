@@ -2464,8 +2464,12 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
           index < selected.parameterTypes.size() &&
           selected.parameterTypes[index].kind == SemanticType::TypeParameter;
       if (!conditionalText && !potentialPackView &&
-          !isOwnerDependentTextExpression(*argument))
+          !isOwnerDependentTextExpression(*argument)) {
+        noteLocalTextEscape(*argument, LocalTextEscapeKind::Storage,
+                            "passed to a constructor that stores it in a "
+                            "field");
         continue;
+      }
       // A fresh value this function returns relays a formal stored in its
       // text field: each call publishes its own argument's owner there.
       if (!potentialPackView && soleField && input.payload == 0 &&
@@ -4885,8 +4889,30 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
   const ExpressionInfo *info =
       value ? semanticModel.findExpression(*value) : nullptr;
   if (info == nullptr || !info->traits.containsBorrowedState) {
+    // Text a capture provided, or a local view that is ever given it, has
+    // an owner the compiler cannot name: a lambda's result over it is for
+    // local use, and a function cannot return it (L-OWN-02).
+    noteLocalTextEscape(value, currentLambdaReturn
+                                   ? LocalTextEscapeKind::LambdaReturn
+                                   : LocalTextEscapeKind::Return);
     return;
   }
+  // Text a capture provided keeps an owner the compiler cannot name however
+  // the rest of the value relays, and so does a local view that is ever
+  // given such text (`finalizeCapturedText`).
+  const auto sources = textValueSources(value.get());
+  if (sources.captured && !currentLambdaReturn) {
+    reportCapturedTextReturn(*value);
+    return;
+  }
+  if (sources.captured)
+    currentLambdaReturn->capturedText = true;
+  for (const auto local : sources.locals)
+    loanFlow.localTextEscapes.push_back(
+        {.local = local,
+         .value = value.get(),
+         .kind = currentLambdaReturn ? LocalTextEscapeKind::LambdaReturn
+                                     : LocalTextEscapeKind::Return});
   const FunctionInfo *function = currentFunctionInfo();
   const bool cString = info->type.kind == SemanticType::CString;
   const std::string description =
