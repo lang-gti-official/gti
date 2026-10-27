@@ -18,8 +18,19 @@ SemanticVisitor &
 SemanticVisitor::operator=(SemanticVisitor &&) noexcept = default;
 
 bool SemanticVisitor::check(const Program &program) {
-  return impl->check(program);
+  try {
+    return impl->check(program);
+  } catch (const Impl::AnalysisCancelled &) {
+    impl->analysisCancelled = true;
+    return false;
+  }
 }
+
+void SemanticVisitor::setCancellation(const std::atomic<bool> *cancellation) {
+  impl->cancellation = cancellation;
+}
+
+bool SemanticVisitor::cancelled() const { return impl->analysisCancelled; }
 
 void SemanticVisitor::requireFunctionBodies(
     const std::unordered_set<const FunctionDecl *> &bodies) {

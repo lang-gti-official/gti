@@ -244,6 +244,17 @@ public:
   bool check(const Program &program);
 
   std::unordered_set<const FunctionDecl *> requiredFunctionBodies;
+  // Cooperative cancellation of check(program) (see SemanticVisitor). Safe
+  // points throw AnalysisCancelled, which only SemanticVisitor::check catches;
+  // the abandoned analyzer is discarded. Speculative workers never receive it.
+  struct AnalysisCancelled {};
+  const std::atomic<bool> *cancellation = nullptr;
+  bool analysisCancelled = false;
+  void throwIfCancelled() const {
+    if (cancellation != nullptr &&
+        cancellation->load(std::memory_order_relaxed))
+      throw AnalysisCancelled{};
+  }
 
   bool check(const Expr &expr);
 

@@ -383,6 +383,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
   };
   const auto visit = [&](const auto &self, ProgramEffectOwner owner,
                          std::size_t depth) -> void {
+    throwIfCancelled();
     if (!visited.insert(owner).second)
       return;
     if (owner.kind == ProgramEffectOwnerKind::ConcreteInstance &&

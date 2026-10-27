@@ -175,6 +175,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   catalog.seal();
   registrationSymbolCeiling = semanticModel.database().symbolIdentityCeiling();
   valueFlow.beginBody(catalog);
+  throwIfCancelled();
   if (workMetrics != nullptr) {
     workMetrics->semanticRegistrationMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
@@ -189,6 +190,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
             std::chrono::steady_clock::now() - bodyStart)
             .count());
   }
+  throwIfCancelled();
   const auto finalizationStart = std::chrono::steady_clock::now();
   discoverOwnedCallableContracts();
   semanticModel.finalizeCallableForwardings();
@@ -4199,6 +4201,7 @@ auto SemanticVisitor::Impl::processLexicalLeaf(const StmtPtr &statement,
   const std::size_t index = lexicalFrames.back().index;
   const auto start = measure ? std::chrono::steady_clock::now()
                              : std::chrono::steady_clock::time_point{};
+  throwIfCancelled();
   measureTopLevelStatements = false;
   heldDiagnostics.emplace_back();
   analyze(statement);

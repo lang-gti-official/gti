@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.480.2 — Faster editor diagnostics after an edit
+
+- `gti_lsp` cancels a running analysis when a newer edit to the same document
+  arrives, and starts analysing sooner after typing pauses (at most 150 ms
+  instead of 500 ms). On an eight-include file an error now appears or clears
+  about 0.35 s sooner (about 1.05 s instead of 1.4 s on Apple silicon).
+  Diagnostics and every other result are unchanged.
+
 ## 0.480.1 — Lambda argument formatting
 
 - Keep lambda captures adjacent to opening call parentheses (`start([]()...)`)
