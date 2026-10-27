@@ -1,4 +1,5 @@
 #include "constructor_field_publication.h"
+#include "placement.h"
 
 #include "../mir_verification_queries.h"
 
@@ -53,7 +54,7 @@ publicationTransport(const MirProgram &program,
   const auto exactNullOwner =
       targetType.kind == SemanticType::UniqueOwner &&
       targetType.arguments.size() == 1 &&
-      mir_detail::completeObjectType(program, targetType.arguments.front()) &&
+      uniqueOwnerPointee(program, targetType.arguments.front()) &&
       instruction.info.type == SemanticType::NullPtr &&
       instruction.info.category == ValueCategory::Value &&
       instruction.literal &&

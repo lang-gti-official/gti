@@ -1,4 +1,5 @@
 #include "reachability.h"
+#include "gti/mir_effects.h"
 #include "native_c_contract.h"
 
 #include <algorithm>
@@ -40,6 +41,31 @@ dispatchSourceBodies(const LoweredProgram &program,
       result.push_back(address);
   }
   return result;
+}
+
+std::optional<HirClassInstanceId>
+dynamicOwnerAllocation(const MirProgram &program,
+                       const MirInstruction &instruction) {
+  if (instruction.tombstone ||
+      (instruction.kind != MirInstructionKind::AllocateObject &&
+       instruction.intrinsic != IntrinsicKind::AllocateUniqueOwner) ||
+      instruction.info.type.kind != SemanticType::UniqueOwner ||
+      instruction.info.type.arguments.size() != 1 ||
+      instruction.info.type.arguments.front().kind != SemanticType::Class)
+    return std::nullopt;
+  const MirClassInstance *selected = nullptr;
+  for (const auto &candidate : program.classInstances())
+    if (candidate.type == instruction.info.type.arguments.front()) {
+      if (selected)
+        throw std::logic_error(
+            "LLVM dynamic owner allocation has ambiguous class identity");
+      selected = &candidate;
+    }
+  if (!selected)
+    throw std::logic_error("LLVM dynamic owner allocation has no sealed class");
+  if (!selected->polymorphic)
+    return std::nullopt;
+  return selected->id;
 }
 
 Reachability reachableProgram(const LoweredProgram &program) {
@@ -105,9 +131,10 @@ Reachability reachableProgram(const LoweredProgram &program) {
       pending.pop_back();
       if (recipe.destructor)
         body({MirBodyKind::Destructor, *recipe.destructor});
-      if (recipe.polymorphicCleanup)
-        result.conservative = true;
-      else if (recipe.type.kind == SemanticType::Class && recipe.classInstance)
+      // A dynamic owner's complete cleanup is demanded where that complete
+      // object was allocated, below; every runtime pointee came from one.
+      if (!recipe.polymorphicCleanup &&
+          recipe.type.kind == SemanticType::Class && recipe.classInstance)
         active(*recipe.classInstance);
       for (const auto &child : recipe.aggregate)
         pending.push_back(&child);
@@ -155,6 +182,16 @@ Reachability reachableProgram(const LoweredProgram &program) {
             continue;
           if (instruction.functionTarget)
             body({MirBodyKind::Function, *instruction.functionTarget});
+          if (const auto owned = dynamicOwnerAllocation(mir, instruction)) {
+            // The allocated class's descriptors carry its complete cleanup.
+            active(*owned);
+            const auto &object = *mir.findClassInstance(*owned);
+            if (const auto complete = mirUniqueCleanupType(mir, object.type))
+              cleanup(*complete);
+            else if (object.requiresActiveCleanup)
+              throw std::logic_error(
+                  "LLVM dynamic owner lost its complete cleanup recipe");
+          }
           if (instruction.functionPointerFunctionTarget)
             body({MirBodyKind::Function,
                   *instruction.functionPointerFunctionTarget});

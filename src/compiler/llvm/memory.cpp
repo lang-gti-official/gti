@@ -483,8 +483,12 @@ bool nativeUniqueConstructionShape(const MirProgram &program,
   const auto found = std::find_if(
       program.classInstances().begin(), program.classInstances().end(),
       [&](const auto &owner) { return owner.type == type; });
-  if (found == program.classInstances().end() || found->polymorphic ||
-      found->abstract)
+  if (found == program.classInstances().end() || found->abstract ||
+      found->kind == ClassKind::Interface)
+    return false;
+  // A concrete polymorphic object is constructed only through its selected
+  // source constructor, which installs its exact active dispatch state.
+  if (found->polymorphic && !instruction.constructorTarget)
     return false;
   if (instruction.constructorTarget) {
     const auto *target =
@@ -517,6 +521,7 @@ bool Memory::handles(IntrinsicKind intrinsic) {
   case IntrinsicKind::UniqueOwnerBorrowMut:
   case IntrinsicKind::UniqueOwnerIsNull:
   case IntrinsicKind::UniqueOwnerSwap:
+  case IntrinsicKind::UniqueOwnerUpcast:
   case IntrinsicKind::SharedOwnerEmpty:
   case IntrinsicKind::SharedOwnerFromUnique:
   case IntrinsicKind::SharedOwnerClone:
@@ -625,6 +630,30 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
     guard(ir.CreateIsNull(address),
           instruction.definedFailure.localOrigins[0].outcomes[0]);
     return {true, address};
+  }
+  case IntrinsicKind::UniqueOwnerUpcast: {
+    // The verified public base conversion keeps one owned allocation and
+    // selects its base view at the exact static subobject offset. An empty
+    // owner stays empty. Cleanup and allocation identity stay with the
+    // installed dispatch descriptor, never with this static view.
+    if (instruction.operands.size() != 1 ||
+        instruction.operands[0].type.kind != SemanticType::UniqueOwner ||
+        instruction.operands[0].type.arguments.size() != 1 ||
+        instruction.info.type.kind != SemanticType::UniqueOwner ||
+        instruction.info.type.arguments.size() != 1)
+      throw std::logic_error("LLVM owner upcast lost its sealed owner types");
+    const auto view = session.layouts().baseSubobject(
+        instruction.operands[0].type.arguments[0],
+        instruction.info.type.arguments[0], "memory.uniqueOwnerUpcast");
+    if (view.offset == 0)
+      return {true, inputs[0]};
+    auto *adjusted =
+        ir.CreateGEP(ir.getInt8Ty(), inputs[0],
+                     ir.getInt64(static_cast<std::int64_t>(view.offset)));
+    return {true, ir.CreateSelect(ir.CreateIsNull(inputs[0]),
+                                  llvm::ConstantPointerNull::get(
+                                      session.layouts().pointer()),
+                                  adjusted)};
   }
   case IntrinsicKind::UniqueOwnerSwap: {
     auto *left = ir.CreateLoad(session.layouts().pointer(), inputs[0]);

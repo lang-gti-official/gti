@@ -23,6 +23,12 @@ namespace lang::native_llvm {
           addressValue(program, type.arguments[0]));
 }
 
+// A unique owner's pointee: a complete object type, or a polymorphic class
+// view (possibly an interface or abstract class) whose complete object the
+// owner's dispatch descriptor identifies. Either way the owner is one handle.
+[[nodiscard]] bool uniqueOwnerPointee(const MirProgram &program,
+                                      const SemanticType &pointee);
+
 // Exclusion only: inline hierarchy state cannot use ordinary object-byte
 // transport. Indirections transport addresses, not their referents. Unknown,
 // missing or cyclic storage fails closed; false is never inferred from it.

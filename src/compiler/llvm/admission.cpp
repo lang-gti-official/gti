@@ -256,6 +256,12 @@ public:
             for (const auto &event : stage.lifecycle)
               if (const auto *drop = body.findDropObligation(event.source))
                 proof.observation |= cleanupObserves(drop->dropType);
+          // A dynamic owner selects this complete cleanup at drop time.
+          if (const auto owned =
+                  native_llvm::dynamicOwnerAllocation(program, stage))
+            if (const auto complete = mirUniqueCleanupType(
+                    program, program.findClassInstance(*owned)->type))
+              proof.observation |= cleanupObserves(*complete);
         }
         auto &edge = operations[key(address, block.id, 0)];
         const auto argument = [&](const MirOperand &value) {
@@ -413,6 +419,23 @@ public:
       native_llvm::Lifetimes::preflightCleanup(*session, *dispatch, recipe,
                                                replacement);
       return Shape::NativeStaticDispatchStorage;
+    } catch (const BackendUnsupportedError &) {
+      return {};
+    }
+  }
+  // An owner of a polymorphic view: its complete cleanup is selected through
+  // the installed descriptor, proved where each complete object is allocated.
+  std::optional<Shape> dynamicOwner(const MirDropType &recipe) {
+    if (!recipe.polymorphicCleanup ||
+        recipe.type.kind != SemanticType::UniqueOwner ||
+        recipe.type.arguments.size() != 1 ||
+        recipe.type.arguments.front().kind != SemanticType::Class)
+      return {};
+    try {
+      if (!metadata(recipe.type.arguments.front()) || !planner())
+        return {};
+      native_llvm::Lifetimes::preflightCleanup(*session, *dispatch, recipe);
+      return Shape::NativePolymorphicOwnership;
     } catch (const BackendUnsupportedError &) {
       return {};
     }
@@ -1022,6 +1045,48 @@ private:
           return {};
         return Shape::NativeStaticDispatchStorage;
       }
+      if (stage.kind == MirInstructionKind::Call &&
+          stage.intrinsic == IntrinsicKind::AllocateUniqueOwner) {
+        const auto owned = native_llvm::dynamicOwnerAllocation(program, stage);
+        if (!owned)
+          return {};
+        const auto &object = *program.findClassInstance(*owned);
+        const auto *target =
+            stage.constructorTarget
+                ? program.findConstructorInstance(*stage.constructorTarget)
+                : nullptr;
+        if (!native_llvm::nativeUniqueConstructionShape(program, stage) ||
+            !target || target->owner != object.id ||
+            target->definitionKind != MirDefinitionKind::Source ||
+            !metadata(object.type) || !planner() ||
+            !this->body({MirBodyKind::Constructor, target->id}) ||
+            !this->body({MirBodyKind::Constructor, target->id})->shape)
+          return {};
+        // Its descriptors publish this exact complete cleanup.
+        dispatch->preflightState(object.id);
+        if (const auto complete = native_llvm::Lifetimes::completeCleanupRecipe(
+                *session, object.id);
+            complete && !cleanup(*complete))
+          return {};
+        return Shape::NativePolymorphicOwnership;
+      }
+      if (stage.kind == MirInstructionKind::Call &&
+          stage.intrinsic == IntrinsicKind::UniqueOwnerUpcast) {
+        if (stage.operands.size() != 1 ||
+            stage.operands.front().type.kind != SemanticType::UniqueOwner ||
+            stage.operands.front().type.arguments.size() != 1 ||
+            stage.info.type.kind != SemanticType::UniqueOwner ||
+            stage.info.type.arguments.size() != 1)
+          return {};
+        const auto &derived = stage.operands.front().type.arguments.front();
+        const auto &base = stage.info.type.arguments.front();
+        if (derived.kind != SemanticType::Class ||
+            base.kind != SemanticType::Class || !metadata(derived) ||
+            !metadata(base) || !instance(base).polymorphic || !planner() ||
+            !session->layouts().findBaseSubobject(derived, base))
+          return {};
+        return Shape::NativePolymorphicOwnership;
+      }
       if (stage.kind == MirInstructionKind::Drop)
         for (const auto &event : stage.lifecycle)
           if (const auto *drop = body.findDropObligation(event.source))
@@ -1186,8 +1251,10 @@ public:
             selected.arguments.begin(), selected.arguments.end(),
             [&](const auto &element) { return self(self, element); });
       if (selected.kind == SemanticType::UniqueOwner) {
+        // A polymorphic view need not be a complete object type: its owner
+        // transports one handle whose complete object is found dynamically.
         if (selected.arguments.size() != 1 ||
-            !mir_detail::completeObjectType(program, selected.arguments[0]))
+            !native_llvm::uniqueOwnerPointee(program, selected.arguments[0]))
           return false;
         const auto &pointee = selected.arguments[0];
         if (pointee.kind == SemanticType::Class)
@@ -1524,9 +1591,12 @@ public:
              currentBody->findDropObligation(stage.objectAllocation) &&
              currentBody->findDropObligation(stage.objectAllocation)->kind ==
                  MirDropObligationKind::ObjectAllocation;
+    // A polymorphic complete object is admitted only by its dispatch proof,
+    // which also proves the cleanup its descriptors will select.
     if (stage.intrinsic == IntrinsicKind::AllocateUniqueOwner)
       return native_llvm::nativeUniqueConstructionShape(program, stage) &&
-             nativeValue(stage.info.type);
+             nativeValue(stage.info.type) &&
+             !native_llvm::dynamicOwnerAllocation(program, stage);
     if (stage.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
         stage.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
         stage.intrinsic == IntrinsicKind::UniqueOwnerIsNull ||
@@ -2626,8 +2696,8 @@ public:
         plan.sourceType != SemanticType::NullPtr ||
         plan.targetType.kind != SemanticType::UniqueOwner ||
         plan.targetType.arguments.size() != 1 ||
-        !mir_detail::completeObjectType(program,
-                                        plan.targetType.arguments.front()))
+        !native_llvm::uniqueOwnerPointee(program,
+                                         plan.targetType.arguments.front()))
       return std::nullopt;
     const auto storage = classShape(plan.targetType);
     if (storage && *storage == Shape::NativeUniqueOwnership)
@@ -2834,7 +2904,7 @@ public:
       if (drop.destructor)
         add(Shape::UserDestructor, shape);
       if (drop.polymorphicCleanup)
-        add(Shape::PolymorphicClass); // Dynamic owner cleanup stays pending.
+        add(Shape::PolymorphicClass, dispatchProofs.dynamicOwner(drop));
       if (drop.payloadVariant)
         add(Shape::PayloadEnum, shape);
       if (!drop.aggregate.empty())
@@ -3288,7 +3358,11 @@ public:
                        stage.intrinsic == IntrinsicKind::ArrayRangeBegin)
                   ? std::optional(Shape::PassiveArrayValue)
               : arrayExtentQuery(stage) ? std::optional(Shape::ArrayExtentQuery)
-                                        : std::nullopt);
+              : (stage.intrinsic == IntrinsicKind::UniqueOwnerUpcast ||
+                 stage.intrinsic == IntrinsicKind::AllocateUniqueOwner) &&
+                      dispatchOperation
+                  ? dispatchOperation->shape
+                  : std::nullopt);
         }
         if (stage.receiver)
           operand(*stage.receiver);

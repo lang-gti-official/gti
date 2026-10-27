@@ -88,7 +88,11 @@ public:
             [&](MirBodyAddress address) { return signature(address); }),
         callables(
             session, [&](MirBodyAddress address) { return function(address); },
-            [&](MirBodyAddress address) { return signature(address); }) {}
+            [&](MirBodyAddress address) { return signature(address); }) {
+    dispatch.bindCompleteCleanup([this](HirClassInstanceId activeClass) {
+      return lifetimes.completeCleanup(activeClass);
+    });
+  }
   void lower(const LlvmAdmissionPlan &admission);
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
   void lowerEvaluation(std::span<const MirBodyAddress> bodies, bool fixedCallBoundaries);

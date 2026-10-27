@@ -2,6 +2,8 @@
 
 #include "gti/lowered_program.h"
 
+#include <optional>
+
 namespace lang::native_llvm {
 
 struct Reachability {
@@ -18,6 +20,14 @@ struct Reachability {
 [[nodiscard]] std::vector<MirBodyAddress>
 dispatchSourceBodies(const LoweredProgram &program,
                      HirClassInstanceId activeClass);
+
+// The concrete polymorphic class whose complete object this exact verified
+// allocation creates as a unique-owner pointee. Owning such an object later
+// selects its cleanup through the installed dispatch descriptor, never through
+// a statically named base or interface.
+[[nodiscard]] std::optional<HirClassInstanceId>
+dynamicOwnerAllocation(const MirProgram &program,
+                       const MirInstruction &instruction);
 
 // Unknown indirect dispatch conservatively retains the complete executable
 // inventory. Omission is never inferred from a source spelling or visibility.

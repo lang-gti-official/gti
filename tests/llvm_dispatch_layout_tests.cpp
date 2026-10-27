@@ -301,7 +301,7 @@ void testThunks(Session &session) {
              "table requests are stable within one immutable session");
       const auto *descriptor =
           llvm::dyn_cast<llvm::ConstantStruct>(table->getInitializer());
-      if (!descriptor || descriptor->getNumOperands() != 2)
+      if (!descriptor || descriptor->getNumOperands() != 3)
         throw std::runtime_error(
             "dispatch table lost its immutable active-object descriptor");
       const auto *offset =
@@ -311,8 +311,14 @@ void testThunks(Session &session) {
                      -static_cast<std::int64_t>(view.location.owner.offset),
              "active-object displacement is relative to the physical pointer "
              "owner, not its logical view or dispatch field");
+      // Only a class allocated as a unique-owner pointee by this program
+      // publishes its complete cleanup; no fixture here allocates one.
+      expect(
+          !dispatch.dynamicallyOwned(active.id) &&
+              llvm::isa<llvm::ConstantPointerNull>(descriptor->getOperand(1)),
+          "a never-allocated active class publishes no complete cleanup");
       const auto *initializer =
-          llvm::dyn_cast<llvm::ConstantArray>(descriptor->getOperand(1));
+          llvm::dyn_cast<llvm::ConstantArray>(descriptor->getOperand(2));
       if (!initializer)
         throw std::runtime_error("dispatch descriptor lost its slot array");
       expect(initializer->getNumOperands() == view.slots.size(),
@@ -1083,9 +1089,9 @@ int main() { return evaluate(2) - 2; }
       "dispatch");
   auto excluded = recipe;
   excluded.polymorphicCleanup = true;
-  rejects<BackendUnsupportedError>(
+  rejects<std::logic_error>(
       [&] { static_cast<void>(lifetimes.cleanup(excluded)); },
-      "dynamic owner cleanup remains independently gated");
+      "a class recipe cannot acquire dynamic owner cleanup authority");
   excluded = recipe;
   excluded.recursiveCleanup = true;
   rejects<BackendUnsupportedError>(
@@ -1785,16 +1791,39 @@ int main() {
          "a genuinely polymorphic pointee retains dynamic cleanup authority");
   if (!dynamicOwner)
     return;
-  const auto beforeDynamic = modulePublication(hierarchyOwnerSession);
-  rejects<BackendUnsupportedError>(
+  // The owner's static pointee names only a view. Its helper recovers the
+  // complete object and cleanup from one descriptor load, calls that cleanup
+  // indirectly and releases the complete allocation, never a static recipe.
+  auto *dynamicCleanup = hierarchyOwnerLifetimes.cleanup(*dynamicOwner);
+  expect(dynamicCleanup && !llvm::verifyFunction(*dynamicCleanup),
+         "dynamic owner cleanup emits a valid descriptor-selected helper");
+  std::size_t indirect = 0, direct = 0;
+  for (const auto &block : *dynamicCleanup)
+    for (const auto &instruction : block)
+      if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+        if (call->isIndirectCall())
+          ++indirect;
+        else if (const auto *callee = call->getCalledFunction();
+                 callee && callee->getName().starts_with("__gti_native_"))
+          ++direct;
+      }
+  expect(indirect == 1 && direct == 0,
+         "dynamic owner cleanup selects exactly one descriptor cleanup and "
+         "no statically named pointee recipe");
+  const auto afterDynamic = modulePublication(hierarchyOwnerSession);
+  expect(hierarchyOwnerLifetimes.cleanup(*dynamicOwner) == dynamicCleanup &&
+             modulePublication(hierarchyOwnerSession) == afterDynamic,
+         "dynamic owner cleanup reuses its exact validated helper");
+  auto forgedDynamic = *dynamicOwner;
+  forgedDynamic.aggregate.push_back(*activeInline);
+  rejects<std::logic_error>(
       [&] {
-        static_cast<void>(hierarchyOwnerLifetimes.cleanup(*dynamicOwner));
+        static_cast<void>(hierarchyOwnerLifetimes.cleanup(forgedDynamic));
       },
-      "dynamic owner cleanup still requires its independent dispatch "
-      "mechanism");
-  expect(
-      modulePublication(hierarchyOwnerSession) == beforeDynamic,
-      "dynamic owner rejection remains non-publishing after static cache use");
+      "a dynamic owner cannot also carry a static pointee schedule");
+  expect(!hierarchyOwnerDispatch.dynamicallyOwned(
+             named(hierarchyOwnerSession.program(), "Derived").id),
+         "a never-allocated polymorphic class publishes no complete cleanup");
   hierarchyOwnerSession.verify();
 
   TargetInfo privateTarget = TargetInfo::host();

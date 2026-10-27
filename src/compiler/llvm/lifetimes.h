@@ -69,6 +69,13 @@ public:
                       const MirConstructorInstance *constructor = nullptr);
   [[nodiscard]] llvm::Function *cleanup(const MirDropType &recipe,
                                         bool replacement = false);
+  // The complete-object cleanup a dynamically owned active class publishes
+  // in its dispatch descriptors. It never releases the allocation itself.
+  [[nodiscard]] llvm::Function *completeCleanup(HirClassInstanceId activeClass);
+  // The exact complete recipe of a concrete polymorphic active class, or none
+  // when its complete object has no observable cleanup.
+  [[nodiscard]] static std::optional<MirDropType>
+  completeCleanupRecipe(Session &session, HirClassInstanceId activeClass);
 
 private:
   Session &session;
@@ -76,6 +83,7 @@ private:
   Dispatch &dispatch;
   FindBody findBody;
   std::vector<std::pair<MirDropType, llvm::Function *>> cleanups;
+  llvm::Function *inertCleanup = nullptr;
   std::map<llvm::Type *, llvm::Function *> moves;
   std::map<llvm::Type *, llvm::Function *> mutexTransfers;
   struct ProgramStorage {

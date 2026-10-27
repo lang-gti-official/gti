@@ -98,6 +98,24 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
   return target->place;
 }
 
+bool uniqueOwnerPointee(const MirProgram &program,
+                        const SemanticType &pointee) {
+  if (mir_detail::completeObjectType(program, pointee))
+    return true;
+  if (pointee.kind != SemanticType::Class)
+    return false;
+  const MirClassInstance *selected = nullptr;
+  for (const auto &candidate : program.classInstances())
+    if (candidate.type == pointee) {
+      if (selected)
+        return false;
+      selected = &candidate;
+    }
+  return selected && selected->polymorphic &&
+         selected->compilerCapability == CompilerCapabilityTypeKind::None &&
+         !selected->cOpaqueHandle;
+}
+
 bool containsHierarchyStorage(const MirProgram &program,
                               const SemanticType &type) {
   // These keys and results live only for this immutable program query. A
@@ -119,7 +137,7 @@ bool containsHierarchyStorage(const MirProgram &program,
     }
     if (selected.kind == SemanticType::UniqueOwner) {
       if (selected.arguments.size() != 1 ||
-          !mir_detail::completeObjectType(program, selected.arguments.front()))
+          !uniqueOwnerPointee(program, selected.arguments.front()))
         reject("LLVM hierarchy exclusion requires an exact owner handle");
       // The handle is indirect. Construction and cleanup still need their
       // independent owner/pointee proofs, including hierarchy exclusions.

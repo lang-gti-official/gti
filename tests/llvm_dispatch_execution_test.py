@@ -53,6 +53,7 @@ SUCCESS_FILES = {
     "nested-hierarchy-transfer": "examples/llvm/nested-hierarchy-transfer.gti",
     "dispatch-cost-correctness": "tests/fixtures/llvm_dispatch_execution_cost.gti",
     "shipped-example": "examples/llvm/inheritance-and-dispatch.gti",
+    "polymorphic-owners": "tests/fixtures/llvm_dispatch_polymorphic_owners.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -130,6 +131,22 @@ TRANSFER_SUCCESS_SOURCES = {
     "generated-move-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second = std::move(first); return second.read(); }\n", 1),
     "fresh-copy-former-cli-control": ("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", 0),
     "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain(); };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
+    "heap-polymorphic-owner-former-reject": ("""#include <std/memory>
+mut int dropped = 0;
+class HeapValue {
+  int value;
+public:
+  HeapValue(int value) : value(value) {}
+  ~HeapValue() { dropped += this.value; }
+  virtual int read() { return this.value; }
+};
+int main() {
+  { auto owner = std::make_unique<HeapValue>(7);
+    if (owner->read() != 7) { return 1; }
+  }
+  return dropped == 7 ? 0 : 2;
+}
+""", 0),
 }
 
 REJECTIONS = {
@@ -206,21 +223,14 @@ public:
 };
 int main() { Observed value{}; return 0; }
 """,
-    "reject-heap-polymorphic-owner": """#include <std/memory>
-mut int dropped = 0;
-class HeapValue {
-  int value;
+    "reject-owned-destructor-observation": """#include <std/memory>
+class Observed {
 public:
-  HeapValue(int value) : value(value) {}
-  ~HeapValue() { dropped += this.value; }
-  virtual int read() { return this.value; }
+  Observed() {}
+  virtual int read() { return 1; }
+  ~Observed() { int observed = this.read(); }
 };
-int main() {
-  { auto owner = std::make_unique<HeapValue>(7);
-    if (owner->read() != 7) { return 1; }
-  }
-  return dropped == 7 ? 0 : 2;
-}
+int main() { auto owner = std::make_unique<Observed>(); return owner->read() - 1; }
 """,
 }
 
@@ -354,7 +364,7 @@ def reject_case(gti: Path, root: Path, work: Path, name: str,
                 raise AssertionError(f"{name} {mode} existing={existing}: {result}")
             expected = ("DestructorDispatchObservation" if "observation" in name
                         else "PureDispatchState" if name == "reject-pure-active-phase"
-                        else None if name in {"reject-global", "reject-thread-local", "reject-heap-polymorphic-owner"}
+                        else None if name in {"reject-global", "reject-thread-local"}
                         else "PolymorphicTransfer")
             if expected and f"Shape.{expected}" not in result.stderr:
                 raise AssertionError(f"{name}: rejection did not exercise {expected}: {result}")
@@ -1045,7 +1055,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1169,6 +1179,34 @@ int main() {
         raise AssertionError("cleanup oracle mutation anchor is not unique")
     add("cleanup-oracle-wrong-trace", lifecycle.replace(anchor, "mut int expected_cleanup = 1234322;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle="return 120 / divisor;")
+    owners = (root / SUCCESS_FILES["polymorphic-owners"]).read_text(encoding="utf-8")
+    owners_marker = "// POLYMORPHIC_OWNERS_MAIN\n"
+    if owners.count(owners_marker) != 1:
+        raise AssertionError("polymorphic owner main marker is not unique")
+    owners_prefix = owners.split(owners_marker, 1)[0]
+    owner_failure = owners_prefix + """int main() {
+  expected_cleanup = 1263549;
+  Guard guard{};
+  std::unique_ptr<Reader> first = make_reader(false);
+  std::unique_ptr<Root> owner = std::upcast_unique<Root, Leaf>(std::make_unique<Leaf>(6));
+  return invoke_failure(*owner, 0);
+}
+"""
+    add("polymorphic-owner-virtual-failure", owner_failure, "defined-failure",
+        expected_exit=70, failure_needle="return 120 / divisor;", endpoints=TRANSFER_ENDPOINTS)
+    add("polymorphic-owner-wrong-cleanup",
+        owner_failure.replace("expected_cleanup = 1263549;", "expected_cleanup = 1263548;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle="return 120 / divisor;",
+        endpoints=TRANSFER_ENDPOINTS)
+    add("polymorphic-owner-constructor-rollback", owners_prefix + """int main() {
+  expected_cleanup = 149;
+  Guard guard{};
+  std::unique_ptr<Reader> first = make_reader(false);
+  std::unique_ptr<Reader> failed = std::upcast_unique<Reader, Leaf>(std::make_unique<Leaf>(0));
+  return 0;
+}
+""", "defined-failure", expected_exit=70, failure_needle="payload(12 / payload)",
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -1199,6 +1237,10 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "nested-hierarchy-transfer", "nested-transfer-failure", "nested-transfer-wrong-cleanup",
             "generated-copy-former-reject", "generated-move-former-reject",
             "fresh-copy-former-cli-control", "generated-move-virtual-failure"),
+        "polymorphic-ownership": (
+            "polymorphic-owners", "heap-polymorphic-owner-former-reject",
+            "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
+            "polymorphic-owner-constructor-rollback"),
     }
     cases = evidence_cases(root)
     if {name for members in profiles.values() for name in members} != set(cases):
@@ -1238,6 +1280,8 @@ def main() -> None:
              "shared-owner-reference", "reject-source-reset-retained-view",
              "owner-failure-before-reference",
              "nested-transfer-failure", "nested-transfer-wrong-cleanup",
+             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
+             "polymorphic-owner-constructor-rollback",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)
