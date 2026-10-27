@@ -55,6 +55,7 @@ SUCCESS_FILES = {
     "shipped-example": "examples/llvm/inheritance-and-dispatch.gti",
     "polymorphic-owners": "tests/fixtures/llvm_dispatch_polymorphic_owners.gti",
     "virtual-signatures": "tests/fixtures/llvm_dispatch_virtual_signatures.gti",
+    "fresh-publication": "tests/fixtures/llvm_dispatch_fresh_publication.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -132,6 +133,7 @@ TRANSFER_SUCCESS_SOURCES = {
     "generated-move-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second = std::move(first); return second.read(); }\n", 1),
     "fresh-copy-former-cli-control": ("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", 0),
     "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain(); };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
+    "fresh-return-former-reject": (PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n", 1),
     "heap-polymorphic-owner-former-reject": ("""#include <std/memory>
 mut int dropped = 0;
 class HeapValue {
@@ -158,7 +160,7 @@ void replace(mut Plain& destination, Plain& source) { destination = source; }
 int main() { mut Derived first{}; Derived second{}; replace(first, second); return first.read(); }
 """,
     "reject-fresh-value-argument": PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n",
-    "reject-fresh-return": PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n",
+    "reject-local-return": PLAIN + "Plain make() { Plain local{}; return local; }\nint main() { Plain value = make(); return value.read(); }\n",
     "reject-array": PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n",
     "reject-global": PLAIN + "Plain value{};\nint main() { return value.read(); }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
@@ -1056,7 +1058,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1229,6 +1231,32 @@ int main() {
         signature_failure.replace("expected_cleanup = 3;", "expected_cleanup = 4;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=signature_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    publication = (root / SUCCESS_FILES["fresh-publication"]).read_text(encoding="utf-8")
+    publication_marker = "// FRESH_PUBLICATION_MAIN\n"
+    if publication.count(publication_marker) != 1:
+        raise AssertionError("fresh publication main marker is not unique")
+    publication_prefix = publication.split(publication_marker, 1)[0]
+    temporary_failure = publication_prefix + """int main() {
+  expected_cleanup = 12634;
+  Guard guard{};
+  return Leaf(2).fail(0);
+}
+"""
+    add("fresh-temporary-virtual-failure", temporary_failure, "defined-failure",
+        expected_exit=70, failure_needle="return 120 / divisor;", endpoints=TRANSFER_ENDPOINTS)
+    add("fresh-temporary-wrong-cleanup",
+        temporary_failure.replace("expected_cleanup = 12634;", "expected_cleanup = 12635;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle="return 120 / divisor;",
+        endpoints=TRANSFER_ENDPOINTS)
+    add("fresh-return-constructor-rollback", publication_prefix + """int main() {
+  expected_cleanup = 121434;
+  Guard guard{};
+  Leaf held = make(3);
+  Leaf failed = make(0);
+  return failed.read() + held.read();
+}
+""", "defined-failure", expected_exit=70, failure_needle="payload(12 / payload)",
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -1261,6 +1289,10 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "nested-hierarchy-transfer", "nested-transfer-failure", "nested-transfer-wrong-cleanup",
             "generated-copy-former-reject", "generated-move-former-reject",
             "fresh-copy-former-cli-control", "generated-move-virtual-failure"),
+        "fresh-publication": (
+            "fresh-publication", "fresh-return-former-reject",
+            "fresh-temporary-virtual-failure", "fresh-temporary-wrong-cleanup",
+            "fresh-return-constructor-rollback"),
         "polymorphic-ownership": (
             "polymorphic-owners", "heap-polymorphic-owner-former-reject",
             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
@@ -1307,6 +1339,8 @@ def main() -> None:
              "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
              "polymorphic-owner-constructor-rollback",
              "virtual-signature-failure", "virtual-signature-wrong-cleanup",
+             "fresh-temporary-virtual-failure", "fresh-temporary-wrong-cleanup",
+             "fresh-return-constructor-rollback",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

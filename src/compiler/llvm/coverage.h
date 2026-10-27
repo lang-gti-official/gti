@@ -97,6 +97,7 @@ enum class Shape {
   NativeVirtualInvocation,
   NativeFreshHierarchyTransfer,
   NativePolymorphicOwnership,
+  NativeFreshHierarchyPublication,
   PolymorphicTransfer,
   PureDispatchState,
   DestructorDispatchObservation,

@@ -162,8 +162,18 @@ public:
     for (const auto address : plan.requiredBodies()) {
       const auto &body = *findMirBody(program, address);
       native_llvm::Placement placement(body);
+      auto &freshTemporaries = temporaries[&body];
+      for (const auto &block : body.blocks)
+        for (const auto &stage : block.instructions)
+          if (!stage.tombstone && stage.result &&
+              freshStorage(address, body, placement, stage) ==
+                  native_llvm::FreshObjectStorage::Temporary)
+            freshTemporaries.insert(*stage.result);
       auto &bodyProof = bodies[{address.kind, address.owner}];
-      bodyProof.transfer = contains(body.returnType);
+      // A hierarchy result constructed directly in the caller's destination
+      // by every return is publication, not a by-value transfer.
+      bodyProof.transfer =
+          contains(body.returnType) && !freshReturns(address, body, placement);
       if (const auto *target = function(address)) {
         for (const auto &parameter : target->parameterTypes)
           bodyProof.transfer |= contains(parameter);
@@ -199,21 +209,24 @@ public:
             continue;
           auto &proof = operations[key(address, block.id, stage.id)];
           const bool fresh = freshConstruction(address, body, placement, stage);
+          const bool published =
+              freshStorage(address, body, placement, stage).has_value();
           const bool transfer = freshTransfer(body, stage);
           const bool initialization =
               freshInitialization(address, body, placement, stage);
           const bool declaration = declarationOnlyField(address, body, stage);
           if (contains(stage.info.type)) {
             if ((stage.kind == MirInstructionKind::Construct && !fresh &&
-                 !transfer) ||
+                 !published && !transfer) ||
                 (stage.kind == MirInstructionKind::Move && !transfer) ||
                 (stage.kind == MirInstructionKind::Load && !transfer) ||
                 stage.kind == MirInstructionKind::Assign ||
                 (stage.kind == MirInstructionKind::CallInput &&
                  stage.callInputKind != HirCallInputKind::ReadBorrow &&
-                 stage.callInputKind != HirCallInputKind::MutableBorrow) ||
+                 stage.callInputKind != HirCallInputKind::MutableBorrow &&
+                 !temporaryBorrow(body, stage)) ||
                 (stage.kind == MirInstructionKind::Call &&
-                 !borrowedCallResult(body, stage)) ||
+                 !borrowedCallResult(body, stage) && !published) ||
                 stage.operation == MirOperation::Aggregate ||
                 (stage.kind == MirInstructionKind::Initialize &&
                  !initialization && !declaration))
@@ -269,7 +282,8 @@ public:
         };
         if (block.terminator.value &&
             block.terminator.kind == MirTerminatorKind::Return &&
-            !referenceReturn(body, block.terminator))
+            !referenceReturn(body, block.terminator) &&
+            !freshReturn(address, body, placement, *block.terminator.value))
           argument(*block.terminator.value);
         for (const auto &value : block.terminator.targetArguments)
           argument(value);
@@ -519,6 +533,7 @@ private:
   const MirProgram &program;
   std::map<Key, Operation> operations;
   std::map<BodyKey, Operation> bodies;
+  std::map<const MirBody *, std::set<MirValueId>> temporaries;
   bool attempted = false;
   std::unique_ptr<native_llvm::Session> session;
   std::unique_ptr<native_llvm::Dispatch> dispatch;
@@ -673,6 +688,61 @@ private:
     return owner &&
            isMirDeclarationOnlyFieldInitialization(*owner, body, stage);
   }
+  std::optional<native_llvm::FreshObjectStorage>
+  freshStorage(MirBodyAddress address, const MirBody &body,
+               const native_llvm::Placement &placement,
+               const MirInstruction &stage) const {
+    if (!contains(stage.info.type))
+      return {};
+    return native_llvm::freshObjectStorage(program, address, body, placement,
+                                           stage);
+  }
+  bool freshReturn(MirBodyAddress address, const MirBody &body,
+                   const native_llvm::Placement &placement,
+                   const MirOperand &value) const {
+    if (value.kind != MirOperandKind::Value || !value.value)
+      return false;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.result == value.value)
+          return freshStorage(address, body, placement, stage) ==
+                 native_llvm::FreshObjectStorage::Returned;
+    return false;
+  }
+  bool freshReturns(MirBodyAddress address, const MirBody &body,
+                    const native_llvm::Placement &placement) const {
+    bool returned = false;
+    for (const auto &block : body.blocks)
+      if (block.terminator.kind == MirTerminatorKind::Return) {
+        if (!block.terminator.value ||
+            !freshReturn(address, body, placement, *block.terminator.value))
+          return false;
+        returned = true;
+      }
+    return returned;
+  }
+  // A read or mutable temporary borrow of a fresh hierarchy object's own
+  // full-expression temporary: an address, never a transfer of its bytes.
+  bool temporaryBorrow(const MirBody &body, const MirInstruction &stage) const {
+    const bool mutableInput =
+        stage.callInputKind == HirCallInputKind::MutableTemporaryBorrow;
+    if (stage.kind != MirInstructionKind::CallInput ||
+        (stage.callInputKind != HirCallInputKind::ReadTemporaryBorrow &&
+         !mutableInput) ||
+        stage.operands.size() != 1 || stage.destination ||
+        stage.preparedParameterDrop || stage.retainedOwnerPlace ||
+        stage.successResultDrop || stage.successResultDestination)
+      return false;
+    const auto &input = stage.operands.front();
+    const auto *place = body.findPlace(input.place);
+    const auto found = temporaries.find(&body);
+    return input.kind == (mutableInput ? MirOperandKind::BorrowWrite
+                                       : MirOperandKind::BorrowRead) &&
+           !input.loan && !input.value && place &&
+           place->root == MirPlaceRootKind::Value &&
+           found != temporaries.end() && found->second.contains(place->value) &&
+           unreference(stage.info.type) == place->type;
+  }
   bool freshConstruction(MirBodyAddress address, const MirBody &body,
                          const native_llvm::Placement &placement,
                          const MirInstruction &stage) const {
@@ -810,6 +880,17 @@ private:
       return false;
     if (!loan.escapes && callResult(body, loan))
       return true;
+    // The verifier-owned read-only loan of one fresh value argument: its
+    // address is the fresh temporary's own storage, ended after the call.
+    if (loan.kind == MirLoanKind::CallArgument && !loan.escapes &&
+        loan.access == AccessMode::ReadOnly)
+      if (const auto *source = body.findPlace(loan.source);
+          source && source->root == MirPlaceRootKind::Value &&
+          source->projections.empty()) {
+        const auto found = temporaries.find(&body);
+        return found != temporaries.end() &&
+               found->second.contains(source->value);
+      }
     return loan.kind == MirLoanKind::Return && loan.escapes &&
            std::any_of(body.blocks.begin(), body.blocks.end(),
                        [&](const auto &block) {
@@ -851,7 +932,8 @@ private:
           continue;
         if (stage.kind != MirInstructionKind::CallInput ||
             (stage.callInputKind != HirCallInputKind::ReadBorrow &&
-             stage.callInputKind != HirCallInputKind::MutableBorrow) ||
+             stage.callInputKind != HirCallInputKind::MutableBorrow &&
+             !temporaryBorrow(body, stage)) ||
             stage.destination || stage.preparedParameterDrop ||
             stage.retainedOwnerPlace || stage.successResultDrop ||
             stage.successResultDestination || stage.operands.size() != 1 ||
@@ -891,11 +973,17 @@ private:
       return {};
     SemanticType source = SemanticType::Unknown;
     AccessMode access = AccessMode::ReadOnly;
+    const auto freshTemporary = [&](const MirPlace &selected) {
+      const auto found = temporaries.find(&body);
+      return selected.root == MirPlaceRootKind::Value &&
+             found != temporaries.end() &&
+             found->second.contains(selected.value);
+    };
     if (place) {
       if (place->foreignStorage ||
           (place->root != MirPlaceRootKind::Binding &&
            place->root != MirPlaceRootKind::This &&
-           place->root != MirPlaceRootKind::Loan) ||
+           place->root != MirPlaceRootKind::Loan && !freshTemporary(*place)) ||
           std::any_of(place->projections.begin(), place->projections.end(),
                       [](const auto &projection) {
                         return projection.kind != MirProjectionKind::Base &&
@@ -998,9 +1086,8 @@ private:
       if (freshTransferInitialization(body, stage) &&
           metadata(stage.operands.front().type))
         return Shape::NativeFreshHierarchyTransfer;
-      if (stage.kind == MirInstructionKind::Construct &&
-          contains(stage.info.type) &&
-          freshConstruction(address, body, placement, stage)) {
+      const auto storage = freshStorage(address, body, placement, stage);
+      if (stage.kind == MirInstructionKind::Construct && storage) {
         if (!metadata(stage.info.type))
           return {};
         if (!stage.constructorTarget) {
@@ -1015,7 +1102,9 @@ private:
               !this->body({MirBodyKind::Constructor, target->id})->shape)
             return {};
         }
-        return Shape::NativeStaticDispatchStorage;
+        return *storage == native_llvm::FreshObjectStorage::Local
+                   ? Shape::NativeStaticDispatchStorage
+                   : Shape::NativeFreshHierarchyPublication;
       }
       if (stage.kind == MirInstructionKind::Initialize &&
           freshInitialization(address, body, placement, stage) &&
@@ -1114,7 +1203,8 @@ private:
           stage.operands.size() == 1 &&
           (stage.kind != MirInstructionKind::CallInput ||
            stage.callInputKind == HirCallInputKind::ReadBorrow ||
-           stage.callInputKind == HirCallInputKind::MutableBorrow)) {
+           stage.callInputKind == HirCallInputKind::MutableBorrow ||
+           temporaryBorrow(body, stage))) {
         if (stage.loan) {
           const auto *loan = body.findLoan(*stage.loan);
           if (!loan || !supportedLoan(body, *loan))
@@ -1176,6 +1266,11 @@ private:
         }
         return Shape::NativeBorrowedDispatchView;
       }
+      // A by-value hierarchy result whose callee constructs it directly in
+      // this exact final storage; the callee's own returns are proved there.
+      if (stage.kind == MirInstructionKind::Call && storage &&
+          metadata(stage.info.type))
+        return Shape::NativeFreshHierarchyPublication;
     } catch (const BackendUnsupportedError &) {
     }
     return {};

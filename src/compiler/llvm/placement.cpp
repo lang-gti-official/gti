@@ -12,6 +12,34 @@
 #include <stdexcept>
 
 namespace lang::native_llvm {
+bool isFreshObjectProducer(const MirProgram &program,
+                           const MirInstruction &producer) {
+  if (producer.tombstone || !producer.result || producer.destination ||
+      producer.info.type.kind != SemanticType::Class ||
+      producer.info.category != ValueCategory::Value)
+    return false;
+  if (producer.kind == MirInstructionKind::Construct)
+    return producer.constructorKind == ConstructorKind::Ordinary &&
+           !producer.loan;
+  if (producer.kind != MirInstructionKind::Call || producer.loan ||
+      producer.intrinsic != IntrinsicKind::None || producer.constructorTarget ||
+      producer.lambdaTarget || producer.bodyTarget ||
+      producer.nativeCalleeType || producer.callableInvocation ||
+      producer.threadTaskAdapter || producer.nativeCallbackAdapter ||
+      !producer.functionTarget ||
+      (producer.dispatch != CallDispatch::Static &&
+       producer.dispatch != CallDispatch::Virtual))
+    return false;
+  const auto *target = program.findFunctionInstance(*producer.functionTarget);
+  // The callee's own body publishes into the result destination; a virtual
+  // call names its sealed root, whose implementations share that contract.
+  return target && target->linkage == LanguageLinkage::Gti &&
+         target->returnType == producer.info.type &&
+         (producer.dispatch == CallDispatch::Virtual
+              ? target->virtualMethod
+              : target->definitionKind == MirDefinitionKind::Source);
+}
+
 std::optional<MirPlaceId>
 freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
                              const MirBody &body, const Placement &placement,
@@ -21,10 +49,7 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
        address.kind != MirBodyKind::Constructor &&
        address.kind != MirBodyKind::Destructor &&
        address.kind != MirBodyKind::FieldInitializers) ||
-      producer.tombstone || producer.kind != MirInstructionKind::Construct ||
-      !producer.result ||
-      producer.constructorKind != ConstructorKind::Ordinary ||
-      producer.info.type.kind != SemanticType::Class)
+      !isFreshObjectProducer(program, producer))
     return {};
   const auto *target = placement.target(*producer.result);
   const auto *place =
@@ -96,6 +121,69 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
       return {};
   }
   return target->place;
+}
+
+std::optional<FreshObjectStorage>
+freshObjectStorage(const MirProgram &program, MirBodyAddress address,
+                   const MirBody &body, const Placement &placement,
+                   const MirInstruction &producer) {
+  if (freshConstructionDestination(program, address, body, placement, producer))
+    return FreshObjectStorage::Local;
+  if (findMirBody(program, address) != &body ||
+      !isFreshObjectProducer(program, producer))
+    return {};
+  const auto value = *producer.result;
+  const auto *definition = body.findValue(value);
+  if (!definition || definition->id != value ||
+      definition->definition != producer.id ||
+      definition->info.type != producer.info.type)
+    return {};
+  // Only value-rooted places of this exact object, and drop obligations on
+  // its unprojected place, may name the producer's own storage.
+  const MirPlace *whole = nullptr;
+  for (const auto &place : body.places)
+    if (place.root == MirPlaceRootKind::Value && place.value == value) {
+      if (place.capture || place.foreignStorage)
+        return {};
+      if (place.projections.empty()) {
+        if (whole || place.type != producer.info.type)
+          return {};
+        whole = &place;
+      }
+    }
+  for (const auto &obligation : body.dropObligations)
+    if (obligation.generatedValue == value ||
+        (obligation.place && body.findPlace(obligation.place) &&
+         body.findPlace(obligation.place)->root == MirPlaceRootKind::Value &&
+         body.findPlace(obligation.place)->value == value))
+      if (!whole || obligation.place != whole->id ||
+          (obligation.kind != MirDropObligationKind::Value &&
+           obligation.kind != MirDropObligationKind::ReturnResult))
+        return {};
+  const auto *target = placement.target(value);
+  bool returned = false;
+  for (const auto &use : body.usesOf(value)) {
+    if (use.kind == MirValueUseKind::PlaceRoot)
+      continue;
+    const auto *block = body.findBlock(use.block);
+    if (use.kind != MirValueUseKind::Terminator || !block ||
+        block->terminator.kind != MirTerminatorKind::Return ||
+        !block->terminator.value ||
+        block->terminator.value->kind != MirOperandKind::Value ||
+        block->terminator.value->value != value)
+      return {};
+    returned = true;
+  }
+  if (returned) {
+    if (!target || !target->returned || body.returnType != producer.info.type ||
+        (address.kind != MirBodyKind::Function &&
+         address.kind != MirBodyKind::Lambda))
+      return {};
+    return FreshObjectStorage::Returned;
+  }
+  if (target || !whole)
+    return {};
+  return FreshObjectStorage::Temporary;
 }
 
 bool uniqueOwnerPointee(const MirProgram &program,

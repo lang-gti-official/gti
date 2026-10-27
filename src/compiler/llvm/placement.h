@@ -84,12 +84,29 @@ private:
   void bind(MirValueId value, Target target);
 };
 
+// A class object produced directly in its own storage: an ordinary
+// construction, or a by-value GTI call whose callee publishes the object in
+// the ABI result destination. Copies, moves and loaded values never qualify.
+[[nodiscard]] bool isFreshObjectProducer(const MirProgram &program,
+                                         const MirInstruction &producer);
+
 // Ordinary construction publishes directly into fresh final storage. This is
 // not copy/move permission. Both admission and emission use the same verified
 // producer/publication identity for locals and constructor field destinations.
+// A fresh by-value call result publishes the same way.
 [[nodiscard]] std::optional<MirPlaceId>
 freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
                              const MirBody &body, const Placement &placement,
                              const MirInstruction &producer);
+
+// Every final storage a fresh producer may publish into without a transfer:
+// a whole fresh local or constructor field, the body's own ABI return
+// destination, or the producer's own full-expression temporary, which is
+// only borrowed through its value-rooted places and dropped there.
+enum class FreshObjectStorage { Local, Returned, Temporary };
+[[nodiscard]] std::optional<FreshObjectStorage>
+freshObjectStorage(const MirProgram &program, MirBodyAddress address,
+                   const MirBody &body, const Placement &placement,
+                   const MirInstruction &producer);
 
 } // namespace lang::native_llvm

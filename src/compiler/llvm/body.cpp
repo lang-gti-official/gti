@@ -344,9 +344,13 @@ private:
         return memory.address(target->place);
       }
       if (target->returned) {
-        if (hierarchy)
+        if (hierarchy && (!stage || stage->result != value ||
+                          freshObjectStorage(session.program().mir(), address,
+                                             input, placement, *stage) !=
+                              FreshObjectStorage::Returned))
           throw BackendUnsupportedError(
-              "LLVM hierarchy return storage is not admitted");
+              "LLVM hierarchy return storage requires its exact fresh "
+              "producer");
         if (!returnDestination)
           throw std::logic_error("LLVM object return lost its ABI destination");
         return returnDestination;
@@ -363,7 +367,12 @@ private:
                           destination(target->aggregate),
                           {ir.getInt64(0), ir.getInt64(target->element)});
     }
-    if (hierarchy)
+    if (const auto found = temporaries.find(value); found != temporaries.end())
+      return found->second;
+    if (hierarchy &&
+        (!stage || stage->result != value ||
+         freshObjectStorage(session.program().mir(), address, input, placement,
+                            *stage) != FreshObjectStorage::Temporary))
       throw BackendUnsupportedError(
           "LLVM hierarchy construction requires its final local destination");
     auto [entry, inserted] = temporaries.try_emplace(value, nullptr);
