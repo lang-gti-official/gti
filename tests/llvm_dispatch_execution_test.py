@@ -73,6 +73,7 @@ SUCCESS_FILES = {
     "generated-empty-former-reject": "tests/fixtures/llvm_dispatch_generated_empty.gti",
     "hierarchy-payloads": "tests/fixtures/llvm_dispatch_hierarchy_payloads.gti",
     "owned-base-arguments": "tests/fixtures/llvm_owned_base_arguments.gti",
+    "reference-base-arguments": "tests/fixtures/llvm_reference_base_arguments.gti",
     "payload-moves": "tests/fixtures/llvm_dispatch_payload_moves.gti",
     "borrowed-carriers": "tests/fixtures/llvm_dispatch_borrowed_carriers.gti",
     "moved-carriers": "tests/fixtures/llvm_dispatch_moved_carriers.gti",
@@ -94,6 +95,7 @@ CPP_LIMITATIONS = {
     "borrowed-mut-reference-chain": "outside the complete C++ text vocabulary",
     "fresh-hierarchy-copy-view": "generated copy/move construction lacks the complete generic destination and cleanup schedule",
     "owned-base-arguments": "outside the complete C++ text vocabulary",
+    "reference-base-arguments": "outside the complete C++ text vocabulary",
 }
 
 # Known C++-backend divergences, not oracle evidence (ADR 031: C++ is not an
@@ -554,6 +556,60 @@ int main() {
   return value.own.value();
 }
 """, "921", "own(Mark(120 / divisor))"),
+    # A forwarded class reference: the base constructor reads through it,
+    # builds an owned field, then fails and drops only that field.
+    "reference-base-constructor-failure": ("""class Point {
+public:
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+class Base {
+public:
+  Mark first;
+  Mark second;
+  Base(Point& point, int divisor) : first(Mark(point.x)), second(Mark(120 / divisor)) {}
+};
+class Derived : public Base {
+public:
+  Derived(Point& point, int divisor) : Base(point, divisor) {}
+};
+int main() {
+  Guard guard{};
+  Point point{3, 4};
+  int divisor = 0;
+  Derived value{point, divisor};
+  return value.first.value();
+}
+""", "3", "second(Mark(120 / divisor))"),
+    # A derived field fails after a base built from a forwarded reference: the
+    # base rolls back, its destructor first.
+    "reference-base-derived-rollback": ("""class Point {
+public:
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+class Base {
+public:
+  Mark first;
+  Base(Point& point) : first(Mark(point.x)) {}
+  ~Base() { events = events * 10 + 9; }
+};
+class Derived : public Base {
+public:
+  Mark own;
+  Derived(Point& point, int divisor) : Base(point), own(Mark(point.y / divisor)) {}
+  ~Derived() { events = events * 10 + 8; }
+};
+int main() {
+  Guard guard{};
+  Point point{3, 4};
+  int divisor = 0;
+  Derived value{point, divisor};
+  return value.own.value();
+}
+""", "93", "own(Mark(point.y / divisor))"),
 }
 
 
@@ -576,27 +632,28 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     "reject-payload-copy": PLAIN + "enum Mark { none, held(Plain value) };\nint main() { Mark first = Mark::held(Plain()); Mark second = first; switch (second) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-payload-return": PLAIN + "enum Mark { none, held(Plain value) };\nMark make() { return Mark::held(Plain()); }\nint main() { Mark mark = make(); switch (mark) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
-    # MIR stages owned base arguments, but still leaves these base initializers
-    # unstaged: a reference formal whose referent is not a passive scalar, an
-    # owned argument beside a reference formal and a borrow carrier passed by
-    # value. No InitializeBase runs the base constructor, so LLVM refuses the
-    # constructor instead of leaving its base unconstructed.
-    "reject-unstaged-base-class-reference": """class Point {
+    # MIR stages owned base arguments and forwarded class or enum references,
+    # but still leaves these base initializers unstaged: an owned argument
+    # beside a reference formal, a borrow carrier passed by value and an array
+    # of owning elements passed by value. No InitializeBase runs the base
+    # constructor, so LLVM refuses the constructor instead of leaving its base
+    # unconstructed.
+    "reject-unstaged-base-array": """class Mark {
 public:
-  int x;
-  int y;
-  Point(int x, int y) : x(x), y(y) {}
+  int id;
+  Mark(int id) : id(id) {}
+  ~Mark() {}
 };
 class Base {
 public:
-  int sum;
-  Base(Point& point) : sum(point.x + point.y) {}
+  Mark[2] held;
+  Base(Mark[2] held) : held(std::move(held)) {}
 };
 class Derived : public Base {
 public:
-  Derived(Point& point) : Base(point) {}
+  Derived(Mark[2] held) : Base(std::move(held)) {}
 };
-int main() { Point point{3, 4}; Derived value{point}; return value.sum - 7; }
+int main() { mut Mark[2] marks = {Mark(1), Mark(2)}; Derived value{std::move(marks)}; return value.held[1].id - 2; }
 """,
     "reject-unstaged-base-owned-with-reference": """class Mark {
 public:
@@ -1577,7 +1634,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers", "owned-base-arguments"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers", "owned-base-arguments", "reference-base-arguments"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -2132,8 +2189,9 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "shared-polymorphic-owners", "shared-polymorphic-owner-failure",
             "shared-polymorphic-owner-wrong-cleanup"),
     }
-    profiles["owned-base-initializers"] = (
-        "owned-base-arguments", *OWNED_BASE_SOURCES, *OWNED_BASE_FAILURES,
+    profiles["staged-base-initializers"] = (
+        "owned-base-arguments", "reference-base-arguments", *OWNED_BASE_SOURCES,
+        *OWNED_BASE_FAILURES,
         *(owned_base_wrong_cleanup(name) for name in OWNED_BASE_FAILURES))
     cases = evidence_cases(root)
     if {name for members in profiles.values() for name in members} != set(cases):

@@ -11740,11 +11740,13 @@ payload values returned by value, thread-local hierarchy objects and
 observable pure phases stay `PolymorphicTransfer` or `PureDispatchState`.
 A derived constructor passing an owned value to its base constructor, moved
 in or created in place, now runs natively: MIR stages each owned argument as a
-prepared parameter that `InitializeBase` hands to the base constructor
-(`owned-base-initializers` in `llvm_dispatch_execution`). A base initializer
-MIR still leaves unstaged is refused as `UnstagedBaseInitializer`: a reference
-formal whose referent is not a passive scalar, an owned argument beside a
-reference formal, a borrow carrier passed by value or a by-value array.
+prepared parameter that `InitializeBase` hands to the base constructor. A
+forwarded class or enum reference without borrowed state is staged as a borrow
+input (`staged-base-initializers` in `llvm_dispatch_execution`). A base
+initializer MIR still leaves unstaged is refused as `UnstagedBaseInitializer`:
+an owned argument beside a reference formal, a reference formal whose referent
+holds borrowed state, a borrow carrier passed by value or an array of owning
+elements passed by value.
 
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
@@ -12072,11 +12074,12 @@ artifacts name `--backend cpp` explicitly.
   mismatch (`llvm_dispatch_lifecycle_phases`).
 - `scoped_parallel_allocations` counts the C++ backend's nothrow `operator new`,
   which native task boxes do not use.
-- A derived constructor that passes an owned value to its base initializer
-  now runs on LLVM; MIR stages the argument as a prepared parameter. C++ still
-  fails on it. A reference formal whose referent is not a passive scalar, an
-  owned argument beside a reference formal, a borrow carrier passed by value
-  and a by-value array remain unstaged: LLVM refuses them
+- A derived constructor that passes an owned value, or forwards a class or
+  enum reference, to its base initializer now runs on LLVM; MIR stages the
+  argument as a prepared parameter or a borrow input. C++ still fails on it.
+  An owned argument beside a reference formal, a reference formal whose
+  referent holds borrowed state, a borrow carrier passed by value and an array
+  of owning elements passed by value remain unstaged: LLVM refuses them
   (`UnstagedBaseInitializer`) and C++ fails. Staging them is follow-up MIR work.
 - Follow-up branches carry further work not in this candidate: borrow-carrier
   value moves, interface views of borrow carriers (blocked on an upcast-borrow

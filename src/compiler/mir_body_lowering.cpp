@@ -664,10 +664,19 @@ private:
   // of leaking through verified MIR.
   bool constructorUnarmedTransfer = false;
 
-  // A first reference-base family forwards one exact incoming scalar
-  // reference. The semantic formal supplies access and referent type; the
-  // existing place engine supplies its evaluated address. No referent value
-  // is loaded merely to pass this borrow, and the base cannot retain it.
+  // A forwarded base reference names a passive scalar, or a class or enum
+  // object that holds no borrowed state of its own.
+  bool forwardableBaseReferent(const SemanticType &referent) const {
+    return isPassiveScalarValueType(referent) ||
+           ((referent.kind == SemanticType::Class ||
+             referent.kind == SemanticType::Enum) &&
+            !resolvedTraits(referent).containsBorrowedState);
+  }
+
+  // A reference-base family forwards one exact incoming reference. The
+  // semantic formal supplies access and referent type; the existing place
+  // engine supplies its evaluated address. No referent value is loaded merely
+  // to pass this borrow, and the base cannot retain it.
   bool forwardedBaseReference(const HirConstructorInitializer &initializer,
                               std::size_t index) const {
     const auto *target =
@@ -683,7 +692,7 @@ private:
     const auto *value = findValue(initializer.arguments[index]);
     if (parameter.kind != SemanticType::Reference ||
         parameter.arguments.size() != 1 ||
-        !isPassiveScalarValueType(parameter.arguments.front()) || !value ||
+        !forwardableBaseReferent(parameter.arguments.front()) || !value ||
         value->kind != HirValueKind::Variable ||
         value->info.category != ValueCategory::Place ||
         value->info.type != parameter.arguments.front())

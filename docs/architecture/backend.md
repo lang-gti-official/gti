@@ -4961,10 +4961,16 @@ base constructor (see the base-subobject family in
 ordinary construction with prepared parameters, including the polymorphic
 form, whose dispatch state now has its base anchor.
 
+A forwarded reference formal whose referent is a class or enum object without
+borrowed state, such as `Point&`, `std::string&`, a payload enum, a
+polymorphic class or an interface view, is staged as a borrow input and lowers
+the same way.
+
 MIR still leaves a base initializer unstaged when it cannot yet express the
-base call: a reference formal whose referent is not a passive scalar, an owned
-argument beside a reference formal, a borrow carrier passed by value or a
-by-value array. Such a constructor body evaluates the arguments and hands
+base call: an owned argument beside a reference formal, a reference formal
+whose referent holds borrowed state, a borrow carrier passed by value or an
+array of owning elements passed by value. Such a constructor body evaluates
+the arguments and hands
 their obligations on, but contains no `InitializeBase`, because only a backend
 that builds the base from the constructor record would run the base
 constructor. LLVM never builds a base from the record, so

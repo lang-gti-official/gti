@@ -17,10 +17,12 @@ for what minor and patch releases mean.
   `std::string`, `std::vector`, `std::unique_ptr`, a payload enum, a closure
   or a class with a destructor, moved in or created in place. Earlier versions
   rejected these constructors with `GTI-B0003`. If a later argument or the base
-  constructor fails, each owned value is still destroyed exactly once. Passing
-  a reference to a class, a borrowing value or an array to a base constructor
-  still reports `GTI-B0003`, and the C++ backend does not compile these
-  constructors.
+  constructor fails, each owned value is still destroyed exactly once. A
+  derived constructor can also forward its own reference to a class or enum,
+  such as `Point&` or `std::string&`, to its base constructor. An owned value
+  beside a reference, a value holding a reference or an array of owning values
+  passed to a base constructor still reports `GTI-B0003`, and the C++ backend
+  does not compile these constructors. The language is unchanged.
 
 ## 0.484.1 - Native moves of polymorphic payloads and borrow carriers
 

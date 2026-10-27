@@ -3663,9 +3663,12 @@ the exact formal, source place, load and unsuspended entry loan; an early loan
 endpoint cannot be hidden behind the loaded SSA value. The base itself still
 cannot retain borrowed state. This permits forwarding a dynamic text view into
 an owning base constructor without mistaking it for a borrowed base object.
-An exact incoming scalar reference can also forward its address into the
+An exact incoming reference formal can also forward its address into the
 selected base reference formal, with the same referent and compatible access.
-Its `CallInput` names the constructor-initializer ordinal and has no ordinary
+The referent is a passive scalar, or a class or enum object that the type
+catalog records as holding no borrowed state of its own; this includes owning
+classes, payload enums, polymorphic classes and interface views. Its
+`CallInput` names the constructor-initializer ordinal and has no ordinary
 HIR call-site identity; it appears at its source-argument position and
 `InitializeBase` is its sole argument consumer. Other arguments in this bounded
 reference family must be inert literals or direct incoming passive scalar
@@ -3704,12 +3707,13 @@ transfers exactly once, and inputs precede the stage in order. Program
 verification binds each prepared input to its exact stage, index, HIR argument
 and type. The type catalog, not a value's own traits, decides that a formal
 owns cleanup, so a value claiming trivial traits cannot stand in for the
-prepared parameter. Some base arguments remain unstaged: a reference formal
-whose referent is not a passive scalar, an owned argument beside a reference
-formal, a borrow carrier passed by value and a by-value array. Such a body has
-no `InitializeBase`, and the native backend refuses it as
-`UnstagedBaseInitializer`. The C++ backend does not represent staged owned base
-arguments; those programs remain native-only.
+prepared parameter. Some base arguments remain unstaged: an owned argument
+beside a reference formal, a reference formal whose referent holds borrowed
+state, a borrow carrier passed by value and an array of owning elements passed
+by value. Such a body has no `InitializeBase`, and the native backend refuses
+it as `UnstagedBaseInitializer`. The C++ backend does not represent staged
+owned base arguments or forwarded class and enum references; those programs
+remain native-only.
 
 The C++ backend fuses observation-free scalar parameter/literal prefixes into
 the exact native base initializer, including passive text-view parameter loads,

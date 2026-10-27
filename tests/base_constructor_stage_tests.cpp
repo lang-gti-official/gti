@@ -705,6 +705,145 @@ int main() {
                       "arguments");
 }
 
+// A base reference formal may name a class or enum object that holds no
+// borrowed state of its own. The derived constructor forwards its own
+// reference formal: the stage's input borrows the exact incoming referent and
+// the base cannot retain it. The C++ backend does not represent this family.
+void checkClassReferenceBaseArguments() {
+  const auto frontend =
+      analyzeWithStandardLibrary("class-reference-base-arguments.gti", R"(
+class Point {
+public:
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+class Counter {
+public:
+  mut int count;
+  Counter() : count(0) {}
+};
+class Base {
+public:
+  int sum;
+  Base(Point& point, mut Counter& counter) : sum(point.x + point.y) {
+    counter.count += 1;
+  }
+};
+class Derived : public Base {
+public:
+  Derived(Point& point, mut Counter& counter) : Base(point, counter) {}
+};
+int main() {
+  Point point{3, 4};
+  mut Counter counter{};
+  Derived value{point, counter};
+  return value.sum + counter.count - 8;
+}
+)");
+  expect(frontend.canGenerateCode(), "class reference base arguments verify");
+  if (!frontend.canGenerateCode())
+    return;
+  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
+  expect(!lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
+         "the C++ backend does not represent class reference base arguments");
+  const auto definitionOf = [](const lang::MirBody &body,
+                               const lang::MirOperand &operand)
+      -> const lang::MirInstruction * {
+    const auto *value = operand.kind == lang::MirOperandKind::Value
+                            ? body.findValue(operand.value)
+                            : nullptr;
+    if (value == nullptr)
+      return nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == value->definition)
+          return &instruction;
+    return nullptr;
+  };
+  std::size_t stages = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances()) {
+    for (const auto &block : constructor.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::InitializeBase ||
+            instruction.operands.size() != 2 || !instruction.constructorTarget)
+          continue;
+        ++stages;
+        const auto expectedKinds = {lang::HirCallInputKind::ReadBorrow,
+                                    lang::HirCallInputKind::MutableBorrow};
+        std::size_t index = 0;
+        for (const auto kind : expectedKinds) {
+          const auto *input =
+              definitionOf(constructor.body, instruction.operands[index]);
+          expect(input != nullptr &&
+                     input->kind == lang::MirInstructionKind::CallInput &&
+                     input->callSite == 0 &&
+                     input->constructorInitializer ==
+                         instruction.constructorInitializer &&
+                     input->callInputIndex == index &&
+                     input->callInputKind == kind &&
+                     !input->preparedParameterDrop,
+                 "each class reference is an exact forwarded borrow input");
+          ++index;
+        }
+        const auto *target =
+            frontend.mir.findConstructorInstance(*instruction.constructorTarget);
+        if (target == nullptr || target->parameterTypes.size() != 2) {
+          expect(false, "the staged base keeps its selected constructor");
+          continue;
+        }
+        const auto referent = target->parameterTypes.front().arguments.front();
+        for (int mutation = 0; mutation < 4; ++mutation) {
+          auto malformed = frontend.mir;
+          auto *changed = const_cast<lang::MirConstructorInstance *>(
+              malformed.findConstructorInstance(constructor.id));
+          auto &instructions = changed->body.blocks[block.id - 1].instructions;
+          auto &stage = *std::find_if(
+              instructions.begin(), instructions.end(),
+              [&](const auto &candidate) {
+                return candidate.id == instruction.id;
+              });
+          if (mutation == 0) {
+            // The catalog records the referent as holding borrowed state, so
+            // the forwarded formal no longer qualifies for the family.
+            for (const auto &instance : malformed.classInstances())
+              if (instance.type == referent)
+                const_cast<lang::MirClassInstance &>(instance)
+                    .traits.containsBorrowedState = true;
+          } else if (mutation == 1) {
+            // The selected formal's referent is not the forwarded place's.
+            auto *selected = const_cast<lang::MirConstructorInstance *>(
+                malformed.findConstructorInstance(
+                    *instruction.constructorTarget));
+            selected->parameterTypes.front().arguments.front() =
+                lang::SemanticType::Int32;
+            stage.parameterTypes.front().arguments.front() =
+                lang::SemanticType::Int32;
+            stage.operands.front().type.arguments.front() =
+                lang::SemanticType::Int32;
+          } else if (mutation == 2) {
+            // A forwarded borrow is not an owning or copied value.
+            for (auto &candidateBlock : changed->body.blocks)
+              for (auto &candidate : candidateBlock.instructions)
+                if (candidate.kind == lang::MirInstructionKind::CallInput &&
+                    candidate.constructorInitializer ==
+                        instruction.constructorInitializer &&
+                    candidate.callInputIndex == 0)
+                  candidate.callInputKind = lang::HirCallInputKind::Value;
+          } else {
+            // The two forwarded borrows trade formals.
+            std::swap(stage.operands[0], stage.operands[1]);
+          }
+          expect(!lang::verifyMirProgram(malformed).valid(),
+                 "class reference base forwarding is sealed (mutation " +
+                     std::to_string(mutation) + ")");
+        }
+      }
+    }
+  }
+  expect(stages == 1, "the derived constructor stages its class references");
+}
+
 int main() {
   checkSelectedGeneratedBaseSchedule();
   checkFieldArgumentOrder();
@@ -714,6 +853,7 @@ int main() {
   checkGenericBaseArguments(fixtures);
   checkClosureGenericBaseArguments();
   checkOwnedBaseArguments();
+  checkClassReferenceBaseArguments();
   for (const auto name :
        {"coverage/reproducers/a45-base-state-rollback-unsupported.gti",
         "coverage/reproducers/a45-base-plus-string-field-unsupported.gti",

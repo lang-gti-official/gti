@@ -1092,6 +1092,20 @@ concreteMirTypeTraits(const MirProgram &program, const SemanticType &type,
   return traits;
 }
 
+// A base constructor's reference formal that a staged initializer may
+// forward: a passive scalar, or a class or enum object that the catalog
+// records as holding no borrowed state of its own.
+[[nodiscard]] bool forwardableBaseReferent(const MirProgram &program,
+                                           const SemanticType &referent) {
+  if (isPassiveScalarValueType(referent))
+    return true;
+  if (referent.kind != SemanticType::Class &&
+      referent.kind != SemanticType::Enum)
+    return false;
+  const auto traits = concreteMirTypeTraits(program, referent);
+  return traits && !traits->containsBorrowedState;
+}
+
 // Storage owns its element lifetime but carries no external-owner loan. Read
 // concrete class/enum facts from MIR, combining only real aggregate components
 // and captures; nominal generic arguments are not stored fields.
@@ -20238,7 +20252,8 @@ verifyMirProgramContracts(const MirProgram &program) {
               [&](const SemanticType &type) {
                 if (type.kind == SemanticType::Reference)
                   return type.arguments.size() == 1 &&
-                         isPassiveScalarValueType(type.arguments.front());
+                         forwardableBaseReferent(program,
+                                                 type.arguments.front());
                 const auto traits = concreteMirTypeTraits(program, type);
                 return traits && !traits->containsBorrowedState &&
                        (traits->drop == DropKind::Trivial ||
@@ -20461,7 +20476,8 @@ verifyMirProgramContracts(const MirProgram &program) {
                       MirPlaceProjection{.kind =
                                              MirProjectionKind::Dereference} &&
                   parameter->arguments.size() == 1 &&
-                  isPassiveScalarValueType(parameter->arguments.front()) &&
+                  forwardableBaseReferent(program,
+                                          parameter->arguments.front()) &&
                   place->type == parameter->arguments.front() && source &&
                   source->kind == SemanticType::Reference &&
                   source->arguments == parameter->arguments &&
