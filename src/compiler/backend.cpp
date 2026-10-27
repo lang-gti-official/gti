@@ -1,4 +1,5 @@
 #include "gti/backend.h"
+#include "gti/target.h"
 
 namespace lang {
 
@@ -20,6 +21,11 @@ std::optional<BackendKind> parseBackendKind(std::string_view name) {
     return BackendKind::Llvm;
   }
   return std::nullopt;
+}
+
+BackendKind defaultBackend(const TargetInfo &target) {
+  return target.os == "macos" && target.arch == "arm64" ? BackendKind::Llvm
+                                                        : BackendKind::Cpp;
 }
 
 } // namespace lang

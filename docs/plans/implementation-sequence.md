@@ -10523,7 +10523,8 @@ fixes only through v1.0 to preserve its existing supported comparison-oracle
 behavior. Do not spend campaign capacity on C++ feature parity; post-1.0
 catch-up requires a separate owner decision and is not promised. See the
 [policy rationale](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
-C++ remains the shipped default until O-LLVM-16 passes. This campaign
+LLVM is the default on macOS arm64 (owner promotion, 2026-10-27); C++ remains
+the default on other targets until O-LLVM-16 passes for them. This campaign
 implements the current language, not a new LLVM-specific subset or edition.
 The [architecture audit](../architecture/backend.md#llvm-readiness-audit-2026-10-24)
 and [ADR 031](../decisions/031-native-llvm-backend-foundation.md) explain the
@@ -12021,19 +12022,59 @@ that no gate covered, each fixed as a general rule with a registered case:
   crashed placement, and array elements skipped the implicit scalar
   initialization conversion MIR leaves to element formation.
 
-#### Remaining Executable Gaps (2026-10-27)
+#### macOS arm64 Default Promotion (2026-10-27)
 
-Grouped by what actually blocks each, not by the reported kind. Several
-examples report the same kind for different reasons, so the kind alone does
-not size the work.
+**Owner revision.** The owner promoted LLVM to the default executable backend
+for the macOS arm64 target alone; other targets keep C++ as their default and
+follow later on their own evidence. This narrows O-LLVM-16 rather than closing
+it: its Linux and remaining-target gates stay open.
+[ADR 031](../decisions/031-native-llvm-backend-foundation.md#default-backend-on-macos-arm64-2026-10-27)
+records the selection rules.
 
-| blocker | examples | nature |
+**Measure.** Every GTI program in the gti-lang organization and this
+repository, compared on both backends, each executable run from its own empty
+directory, on the promotion candidate (main merged at `b679bd632`):
+
+| | programs | result |
 | --- | --- | --- |
-| O-LLVM-10 polymorphism | 025, 071, 086, 135, 149 | milestone; these now match the C++ oracle at O0-O3: inline polymorphic slots, owned hierarchy transfers, consuming and temporary receivers, closure models, whole-object replacement, hierarchy arrays, program-storage objects, shared polymorphic owners, unobservable abstract phases and destructor lifecycle dispatch are admitted (see O-LLVM-10) |
-| element and pointee eligibility | 127, 129, 142 | admission only; the emitters are element-agnostic. `ArraySize`/`ArrayRangeBegin` return constants yet demand a passive element; a payload-enum pointee and an array of sealed integral enums have implemented shapes that the eligibility predicates do not reach |
-| unsafe receiver on a `Call` stage | 121 | admission only; a receiver-role `Call` with a mutable-temporary-borrow input kind and no call target |
-| remaining field projection | 042 | admission only; progressed from the earlier reference-adjustment refusal |
-| undetermined | 143, 144, 166 | 143 refuses a `Construct` although `nativeValue` accepts its type; 144 fails an internal `vector` length check during representation generation; 166 compiles and then never terminates, with a correctly lowered reverse-destroy loop reading an implausible count |
+| single-file programs in examples, tests, the legacy archive and gti-reference | 4,003 | 3,160 match the C++ backend at O0 and O2 (30 long-running ones at O2 only); 842 do not compile on C++; 1 recorded C++ divergence |
+| single-file programs in benchmarks, scripts, fuzz and tree-sitter | 86 | 83 match at O2; 3 do not compile on C++ alone (two deliberate syntax errors, one that links a companion and matches with it) |
+| project targets in this repository and the organization | 345 | 151 build and match, tests included; 119 do not build on C++; 72 are source-only packages |
+
+No program that compiles on C++ is refused, crashes the compiler or differs on
+LLVM. The C++-rejected programs are deliberate diagnostic fixtures, programs
+that need their native companion (built with it by their tests), LLVM-only
+fixtures for shapes C++ never supported, and deliberate whole-program errors.
+Against the first corpus sweep of 2026-10-27 the set only gained four new
+companion fixtures; no program stopped compiling on C++. Two project rows only look
+different: a profile that retains C++ output rejects `--backend llvm` by
+design and matches with `--no-keep-cpp`, and one program prints a random UUID.
+
+**LLVM-default suite.** The full suite run with LLVM as the host default found
+what the per-program measure could not, and each is fixed: native companion
+sources after `--` compile with the C++ invocation's include directory,
+language level, optimization and strict floating point; a dependency's GTI
+build script reuses its output only together with its exact cached host
+executable; a library macro's debug scope names the caller's file; a generated
+default constructor needs no lexical debug facts; C structs and unions pass by
+value straight from C globals; and tests that asserted C++ command lines or
+artifacts name `--backend cpp` explicitly.
+
+**Recorded divergences and open follow-ups.**
+
+- A base destructor's virtual call on `this` runs the destructor's own class
+  on LLVM, the owner's lifecycle-dispatch rule. The C++ backend reaches the
+  destroyed derived override; this is a recorded C++ bug and the one corpus
+  mismatch (`llvm_dispatch_lifecycle_phases`).
+- `scoped_parallel_allocations` counts the C++ backend's nothrow `operator new`,
+  which native task boxes do not use.
+- A derived constructor that passes an owned value or a reference to its base
+  initializer is refused on LLVM (`UnstagedBaseInitializer`) and fails on C++:
+  MIR leaves such base initializers unstaged. Staging them is follow-up MIR work.
+- Follow-up branches carry further work not in this candidate: borrow-carrier
+  value moves, interface views of borrow carriers (blocked on an upcast-borrow
+  soundness fix in semantics and MIR), invocation-pointer text results and
+  a MIR verifier hardening for text call results.
 
 **Negative constants above O0 (fixed).** The five-line reduction
 

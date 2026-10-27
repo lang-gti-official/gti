@@ -1,16 +1,18 @@
 # Backend And Native Handoff
 
 
-Status: current architecture. LLVM is the primary development backend. C++ is
-deprecated as the primary backend and maintained with bug fixes only through
-v1.0 as a comparison oracle. It remains the shipped default until LLVM passes
-O-LLVM-16; a future C++ catch-up requires a separate owner decision. See
-[ADR 031's backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
+Status: current architecture. LLVM is the primary development backend and the
+default on macOS arm64. C++ is deprecated as the primary backend and maintained
+with bug fixes only through v1.0 as a comparison oracle. It remains the default
+on other targets until LLVM passes O-LLVM-16 there; a future C++ catch-up
+requires a separate owner decision. See
+[ADR 031's backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25)
+and [its macOS arm64 promotion](../decisions/031-native-llvm-backend-foundation.md#default-backend-on-macos-arm64-2026-10-27).
 
-GTI ships a C++ source backend and a selectable native LLVM backend, which
-already emits the documented scalar, places/text and ordinary class/lifecycle
-profiles. Unsupported required LLVM shapes reject before artifact publication;
-full-language coverage remains in progress. Both consume one compiler-owned,
+GTI ships a native LLVM backend and a C++ source backend, and either can be
+selected on any target. Unsupported required LLVM shapes reject with
+`GTI-B0003` before artifact publication, never by falling back to C++. Both
+consume one compiler-owned,
 backend-neutral `LoweredProgram`;
 they do not receive the AST,
 `SemanticModel`, `HirProgram`, source MIR, optimizer side tables, or generated
@@ -4384,8 +4386,9 @@ Backend selection is immutable `CompilationRequest` policy. The generic
 `compileToSelectedBackend` entry follows the same frontend, optimized-MIR,
 lowered construction, verification, diagnostic, and progress path as
 `compileToCpp`. Direct CLI compilation exposes `--backend cpp|llvm`; omitting it
-continues to select C++. C++-only `--std` and `--keep-cpp` policy cannot be
-combined with LLVM selection.
+selects the target's default. The C++-only `--std` and `--keep-cpp` options
+select C++ when no backend is named and cannot be combined with an explicit LLVM
+selection.
 
 `BackendArtifactKind::Object` is the neutral native handoff. Object
 contents remain opaque bytes; the driver, not the backend, owns atomic
@@ -4393,9 +4396,13 @@ publication, runtime/native inputs, linking, caches, diagnostics, and final
 executable publication. A dedicated `NativeLinkRequest` composes an object
 artifact with declared native objects, ordered link inputs, and the GTI runtime
 without applying C++ standard, preprocessing, strict-floating-point, or source
-optimization flags. Object-backend cache entries remain conservatively
-bypassed until their binary metadata format is implemented. LLVM returns this
-artifact kind for admitted programs; C++ remains the default backend.
+optimization flags. Project builds cache object artifacts under their own
+schema-v5 identity, described in
+[the project cache](build-and-driver.md#whole-program-project-cache); direct
+requests remain uncached. LLVM returns this artifact kind for admitted
+programs. `defaultBackend(TargetInfo)` names the
+backend a request gets when none is selected: LLVM for macOS arm64 and C++ for
+every other target.
 
 LLVM lowering preserves this boundary. It must not link
 frontend representations, receive source MIR or optimizer tables, parse

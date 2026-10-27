@@ -1,4 +1,5 @@
 #include "gti/driver/project.h"
+#include "gti/backend.h"
 #include "gti/driver/artifact.h"
 
 #include "gti/driver/process.h"
@@ -516,7 +517,8 @@ selectProfile(const ProjectManifest &manifest, std::string_view requested,
               const ProjectBuildOverrides &overrides = {}) {
   const ProjectProfile *profile = manifest.findProfile(requested);
   if (profile != nullptr) {
-    if (overrides.backend.value_or(profile->backend) == BackendKind::Llvm &&
+    if (overrides.backend.value_or(
+            profile->backend.value_or(BackendKind::Cpp)) == BackendKind::Llvm &&
         (overrides.cppStandard ||
          overrides.keepCpp.value_or(profile->keepCpp))) {
       diagnostics.push_back(projectDiagnostic(
@@ -652,9 +654,14 @@ ProjectBuildPlan makeBuildPlan(
       overrides.optimization.value_or(selectedProfile.optimization);
   const CppStandard cppStandard =
       overrides.cppStandard.value_or(selectedProfile.cppStandard);
-  const BackendKind backend =
-      overrides.backend.value_or(selectedProfile.backend);
   const bool keepCpp = overrides.keepCpp.value_or(selectedProfile.keepCpp);
+  // An explicit backend wins; otherwise C++-only options keep the C++ backend
+  // they configure and every other build uses the target's default.
+  const BackendKind backend =
+      overrides.backend                  ? *overrides.backend
+      : selectedProfile.backend          ? *selectedProfile.backend
+      : overrides.cppStandard || keepCpp ? BackendKind::Cpp
+                                         : defaultBackend(target);
   const bool debugInfo =
       overrides.debugInfo.value_or(selectedProfile.debugInfo);
   const RawPointerAuditMode rawPointerAudit =

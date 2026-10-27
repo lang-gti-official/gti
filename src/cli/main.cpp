@@ -348,10 +348,10 @@ void printUsage(std::ostream &stream) {
          "debug symbols.\n"
          "      --no-debug-info  Disable source-level debug info.\n"
          "      --cxx <path>     Select the native compiler.\n"
-         "      --backend <name> Select cpp (default) or llvm. The LLVM "
-         "backend has partial language support; unsupported features report "
-         "GTI-B0003. C++ remains the production "
-         "default.\n"
+         "      --backend <name> Select llvm or cpp. The default is llvm on "
+         "arm64 macOS and cpp on other targets; --std and --keep-cpp select "
+         "cpp. The LLVM backend has partial language support; unsupported "
+         "features report GTI-B0003.\n"
          "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
          "      --execution-profile <name>\n"
          "                       Select single-threaded (default) or "
@@ -414,7 +414,8 @@ void printUsage(std::ostream &stream) {
          "      --format <mode> Test results: human (default), json (JSON "
          "Lines).\n"
          "      --std <version>  Override c++20 or c++23.\n"
-         "      --backend <name> Select cpp or llvm for executable builds.\n"
+         "      --backend <name> Select llvm or cpp for executable builds "
+         "(default: llvm on arm64 macOS, cpp elsewhere).\n"
          "      --execution-profile <name>\n"
          "                       Override single-threaded or concurrent "
          "semantics.\n"
@@ -2300,8 +2301,12 @@ void reportBackendDiagnosticLog(const lang::driver::DiagnosticLogResult &log) {
 void reportSavedRepresentation(
     const lang::driver::ExecutableBuildResult &result) {
   if (result.generatedSourceRetained) {
-    std::cerr << "gti: backend 'c++' representation saved at "
-              << result.generatedSource.string() << '\n';
+    const bool object =
+        result.compilation.artifact &&
+        result.compilation.artifact->kind == lang::BackendArtifactKind::Object;
+    std::cerr << "gti: backend '" << (object ? "llvm" : "c++")
+              << "' representation saved at " << result.generatedSource.string()
+              << '\n';
   }
 }
 
@@ -2569,10 +2574,17 @@ int runDirect(const Options &options, const char *driver) {
     return exitCode(ExitStatus::Success);
   }
 
+  // An unselected backend is the target's default; --std and --keep-cpp
+  // keep selecting the C++ backend they configure.
+  const lang::BackendKind backend =
+      options.backendSelected ? options.backend
+      : options.keepCpp || options.standardSelected
+          ? lang::BackendKind::Cpp
+          : lang::defaultBackend(target);
   const std::filesystem::path generatedSource =
       options.keepCpp
           ? std::filesystem::path(options.output.string() + ".gti.cpp")
-      : options.backend == lang::BackendKind::Cpp
+      : backend == lang::BackendKind::Cpp
           ? lang::driver::temporaryCppPath(options.input)
           : lang::driver::temporaryArtifactPath(options.input, ".o");
   lang::driver::NativeInputs nativeInputs;
@@ -2591,7 +2603,7 @@ int runDirect(const Options &options, const char *driver) {
                       lang::RawPointerAuditMode::Off),
                   {}, {},
                   options.rawPointerAuditLibraryFindings.value_or(false))
-                  .withBackend(options.backend),
+                  .withBackend(backend),
               toolchain, generatedSource, options.output,
               lang::driver::discoverNativeCompiler(options.cxx),
               std::move(nativeInputs), options.keepCpp, false, options.verbose,
@@ -2659,8 +2671,11 @@ void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
             << plan.profileName() << ", "
             << lang::driver::targetTriple(plan.target()) << "]\n"
             << "gti: configuration -O"
-            << lang::cli::optimizationNumber(plan.optimization())
-            << ", execution-profile="
+            << lang::cli::optimizationNumber(plan.optimization());
+  if (command != ProjectCommand::Check) {
+    std::cerr << ", backend=" << lang::backendKindName(plan.backend());
+  }
+  std::cerr << ", execution-profile="
             << lang::executionProfileName(plan.target().executionProfile)
             << ", keep-representation=" << (plan.keepCpp() ? "true" : "false")
             << ", debug-info=" << (plan.debugInfo() ? "true" : "false") << '\n';

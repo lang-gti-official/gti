@@ -194,21 +194,35 @@ private:
   bool sourceDebugInfo = false;
 };
 
+// The language level and optimization a native invocation gives the native
+// sources named among its forwarded arguments.
+struct ForwardedSourcePolicy {
+  CppStandard standard = CppStandard::Cpp23;
+  OptimizationLevel optimization = OptimizationLevel::O0;
+};
+
 // Links a backend-produced native object without applying source-language,
-// preprocessing, or frontend code-generation flags. The backend owns the
+// preprocessing, or frontend code-generation flags to it. The backend owns the
 // object's target and code-generation policy; the driver owns executable
 // publication and composition with native dependencies and the GTI runtime.
+// Forwarded arguments may name native sources that this invocation compiles.
+// Given a policy, they compile exactly as they would beside generated C++:
+// with its language level, optimization, include directories, compiler
+// arguments, strict floating point and strict-policy marker.
 class NativeLinkRequest final {
 public:
-  NativeLinkRequest(std::string compiler, std::filesystem::path object,
-                    std::filesystem::path output, NativeInputs inputs,
-                    bool debugInfo = false);
+  NativeLinkRequest(
+      std::string compiler, std::filesystem::path object,
+      std::filesystem::path output, NativeInputs inputs, bool debugInfo = false,
+      std::optional<ForwardedSourcePolicy> forwardedSources = std::nullopt);
 
   [[nodiscard]] const std::string &compiler() const;
   [[nodiscard]] const std::filesystem::path &object() const;
   [[nodiscard]] const std::filesystem::path &output() const;
   [[nodiscard]] bool debugInfo() const;
   [[nodiscard]] const NativeInputs &inputs() const;
+  [[nodiscard]] const std::optional<ForwardedSourcePolicy> &
+  forwardedSources() const;
 
 private:
   std::string compilerExecutable;
@@ -216,6 +230,7 @@ private:
   std::filesystem::path outputPath;
   NativeInputs nativeInputs;
   bool sourceDebugInfo = false;
+  std::optional<ForwardedSourcePolicy> forwardedSourcePolicy;
 };
 
 class NativeCCompileRequest final {
