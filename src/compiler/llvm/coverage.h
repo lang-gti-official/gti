@@ -56,6 +56,7 @@ enum class Shape {
   FailureReturn,
   PassiveArrayValue,
   CheckedArrayProjection,
+  ArrayExtentQuery,
   PassiveReference,
   CountedText,
   PrimitiveRawAccess,

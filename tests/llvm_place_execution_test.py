@@ -323,6 +323,54 @@ int main() {
 '''
 
 
+# A fixed-array extent query is a sealed constant: range-for and size() over
+# class, owning-class and payload elements never read an element to count.
+ARRAY_EXTENT_QUERIES = r'''
+#include <std/string>
+struct Counter {
+  int count;
+  Counter(int number) : count(number) {}
+};
+struct Slot {
+  Counter value;
+  Slot(int number) : value(Counter(number)) {}
+};
+struct Named {
+  std::string text;
+  Named(std::string_view spelling) : text(std::string(spelling)) {}
+};
+enum Plain { none, pair(int first, int second) };
+int sum(Plain& value) {
+  switch (value) {
+  case Plain::none: return 0;
+  case Plain::pair(first, second): return first + second;
+  }
+}
+int main() {
+  Slot slots[3] = {Slot(4), Slot(5), Slot(6)};
+  mut int total = 0;
+  for (auto& slot : slots) { total = total * 10 + slot.value.count; }
+  if (total != 456 || slots.size() != uint64_t(3)) { return 1; }
+  Slot grid[2][2] = {{Slot(1), Slot(2)}, {Slot(3), Slot(4)}};
+  mut int weighted = 0;
+  for (auto& row : grid) {
+    for (auto& cell : row) { weighted = weighted * 10 + cell.value.count; }
+  }
+  if (weighted != 1234 || grid.size() != uint64_t(2) || grid[1].size() != uint64_t(2)) {
+    return 2;
+  }
+  Named names[2] = {Named("ab"), Named("cde")};
+  mut uint64_t letters = 0;
+  for (auto& name : names) { letters = letters + name.text.view().size(); }
+  if (letters != uint64_t(5) || names.size() != uint64_t(2)) { return 3; }
+  Plain plains[3] = {Plain::pair(1, 2), Plain::none, Plain::pair(3, 4)};
+  mut int sums = 0;
+  for (auto& plain : plains) { sums = sums * 10 + sum(plain); }
+  return sums == 307 && plains.size() == uint64_t(3) ? 0 : 4;
+}
+'''
+
+
 def successes(root: Path) -> dict[str, str]:
     cases = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS,
              'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES,
@@ -332,7 +380,8 @@ def successes(root: Path) -> dict[str, str]:
              'erased-references': ERASED_REFERENCES,
              'erased-reference-cleanup': ERASED_REFERENCE_CLEANUP,
              'unsafe-wrapper': UNSAFE_WRAPPER,
-             'conditional-references': CONDITIONAL_REFERENCES}
+             'conditional-references': CONDITIONAL_REFERENCES,
+             'array-extent-queries': ARRAY_EXTENT_QUERIES}
     cases['shipped-example'] = (
         root / 'examples/llvm/places-and-text.gti').read_text()
     cases['enum-references'] = (

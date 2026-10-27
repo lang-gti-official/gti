@@ -2218,6 +2218,30 @@ int main() { int* left[2] = {}; int* right[2] = {}; return left == right ? 0 : 1
              pointerArrayEquality.firstUnsupported()->entry->key() ==
                  "Shape.ArrayValueComparison",
          "pointer array storage does not invent element comparison semantics");
+  // An extent query reads no receiver bytes, so a class-element receiver
+  // reports the constant-extent witness rather than a passive-array claim.
+  const auto classExtents = lang::planLlvmAdmission(lower(R"(
+struct Slot { int value; Slot(int value) : value(value) {} };
+int main() {
+  Slot slots[2] = {Slot(3), Slot(4)};
+  mut int total = 0;
+  for (auto& slot : slots) { total += slot.value; }
+  return total == 7 && slots.size() == uint64_t(2) ? 0 : 1;
+}
+)"));
+  bool extentSize = false, extentBegin = false;
+  for (const auto &use : classExtents.requirements())
+    if (use.entry->family == "IntrinsicKind" &&
+        (use.entry->name == "ArraySize" ||
+         use.entry->name == "ArrayRangeBegin")) {
+      (use.entry->name == "ArraySize" ? extentSize : extentBegin) = true;
+      expect(use.entry->state == lang::LlvmCoverageState::Pending &&
+                 use.implementedShape &&
+                 use.implementedShape->name == "ArrayExtentQuery",
+             "a class-array extent query uses only the constant extent");
+    }
+  expect(classExtents.admitted() && extentSize && extentBegin,
+         "range-for and size() over class elements read no element");
   for (const auto &use : arrays.requirements())
     if (use.entry->family == "MirOperation" && use.entry->name == "Aggregate")
       expect(use.entry->state == lang::LlvmCoverageState::Pending &&

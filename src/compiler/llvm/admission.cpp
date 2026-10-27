@@ -1233,6 +1233,24 @@ public:
     return sealed && sealed->underlyingType == stage.info.type &&
            isPassiveScalarValueType(stage.info.type);
   }
+  // A fixed array's extent query never reads its receiver: emission produces
+  // the sealed static extent (ArraySize) or the zero endpoint
+  // (ArrayRangeBegin). The element family is therefore irrelevant to this
+  // operation; the receiver only needs an admitted native representation,
+  // and its operand remains independently inventoried.
+  bool arrayExtentQuery(const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Call ||
+        (stage.intrinsic != IntrinsicKind::ArraySize &&
+         stage.intrinsic != IntrinsicKind::ArrayRangeBegin) ||
+        !stage.receiver || !stage.operands.empty() || stage.functionTarget ||
+        stage.constructorTarget || stage.bodyTarget || stage.lambdaTarget ||
+        stage.nativeCalleeType || stage.loan ||
+        stage.info.type != SemanticType::UInt64)
+      return false;
+    const auto &array = stage.receiver->type;
+    return array.kind == SemanticType::Array && array.arguments.size() == 1 &&
+           !array.arrayLengthParameterId && nativeValue(array);
+  }
   std::optional<Shape> mutexShape(const SemanticType &type) const {
     if (program.executionProfile() != ExecutionProfile::Concurrent ||
         !program.target().runtimeCapabilities.threads)
@@ -2971,7 +2989,8 @@ public:
                       (stage.intrinsic == IntrinsicKind::ArraySize ||
                        stage.intrinsic == IntrinsicKind::ArrayRangeBegin)
                   ? std::optional(Shape::PassiveArrayValue)
-                  : std::nullopt);
+              : arrayExtentQuery(stage) ? std::optional(Shape::ArrayExtentQuery)
+                                        : std::nullopt);
         }
         if (stage.receiver)
           operand(*stage.receiver);
