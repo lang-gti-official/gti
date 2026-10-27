@@ -212,7 +212,9 @@ public:
         // initializer will silently transfer a subobject into `this`
         // without arming rollback; the verifier holds the matching
         // body-wide rule. Stage-eligible single owning arguments either arm
-        // rollback or stay inactive, so they never transfer unarmed.
+        // rollback or stay inactive, so they never transfer unarmed. An owned
+        // base argument hands its prepared parameter to the staged base
+        // constructor, which is not a transfer into `this` either.
         for (const HirConstructorInitializer &initializer : *initializers) {
           const HirConstructorInstance *target =
               initializer.constructorTarget
@@ -247,14 +249,14 @@ public:
           std::vector<Scope> incomingScopes = scopes;
           const std::vector<TemporaryDrop> incomingTemporaryDrops =
               temporaryDrops;
-          const bool stageReferenceInputs = stagedBase(initializer) != nullptr;
+          const bool stagedBaseInputs = stagedBase(initializer) != nullptr;
           std::vector<std::optional<MirOperand>> preparedBaseInputs(
               initializer.arguments.size());
           std::vector<MirDropObligationId> preparedBaseDrops;
           for (std::size_t argumentIndex = 0;
                argumentIndex < initializer.arguments.size(); ++argumentIndex) {
             const HirValueId argument = initializer.arguments[argumentIndex];
-            if (stageReferenceInputs &&
+            if (stagedBaseInputs &&
                 ownedBaseArgument(initializer, argumentIndex)) {
               // The owned value moves into its prepared parameter, which the
               // InitializeBase hands to the base constructor.
@@ -274,7 +276,7 @@ public:
                 preparedBaseDrops.push_back(prepared.parameterDrop);
               continue;
             }
-            if (stageReferenceInputs &&
+            if (stagedBaseInputs &&
                 forwardedBaseReference(initializer, argumentIndex)) {
               const auto &parameter =
                   program

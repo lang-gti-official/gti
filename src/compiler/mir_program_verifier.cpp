@@ -20180,9 +20180,10 @@ verifyMirProgramContracts(const MirProgram &program) {
                       target->parameterTypes.end(), [](const auto &type) {
                         return type.kind == SemanticType::Reference;
                       });
-      // An owned by-value class parameter moves through a prepared parameter
-      // the stage hands to the selected constructor. Reference and owned
-      // families stay unstaged when lowering cannot prove every argument.
+      // An owned by-value parameter (an owning class, payload enum or
+      // closure) moves through a prepared parameter that the stage hands to
+      // the selected constructor. Reference and owned families stay unstaged
+      // when lowering cannot prove every argument.
       const bool ownedFamily =
           target && !referenceFamily &&
           std::any_of(target->parameterTypes.begin(),
