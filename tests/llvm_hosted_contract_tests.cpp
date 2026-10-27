@@ -227,7 +227,7 @@ void unsafeReferenceLoadContract(const std::filesystem::path &repository,
     mutations[index](invalid, block, load, call, place, loan);
     auto built = LoweredProgramBuilder().build(
         frontend.program, frontend.semantics, frontend.hir, invalid, invalid,
-        {}, TargetInfo::host(), true);
+        {}, TargetInfo::host());
     bool rejected = !built.valid();
     if (built.valid()) {
       auto verified = verifiedLoweredProgram(std::move(*built.program), issues);
@@ -434,7 +434,7 @@ void unsafeReferenceReturnContract(
     mutate(invalid, body, block, transfer, call, from, to);
     auto built = LoweredProgramBuilder().build(
         frontend.program, frontend.semantics, frontend.hir, invalid, invalid,
-        {}, TargetInfo::host(), true);
+        {}, TargetInfo::host());
     bool rejected = !built.valid();
     if (built.valid()) {
       auto verified = verifiedLoweredProgram(std::move(*built.program), issues);
@@ -604,7 +604,7 @@ void classOwnerRawReferenceContract(const std::filesystem::path &repository,
           }
           auto built = LoweredProgramBuilder().build(
               frontend.program, frontend.semantics, frontend.hir, invalidMir,
-              invalidMir, {}, TargetInfo::host(), true);
+              invalidMir, {}, TargetInfo::host());
           bool rejected = !built.valid();
           if (built.valid()) {
             auto verified =
