@@ -1,4 +1,5 @@
 #include "mutexes.h"
+#include "closure_environment.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 #include "runtime_abi.h"
@@ -40,6 +41,89 @@ nativeMutexElement(const MirProgram &program, const SemanticType &type,
   return type.arguments[0];
 }
 
+std::optional<MutexComposition>
+mutexComposition(const MirProgram &program, const SemanticType &type,
+                 const std::function<bool(const SemanticType &)> &leaf) {
+  if (program.executionProfile() != ExecutionProfile::Concurrent ||
+      !program.target().runtimeCapabilities.threads)
+    return {};
+  std::vector<SemanticType> visiting;
+  bool mutex = false;
+  MutexComposition result;
+  const auto represented = [&](const auto &self,
+                               const SemanticType &selected) -> bool {
+    if (std::find(visiting.begin(), visiting.end(), selected) !=
+        visiting.end())
+      return false;
+    visiting.push_back(selected);
+    bool valid = false;
+    if (selected.kind == SemanticType::Reference &&
+        selected.arguments.size() == 1)
+      valid = self(self, selected.arguments[0]);
+    else if (selected.kind == SemanticType::Array &&
+             selected.arguments.size() == 1 && !selected.arrayLengthParameterId)
+      valid = self(self, selected.arguments[0]);
+    else if (const auto *payload = program.findPayloadEnum(selected)) {
+      valid = true;
+      for (const auto &variant : payload->variants)
+        for (const auto &element : variant.payloadTypes)
+          valid &= self(self, element);
+    } else if (selected.kind == SemanticType::Lambda && !leaf(selected)) {
+      // A closure environment is an inline aggregate of its captures, so a
+      // capture taken by value may hold mutex storage. A borrowing capture
+      // stores only an address and stays an ordinary leaf.
+      const auto environment = closureEnvironmentLayout(program, selected);
+      valid = environment &&
+              environment->captureTypes.size() ==
+                  environment->captureModes.size() &&
+              environment->captureTypes.size() ==
+                  environment->captureRequiresActiveCleanup.size();
+      for (std::size_t index = 0;
+           valid && index < environment->captureTypes.size(); ++index)
+        valid = isBorrowingCapture(environment->captureModes[index])
+                    ? leaf(environment->captureTypes[index])
+                    : self(self, environment->captureTypes[index]);
+      result.closure |= valid;
+    } else if (selected.kind == SemanticType::Class) {
+      const MirClassInstance *owner = nullptr;
+      for (const auto &candidate : program.classInstances())
+        if (candidate.type == selected) {
+          if (owner) {
+            visiting.pop_back();
+            return false;
+          }
+          owner = &candidate;
+        }
+      if (owner && (owner->compilerCapability ==
+                        CompilerCapabilityTypeKind::MutexStorage ||
+                    owner->compilerCapability ==
+                        CompilerCapabilityTypeKind::MutexLockToken)) {
+        const auto element =
+            nativeMutexElement(program, selected, owner->compilerCapability);
+        valid = element && self(self, *element);
+        mutex |= valid;
+      } else if (owner &&
+                 owner->compilerCapability ==
+                     CompilerCapabilityTypeKind::None &&
+                 !owner->abstract && !owner->polymorphic &&
+                 !owner->cOpaqueHandle && !owner->cAbiLayout &&
+                 !owner->unionLayout && owner->bases.empty() &&
+                 owner->structuralBases.empty()) {
+        valid = true;
+        for (const auto &field : owner->declaredFields)
+          valid &= self(self, field.type);
+      } else
+        valid = leaf(selected);
+    } else
+      valid = leaf(selected);
+    visiting.pop_back();
+    return valid;
+  };
+  if (!represented(represented, type) || !mutex)
+    return {};
+  return result;
+}
+
 std::optional<SemanticType>
 nativeMutexConstructor(const MirProgram &program,
                        const MirConstructorInstance &constructor) {
@@ -53,6 +137,19 @@ nativeMutexConstructor(const MirProgram &program,
       program.target().executionProfile == ExecutionProfile::Concurrent &&
       program.target().runtimeCapabilities.threads)
     return payload;
+  // A payload with active cleanup carries its exact unique recipe. One
+  // without keeps MIR's passive binding obligation: the consumed parameter's
+  // Drop then has nothing to retire, whatever the payload's source type.
+  const auto parameterRecipe =
+      payload ? mirUniqueCleanupType(program, *payload) : std::nullopt;
+  // A passive payload's drop runs no code, so this loan- and value-free body
+  // cannot let the receiver or argument escape. The summary's conservative
+  // boundary for a drop naming hierarchy storage proves nothing more here.
+  const bool escapes =
+      constructor.effectSummary.receiverEscapes ||
+      std::any_of(constructor.effectSummary.argumentsEscape.begin(),
+                  constructor.effectSummary.argumentsEscape.end(),
+                  [](bool escaped) { return escaped; });
   if (!payload ||
       program.target().executionProfile != ExecutionProfile::Concurrent ||
       !program.target().runtimeCapabilities.threads ||
@@ -64,10 +161,7 @@ nativeMutexConstructor(const MirProgram &program,
       !constructor.typeArguments.empty() ||
       !constructor.valueArguments.empty() || constructor.requiresUnsafe ||
       constructor.borrowOrigin != BorrowOriginKind::None ||
-      constructor.effectSummary.receiverEscapes ||
-      std::any_of(constructor.effectSummary.argumentsEscape.begin(),
-                  constructor.effectSummary.argumentsEscape.end(),
-                  [](bool escapes) { return escapes; }) ||
+      (parameterRecipe && escapes) ||
       !body.values.empty() || !body.loans.empty() ||
       !body.fullExpressions.empty() || body.places.size() != 1 ||
       body.dropObligations.size() > 1 ||
@@ -79,10 +173,6 @@ nativeMutexConstructor(const MirProgram &program,
       parameter.type != *payload || !parameter.initiallyAvailable ||
       !parameter.projections.empty())
     return {};
-  // A payload with active cleanup carries its exact unique recipe. One
-  // without keeps MIR's passive binding obligation: the consumed parameter's
-  // Drop then has nothing to retire, whatever the payload's source type.
-  const auto parameterRecipe = mirUniqueCleanupType(program, *payload);
   const auto passive = [&](const MirDropType &drop) {
     return !parameterRecipe && drop.type == *payload &&
            !drop.requiresActiveCleanup && !drop.destructor &&

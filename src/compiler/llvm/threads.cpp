@@ -45,9 +45,13 @@ const MirClassInstance *exactClass(const MirProgram &program,
   return owner;
 }
 
-bool hierarchyFree(const MirProgram &program, const SemanticType &type) {
+// The inline storage of a task or result has an exact proof. Hierarchy
+// storage itself crosses a task box only through its generated relocation and
+// cleanup recipes, which admission checks for each boxed type.
+bool exactInlineStorage(const MirProgram &program, const SemanticType &type) {
   try {
-    return !containsHierarchyStorage(program, type);
+    static_cast<void>(containsHierarchyStorage(program, type));
+    return true;
   } catch (const BackendUnsupportedError &) {
     return false;
   }
@@ -217,9 +221,9 @@ bool nativeThreadTaskAdapter(const MirProgram &program,
       adapter.resultType == SemanticType::Unknown ||
       adapter.resultType.kind == SemanticType::Reference ||
       adapter.resultType.kind == SemanticType::RawPointer ||
-      !hierarchyFree(program, adapter.taskType) ||
+      !exactInlineStorage(program, adapter.taskType) ||
       (adapter.resultType != SemanticType::Void &&
-       !hierarchyFree(program, adapter.resultType)))
+       !exactInlineStorage(program, adapter.resultType)))
     return false;
   if (adapter.functionTarget) {
     const auto *target = program.findFunctionInstance(*adapter.functionTarget);
@@ -263,6 +267,14 @@ bool nativeThreadTaskAdapter(const MirProgram &program,
          (adapter.resultType == SemanticType::Void ||
           mirTypeRelocationKind(program, adapter.resultType) !=
               RelocationKind::Unavailable);
+}
+
+bool hierarchyThreadTask(const MirProgram &program,
+                         const MirThreadTaskAdapter &adapter) {
+  return nativeThreadTaskAdapter(program, adapter) &&
+         (containsHierarchyStorage(program, adapter.taskType) ||
+          (adapter.resultType != SemanticType::Void &&
+           containsHierarchyStorage(program, adapter.resultType)));
 }
 
 bool isNativeThreadIntrinsic(IntrinsicKind intrinsic) {

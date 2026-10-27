@@ -29,6 +29,11 @@ nativeThreadHandle(const MirProgram &program, const SemanticType &type);
 // value representation is checked separately by the storage witnesses.
 [[nodiscard]] bool nativeThreadTaskAdapter(const MirProgram &program,
                                            const MirThreadTaskAdapter &adapter);
+// A native adapter whose task or result holds hierarchy storage: a boxed one
+// crosses its box only through the generated relocation, and a scoped one
+// runs in place in its caller's storage.
+[[nodiscard]] bool hierarchyThreadTask(const MirProgram &program,
+                                       const MirThreadTaskAdapter &adapter);
 
 [[nodiscard]] bool isNativeThreadIntrinsic(IntrinsicKind intrinsic);
 // Exact staged managed-thread operation over sealed MIR facts and trusted

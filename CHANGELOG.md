@@ -83,7 +83,10 @@ for what minor and patch releases mean.
   `std::parallel_invoke`, manual C-thread create/join, once, mutex and
   condition services, mutexes held by value in lambda captures, and mutexes
   protecting class values that need no cleanup. Worker failures re-raise at
-  join and cleanup failures report exactly as on the C++ backend.
+  join and cleanup failures report exactly as on the C++ backend. Thread
+  tasks may also hold polymorphic objects, `std::inline_polymorphic` slots or
+  a `std::transfer_function`, and a mutex may protect a polymorphic value, so
+  the managed-threads example now builds with LLVM.
 - Native debug builds (`-g`) of programs using a library macro, such as
   `std::testing::check_eq` in a `[[test]]` suite, no longer fail with an
   internal error. A scope the macro opened was recorded under the macro's own
@@ -105,9 +108,9 @@ for what minor and patch releases mean.
   destructor's own class's override; it never reaches a derived part that is
   already destroyed. The C++ backend still calls the most-derived override
   there, which is a known C++ backend defect. Payload enums such as
-  `std::optional` holding polymorphic values, and erased callables moved
-  into threads, remain rejected on the native backend. C++ remains the
-  production default.
+  `std::optional` holding polymorphic values, including a polymorphic thread
+  result returned through `std::expected`, remain rejected on the native
+  backend. C++ remains the production default.
 
 ## 0.480.1 — Lambda argument formatting
 
