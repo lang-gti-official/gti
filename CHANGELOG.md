@@ -84,6 +84,9 @@ for what minor and patch releases mean.
   condition services, mutexes held by value in lambda captures, and mutexes
   protecting class values that need no cleanup. Worker failures re-raise at
   join and cleanup failures report exactly as on the C++ backend.
+- Debug builds (`-g`) of a class whose default constructor is generated and
+  whose base is polymorphic no longer fail with an internal error on either
+  backend.
 - Native debug builds (`-g`) of programs using a library macro, such as
   `std::testing::check_eq` in a `[[test]]` suite, no longer fail with an
   internal error. A scope the macro opened was recorded under the macro's own

@@ -1580,6 +1580,48 @@ int main() {
   (void)session.emitObject();
 }
 
+// A generated default constructor of a class with a state-bearing
+// polymorphic base executes, to install its dispatch state, yet has no written
+// body: HIR collects no lexical facts for it, and lowering must accept that.
+void generatedConstructorDebug(LlvmCodegenOptimization optimization) {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend({.requireEntryPoint = true,
+                .lowerReachableOnly = true,
+                .lowerLibraryReachableOnly = true,
+                .trustedBodies = TrustedBodyAnalysis::Reachable,
+                .sourceDebugProfile = SourceDebugProfile::LexicalV1})
+          .analyze("generated-debug.gti", R"gti(
+class Solo {
+public:
+  virtual int read() { return 3; }
+};
+class Stateful : public Solo {};
+int main() {
+  Stateful stateful{};
+  return stateful.read() == 3 ? 0 : 1;
+}
+)gti",
+                   {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("generated constructor source failed analysis");
+  auto lowered = LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, TargetInfo::host());
+  if (!lowered.valid())
+    throw std::runtime_error(
+        "generated constructor without lexical facts failed lowering");
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(std::move(*lowered.program), issues);
+  if (!input)
+    throw std::runtime_error("generated constructor source lost its seal");
+  Session session(*input, {.optimization = optimization, .debugInfo = true});
+  lowerScalarProgram(session, planLlvmAdmission(*input, session.options()));
+  session.debugInfo()->finalize();
+  session.verify();
+  (void)session.emitObject();
+}
+
 int main(int argc, char **argv) {
   ownerPointerMetadata(LlvmCodegenOptimization::None);
   ownerPointerMetadata(LlvmCodegenOptimization::Aggressive);
@@ -1587,6 +1629,8 @@ int main(int argc, char **argv) {
   payloadEnumMetadata(LlvmCodegenOptimization::Aggressive);
   libraryMacroScopes(LlvmCodegenOptimization::None);
   libraryMacroScopes(LlvmCodegenOptimization::Aggressive);
+  generatedConstructorDebug(LlvmCodegenOptimization::None);
+  generatedConstructorDebug(LlvmCodegenOptimization::Aggressive);
   if (metadata("/checkout-one/debug.gti") !=
       metadata("/other-checkout/debug.gti"))
     throw std::runtime_error(
