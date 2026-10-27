@@ -10036,6 +10036,7 @@ auto SemanticVisitor::Impl::endScope() -> void {
       applyRawCleanupWrites(symbol.type, tokenSpan(symbol.declaration),
                             symbol.rawPointerFields);
     removeLoanCarrier(symbol);
+    removeCapturedTextCarrier(symbol);
     expired.insert(symbolForDeclaration(symbol.declaration));
   }
   for (auto &scope : scopes) {

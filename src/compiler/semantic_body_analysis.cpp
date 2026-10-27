@@ -6430,6 +6430,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       }
     }
   }
+  if (!globalStorage)
+    recordCapturedTextCarriers(stmt);
   if (stmt.isThreadLocal())
     recordThreadLocalDeclaration(stmt);
 }
@@ -6663,12 +6665,19 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
                                  : analyze(expr.value());
   }
   // A local view may take a capture's text, whose owner has no name; it
-  // then holds that text for its whole scope and cannot escape (L-OWN-02).
-  if (const auto targetView =
-          simpleAssignment ? localTextView(symbol) : std::nullopt)
+  // then holds that text for its whole scope and cannot escape. Text that
+  // keeps a dynamic view's owner borrowed is not reassignable, as that view
+  // itself is not (L-OWN-02).
+  const bool textTarget =
+      simpleAssignment && (targetType.kind == SemanticType::StringView ||
+                           targetType.kind == SemanticType::CString);
+  if (textTarget && !capturedTextLoans(expr.value().get()).empty())
+    reportOwnerDependentTextStorage(expr.value(),
+                                    "assigned into an existing binding");
+  else if (const auto targetView =
+               simpleAssignment ? localTextView(symbol) : std::nullopt)
     noteLocalTextFlow(expr.value(), *targetView);
-  else if (simpleAssignment && (targetType.kind == SemanticType::StringView ||
-                                targetType.kind == SemanticType::CString))
+  else if (textTarget)
     noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
                         "assigned into an existing binding");
   if (simpleAssignment &&
@@ -15042,6 +15051,8 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
        retainedSymbolicRangeIterator)) {
     recordRetainedBorrow(declaration, declaration.initializer());
   }
+  if (local && !declaration.isThreadLocal())
+    recordCapturedTextCarriers(declaration);
 }
 
 } // namespace lang

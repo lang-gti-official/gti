@@ -773,9 +773,12 @@ private:
           place->projections.empty())
         return temporarySources(context, *place, active);
       if (place->root != MirPlaceRootKind::Binding ||
-          !place->projections.empty() ||
-          !active.emplace(false, place->binding).second)
+          !place->projections.empty())
         return {};
+      // A local already being traced adds nothing new on this path: each of
+      // its writes is traced where it is.
+      if (!active.emplace(false, place->binding).second)
+        return {.known = true};
       TextSources answer;
       const auto formal = std::find(context.bindings.begin(),
                                     context.bindings.end(), place->binding);
@@ -785,8 +788,18 @@ private:
         if (index < context.types.size() && context.types[index] == place->type)
           answer = {.known = true, .parameters = {index}};
       } else {
-        const MirInstruction *initializer = nullptr;
-        bool writable = false;
+        // A local text binding holds what any of its writes stored: its
+        // initialization, each assignment, and a store through a mutable
+        // borrow of it. That store is a checked text store, so it holds
+        // ownerless text or text its function requires ownerless.
+        answer.known = true;
+        bool initialized = false;
+        const auto join = [&](const TextSources &written) {
+          answer.known = answer.known && written.known;
+          answer.parameters.insert(written.parameters.begin(),
+                                   written.parameters.end());
+          answer.fields.insert(written.fields.begin(), written.fields.end());
+        };
         for (const auto &block : context.body.blocks)
           for (const auto &instruction : block.instructions) {
             const auto *destination =
@@ -795,21 +808,18 @@ private:
                     : nullptr;
             if (destination && destination->root == MirPlaceRootKind::Binding &&
                 destination->binding == place->binding) {
-              if (instruction.kind != MirInstructionKind::Initialize ||
-                  initializer)
-                writable = true;
-              initializer = &instruction;
-            }
-            for (const auto &input : instruction.operands) {
-              const auto *written = context.body.findPlace(input.place);
-              if (input.kind == MirOperandKind::BorrowWrite && written &&
-                  written->root == MirPlaceRootKind::Binding &&
-                  written->binding == place->binding)
-                writable = true;
+              initialized = initialized ||
+                            instruction.kind == MirInstructionKind::Initialize;
+              if ((instruction.kind == MirInstructionKind::Initialize ||
+                   instruction.kind == MirInstructionKind::Assign) &&
+                  destination->projections.empty() &&
+                  instruction.operands.size() == 1)
+                join(sources(context, instruction.operands.front(), active));
+              else
+                answer.known = false;
             }
           }
-        if (!writable && initializer && initializer->operands.size() == 1)
-          answer = sources(context, initializer->operands.front(), active);
+        answer.known = answer.known && initialized;
       }
       active.erase({false, place->binding});
       return answer;
