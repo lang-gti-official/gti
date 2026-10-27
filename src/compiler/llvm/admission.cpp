@@ -40,9 +40,11 @@ bool passiveArrayElement(const SemanticType &type) {
     return type.arguments.size() == 1 && !type.arrayLengthParameterId &&
            passiveArrayElement(type.arguments.front());
   // Pointer storage is passive regardless of its referent. Accessing that
-  // referent still requires its own typed projection and unsafe witness.
+  // referent still requires its own typed projection and unsafe witness. A C
+  // string is such an inert native address; it is compared only by address.
   return (isPassiveScalarValueType(type) && type.kind != SemanticType::Void) ||
-         (type.kind == SemanticType::RawPointer && type.arguments.size() == 1);
+         (type.kind == SemanticType::RawPointer && type.arguments.size() == 1) ||
+         type.kind == SemanticType::CString;
 }
 
 // A one-dimensional fixed array of counted text views. Each element is a

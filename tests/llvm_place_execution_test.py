@@ -477,6 +477,41 @@ int main() {
 '''
 
 
+C_STRING_ADDRESSES = r'''
+// C strings are inert native addresses: copied, stored, compared with
+// nullptr and reached through c_string* raw pointers by address.
+int32_t count(c_string* items) {
+  mut int32_t total = 0;
+  unsafe {
+    while (items[total] != nullptr) { total += 1; }
+  }
+  return total;
+}
+void put(c_string* items, int32_t at, c_string value) {
+  unsafe { items[at] = value; }
+}
+bool secondSet(c_string* items) {
+  unsafe {
+    c_string* next = items + 1;
+    return *next != nullptr;
+  }
+}
+int main() {
+  mut c_string slots[4] = {nullptr, nullptr, nullptr, nullptr};
+  mut c_string* items = &slots[0];
+  put(items, 0, "a");
+  put(items, 1, "bc");
+  put(items, 2, "def");
+  if (count(items) != 3 || !secondSet(items)) { return 1; }
+  unsafe { items[1] = nullptr; }
+  if (count(items) != 1 || slots[1] != nullptr || secondSet(items)) { return 2; }
+  c_string copy[4] = slots;
+  if (copy[0] == nullptr || copy[2] == nullptr || copy[1] != nullptr) { return 3; }
+  return 0;
+}
+'''
+
+
 def successes(root: Path) -> dict[str, str]:
     cases = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS,
              'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES,
@@ -490,7 +525,8 @@ def successes(root: Path) -> dict[str, str]:
              'array-extent-queries': ARRAY_EXTENT_QUERIES,
              'integral-enum-arrays': INTEGRAL_ENUM_ARRAYS,
              'integral-enum-pointers': INTEGRAL_ENUM_POINTERS,
-             'text-view-arrays': TEXT_VIEW_ARRAYS}
+             'text-view-arrays': TEXT_VIEW_ARRAYS,
+             'c-string-addresses': C_STRING_ADDRESSES}
     cases['shipped-example'] = (
         root / 'examples/llvm/places-and-text.gti').read_text()
     cases['enum-references'] = (

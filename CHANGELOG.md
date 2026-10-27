@@ -44,7 +44,8 @@ for what minor and patch releases mean.
   move.
 - Compile on the native backend: destructuring declarations, reads of an
   integral enum's underlying value, counted text views held as values,
-  arrays of `std::string_view`, range `for` over arrays of views or integral
+  arrays of `std::string_view` or `c_string`, `c_string` values read and
+  written through `c_string*`, range `for` over arrays of views or integral
   enums, constructions, call receivers and call results under declared
   `unsafe` permission, constant-folded raw field indexing, native function
   values, C strings, null pointers and array values published into
