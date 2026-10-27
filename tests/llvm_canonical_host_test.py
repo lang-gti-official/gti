@@ -186,9 +186,11 @@ def main() -> None:
     collector.write_json(evidence / "example-observer.json", example)
 
     # Complete source definitions do not prove a sealed native call graph.
-    # Observe a real virtual call through conservative production reachability,
-    # preserving its current positive/unsupported outcome without an oracle
-    # manufactured by changing the production admission plan.
+    # Native dispatch now seals this virtual call, so production reachability
+    # reports the sealed closure for it; the conservative union is observed
+    # below through a managed worker adapter, which stays outside the sealed
+    # call graph. Neither outcome is manufactured by changing the production
+    # admission plan.
     virtual_source = """class Value {
   int data;
 public:
@@ -210,15 +212,50 @@ int main() { Value value{3}; return value.get() - 3; }
         [virtual_key], ["single-threaded"], ["O0", "O3"], resume=False, scope="focused-controls")
     assert all(row["status"] in {"admitted-only", "unsupported"} for row in virtual_summary["observations"])
     virtual_manifest = collector.read_json(virtual_run / "host-run.json")
-    saw_conservative = False
+    saw_sealed = False
     for identity, observed_events in collector.event_history(virtual_run).items():
         checked = collector.validate_host_attempt(virtual_run, virtual_manifest, identity, observed_events["finish"])
         artifact = collector.read_json(virtual_run / "attempts" / identity / "observer.json")
         assert artifact["request"]["entry_required"] is True
         assert artifact["request"]["definition_closure_required"] is True
+        assert artifact["uses"]["closure"] in {"sealed-entry-dependencies",
+                                               "all-executable-bodies"}
+        saw_sealed |= artifact["uses"]["closure"] == "sealed-entry-dependencies"
+        assert checked["status"] == ("admitted-only" if artifact["uses"]["admitted"] else "unsupported")
+    assert saw_sealed, "virtual-call control no longer seals its reachable call graph"
+
+    # A managed worker adapter is not a statically named target, so production
+    # reachability falls back to the conservative union. This keeps the
+    # fallback observed through a real program rather than a forged plan.
+    worker_source = """#include <std/thread>
+int main() {
+  auto started = std::thread::start([]() -> void {});
+  if (!started.has_value()) { return 1; }
+  return 0;
+}
+"""
+    worker_member = {"provider": "focused-controls", "id": "conservative-worker",
+        "source": {"path": "inline", "inline": worker_source,
+                   "sha256": hashlib.sha256(worker_source.encode()).hexdigest()},
+        "contract": {"role": "positive-admission", "metadata": {"scope": "focused-controls"}}}
+    worker_plan = deepcopy(plan)
+    worker_key = "focused-controls:conservative-worker"
+    worker_plan["members"] = {worker_key: worker_member}
+    worker_plan["provider_revision"] = audit.digest(worker_plan["members"])
+    worker_run = evidence / "conservative-worker"
+    worker_summary = collector.collect_host(worker_run, root, worker_plan, helper, report,
+        [worker_key], ["concurrent"], ["O0", "O3"], resume=False, scope="focused-controls")
+    assert all(row["status"] in {"admitted-only", "unsupported"} for row in worker_summary["observations"])
+    worker_manifest = collector.read_json(worker_run / "host-run.json")
+    saw_conservative = False
+    for identity, observed_events in collector.event_history(worker_run).items():
+        checked = collector.validate_host_attempt(worker_run, worker_manifest, identity, observed_events["finish"])
+        artifact = collector.read_json(worker_run / "attempts" / identity / "observer.json")
+        assert artifact["request"]["entry_required"] is True
+        assert artifact["request"]["definition_closure_required"] is True
         saw_conservative |= artifact["uses"]["closure"] == "all-executable-bodies"
         assert checked["status"] == ("admitted-only" if artifact["uses"]["admitted"] else "unsupported")
-    assert saw_conservative, "virtual-call control no longer exercises conservative reachability"
+    assert saw_conservative, "worker control no longer exercises conservative reachability"
 
     absent = evidence / "absent"
     env = dict(os.environ, GTI_RUNTIME_LIBRARY=str(absent / "runtime.a"),

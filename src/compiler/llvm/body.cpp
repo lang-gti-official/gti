@@ -377,32 +377,30 @@ private:
     if (!lifetimes.transferMutexes(ir, address, value, type))
       memory.store(value, address, type);
   }
-  // An entry Stored loan is self-sourced at the carrier object a by-value
-  // borrowed-state parameter provides, so MIR records the carrier as its
-  // source and never publishes a physical address for it. A Loan operand that
-  // names such a loan without its own place therefore carries provenance
-  // only. This borrow's loan already names the exact source place of the
-  // designated referent; every fact below is sealed MIR, and a shape that
-  // does not match exactly is refused rather than guessed.
+  // A Loan operand carries provenance; its place is the optional exact
+  // runtime address source. Some loans protect a carrier object rather than
+  // the referent a borrow designates -- an entry Stored loan self-sourced at
+  // a by-value borrowed-state parameter's carrier, and a cursor loan whose
+  // source place is the cursor itself -- and no physical address is published
+  // for the designated referent under that loan. Such an operand supplies
+  // provenance only, and this borrow's own loan already names the exact
+  // source place of the referent. Every fact below is sealed MIR: the
+  // produced loan must be a direct child of the operand's provenance loan,
+  // its source place must carry exactly the operand type, and the provenance
+  // loan must protect a differently typed carrier. Anything else keeps the
+  // ordinary selection path, which fails closed on its own.
   [[nodiscard]] bool
   provenanceOnlyCarrierBorrow(const MirOperand &operand,
                               const MirLoan &produced) const {
     const auto *provenance = input.findLoan(operand.loan);
-    if (!provenance || provenance->kind != MirLoanKind::Stored ||
-        !provenance->entry || provenance->source == 0)
-      return false;
-    // The provenance loan must be this borrow's recorded parent, binding the
-    // operand to the loan whose source place is used below.
-    if (produced.parent != provenance->id || produced.source == 0)
+    if (!provenance || provenance->source == 0 || produced.source == 0 ||
+        produced.parent != provenance->id)
       return false;
     const auto *carrier = input.findPlace(provenance->source);
     const auto *referent = input.findPlace(produced.source);
-    if (!carrier || !referent || referent->projections.empty())
+    if (!carrier || !referent)
       return false;
-    // The carrier is the loan's own source, and the referent is reached from
-    // it through the designated stored reference rather than being the
-    // carrier itself.
-    return carrier->type != operand.type && referent->type == operand.type;
+    return referent->type == operand.type && carrier->type != operand.type;
   }
   [[nodiscard]] UnstagedConstructorFieldPublicationPlan
   recordPublication(const MirInstruction &instruction) const {

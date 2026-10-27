@@ -64,8 +64,10 @@ def main() -> int:
             raise AssertionError("unsupported LLVM admission replaced an existing artifact")
 
         # O0 deliberately retains this unused construction. Required-body
-        # assertions for read -> helper live in llvm_admission_tests; the CLI
-        # preserves the structured rejection and artifact boundary here.
+        # assertions for read -> helper live in llvm_admission_tests. Native
+        # dispatch now admits this reachable dependency, so the CLI publishes a
+        # working artifact for it; the unsupported path above still covers the
+        # structured rejection and the existing-artifact boundary.
         source.write_text("""
 int helper() { auto call = []() -> int { return 9; }; return call(); }
 class Value { public: virtual int read() { return helper(); } };
@@ -75,11 +77,11 @@ int main() { Value value{}; return 0; }
         run([sys.argv[1], str(source), "-O0", "--emit-mir", "-o", str(mir)], 0)
         if not re.search(r"^\s+i\d+ construct\b", mir.read_text(encoding="utf-8"), re.MULTILINE):
             raise AssertionError("the no-call dependency control lost its verified construction")
-        rejected = run([sys.argv[1], str(source), "-O0", "--backend", "llvm", "-o", str(output)], 65)
-        if "error[GTI-B0003]" not in rejected.stderr:
-            raise AssertionError("the no-call dependency control lost its structured limitation")
-        if output.read_bytes() != b"existing artifact" or list(root.glob("*.o")):
-            raise AssertionError("rejected dispatch dependencies published partial native output")
+        if output.read_bytes() != b"existing artifact":
+            raise AssertionError("an unsupported LLVM build replaced an existing artifact")
+        dependency = root / "dependency"
+        run([sys.argv[1], str(source), "-O0", "--backend", "llvm", "-o", str(dependency)], 0)
+        run([str(dependency)], 0)
 
         run([sys.argv[1], str(source), "--backend", "unknown"], 64)
         run(
