@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.2 - Native text returned through virtual calls
+
+- A function returning the view a virtual call returns, such as
+  `std::string_view call(Base& n) { return n.name(); }` with `name` virtual,
+  now builds on the native backend and matches the C++ backend. It previously
+  failed with `GTI-B0003`. The view keeps its owner borrowed exactly as a
+  static call's view does.
+
 ## 0.484.1 - Native moves of polymorphic payloads and borrow carriers
 
 - The native backend now builds programs that previously failed with

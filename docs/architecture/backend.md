@@ -5149,6 +5149,16 @@ call are fresh producers that publish into their destination. This lets
 alternatives moved out, and payload values returned by value stay
 `PolymorphicTransfer`.
 
+A view that a body returns by value has a `Return` loan naming the view's
+owner, not an address in it; text a virtual or static call returned is an
+example. The loan is borrow metadata (`NativeBorrowMetadata`) even when that
+owner is hierarchy storage reached through a reference. A virtual call's
+returned view therefore keeps the loan source a static call's view has. Every
+return that names the loan must return a value that is neither a reference
+nor hierarchy storage. Its one `Borrow` must relay that value's own loan, and
+MIR verification rejects any forged relay. Semantics still refuses a view that
+would outlive its owner, and an owner changed while the view lives.
+
 Hierarchy metadata also covers classes that hold borrowed state, such as a
 reference field beside an inline polymorphic object. A reference or view is an
 address, and its loans are MIR facts with no runtime state beside the dispatch

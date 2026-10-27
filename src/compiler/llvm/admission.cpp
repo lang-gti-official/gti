@@ -2459,6 +2459,45 @@ public:
   const MirBody *currentBody = nullptr;
 
   bool nativeValue(const SemanticType &type) const { return natives(type); }
+  // The Return loan of a view this body returns by value, such as text a
+  // virtual or static call returned: every return naming it returns a value
+  // that is neither a reference nor hierarchy storage, and the one Borrow
+  // producing it relays that value's own loan. It names the view's owner, not
+  // an address in it, so a virtual call's view keeps a static call's source.
+  bool viewReturnLoan(const MirBody &mir, const MirLoan &loan) const {
+    if (loan.kind != MirLoanKind::Return || !loan.escapes ||
+        loan.referenceSelection || !loan.additionalDependencies.empty() ||
+        !loan.conditions.empty() || loan.twoPhase || loan.lifecycleBound ||
+        loan.entry)
+      return false;
+    bool returned = false;
+    for (const auto &block : mir.blocks) {
+      const auto &term = block.terminator;
+      if (!term.returnLoan || *term.returnLoan != loan.id)
+        continue;
+      if (term.kind != MirTerminatorKind::Return || !term.value ||
+          term.value->kind != MirOperandKind::Value ||
+          term.value->type.kind == SemanticType::Reference ||
+          dispatchProofs.related(term.value->type))
+        return false;
+      returned = true;
+    }
+    const MirInstruction *relay = nullptr;
+    for (const auto &block : mir.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone || stage.loan != loan.id)
+          continue;
+        if (relay || stage.kind != MirInstructionKind::Borrow ||
+            stage.operands.size() != 1 ||
+            stage.operands.front().kind != MirOperandKind::Loan ||
+            stage.info.type.kind == SemanticType::Reference ||
+            dispatchProofs.related(stage.info.type) ||
+            dispatchProofs.related(stage.operands.front().type))
+          return false;
+        relay = &stage;
+      }
+    return returned && relay != nullptr;
+  }
   // A native value or hierarchy storage with exact dispatch metadata. Only a
   // representation fact: every operation keeps its own transfer proof.
   bool representedValue(const SemanticType &type) const {
@@ -4596,10 +4635,21 @@ public:
                             ? origin->type.arguments.front()
                             : origin->type)
               .has_value();
+      // A returned view of hierarchy storage depends on its owner without
+      // an address in it: borrow metadata, as for a static call's view.
+      const bool viewReturn =
+          hierarchy && viewReturnLoan(mir, loan) &&
+          dispatchProofs
+              .metadata(origin->type.kind == SemanticType::Reference &&
+                                origin->type.arguments.size() == 1
+                            ? origin->type.arguments.front()
+                            : origin->type)
+              .has_value();
       const auto view =
-          storedRecord ? std::optional(Shape::NativeBorrowMetadata)
-          : hierarchy  ? dispatchProofs.loan(mir, loan)
-                       : std::nullopt;
+          storedRecord || viewReturn
+              ? std::optional(Shape::NativeBorrowMetadata)
+          : hierarchy ? dispatchProofs.loan(mir, loan)
+                      : std::nullopt;
       add(loan.kind, hierarchy     ? (view || !mutexShellLoan(mir, loan.id)
                                           ? view
                                           : std::optional(

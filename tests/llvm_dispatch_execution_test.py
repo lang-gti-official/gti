@@ -75,6 +75,7 @@ SUCCESS_FILES = {
     "payload-moves": "tests/fixtures/llvm_dispatch_payload_moves.gti",
     "borrowed-carriers": "tests/fixtures/llvm_dispatch_borrowed_carriers.gti",
     "moved-carriers": "tests/fixtures/llvm_dispatch_moved_carriers.gti",
+    "virtual-text-relays": "tests/fixtures/llvm_dispatch_virtual_text_relays.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -495,6 +496,38 @@ public:
 };
 int main() { Bundle first{}; Bundle moved = std::move(first); return 0; }
 """,
+    # A view a virtual call returns keeps its owner borrowed: it cannot
+    # escape that owner, and the owner cannot change while the view lives.
+    "reject-source-virtual-view-escape": """#include <std/string>
+class Base {
+public:
+  std::string text;
+  Base() : text(std::string("ann")) {}
+  virtual std::string_view name() { return this.text.view(); }
+};
+std::string_view escape() {
+  Base local{};
+  Base& view = local;
+  return view.name();
+}
+int main() { return int(escape().size()); }
+""",
+    "reject-source-virtual-view-owner-mutation": """#include <std/string>
+class Base {
+public:
+  mut std::string text;
+  Base() : text(std::string("ann")) {}
+  virtual std::string_view name() { return this.text.view(); }
+  void grow() mut { this.text.append("!"); }
+};
+int main() {
+  mut Base owner{};
+  Base& view = owner;
+  std::string_view name = view.name();
+  owner.grow();
+  return int(name.size());
+}
+""",
     "reject-source-moved-carrier-referent": """interface Gauge { int read(); };
 class Small : public Gauge {
   int value;
@@ -522,6 +555,8 @@ SOURCE_REJECTION_CODES = {
     "reject-source-use-after-move": "GTI-S2018",
     "reject-source-self-borrowing-carrier": "GTI-S2045",
     "reject-source-moved-carrier-referent": "GTI-S2017",
+    "reject-source-virtual-view-escape": "GTI-S2045",
+    "reject-source-virtual-view-owner-mutation": "GTI-S2017",
 }
 
 
@@ -1326,7 +1361,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers", "virtual-text-relays"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1822,7 +1857,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
                                "virtual-signatures", "virtual-signature-failure",
                                "virtual-signature-wrong-cleanup", "temporary-receivers",
                                "temporary-receiver-failure",
-                               "temporary-receiver-wrong-cleanup"),
+                               "temporary-receiver-wrong-cleanup",
+                               "virtual-text-relays"),
         "dispatch-lifecycle": ("virtual-failure-cleanup", "constructor-rollback",
                                "cleanup-oracle-wrong-trace", "nonobserving-cleanup-helper-cycle"),
         "fresh-local-generated-transfers": (
