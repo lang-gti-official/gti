@@ -172,29 +172,25 @@ returningLiteral(const lang::MirProgram &program, std::string_view text) {
   return nullptr;
 }
 
-// Replaces the string literal `text` in a function's body, which each of these
-// functions returns, with a load of its first formal, copied from a load the
-// body already performs.
-bool returnFirstFormal(lang::MirProgram &program,
-                       lang::HirFunctionInstanceId id, std::string_view text) {
-  auto *function =
-      const_cast<lang::MirFunctionInstance *>(program.findFunctionInstance(id));
+// Replaces the string literal `text` in a body with a load of the formal bound
+// to `formal`, copied from a load the body already performs.
+bool loadFormalForLiteral(lang::MirBody &body, lang::HirBindingId formal,
+                          std::string_view text) {
   std::optional<lang::MirInstruction> load;
-  for (const auto &block : function->body.blocks)
+  for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions) {
       const auto *place =
           instruction.kind == lang::MirInstructionKind::Load &&
                   instruction.operands.size() == 1
-              ? function->body.findPlace(instruction.operands.front().place)
+              ? body.findPlace(instruction.operands.front().place)
               : nullptr;
       if (place && place->root == lang::MirPlaceRootKind::Binding &&
-          place->projections.empty() &&
-          place->binding == function->parameterBindings.front())
+          place->projections.empty() && place->binding == formal)
         load = instruction;
     }
   if (!load)
     return false;
-  for (auto &block : function->body.blocks)
+  for (auto &block : body.blocks)
     for (auto &instruction : block.instructions)
       if (instruction.operation == lang::MirOperation::Literal &&
           instruction.literal &&
@@ -208,6 +204,16 @@ bool returnFirstFormal(lang::MirProgram &program,
         return true;
       }
   return false;
+}
+
+// Replaces the string literal `text` in a function's body, which each of these
+// functions returns, with a load of its first formal.
+bool returnFirstFormal(lang::MirProgram &program,
+                       lang::HirFunctionInstanceId id, std::string_view text) {
+  auto *function =
+      const_cast<lang::MirFunctionInstance *>(program.findFunctionInstance(id));
+  return loadFormalForLiteral(function->body,
+                              function->parameterBindings.front(), text);
 }
 
 void testRecursiveOwnerlessReturns() {
@@ -1049,7 +1055,320 @@ int main() {
   }
 }
 
+// The source function whose qualified name is `name`.
+const lang::MirFunctionInstance *
+namedFunction(const lang::FrontendResult &result, std::string_view name) {
+  for (const auto &function : result.mir.functionInstances()) {
+    const auto *info = result.semantics.findFunction(function.declaration);
+    if (function.definitionKind == lang::MirDefinitionKind::Source &&
+        info != nullptr && info->qualifiedName == name)
+      return &function;
+  }
+  return nullptr;
+}
+
+// Whether a program is rejected at source with `code` and no internal error.
+bool rejectedAtSource(const lang::FrontendResult &result,
+                      const std::string &code) {
+  return !result.canGenerateCode() &&
+         hasDiagnosticCode(result.diagnostics, code) &&
+         std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code.starts_with("GTI-B");
+                      });
+}
+
+// Semantics never nests dynamic text in an array (L-OWN-02), so a view copied
+// out of an array holds what the array holds: ownerless text, wherever the
+// array lives. MIR proves it independently: each element write, an array
+// literal's included, is a checked text store, and an element read is then
+// an ownerless result proof. A user-defined record's array field and a
+// lambda's result follow the same rules.
+const std::string kArrayTextStorage = R"gti(
+#include <std/string>
+struct Shelf {
+  std::string_view titles[2];
+  int count;
+  Shelf() : titles({"x", "yz"}), count(2) {}
+};
+std::string_view table[3] = {"zero", "one", "two"};
+mut std::string_view kept = "";
+std::string_view pick(std::string_view names[3], uint64_t index) {
+  return names[index];
+}
+std::string_view fromTable(uint64_t index) { return table[index]; }
+std::string_view fromLocal(uint64_t index) {
+  std::string_view local[2] = {"left", "right"};
+  return local[index];
+}
+std::string_view fromGrid(uint64_t row, uint64_t column) {
+  std::string_view grid[2][2] = {{"a", "b"}, {"c", "d"}};
+  return grid[row][column];
+}
+std::string_view fromShelf(Shelf shelf, uint64_t index) {
+  return shelf.titles[index];
+}
+std::string_view fromDefault(uint64_t index) {
+  std::string_view empty[2] = {};
+  return empty[index];
+}
+std::string_view place(std::string_view text, uint64_t at) {
+  mut std::string_view slots[2] = {"first", "second"};
+  slots[at] = text;
+  return slots[at];
+}
+uint64_t stamp(std::string_view text, uint64_t at) {
+  std::string_view copy = text;
+  mut std::string_view slots[2] = {"stored", "spare"};
+  slots[at] = "stamped";
+  return slots[at].size() + copy.size();
+}
+std::string_view labelled(std::string_view prefix) {
+  auto label = [](std::string_view unused) -> std::string_view {
+    std::string_view copy = unused;
+    return "label";
+  };
+  std::string_view labels[2] = {label(prefix), "other"};
+  return labels[0];
+}
+std::string_view throughReferences() {
+  mut std::string_view words[2] = {"a", "bc"};
+  for (mut std::string_view& word : words) {
+    word = "q";
+  }
+  std::string_view& last = words[1];
+  return last == "q" ? words[0] : "missed";
+}
+uint64_t guard() {
+  std::string owner{"dynamic"};
+  std::string_view view = owner.view();
+  std::string_view copy = view;
+  mut std::string_view slots[2] = {"first", "second"};
+  slots[0] = "guarded";
+  return slots[0].size() + copy.size();
+}
+)gti";
+
+void testArrayElementTextStorage() {
+  const auto result = analyzeText(kArrayTextStorage + R"gti(
+int main() {
+  std::string_view names[3] = {"ab", "cde", ""};
+  kept = pick(names, uint64_t(1));
+  if (kept != "cde" || fromTable(uint64_t(2)) != "two") { return 1; }
+  if (fromLocal(uint64_t(1)) != "right" ||
+      fromGrid(uint64_t(1), uint64_t(0)) != "c") { return 2; }
+  if (fromShelf(Shelf(), uint64_t(1)) != "yz" ||
+      !fromDefault(uint64_t(0)).empty()) { return 3; }
+  if (place("literal", uint64_t(1)) != "literal" ||
+      stamp("ab", uint64_t(0)) != uint64_t(9)) { return 4; }
+  if (throughReferences() != "q" || guard() != uint64_t(14)) { return 5; }
+  return labelled("prefix") == "label" ? 0 : 6;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a view read from an array element is an ownerless result");
+  if (!result.canGenerateCode())
+    return;
+  for (const char *name :
+       {"pick", "fromTable", "fromLocal", "fromGrid", "fromShelf",
+        "fromDefault", "place", "labelled", "throughReferences"}) {
+    const auto *function = namedFunction(result, name);
+    expect(function != nullptr && textResult(*function) &&
+               function->returnBorrowOrigin == lang::BorrowOriginKind::None,
+           std::string("an array element return is ownerless: ") + name);
+  }
+  const auto *place = namedFunction(result, "place");
+  const auto *stamp = namedFunction(result, "stamp");
+  const auto *labelled = namedFunction(result, "labelled");
+  expect(place && stamp && labelled, "the array writers exist");
+  if (!place || !stamp || !labelled)
+    return;
+  // Storing a formal in an element requires ownerless text from each
+  // caller, as storing it in a field does. MIR derived no such requirement
+  // for a local array, which reported GTI-B0001 against semantics' contract.
+  expect(place->ownerlessTextParameters == std::vector<std::size_t>{0},
+         "an element write of a formal requires ownerless text");
+  {
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(place->id))
+        ->ownerlessTextParameters.clear();
+    expect(functionError(lang::verifyMirProgram(changed), place->id,
+                         "ownerless text input contract differs"),
+           "MIR derives an element write's requirement");
+  }
+  // An element assignment and an array literal element are each a checked
+  // text store: storing the formal there instead of a literal requires it.
+  expect(stamp->ownerlessTextParameters.empty(),
+         "literal elements require nothing");
+  for (const char *literal : {"stamped", "stored"}) {
+    auto changed = result.mir;
+    expect(returnFirstFormal(changed, stamp->id, literal),
+           std::string("the element store reads a formal: ") + literal);
+    expect(functionError(lang::verifyMirProgram(changed), stamp->id,
+                         "ownerless text input contract differs"),
+           std::string("an array element store is checked text storage: ") +
+               literal);
+  }
+  // A local owner's view is not ownerless text: storing it in an element
+  // fails MIR verification, as storing it in a field would.
+  const auto *guard = namedFunction(result, "guard");
+  expect(guard != nullptr, "the guarded store exists");
+  if (guard != nullptr) {
+    auto changed = result.mir;
+    auto *body = &const_cast<lang::MirFunctionInstance *>(
+                      changed.findFunctionInstance(guard->id))
+                      ->body;
+    std::optional<lang::HirBindingId> view;
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *read =
+            instruction.kind == lang::MirInstructionKind::Load &&
+                    instruction.operands.size() == 1
+                ? body->findPlace(instruction.operands.front().place)
+                : nullptr;
+        if (read && read->root == lang::MirPlaceRootKind::Binding &&
+            read->projections.empty() &&
+            read->type.kind == lang::SemanticType::StringView)
+          view = read->binding;
+      }
+    expect(view && loadFormalForLiteral(*body, *view, "guarded"),
+           "the element store reads the local owner's view");
+    expect(functionError(lang::verifyMirProgram(changed), guard->id,
+                         "ownerless text storage or call lacks exact producer "
+                         "evidence"),
+           "a local owner's view cannot fill an array element");
+  }
+  // A lambda's result holds what its returns hold; one returning its formal
+  // has no relay contract, so its result cannot fill an array.
+  auto changed = result.mir;
+  bool mutated = false;
+  for (const auto &lambda : changed.lambdaInstances())
+    if (!lambda.parameterBindings.empty())
+      mutated =
+          mutated || loadFormalForLiteral(
+                         const_cast<lang::MirLambdaInstance &>(lambda).body,
+                         lambda.parameterBindings.front(), "label");
+  expect(mutated, "the lambda returns its formal");
+  expect(functionError(lang::verifyMirProgram(changed), labelled->id,
+                       "ownerless text storage or call lacks exact producer "
+                       "evidence"),
+         "a lambda result stored in an array needs its returns' proof");
+}
+
+// Arrays still never hold a local owner's text, and a view of one still
+// cannot escape: each is rejected at source, before MIR.
+void testArrayElementTextRejections() {
+  for (const std::string body :
+       {"std::string_view names[2] = {owner.view(), \"x\"}; "
+        "return names[1].size() == uint64_t(1) ? 0 : 1;",
+        "mut std::string_view names[2] = {\"a\", \"x\"}; "
+        "names[0] = owner.view(); return names[1].size() == uint64_t(1) ? 0 "
+        ": 1;",
+        "return place(owner.view(), uint64_t(0)).empty() ? 1 : 0;"}) {
+    const auto rejected = analyzeText(
+        kArrayTextStorage + "int main() { std::string owner{\"dynamic\"}; " +
+        body + " }\n");
+    expect(rejectedAtSource(rejected, "GTI-S2045"),
+           "dynamic text cannot reach an array: " + body);
+  }
+  const auto leak = analyzeText(R"gti(
+#include <std/string>
+std::string_view leak() {
+  std::string owner{"local"};
+  std::string_view names[1] = {"static"};
+  return owner.view();
+}
+int main() { return leak().empty() ? 1 : 0; }
+)gti");
+  expect(rejectedAtSource(leak, "GTI-S2045"),
+         "a view of a local owner still cannot be returned");
+}
+
+// Text read through a raw pointer is an inert native value: unsafe code took
+// on its validity, and raw writes are not checked text stores, so it has no
+// GTI owner to relay. A C string reached through `c_string*`, a view through
+// a raw pointer and a user-defined record's text field behind one each
+// return ownerless text.
+void testRawMemoryTextReads() {
+  const auto result = analyzeText(R"gti(
+#include <std/string>
+struct Entry {
+  std::string_view name;
+  int id;
+};
+mut c_string keptText = nullptr;
+mut std::string_view keptView = "";
+void put(c_string* items, int32_t at, c_string value) {
+  unsafe { items[at] = value; }
+}
+c_string second(c_string* items) {
+  unsafe {
+    c_string* next = items + 1;
+    return *next;
+  }
+}
+c_string at(c_string* items, int32_t index) {
+  unsafe {
+    c_string* base = items;
+    return base[index];
+  }
+}
+std::string_view viewAt(std::string_view* item) { unsafe { return *item; } }
+std::string_view nameAt(Entry* entry) {
+  unsafe {
+    Entry* base = entry;
+    return base->name;
+  }
+}
+int main() {
+  mut c_string slots[3] = {nullptr, nullptr, nullptr};
+  put(&slots[0], 1, "b");
+  keptText = second(&slots[0]);
+  if (keptText == nullptr || keptText != slots[1] ||
+      at(&slots[0], 2) != nullptr) { return 1; }
+  mut std::string_view word = "word";
+  keptView = viewAt(&word);
+  mut Entry entry{.name = "entry", .id = 1};
+  return keptView == "word" && nameAt(&entry) == "entry" ? 0 : 2;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "text read through a raw pointer is an ownerless result");
+  if (result.canGenerateCode())
+    for (const char *name : {"second", "at", "viewAt", "nameAt"}) {
+      const auto *function = namedFunction(result, name);
+      expect(function != nullptr && textResult(*function) &&
+                 function->returnBorrowOrigin == lang::BorrowOriginKind::None,
+             std::string("a raw-memory text return is ownerless: ") + name);
+    }
+  // A GTI owner's C string is not raw memory, inside unsafe code or not.
+  const auto dependent = analyzeText(R"gti(
+#include <std/string>
+c_string leak(c_string* items) {
+  std::string owner{"local"};
+  unsafe {
+    c_string* next = items + 1;
+    if (*next != nullptr) {
+      return *next;
+    }
+  }
+  return owner.c_string();
+}
+int main() { mut c_string slots[2] = {nullptr, nullptr}; return leak(&slots[0]) == nullptr ? 1 : 0; }
+)gti");
+  expect(rejectedAtSource(dependent, "GTI-S2045"),
+         "an owner-dependent C string still cannot escape beside a raw read");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testArrayElementTextStorage", testArrayElementTextStorage},
+    {"testArrayElementTextRejections", testArrayElementTextRejections},
+    {"testRawMemoryTextReads", testRawMemoryTextReads},
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testAccessorSubjectRelays", testAccessorSubjectRelays},
     {"testAccessorFieldEscapes", testAccessorFieldEscapes},

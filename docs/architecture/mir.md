@@ -1996,21 +1996,28 @@ operand retains both the external owner loan and the separately verified
 runtime field/dereference place, never the carrier shell's address.
 
 `verifyOwnerlessTextContracts` independently derives every ownerless text
-input contract. A write to a text field, to a text element of an array reached
-through a field, to a payload-enum text field, or any other checked text
-assignment outside local storage needs an operand whose source is known: a
-string or null literal (including `nullptr` for a `c_string` field), an
-ownerless field projection, unprojected static text storage, a temporary or
-block parameter whose every incoming value is known, a formal parameter, or
-the result of a call to a source function whose returns are known.
+input contract. A write to a text field, to a text array element wherever the
+array lives (each element of an array literal included), to a payload-enum
+text field, or any other checked text assignment outside a local text binding
+needs an operand whose source is known: a string or null literal (including
+`nullptr` for a `c_string` field), an ownerless field or array-element
+projection, unprojected static text storage, text read from raw memory, a
+temporary or block parameter whose every incoming value is known, a formal
+parameter, or the result of a call to a source function or lambda whose
+returns are known.
 A formal becomes a requirement of its function. Requirements propagate to a
 fixed point through calls and constructions and must equal the semantic
 `ownerlessTextParameters` exactly. Virtual, override or native dispatch,
 function items, lambdas and native exports cannot carry a nonempty
-requirement. Local text bindings and local text arrays are not field storage
-and may hold dynamic text. Static text storage counts as ownerless because
-semantics admits only ownerless initializers and stores into it; MIR checks
-assignments to it but does not yet re-verify global initializers.
+requirement. A local text binding is not text storage and may hold dynamic
+text; a reader traces its one initializer instead. Semantics never nests
+dynamic text in an array (`L-OWN-02`), and every safe element write is a
+checked text store here, so an array element is ownerless text storage
+wherever the array lives: a by-value array formal holds what its caller's
+array held, and an element read is an ownerless result proof. Static text
+storage counts as ownerless because semantics admits only ownerless
+initializers and stores into it; MIR checks assignments to it but does not
+yet re-verify global initializers.
 
 An external C declaration returning an untracked `c_string` is also an exact
 text producer. Its pointer validity and retention obligations belong to the
@@ -2018,6 +2025,12 @@ native boundary; the verifier does not require a source body for that call.
 This admission requires C linkage, no source definition, and no result loan or
 borrow contract on the target or call. It does not apply to GTI-owned strings'
 dependent C-string observers or erase an annotated native result's dependency.
+Text read from raw memory, below a raw dereference or raw index with only
+field and element selection after it, is an exact producer for the same
+reason: unsafe code took on its validity and lifetime obligations, and raw
+writes are not checked text stores, so it is an inert native value with no
+GTI owner to reconstruct. A checked dereference below the raw step reads a
+referent elsewhere and keeps the ordinary rules.
 
 A call's result holds what its callee's returns hold, mapped through the
 call's arguments and receiver. `TextContracts` summarizes each source
@@ -2032,7 +2045,9 @@ recursive set to be evaluated repeats its returns, with one evaluation of
 each other member per pass, until no summary of the set grows, and then
 completes them all; a summary that read an unfinished one stays provisional
 until then. A recursive text result is therefore ownerless exactly when its
-other returns are.
+other returns are. A lambda invocation's result holds what the lambda's
+returns hold in its own body; a lambda has no relay contract, so a returned
+formal or capture there is unknown text.
 
 Text read through a reference that a source call returned is summarized the
 same way: the callee's Return loans name the referent, and its sources are
@@ -2239,7 +2254,7 @@ The verifier admits a publishing call's borrow facts against its target's
 `publishedTextFields` (`dependentTextCallPublication`), as it admits a
 publishing construction against its constructor.
 
-`isOwnerlessTextFieldProjection` excludes a direct text-field
+`isOwnerlessTextStorageProjection` excludes a direct text-field
 place whose object carries a `Stored` loan designating the field: a carrier
 binding of that loan, or the construction's own result value. A write into
 such a field still requires ownerless text. A temporary's field view, whose

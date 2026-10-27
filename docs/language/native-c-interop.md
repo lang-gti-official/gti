@@ -149,7 +149,12 @@ integer aliases, raw pointers, exact native function pointers, and passive C
 records/unions with recursively passive scalar, pointer, native-function, record
 and fixed-array fields. The foreign declaration stays external, nonconstant and aligned even
 when source access is read-only; it acquires no GTI initializer or cleanup.
-Loaded function pointers are selected before later call arguments execute.
+A record or union passed by value is copied straight out of the external object
+into the parameter, exactly as a load reads it. A native function pointer is
+passive address storage like a raw pointer, so its address, pointers to it and
+arrays of it follow the raw-pointer rules; calling it still requires its exact
+C signature. Loaded function pointers are selected before later call arguments
+execute.
 The runnable [native storage example](../../examples/llvm/native-c-storage.gti)
 shows mutation, function replacement and ordinary wrapper cleanup.
 
@@ -159,7 +164,9 @@ null replacement. Only the pointer referent metadata is admitted: incomplete
 objects still cannot be passed by value, laid out or dereferenced. Direct
 foreign-union member reads and writes use the canonical field/index path and
 the source union-member unsafe permission. This includes a union inside a
-foreign record or fixed-array field. The backend establishes no active-member
+foreign record or fixed-array field. A field of a selected member, such as
+`storage.member.field`, is an ordinary foreign-storage access: the union-member
+permission belongs to an access whose final selection is the member itself. The backend establishes no active-member
 guarantee for untagged C unions. Whole union snapshots retain the same unsafe
 member-access obligations. Aggregate and recursively nested native-function
 signatures retain the same staged receiver and argument rules as scalar calls.
@@ -586,7 +593,9 @@ lets user-defined byte consumers operate without constructing a string.
 derefencing or indexing operations. A value returned by C may be null; GTI can
 compare it with `nullptr`, copy it as the same exact type, initialize it from
 `nullptr`, and pass its address as `c_string*` inside the ordinary raw-pointer
-`unsafe` boundary.
+`unsafe` boundary. A `c_string` read back through such a pointer is the inert
+native address stored there, with no GTI owner, so a function may return it as
+ownerless text; its validity remains the unsafe code's obligation.
 
 The only implicit production conversion in the current bounded slice is from
 `std::string_view` to a `c_string` **call parameter**. Only a complete,

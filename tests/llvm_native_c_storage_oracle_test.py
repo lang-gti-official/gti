@@ -16,10 +16,10 @@ from llvm_evidence_manifest import build_manifest
 
 SOURCE_PATHS = {name: f"tests/fixtures/llvm_native_c_abi/{name}.gti" for name in
                 ("native_storage", "native_storage_controls", "native_storage_failure", "native_storage_opaque",
-                 "native_storage_union_member")}
+                 "native_storage_union_member", "native_storage_values")}
 SOURCE_PATHS.update({"storage_original": "tests/fixtures/llvm_native_c_abi/reject_foreign_storage.gti",
                      "storage_example": "examples/llvm/native-c-storage.gti"})
-PREREQUISITES = ("native_storage_opaque", "native_storage_union_member")
+PREREQUISITES = ("native_storage_opaque", "native_storage_union_member", "native_storage_values")
 
 
 def evidence_cases(root):
