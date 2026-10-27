@@ -69,6 +69,8 @@ SUCCESS_FILES = {
     "field-default-closure-former-reject": "tests/fixtures/constructor_callback_field.gti",
     "program-storage": "tests/fixtures/llvm_dispatch_program_storage.gti",
     "shared-polymorphic-owners": "tests/fixtures/llvm_dispatch_shared_owners.gti",
+    "lifecycle-phases": "tests/fixtures/llvm_dispatch_lifecycle_phases.gti",
+    "generated-empty-former-reject": "tests/fixtures/llvm_dispatch_generated_empty.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -86,6 +88,20 @@ CPP_LIMITATIONS = {
     "inline-field-constructor-rollback": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "borrowed-mut-reference-chain": "outside the complete C++ text vocabulary",
     "fresh-hierarchy-copy-view": "generated copy/move construction lacks the complete generic destination and cleanup schedule",
+}
+
+# Known C++-backend divergences, not oracle evidence (ADR 031: C++ is not an
+# oracle for a shape it does not represent correctly). The C++ backend runs
+# GTI cleanup while the C++ object is still whole, so a base destructor or a
+# constructor rollback dispatches to the most-derived override, into destroyed
+# or unconstructed state. The owner selected the destructor's own class
+# (2026-10-27); LLVM must produce each case's independent expected value. The
+# divergent C++ result is pinned so that a C++ fix is reviewed here.
+CPP_DIVERGENCES = {
+    "lifecycle-phases": (2, ""),
+    "lifecycle-phase-rollback": (70, "GTI-R0014"),
+    "lifecycle-phase-wrong-cleanup": (70, "GTI-R0014"),
+    "cleanup-helper-cycle-base-phase-former-reject": (1, ""),
 }
 
 SUCCESS_SOURCES = {
@@ -319,34 +335,20 @@ public:
 };
 int main() { Derived value{}; return value.read(); }
 """,
-    "reject-rollback-virtual-observation": """class Base {
-public:
-  Base() {}
-  virtual int read() { return 1; }
-  ~Base() { int observed = this.read(); }
-};
-class Derived : public Base {
-  int quotient;
-public:
-  Derived(int divisor) : Base(), quotient(12 / divisor) {}
-  int read() override { return 2; }
-};
-int main() { Derived value{0}; return value.read(); }
-""",
 }
 
-# The same terminating call cycle must not hide its reachable virtual
-# observer when the destructor runs as a base phase of a derived object.
-REJECTIONS["reject-cleanup-helper-cycle-observation"] = SUCCESS_SOURCES[
-    "nonobserving-cleanup-helper-cycle"].replace(
-        "return value.payload();", "return value.read();").replace(
-        "int main() { { Numeric value{}; } return observed == 7 ? 0 : 1; }",
-        "class Wider : public Numeric {\npublic:\n  Wider() : Numeric() {}\n"
-        "  int read() override { return 8; }\n};\n"
-        "int main() { { Wider value{}; } return observed == 7 ? 0 : 1; }")
-# A base destructor observes the phase of a derived object directly or
-# through a helper; that phase rule stays gated.
-REJECTIONS["reject-base-destructor-observation"] = """class Base {
+# Former destructor-observation rejections. A base destructor runs under its
+# own class (owner decision, 2026-10-27), directly, through a helper or a
+# terminating helper cycle, and during constructor rollback.
+LIFECYCLE_FORMER_REJECTS = {
+    "cleanup-helper-cycle-base-phase-former-reject": (SUCCESS_SOURCES[
+        "nonobserving-cleanup-helper-cycle"].replace(
+            "return value.payload();", "return value.read();").replace(
+            "int main() { { Numeric value{}; } return observed == 7 ? 0 : 1; }",
+            "class Wider : public Numeric {\npublic:\n  Wider() : Numeric() {}\n"
+            "  int read() override { return 8; }\n};\n"
+            "int main() { { Wider value{}; } return observed == 7 ? 0 : 1; }"), 0),
+    "base-destructor-observation-former-reject": ("""class Base {
 public:
   Base() {}
   virtual int read() { return 1; }
@@ -358,8 +360,8 @@ public:
   int read() override { return 2; }
 };
 int main() { Derived value{}; return value.read() - 2; }
-"""
-REJECTIONS["reject-base-helper-observation"] = """class Base {
+""", 0),
+    "base-helper-observation-former-reject": ("""class Base {
 public:
   Base() {}
   virtual int read() { return 1; }
@@ -372,6 +374,21 @@ public:
   int read() override { return 2; }
 };
 int main() { Derived value{}; return 0; }
+""", 0),
+}
+LIFECYCLE_ROLLBACK_FORMER_REJECT = """class Base {
+public:
+  Base() {}
+  virtual int read() { return 1; }
+  ~Base() { int observed = this.read(); }
+};
+class Derived : public Base {
+  int quotient;
+public:
+  Derived(int divisor) : Base(), quotient(12 / divisor) {}
+  int read() override { return 2; }
+};
+int main() { Derived value{0}; return value.read(); }
 """
 
 SOURCE_REJECTIONS = {
@@ -437,7 +454,8 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
                  failure_needle: str | None = None,
                  expected_exit: int = 0,
                  cpp_limitation: str | None = None,
-                 endpoints: tuple[Endpoint, ...] = ENDPOINTS) -> None:
+                 endpoints: tuple[Endpoint, ...] = ENDPOINTS,
+                 cpp_divergence: tuple[int, str] | None = None) -> None:
     observables = []
     if cpp_limitation:
         mir_case = work / f"{name}-source-mir"
@@ -462,6 +480,13 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
             print(f"{name} {endpoint.standard}: C++ comparator REJECTED (not execution evidence)", flush=True)
             print(f"command: {result.command}\n{result.stderr}\n{detail}", flush=True)
             continue
+        if cpp_divergence and endpoint.backend == "cpp":
+            if (result.error or result.returncode != cpp_divergence[0]
+                    or cpp_divergence[1] not in result.stderr):
+                raise AssertionError(f"{name}: pinned C++ divergence changed; review coverage: {result}")
+            print(f"{name} {endpoint.standard}: C++ comparator DIVERGES as pinned (known C++ backend defect, "
+                  f"not execution evidence)", flush=True)
+            continue
         if result.error:
             raise AssertionError(f"{name} {endpoint}: {result}")
         if failure_needle is None:
@@ -475,6 +500,8 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
     levels = "/".join(endpoint.optimization for endpoint in endpoints if endpoint.backend == "llvm")
     if cpp_limitation:
         print(f"{name}: verified source/MIR and native {levels} passed; C++ failures retained", flush=True)
+    elif cpp_divergence:
+        print(f"{name}: native {levels} passed its independent expectation; C++ divergence pinned", flush=True)
     else:
         outcome = f"normal exit {expected_exit}" if failure_needle is None else "source-attributed failure exit 70"
         print(f"{name}: C++20/23 O3 and native {levels} passed ({outcome})", flush=True)
@@ -1125,6 +1152,7 @@ class DispatchCase:
     failure_needle: str | None = None
     cpp_limitation: str | None = None
     endpoints: tuple[Endpoint, ...] = ENDPOINTS
+    cpp_divergence: tuple[int, str] | None = None
 
     @property
     def is_control(self) -> bool:
@@ -1136,6 +1164,9 @@ class DispatchCase:
         expectation = {"kind": self.kind, "expected_exit": self.expected_exit,
                        "failure_needle": self.failure_needle,
                        "cpp_limitation": self.cpp_limitation}
+        if self.cpp_divergence:
+            expectation["cpp_divergence"] = {"exit": self.cpp_divergence[0],
+                                             "stderr": self.cpp_divergence[1]}
         if self.kind == "backend-rejection":
             expectation.update(diagnostic="GTI-B0003", verified_source_mir=True,
                                artifact_preservation="absent-and-existing", no_object_publication=True)
@@ -1185,12 +1216,13 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
             unresolved=("host-target-applicability", "effective-compiler-environment",
                         "implicit-toolchain-runtime", "compiler-build-source-identity"))
         cases[name] = DispatchCase(source, context, kind, expected_exit,
-                                   failure_needle, cpp_limitation, endpoints)
+                                   failure_needle, cpp_limitation, endpoints,
+                                   CPP_DIVERGENCES.get(name))
 
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1528,6 +1560,31 @@ int main() {
         replacement_failure.replace("expected_cleanup = 72;", "expected_cleanup = 73;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=replacement_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    for name, (source, expected_exit) in LIFECYCLE_FORMER_REJECTS.items():
+        add(name, source, expected_exit=expected_exit, endpoints=TRANSFER_ENDPOINTS)
+    add("rollback-virtual-observation-former-reject", LIFECYCLE_ROLLBACK_FORMER_REJECT,
+        "defined-failure", expected_exit=70,
+        failure_needle="Derived(int divisor) : Base(), quotient(12 / divisor) {}",
+        endpoints=TRANSFER_ENDPOINTS)
+    lifecycle = (root / SUCCESS_FILES["lifecycle-phases"]).read_text(encoding="utf-8")
+    lifecycle_marker = "// LIFECYCLE_MAIN\n"
+    if lifecycle.count(lifecycle_marker) != 1:
+        raise AssertionError("lifecycle main marker is not unique")
+    lifecycle_rollback = lifecycle.split(lifecycle_marker, 1)[0] + """int main() {
+  expected_cleanup = 241241;
+  Guard guard{};
+  Mid kept{};
+  Leaf failed{0};
+  return failed.read() + kept.read();
+}
+"""
+    lifecycle_needle = "Leaf(int divisor) : Mid(), quotient(12 / divisor) {}"
+    add("lifecycle-phase-rollback", lifecycle_rollback, "defined-failure",
+        expected_exit=70, failure_needle=lifecycle_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("lifecycle-phase-wrong-cleanup",
+        lifecycle_rollback.replace("expected_cleanup = 241241;", "expected_cleanup = 241242;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=lifecycle_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     shared = (root / SUCCESS_FILES["shared-polymorphic-owners"]).read_text(encoding="utf-8")
     shared_marker = "// SHARED_OWNERS_MAIN\n"
     if shared.count(shared_marker) != 1:
@@ -1658,6 +1715,12 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "array-former-reject"),
         "program-hierarchy-storage": (
             "program-storage", "program-storage-failure", "global-former-reject"),
+        "lifecycle-dispatch": (
+            "lifecycle-phases", "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
+            "generated-empty-former-reject", "base-destructor-observation-former-reject",
+            "base-helper-observation-former-reject",
+            "cleanup-helper-cycle-base-phase-former-reject",
+            "rollback-virtual-observation-former-reject"),
         "polymorphic-ownership": (
             "polymorphic-owners", "heap-polymorphic-owner-former-reject",
             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
@@ -1720,6 +1783,8 @@ def main() -> None:
              "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
              "program-storage-failure",
              "shared-polymorphic-owner-failure", "shared-polymorphic-owner-wrong-cleanup",
+             *LIFECYCLE_FORMER_REJECTS, "rollback-virtual-observation-former-reject",
+             "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)
@@ -1786,6 +1851,12 @@ def main() -> None:
                 for endpoint in specification.endpoints:
                     case = work / f"{name}-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard or 'native'}"
                     result = execute(gti, root, case, source, endpoint, env)
+                    divergence = specification.cpp_divergence
+                    if divergence and endpoint.backend == "cpp":
+                        if (result.error or result.returncode != divergence[0]
+                                or divergence[1] not in result.stderr):
+                            raise AssertionError(f"{name}: pinned C++ divergence changed: {result}")
+                        continue
                     if (result.error or result.returncode != 70 or result.stdout
                             or "GTI-R0014" not in result.stderr
                             or "primary [GTI-R0002]" not in result.stderr
@@ -1798,7 +1869,8 @@ def main() -> None:
                              expected_exit=specification.expected_exit,
                              failure_needle=specification.failure_needle,
                              cpp_limitation=specification.cpp_limitation,
-                             endpoints=specification.endpoints)
+                             endpoints=specification.endpoints,
+                             cpp_divergence=specification.cpp_divergence)
 
 
 if __name__ == "__main__":

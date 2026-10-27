@@ -1616,12 +1616,27 @@ struct MirConstructorInstance {
                          const MirConstructorInstance &) = default;
 };
 
+// The lifecycle-dispatch contract of a source destructor of a polymorphic
+// class: from the destructor's entry, through its body and the cleanup of the
+// class's own fields, the object dispatches as an object of activeClass, the
+// destructor's own class. A virtual call on `this`, directly or through a
+// helper, selects that class's members; a destroyed derived part is never
+// reached. Base cleanup then runs under each base's own transition.
+struct MirDestructorDispatchState {
+  HirClassInstanceId activeClass = 0;
+
+  friend bool operator==(const MirDestructorDispatchState &,
+                         const MirDestructorDispatchState &) = default;
+};
+
 struct MirDestructorInstance {
   HirDestructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
   bool mayRaiseDefinedFailure = true;
   MirEffectSummary effectSummary;
+  // Present exactly for a source destructor of a polymorphic class.
+  std::optional<MirDestructorDispatchState> dispatchState;
   MirBody body;
 
   friend bool operator==(const MirDestructorInstance &,

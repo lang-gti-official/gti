@@ -11698,10 +11698,30 @@ whole local or their own full-expression temporary, which may be a borrowed
 receiver or argument. `llvm_dispatch_execution` profiles
 `polymorphic-ownership`, `virtual-invocation` and `fresh-publication` carry
 C++20/23 and native O0-O3 evidence, including failure unwinding and rollback;
-examples 025, 071 and 149 now match the C++ oracle at O0-O3. By-value
-hierarchy arguments, returns of existing objects, consuming receivers of
-inline hierarchy storage, shared polymorphic owners and public inline slots
-remain open.
+examples 025, 071 and 149 now match the C++ oracle at O0-O3.
+
+The 2026-10-27 checkpoint closes the following shapes. Each has a user-defined
+`llvm_dispatch_execution` profile with C++20/23 and native O0-O3 evidence,
+including failure and wrong-trace variants:
+- by-value hierarchy arguments and returns of moved locals;
+- public inline polymorphic slots, which carry `std::function` and the other
+  erased callables;
+- consuming, temporary, retained and prepared receivers;
+- whole-object replacement, including through a reserved two-phase accessor;
+- fixed hierarchy arrays in locals and fields;
+- program-storage hierarchy objects;
+- shared polymorphic owners and upcasts;
+- unobservable abstract phases.
+
+Destructor dispatch follows the owner's lifecycle decision. Shipped examples
+025, 071, 086, 135 and 149 match at O0-O3. Of the 217 corpus programs that
+C++ compiled and LLVM refused, 205 now match at O0 and O2. The remainder are:
+- three thread programs whose erased callable crosses a thread spawn
+  (O-LLVM-13 owns the spawn);
+- `std::optional` of a hierarchy payload (payload enums with inline hierarchy
+  storage);
+- a mutex protecting a hierarchy payload;
+- the shapes still gated as `PolymorphicTransfer` or `PureDispatchState`.
 
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
@@ -11716,15 +11736,21 @@ remain open.
   transfer and nonlocal/value-return publication remain prerequisites.
   Rich field-borrow and owner cases retain the existing C++ text-vocabulary
   rejection and require independent source/MIR/native results;
-  general transfer, dynamic ownership/in-place replacement, pure active states, exact optimized cost
-  evidence and combined O14/O16 source/evidence identities remain open. The loop
-  fixture checks results, not retained dispatch or allocations.
-- **Lifecycle authority prerequisite:** existing cleanup order and typed
-  destructor ownership do not specify destructor-observed virtual active state.
-  `DestructorDispatchObservation` conservatively gates direct/transitive
-  observations pending an approved backend-neutral phase contract; no C++ trace
-  or private LLVM helper establishes that rule. Independent constructor-state,
-  borrowed dispatch and numeric cleanup-order cases proceed.
+  base-view replacement, payload-enum hierarchy storage, observable pure
+  active states, exact optimized cost evidence and combined O14/O16
+  source/evidence identities remain open. The loop fixture checks results,
+  not retained dispatch or allocations.
+- **Lifecycle dispatch (owner decision, 2026-10-27): destructor's own class.**
+  While a destructor of class `C` runs, a virtual call on `this` (directly or
+  through helpers) resolves as if the dynamic type were `C`. MIR records
+  `MirDestructorDispatchState` on every polymorphic source destructor. The
+  verifier requires it, and LLVM lowers it through `NativeLifecycleDispatch`.
+  Constructors already follow the symmetric rule (`MirConstructorDispatchState`);
+  that records existing behaviour. The C++ backend still dispatches to the
+  most-derived override during base destruction and rollback, a known
+  defect recorded in `backend.md` (observed `-1` where the contract gives `1`,
+  and an internal compiler error with a `unique_ptr` field). Its results are
+  pinned as divergences, not oracle evidence, under ADR 031.
 - **Unlock:** existing abstract/interface hierarchies and polymorphic owners.
 - **Deliver:** base subobjects, base-constructor/rollback order, verified method
   targets, dispatch tables, receiver/base adjustments, upcasts and dynamic
@@ -11977,8 +12003,8 @@ not size the work.
 
 | blocker | examples | nature |
 | --- | --- | --- |
-| O-LLVM-10 polymorphism | 025, 071, 086, 135, 149 | milestone; these now match the C++ oracle at O0-O3: inline polymorphic slots, owned hierarchy transfers, consuming and temporary receivers, closure models and unobservable abstract phases are admitted (see O-LLVM-10) |
-| O-LLVM-10 erased transfer callable | 066 | 076 and 175 now execute with native managed workers, and owner-held mutex storage has its own witness, so the `shared_ptr<mutex<T>>` receiver and its empty-owner field default now lower; 066 still needs `std::transfer_function` (inline polymorphic storage and virtual invocation). With that use removed, 066 matches the C++ oracle at O0-O3 |
+| O-LLVM-10 polymorphism | 025, 071, 086, 135, 149 | milestone; these now match the C++ oracle at O0-O3: inline polymorphic slots, owned hierarchy transfers, consuming and temporary receivers, closure models, whole-object replacement, hierarchy arrays, program-storage objects, shared polymorphic owners, unobservable abstract phases and destructor lifecycle dispatch are admitted (see O-LLVM-10) |
+| O-LLVM-10 erased transfer callable | 066 | 076 and 175 now execute with native managed workers, and owner-held mutex storage has its own witness, so the `shared_ptr<mutex<T>>` receiver and its empty-owner field default now lower; inline slots and virtual invocation are admitted, but 066 still moves a `std::transfer_function` into a thread spawn, which needs the O-LLVM-13 task transfer of hierarchy storage. With that use removed, 066 matches the C++ oracle at O0-O3 |
 | element and pointee eligibility | 127, 129, 142 | admission only; the emitters are element-agnostic. `ArraySize`/`ArrayRangeBegin` return constants yet demand a passive element; a payload-enum pointee and an array of sealed integral enums have implemented shapes that the eligibility predicates do not reach |
 | unsafe receiver on a `Call` stage | 121 | admission only; a receiver-role `Call` with a mutable-temporary-borrow input kind and no call target |
 | remaining field projection | 042 | admission only; progressed from the earlier reference-adjustment refusal |

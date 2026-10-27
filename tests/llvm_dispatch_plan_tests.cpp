@@ -249,7 +249,7 @@ void testPlans(const FrontendResult &frontend) {
   expect(text.starts_with("lowered-program-v27\n") &&
              text.find("virtual-dispatch=[{root=") != std::string::npos &&
              text == LoweredProgramPrinter().print(lowered) &&
-             MirPrinter().print(frontend.mir).starts_with("mir-v116 "),
+             MirPrinter().print(frontend.mir).starts_with("mir-v117 "),
          "dispatch selection and paths serialize deterministically");
   auto &sealed = const_cast<LoweredClassInstance &>(*std::find_if(
       lowered.classInstances().begin(), lowered.classInstances().end(),

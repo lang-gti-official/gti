@@ -333,6 +333,9 @@ public:
     bool transfer = false;
     bool pure = false;
     bool observation = false;
+    // A destructor that observes its own phase under the MIR-recorded
+    // lifecycle-dispatch transition.
+    bool lifecycle = false;
   };
 
   StaticDispatchProofs(const LlvmAdmissionPlan &plan,
@@ -379,10 +382,15 @@ public:
           bodyProof.pure = pureState(target.dispatchState->activeClass) &&
                            constructionObserves(address);
       }
+      // A destructor observing its phase runs under the MIR-recorded
+      // transition to its own class; only an unrecorded one stays gated.
       if (address.kind == MirBodyKind::Destructor) {
         const auto &target = *program.findDestructorInstance(address.owner);
-        if (contains(program.findClassInstance(target.owner)->type))
-          bodyProof.observation = observesDispatch(address);
+        if (contains(program.findClassInstance(target.owner)->type) &&
+            observesDispatch(address)) {
+          bodyProof.lifecycle = recordedPhase(target);
+          bodyProof.observation = !bodyProof.lifecycle;
+        }
       }
       // A concrete parameter pack's hierarchy elements are their own class
       // places; the pack binding itself transports no object bytes.
@@ -966,9 +974,18 @@ private:
       pure |= pureCleanup(child);
     return pure;
   }
+  // The lifecycle-dispatch contract MIR records for a source destructor of
+  // a polymorphic class: it runs under its own class.
+  bool recordedPhase(const MirDestructorInstance &destructor) const {
+    return destructor.definitionKind == MirDefinitionKind::Source &&
+           destructor.dispatchState &&
+           destructor.dispatchState->activeClass == destructor.owner;
+  }
+  // A destructor that may observe its phase without a recorded transition.
   bool cleanupObserves(const MirDropType &recipe) const {
     if (recipe.destructor && contains(recipe.type) &&
-        observesDispatch({MirBodyKind::Destructor, *recipe.destructor}))
+        observesDispatch({MirBodyKind::Destructor, *recipe.destructor}) &&
+        !recordedPhase(*program.findDestructorInstance(*recipe.destructor)))
       return true;
     return std::any_of(
         recipe.aggregate.begin(), recipe.aggregate.end(),
@@ -1840,8 +1857,13 @@ private:
     try {
       if (!metadata(owner->type))
         return {};
-      if (address.kind == MirBodyKind::Destructor && observesDispatch(address))
-        return {};
+      if (address.kind == MirBodyKind::Destructor && owner->polymorphic) {
+        const auto &target = *program.findDestructorInstance(address.owner);
+        if (observesDispatch(address) && !recordedPhase(target))
+          return {};
+        if (recordedPhase(target))
+          dispatch->preflightPhase(target.dispatchState->activeClass);
+      }
       if (address.kind == MirBodyKind::Constructor && owner->polymorphic) {
         const auto &target = *program.findConstructorInstance(address.owner);
         if (target.definitionKind != MirDefinitionKind::Source ||
@@ -4169,6 +4191,10 @@ public:
         add(Shape::PureDispatchState);
       if (proof->observation)
         add(Shape::DestructorDispatchObservation);
+      if (proof->lifecycle)
+        add(Shape::DestructorDispatchObservation,
+            proof->shape ? std::optional(Shape::NativeLifecycleDispatch)
+                         : std::nullopt);
     }
     if (mir.kind == MirBodyKind::Constructor) {
       const auto *constructor = program.findConstructorInstance(body->owner);

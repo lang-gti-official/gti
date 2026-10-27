@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v116 valid=" << program.valid() << '\n';
+    output << "mir-v117 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -860,6 +860,11 @@ public:
       output << " may-raise-defined-failure="
              << instance.mayRaiseDefinedFailure;
       effectSummary(instance.effectSummary);
+      output << " dispatch-state=";
+      if (instance.dispatchState)
+        output << instance.dispatchState->activeClass;
+      else
+        output << '-';
       output << '\n';
       body(instance.body, instance.id);
     }

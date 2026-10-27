@@ -370,7 +370,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v116`/`mir-body-v93`,
+The combined deterministic serialization is currently `mir-v117`/`mir-body-v93`,
 with `lowered-program-v27` declaration metadata. These distinct combined
 identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
@@ -387,6 +387,12 @@ base exists. Verification checks the selected instruction and success dominance;
 optimization preserves that identity. Absence remains valid core MIR for existing
 base-call families whose staging is incomplete, and requires a native admission
 gate rather than an invented entry transition.
+Every source destructor of a polymorphic class records the lifecycle-dispatch
+transition to its own class (`MirDestructorDispatchState`, `mir-v117`). From
+the destructor's entry, through its body and its own fields' cleanup, the
+object dispatches as that class. The owner decided this rule on 2026-10-27;
+see [backend lifecycle dispatch](backend.md#lifecycle-dispatch). Verification
+requires the record exactly for those destructors.
 Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains

@@ -1293,7 +1293,11 @@ before comparing parameter lists, so an ordinary zero-argument or multi-argument
 override can implement the corresponding instantiated interface pack. Symbolic
 packs remain distinct until substitution. Abstract values cannot be directly
 constructed. GTI does not permit object slicing. Polymorphic destruction is
-derived by the compiler from lifecycle metadata.
+derived by the compiler from lifecycle metadata. While a constructor or
+destructor of a class runs, virtual calls on `this` select that class's
+members. [Lifecycle dispatch](execution.md#422-initialization-and-materialization)
+defines the transitions, including the 2026-10-27 owner decision for
+destructors.
 
 An ordinary class or struct cannot contain itself transitively by value. Fixed
 arrays and payload-enum alternatives preserve the by-value edge, including an
