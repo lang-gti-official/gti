@@ -532,6 +532,38 @@ int main() {
 '''
 
 
+NATIVE_RECORD_REFERENCES = r'''
+#include <std/memory>
+#include <std/vector>
+[[c_abi]]
+struct QuotRem {
+  int64_t quot;
+  int64_t rem;
+};
+extern "C" {
+  QuotRem imaxdiv(int64_t numerator, int64_t denominator);
+}
+class Holder {
+public:
+  QuotRem value;
+  Holder(QuotRem value) : value(value) {}
+  QuotRem& view() { unsafe { return std::assume_ref(&this.value, this); } }
+};
+int64_t recombine(QuotRem& value, int64_t divisor) { return value.quot * divisor + value.rem; }
+int main() {
+  Holder holder{imaxdiv(int64_t(47), int64_t(5))};
+  if (recombine(holder.view(), int64_t(5)) != int64_t(47) || holder.view().rem != int64_t(2)) { return 1; }
+  mut std::vector<QuotRem> history{};
+  history.push_back(imaxdiv(int64_t(-47), int64_t(5)));
+  history.push_back(imaxdiv(int64_t(9), int64_t(4)));
+  return recombine(history[std::size_t(0)], int64_t(5)) == int64_t(-47) &&
+                 history[std::size_t(1)].quot == int64_t(2)
+             ? 0
+             : 2;
+}
+'''
+
+
 def successes(root: Path) -> dict[str, str]:
     cases = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS,
              'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES,
@@ -547,7 +579,8 @@ def successes(root: Path) -> dict[str, str]:
              'integral-enum-pointers': INTEGRAL_ENUM_POINTERS,
              'text-view-arrays': TEXT_VIEW_ARRAYS,
              'c-string-addresses': C_STRING_ADDRESSES,
-             'enumerator-references': ENUMERATOR_REFERENCES}
+             'enumerator-references': ENUMERATOR_REFERENCES,
+             'native-record-references': NATIVE_RECORD_REFERENCES}
     cases['shipped-example'] = (
         root / 'examples/llvm/places-and-text.gti').read_text()
     cases['enum-references'] = (

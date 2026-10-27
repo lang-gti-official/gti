@@ -1223,6 +1223,9 @@ public:
         payloads = std::move(inlinePayloads);
         crossed = enclosingClasses;
         crossedPayloads = enclosingPayloads;
+        // A mutex-bearing pointee has its own admitted representation, whose
+        // native identity the allocation holds in place. The guarded query
+        // keeps a recursive node owning its successor finite.
         return valid || dispatchProofs.metadata(pointee).has_value() ||
                ownedMutexPointee(pointee);
       }
@@ -2021,10 +2024,10 @@ public:
               (mutableInput ? MirOperandKind::BorrowWrite
                             : MirOperandKind::BorrowRead))
         return false;
+      // The receiver is the pointee or a field or element reached from it;
+      // nativeRawPlace proves the whole path, including its raw step.
       const auto *place = mir.findPlace(input.operands.front().place);
       return place && !place->projections.empty() &&
-             place->projections.back().kind ==
-                 MirProjectionKind::RawDereference &&
              nativeRawPlace(mir, *place);
     };
     if (stage.kind == MirInstructionKind::CallInput)
@@ -2043,8 +2046,11 @@ public:
           return candidate.id == value->definition &&
                  candidate.result == stage.receiver->value;
         });
+    // The staged receiver carries the raw access whatever the call's own
+    // marker: none for an ordinary method on a field reached through the
+    // pointer, the same access for a method on the pointee itself, or the
+    // method's declared unsafe permission, which is admitted separately.
     return input != block->instructions.end() && !input->tombstone &&
-           input->unsafeOperation == stage.unsafeOperation &&
            input->callSite != 0 && input->callSite == stage.callSite &&
            staged(*input);
   }
@@ -2348,10 +2354,30 @@ public:
            nativeValue(type) && classShape(type) == Shape::NativeClassStorage;
   }
 
+  // A native C record is addressed like any complete object; its fields
+  // keep the C layout the record's own layout supplies.
+  bool nativeRecordObject(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class)
+      return false;
+    const MirClassInstance *owner = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == type) {
+        if (owner)
+          return false;
+        owner = &candidate;
+      }
+    return owner && (owner->cAbiRecord || owner->cAbiLayout) &&
+           !owner->cOpaqueHandle && !owner->unionLayout &&
+           owner->compilerCapability == CompilerCapabilityTypeKind::None &&
+           owner->bases.empty() && owner->structuralBases.empty() &&
+           nativeValue(type);
+  }
+
   bool representedRawReferenceTypes(const MirInstruction &stage) const {
     const auto &pointer = stage.operands[0].type;
     if (!(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
         !ordinaryRawReferenceObject(pointer.arguments.front()) &&
+        !nativeRecordObject(pointer.arguments.front()) &&
         !payloadRawReferent(stage) &&
         !(integralEnumAddress(pointer) &&
           stage.info.type == pointer.arguments.front()))
@@ -3677,8 +3703,23 @@ public:
         // memory operation. The typed access/arithmetic stages are inventoried
         // independently; their pending shapes cannot be hidden by this marker.
         const auto &instructionCoverage = coverage(stage.kind);
+        // A drop of a place not reached through raw memory destroys an
+        // ordinary object; its marker repeats the statement's permission and
+        // the destruction is admitted by its own drop recipe.
+        const auto *dropped =
+            stage.kind == MirInstructionKind::Drop && stage.destination
+                ? mir.findPlace(*stage.destination)
+                : nullptr;
+        const bool ordinaryDrop =
+            dropped && !stage.rawMemoryAccess &&
+            std::none_of(dropped->projections.begin(),
+                         dropped->projections.end(), [](const auto &step) {
+                           return step.kind ==
+                                      MirProjectionKind::RawDereference ||
+                                  step.kind == MirProjectionKind::RawIndex;
+                         });
         const bool permissionOnly =
-            stage.kind == MirInstructionKind::Lifecycle ||
+            stage.kind == MirInstructionKind::Lifecycle || ordinaryDrop ||
             (instructionCoverage.state ==
                  LlvmCoverageState::VerifiedNonExecuting &&
              instructionCoverage.nonExecuting ==

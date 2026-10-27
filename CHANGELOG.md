@@ -50,16 +50,18 @@ for what minor and patch releases mean.
   `unsafe` permission, constant-folded raw field indexing, native function
   values, C strings, null pointers and array values published into
   constructor fields, unqualified field names in constructor bodies,
-  enumerators passed to reference parameters, borrows reached through a
+  enumerators passed to reference parameters, methods called on fields reached
+  through raw pointers, references to `[[c_abi]]` records obtained through
+  `std::assume_ref`, unique and shared owners of mutex-bearing values,
+  references reborrowed from a carrier's stored reference, borrows reached through a
   carrier's stored reference, and restoring swaps and exchanges
   (`std::swap`, `std::exchange`, `std::array::swap` and `swap_elements`).
 - Compile threads on the native backend: `std::thread` and
   `std::thread_result` start, join, automatic join and result take, scoped
   `std::parallel_invoke`, manual C-thread create/join, once, mutex and
-  condition services, and mutexes held by value in lambda captures or behind
-  `std::unique_ptr`/`std::shared_ptr`, including payloads with deleted copy
-  constructors. Worker failures re-raise at join and cleanup failures report
-  exactly as on the C++ backend.
+  condition services, mutexes held by value in lambda captures, and mutexes
+  protecting class values that need no cleanup. Worker failures re-raise at
+  join and cleanup failures report exactly as on the C++ backend.
 - C++ remains the production default. Polymorphic ownership, dynamic dispatch
   transfer and erased callables (`std::function`, `std::transfer_function`)
   remain rejected on the native backend.
