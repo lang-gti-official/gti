@@ -64,6 +64,10 @@ SUCCESS_FILES = {
     "temporary-receivers": "tests/fixtures/llvm_dispatch_temporary_receivers.gti",
     "replacements": "tests/fixtures/llvm_dispatch_replacements.gti",
     "hierarchy-arrays": "tests/fixtures/llvm_dispatch_hierarchy_arrays.gti",
+    # A field default's closure is lowered by each body running that default;
+    # its instances agree on captures, so the model relocates into its slot.
+    "field-default-closure-former-reject": "tests/fixtures/constructor_callback_field.gti",
+    "program-storage": "tests/fixtures/llvm_dispatch_program_storage.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -248,6 +252,7 @@ int main() {
     # Copy assignment of a complete inert polymorphic object.
     "assignment-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second{}; first = second; return first.read(); }\n", 1),
     "array-former-reject": (PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n", 1),
+    "global-former-reject": (PLAIN + "Plain value{};\nint main() { return value.read(); }\n", 1),
     # A moved owned local with active cleanup leaves through the return edge.
     "returned-owned-move": ("""mut int dropped = 0;
 class Owned {
@@ -297,7 +302,6 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     # hierarchy array still transports its objects.
     "reject-array-copy": PLAIN + "int main() { Plain values[1] = {Plain()}; Plain copied[1] = values; return copied[0].read(); }\n",
     "reject-array-argument": PLAIN + "int sum(Plain values[1]) { return values[0].read(); }\nint main() { Plain values[1] = {Plain()}; return sum(values); }\n",
-    "reject-global": PLAIN + "Plain value{};\nint main() { return value.read(); }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
     # A pure member selected while a constructor that never hands the object to
     # other code runs is unobservable; this phase is not, so it stays gated.
@@ -1185,7 +1189,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1523,6 +1527,16 @@ int main() {
         replacement_failure.replace("expected_cleanup = 72;", "expected_cleanup = 73;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=replacement_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    storage = (root / SUCCESS_FILES["program-storage"]).read_text(encoding="utf-8")
+    storage_marker = "// PROGRAM_STORAGE_MAIN\n"
+    if storage.count(storage_marker) != 1:
+        raise AssertionError("program storage main marker is not unique")
+    add("program-storage-failure", storage.split(storage_marker, 1)[0] + """Square broken = scaled(0);
+
+int main() { return broken.area() + square.area(); }
+""", "defined-failure", expected_exit=70,
+        failure_needle="Square scaled(int divisor) { return Square(12 / divisor); }",
+        endpoints=TRANSFER_ENDPOINTS)
     arrays = (root / SUCCESS_FILES["hierarchy-arrays"]).read_text(encoding="utf-8")
     arrays_marker = "// HIERARCHY_ARRAYS_MAIN\n"
     if arrays.count(arrays_marker) != 1:
@@ -1609,7 +1623,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "fresh-temporary-virtual-failure", "fresh-temporary-wrong-cleanup",
             "fresh-return-constructor-rollback"),
         "inline-polymorphic-slot": (
-            "inline-slots", "inline-slot-virtual-failure", "inline-slot-wrong-cleanup"),
+            "inline-slots", "inline-slot-virtual-failure", "inline-slot-wrong-cleanup",
+            "field-default-closure-former-reject"),
         "consuming-receivers": (
             "consuming-receivers", "consuming-receiver-failure",
             "consuming-receiver-wrong-cleanup"),
@@ -1620,6 +1635,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "hierarchy-arrays", "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
             "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
             "array-former-reject"),
+        "program-hierarchy-storage": (
+            "program-storage", "program-storage-failure", "global-former-reject"),
         "polymorphic-ownership": (
             "polymorphic-owners", "heap-polymorphic-owner-former-reject",
             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
@@ -1678,6 +1695,7 @@ def main() -> None:
              "replacement-failure", "replacement-wrong-cleanup",
              "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
              "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
+             "program-storage-failure",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

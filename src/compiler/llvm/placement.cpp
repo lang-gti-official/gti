@@ -75,7 +75,8 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
       (address.kind != MirBodyKind::Function &&
        address.kind != MirBodyKind::Constructor &&
        address.kind != MirBodyKind::Destructor &&
-       address.kind != MirBodyKind::FieldInitializers) ||
+       address.kind != MirBodyKind::FieldInitializers &&
+       address.kind != MirBodyKind::Module) ||
       (!isFreshObjectProducer(program, producer) && !materialized &&
        !isFreshHierarchyAggregate(program, producer)))
     return {};

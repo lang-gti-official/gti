@@ -3403,21 +3403,42 @@ void testDispatchPerUseWitnesses() {
          "scalar writes and a complete local's replacement remain distinct "
          "from the base view's coalesced source copy and assignment "
          "exclusions in the same body");
+  // Its initialization step constructs a namespace object in place; the
+  // receiver borrows that complete object through its symbol.
   const auto global = planLlvmAdmission(lower(R"(
     class P { public: P() {} virtual int read() { return 1; } };
     P value{};
     int main() { return value.read(); }
   )"));
-  expect(!global.admitted() &&
+  expect(global.admitted() &&
              std::any_of(
                  global.requirements().begin(), global.requirements().end(),
                  [](const auto &use) {
                    return use.required &&
                           use.entry->key() == "Shape.PolymorphicTransfer" &&
-                          !use.implementedShape;
+                          use.implementedShape &&
+                          use.implementedShape->name ==
+                              "NativeProgramHierarchyStorage";
                  }),
-         "nonlocal storage keeps an explicit transfer exclusion even when an "
-         "unsupported global receiver has the preferred diagnostic span");
+         "a namespace hierarchy object constructed in place by its "
+         "initialization step carries its program-storage witness: " +
+             global.limitation());
+  const auto threadLocal = planLlvmAdmission(lower(R"(
+    class P { public: P() {} virtual int read() { return 1; } };
+    thread_local P value{};
+    int main() { return value.read(); }
+  )"));
+  expect(!threadLocal.admitted() &&
+             std::any_of(threadLocal.requirements().begin(),
+                         threadLocal.requirements().end(),
+                         [](const auto &use) {
+                           return use.required &&
+                                  use.entry->key() ==
+                                      "Shape.PolymorphicTransfer" &&
+                                  !use.implementedShape;
+                         }),
+         "thread-local storage keeps an explicit transfer exclusion even "
+         "when an unsupported receiver has the preferred diagnostic span");
 }
 
 } // namespace

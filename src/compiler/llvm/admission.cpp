@@ -396,7 +396,9 @@ public:
                 place.root == MirPlaceRootKind::Binding &&
                 place.projections.empty()) &&
               !hierarchyArray(place.type)) ||
-             place.root == MirPlaceRootKind::Symbol || place.foreignStorage ||
+             (place.root == MirPlaceRootKind::Symbol &&
+              !programObject(place)) ||
+             place.foreignStorage ||
              (place.type.kind == SemanticType::Array && place.capture)))
           bodyProof.transfer = true;
       for (const auto &drop : body.dropObligations) {
@@ -577,6 +579,35 @@ public:
     } catch (const BackendUnsupportedError &) {
       return false;
     }
+  }
+  // A hierarchy object in program storage that its program initialization
+  // step constructs in place: a complete object, never thread-local and, by
+  // the program-storage rules, without source or owning cleanup.
+  bool programStep(const MirProgramInitializationStep &step) const {
+    const MirBodyAddress module{MirBodyKind::Module, 0};
+    const auto *body = findMirBody(program, module);
+    const auto *place = body ? body->findPlace(step.storagePlace) : nullptr;
+    if (!place || place->type.kind != SemanticType::Class ||
+        step.requiresActiveCleanup || step.nativeRetirement ||
+        program.findThreadLocalStorage(step.symbol) ||
+        step.role != ProgramInitializationStepRole::Initializer)
+      return false;
+    native_llvm::Placement placement(*body);
+    for (const auto &block : body->blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.id == step.storageInitialization)
+          return stage.destination == step.storagePlace &&
+                 freshInitialization(module, *body, placement, stage);
+    return false;
+  }
+  bool programObject(const MirPlace &place) const {
+    if (place.root != MirPlaceRootKind::Symbol || !place.symbol ||
+        place.capture || place.foreignStorage)
+      return false;
+    for (const auto &step : program.programInitializationPlan().steps)
+      if (step.symbol == place.symbol)
+        return programStep(step);
+    return false;
   }
   std::optional<Shape> metadata(const SemanticType &type) {
     // A raw pointer to hierarchy storage is an address; its accesses keep
@@ -1742,7 +1773,7 @@ private:
           (place->root != MirPlaceRootKind::Binding &&
            place->root != MirPlaceRootKind::This &&
            place->root != MirPlaceRootKind::Loan && !freshTemporary(*place) &&
-           !raw && !hidden) ||
+           !raw && !hidden && !programObject(*place)) ||
           std::any_of(place->projections.begin() + (raw ? 1 : 0),
                       place->projections.end(), [](const auto &projection) {
                         return projection.kind != MirProjectionKind::Base &&
@@ -5187,7 +5218,12 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     if (const auto *module = findMirBody(mir, {MirBodyKind::Module, 0}))
       if (const auto *place = module->findPlace(step.storagePlace))
         if (dispatchProofs.contains(place->type))
-          inventory.add(Shape::PolymorphicTransfer);
+          inventory.add(Shape::PolymorphicTransfer,
+                        dispatchProofs.programStep(step) &&
+                                dispatchProofs.metadata(place->type) ==
+                                    Shape::NativeStaticDispatchStorage
+                            ? std::optional(Shape::NativeProgramHierarchyStorage)
+                            : std::nullopt);
   }
   inventory.required = true;
   if (mir.hostedStartupPlan())

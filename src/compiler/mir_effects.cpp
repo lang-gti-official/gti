@@ -2353,12 +2353,18 @@ bool mirTypeRelocationIsDefinedFailureFree(const MirProgram &program,
              self(self, candidate.arguments.front());
     }
     if (candidate.kind == SemanticType::Lambda) {
+      // One closure type may be lowered by several bodies, such as a field
+      // default initializer shared by constructors. Its relocation moves the
+      // captures the type names, so every instance must agree on them.
       const MirLambdaInstance *lambda = nullptr;
       for (const auto &instance : program.lambdaInstances()) {
         if (instance.type != candidate)
           continue;
-        if (lambda != nullptr)
-          return false;
+        if (lambda != nullptr) {
+          if (instance.captureTypes != lambda->captureTypes)
+            return false;
+          continue;
+        }
         lambda = &instance;
       }
       if (lambda == nullptr || !lambdas.insert(lambda->id).second)
