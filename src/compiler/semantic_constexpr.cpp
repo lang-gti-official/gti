@@ -23,6 +23,53 @@ struct StagedInstanceKeyView {
   std::span<const CompileTimeValue> values;
 };
 
+struct StagedHash {
+  std::size_t value = 0;
+  void add(std::size_t next) {
+    value ^= next + std::size_t{0x9e3779b9} + (value << 6) + (value >> 2);
+  }
+  void type(const SemanticType &type) {
+    add(type.kind);
+    add(type.classId);
+    add(type.enumId);
+    add(type.genericParameterId);
+    add(type.functionId);
+    add(type.arrayLength);
+    add(type.arguments.size());
+    for (const auto &argument : type.arguments)
+      this->type(argument);
+    add(type.valueArguments.size());
+    for (const auto &argument : type.valueArguments)
+      add(argument.value);
+  }
+  void constant(const ConstantValue &value) {
+    add(value.index());
+    if (const auto *integer = std::get_if<ConstantInteger>(&value)) {
+      add(integer->magnitude);
+      add(integer->negative);
+    } else if (const auto *text = std::get_if<std::string>(&value)) {
+      add(std::hash<std::string>{}(*text));
+    } else if (const auto *flag = std::get_if<bool>(&value)) {
+      add(*flag);
+    } else if (const auto *enumerator = std::get_if<ConstantEnum>(&value)) {
+      add(enumerator->enumId);
+      add(enumerator->value.magnitude);
+    } else if (const auto *aggregate =
+                   std::get_if<ConstantAggregateValue>(&value);
+               aggregate != nullptr && aggregate->value != nullptr) {
+      add(static_cast<std::size_t>(aggregate->value->kind));
+      add(aggregate->value->identity);
+      add(aggregate->value->variant);
+      for (const auto &element : aggregate->value->elements)
+        constant(element);
+      for (const auto &field : aggregate->value->fields) {
+        add(field.symbol);
+        constant(field.value);
+      }
+    }
+  }
+};
+
 // Read-only traits do not require a fork. Allocate the isolated analysis
 // snapshot only if ordinary HIR discovery actually requests an instance.
 class StagedInstanceProvider final : public SemanticInstanceProvider {
@@ -222,6 +269,185 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   return copy;
 }
 
+auto SemanticVisitor::Impl::StagedConstantResults::environment(
+    std::vector<std::uintptr_t> identity) -> std::size_t {
+  return environments.try_emplace(std::move(identity), environments.size() + 1)
+      .first->second;
+}
+
+auto SemanticVisitor::Impl::StagedConstantResults::hash(const Key &key)
+    -> std::size_t {
+  StagedHash hash;
+  hash.add(key.function);
+  hash.add(key.constructor);
+  hash.add(std::hash<const void *>{}(key.declaration));
+  hash.type(key.constructedType);
+  for (const auto &type : key.typeArguments)
+    hash.type(type);
+  for (const auto &value : key.valueArguments)
+    hash.add(value.value);
+  for (const auto &type : key.parameterTypes)
+    hash.type(type);
+  hash.add(key.defaultArguments.size());
+  hash.add(key.designatedArguments.size());
+  hash.add(static_cast<std::size_t>(key.kind));
+  hash.add(key.generatedDefault);
+  hash.add(key.directInitialization);
+  // The substitution maps are unordered; combine their entries commutatively.
+  std::size_t substitution = 0;
+  for (const auto &[parameter, type] : key.substitution.types) {
+    StagedHash entry;
+    entry.add(parameter);
+    entry.type(type);
+    substitution += entry.value;
+  }
+  for (const auto &[parameter, value] : key.substitution.values) {
+    StagedHash entry;
+    entry.add(parameter);
+    entry.add(value.value);
+    substitution += entry.value;
+  }
+  hash.add(substitution);
+  for (const auto &argument : key.arguments)
+    hash.constant(argument);
+  if (key.receiver)
+    hash.constant(*key.receiver);
+  hash.add(key.environment);
+  return hash.value;
+}
+
+auto SemanticVisitor::Impl::StagedConstantResults::same(const Key &left,
+                                                        const Key &right)
+    -> bool {
+  return left.function == right.function &&
+         left.constructor == right.constructor &&
+         left.declaration == right.declaration &&
+         left.environment == right.environment && left.kind == right.kind &&
+         left.generatedDefault == right.generatedDefault &&
+         left.directInitialization == right.directInitialization &&
+         left.constructedType == right.constructedType &&
+         left.typeArguments == right.typeArguments &&
+         left.valueArguments == right.valueArguments &&
+         left.parameterTypes == right.parameterTypes &&
+         left.defaultArguments == right.defaultArguments &&
+         left.designatedArguments == right.designatedArguments &&
+         left.substitution.types == right.substitution.types &&
+         left.substitution.values == right.substitution.values &&
+         left.arguments == right.arguments && left.receiver == right.receiver;
+}
+
+auto SemanticVisitor::Impl::StagedConstantResults::find(const Key &key) const
+    -> const Result * {
+  const auto bucket = results.find(hash(key));
+  if (bucket == results.end())
+    return nullptr;
+  const auto found =
+      std::find_if(bucket->second.begin(), bucket->second.end(),
+                   [&](const Result &result) { return same(result.key, key); });
+  return found == bucket->second.end() ? nullptr : &*found;
+}
+
+auto SemanticVisitor::Impl::StagedConstantResults::record(Result result)
+    -> void {
+  auto &bucket = results[hash(result.key)];
+  const auto found =
+      std::find_if(bucket.begin(), bucket.end(), [&](const Result &existing) {
+        return same(existing.key, result.key);
+      });
+  if (found != bucket.end()) {
+    // A deeper success proves the shallower ones too.
+    found->depth = std::max(found->depth, result.depth);
+    return;
+  }
+  if (size >= capacity)
+    return;
+  bucket.push_back(std::move(result));
+  ++size;
+}
+
+auto SemanticVisitor::Impl::StagedConstantResults::reusable(
+    const ConstantValue &value) -> bool {
+  const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
+  if (aggregate == nullptr || aggregate->value == nullptr)
+    return true;
+  const ConstantAggregate &node = *aggregate->value;
+  return node.kind != ConstantAggregateKind::TransientOwner &&
+         std::all_of(node.elements.begin(), node.elements.end(), reusable) &&
+         std::all_of(node.fields.begin(), node.fields.end(),
+                     [](const auto &field) { return reusable(field.value); });
+}
+
+auto SemanticVisitor::Impl::stagedConstantKey(
+    const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+        &selected,
+    const FunctionInfo *function, const std::vector<ConstantValue> &arguments,
+    const GenericSubstitution &substitution,
+    const std::optional<ConstantValue> &receiver,
+    std::vector<FunctionId> completed, std::vector<ConstructorId> constructors)
+    -> std::optional<StagedConstantResults::Key> {
+  if (!std::all_of(arguments.begin(), arguments.end(),
+                   StagedConstantResults::reusable) ||
+      (receiver && !StagedConstantResults::reusable(*receiver)))
+    return std::nullopt;
+  // What the evaluation may execute: the definitions and constructors its
+  // worker copies (those declared before this point) and those HIR lowers.
+  std::vector<std::uintptr_t> identity{concreteReanalysis() ? 1U : 0U};
+  const auto append = [&](std::vector<std::uintptr_t> values) {
+    std::sort(values.begin(), values.end());
+    identity.push_back(values.size());
+    identity.insert(identity.end(), values.begin(), values.end());
+  };
+  std::vector<std::uintptr_t> values;
+  for (const FunctionDecl *definition : constexprDefinitionsAnalyzed)
+    if (declaredBeforeCurrent(definition))
+      values.push_back(reinterpret_cast<std::uintptr_t>(definition));
+  append(std::move(values));
+  values = {};
+  for (const auto *definition : constexprConstructorsAnalyzed)
+    if (declaredBeforeCurrent(definition))
+      values.push_back(reinterpret_cast<std::uintptr_t>(definition));
+  append(std::move(values));
+  append({completed.begin(), completed.end()});
+  append({constructors.begin(), constructors.end()});
+  StagedConstantResults::Key key{
+      .substitution = substitution,
+      .arguments = arguments,
+      .receiver = receiver,
+      .environment =
+          requestSession.stagedConstants->environment(std::move(identity))};
+  if (const auto *construction =
+          std::get_if<ResolvedConstructionInfo>(&selected)) {
+    key.constructor = construction->constructor;
+    key.declaration = construction->declaration;
+    key.constructedType = construction->constructedType;
+    key.typeArguments = construction->typeArguments;
+    key.valueArguments = construction->valueArguments;
+    key.parameterTypes = construction->parameterTypes;
+    key.defaultArguments = construction->defaultArguments;
+    key.designatedArguments = construction->designatedArguments;
+    key.kind = construction->kind;
+    key.generatedDefault = construction->generatedDefault;
+    key.directInitialization = construction->directInitialization;
+  } else {
+    key.function = function->id;
+  }
+  return key;
+}
+
+auto SemanticVisitor::Impl::appendStagedWarnings(
+    const std::vector<Diagnostic> &warnings) -> void {
+  for (const Diagnostic &warning : warnings) {
+    if (std::none_of(diagnostics.begin(), diagnostics.end(),
+                     [&](const Diagnostic &existing) {
+                       return existing.code == warning.code &&
+                              existing.primary == warning.primary &&
+                              existing.message == warning.message;
+                     })) {
+      diagnostics.push_back(warning);
+    }
+  }
+}
+
 auto SemanticVisitor::Impl::stagedWorkerFor(
     const SemanticModel &stagingModel,
     const std::shared_ptr<ConstexprWorkBudget> &work) -> Impl & {
@@ -268,6 +494,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.constructors = constructors;
   }
   worker.impl->requestSession.constexprWork = work;
+  worker.impl->requestSession.stagedConstants = requestSession.stagedConstants;
   // Concrete constant bodies also demand source access summaries. Share
   // their request-local cycle/depth accounting, not mutable body state.
   worker.impl->requestSession.rawResultQueries =
@@ -329,6 +556,31 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       completed.push_back(candidate->id);
     }
   }
+  // A success this request already proved is replayed (see
+  // StagedConstantResults), unless the outer authority has since closed a
+  // failed concrete query that a fresh evaluation would observe.
+  if (!requestSession.stagedConstants)
+    requestSession.stagedConstants = std::make_shared<StagedConstantResults>();
+  const auto stagedConstants = requestSession.stagedConstants;
+  const auto &concreteEffects = requestSession.programConcreteEffects;
+  const auto reuseKey =
+      !concreteEffects || concreteEffects->invalidInstances.empty()
+          ? stagedConstantKey(selected, info, arguments, substitution, receiver,
+                              completed, constructors)
+          : std::nullopt;
+  const std::size_t depth = enclosingDepth + context.callDepth;
+  if (reuseKey) {
+    const auto *reused = stagedConstants->find(*reuseKey);
+    if (reused != nullptr && reused->depth >= depth &&
+        context.work->steps + reused->steps <= constexprExpressionStepLimit) {
+      context.work->steps += reused->steps;
+      appendStagedWarnings(reused->warnings);
+      if (workMetrics != nullptr)
+        ++workMetrics->constexprStagedReuses;
+      return ConstexprEvaluation{.value = reused->value, .location = callSite};
+    }
+  }
+  const std::size_t stepsBefore = context.work->steps;
   // Reanalysis may reset all body-local scopes and flow. Never run it on this
   // in-progress visitor. A request-local snapshot reuses the ordinary semantic
   // provider and exact declaration identities without lending it mutable caller
@@ -386,16 +638,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     }
     return std::nullopt;
   }
-  for (const Diagnostic &warning : hir.diagnostics) {
-    if (std::none_of(diagnostics.begin(), diagnostics.end(),
-                     [&](const Diagnostic &existing) {
-                       return existing.code == warning.code &&
-                              existing.primary == warning.primary &&
-                              existing.message == warning.message;
-                     })) {
-      diagnostics.push_back(warning);
-    }
-  }
+  appendStagedWarnings(hir.diagnostics);
   const auto *entry = sourceGraph->findUnit(sourceGraph->entryUnit());
   if (entry == nullptr) {
     return std::nullopt;
@@ -604,9 +847,16 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       }
     }
   }
-  if (result)
+  if (result) {
+    if (reuseKey && StagedConstantResults::reusable(*result.value))
+      stagedConstants->record({.key = *reuseKey,
+                               .value = *result.value,
+                               .steps = context.work->steps - stepsBefore,
+                               .depth = depth,
+                               .warnings = hir.diagnostics});
     return ConstexprEvaluation{.value = std::move(result.value),
                                .location = callSite};
+  }
   // Library internals are not the user's to fix: a failure executed inside a
   // compiler-trusted unit is reported at the evaluation site that required
   // it, with the library location kept as a note (the same policy as

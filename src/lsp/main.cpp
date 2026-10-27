@@ -84,11 +84,13 @@ unsigned analysisWorkerCountFromEnvironment() {
 // whole-program analysis of the final text, as clangd's update debounce does.
 // The wait is the document's median recent analysis time, bounded below so a
 // trivially cheap file still coalesces and above so a slow file is never
-// deferred for long. A semantic request waiting on the document ends the wait
+// deferred for long: a further edit cancels a running analysis of the same
+// document (`AnalysisRequest::cancellation`), so starting early wastes no
+// waiting. A semantic request waiting on the document ends the wait
 // immediately. `GTI_LSP_UPDATE_DEBOUNCE_MS` pins a fixed wait (0 disables it)
 // for benchmarks and tests.
 constexpr std::chrono::milliseconds minimumUpdateDebounce{50};
-constexpr std::chrono::milliseconds maximumUpdateDebounce{500};
+constexpr std::chrono::milliseconds maximumUpdateDebounce{150};
 constexpr std::size_t analysisDurationHistory = 8;
 
 // A raw-pointer audit of a published generation starts only after the document
@@ -1673,6 +1675,10 @@ struct AnalysisRequest {
   // not invalidate the dependants that already used its current text.
   std::unordered_map<std::string, std::uint64_t> documentGenerations;
   lang::lsp::FrontendSourceSnapshot frontendSources;
+  // Set when a newer edit supersedes this analysis while it runs; the
+  // frontend then stops at its next safe point and nothing is published.
+  std::shared_ptr<std::atomic<bool>> cancellation =
+      std::make_shared<std::atomic<bool>>(false);
 };
 
 struct CompletionRequest {
@@ -3234,6 +3240,7 @@ private:
     // the open file's declarations: library instances nothing in the file
     // reaches are the library's own `gti check` concern.
     frontendOptions.stopAfter = lang::FrontendPhase::Hir;
+    frontendOptions.cancellation = request.cancellation.get();
     frontendOptions.lowerEntryUnitOnly = true;
     // The LSP never reads HIR bodies: library-only instances (trusted
     // declarations with only trusted arguments) are analysed for their
@@ -3287,6 +3294,8 @@ private:
     frontend.hir = lang::HirProgram{};
     result.frontend =
         std::make_shared<const lang::FrontendResult>(std::move(frontend));
+    if (result.frontend->cancelled)
+      return result;
     const lang::FrontendResult &analysis = *result.frontend;
     for (const lang::SourceUnit &unit : analysis.sourceGraph.sourceUnits()) {
       const std::string loadedSource = unit.path.string();
@@ -3688,8 +3697,12 @@ private:
       case AnalysisTrigger::DocumentChanged:
       case AnalysisTrigger::DependencyChanged:
         // Each further edit restarts the wait, so a typing burst is analysed
-        // once, from its final text.
+        // once, from its final text, and stops a running analysis of the
+        // document, whose result would only be discarded.
         request.readyAt = now + updateDebounceLocked(request.uri);
+        if (const auto running = activeAnalysisCancellations.find(request.uri);
+            running != activeAnalysisCancellations.end())
+          running->second->store(true, std::memory_order_relaxed);
         break;
       case AnalysisTrigger::Opened:
       case AnalysisTrigger::ProjectChanged:
@@ -3720,6 +3733,7 @@ private:
           AnalysisRequest request = std::move(pending->second);
           pendingAnalyses.erase(pending);
           activeAnalysisUris.insert(request.uri);
+          activeAnalysisCancellations[request.uri] = request.cancellation;
           return request;
         };
     // A queued hover, definition, or similar request waits for its
@@ -3776,6 +3790,7 @@ private:
         if (stoppingAnalysis) {
           if (next) {
             activeAnalysisUris.erase(next->uri);
+            activeAnalysisCancellations.erase(next->uri);
           }
           return;
         }
@@ -3803,7 +3818,17 @@ private:
         guarded.status = GuardedAnalysisStatus::Failed;
         guarded.failure = "unknown exception during project resolution";
       }
-      switch (guarded.status) {
+      // A newer edit stopped this analysis: its partial result is dropped and
+      // the pending request for the newer text runs next.
+      const bool superseded =
+          guarded.status == GuardedAnalysisStatus::Completed &&
+          guarded.analysis->frontend != nullptr &&
+          guarded.analysis->frontend->cancelled;
+      if (superseded && frontendTracePath)
+        recordFrontendWork("cancelled", request.uri, request.generation,
+                           guarded.analysis->frontendElapsedMicroseconds,
+                           guarded.analysis->workMetrics);
+      switch (superseded ? GuardedAnalysisStatus::Failed : guarded.status) {
       case GuardedAnalysisStatus::Completed:
         if (frontendTracePath) {
           std::size_t retained = 0;
@@ -3831,6 +3856,8 @@ private:
         }
         break;
       case GuardedAnalysisStatus::Failed:
+        if (superseded)
+          break;
         std::cerr << "LSP analysis failed: " << guarded.failure << '\n';
         rejectPendingSemanticGeneration(request.uri, request.generation, -32603,
                                         "Internal error");
@@ -3846,12 +3873,18 @@ private:
       {
         const std::lock_guard lock(stateMutex);
         activeAnalysisUris.erase(request.uri);
-        std::deque<std::chrono::microseconds> &history =
-            analysisDurations[request.uri];
-        history.push_back(std::chrono::duration_cast<std::chrono::microseconds>(
-            SteadyClock::now() - analysisStart));
-        if (history.size() > analysisDurationHistory) {
-          history.pop_front();
+        activeAnalysisCancellations.erase(request.uri);
+        // A stopped analysis's partial duration says nothing about the
+        // document's cost.
+        if (!superseded) {
+          std::deque<std::chrono::microseconds> &history =
+              analysisDurations[request.uri];
+          history.push_back(
+              std::chrono::duration_cast<std::chrono::microseconds>(
+                  SteadyClock::now() - analysisStart));
+          if (history.size() > analysisDurationHistory) {
+            history.pop_front();
+          }
         }
         // One refresh per wave of dependency re-analyses, once the pool is
         // idle. Clients may answer a refresh by discarding and re-requesting
@@ -4548,6 +4581,14 @@ private:
          static_cast<std::int64_t>(metrics.semanticInstanceReuseStores)},
         {"instanceReuseMicroseconds",
          static_cast<std::int64_t>(metrics.semanticInstanceReuseMicroseconds)},
+        {"conceptProofReuses",
+         static_cast<std::int64_t>(metrics.semanticConceptProofReuses)},
+        {"conceptProofRecords",
+         static_cast<std::int64_t>(metrics.semanticConceptProofRecords)},
+        {"effectQueryReuses",
+         static_cast<std::int64_t>(metrics.semanticEffectQueryReuses)},
+        {"effectQueryRecords",
+         static_cast<std::int64_t>(metrics.semanticEffectQueryRecords)},
         {"semanticBorrowSummaryCandidateInspections",
          static_cast<std::int64_t>(
              metrics.semanticBorrowSummaryCandidateInspections)},
@@ -4731,6 +4772,9 @@ private:
   std::unordered_set<std::string> canceledRequests;
   // Documents whose analysis is running on a pool worker.
   std::unordered_set<std::string> activeAnalysisUris;
+  // The cancellation flag of each document's running analysis.
+  std::unordered_map<std::string, std::shared_ptr<std::atomic<bool>>>
+      activeAnalysisCancellations;
   std::size_t activeCompletions = 0;
   bool stoppingAnalysis = false;
   bool stoppingReclamation = false;

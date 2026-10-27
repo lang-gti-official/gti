@@ -9,6 +9,40 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.480.5 — Faster compile-time requirement policies
+
+- Evaluate each identical staged constant call once per compilation request and
+  replay its proved result, step charge and warnings elsewhere. Programs whose
+  iterator and range requirements are checked by reflection-based policies
+  compile and update in the editor several times faster (an ordered-search
+  fixture: 60 s to 15 s); results, limits and diagnostics are unchanged.
+
+## 0.480.4 — Faster editor finalization
+
+- `gti_lsp` analyses the initializer and storage effects of each
+  standard-library instance once per include graph instead of on every edit.
+  On an eight-include file the finalization of each edit drops from about
+  520 ms to about 70 ms, and a whole edit's analysis from about 0.85 s to
+  about 0.2 s. Diagnostics are unchanged; `gti check` and builds are not
+  affected.
+
+## 0.480.3 — Faster editor analysis with standard-library concepts
+
+- `gti_lsp` proves each standard-library concept for standard-library types
+  once per include graph instead of on every edit, so source-defined concepts
+  such as those behind `std::vector` and ranges no longer slow typing. On an
+  eight-include file the analysis of each edit's function bodies drops from
+  about 410 ms to about 30 ms. Diagnostics are unchanged; `gti check` and
+  builds are not affected.
+
+## 0.480.2 — Faster editor diagnostics after an edit
+
+- `gti_lsp` cancels a running analysis when a newer edit to the same document
+  arrives, and starts analysing sooner after typing pauses (at most 150 ms
+  instead of 500 ms). On an eight-include file an error now appears or clears
+  about 0.35 s sooner (about 1.05 s instead of 1.4 s on Apple silicon).
+  Diagnostics and every other result are unchanged.
+
 ## 0.480.1 — Lambda argument formatting
 
 - Keep lambda captures adjacent to opening call parentheses (`start([]()...)`)

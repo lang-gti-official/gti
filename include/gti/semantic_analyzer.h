@@ -2,6 +2,7 @@
 
 #include "gti/semantic_model.h"
 
+#include <atomic>
 #include <memory>
 
 namespace lang {
@@ -86,6 +87,10 @@ public:
   SemanticVisitor &operator=(SemanticVisitor &&) noexcept;
 
   bool check(const Program &program);
+  // Stops check(program) at its next safe point once `cancellation` is set;
+  // check then returns false and cancelled() reports why.
+  void setCancellation(const std::atomic<bool> *cancellation);
+  [[nodiscard]] bool cancelled() const;
   // Trusted prefix preamble (see SemanticPreambleCache). buildPreamble
   // analyses `prefix`, a program made of a larger program's leading
   // compiler-trusted units, completely and freezes this analyzer's state

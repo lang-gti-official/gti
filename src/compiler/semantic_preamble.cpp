@@ -84,6 +84,7 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   // Request-local budgets and query states are never shared with the
   // preamble or with another resumed analysis.
   requestSession.constexprWork.reset();
+  requestSession.stagedConstants = std::make_shared<StagedConstantResults>();
   requestSession.programConcreteEffects =
       std::make_shared<ProgramConcreteEffectState>(
           *source.requestSession.programConcreteEffects);
@@ -153,6 +154,7 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
   // The prefix's body phase declared its globals; only add what the rest of
   // the program registered.
   valueFlow.extendBody(catalog);
+  throwIfCancelled();
   if (workMetrics != nullptr) {
     workMetrics->semanticRegistrationMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
@@ -193,6 +195,7 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
             .count());
   }
 
+  throwIfCancelled();
   const auto finalizationStart = std::chrono::steady_clock::now();
   const std::unordered_set<const FunctionDecl *> functions(analyzed.begin(),
                                                            analyzed.end());
@@ -282,7 +285,7 @@ auto SemanticVisitor::Impl::reachPreambleBodies(
       diagnostics.push_back(diagnostic);
     }
   }
-  if (workMetrics != nullptr)
+  if (workMetrics != nullptr && countsPreambleReach)
     workMetrics->semanticPreambleReachedBodies += reached.size();
   return errors;
 }

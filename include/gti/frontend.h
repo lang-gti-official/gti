@@ -17,6 +17,7 @@
 #include "gti/source_graph.h"
 #include "gti/target.h"
 
+#include <atomic>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -55,6 +56,10 @@ struct FrontendOptions {
   // even when they intentionally do not require a hosted entry point.
   bool requireFunctionDefinitions = false;
   ProgressObserver *progress = nullptr;
+  // An editor's stop request for a superseded snapshot. Set by another
+  // thread; semantic analysis stops at its next safe point and the result
+  // reports `cancelled`. Caches receive only work completed before the stop.
+  const std::atomic<bool> *cancellation = nullptr;
   // Optional synchronous work accounting. The caller owns this object for the
   // complete Frontend invocation.
   FrontendWorkMetrics *workMetrics = nullptr;
@@ -113,6 +118,9 @@ struct FrontendOptions {
 };
 
 struct FrontendResult {
+  // `FrontendOptions::cancellation` stopped this analysis; nothing else in
+  // the result describes the program.
+  bool cancelled = false;
   std::optional<SyntaxCompletionContext> syntaxCompletion;
   Program program;
   SemanticModel semantics;
