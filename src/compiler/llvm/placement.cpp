@@ -44,14 +44,28 @@ bool isFreshObjectProducer(const MirProgram &program,
 bool isFreshHierarchyAggregate(const MirProgram &program,
                                const MirInstruction &producer) {
   if (producer.tombstone || !producer.result || producer.destination ||
-      producer.kind != MirInstructionKind::Compute ||
-      producer.operation != MirOperation::Aggregate || producer.receiver ||
-      producer.loan || producer.info.category != ValueCategory::Value ||
-      producer.info.type.kind != SemanticType::Array ||
-      producer.info.type.arguments.size() != 1 ||
-      producer.info.type.arrayLengthParameterId ||
-      producer.info.type.arrayLength != producer.operands.size())
+      producer.kind != MirInstructionKind::Compute || producer.receiver ||
+      producer.loan || producer.info.category != ValueCategory::Value)
     return false;
+  const auto &type = producer.info.type;
+  if (producer.operation == MirOperation::Aggregate) {
+    if (type.kind != SemanticType::Array || type.arguments.size() != 1 ||
+        type.arrayLengthParameterId ||
+        type.arrayLength != producer.operands.size())
+      return false;
+  } else if (producer.operation == MirOperation::PayloadConstruct) {
+    // One payload alternative aggregated from its exact fields.
+    const auto *payload = type.kind == SemanticType::Enum
+                              ? program.findPayloadEnum(type)
+                              : nullptr;
+    if (!payload || !producer.enumVariant ||
+        *producer.enumVariant >= payload->variants.size() ||
+        payload->variants[*producer.enumVariant].payloadTypes.size() !=
+            producer.operands.size())
+      return false;
+  } else {
+    return false;
+  }
   try {
     return containsHierarchyStorage(program, producer.info.type);
   } catch (const BackendUnsupportedError &) {
@@ -249,23 +263,32 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
            obligation.kind != MirDropObligationKind::ReturnResult))
         return {};
   const auto *target = placement.target(value);
-  if (target && target->aggregate && !target->variant) {
+  if (target && target->aggregate) {
     // An element constructed directly in its slot of a fresh hierarchy
-    // aggregate. Its one use is that slot's operand; the aggregate takes its
-    // value obligation, and itself publishes into final storage.
+    // aggregate: an array element or one field of a payload alternative. Its
+    // one use is that slot's operand; the aggregate takes its value
+    // obligation and is itself published in its own planned storage.
     const MirInstruction *outer = nullptr;
     for (const auto &block : body.blocks)
       for (const auto &stage : block.instructions)
         if (!stage.tombstone && stage.result == target->aggregate)
           outer = &stage;
-    if (!outer || !isFreshHierarchyAggregate(program, *outer) ||
-        target->element >= outer->operands.size() ||
+    const bool alternative =
+        outer && outer->operation == MirOperation::PayloadConstruct;
+    const SemanticType *slot = nullptr;
+    if (outer && isFreshHierarchyAggregate(program, *outer)) {
+      if (alternative && target->variant == outer->enumVariant)
+        slot = &program.findPayloadEnum(outer->info.type)
+                    ->variants[*outer->enumVariant]
+                    .payloadTypes[target->element];
+      else if (!alternative && !target->variant)
+        slot = &outer->info.type.arguments.front();
+    }
+    if (!slot || target->element >= outer->operands.size() ||
         outer->operands[target->element].kind != MirOperandKind::Value ||
         outer->operands[target->element].value != value ||
-        outer->info.type.arguments.front() != producer.info.type ||
-        !freshObjectStorage(program, address, body, placement, *outer) ||
-        *freshObjectStorage(program, address, body, placement, *outer) ==
-            FreshObjectStorage::Temporary)
+        *slot != producer.info.type ||
+        !freshObjectStorage(program, address, body, placement, *outer))
       return {};
     for (const auto &use : body.usesOf(value))
       if (use.kind != MirValueUseKind::PlaceRoot &&
@@ -286,7 +309,7 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
         return {};
     return FreshObjectStorage::Element;
   }
-  if (aggregate)
+  if (aggregate && target)
     return {};
   if (target && target->place && !target->aggregate && !target->returned) {
     // A by-value argument constructed directly in its prepared storage.
@@ -358,7 +381,7 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
       return {};
     returned = true;
   }
-  if (returned && replacing)
+  if ((returned && replacing) || (aggregate && returned))
     return {};
   if (returned) {
     if (!target || !target->returned || body.returnType != producer.info.type ||
@@ -374,8 +397,12 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
 }
 
 bool completeObjectPlace(const MirProgram &program, const MirPlace &place) {
-  if (place.type.kind != SemanticType::Class || place.capture ||
-      place.foreignStorage)
+  if (place.capture || place.foreignStorage)
+    return false;
+  // A payload enum has no derived type: every place of it is complete.
+  if (place.type.kind == SemanticType::Enum)
+    return program.findPayloadEnum(place.type) != nullptr;
+  if (place.type.kind != SemanticType::Class)
     return false;
   if (place.projections.empty() &&
       (place.root == MirPlaceRootKind::Binding ||
@@ -990,6 +1017,14 @@ public:
             // assignment then relocates it into the destination.
             result.publication = &stage;
             result.publishes = FreshHierarchyPublication::Replacement;
+          } else if (result.kind == ConstructorKind::Move &&
+                     isFreshHierarchyAggregate(program, stage) &&
+                     elementSlot(stage, index) == owner.type) {
+            // The moved object is relocated into its slot of a fresh array or
+            // payload alternative, which publishes into its own storage.
+            result.publication = &stage;
+            result.publishes = FreshHierarchyPublication::Element;
+            result.element = index;
           } else {
             unsupported("LLVM transfer requires one direct consumer");
           }
@@ -1122,6 +1157,20 @@ public:
             !droppedObligation(result.valueDrop, result.publication))
           unsupported("LLVM consumed receiver must keep its value obligation "
                       "until its drop");
+      } else if (result.publishes == FreshHierarchyPublication::Element) {
+        // The aggregate takes the moved value's obligation as its own.
+        if (result.valueDrop &&
+            std::none_of(result.publication->lifecycle.begin(),
+                         result.publication->lifecycle.end(),
+                         [&](const auto &event) {
+                           return event.kind ==
+                                      MirLifecycleEventKind::TransferOut &&
+                                  event.source == result.valueDrop &&
+                                  !event.target && !event.conditional &&
+                                  !event.failureCleanup;
+                         }))
+          unsupported("LLVM element transfer must hand its value obligation "
+                      "to its aggregate");
       } else if (result.publishes == FreshHierarchyPublication::Task) {
         if (result.valueDrop &&
             !spawnedObligation(result.valueDrop, result.publication))
@@ -1384,6 +1433,23 @@ private:
   }
   // A receiver input used exactly once, as the receiver of a direct or
   // virtual call to a consuming member of a class.
+  // The element type of one operand slot of a fresh hierarchy aggregate.
+  SemanticType elementSlot(const MirInstruction &aggregate,
+                           std::size_t index) const {
+    if (aggregate.operation == MirOperation::PayloadConstruct) {
+      const auto *payload = program.findPayloadEnum(aggregate.info.type);
+      return payload && aggregate.enumVariant &&
+                     *aggregate.enumVariant < payload->variants.size() &&
+                     index < payload->variants[*aggregate.enumVariant]
+                                 .payloadTypes.size()
+                 ? payload->variants[*aggregate.enumVariant]
+                       .payloadTypes[index]
+                 : SemanticType::Unknown;
+    }
+    return aggregate.info.type.arguments.size() == 1
+               ? aggregate.info.type.arguments.front()
+               : SemanticType::Unknown;
+  }
   bool consumingReceiver(MirValueId value) const {
     const MirInstruction *call = nullptr;
     for (const auto &use : body.usesOf(value)) {
@@ -1613,12 +1679,19 @@ Placement::Placement(const MirProgram &program, const MirBody &body) {
       hierarchyTransfers.insert(*stage.result);
       // Bind only the exact proven publication. Do not replay the generic
       // CallInput/aggregate/return scan after enabling hierarchy freshness.
-      // A slot construction relocates from the moved binding itself.
-      // A slot construction relocates from the moved binding itself, and a
+      // A slot construction relocates from the moved binding itself, a
       // consumed receiver, replacing value or spawned task lives in its own
-      // value storage.
+      // value storage, and an element lives in its aggregate's slot.
       if (transfer->publishes == FreshHierarchyPublication::Returned)
         bind(*stage.result, {.returned = true});
+      else if (transfer->publishes == FreshHierarchyPublication::Element)
+        bind(*stage.result,
+             {.aggregate = *transfer->publication->result,
+              .element = transfer->element,
+              .variant = transfer->publication->operation ==
+                                 MirOperation::PayloadConstruct
+                             ? transfer->publication->enumVariant
+                             : std::nullopt});
       else if (transfer->publishes != FreshHierarchyPublication::Slot &&
                transfer->publishes != FreshHierarchyPublication::Receiver &&
                transfer->publishes != FreshHierarchyPublication::Replacement &&
@@ -1631,9 +1704,16 @@ void Placement::collect(const MirProgram *program, const MirBody &body) {
   const auto storesAddress = [&](const SemanticType &type) {
     return program ? addressValue(*program, type) : addressValue(type);
   };
+  // A payload construction always produces a payload enum, which lives in
+  // memory, even where no program classifies the enum type.
+  const auto payloadAggregate = [](const MirInstruction &stage) {
+    return stage.kind == MirInstructionKind::Compute &&
+           stage.operation == MirOperation::PayloadConstruct;
+  };
   for (const auto &block : body.blocks)
     for (const auto &stage : block.instructions)
-      if (!stage.tombstone && stage.result && storesAddress(stage.info.type)) {
+      if (!stage.tombstone && stage.result &&
+          (storesAddress(stage.info.type) || payloadAggregate(stage))) {
         const bool hierarchyTransport =
             program &&
             (stage.kind == MirInstructionKind::Load ||
@@ -1653,7 +1733,11 @@ void Placement::collect(const MirProgram *program, const MirBody &body) {
           stage.destination && stage.operands.size() == 1 &&
           stage.operands[0].kind == MirOperandKind::Value) {
         const auto *place = body.findPlace(*stage.destination);
-        if (place && storesAddress(place->type) &&
+        const auto producer = producers.find(stage.operands[0].value);
+        if (place &&
+            (storesAddress(place->type) ||
+             (producer != producers.end() &&
+              payloadAggregate(*producer->second))) &&
             place->type == stage.operands[0].type)
           bind(stage.operands[0].value, {.place = *stage.destination});
       }

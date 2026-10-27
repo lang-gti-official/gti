@@ -4946,6 +4946,20 @@ constructor, physical destination and current shared ABI; a failed base never
 installs derived state. MIR retains all base/subobject rollback publication and
 ordering. Unstaged polymorphic source constructors remain unsupported.
 
+MIR leaves a base initializer unstaged when it cannot yet express the base
+call, for example when an argument owns cleanup: a moved string, vector, unique
+owner or a class with a destructor. Such a constructor body evaluates the
+arguments and hands their obligations on, but contains no `InitializeBase`,
+because only a backend that builds the base from the constructor record would
+run the base constructor. LLVM never builds a base from the record, so
+`UnstagedBaseInitializer` refuses any constructor with a class-base initializer
+that has no `InitializeBase` in its body. Stateless interface bases are exempt.
+The polymorphic form is refused earlier, at the derived object's construction,
+because its dispatch state stays unrepresented with the base. Until
+2026-10-27 LLVM lowered the non-polymorphic form without its base and read an
+unconstructed base. The correct lowering is for MIR to stage owned base
+arguments through the prepared-input protocol that calls already use.
+
 An exact generated ordinary default with no source schedule can initialize
 fresh metadata-only class/struct storage directly: no declared fields or
 state-bearing bases, only verified interface subobjects, and no foreign layout,
@@ -5072,7 +5086,8 @@ these destinations:
   receiver;
 - an inline polymorphic slot (`NativeInlinePolymorphicSlot`);
 - the caller's return destination;
-- a constructor field, through its exact field initializer.
+- a constructor field, through its exact field initializer;
+- its slot in a fresh array or payload alternative that is itself published.
 
 `NativeConsumingHierarchyReceiver` admits several consuming-call receivers: a
 moved binding relocated into its own value storage, a retained owned field
@@ -5097,6 +5112,18 @@ into the final storage, nested arrays included. Elements are complete objects
 selected through checked index projections. Cleanup runs each element's
 complete cleanup in reverse order. Whole-array copies and by-value array
 transport stay `PolymorphicTransfer`.
+
+`NativeHierarchyPayload` admits payload enums that hold hierarchy storage,
+such as `std::optional` of an erased callable. Each payload field of an
+alternative is published directly in its slot: either a fresh construction or
+by-value result, or a moved object relocated there. The payload construction
+itself publishes into a whole local, a class field or, as a replacing value,
+its own storage. Borrows of the enum select it, and its checked borrowing
+extractions select payloads as complete objects. Cleanup runs the active
+alternative's field cleanup. Every payload enum place is a complete object, so
+assigning a new alternative ends the old one exactly once and relocates the
+fresh value. Enum copies and payload values returned by value stay
+`PolymorphicTransfer`.
 
 `NativeProgramHierarchyStorage` admits a hierarchy object in namespace or
 static-field storage that its program initialization step constructs in
@@ -5160,9 +5187,9 @@ constructor rollback and owner-selected complete cleanup.
 MIR owns the transition. Every source destructor of a polymorphic class
 carries `MirDestructorDispatchState{activeClass}`, with the active class set to
 the destructor's own class. The verifier requires that record exactly for
-those destructors, and the serialization is `mir-v117`. The LLVM cleanup
-recipe installs the recorded class at each class step that still has
-observable work; it never selects a destructor's phase itself.
+those destructors; the record entered the serialization at `mir-v117`. The
+LLVM cleanup recipe installs the recorded class at each class step that
+still has observable work; it never selects a destructor's phase itself.
 `NativeLifecycleDispatch` witnesses each `DestructorDispatchObservation`
 under that record. Only a destructor without the record would stay gated. An
 abstract phase that selects a pure member stays `PureDispatchState`.

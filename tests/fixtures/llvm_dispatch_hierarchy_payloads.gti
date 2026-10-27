@@ -1,0 +1,107 @@
+// Payload enums holding hierarchy storage. Each payload field of an
+// alternative is a fresh object constructed directly in its slot, or a moved
+// object relocated there; a borrowed switch binding selects it as a complete
+// object; the enum's cleanup runs the active alternative's complete cleanup;
+// and assigning a new alternative ends the old one exactly once, then
+// relocates the fresh value with its own dispatch state. Destructors record
+// explicit IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Named { int code(); };
+
+interface Shape { int area(); };
+
+// Named precedes Shape, so the Shape view has a nonzero offset.
+class Square : public Named, public Shape {
+  int side;
+public:
+  Square(int side) : side(side) {}
+  ~Square() { record(this.side); }
+  int code() override { return this.side + 10; }
+  int area() override { return this.side * this.side; }
+};
+
+Square make(int side) { return Square(12 / side); }
+
+enum Slot {
+  empty,
+  held(Square value),
+  pair(Square left, Square right),
+};
+
+int measure(Slot& slot) {
+  switch (slot) {
+  case Slot::held(auto& value): return value.area();
+  case Slot::pair(auto& left, auto& right): return left.area() + right.area();
+  case Slot::empty: return 0;
+  }
+}
+
+int code_of(Slot& slot) {
+  switch (slot) {
+  case Slot::held(auto& value): {
+    Named& named = value;
+    return named.code();
+  }
+  case Slot::pair(auto& left, auto& right): return left.code();
+  case Slot::empty: return 0;
+  }
+}
+
+// A user-defined owner of one slot, replaced in place.
+class Holder {
+  mut Slot slot = Slot::empty;
+public:
+  Holder() {}
+  void hold(int side) mut { this.slot = Slot::held(Square(side)); }
+  void adopt(Square value) mut { this.slot = Slot::held(std::move(value)); }
+  void clear() mut { this.slot = Slot::empty; }
+  int area() { return measure(this.slot); }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// PAYLOADS_MAIN
+int main() {
+  {
+    Slot slot = Slot::held(Square(2));
+    if (measure(slot) != 4 || code_of(slot) != 12) { return 1; }
+  }
+  if (events != 2) { return 2; }
+  events = 0;
+  {
+    Slot both = Slot::pair(Square(3), make(3));
+    if (measure(both) != 25 || code_of(both) != 13) { return 3; }
+  }
+  if (events != 43) { return 4; }
+  events = 0;
+  {
+    mut Holder holder{};
+    holder.hold(5);
+    holder.hold(6);
+    if (holder.area() != 36 || events != 5) { return 5; }
+    holder.clear();
+    if (holder.area() != 0 || events != 56) { return 6; }
+    holder.adopt(Square(7));
+    if (holder.area() != 49 || events != 56) { return 7; }
+  }
+  if (events != 567) { return 8; }
+  events = 0;
+  {
+    Square moved = Square(8);
+    Slot adopted = Slot::held(std::move(moved));
+    if (measure(adopted) != 64 || events != 0) { return 9; }
+  }
+  return events == 8 ? 0 : 10;
+}

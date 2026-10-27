@@ -11,6 +11,12 @@ for what minor and patch releases mean.
 
 ## 0.484.0 - Native LLVM correctness and broader language coverage
 
+- Fix silently wrong native code for a derived constructor that passes an
+  owned value, such as a moved `std::string`, `std::vector`,
+  `std::unique_ptr` or class with a destructor, to its base constructor
+  (`Derived(std::string t) : Base(std::move(t))`). The base was never
+  constructed, so reading it printed garbage or crashed. The native backend
+  now rejects such constructors with GTI-B0003 until it can run them.
 - Fix a native `switch` carrying a `default` branching to the wrong block. The
   default was treated as absent, so a value matching no case fell through to
   the following block. `std::format` selects a decimal digit through such a
@@ -111,15 +117,15 @@ for what minor and patch releases mean.
   - `std::function`, `std::move_only_function` and other erased callables
     held in `std::inline_polymorphic`;
   - polymorphic objects passed and returned by value, assigned as whole
-    objects, held in fixed arrays, and declared as globals or static fields.
+    objects, held in fixed arrays or in payload enums such as
+    `std::optional`, and declared as globals or static fields.
 
   A destructor that calls a virtual method on its own object now runs the
   destructor's own class's override; it never reaches a derived part that is
   already destroyed. The C++ backend still calls the most-derived override
-  there, which is a known C++ backend defect. Payload enums such as
-  `std::optional` holding polymorphic values, including a polymorphic thread
-  result returned through `std::expected`, remain rejected on the native
-  backend. C++ remains the production default.
+  there, which is a known C++ backend defect. A polymorphic thread result
+  returned through `std::expected` remains rejected on the native backend.
+  C++ remains the production default.
 
 ## 0.480.1 — Lambda argument formatting
 

@@ -722,9 +722,9 @@ int main() {
       issues);
   require(pending && !planLlvmAdmission(*pending).admitted(),
           "primitive pointee does not admit an unsupported owner layout");
-  // A referent whose layout native lowering does not represent: a payload
-  // enum holding a polymorphic object. Move this control to another
-  // unsupported layout as LLVM coverage grows.
+  // A referent whose hierarchy storage native lowering does not yet admit:
+  // its payload enum field is initialized from a payload returned by value.
+  // Move this control to another unsupported referent as LLVM coverage grows.
   const auto unsupportedReferent =
       analyze("unsupported-referent-layout.gti", R"(
 #include <std/memory>
@@ -736,9 +736,10 @@ public:
   int area() override { return this.side; }
 };
 enum Slot { empty, held(Square value) };
+Slot fill() { return Slot::held(Square(3)); }
 struct Referent {
   int value = 7;
-  Slot slot = Slot::empty;
+  Slot slot = fill();
 };
 struct Owner { int marker = 11; };
 int main() {
@@ -755,7 +756,7 @@ int main() {
                              unsupportedReferent.mir),
       issues);
   require(pendingReferent && !planLlvmAdmission(*pendingReferent).admitted(),
-          "ordinary witness does not admit an unsupported referent layout");
+          "ordinary witness does not admit an unsupported referent");
 }
 
 void classOwnerTextContract(const std::filesystem::path &repository) {

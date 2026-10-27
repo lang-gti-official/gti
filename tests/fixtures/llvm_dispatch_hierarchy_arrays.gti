@@ -91,6 +91,15 @@ int main() {
     }
     if (events != 34) { return 7; }
     events = 0;
+    {
+      // Moved elements are relocated into their slots.
+      Square first = Square(1);
+      Square second = Square(2);
+      Square moved[2] = {std::move(first), std::move(second)};
+      if (measure(moved[1]) != 4 || events != 0) { return 9; }
+    }
+    if (events != 21) { return 10; }
+    events = 0;
   }
   return events == 7654321 ? 0 : 8;
 }

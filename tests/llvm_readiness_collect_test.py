@@ -257,12 +257,10 @@ def main() -> None:
                       not native_result["campaign_promotion_ready"],
                       "supported native import did not retain admission-only evidence")
         # Base-view replacement stays refused; move this control to another
-        # refused construct as LLVM coverage grows. Explicit constructors keep
-        # the probe clear of an unrelated source-debug lowering defect in
-        # generated derived default constructors.
+        # refused construct as LLVM coverage grows.
         unsupported = member(
-            "unsupported", "class Owner { public: Owner() {} virtual int read() { return 0; } };\n"
-            "class Derived : public Owner { public: Derived() : Owner() {} };\n"
+            "unsupported", "class Owner { public: virtual int read() { return 0; } };\n"
+            "class Derived : public Owner {};\n"
             "unsafe int create(mut Owner& value, Owner& other) { value = other; return 0; }\n"
             "int main() { mut Derived first{}; Derived second{}; "
             "unsafe { return create(first, second); } }\n", [single])
