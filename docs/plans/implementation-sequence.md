@@ -11850,6 +11850,103 @@ integration prerequisites.
   introduced. Removing C++ or resuming its feature development after v1.0
   requires a separate owner decision; neither is automatic at promotion.
 
+#### Consolidated Candidate Status (2026-10-27)
+
+The four parallel campaign branches `codex/llvm-production-{integration,
+native,debug,threading}` are consolidated on `codex/llvm-production-completion`
+with no work dropped. They had never been built as a set: one test passed a
+trailing argument that predated `LoweredProgramVerifiedInputs` replacing
+`captureSourceLocations`, so the combined tree did not compile and no worker
+had seen the integrated result.
+
+**Acceptance measure.** The owner's exit condition is that every GTI program
+the C++ backend compiles must compile and behave identically on LLVM, with no
+change to GTI semantics. Measured per shipped example by compiling on both
+backends and comparing exit status, stdout and stderr at native O0 and O3:
+
+| | examples |
+| --- | --- |
+| match the C++ backend at O0 and O3 | 161 |
+| still refused or wrong | 18 |
+| LLVM-only, which C++ cannot compile, so outside the condition | 5 |
+
+At consolidation the same measure read 133 match and 46 failing, one of them a
+silent wrong answer. There are now no observable mismatches: every remaining
+failure is a refusal, a compiler internal failure or one hang.
+
+75 of the 77 registered `llvm_*` gates pass. `llvm_atomic_execution` and
+`llvm_placement_execution` fail, and both fail identically at the
+consolidation commit, so neither is caused by the consolidation work.
+
+**Two defects found by this measure, not by any gate.**
+
+A `switch` carrying a `default` branched to the wrong block. A Switch
+terminator keeps its cases in `switchTargets` and its default in `target`, as
+the C++ emitter reads it, but native lowering searched the case list for a
+valueless entry that MIR never emits, concluded the switch was exhaustive and
+installed an unreachable fallback; at O0 control then fell through to the
+following block. `std::format` picks a decimal digit through such a switch, so
+every digit 9 printed as 8 and any program whose output contained a 9 was
+silently wrong. Fixed, with a registered `switch-default` execution case.
+
+A negative enumerator crossing a function argument is answered wrongly at O1
+and above, while O0 and the C++ backend are correct. It needs no stdlib, no
+formatting and no switch, and it predates this campaign. Not yet fixed; the
+reduction and the ruled-out causes are recorded with the remaining work below.
+This is a promotion blocker independent of the unimplemented milestones.
+
+#### Remaining Executable Gaps (2026-10-27)
+
+Grouped by what actually blocks each, not by the reported kind. Several
+examples report the same kind for different reasons, so the kind alone does
+not size the work.
+
+| blocker | examples | nature |
+| --- | --- | --- |
+| O-LLVM-10 public polymorphic-storage admission | 086, 135 | milestone; `nativeValue` refuses any capability-bearing type, and the inline slot's public admission waits on boxed-owner dynamic cleanup |
+| O-LLVM-10 polymorphic transfer and virtual-call shapes | 071, 025 | milestone |
+| O-LLVM-07/10 hierarchy containment on a receiver stage | 149 | milestone; the receiver's type merely contains hierarchy storage |
+| O-LLVM-13 thread-handle construction | 066, 076, 175 | milestone; the handle's own construction is outside admission |
+| O-LLVM-08 `RestoringSwap` | 103, 104 | no emission exists; needs a layout-width three-step exchange honouring both restored loans |
+| element and pointee eligibility | 127, 129, 142 | admission only; the emitters are element-agnostic. `ArraySize`/`ArrayRangeBegin` return constants yet demand a passive element; a payload-enum pointee and an array of sealed integral enums have implemented shapes that the eligibility predicates do not reach |
+| unsafe receiver on a `Call` stage | 121 | admission only; a receiver-role `Call` with a mutable-temporary-borrow input kind and no call target |
+| remaining field projection | 042 | admission only; progressed from the earlier reference-adjustment refusal |
+| undetermined | 143, 144, 166 | 143 refuses a `Construct` although `nativeValue` accepts its type; 144 fails an internal `vector` length check during representation generation; 166 compiles and then never terminates, with a correctly lowered reverse-destroy loop reading an implausible count |
+
+**Negative enumerator across an argument (O1 and above).** Reduced to five
+lines with no stdlib, no formatting, no switch and no ownership:
+
+```gti
+enum class E : int32_t { a = -5, b = 1000 };
+int32_t f(E v) { if (v == E::a) { return 1; } return 2; }
+int main() { if (f(E::a) != 1) { return 10; } if (f(E::b) != 2) { return 20; } return 0; }
+```
+
+Native O0 exits 0; O1, O2 and O3 exit 20 because `f(E::b)` takes the
+`v == E::a` branch. The C++ backend is correct at O3. The defect needs all
+three of a negative enumerator, the enum crossing an argument boundary, and
+the optimizer: the same shape with both enumerators positive, with a
+`uint8_t` underlying type, compared in `main` without a call, or with a plain
+`int32_t` parameter is correct at every level.
+
+Ruled out: both enumerators materialize correctly in `Scalars::constant`;
+`Scalars::domain` returns the sealed underlying type so the compare is a
+signed `i32` compare; `layouts().get` delegates an enum to that integer; the
+private call ABI sets no extension attribute and the native-C `extension()`
+only widens 8/16-bit C scalars and is not on this path; and the module passes
+LLVM verification before and after optimization. The optimizer is therefore
+acting on a promise the emitter makes rather than on malformed IR. Next step
+is to compare the emitted `f` at O0 against O1 for the argument's stored width
+and any range metadata on the parameter or the compare.
+
+**Not on this path.** The C04 failure-transport comparison recommends native
+unwinding as a proposal to the ABI owner and states that production keeps
+status transport until a reviewed migration. Promotion does not require it.
+
+**Cannot be closed here.** O-LLVM-16 requires ten gates on four targets, two
+of them Linux x86_64. Linux evidence needs the managed runners; nothing in
+this candidate claims it.
+
 #### LLVM Campaign Waves And Validation
 
 ##### Current Milestone Ownership
