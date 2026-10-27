@@ -194,6 +194,53 @@ hirInitializerReachability(const HirBody &body,
 
 namespace {
 
+// Substitution leaves a computed type projection such as
+// std::meta::callable_return_type<F> applied to its now-concrete subject,
+// which semantic instantiation reduces to the subject's declared result.
+// Apply that same reduction before comparing a substituted selection with a
+// concrete instance type.
+// Semantic analysis selects a generic class family member, such as a partial
+// specialization, by matching patterns against the argument list. The
+// verifier cannot repeat that selection, but it is a function of the family
+// and the arguments: an instance of the same family with exactly these
+// arguments is the selected class.
+bool sameFamilySelection(const SemanticType &selected,
+                         const SemanticType &instance,
+                         const SemanticModel &semantics) {
+  if (selected == instance)
+    return true;
+  if (selected.kind != SemanticType::Class ||
+      instance.kind != SemanticType::Class)
+    return false;
+  const auto family = [&](ClassId id) {
+    const auto *info = semantics.findClassType(id);
+    return info != nullptr && info->definitionFamilyPrimary != 0
+               ? info->definitionFamilyPrimary
+               : id;
+  };
+  auto member = selected;
+  member.classId = instance.classId;
+  return family(selected.classId) == family(instance.classId) &&
+         member == instance;
+}
+
+SemanticType reduceComputedTypeProjections(SemanticType type,
+                                           const SemanticModel &semantics) {
+  for (auto &argument : type.arguments)
+    argument = reduceComputedTypeProjections(std::move(argument), semantics);
+  if (type.kind != SemanticType::Class || type.arguments.size() != 1 ||
+      !type.valueArguments.empty())
+    return type;
+  const auto *info = semantics.findClassType(type.classId);
+  if (info == nullptr ||
+      info->computedTypeProjection != ComputedTypeProjectionKind::CallableReturn)
+    return type;
+  // The result names a subobject of type; copy it before returning.
+  if (const auto *result = type.arguments.front().callableReturnType())
+    return SemanticType(*result);
+  return type;
+}
+
 template <typename Nodes, typename Ids>
 [[nodiscard]] bool exactInventory(const Nodes &nodes, const Ids &ids) {
   return nodes.size() == ids.size() &&
@@ -1598,7 +1645,19 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       if (value.kind != HirValueKind::Lambda || !value.lambdaTarget)
         continue;
       const auto *lambda = program.findLambda(*value.lambdaTarget);
-      if (!lambda || lambda->source != exprAs<Lambda>(value.source) ||
+      // Macro forcing can expand one written lambda into several expression
+      // nodes that share its semantic identity and therefore one HIR lambda;
+      // the creator is exact when both name that same semantic lambda.
+      const auto *written = exprAs<Lambda>(value.source);
+      const auto sameLambda = [&](const Lambda *creator) {
+        if (creator == written)
+          return creator != nullptr;
+        const auto *selected = written ? semantics.findLambda(*written) : nullptr;
+        const auto *source = creator ? semantics.findLambda(*creator) : nullptr;
+        return selected != nullptr && source != nullptr &&
+               selected->id == source->id;
+      };
+      if (!lambda || !sameLambda(lambda->source) ||
           lambda->type != value.info.type) {
         result.errors.emplace_back(
             "construction context has no exact lambda creator");
@@ -1706,8 +1765,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                      : nullptr;
       const SemanticType selectedType =
           construction != nullptr
-              ? substituteSemanticType(construction->constructedType,
-                                       substitution, &semantics)
+              ? semantics.resolveExactClassSpecialization(
+                    reduceComputedTypeProjections(
+                        substituteSemanticType(construction->constructedType,
+                                               substitution, &semantics),
+                        semantics))
               : SemanticType::Unknown;
       const auto *type = construction != nullptr &&
                                  construction->generatedDefault &&
@@ -1734,7 +1796,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         }
         const bool exactOwner = owner != nullptr && unique &&
                                 !containsUnresolvedGeneric(selectedType) &&
-                                owner->type == selectedType;
+                                sameFamilySelection(selectedType, owner->type,
+                                                    semantics);
         if (!exactOwner ||
             owner->defaultConstructor != SpecialMemberStatus::Generated ||
             owner->generatedDefaultRequiresSchedule ||

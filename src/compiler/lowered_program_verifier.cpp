@@ -21,6 +21,21 @@
 namespace lang {
 namespace {
 
+// A lowered dispatch selection names exactly the MIR selection's instances.
+template <typename Mir>
+bool sameVirtualDispatch(const std::vector<LoweredVirtualDispatch> &lowered,
+                         const std::vector<Mir> &mir) {
+  return std::equal(lowered.begin(), lowered.end(), mir.begin(), mir.end(),
+                    [](const auto &left, const auto &right) {
+                      return left.root == right.root &&
+                             left.target == right.target &&
+                             left.rootOwner == right.rootOwner &&
+                             left.targetOwner == right.targetOwner &&
+                             left.rootPath == right.rootPath &&
+                             left.targetPath == right.targetPath;
+                    });
+}
+
 [[nodiscard]] bool lifecycleContainsClosure(const SemanticType &type) {
   return type.kind == SemanticType::Lambda ||
          std::any_of(type.arguments.begin(), type.arguments.end(),
@@ -1360,7 +1375,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         instance.declaration != mir.declaration ||
         instance.typeArguments != mir.type.arguments ||
         instance.valueArguments != mir.type.valueArguments ||
-        instance.virtualDispatch != mir.virtualDispatch ||
+        !sameVirtualDispatch(instance.virtualDispatch, mir.virtualDispatch) ||
         !resolvedTypes(instance.typeArguments) ||
         !resolvedValues(instance.valueArguments) ||
         !classDeclarations.contains(instance.declaration)) {

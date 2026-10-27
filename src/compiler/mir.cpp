@@ -7682,8 +7682,11 @@ movedValueIntoInstruction(const MirBody &body, const MirOperand &operand,
   const bool exactConstruction =
       producer != nullptr && producer->kind == MirInstructionKind::Construct &&
       producer->constructorTarget.has_value();
+  // A generated default with no selected schedule is a target-less
+  // construction; the shared recognizer owns that representation.
   const bool exactDefaultConstruction =
-      producer != nullptr && producer->kind == MirInstructionKind::Call &&
+      producer != nullptr &&
+      mir_detail::generatedDefaultConstruction(*producer) &&
       producer->result.has_value() &&
       producer->info.type.kind == SemanticType::Class &&
       producer->info.category == ValueCategory::Value && !producer->receiver &&

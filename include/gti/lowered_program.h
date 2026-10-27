@@ -561,13 +561,28 @@ struct LoweredSymbol {
                          const LoweredSymbol &) = default;
 };
 
+// Concrete dispatch selection of one virtual slot. Paths contain successive
+// direct base instances, excluding the complete owner; an empty path selects
+// that owner. No native offsets or physical call convention belong here.
+struct LoweredVirtualDispatch {
+  LoweredFunctionInstanceId root = 0;
+  LoweredFunctionInstanceId target = 0;
+  LoweredClassInstanceId rootOwner = 0;
+  LoweredClassInstanceId targetOwner = 0;
+  std::vector<LoweredClassInstanceId> rootPath;
+  std::vector<LoweredClassInstanceId> targetPath;
+
+  friend bool operator==(const LoweredVirtualDispatch &,
+                         const LoweredVirtualDispatch &) = default;
+};
+
 struct LoweredClassInstance {
   LoweredClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
-  std::vector<HirVirtualDispatch> virtualDispatch;
+  std::vector<LoweredVirtualDispatch> virtualDispatch;
   SourceSpan source;
 
   friend bool operator==(const LoweredClassInstance &,

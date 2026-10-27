@@ -28,6 +28,22 @@
 namespace lang {
 namespace {
 
+// The lowered contract carries dispatch selections in its own identities,
+// which number instances exactly as HIR does.
+std::vector<LoweredVirtualDispatch>
+loweredVirtualDispatch(const std::vector<HirVirtualDispatch> &selections) {
+  std::vector<LoweredVirtualDispatch> result;
+  result.reserve(selections.size());
+  for (const auto &selection : selections)
+    result.push_back({.root = selection.root,
+                      .target = selection.target,
+                      .rootOwner = selection.rootOwner,
+                      .targetOwner = selection.targetOwner,
+                      .rootPath = selection.rootPath,
+                      .targetPath = selection.targetPath});
+  return result;
+}
+
 using lowered_detail::addIssue;
 using lowered_detail::bodyRole;
 using lowered_detail::constructionSeal;
@@ -2002,7 +2018,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .declaration = instance.declaration,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
-         .virtualDispatch = instance.virtualDispatch,
+         .virtualDispatch = loweredVirtualDispatch(instance.virtualDispatch),
          .source = instance.source == nullptr
                        ? SourceSpan{}
                        : tokenSpan(instance.source->name())});

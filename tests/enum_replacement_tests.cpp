@@ -35,9 +35,11 @@ void checkReplacementProof() {
   expect(!gti_test::emitCppText(frontend, lang::CppStandard::Cpp23, target)
               .empty(),
          "checked replacement has complete native representation");
-  // Generated movement into empty storage is not permission to relocate an
-  // object. Exercise the exact operation query independently of SSA/body
-  // rejection, so an unrelated malformed operand cannot hide this boundary.
+  // A mutex relocates structurally when its payload does: relocation builds a
+  // fresh native mutex and transfers the payload, never copying native
+  // identity bytes. A locked mutex is borrowed by its lock token, so it cannot
+  // be relocated while held. Exercise the exact operation query independently
+  // of SSA/body rejection, so an unrelated malformed operand cannot hide it.
   const auto relocation = [](const lang::SemanticType &type) {
     const auto pointer = lang::SemanticType::rawPointerTo(type);
     lang::MirInstruction result;
@@ -58,17 +60,17 @@ void checkReplacementProof() {
   expect(lang::mir_detail::objectRelocate(
              frontend.mir, relocation(lang::SemanticType::Int32)),
          "exact single-object relocation control is accepted");
-  std::size_t nonrelocatable = 0;
-  const auto checkNonrelocatable = [&](const lang::SemanticType &type) {
-    ++nonrelocatable;
+  std::size_t structural = 0;
+  const auto checkStructural = [&](const lang::SemanticType &type) {
+    ++structural;
     expect(lang::mirTypeRelocationIsDefinedFailureFree(frontend.mir, type),
-           "nonrelocatable owner still has failure-free generated movement");
+           "mutex-bearing owner has failure-free generated movement");
     expect(lang::mirTypeRelocationKind(frontend.mir, type) ==
-               lang::RelocationKind::Unavailable,
-           "movement does not acquire relocation eligibility");
-    expect(!lang::mir_detail::objectRelocate(frontend.mir, relocation(type)),
-           "single-object relocation rejects nonrelocatable owners even when "
-           "their movement is failure-free");
+               lang::RelocationKind::Structural,
+           "a mutex and its owners relocate structurally, never bitwise");
+    expect(lang::mir_detail::objectRelocate(frontend.mir, relocation(type)),
+           "single-object relocation accepts a structurally relocatable "
+           "mutex owner");
   };
   for (const auto &instance : frontend.hir.classInstances()) {
     if (!instance.source ||
@@ -78,15 +80,15 @@ void checkReplacementProof() {
     const auto *owner = frontend.mir.findClassInstance(instance.id);
     expect(owner != nullptr, "public mutex and wrapper retain MIR identities");
     if (owner)
-      checkNonrelocatable(owner->type);
+      checkStructural(owner->type);
   }
   for (const auto &enumeration : frontend.mir.payloadEnums())
     if (enumeration.traits.moveAssignable &&
-        lang::mirTypeRelocationKind(frontend.mir, enumeration.type) ==
-            lang::RelocationKind::Unavailable)
-      checkNonrelocatable(enumeration.type);
-  expect(nonrelocatable >= 3,
-         "relocation boundary covers public mutex, wrapper and replacing enum");
+        lang::mirTypeRelocationKind(frontend.mir, enumeration.type) !=
+            lang::RelocationKind::Bitwise)
+      checkStructural(enumeration.type);
+  expect(structural >= 3,
+         "relocation policy covers public mutex, wrapper and replacing enum");
   const lang::CppMirBodyEmissionMap map(
       buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23, target));
   std::size_t checked = 0;
