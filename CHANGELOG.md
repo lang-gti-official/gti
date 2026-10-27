@@ -48,7 +48,8 @@ for what minor and patch releases mean.
   use, as an equivalent class does, rather than until the lambda is destroyed.
   Such lambdas previously failed with an internal compiler error. A lambda
   that moves in a value whose own destructor uses a borrow still keeps that
-  borrow until it is destroyed.
+  borrow until it is destroyed, and now compiles on both backends instead of
+  failing with an internal compiler error.
 - Fix internal compiler errors on both backends when a value that borrows
   and has a destructor is returned by a method called through a by-reference
   lambda capture (for example locking a captured `std::mutex`), when a mutex

@@ -370,7 +370,7 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v117`/`mir-body-v93`,
+The combined deterministic serialization is currently `mir-v118`/`mir-body-v93`,
 with `lowered-program-v27` declaration metadata. These distinct combined
 identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
@@ -4243,9 +4243,17 @@ Semantics decides structurally whether a closure is a cleanup-bound carrier
 (owner decision 2026-10-27): its environment is an aggregate of its captures,
 so moving in an owner with a destructor beside a borrowing capture leaves an
 ordinary loan that ends at the closure's last use. Only a capture that is
-itself cleanup-bound makes the closure bound. MIR's cleanup-bound carriers are
-still classes, so a closure bound that way, by moving in a guard that reads its
-reference on destruction, is not yet lowered.
+itself cleanup-bound makes the closure bound. Each lambda instance records
+that decision (`lifecycleBoundBorrowCarrier`, `mir-v118`); program
+verification re-derives it from the captures, as it does for a class from its
+fields. A closure formation that moves such a carrier in produces the
+closure's lifecycle-bound `Stored` loan. That loan follows the closure's
+obligation through moves and by-value parameters, and ends only after the
+closure's drop or a complete handoff, under the same rules as a class
+carrier's. Inside the lambda body a by-value capture belongs to the closure
+environment, which owns any release obligation it contains, as a caller owns
+a method's receiver; the capture's stored entry is therefore not
+cleanup-bound there, so the body is not bound by a destructor it never runs.
 
 A body-local reference may share an existing semantic owner identity while
 capturing an accessor's different runtime referent. Lowering accepts that

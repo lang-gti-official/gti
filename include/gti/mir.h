@@ -1655,6 +1655,9 @@ struct MirLambdaInstance {
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::vector<SymbolId> captureSymbols;
   std::vector<bool> captureRequiresActiveCleanup;
+  // Semantics' decision that this environment is a cleanup-bound borrow
+  // carrier: a capture is one, so a loan it carries ends only at its drop.
+  bool lifecycleBoundBorrowCarrier = false;
   // A reference result's owner contract: the parameter whose entry loan the
   // escaping Return loan must reach. Captures never own a result.
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;

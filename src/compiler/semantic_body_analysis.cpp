@@ -10131,9 +10131,20 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     if (carrier == nullptr)
       continue;
     if (!isBorrowingCapture(capture.mode)) {
-      if (isDirectStoredReferenceType(capture.type))
-        recordStoredEntryDependency(*carrier, capture.bindingSymbol,
-                                    capture.type, false);
+      if (!isDirectStoredReferenceType(capture.type))
+        continue;
+      const auto id = recordStoredEntryDependency(
+          *carrier, capture.bindingSymbol, capture.type, false);
+      // The closure environment owns a by-value capture and any release
+      // obligation it contains, as a caller owns a method's receiver; the
+      // body never destroys it. Its entry describes the declared reference
+      // fields only, so a cleanup-bound capture does not bind the body.
+      if (id != 0) {
+        auto loan = *semanticModel.findLoan(id);
+        loan.lifecycleBound = false;
+        semanticModel.recordLoan(std::move(loan));
+        loanFlow.records.at(id).lifecycleBound = false;
+      }
       continue;
     }
     const auto dependency =

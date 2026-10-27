@@ -737,6 +737,35 @@ int main() {
 }
 )",
            "GTI-S2017");
+  // Such a closure lowers: its environment is a cleanup-bound carrier whose
+  // borrow ends when the closure is destroyed, so the owner may change after
+  // the closure's scope.
+  const auto boundClosure = positive("bound-carrier-capture-lowers", R"(
+class Watcher {
+  int& target;
+public:
+  Watcher(int& target) : target(target) {}
+  int read() { return this.target; }
+  ~Watcher() { std::println(this.target); }
+};
+int main() {
+  mut int base = 4;
+  mut int first = 0;
+  {
+    Watcher watcher = Watcher(base);
+    auto reader = [held = std::move(watcher)]() -> int { return held.read(); };
+    first = reader();
+  }
+  base = 10;
+  return first == 4 && base == 10 ? 0 : 1;
+}
+)");
+  expect(lang::verifyMirProgram(boundClosure.mir).valid(),
+         "a cleanup-bound closure verifies as a whole program");
+  bool boundLambda = false;
+  for (const auto &lambda : boundClosure.mir.lambdaInstances())
+    boundLambda = boundLambda || lambda.lifecycleBoundBorrowCarrier;
+  expect(boundLambda, "the closure records its cleanup-bound carrier decision");
   // A local reference alias of a by-reference capture borrows below the
   // capture's entry loan. The closure environment, not a binding, holds that
   // entry for the whole call, so no alias joins it as a carrier and a later

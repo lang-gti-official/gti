@@ -4410,6 +4410,9 @@ private:
         .capability = info->capability,
         .captureRequiresActiveCleanup = std::move(captureRequiresActiveCleanup),
         .traits = info->traits,
+        .lifecycleBoundBorrowCarrier =
+            instanceProvider->lifecycleBoundBorrowCarrierFor(
+                model.typeOf(lambda)),
         .returnBorrowOrigin = info->returnBorrowOrigin,
         .returnBorrowParameter = info->returnBorrowParameter,
         .returnBorrowAccess = info->returnBorrowAccess,

@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v117 valid=" << program.valid() << '\n';
+    output << "mir-v118 valid=" << program.valid() << '\n';
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -907,7 +907,8 @@ public:
                        : false)
                << '}';
       }
-      output << ']';
+      output << "] lifecycle-bound-borrow-carrier="
+             << instance.lifecycleBoundBorrowCarrier;
       effectSummary(instance.effectSummary);
       output << '\n';
       body(instance.body, instance.id);
