@@ -11,6 +11,12 @@ for what minor and patch releases mean.
 
 ## 0.484.0 - Native LLVM correctness and broader language coverage
 
+- Fix silently wrong native code for a derived constructor that passes an
+  owned value, such as a moved `std::string`, `std::vector`,
+  `std::unique_ptr` or class with a destructor, to its base constructor
+  (`Derived(std::string t) : Base(std::move(t))`). The base was never
+  constructed, so reading it printed garbage or crashed. The native backend
+  now rejects such constructors with GTI-B0003 until it can run them.
 - Fix a native `switch` carrying a `default` branching to the wrong block. The
   default was treated as absent, so a value matching no case fell through to
   the following block. `std::format` selects a decimal digit through such a

@@ -11727,6 +11727,10 @@ seven belong to the threads track, which builds on this branch:
 Base-view replacement, enum copies, payload values returned by value,
 thread-local hierarchy objects and observable pure phases stay
 `PolymorphicTransfer` or `PureDispatchState`.
+A derived constructor whose base initializer MIR leaves unstaged, such as
+one passing an owned value to its base constructor, is refused as
+`UnstagedBaseInitializer`. Until 2026-10-27 LLVM lowered it without its base.
+Running it needs MIR to stage owned base arguments.
 
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not

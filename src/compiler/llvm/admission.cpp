@@ -4417,6 +4417,37 @@ public:
                               }));
                 }))
           add(Shape::StoredFieldPublication);
+      // A base initializer that MIR leaves unstaged has no InitializeBase in
+      // this body. Its arguments are evaluated and their obligations handed
+      // on, but only a backend constructing the base from the record would
+      // run the base constructor, and LLVM never does: lowering the body
+      // alone would leave the base unconstructed. A stateless interface base
+      // has nothing to run.
+      const auto *owner = program.findClassInstance(constructor->owner);
+      for (std::size_t index = 0; index < constructor->initializers.size();
+           ++index) {
+        const auto &initializer = constructor->initializers[index];
+        if (initializer.kind != ConstructorInitializerTargetKind::Base ||
+            (owner && initializer.base &&
+             std::any_of(owner->bases.begin(), owner->bases.end(),
+                         [&](const auto &base) {
+                           return base.interface &&
+                                  base.instance == *initializer.base;
+                         })))
+          continue;
+        const bool staged = std::any_of(
+            mir.blocks.begin(), mir.blocks.end(), [&](const auto &block) {
+              return std::any_of(
+                  block.instructions.begin(), block.instructions.end(),
+                  [&](const auto &stage) {
+                    return !stage.tombstone &&
+                           stage.kind == MirInstructionKind::InitializeBase &&
+                           stage.constructorInitializer == index + 1;
+                  });
+            });
+        if (!staged)
+          add(Shape::UnstagedBaseInitializer);
+      }
     }
     if (row.role != LoweredBodyRole::SourceExecutable)
       return;

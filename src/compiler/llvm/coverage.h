@@ -91,6 +91,7 @@ enum class Shape {
   NativeThreadTask,
   NativeHierarchyThreadTask,
   UnstagedConstructorFieldPublication,
+  UnstagedBaseInitializer,
   NativeCallableStorage,
   CallableMetadata,
   NativeMemoryOperation,

@@ -310,6 +310,28 @@ int main() {
 """, 0),
 }
 
+
+def unstaged_base(prefix: str, held: str, argument: str, member: str = "",
+                  use: str = "std::println(\"ann\");") -> str:
+    """A derived constructor forwarding an owned value to its base."""
+    return f"""{prefix}class Base {{
+public:
+  {held} held;
+  Base({held} value) : held(std::move(value)) {{}}
+  {member}
+}};
+class Derived : public Base {{
+public:
+  Derived({held} value) : Base(std::move(value)) {{}}
+}};
+int main() {{
+  Derived value{{{argument}}};
+  {use}
+  return 0;
+}}
+"""
+
+
 REJECTIONS = {
     "reject-move-construction": PLAIN + "int main() { mut Plain first{}; Plain second = Plain(std::move(first)); return second.read(); }\n",
     "reject-base-assignment": PLAIN + """class Derived : public Plain {};
@@ -325,6 +347,23 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     "reject-payload-copy": PLAIN + "enum Mark { none, held(Plain value) };\nint main() { Mark first = Mark::held(Plain()); Mark second = first; switch (second) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-payload-return": PLAIN + "enum Mark { none, held(Plain value) };\nMark make() { return Mark::held(Plain()); }\nint main() { Mark mark = make(); switch (mark) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
+    # MIR leaves a base initializer unstaged when an argument owns cleanup: no
+    # InitializeBase runs the base constructor, so LLVM refuses the constructor
+    # instead of leaving its base unconstructed. Each control must become an
+    # execution case once MIR stages owned base arguments.
+    "reject-unstaged-base-text": unstaged_base(
+        "#include <std/string>\n", "std::string", 'std::string("ann")',
+        use="std::println(value.held);"),
+    "reject-unstaged-base-virtual": unstaged_base(
+        "#include <std/string>\n", "std::string", 'std::string("ann")',
+        member="virtual int tag() { return 1; }", use="std::println(value.held);"),
+    "reject-unstaged-base-vector": unstaged_base(
+        "#include <std/vector>\n", "std::vector<int>", "std::vector<int>()"),
+    "reject-unstaged-base-unique": unstaged_base(
+        "#include <std/memory>\n", "std::unique_ptr<int>", "std::make_unique<int>(9)"),
+    "reject-unstaged-base-cleanup": unstaged_base(
+        "class Noisy {\npublic:\n  int id;\n  Noisy(int id) : id(id) {}\n"
+        "  ~Noisy() { std::println(\"drop\"); }\n};\n", "Noisy", "Noisy(3)"),
     # A pure member selected while a constructor that never hands the object to
     # other code runs is unobservable; this phase is not, so it stays gated.
     "reject-observed-pure-phase": """class Base {
@@ -530,6 +569,10 @@ def reject_case(gti: Path, root: Path, work: Path, name: str,
             if result.returncode != 65 or "GTI-B0003" not in result.stderr or not preserved:
                 raise AssertionError(f"{name} {mode} existing={existing}: {result}")
             expected = ("DestructorDispatchObservation" if "observation" in name
+                        # The polymorphic form is refused first at its construction:
+                        # MIR leaves its dispatch state unrepresented with the base.
+                        else None if name == "reject-unstaged-base-virtual"
+                        else "UnstagedBaseInitializer" if name.startswith("reject-unstaged-base-")
                         else "PureDispatchState" if name == "reject-observed-pure-phase"
                         else None if name in {"reject-global", "reject-thread-local"}
                         else "PolymorphicTransfer")
