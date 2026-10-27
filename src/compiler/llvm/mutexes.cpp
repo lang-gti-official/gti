@@ -297,8 +297,10 @@ void Mutexes::require(llvm::Value *condition) {
       llvm::BasicBlock::Create(session.context(), "mutex.invalid", function);
   ir.CreateCondBr(condition, valid, invalid);
   ir.SetInsertPoint(invalid);
-  ir.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(&session.module(),
-                                                        llvm::Intrinsic::trap));
+  // A malformed private token or retired storage terminates as the generated
+  // C++ representation does.
+  ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::ContractTerminate));
   ir.CreateUnreachable();
   ir.SetInsertPoint(valid);
 }

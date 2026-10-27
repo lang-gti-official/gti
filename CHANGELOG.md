@@ -45,6 +45,10 @@ for what minor and patch releases mean.
   in a `mut` method, or a `mut std::unique_ptr<std::mutex<T>>&` parameter),
   and when a mutex is locked through a reference parameter that the function
   also returns.
+- On the native backend, a foreign C++ exception reaching a GTI callback, a
+  thread-confined callback bound on another thread, and malformed internal
+  thread or mutex state now end through `std::terminate` as on the C++
+  backend, so a host's terminate handler observes them.
 - `std::mutex<T>` is now `std::relocatable` exactly when `T` is. Relocation
   builds a fresh native mutex and moves the protected value, so mutexes can
   be swapped and held in relocating containers; a held mutex still cannot

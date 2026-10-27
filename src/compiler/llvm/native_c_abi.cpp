@@ -3,6 +3,7 @@
 #include "debug_info.h"
 #include "failure.h"
 #include "native_c_contract.h"
+#include "runtime_abi.h"
 
 #include <llvm/IR/Constants.h>
 #include <llvm/TargetParser/Triple.h>
@@ -1447,9 +1448,12 @@ llvm::Function *nativeService(Session &session, const char *name,
                                 session.module());
 }
 
-void abortNativeBoundary(Session &session, llvm::IRBuilder<> &ir) {
-  auto *abort = nativeService(session, "abort", ir.getVoidTy(), {});
-  ir.CreateCall(abort);
+// A foreign exception at a callback boundary or a confined callback bound on
+// a second thread ends the process through std::terminate, as the generated
+// C++ adapters do, so a host terminate handler observes it.
+void terminateNativeBoundary(Session &session, llvm::IRBuilder<> &ir) {
+  ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::ContractTerminate));
   ir.CreateUnreachable();
 }
 
@@ -1609,7 +1613,7 @@ void emitNativeCCallbacks(
                                 session.layouts().pointer(),
                                 {session.layouts().pointer()}),
                   {ir.CreateExtractValue(landing, 0)});
-    abortNativeBoundary(session, ir);
+    terminateNativeBoundary(session, ir);
     ir.SetInsertPoint(normal);
     if (gti.statusResult) {
       auto *success = llvm::BasicBlock::Create(session.context(),
@@ -1664,7 +1668,7 @@ llvm::Value *nativeCCallbackAddress(Session &session, llvm::IRBuilder<> &ir,
                   ir.CreateICmpEQ(ir.CreateExtractValue(claim, 0), current)),
       ready, invalid);
   ir.SetInsertPoint(invalid);
-  abortNativeBoundary(session, ir);
+  terminateNativeBoundary(session, ir);
   ir.SetInsertPoint(ready);
   return wrapper;
 }

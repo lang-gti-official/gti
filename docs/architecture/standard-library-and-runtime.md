@@ -1482,6 +1482,14 @@ Mixed outcomes retain their other cleanup edges. Combined source-family,
 corpus and performance acceptance passed for S-ALLOC-08/09 in 0.397.0; see
 [verification](verification.md#source-prefix-ownership-and-allocation-abort-acceptance-03970).
 
+`gti_rt_contract_terminate_v1` ends a broken native or private runtime contract
+that is not a GTI failure: a foreign exception reaching a GTI callback
+boundary, a thread-confined callback bound on a second thread, or a malformed
+private runtime handle. It calls `std::terminate`, so natively lowered code
+reaches the host's C++ terminate handler exactly where generated C++ calls
+`std::terminate`; without a handler the process aborts. It reports nothing,
+runs no cleanup and never returns.
+
 Only `panic` / `explicit_panic` (`GTI-R0017`, detail 37) admits a message.
 Generated code prepares its exact record header, then calls
 `gti_rt_failure_capture_panic_v2` before starting language cleanup. Capture

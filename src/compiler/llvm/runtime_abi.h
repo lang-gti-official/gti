@@ -15,6 +15,7 @@ enum class RuntimeService {
   TerminateFailure,
   TerminateCleanupFailure,
   AbortAllocation,
+  ContractTerminate,
   ValidateFailure,
   CapturePanic,
   AtomicWait,

@@ -4496,8 +4496,10 @@ and sealed lock, unlock, active and borrowed-read operations. Its reviewed
 native storage is a 64-byte, eight-aligned pthread slot followed by payload
 storage and a distinct state byte with separate shell/payload-live bits; a lock token is one owner identity
 pointer. Failed lock status leaves the token inert, transfer clears the old
-token, and unlock retires it. Defensive checks on malformed private token use
-trap in the test boundary; they do not define a new source failure convention.
+token, and unlock retires it. A malformed private token or retired storage
+ends through the runtime's `gti_rt_contract_terminate_v1`, as the generated C++
+representation ends it with `std::terminate`; these checks do not define a new
+source failure convention.
 The production runtime explicitly initializes and destroys the native slot.
 Semantic cleanup facts and MIR recipes now retain shell retirement even with a
 passive payload; active payload recipes remain explicit children. Isolated LLVM
@@ -4661,6 +4663,17 @@ Their entry and once callbacks keep the sealed attachment adapters. The runtime
 supplies every edge; no source-level runtime control is exposed. Public
 native callback evidence requires composition with the separately owned O11
 callback boundary, not a synthetic attachment oracle.
+
+A broken native or private runtime contract ends through the runtime's
+`gti_rt_contract_terminate_v1`, which calls `std::terminate`, at exactly the
+points where generated C++ does: a foreign exception reaching a native callback
+thunk, a thread-confined callback bound on a second thread, a malformed managed
+thread runtime result or join failure kind, and a malformed private mutex token
+or retired storage. A host's C++ terminate handler therefore observes native
+programs as it observes C++ ones; without a handler the process aborts.
+`llvm_thread_execution` links a host helper that installs a handler and
+compares both backends at O0-O3 for the confined-binding and foreign-exception
+cases. LLVM-only internal invariant checks, such as a pinned unload, still trap.
 
 O-LLVM-03 provides the private machinery shared by all native lowering profiles.
 `Session` owns the exact

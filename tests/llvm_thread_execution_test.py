@@ -92,9 +92,16 @@ NATIVE_HELPER_CONTROLS = (
     ("cthread_sleep_oracle.gti", "cthread_sleep_oracle.cpp"),
     ("cthread_yield_call_count.gti", "cthread_yield_call_count.cpp"),
     ("llvm_thread_join_quarantine.gti", "llvm_thread_join_fault.cpp"),
+    ("llvm_contract_terminate_confined.gti", "llvm_contract_terminate.cpp"),
+    ("llvm_contract_terminate_exception.gti", "llvm_contract_terminate.cpp"),
 )
-# Oracle anchors: an environmental automatic-join failure is terminal GTI-R0012.
-ORACLE_EXPECTATIONS = {"llvm_thread_join_quarantine.gti": (70, "GTI-R0012")}
+# Oracle anchors: an environmental automatic-join failure is terminal GTI-R0012;
+# a broken native contract reaches the host's C++ terminate handler, not abort.
+ORACLE_EXPECTATIONS = {
+    "llvm_thread_join_quarantine.gti": (70, "GTI-R0012"),
+    "llvm_contract_terminate_confined.gti": (86, "terminate-handler"),
+    "llvm_contract_terminate_exception.gti": (86, "terminate-handler"),
+}
 
 
 def evidence_cases(root):
