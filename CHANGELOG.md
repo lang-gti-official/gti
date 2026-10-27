@@ -50,7 +50,10 @@ for what minor and patch releases mean.
   `unsafe` permission, constant-folded raw field indexing, native function
   values, C strings, null pointers and array values published into
   constructor fields, unqualified field names in constructor bodies,
-  enumerators passed to reference parameters, borrows reached through a
+  enumerators passed to reference parameters, methods called on fields reached
+  through raw pointers, references to `[[c_abi]]` records obtained through
+  `std::assume_ref`, unique and shared owners of mutex-bearing values,
+  references reborrowed from a carrier's stored reference, borrows reached through a
   carrier's stored reference, and restoring swaps and exchanges
   (`std::swap`, `std::exchange`, `std::array::swap` and `swap_elements`).
 - C++ remains the production default. Polymorphic ownership, dynamic dispatch
