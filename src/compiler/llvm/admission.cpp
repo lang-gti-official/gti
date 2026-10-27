@@ -1251,6 +1251,36 @@ public:
     return array.kind == SemanticType::Array && array.arguments.size() == 1 &&
            !array.arrayLengthParameterId && nativeValue(array);
   }
+  // A sealed integral enum is represented by exactly its declared fixed-width
+  // underlying integer (layout.cpp), so a one-dimensional array of them has
+  // the storage and SSA aggregate form of that integer array. Nested arrays,
+  // payload enums, Bool/Char backings and every other element family stay
+  // outside this predicate.
+  bool integralEnumArray(const SemanticType &type) const {
+    if (type.kind != SemanticType::Array || type.arguments.size() != 1 ||
+        type.arrayLengthParameterId)
+      return false;
+    const auto &element = type.arguments.front();
+    const auto *sealed = program.findIntegralEnum(element);
+    return element.kind == SemanticType::Enum && sealed &&
+           !program.findPayloadEnum(element) &&
+           constantIntegerDomain(sealed->underlyingType).has_value() &&
+           nativeValue(element);
+  }
+  // Complete element-wise formation only: one operand of the exact element
+  // type per element, so no unwritten slot is zero-filled into a value that
+  // may not name an enumerator.
+  bool integralEnumArrayAggregate(const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::Compute ||
+        stage.operation != MirOperation::Aggregate ||
+        !integralEnumArray(stage.info.type) ||
+        stage.operands.size() != stage.info.type.arrayLength)
+      return false;
+    const auto &element = stage.info.type.arguments.front();
+    return std::all_of(
+        stage.operands.begin(), stage.operands.end(),
+        [&](const auto &operand) { return operand.type == element; });
+  }
   std::optional<Shape> mutexShape(const SemanticType &type) const {
     if (program.executionProfile() != ExecutionProfile::Concurrent ||
         !program.target().runtimeCapabilities.threads)
@@ -2468,6 +2498,7 @@ public:
             add(Shape::NativeUnion, classShape(type));
       const bool passiveArray =
           type.kind == SemanticType::Array && passiveArrayElement(type);
+      const bool enumArray = !passiveArray && integralEnumArray(type);
       const bool arrayAddress = type.kind == SemanticType::RawPointer &&
                                 type.arguments.size() == 1 &&
                                 passiveArrayElement(type.arguments.front());
@@ -2489,6 +2520,7 @@ public:
           : native_llvm::nativeCFunctionValueContract(program, nativeTarget, type)
               ? std::optional(Shape::NativeCSignature)
           : passiveArray ? std::optional(Shape::PassiveArrayValue)
+          : enumArray    ? std::optional(Shape::IntegralEnumArrayValue)
           : reference    ? std::optional(Shape::PassiveReference)
           : arrayAddress ? std::optional(Shape::CheckedArrayProjection)
                          : representationShape(type));
@@ -2501,9 +2533,10 @@ public:
         add(Shape::NativeScalar, nativeScalar);
       }
       if (type.kind == SemanticType::Array)
-        add(Shape::FixedArray, passiveArray
-                                   ? std::optional(Shape::PassiveArrayValue)
-                                   : representationShape(type));
+        add(Shape::FixedArray,
+            passiveArray ? std::optional(Shape::PassiveArrayValue)
+            : enumArray  ? std::optional(Shape::IntegralEnumArrayValue)
+                         : representationShape(type));
       if (!type.arguments.empty())
         add(Shape::TypeArguments);
       for (const SemanticType &argument : type.arguments) {
@@ -2968,6 +3001,8 @@ public:
               : payloadPointerArithmetic(stage)
                   ? std::optional(Shape::NativePayloadRawAccess)
               : arrayAggregate ? std::optional(Shape::PassiveArrayValue)
+              : integralEnumArrayAggregate(stage)
+                  ? std::optional(Shape::IntegralEnumArrayValue)
               : stage.operation == MirOperation::Aggregate &&
                       stage.info.type.kind == SemanticType::Array
                   ? classShape(stage.info.type)

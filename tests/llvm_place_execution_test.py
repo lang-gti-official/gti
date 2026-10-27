@@ -370,6 +370,60 @@ int main() {
 }
 '''
 
+# One-dimensional arrays of sealed integral enums use their fixed-width
+# underlying integer storage in a user-defined owner and in std::array.
+INTEGRAL_ENUM_ARRAYS = r'''
+#include <std/array>
+enum class phase : uint8_t { idle, loading, running };
+enum class reach : int64_t { near = 7, far = 6000000000 };
+phase next(phase current) {
+  switch (current) {
+  case phase::idle: return phase::loading;
+  case phase::loading: return phase::running;
+  case phase::running: return phase::idle;
+  default: return phase::idle;
+  }
+}
+// A user-defined owner: aggregate formation, the by-value array parameter
+// and the field publication are the same rule std::array relies on.
+struct Track {
+  phase stops[3];
+  Track(phase initial[3]) : stops(initial) {}
+  phase at(uint64_t index) { return this.stops[index]; }
+};
+Track route(phase first) {
+  phase second = next(first);
+  return Track({first, second, next(second)});
+}
+std::array<phase, 3> cycle(phase first) {
+  phase second = next(first);
+  return std::array<phase, 3>({first, second, next(second)});
+}
+int main() {
+  Track track = route(phase::running);
+  if (track.at(uint64_t(0)) != phase::running || track.at(uint64_t(1)) != phase::idle ||
+      track.at(uint64_t(2)) != phase::loading) {
+    return 1;
+  }
+  std::array<phase, 3> states = cycle(phase::loading);
+  if (states[uint64_t(0)] != phase::loading || states[uint64_t(1)] != phase::running ||
+      states[uint64_t(2)] != phase::idle) {
+    return 2;
+  }
+  mut std::array<phase, 3> copy = states;
+  phase wrapped = next(copy.at(uint64_t(1)));
+  copy.at(uint64_t(0)) = wrapped;
+  if (states.at(uint64_t(0)) != phase::loading || copy.at(uint64_t(0)) != phase::idle ||
+      copy.at(uint64_t(2)) != phase::idle) {
+    return 3;
+  }
+  reach far = reach::far;
+  std::array<reach, 2> reaches = std::array<reach, 2>({far, reach::near});
+  if (reaches[uint64_t(0)] != reach::far || reaches[uint64_t(1)] != reach::near) { return 4; }
+  return 0;
+}
+'''
+
 
 def successes(root: Path) -> dict[str, str]:
     cases = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS,
@@ -381,7 +435,8 @@ def successes(root: Path) -> dict[str, str]:
              'erased-reference-cleanup': ERASED_REFERENCE_CLEANUP,
              'unsafe-wrapper': UNSAFE_WRAPPER,
              'conditional-references': CONDITIONAL_REFERENCES,
-             'array-extent-queries': ARRAY_EXTENT_QUERIES}
+             'array-extent-queries': ARRAY_EXTENT_QUERIES,
+             'integral-enum-arrays': INTEGRAL_ENUM_ARRAYS}
     cases['shipped-example'] = (
         root / 'examples/llvm/places-and-text.gti').read_text()
     cases['enum-references'] = (

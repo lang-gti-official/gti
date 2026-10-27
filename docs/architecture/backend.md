@@ -5870,7 +5870,10 @@ A pending vocabulary family can have a narrower implemented shape. Each use
 retains its original ledger row and an optional inventory-produced structural
 implementation witness. Concrete primitive or raw-pointer arrays satisfy `PassiveArrayValue`,
 not the whole `Aggregate` family; admitted ordinary class arrays use the separate
-`NativeClassStorage` witness. `ArraySize` and
+`NativeClassStorage` witness. One-dimensional arrays of a sealed integral enum
+with a fixed-width integer backing use `IntegralEnumArrayValue`: storage,
+by-value transport and complete element-wise formation of exactly the underlying
+integer array, never element projection or nested arrays. `ArraySize` and
 `ArrayRangeBegin` over any concrete array with an admitted representation use
 `ArrayExtentQuery`, because emission yields the sealed extent or zero without
 reading the receiver. Private capability/payload arrays remain rejected. Distinct

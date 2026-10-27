@@ -2242,6 +2242,43 @@ int main() {
     }
   expect(classExtents.admitted() && extentSize && extentBegin,
          "range-for and size() over class elements read no element");
+  // A sealed integral enum array is exactly its underlying integer array.
+  // Only complete one-dimensional formation is claimed.
+  const auto enumArrays = lang::planLlvmAdmission(lower(R"(
+enum class Phase : uint8_t { idle, running };
+struct Track {
+  Phase stops[2];
+  Track(Phase initial[2]) : stops(initial) {}
+  Phase at(uint64_t index) { return this.stops[index]; }
+};
+int main() {
+  Phase first = Phase::running;
+  Track track = Track({first, Phase::idle});
+  return track.at(uint64_t(0)) == Phase::running ? 0 : 1;
+}
+)"));
+  bool enumAggregate = false;
+  for (const auto &use : enumArrays.requirements())
+    if (use.entry->family == "MirOperation" && use.entry->name == "Aggregate") {
+      enumAggregate = true;
+      expect(use.implementedShape &&
+                 use.implementedShape->name == "IntegralEnumArrayValue",
+             "an enum array aggregate is integral enum array formation");
+    }
+  expect(enumArrays.admitted() && enumAggregate,
+         "one-dimensional integral enum arrays use underlying integer storage");
+  const auto nestedEnumArrays = lang::planLlvmAdmission(lower(R"(
+enum class Phase : uint8_t { idle, running };
+struct Grid {
+  Phase cells[2][2];
+  Grid(Phase a, Phase b) : cells({{a, b}, {b, a}}) {}
+};
+int main() { Grid grid = Grid(Phase::idle, Phase::running); return 0; }
+)"));
+  expect(!nestedEnumArrays.admitted() &&
+             nestedEnumArrays.firstUnsupported()->entry->key() ==
+                 "MirOperation.Aggregate",
+         "nested integral enum arrays remain outside the enum array witness");
   // Raw payload access strides by the payload layout and transports the
   // address; an element-count difference remains a separate operation.
   const auto payloadDifference = lang::planLlvmAdmission(lower(R"(
