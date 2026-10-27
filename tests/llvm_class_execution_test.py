@@ -2,15 +2,33 @@
 """Concrete class/lifetime execution through independent native endpoints."""
 
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from llvm_evidence_manifest import build_manifest
 
 
 CASES = {
+    "initializer-list-and-defaults": r'''
+mut int events = 0;
+int mark(int value) { events = events * 10 + value; return value; }
+class Mixed {
+  int data;
+  int defaulted = mark(2);
+  int overridden = mark(9);
+public:
+  Mixed(int input) : data(mark(input)), overridden(mark(3)) {}
+  int total() { return this.data + this.defaulted + this.overridden; }
+};
+int main() {
+  Mixed value{1};
+  return value.total() == 6 && events == 123 ? 0 : 1;
+}
+''',
     "ordinary": r'''
 mut int events = 0;
 class Ticket {
@@ -197,6 +215,454 @@ int main() {
   return point.x == 4 && point.y == 5 && first.read() == 3 && second.read() == 6 ? 0 : 1;
 }
 ''',
+    # A field reborrowed through a reference names a loan root no place spells.
+    "loan-root-field-reborrow": r'''
+class Counter {
+public:
+  mut int value;
+  Counter(int initial) : value(initial) {}
+};
+void bump(mut Counter& parent) {
+  mut int& field = parent.value;
+  field += 3;
+}
+int main() {
+  mut Counter counter = Counter(10);
+  mut Counter& parent = counter;
+  mut int& field = parent.value;
+  field += 2;
+  bump(counter);
+  return counter.value == 15 ? 0 : 1;
+}
+''',
+    # A by-value unsafe call result receives further calls through a temporary borrow.
+    "unsafe-value-receiver": r'''
+class Source {
+public:
+  int base;
+  Source(int initial) : base(initial) {}
+  unsafe expected<int, int> fetch(int offset) {
+    if (offset < 0) { return unexpected(offset); }
+    return this.base + offset;
+  }
+};
+int main() {
+  Source source = Source(40);
+  mut int result = 0;
+  mut bool present = false;
+  unsafe {
+    result = source.fetch(2).expect("fetch failed");
+    present = source.fetch(-1).has_value();
+  }
+  if (present) { return 2; }
+  return result == 42 ? 0 : 1;
+}
+''',
+    # A type recursing through its own unique owner, built, read and destroyed.
+    "recursive-owned-links": r'''
+#include <std/memory>
+mut int destroyed = 0;
+struct Link {
+  mut int value;
+  mut std::unique_ptr<Link> next = std::unique_ptr<Link>();
+  Link(int initial) : value(initial) {}
+  ~Link() { destroyed += 1; }
+};
+class Chain {
+public:
+  mut std::unique_ptr<Link> head = std::unique_ptr<Link>();
+  Chain() {}
+  void push(int value) mut {
+    mut std::unique_ptr<Link> node = std::make_unique<Link>(value);
+    node->next = std::move(this.head);
+    this.head = std::move(node);
+  }
+};
+int total(Chain& chain) {
+  mut int sum = 0;
+  if (chain.head != nullptr) {
+    sum += chain.head->value;
+    if (chain.head->next != nullptr) {
+      sum += chain.head->next->value;
+    }
+  }
+  return sum;
+}
+int main() {
+  {
+    mut Chain chain = Chain();
+    chain.push(1);
+    chain.push(2);
+    chain.push(3);
+    if (total(chain) != 5) { return 1; }
+  }
+  return destroyed == 3 ? 0 : 2;
+}
+''',
+    # Destructor-bearing results produced inside conditional operands are materialized in place.
+    "conditional-temporary-materialization": r'''
+mut int events = 0;
+class Tracked {
+public:
+  int value;
+  Tracked(int initial) : value(initial) {}
+  int read() { return this.value; }
+  ~Tracked() { events = events * 10 + this.value; }
+};
+Tracked make(int value) { return Tracked(value); }
+int main() {
+  bool early = false;
+  if (early || make(7).read() != 7) { return 1; }
+  if (!early && make(8).read() != 8) { return 2; }
+  int chosen = early ? 0 : make(9).read();
+  if (chosen != 9) { return 3; }
+  return events == 789 ? 0 : 4;
+}
+''',
+    # Methods reached through raw pointers stage read and mutable receivers.
+    "raw-pointer-method-receivers": r'''
+class Node {
+public:
+  mut int value;
+  Node(int initial) : value(initial) {}
+  int read() { return this.value; }
+  void add(int amount) mut { this.value += amount; }
+};
+int main() {
+  mut Node node = Node(5);
+  Node* pointer = &node;
+  const Node* view = &node;
+  mut int total = 0;
+  unsafe {
+    total = view->read();
+    pointer->add(3);
+    total += pointer->read();
+  }
+  return total == 13 && node.value == 8 ? 0 : 1;
+}
+''',
+    # By-value borrow carriers produced inside conditional operands are built in their hidden temporaries.
+    "conditional-carrier-temporaries": r'''
+mut int destroyed = 0;
+class Counter {
+  mut int value;
+public:
+  Counter(int initial) : value(initial) {}
+  int read() { return this.value; }
+  void bump() mut { this.value += 1; }
+};
+class Note {
+  int tag;
+public:
+  Note(int value) : tag(value) {}
+  int read() { return this.tag; }
+  ~Note() { destroyed += 1; }
+};
+class View {
+  Counter& source;
+  Note label;
+public:
+  View(Counter& counter, int tag) : source(counter), label(Note(tag)) {}
+  int sum() { return this.source.read() + this.label.read(); }
+};
+class Writer {
+  mut Counter& target;
+public:
+  Writer(mut Counter& counter) : target(counter) {}
+  int bump() mut { this.target.bump(); return this.target.read(); }
+};
+class Hub {
+  mut Counter counter;
+public:
+  Hub() : counter(Counter(10)) {}
+  View view(int tag) { return View(this.counter, tag); }
+  Writer writer() mut { return Writer(this.counter); }
+};
+int main() {
+  mut Hub hub{};
+  bool early = false;
+  if (early || hub.view(5).sum() != 15) { return 1; }
+  if (!early && hub.view(2).sum() != 12) { return 2; }
+  int chosen = early ? 0 : hub.view(1).sum();
+  if (chosen != 11) { return 3; }
+  if (early || hub.writer().bump() != 11) { return 4; }
+  return destroyed == 3 ? 0 : 5;
+}
+''',
+    # Array elements take the implicit scalar initialization conversion from differently typed values.
+    "aggregate-element-conversions": r'''
+double third(double values[3]) { return values[2]; }
+class Mix {
+  double values[3];
+public:
+  Mix(double initial[3]) : values(initial) {}
+  double at(uint64_t index) { return this.values[index]; }
+};
+int main() {
+  double floats[3] = {1.0, -0.0, 3.0};
+  if (floats[0] != double(1.0) || floats[2] != double(3.0)) { return 1; }
+  int64_t widened[2] = {int32_t(-5), uint8_t(200)};
+  if (widened[0] != int64_t(-5) || widened[1] != int64_t(200)) { return 3; }
+  if (third(floats) != double(3.0)) { return 4; }
+  Mix mix = Mix(floats);
+  if (mix.at(uint64_t(0)) != double(1.0)) { return 5; }
+  return 0;
+}
+''',
+    # A stored borrow carrier returned by value only states its provenance.
+    "returned-view-provenance": r'''
+class IntView {
+public:
+  int& target;
+  IntView(int& value) : target(value) {}
+  int read() { return this.target; }
+};
+class Holder {
+public:
+  IntView view;
+  Holder(int& value) : view(IntView(value)) {}
+  IntView get() { return this.view; }
+};
+int main() {
+  int value = 41;
+  Holder holder = Holder(value);
+  IntView copy = holder.get();
+  return copy.read() == 41 ? 0 : 1;
+}
+''',
+    # A by-value parameter formed from a named place is the callee's own copy: moving or reassigning it leaves the caller's object intact.
+    "by-value-place-parameters": r'''
+enum Token { word(int value), stop };
+enum Slot { ready(int& value), empty };
+int peek(Token token) {
+  switch (token) {
+  case Token::word(auto& value): return value;
+  case Token::stop: return -1;
+  }
+}
+int take(Token token) { Token kept = std::move(token); return peek(kept); }
+int reset(mut Token token) { token = Token::stop; return peek(token); }
+int weigh(Slot slot) {
+  switch (slot) {
+  case Slot::ready(auto& value): return value;
+  case Slot::empty: return 0;
+  }
+}
+class Holder {
+  Token token;
+public:
+  Holder(Token token) : token(std::move(token)) {}
+  int read() { return peek(this.token); }
+  Holder clone() { return Holder(this.token); }
+};
+class Shelf {
+  Slot slot;
+public:
+  Shelf(Slot slot) : slot(std::move(slot)) {}
+  int get() { return weigh(this.slot); }
+};
+int main() {
+  Token named = Token::word(7);
+  Holder holder = Holder(named);
+  if (peek(named) != 7 || holder.read() != 7) { return 1; }
+  if (take(named) != 7 || peek(named) != 7) { return 2; }
+  if (reset(named) != -1 || peek(named) != 7) { return 3; }
+  Holder second = holder.clone();
+  if (holder.read() != 7 || second.read() != 7) { return 4; }
+  int owner = 3;
+  Slot slot = Slot::ready(owner);
+  Shelf shelf = Shelf(slot);
+  if (weigh(slot) != 3 || shelf.get() != 3) { return 5; }
+  return 0;
+}
+''',
+    # An unsafe call's by-value result moves into its consumer, and a fallible unsafe call's reference result is read and passed on in its success block.
+    "unsafe-result-staging": r'''
+mut int32_t divisor = 1;
+class Window {
+  int32_t& value;
+public:
+  Window(int32_t& value) : value(value) {}
+  int32_t read() { return this.value; }
+};
+unsafe Window open(int32_t& value) { return Window(value); }
+unsafe Window checked(int32_t& value) {
+  int32_t guard = 10 / divisor;
+  return Window(value);
+}
+int32_t consume(Window window) { return window.read(); }
+class Slots {
+  mut int32_t values[3];
+public:
+  Slots() : values({1, 2, 3}) {}
+  unsafe int32_t& at(uint64_t index) { return this.values[index]; }
+};
+int32_t twice(int32_t& value) { return value * 2; }
+int main() {
+  int32_t value = 7;
+  mut Slots slots{};
+  unsafe {
+    if (consume(open(value)) != 7) { return 1; }
+    if (consume(checked(value)) != 7) { return 2; }
+    if (slots.at(uint64_t(1)) != 2) { return 3; }
+    if (twice(slots.at(uint64_t(2))) != 6) { return 4; }
+  }
+  return 0;
+}
+''',
+    # Field initializers publish null addresses, address values and whole array values directly into their fields.
+    "field-publication-values": r'''
+enum class Mode : int32_t { off = 0, on = 1 };
+class Defaults {
+public:
+  c_string native = nullptr;
+  int32_t* cursor = nullptr;
+  std::string_view names[2] = {"first", "second"};
+  int32_t values[3] = {1, 2, 3};
+  Mode modes[2] = {Mode::on, Mode::off};
+  Defaults() = default;
+};
+class Tagged {
+public:
+  c_string tag;
+  c_string kept;
+  Tagged(c_string tag, c_string kept) : tag(tag), kept(std::move(kept)) {}
+};
+int main() {
+  Defaults defaults{};
+  if (defaults.native != nullptr || defaults.cursor != nullptr) { return 1; }
+  if (defaults.names[1] != "second" || defaults.values[2] != 3) { return 2; }
+  if (defaults.modes[0] != Mode::on || defaults.modes[1] != Mode::off) { return 3; }
+  Tagged tagged{"alpha", "beta"};
+  if (tagged.tag == nullptr || tagged.kept == nullptr) { return 4; }
+  return 0;
+}
+''',
+    # Unqualified fields in a constructor body are the constructed object's fields, exactly like this.field.
+    "implicit-constructor-fields": r'''
+mut int32_t seen = 0;
+class Meter {
+  mut int32_t level;
+  mut int32_t peak = 1;
+  int32_t limit;
+public:
+  Meter(int32_t start, int32_t cap) : level(start), limit(cap) {
+    if (level > limit) { level = limit; }
+    peak += level;
+    seen = peak * 10 + level;
+  }
+  int32_t read() { return this.level + this.peak; }
+};
+int main() {
+  Meter low{3, 5};
+  Meter high{9, 4};
+  if (low.read() != 7 || high.read() != 9) { return 1; }
+  return seen == 54 ? 0 : 2;
+}
+''',
+    # Methods on a field reached through a raw pointer use that field as their receiver; an unsafe method keeps its own permission, and a temporary dropped in that statement is an ordinary drop.
+    "raw-field-receivers": r'''
+mut int32_t dropped = 0;
+class Counter {
+  mut int32_t value = 0;
+public:
+  Counter() {}
+  void bump() mut { this.value += 1; }
+  int32_t read() { return this.value; }
+};
+class Label {
+  int32_t id;
+public:
+  Label(int32_t id) : id(id) {}
+  ~Label() { dropped += this.id; }
+  int32_t read() { return this.id; }
+};
+class Node {
+public:
+  mut Counter counter;
+  mut Label label;
+  Node() : counter(Counter()), label(Label(1)) {}
+  unsafe int32_t total() { return this.counter.read() + this.label.read(); }
+};
+Node* same(Node* node) { return node; }
+int main() {
+  mut Node node{};
+  mut Node* pointer = &node;
+  unsafe {
+    pointer->counter.bump();
+    same(pointer)->counter.bump();
+    if (pointer->counter.read() != 2) { return 1; }
+    same(pointer)->label = Label(10);
+    if (pointer->label.read() != 10 || dropped != 1) { return 2; }
+    if (same(pointer)->total() != 12) { return 3; }
+  }
+  return 0;
+}
+''',
+    # A reference reborrowed from a carrier's stored reference designates the referent, and a payload returned with a borrowed view only states provenance.
+    "carrier-reborrow-provenance": r'''
+#include <std/string>
+struct Pair {
+  int32_t& left;
+  mut int32_t& right;
+  Pair(int32_t& left, mut int32_t& right) : left(left), right(right) {}
+};
+enum Word { text(std::string_view value), none };
+Word word_of(std::string& input) { return Word::text(input.view()); }
+int main() {
+  int32_t a = 1;
+  mut int32_t b = 2;
+  mut Pair pair{a, b};
+  mut int32_t& right = pair.right;
+  right = right + pair.left + 4;
+  if (b != 7) { return 1; }
+  std::string source{"word"};
+  Word word = word_of(source);
+  switch (word) {
+  case Word::text(value): return value.size() == std::size_t(4) ? 0 : 2;
+  case Word::none: return 3;
+  }
+}
+''',
+    # A consumed receiver selected by a conditional is destroyed exactly once: a fresh one at the full-expression end, a moved one through its moved-from owner.
+    "consuming-conditional-receivers": r'''
+mut int log = 0;
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() { log = log * 10 + this.id; }
+  int read() { return this.id; }
+};
+class Single {
+  mut Tracked item;
+public:
+  Single(int value) : item(Tracked(value)) {}
+  Tracked release() && { return std::move(this.item); }
+  int take() && { return this.item.read(); }
+};
+Single make(int value) { return Single(value); }
+int fresh(bool left) {
+  log = 0;
+  int taken = (left ? make(1) : Single(2)).take();
+  return taken * 100 + log;
+}
+int named(bool left) {
+  log = 0;
+  {
+    Single a{3};
+    Single b{4};
+    Tracked chosen = left ? std::move(a).release() : std::move(b).release();
+    if (chosen.read() != (left ? 3 : 4)) { return -1; }
+  }
+  return log;
+}
+int main() {
+  if (fresh(true) != 101 || fresh(false) != 202) { return 1; }
+  if (named(true) != 34 || named(false) != 43) { return 2; }
+  return 0;
+}
+''',
 }
 
 FAILURES = {
@@ -370,11 +836,50 @@ int main() { return local(32); }
 }
 
 
+def success_cases(root: Path) -> dict[str, str]:
+    cases = dict(CASES)
+    cases["shipped-example"] = (
+        root / "examples/llvm/classes-and-lifetimes.gti").read_text(
+            encoding="utf-8")
+    cases["fresh-transfer-placement"] = (
+        root / "tests/fixtures/llvm_class_fresh_transfer_regression.gti").read_text(
+            encoding="utf-8")
+    return cases
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    return {**success_cases(root),
+            **{name: source for name, (source, _, _) in FAILURES.items()},
+            **NATIVE_ONLY,
+            **{name: source for name, (source, _) in NATIVE_FAILURES.items()}}
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    cases = evidence_cases(root)
+    profiles = {name: (name,) for name in cases}
+    assert all(case in cases for profile in profiles.values() for case in profile)
+    return profiles
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest(
+        "llvm_class_execution", evidence_cases(root), evidence_profiles(root),
+        {"shipped-example": "examples/llvm/classes-and-lifetimes.gti",
+         "fresh-transfer-placement": "tests/fixtures/llvm_class_fresh_transfer_regression.gti"})
+
+
+def list_evidence(root: Path) -> None:
+    print(json.dumps(evidence_manifest(root), sort_keys=True))
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
+        list_evidence(Path(sys.argv[2]).resolve())
+        return
     gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
-    CASES["shipped-example"] = (root / "examples/llvm/classes-and-lifetimes.gti").read_text(encoding="utf-8")
+    runnable_cases = success_cases(root)
     selected = sys.argv[3] if len(sys.argv) > 3 else None
-    if selected and selected not in CASES and selected not in FAILURES and selected not in NATIVE_ONLY and selected not in NATIVE_FAILURES:
+    if selected and selected not in runnable_cases and selected not in FAILURES and selected not in NATIVE_ONLY and selected not in NATIVE_FAILURES:
         raise ValueError(f"unknown class execution case: {selected}")
     env = os.environ.copy()
     env["NO_COLOR"] = "1"
@@ -382,7 +887,7 @@ def main():
                  *(Endpoint("llvm", mode) for mode in ("O0", "O1", "O2", "O3")))
     with tempfile.TemporaryDirectory(prefix="gti-llvm-classes-") as directory:
         work = Path(directory)
-        for name, text in CASES.items():
+        for name, text in runnable_cases.items():
             if selected and name != selected:
                 continue
             source = work / f"{name}.gti"

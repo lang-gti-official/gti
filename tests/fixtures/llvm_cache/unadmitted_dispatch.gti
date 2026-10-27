@@ -1,0 +1,23 @@
+// A negative admission control. Replacing an object through a base view could
+// change the dynamic type of the enclosing derived object, so native admission
+// refuses it (Shape.PolymorphicTransfer). If LLVM coverage grows to admit this
+// shape, move the control to a construct that is still refused.
+class CacheDispatch {
+public:
+  CacheDispatch() {}
+  virtual int read() { return 29; }
+};
+
+class CacheValue : public CacheDispatch {
+public:
+  CacheValue() : CacheDispatch() {}
+};
+
+void replace(mut CacheDispatch& value, CacheDispatch& other) { value = other; }
+
+int main() {
+  mut CacheValue value{};
+  CacheValue other{};
+  replace(value, other);
+  return value.read();
+}

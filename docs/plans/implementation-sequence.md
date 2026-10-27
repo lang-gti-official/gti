@@ -10523,7 +10523,8 @@ fixes only through v1.0 to preserve its existing supported comparison-oracle
 behavior. Do not spend campaign capacity on C++ feature parity; post-1.0
 catch-up requires a separate owner decision and is not promised. See the
 [policy rationale](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
-C++ remains the shipped default until O-LLVM-16 passes. This campaign
+LLVM is the default on macOS arm64 (owner promotion, 2026-10-27); C++ remains
+the default on other targets until O-LLVM-16 passes for them. This campaign
 implements the current language, not a new LLVM-specific subset or edition.
 The [architecture audit](../architecture/backend.md#llvm-readiness-audit-2026-10-24)
 and [ADR 031](../decisions/031-native-llvm-backend-foundation.md) explain the
@@ -10793,6 +10794,121 @@ an equivalent benchmark baseline or an approved new feature. Rust's hosted
 unwind strategy is relevant precedent, not GTI's acceptance rule; see the
 [Rust panic reference](https://doc.rust-lang.org/stable/reference/panic.html)
 and [LLVM exception-handling model](https://www.llvm.org/docs/ExceptionHandling.html).
+
+**MIR-derived evaluation staging (not production admission):** the opt-in
+`GTI_BUILD_LLVM_C04_EVALUATION` targets build separate status and native-unwind
+backend copies against the same frontend and sealed MIR. Their structural
+profile accepts a closed static-call graph with scalar or ordinary-record results,
+scalar-reference and ordinary-record parameters,
+and local ordinary classes with scalar/reference/ordinary-record fields
+and explicit `int*` observation handles,
+including fallible source constructors and destructors. Arrays, private owner
+representations, hierarchy, global initialization, native imports and adapters remain
+outside this experiment. Both candidates use the central ABI planner, the same
+verified MIR lifecycle/drop schedules and fixed `noinline` call boundaries.
+Native invokes enter cleanup-only landing pads, follow the MIR failure edge,
+then resume the original exception after cleanup. A test-owned C++ marker and
+thread-local failure channel retain the original record until the outer catch;
+the successful path does not consult that carrier. This edge is explicitly
+unwind-permitted and is not a production runtime C service. It uses the platform
+C++ personality/unwinder without reading a C++ exception object's layout.
+Experimental symbols and module flags distinguish the artifacts.
+Generated cleanup helpers invoke the selected source destructor and exact
+verified child recipes. A cleanup landing pad records the original unwind
+token, enters the existing failure-cleanup context, and drains remaining child
+recipes before leaving that context and resuming the original token. A second
+failure terminates instead of continuing cleanup. Constructor return and a
+field-initializer schedule's final Exit may publish their armed construction
+rollback obligations. A staged ordinary-record argument retains its
+verified prepared-parameter drop until the exact static call transfers it to
+the callee. Ordinary-record returns publish their verified Value or ReturnResult
+obligation only at the final return. A prepared result remains owned by that
+invocation while local cleanup can still fail. Local ordinary-record replacement
+uses the sealed CleanupBeforeAssign/Assign pair and its exact source/destination
+drop obligations. Field-only projection paths rooted in a local binding are
+also admitted: their Replace event consumes the prepared Value obligation with
+target zero, while the containing binding retains its aggregate cleanup
+obligation. Borrowed/raw/indexed destinations remain outside this profile. No
+cleanup recipe or publication event is fabricated by the experiment.
+
+This staging replaces hand-built traces for the first comparison, not the
+remaining C04 obligations. The harness checks identical sealed-program input,
+direct/indirect root calls at O0/O3, original failure reporting, exactly-once
+cleanup in three frames, remaining local cleanup after a destructor fails,
+non-destruction of a failed construction, and immediate terminal cleanup failure
+in an outer frame while the original failure is already propagating. A mapped
+test observation buffer verifies that later destructors did not run after that
+secondary failure. Repeated and alternating failure/success entry and structural
+rejections preserve their checks. Ordinary owned-record cases additionally
+exercise partial-construction rollback, remaining fields after a source destructor
+or child destructor fails, and terminal failure while draining those fields.
+The evaluation exposed and repaired constructor entry-reference retirement
+before rollback when a later initializer publishes that reference; independent
+MIR mutation checks retain rejection of early dependency retirement.
+Fresh ordinary-record arguments additionally check failure before call entry
+while evaluating a later argument, and after ownership reaches the callee.
+Both cases require exactly-once parameter cleanup alongside caller locals.
+Owning results check both a simple fresh return and destruction of the completed
+result when local cleanup fails before publication. This exposed and repaired
+missing LLVM result-loan publication for constructed borrowed carriers; ordinary
+production placement regressions separately check alias identity and return
+rollback. Replacement checks old-value, prepared-RHS and surrounding cleanup
+with caller-owned observer slots, including failure in the old destructor,
+failed preparation before replacement starts, and terminal secondary failure
+while draining the prepared replacement. The same cases run through two nested
+ordinary fields, distinguishing the prepared field value from its containing
+owner. The original simple projected-replacement rejection is now a positive
+case; a borrowed-record destination retains explicit profile rejection and
+artifact preservation.
+Explicit unsafe scalar dereferences provide those observations without changing
+stored-reference assignment semantics; pointer arithmetic and allocation remain
+excluded. Opaque-pointer/array fields and borrowed-record parameters reject
+before artifact publication.
+It does not validate non-field projections, callbacks, user TLS, workers, foreign/forced
+unwind, carrier OOM, or artifact unloading. Native-carrier/runtime sanitizer runs do not instrument
+the generated LLVM object. No transport selection or production speedup follows
+from these checks. Next, extend real MIR cleanup to dynamic-call and worker
+containment before the representative
+platform/cost comparison and ADR decision.
+Remove or replace these opt-in evaluation hooks once that decision is implemented;
+they are not a permanent second production backend or CLI transport option.
+
+The staging also includes a hash-bound cost reporter, `tests/llvm_c04_cost.py`,
+over validated unsanitized O3 artifacts. It alternates status/unwind candidates
+for direct/indirect success, failure and mixed entry, retaining independent
+checksum checks, runtime distributions and code/unwind-table sizes. The
+evaluation's optional `--build-metrics` records fixture emission/link time and
+peak memory. Separate `--call-boundaries fixed` and `optimizable` runs compare
+the controlled noinline baseline with the ordinary LLVM optimization pipeline,
+without forcing inlining. Retained post-codegen IR and scalar entry call counts
+record the actual optimizer decision; large status failure-copy paths may remain
+out of line. Cost receipts reject mixed policies. This is supporting evidence
+for the bounded local/parameter/return/
+replacement workloads, not completion of the representative platform comparison:
+allocation measurement, dynamic GTI adapters, workers, foreign containment and
+representative whole-program optimization remain explicit obligations before
+choosing the transport.
+The reporter additionally accepts `--fixtures field_replacement_cleanup` for
+the nested-field workload; its default five workloads remain stable so earlier
+hash-bound evidence can still be compared without missing new receipts.
+Do not infer a uniform success-path benefit from the fixed-call baseline:
+the local optimizable returned-owner cleanup probe favored status while several
+other probes favored unwinding. Resolve the workload-specific generated-code
+costs and platform results before making the production decision.
+The integration candidate replaces aggregate-SSA channel and emergency-record
+copies with DataLayout-sized, overlap-safe bulk moves. Failure-cleanup runtime
+services carry a cold cost hint, without new unwind/return or alias promises.
+This recovers the owning-return probe's lost frame shrink-wrapping and reduces
+its generated code; paired local timings no longer show that return regression.
+Terminal double-failure envelope construction now lives in one internal cold,
+non-inlined helper, retaining both records and their artifact pointers without
+introducing an unwind promise. This removes terminal-only dynamic stack storage
+from ordinary cleanup callers. A three-checkpoint paired macOS comparison no
+longer shows the earlier successful replacement-cleanup regression; the helper
+candidate is below the original baseline for both transports and dispatch modes.
+This is bounded local evidence, not isolated-host or whole-program acceptance.
+Required platform and representative-workload comparison remains open; neither
+smaller code nor passing cleanup checks waives it.
 
 ##### LLVM-C05: Dynamic Calls Use Planned Adapters
 
@@ -11331,6 +11447,36 @@ or resolve them using source.
 
 ### O-LLVM-07: Unions, Payloads And Conditional Publication
 
+- **State:** implementation in progress. The initial native tag/aligned-payload
+  plan, exact final destinations, field extraction and active-alternative cleanup
+  execute generic scalar and owning replacement/consuming probes. End-to-end
+  completion still requires the full loan/wrapper/failure/slot composition and
+  macOS/Linux acceptance below; this is not a completed milestone.
+- **Composition checkpoint:** the native matrix now exercises ordinary enum
+  optional/expected wrappers, source `?`, nested cleanup-owning alternatives,
+  stored/external reference selection, static constants with typed relocations,
+  globals/TLS, replacement, partial-input failure and failure during active
+  payload destruction. Conditions/dependency groups erase only as verified
+  permissions; evaluated MIR addresses determine actual references. Existing
+  raw-pointer component checks guard the distinction between a pointer value
+  and a selected payload place.
+- **Prerequisite audit:** current `stdlib/std/optional.gti` uses ordinary enums;
+  `tests/optional_compiler_tests.cpp` verifies no private optional storage is
+  instantiated. Do not create an unused capability to satisfy historical plan
+  wording. Live `PolymorphicStorage` construction/read/transfer requires the
+  polymorphic model/base layout owned by O-LLVM-10, even without a virtual call.
+  Heap-owned field composition requires O-LLVM-08. These remain explicit open
+  acceptance dependencies, not silently supported or removed deliverables.
+- **Shared parameter prerequisite:** source optional emplacement needs concrete
+  pack forwarding. Reuse O-LLVM-09's central parameter planner (PR353,
+  `9bc5a6ab110d31a8432db0f1e816014bfdb491f6`) for function/constructor lanes,
+  exact formal admission and compatible duplicate-view coalescing. Remove the
+  earlier body-local cursor/root inference; no separate permanent pack mapper,
+  lambda/capture lowering or new owner schema is introduced. Empty trailing
+  bindings already exist in MIR even when the text printer omits them.
+  Follow-up `6b10d4851c04eeffb4c9dacda84b211d3d23d326` keeps optional ownership
+  keys separate from physical lane identity; a user-defined scalar factory and
+  wrong-key controls accompany source optional emplacement.
 - **Unlock:** source-defined optional/expected, payload enums, matching and
   propagation in arbitrary user types.
 - **Deliver:** native union overlapping storage and tag/payload layouts for
@@ -11363,6 +11509,99 @@ or resolve them using source.
 
 ### O-LLVM-09: Function Values, Lambdas And Callable Adapters
 
+**Implementation checkpoint (2026-10-25):** PR 353 implements the independent
+native callable slice: exact function items and invocation pointers; concrete
+closure environments; direct/indirect read, mutable and consuming invocation;
+copy/move/read-borrow/mutable-borrow captures; returned, stored and nested
+generic closures; concrete trailing callable packs; checked failure adapters;
+and reverse owned-capture cleanup. Compatible duplicate lambda instantiations
+share only their checked physical environment plan; formation, invocation and
+cleanup retain exact instance identities. Verified complete-object erased
+references now compose source-defined callable views and unrelated source
+relay helpers through the verifier's finite exact restoration proof, without
+public-name recognition. Unstaged constructor-field records are admitted only
+through one exact owner/field/result/unique-producer plan plus an independently
+supported storage transport. Stored loans publish an address only for an exact
+reference field; a by-value borrowed carrier retains provenance without a
+second physical write or fabricated runtime loan slot. Focused macOS O0--O3
+execution, malformed admission controls, borrow rejection, wrapper rollback
+and allocation-symbol/optimized-cost probes pass. The named owned-environment
+composition proof also passes on clean combined candidate
+`17457f622b9374d92ab066668067bdef15c4721c` with the published O-LLVM-08 and
+O-LLVM-09 inputs. This is not the milestone exit:
+polymorphic callable erasure composes with O-LLVM-10, native callbacks compose
+with O-LLVM-11, and the integration campaign remains pending. Exact-head Linux
+x86_64 Release evidence for `1628331a` passed
+`llvm_admission`, `llvm_placement_execution` and `llvm_callable_execution`
+serially in managed run `run-a4928e5a4d2b40dd9da315abc06d557c`. The
+keyless-pack corrective code checkpoint
+`6b10d4851c04eeffb4c9dacda84b211d3d23d326` also passed Release
+`llvm_admission` and `llvm_callable_execution` serially on Linux x86_64 in
+managed run `run-ee6ab748c24d470ea1cc7d6fb8600a4c`; its clean snapshot was
+`908fb7f9dfa0afcc5079c592b429edee3c063e62430ae55fc63b62df6cc85b5c`.
+C04's physical failure-transport evaluation remains open. Optimized
+function-pointer and mixed-callable probes remain about seven times slower than
+the C++23 reference: the checked indirect path retains two call boundaries and
+a large failure record. The campaign lead assigned the legally proven
+visibility, inlining and devirtualization prerequisite to O-LLVM-15;
+O-LLVM-09 retains the verified signature/effect contract and does not select
+an infallible ABI from the current target.
+
+The callable checkpoint's concrete trailing-pack support now uses one shared
+native parameter plan for admission, body lowering and storage. Compatible
+MIR aliases coalesce without consuming extra lanes when their verified binding,
+constant element index and type agree. Projected views may omit optional
+ownership-key metadata, while every key that is present must exactly extend the
+pack root; divergent identities fail closed. Empty packs remain supported only
+through the verified trailing source binding already preserved by function,
+constructor and lambda owners; the former body-root-only fallback was not an
+owner proof and has been removed. Focused sealed-owner mutations and native
+O0/O3 duplicate-view execution cover this prerequisite for reuse by O-LLVM-07.
+
+**Named O-LLVM-08/O-LLVM-09 integration proof (passed):**
+`llvm_callable_owned_composition_test.py` is the callable-owned composition
+proof and is intentionally not part of the passing O-LLVM-09 component gate.
+It uses an unrelated source-defined `Stored<F>` adapter and covers a returned/
+stored consuming closure whose environment contains ordinary owned values and
+a source shared owner, explicit clone/reset/last release, reverse exactly-once
+cleanup, borrowed-capture nonownership, wrapper rollback after publication and
+later-argument rollback. The O-LLVM-09 branch validates its production C++23
+oracle with
+`python3 tests/llvm_callable_owned_composition_test.py build/gti . --oracle-only`.
+The clean coordinator-designated candidate
+`17457f622b9374d92ab066668067bdef15c4721c`, containing published O-LLVM-08 and
+O-LLVM-09 inputs, ran
+`python3 tests/llvm_callable_owned_composition_test.py
+/private/tmp/gti-llvm-composition-build/gti
+/Users/lukeh/.codex/worktrees/llvm-composition-candidate/cpplang` successfully
+on macOS with its optimized compiler. The production C++23 oracle and native
+LLVM O0--O3 all passed; suite-window session `74099` retained its complete log at
+`/private/tmp/gti-llvm-composition-callable-owned.log`.
+Its success observable is `(0, "", "")` at native O0--O3. The later-argument
+failure must exactly match its C++23 oracle with status 70 and contain
+`owned callable later argument failed`. The native-only wrapper rollback must
+produce status 70 with `owned callable later initializer failed` consistently
+at O0--O3. Both outer cleanup observers require the exact `2, 7, 1` rollback
+trace and one final shared-payload drop. The passing combined run closes this
+functional composition prerequisite. It does not satisfy combined-candidate
+Linux, performance, C04 failure-transport or O-LLVM-11 callback acceptance and
+is not by itself a milestone-exit claim.
+
+**Null-owner publication correction (component checkpoint):** the shared
+unstaged constructor publication plan now distinguishes its existing exact-
+value transport from one exact source-null-to-native-unique-owner transport.
+The latter requires a source `Compute/Literal` null with no effects or hidden
+authority, a complete typed pointee and O-LLVM-08's exact
+`NativeUniqueOwnership` admission shape. The O-LLVM-09 component deliberately
+retains backend rejection without that shape. Its focused planner controls
+reject nonnull, wrong-source, incomplete-pointee, duplicate-producer and staged
+forms. `llvm_callable_null_owner_rollback_test.py` supplies a production C++23
+oracle, an ordinary GTI destructor trace and a test memory provider that aborts
+on any allocation or release call. Across a later-initializer failure, combined
+native O0--O3 must preserve the original failure and exact rollback trace;
+reaching either provider entry is an immediate test failure. The combined
+execution remains an integration gate rather than component evidence.
+
 - **Unlock:** higher-order algorithms, capturing callbacks and source-defined
   function wrappers, including owned/borrowed and read/mut/once forms.
 - **Deliver:** concrete function items/signatures, function pointers, closure
@@ -11380,6 +11619,148 @@ or resolve them using source.
 
 ### O-LLVM-10: Inheritance, Interfaces And Polymorphism
 
+**Inline-owner integration prerequisite:** the private polymorphic slot now has
+a target-checked representation plan and a dedicated component layout oracle.
+This does not close public erased-callable support. The next operation layer
+must use sealed concrete model identity and relocation/cleanup eligibility to
+construct and relocate the payload, recover the exact interface subobject at
+its new address, and implement empty/reset/read behavior. General boxed
+polymorphic ownership and dynamic cleanup remain necessary for payloads that
+do not qualify for inline storage; do not recognize `std::function` by name or
+admit a wrapper merely because its slot has a layout. Required platform and
+composition evidence remains part of milestone acceptance.
+
+The inert model relocation component now handles generated borrow-free
+records/arrays and cleanup-inert payload enums, including nested complete-object
+dispatch state, without copying source headers or invoking source callbacks.
+Its native component oracle checks
+field transfer and distinct interface headers at O0/O3 through an external C
+observer. Payload relocation dispatches on the active variant and retires the
+source tag; empty variants and inactive storage leave payload bytes untouched.
+Every variant is checked before publication, including variants not active in
+the tested value. This is not public slot operation admission. The private
+operation component now wires exact construct/reset/read operations and descriptor-driven
+slot relocation, including recomputed interface addresses and nested record
+fields. Its component execution checks empty/repeated operations, moved-from
+storage, multiple model offsets, and invariant traps. The exact private source
+default constructor now initializes its hidden empty state at entry without
+replacing the original MIR body. Ordinary empty constructors do not acquire
+that behavior. The shared generated-relocation emitter now also transfers
+cleanup-bearing record/payload state and exclusive/shared handles, retaining
+suppressed cleanup bytes and leaving reference counts untouched. Inline-model
+eligibility still uses the stricter inert preflight; the new component is not
+blanket public slot admission. Verified object relocation now uses this emitter
+for structural types, with existing object/storage/vector relocation programs
+passing C++20/23 O3 and LLVM O0-O3 value/cleanup checks. An owning-closure wrapper
+also transfers function-pointer, vacant storage and passive union fields under
+an independent native source oracle; C++ cannot represent that fixture's closure
+forwarding into `construct_at`. Raw class-pointer arithmetic argument staging
+now preserves the exact producer witness, closing the storage-read prerequisite
+exposed by the existing structural-relocation fixture. Next: complete body-local
+publication and transfer; extend remaining capability/borrowed representations
+where needed; complete boxed-owner dynamic
+cleanup and validate ordinary source wrappers end to end. Platform evidence is
+tracked per checkpoint, not inferred from these component checks.
+
+The dispatch descriptor now records an exact target-width displacement from
+each physical pointer owner to its installed active class. Ordinary virtual
+calls retain their two loads and root ABI; per-object layout is unchanged.
+Native representation probes recover the relocated complete state through every
+view and distinguish a subsequently installed base state at nonzero offset.
+This is a prerequisite for dynamic owner cleanup, not ownership admission: the
+cleanup operation still needs an exact selected cleanup adapter and must retain
+the allocation identity before changing lifecycle state. It does not authorize
+source downcasts or establish destructor-observed virtual phase semantics.
+
+Static owner cleanup now distinguishes an ordinary record containing hierarchy
+storage from a dynamically typed pointee. The former retains an exact canonical
+recipe and runs hierarchy preflight at owned child edges; the latter remains
+gated by `polymorphicCleanup`. Unique/shared allocation, last-owner release and
+empty cleanup have native component probes. Public unique/shared ownership of
+ordinary records containing hierarchy fields now composes with exact reference
+returns, mutation, reset, last-owner release and failure cleanup. Owner reset
+retires a separate allocation rather than replacing live inline hierarchy
+storage. General by-value transport and dynamic cleanup remain separate
+integration prerequisites.
+
+Boxed polymorphic ownership is implemented. Each concrete polymorphic class
+that an admitted body allocates as a unique-owner pointee publishes its
+complete-object cleanup in its dispatch descriptors, after the displacement.
+A dynamic owner drop reads the complete object and that cleanup from one
+descriptor load before any lifecycle transition, runs it, then releases the
+complete allocation; the allocation site demands and admits the recipe, so a
+polymorphic drop no longer forces the conservative closure. Owner upcasts
+select the static base view; selected source constructors and the exact
+generated empty default construct into the allocation. Virtual and direct
+member calls on proved views accept the root's general shared signature,
+including reference results, records and owners. Ordinary constructions and
+by-value call results publish directly in the ABI return destination, a fresh
+whole local or their own full-expression temporary, which may be a borrowed
+receiver or argument. `llvm_dispatch_execution` profiles
+`polymorphic-ownership`, `virtual-invocation` and `fresh-publication` carry
+C++20/23 and native O0-O3 evidence, including failure unwinding and rollback;
+examples 025, 071 and 149 now match the C++ oracle at O0-O3.
+
+The 2026-10-27 checkpoint closes the following shapes. Each has a user-defined
+`llvm_dispatch_execution` profile with C++20/23 and native O0-O3 evidence,
+including failure and wrong-trace variants:
+- by-value hierarchy arguments and returns of moved locals;
+- public inline polymorphic slots, which carry `std::function` and the other
+  erased callables;
+- consuming, temporary, retained and prepared receivers;
+- whole-object replacement, including through a reserved two-phase accessor;
+- fixed hierarchy arrays in locals and fields, with fresh or moved
+  elements;
+- payload enums holding hierarchy storage, including `std::optional` of an
+  erased callable;
+- program-storage hierarchy objects;
+- shared polymorphic owners and upcasts;
+- unobservable abstract phases.
+
+Destructor dispatch follows the owner's lifecycle decision. Shipped examples
+025, 071, 086, 135 and 149 match at O0-O3. Of the 217 corpus programs that
+C++ compiled and LLVM refused, 210 now match at O0 and O2. The remaining
+seven belong to the threads track, which builds on this branch:
+- three thread programs whose erased callable crosses a thread spawn, each
+  under both roots (O-LLVM-13 task transfer of hierarchy storage);
+- a mutex protecting a hierarchy payload.
+
+Base-view replacement, enum copies, payload values returned by value,
+thread-local hierarchy objects and observable pure phases stay
+`PolymorphicTransfer` or `PureDispatchState`.
+A derived constructor whose base initializer MIR leaves unstaged, such as
+one passing an owned value to its base constructor, is refused as
+`UnstagedBaseInitializer`. Until 2026-10-27 LLVM lowered it without its base.
+Running it needs MIR to stage owned base arguments.
+
+- **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
+  has a dedicated public native execution gate and runnable example. It is not
+  milestone completion: generated scalar-hierarchy copies/moves now have exact
+  fresh-local producer/publication guards and public execution/rejection checks;
+  fresh ordinary hierarchy fields now use one admission/emission destination
+  proof, with native O0-O3 nested-interface, mutation and partial-construction
+  cleanup evidence. Checked reference results and static record owners have
+  source/MIR/native O0-O3 evidence. Fresh generated copy/move now also composes
+  through borrow-free ordinary record fields with exact canonical cleanup and
+  independent field dispatch state; arrays, owner fields, source-defined
+  transfer and nonlocal/value-return publication remain prerequisites.
+  Rich field-borrow and owner cases retain the existing C++ text-vocabulary
+  rejection and require independent source/MIR/native results;
+  base-view replacement, enum copies and payload returns, observable pure
+  active states, exact optimized cost evidence and combined O14/O16
+  source/evidence identities remain open. The loop fixture checks results,
+  not retained dispatch or allocations.
+- **Lifecycle dispatch (owner decision, 2026-10-27): destructor's own class.**
+  While a destructor of class `C` runs, a virtual call on `this` (directly or
+  through helpers) resolves as if the dynamic type were `C`. MIR records
+  `MirDestructorDispatchState` on every polymorphic source destructor. The
+  verifier requires it, and LLVM lowers it through `NativeLifecycleDispatch`.
+  Constructors already follow the symmetric rule (`MirConstructorDispatchState`);
+  that records existing behaviour. The C++ backend still dispatches to the
+  most-derived override during base destruction and rollback, a known
+  defect recorded in `backend.md` (observed `-1` where the contract gives `1`,
+  and an internal compiler error with a `unique_ptr` field). Its results are
+  pinned as divergences, not oracle evidence, under ADR 031.
 - **Unlock:** existing abstract/interface hierarchies and polymorphic owners.
 - **Deliver:** base subobjects, base-constructor/rollback order, verified method
   targets, dispatch tables, receiver/base adjustments, upcasts and dynamic
@@ -11465,6 +11846,44 @@ or resolve them using source.
   accesses obey the memory model, including lawful exclusive initialization,
   and wait/notify shares the exact atomic representation. Report sequential/
   parallel workload and synchronization cost.
+- **Status (2026-10-27):** managed `std::thread`/`std::thread_result` and
+  scoped `parallel_invoke` lower natively: handle representation, spawn, join,
+  automatic join with quarantine, take and scope through the versioned
+  `runtime_thread.h` services, per-adapter entry/cleanup/result callbacks that
+  publish contained failures to the worker sink, and generated worker
+  containment so a cleanup emergency in native worker frames is published and
+  abandoned by status instead of reaching the throwing legacy endpoint.
+  `llvm_thread_execution` matches the C++ oracle at O0-O3 on macOS arm64 for
+  user-defined tasks, results, scopes, failures, envelopes, TLS drain and
+  join quarantine; examples 076 and 175 match. Manual C-thread create/join,
+  once, mutex and condition services execute through their exact trusted C
+  declarations; the C-thread fixtures, including terminal and linked-helper
+  cases, match the oracle at O0-O3. Mutex storage held by value in a closure
+  environment or as a unique/shared owner's pointee, and a passive class mutex
+  payload, lower natively with their own witnesses (`threads.mutex-composition`,
+  including a payload cleanup failure on a worker re-raised at join); a
+  program without task adapters joins a never-started handle without worker
+  containment. Tasks holding hierarchy storage (polymorphic objects, inline
+  slots, `std::transfer_function`) cross task boxes through their generated
+  relocation, and scoped ones run in place (`threads.hierarchy-tasks`); a
+  mutex may protect a hierarchy payload (`threads.hierarchy-mutexes`). All 47
+  recorded threading programs match the oracle at O0 and O2, and 066,
+  `scoped_parallel_threads`, `transfer_function_threads` and `panic_runtime`
+  match at O0-O3 under both the repository and legacy roots. A thread result
+  holding hierarchy storage still crosses `std::expected` by value, which is
+  an O-LLVM-10 `PolymorphicTransfer` into a payload enum. Broken native or
+  private runtime contracts (a foreign exception
+  at a callback boundary, a wrong-thread confined-callback binding, malformed
+  thread or mutex state) end through `std::terminate` as in C++, so a host
+  terminate handler observes both backends alike. Known non-semantic
+  divergence: the C++-only nothrow-`operator new` allocation oracle
+  (`scoped_parallel_allocations`) does not observe native task boxes, which
+  use the process memory provider. Remaining:
+  hierarchy-bearing thread results (O-LLVM-10 payload enums), Linux execution
+  evidence,
+  generated-code TSan, the terminal containment of a defined failure inside an
+  unattached native callback invoked on a managed worker (it still calls the
+  legacy runtime endpoint), and the workload/synchronization cost report.
 
 ### O-LLVM-14: Project, Artifact And Installed-Toolchain Completion
 
@@ -11525,6 +11944,159 @@ or resolve them using source.
   fallback, cross-backend private object ABI or generated-C++ dependency is
   introduced. Removing C++ or resuming its feature development after v1.0
   requires a separate owner decision; neither is automatic at promotion.
+
+#### Consolidated Candidate Status (2026-10-27)
+
+The four parallel campaign branches `codex/llvm-production-{integration,
+native,debug,threading}` are consolidated on `codex/llvm-production-completion`
+with no work dropped. They had never been built as a set: one test passed a
+trailing argument that predated `LoweredProgramVerifiedInputs` replacing
+`captureSourceLocations`, so the combined tree did not compile and no worker
+had seen the integrated result.
+
+**Acceptance measure.** The owner's exit condition is that every GTI program
+the C++ backend compiles must compile and behave identically on LLVM, with no
+change to GTI semantics. Measured per shipped example by compiling on both
+backends and comparing exit status, stdout and stderr at native O0 and O3:
+
+| | examples |
+| --- | --- |
+| match the C++ backend at O0 and O3 | 161 |
+| still refused or wrong | 18 |
+| LLVM-only, which C++ cannot compile, so outside the condition | 5 |
+
+At consolidation the same measure read 133 match and 46 failing, one of them a
+silent wrong answer. There are now no observable mismatches: every remaining
+failure is a refusal, a compiler internal failure or one hang.
+
+75 of the 77 registered `llvm_*` gates pass. `llvm_atomic_execution` and
+`llvm_placement_execution` fail, and both fail identically at the
+consolidation commit, so neither is caused by the consolidation work.
+
+**Two defects found by this measure, not by any gate.**
+
+A `switch` carrying a `default` branched to the wrong block. A Switch
+terminator keeps its cases in `switchTargets` and its default in `target`, as
+the C++ emitter reads it, but native lowering searched the case list for a
+valueless entry that MIR never emits, concluded the switch was exhaustive and
+installed an unreachable fallback; at O0 control then fell through to the
+following block. `std::format` picks a decimal digit through such a switch, so
+every digit 9 printed as 8 and any program whose output contained a 9 was
+silently wrong. Fixed, with a registered `switch-default` execution case.
+
+A negative enumerator crossing a function argument was answered wrongly at O1
+and above, while O0 and the C++ backend were correct. Native lowering built
+negative constants that LLVM 23 does not canonicalize; the record is with the
+remaining work below. Fixed, with negative enumerators and negative case labels
+added to the `integral-enum-underlying` and `switch-default` execution cases.
+
+**Corpus sweep (2026-10-27).** The measure was widened from the shipped
+examples to every single-file program in the gti-lang organization: this
+repository's examples and tests and the other organization repositories,
+compared on both backends at native O0 and O2. It found silent wrong answers
+that no gate covered, each fixed as a general rule with a registered case:
+
+- Native lowering raised every container bounds check under the private
+  storage detail, while MIR records `std::vector` and `std::string` checks
+  under their own details. The guard treats an unrecorded outcome as
+  discharged, so an out-of-range vector index, string index or `substr`
+  position read past the container. The lowering now uses the recorded
+  outcome (`vector-index-high`, `string-index-high`, `string-position-high`),
+  and a guard whose code is recorded under another detail now fails closed.
+- A by-value call input formed from a place observation passed the observed
+  place's address, so a callee that moved from or reassigned its parameter
+  changed the caller's variable (`by-value-place-parameters`).
+- A consumed receiver chosen by a conditional was copied out of its hidden
+  temporary, losing the fresh receiver's destructor and destroying a moved
+  receiver twice (`consuming-conditional-receivers`).
+- A by-value call result carrying a loan was not treated as fresh, which
+  crashed placement, and array elements skipped the implicit scalar
+  initialization conversion MIR leaves to element formation.
+
+#### macOS arm64 Default Promotion (2026-10-27)
+
+**Owner revision.** The owner promoted LLVM to the default executable backend
+for the macOS arm64 target alone; other targets keep C++ as their default and
+follow later on their own evidence. This narrows O-LLVM-16 rather than closing
+it: its Linux and remaining-target gates stay open.
+[ADR 031](../decisions/031-native-llvm-backend-foundation.md#default-backend-on-macos-arm64-2026-10-27)
+records the selection rules.
+
+**Measure.** Every GTI program in the gti-lang organization and this
+repository, compared on both backends, each executable run from its own empty
+directory, on the promotion candidate (main merged at `b679bd632`):
+
+| | programs | result |
+| --- | --- | --- |
+| single-file programs in examples, tests, the legacy archive and gti-reference | 4,003 | 3,160 match the C++ backend at O0 and O2 (30 long-running ones at O2 only); 842 do not compile on C++; 1 recorded C++ divergence |
+| single-file programs in benchmarks, scripts, fuzz and tree-sitter | 86 | 83 match at O2; 3 do not compile on C++ alone (two deliberate syntax errors, one that links a companion and matches with it) |
+| project targets in this repository and the organization | 345 | 151 build and match, tests included; 119 do not build on C++; 72 are source-only packages |
+
+No program that compiles on C++ is refused, crashes the compiler or differs on
+LLVM. The C++-rejected programs are deliberate diagnostic fixtures, programs
+that need their native companion (built with it by their tests), LLVM-only
+fixtures for shapes C++ never supported, and deliberate whole-program errors.
+Against the first corpus sweep of 2026-10-27 the set only gained four new
+companion fixtures; no program stopped compiling on C++. Two project rows only look
+different: a profile that retains C++ output rejects `--backend llvm` by
+design and matches with `--no-keep-cpp`, and one program prints a random UUID.
+
+**LLVM-default suite.** The full suite run with LLVM as the host default found
+what the per-program measure could not, and each is fixed: native companion
+sources after `--` compile with the C++ invocation's include directory,
+language level, optimization and strict floating point; a dependency's GTI
+build script reuses its output only together with its exact cached host
+executable; a library macro's debug scope names the caller's file; a generated
+default constructor needs no lexical debug facts; C structs and unions pass by
+value straight from C globals; and tests that asserted C++ command lines or
+artifacts name `--backend cpp` explicitly.
+
+**Recorded divergences and open follow-ups.**
+
+- A base destructor's virtual call on `this` runs the destructor's own class
+  on LLVM, the owner's lifecycle-dispatch rule. The C++ backend reaches the
+  destroyed derived override; this is a recorded C++ bug and the one corpus
+  mismatch (`llvm_dispatch_lifecycle_phases`).
+- `scoped_parallel_allocations` counts the C++ backend's nothrow `operator new`,
+  which native task boxes do not use.
+- A derived constructor that passes an owned value or a reference to its base
+  initializer is refused on LLVM (`UnstagedBaseInitializer`) and fails on C++:
+  MIR leaves such base initializers unstaged. Staging them is follow-up MIR work.
+- Follow-up branches carry further work not in this candidate: borrow-carrier
+  value moves, interface views of borrow carriers (blocked on an upcast-borrow
+  soundness fix in semantics and MIR), invocation-pointer text results and
+  a MIR verifier hardening for text call results.
+
+**Negative constants above O0 (fixed).** The five-line reduction
+
+```gti
+enum class E : int32_t { a = -5, b = 1000 };
+int32_t f(E v) { if (v == E::a) { return 1; } return 2; }
+int main() { if (f(E::a) != 1) { return 10; } if (f(E::b) != 2) { return 20; } return 0; }
+```
+
+exited 20 at native O1 and above. Native lowering built every negative integer,
+enumerator and switch-label constant as
+`ConstantInt::get(type, uint64_t(0) - magnitude)`. Through LLVM 22 that call
+truncated implicitly. LLVM 23 made truncation opt-in, and a release-built
+`APInt` keeps an unfitted payload's high bits rather than asserting, so the
+emitted `i32 -5` carried the raw word `0xfffffffffffffffb`: it printed as
+`-5` but was a different constant from the canonical `-5` and compared unequal
+to it. IPSCCP then concluded `f` always returns 1 and folded `f(E::b) != 2` to
+true. Printing and reparsing a module canonicalizes the constant, which is why
+`opt` on a dumped module was always correct while the in-process pipeline was
+not, and `CloneModule` preserves it. Comparing a reparsed copy with a clone
+pass by pass localized the divergence to IPSCCP's input. One `integerConstant`
+helper now builds each such constant at its type's width. Builds against the
+bundled LLVM 20.1.0 were unaffected; every build against LLVM 23 was.
+
+**Not on this path.** The C04 failure-transport comparison recommends native
+unwinding as a proposal to the ABI owner and states that production keeps
+status transport until a reviewed migration. Promotion does not require it.
+
+**Cannot be closed here.** O-LLVM-16 requires ten gates on four targets, two
+of them Linux x86_64. Linux evidence needs the managed runners; nothing in
+this candidate claims it.
 
 #### LLVM Campaign Waves And Validation
 

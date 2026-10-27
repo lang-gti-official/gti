@@ -1,0 +1,113 @@
+#include <std/memory>
+#include <std/vector>
+
+// Receivers that live in a full-expression temporary or behind an address.
+// Each arm of a conditional constructs its own receiver in the hidden
+// temporary MIR materializes for it; a conditional-joined receiver is one
+// temporary dropped once after the call; a consuming member consumes a fresh
+// call result in place; a raw class pointer and an element reached through a
+// cursor's call result are checked views. Destructors record explicit IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+class Result {
+  int value;
+public:
+  Result(int value) : value(value) {}
+  ~Result() { record(9); }
+  int read() { return this.value; }
+};
+
+// A generated default constructor and no destructor.
+class Maker {
+public:
+  virtual Result make() { return Result(1); }
+};
+
+class Source {
+  int tag;
+public:
+  Source(int tag) : tag(tag) {}
+  ~Source() { record(this.tag); }
+  virtual Result make() { return Result(this.tag * 10); }
+  virtual int share(int divisor) { return 60 / divisor; }
+};
+
+interface Ticket {
+  int redeem(int divisor) &&;
+};
+
+class Voucher : public Ticket {
+  int amount;
+public:
+  Voucher(int amount) : amount(amount) {}
+  ~Voucher() { record(this.amount); }
+  int redeem(int divisor) && override { return this.amount * 10 / divisor; }
+};
+
+Voucher issue(int amount) { return Voucher(amount); }
+
+int chosen(bool left) {
+  Result made = left ? Maker().make() : Source(4).make();
+  return made.read();
+}
+
+int joined(bool left, int divisor) {
+  return (left ? Source(5) : Source(6)).share(divisor);
+}
+
+int pointed(Source& source) {
+  unsafe {
+    const Source* address = &source;
+    return address->share(3);
+  }
+}
+
+int total(std::vector<std::unique_ptr<Source>>& sources) {
+  mut int sum = 0;
+  auto stop = sources.end();
+  for (mut auto it = sources.begin(); it != stop; ++it) {
+    sum += (*it)->share(2);
+  }
+  return sum;
+}
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// TEMPORARY_RECEIVERS_MAIN
+int main() {
+  if (chosen(true) != 1 || events != 9) { return 1; }
+  events = 0;
+  if (chosen(false) != 40 || events != 49) { return 2; }
+  events = 0;
+  if (joined(true, 2) != 30 || events != 5) { return 3; }
+  events = 0;
+  if (joined(false, 3) != 20 || events != 6) { return 4; }
+  events = 0;
+  int redeemed = issue(7).redeem(2);
+  if (redeemed != 35 || events != 7) { return 5; }
+  events = 0;
+  {
+    Source source = Source(3);
+    if (pointed(source) != 20) { return 6; }
+  }
+  if (events != 3) { return 7; }
+  events = 0;
+  {
+    mut std::vector<std::unique_ptr<Source>> sources{};
+    sources.push_back(std::make_unique<Source>(1));
+    sources.push_back(std::make_unique<Source>(2));
+    if (total(sources) != 60 || events != 0) { return 8; }
+  }
+  return events == 21 ? 0 : 9;
+}

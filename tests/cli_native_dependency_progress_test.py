@@ -108,9 +108,11 @@ def main():
             '[targets.app]\nkind = "executable"\nroot = "main.gti"\n')
         marker, release = root / "native-started", root / "native-release"
         shim = root / "cxx"
+        # Block the native step of a build script on either backend: its
+        # generated C++ source or its LLVM object.
         shim.write_text(
             f'#!{sys.executable}\nimport os, pathlib, sys, time\n'
-            'if any(arg.endswith(".cpp") for arg in sys.argv[1:]):\n'
+            'if any(arg.endswith((".cpp", ".gti.o")) for arg in sys.argv[1:]):\n'
             '    pathlib.Path(os.environ["GTI_PROGRESS_MARKER"]).touch()\n'
             '    deadline = time.monotonic() + 60\n'
             '    while not pathlib.Path(os.environ["GTI_PROGRESS_RELEASE"]).exists():\n'

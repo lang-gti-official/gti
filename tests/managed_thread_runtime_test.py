@@ -384,13 +384,28 @@ int main() {
 
 AUTOMATIC_JOIN_HOST_FAILURE_SOURCE = """\
 #include <std/thread>
+#include <std/mutex>
+
+std::mutex<int32_t> process_value{7};
 
 extern "C" {
   void gti_test_inject_thread_join_failure();
+  void gti_test_expect_native_storage_pinned(int32_t value);
 }
 
+class CleanupProbe {
+public:
+  ~CleanupProbe() {
+    auto held = process_value.lock();
+    gti_test_expect_native_storage_pinned(held.get());
+  }
+};
+
 int main() {
-  auto started = std::thread::start([]() -> void {});
+  CleanupProbe probe{};
+  auto started = std::thread::start([]() -> void {
+    auto held = process_value.lock();
+  });
   if (!started.has_value()) { return 1; }
   mut std::thread worker = std::move(started).value();
   gti_test_inject_thread_join_failure();
@@ -735,32 +750,40 @@ def test_automatic_join_host_failure(
     helper = root / "managed-thread-fault.cpp"
     helper.write_text(
         '#include "thread_internal.h"\n'
+        '#include "gti/runtime_thread.h"\n'
+        '#include <cstdlib>\n'
         'extern "C" void gti_test_inject_thread_join_failure() noexcept {\n'
         "  gti::runtime::detail::setThreadTestFault(\n"
         "      gti::runtime::detail::ThreadTestFault::JoinFailed);\n"
+        "}\n"
+        'extern "C" void gti_test_expect_native_storage_pinned(int32_t value) noexcept {\n'
+        "  if (value != 7 || gti_rt_thread_program_storage_retirement_ready_v1()) std::abort();\n"
         "}\n",
         encoding="utf-8",
     )
     source_root = pathlib.Path(__file__).resolve().parent.parent
-    binary = build(
-        compiler,
-        root,
-        "managed_thread_automatic_join_host_failure",
-        AUTOMATIC_JOIN_HOST_FAILURE_SOURCE,
-        native_arguments=[
-            str(helper),
-            f"-I{source_root / 'runtime/src'}",
-        ],
-    )
-    result = execute([str(binary)], expected=70)
-    if result.stdout != "" or "runtime error[GTI-R0012]" not in result.stderr or (
-        "infallible_host_operation_failed in automatic_join\n"
-        not in result.stderr
-    ):
-        raise AssertionError(
-            "automatic join did not re-raise its exact GTI-R0012 outcome\n"
-            f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+    for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
+        binary = build(
+            compiler,
+            root,
+            f"managed_thread_automatic_join_host_failure_{standard}_{optimization[1:]}",
+            AUTOMATIC_JOIN_HOST_FAILURE_SOURCE,
+            standard=standard,
+            optimization=optimization,
+            native_arguments=[
+                str(helper),
+                f"-I{source_root / 'runtime/src'}",
+            ],
         )
+        result = execute([str(binary)], expected=70)
+        if result.stdout != "" or "runtime error[GTI-R0012]" not in result.stderr or (
+            "infallible_host_operation_failed in automatic_join\n"
+            not in result.stderr
+        ):
+            raise AssertionError(
+                "automatic join did not re-raise its exact GTI-R0012 outcome\n"
+                f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+            )
 
 
 def test_nested_worker_failure(

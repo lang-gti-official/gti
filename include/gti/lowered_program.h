@@ -85,16 +85,77 @@ struct LoweredSourceLocation {
   MirBlockId block = 0;
   MirInstructionId instruction = 0;
   SourceSpan source;
+  SourceScopeId scope = 0;
 
   friend bool operator==(const LoweredSourceLocation &,
                          const LoweredSourceLocation &) = default;
+};
+
+struct LoweredSourceRange {
+  SourceLocalId local = 0;
+  MirPlaceId place = 0;
+  MirDebugPoint begin;
+  MirDebugPoint end;
+  friend bool operator==(const LoweredSourceRange &,
+                         const LoweredSourceRange &) = default;
+};
+
+struct LoweredSourceValueRange {
+  SourceLocalId local = 0;
+  MirValueId value = 0;
+  MirDebugPoint begin;
+  MirDebugPoint end;
+  // A final scalar lexical exit in a single-block returning body; its actual
+  // DWARF scope bounds visibility. All other ends need an explicit value cut.
+  bool lexicalScopeEnd = false;
+  friend bool operator==(const LoweredSourceValueRange &,
+                         const LoweredSourceValueRange &) = default;
+};
+
+struct LoweredSourceFragmentRange {
+  SourceLocalId local = 0;
+  MirPlaceId place = 0;
+  MirValueId value = 0;
+  MirDebugPoint begin;
+  MirDebugPoint end;
+  friend bool operator==(const LoweredSourceFragmentRange &,
+                         const LoweredSourceFragmentRange &) = default;
+};
+
+struct LoweredSourceParameterFragment {
+  SourceLocalId local = 0;
+  MirPlaceId place = 0;
+  std::size_t element = 0;
+  MirDebugPoint begin;
+  MirDebugPoint end;
+  friend bool operator==(const LoweredSourceParameterFragment &,
+                         const LoweredSourceParameterFragment &) = default;
+};
+
+struct LoweredSourceDebugTables {
+  PlaceDomain domain;
+  std::vector<SourceDebugScope> scopes;
+  std::vector<MirSourceLocal> locals;
+  std::vector<LoweredSourceLocation> locations;
+  std::vector<LoweredSourceRange> ranges;
+  std::vector<LoweredSourceValueRange> valueRanges;
+  std::vector<LoweredSourceFragmentRange> fragments;
+  std::vector<LoweredSourceParameterFragment> parameterFragments;
+  friend bool operator==(const LoweredSourceDebugTables &,
+                         const LoweredSourceDebugTables &) = default;
 };
 
 struct LoweredBody {
   LoweredBodyIdentity identity;
   LoweredBodyRole role = LoweredBodyRole::SourceExecutable;
   std::vector<LoweredGeneratedItemIdentity> requiredGeneratedItems;
-  std::vector<LoweredSourceLocation> sourceLocations;
+  SourceDebugRecord<LoweredSourceDebugTables> sourceDebug;
+
+  [[nodiscard]] const std::vector<LoweredSourceLocation> &
+  sourceLocations() const {
+    static const std::vector<LoweredSourceLocation> empty;
+    return sourceDebug.tables ? sourceDebug.tables->locations : empty;
+  }
 
   friend bool operator==(const LoweredBody &, const LoweredBody &) = default;
 };
@@ -251,6 +312,7 @@ struct LoweredClassDeclaration {
   std::vector<LoweredGenericParameter> genericParameters;
   std::vector<SemanticType> genericArgumentPatterns;
   std::vector<LoweredClassBase> bases;
+  std::vector<ClassVirtualDispatch> virtualDispatch;
   SemanticTypeTraits traits;
   ConcurrencyCapabilityPolicy transferPolicy =
       ConcurrencyCapabilityPolicy::Structural;
@@ -499,12 +561,28 @@ struct LoweredSymbol {
                          const LoweredSymbol &) = default;
 };
 
+// Concrete dispatch selection of one virtual slot. Paths contain successive
+// direct base instances, excluding the complete owner; an empty path selects
+// that owner. No native offsets or physical call convention belong here.
+struct LoweredVirtualDispatch {
+  LoweredFunctionInstanceId root = 0;
+  LoweredFunctionInstanceId target = 0;
+  LoweredClassInstanceId rootOwner = 0;
+  LoweredClassInstanceId targetOwner = 0;
+  std::vector<LoweredClassInstanceId> rootPath;
+  std::vector<LoweredClassInstanceId> targetPath;
+
+  friend bool operator==(const LoweredVirtualDispatch &,
+                         const LoweredVirtualDispatch &) = default;
+};
+
 struct LoweredClassInstance {
   LoweredClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
+  std::vector<LoweredVirtualDispatch> virtualDispatch;
   SourceSpan source;
 
   friend bool operator==(const LoweredClassInstance &,
@@ -533,6 +611,7 @@ struct LoweredConstructorInstance {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
+  std::optional<MirConstructorDispatchState> dispatchState;
   std::optional<SourceSpan> instantiationSource;
   SourceSpan source;
 
@@ -746,6 +825,9 @@ public:
 
   [[nodiscard]] const TargetInfo &target() const { return target_; }
   [[nodiscard]] const MirProgram &mir() const { return mir_; }
+  [[nodiscard]] SourceDebugProfile sourceDebugProfile() const {
+    return mir_.sourceDebugProfile();
+  }
   [[nodiscard]] ProgramKind programKind() const { return programKind_; }
   [[nodiscard]] const std::optional<LoweredEmbeddingPlan> &
   embeddingPlan() const {

@@ -31,6 +31,34 @@ name determines language meaning or bypasses deleted/private constructors.
 
 ## Representation
 
+Bodyless generated default construction uses an explicit ordinary `Construct`
+with zero inputs and no constructor target. Whole-program verification requires
+the unique concrete owner's generated default policy and absence of an
+initializer schedule; ordinary materialization, publication and cleanup remain
+mandatory. Temporary receiver/argument proofs and effect analysis consume that
+same construction operation. A targetless ordinary `Call` cannot stand in for
+construction; native/deferred calls retain their separate typed targets or
+invocation capabilities.
+
+The existing one-input passive-union family is proved separately: the exact concrete union,
+sealed overlapping layout and first declared field type must match the input.
+That proof grants no ordinary call target, default-constructor policy, cleanup,
+borrow, failure or precise effect authority.
+
+A passive scalar value return preserves its source operand type and declared
+body return type. The MIR-owned scalar-return query proves an exact type or
+uses the existing shared context-free initialization-conversion rule; it does
+not repeat assignability or decide literal-dependent narrowing. Semantic
+contextual typing must already give a narrowed integer literal its exact type.
+Scalar results use value/constant/copy/move carriers. A copy/move's claimed
+source type must equal its exact selected place type before choosing either an
+exact return or an initialization conversion; ordinary operand and availability
+checks remain mandatory. Address or loan carriers cannot stand in
+for a by-value scalar. The query applies to the destination type: a reference
+return can intentionally carry a referent-typed address operand and retains its
+independent return-loan authority. Aggregate, enum, text, callable, raw and
+ownership return families receive no new authority from this scalar rule.
+
 Raw address conversion uses `Compute/Convert` with one evaluated pointer value.
 The independent `rawPointerConversion` query is shared by body verification and
 production backend admission: only typed/void or same-pointee conversion is
@@ -277,6 +305,19 @@ empty one-block `Exit` shape, except `Module/0`: its verified implicit-zero or
 constant storage stages remain `DataOnly`, while any merged `Initializer` step
 makes the module row executable.
 
+Instance-field initializer inventory includes declaration-only `Initialize`
+rows for fields without a resolved declaration initializer. The source/HIR
+bridge binds each such row to the exact root variable statement, field binding,
+SymbolId and concrete type, and proves both field and statement initializer
+absence. The shared MIR shape predicate recognizes only this exact instance
+body/field identity with no value, operands, constructor stage, failure or
+lifecycle effect. It does not authorize erasing a real initializer. These rows
+declare storage, not an implicit value or reference loan: the constructor's
+separately selected `This`-field writes and their publication remain required.
+No corresponding exemption applies to locals, module/static fields or actual
+constructor stages. Conservative inventory retention need not imply execution
+of a declaration-only row and must not be weakened to avoid representing it.
+
 The private C++ whole-program planner subsequently consumes the sealed lowered
 inventory. Its representation snapshot owns an exact canonical `MirProgram`
 copy, so planning checks structural equality rather than treating the
@@ -329,10 +370,29 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v114`/`mir-body-v93`,
-with `lowered-program-v26` declaration metadata. These distinct combined
+The combined deterministic serialization is currently `mir-v118`/`mir-body-v93`,
+with `lowered-program-v27` declaration metadata. These distinct combined
 identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
+Class records also preserve semantic-selected virtual root/target declarations.
+HIR binds each selection to exact concrete function and owner identities plus
+successive direct-base paths; MIR verifies complete root coverage, signatures,
+final target coherence and paths independently. Abstract classes may retain pure
+targets. Lowered declaration and instance records seal and serialize the same
+selection. These are backend-neutral facts; this metadata alone does not admit
+LLVM virtual execution or prescribe a table layout or physical call ABI.
+Represented polymorphic constructor stages may also carry an exact active-class
+plan anchored after successful `InitializeBase`, or at entry when no state-bearing
+base exists. Verification checks the selected instruction and success dominance;
+optimization preserves that identity. Absence remains valid core MIR for existing
+base-call families whose staging is incomplete, and requires a native admission
+gate rather than an invented entry transition.
+Every source destructor of a polymorphic class records the lifecycle-dispatch
+transition to its own class (`MirDestructorDispatchState`, `mir-v117`). From
+the destructor's entry, through its body and its own fields' cleanup, the
+object dispatches as that class. The owner decided this rule on 2026-10-27;
+see [backend lifecycle dispatch](backend.md#lifecycle-dispatch). Verification
+requires the record exactly for those destructors.
 Declaration-bound computed
 type projections retain logical callable results independently of native ABI
 result channels. The combined schema retains
@@ -680,6 +740,23 @@ field publication must agree; matching forged call/field metadata cannot invent
 or erase the original owner authority. Each local value copy attached to an entry requires
 an independently proven, dominating same-type initialization; merely adding a
 binding to the carrier list grants no authority.
+A lifecycle-bound stored result may obtain exclusive owner dependency from
+its verified callee while accepting a shared address. Its incoming carrier
+parent supplies the selected address permission and lifetime; it does not
+supply mutable referent permission. For this sole-origin publication, body
+verification retains the exact staged input, live parent, source containment,
+Mutable result exclusion and cleanup endpoint. Program verification reconstructs
+the parent from independently checked stored entry paths and binds publication
+to the exact callee/constructor contract. Clearing that parent, changing the
+input/target/access, or using the readonly ancestor while the exclusive child
+is live remains invalid. Ordinary reborrows retain their existing permission
+rule. Every finite normal return and constructor publication is checked,
+including the structural trusted capability construction base; legal recursive
+relays require no termination proof or new certificate subsystem.
+Some invalid ancestor uses through stored readonly receivers still reach the
+MIR safety firewall instead of a semantic source diagnostic; that diagnostic
+frontier remains pending and is not satisfactory user-facing rejection.
+
 Checked references to primitive text views use the same two-dependency model.
 Their abstract `Stored` entry has no nominal field path: it represents the
 opaque caller-owned text and grants read-only access only. Semantic analysis
@@ -1038,6 +1115,19 @@ Canonical checked-place forwarding does not cross `RawDereference` or
 the pointer; a read-only carrier shell therefore does not make the raw pointee
 read-only. Ordinary pointer type/access and lexical unsafe obligations remain
 separate from checked loan ancestry.
+
+Program verification independently resolves Value-rooted raw class field
+projections through the exact MIR class catalog and checks their final type.
+It reuses the ordinary field/base/array/reference projection query; a missing
+root, invalid selected field, or contradictory final type rejects the owning
+body/place before lowered sealing. Native admission retains its independent
+supported-layout and final-type checks. This program-level check does not yet
+extend through Lambda capture-field selectors, whose exact environment identity
+requires a separate proof; it does not declare those paths universally valid.
+Class projection prefixes are still checked before that boundary, and each
+independently materialized prefix place retains its own final-type check. This
+is the current verification coverage, not a permanent source-language exception.
+
 Program v74/body v64 serialize signature receiver capability in semantic type
 metadata. Read-only, mutable, and consuming signatures cannot share a serialized
 identity. The lowered declaration seal includes the same field in
@@ -1801,6 +1891,10 @@ independent identity and child-first endpoint checks. The program verifier
 requires a borrowing call or constructor's result loan to remain `CallResult`
 or `Stored`, matching the producer, rather than accepting a forged `Local` loan
 with otherwise unchanged source metadata.
+For `CallResult`, `producedBy` must equal the owning call/construct's source
+value identity as well as retaining the exact origin and access mode. A
+different producer is compiler corruption even when the selected source place
+is unchanged; backend address publication cannot repair that provenance.
 They do not retire that chain and replace it with a `Local` loan against the
 coarser shared range. The selected returned address and child-first lifetime
 therefore survive through each iteration's last use, break, continue, return
@@ -1886,10 +1980,15 @@ witness: semantics rejects storing a dynamic view in a field or fixed-array
 element, so one exact `Load` copying a place whose final `Field` or `Index`
 projection has the returned view type, with no borrowed state, loan,
 destination, receiver or lifecycle events, is also lifetime independent. A
-reference field ends in a dereference and never qualifies. Clearing a
-borrowed-state flag or a return loan does not establish either witness. A
-function whose returns are all stored views or literals summarizes no owner
-dependency at all. All dynamic alternatives still
+reference field ends in a dereference and never qualifies. A third witness
+is the result of a static call of a source text function that has no result
+dependency, or of a text field relay, carrying no loan and no borrowed state:
+the callee's own returns are proven ownerless, and a field relay without a
+loan reads a field that holds ownerless text. A method whose predeclared
+receiver relay its body never uses therefore returns `this.inner.label()` as
+it returns a literal. Clearing a borrowed-state flag or a return loan does not
+establish any witness. A function whose returns are all stored views or
+literals summarizes no owner dependency at all. All dynamic alternatives still
 publish and verify their exact escaping loan, and callers conservatively retain
 the function's owner dependency regardless of the runtime branch.
 A dynamic alternative may also return another text relay's result, such as
@@ -1908,21 +2007,32 @@ operand retains both the external owner loan and the separately verified
 runtime field/dereference place, never the carrier shell's address.
 
 `verifyOwnerlessTextContracts` independently derives every ownerless text
-input contract. A write to a text field, to a text element of an array reached
-through a field, to a payload-enum text field, or any other checked text
-assignment outside local storage needs an operand whose source is known: a
-string or null literal (including `nullptr` for a `c_string` field), an
-ownerless field projection, unprojected static text storage, a temporary or
-block parameter whose every incoming value is known, a formal parameter, or
-the result of a call to a source function whose returns are known.
+input contract. A write to a text field, to a text array element wherever the
+array lives (each element of an array literal included), to a payload-enum
+text field, or any other checked text assignment outside a local text binding
+needs an operand whose source is known: a string or null literal (including
+`nullptr` for a `c_string` field), an ownerless field or array-element
+projection, unprojected static text storage, text read from raw memory, a
+temporary or block parameter whose every incoming value is known, a formal
+parameter, or the result of a call to a source function or lambda whose
+returns are known.
 A formal becomes a requirement of its function. Requirements propagate to a
 fixed point through calls and constructions and must equal the semantic
 `ownerlessTextParameters` exactly. Virtual, override or native dispatch,
 function items, lambdas and native exports cannot carry a nonempty
-requirement. Local text bindings and local text arrays are not field storage
-and may hold dynamic text. Static text storage counts as ownerless because
-semantics admits only ownerless initializers and stores into it; MIR checks
-assignments to it but does not yet re-verify global initializers.
+requirement. A local text binding is not text storage and may hold dynamic
+text; a reader traces every write of it instead: its initialization and each
+assignment, in any order and in a loop. A local already being traced on that
+path adds nothing new, and a store through a mutable borrow of the local is a
+checked text store, which holds ownerless text or text its function requires
+ownerless. Semantics never nests
+dynamic text in an array (`L-OWN-02`), and every safe element write is a
+checked text store here, so an array element is ownerless text storage
+wherever the array lives: a by-value array formal holds what its caller's
+array held, and an element read is an ownerless result proof. Static text
+storage counts as ownerless because semantics admits only ownerless
+initializers and stores into it; MIR checks assignments to it but does not
+yet re-verify global initializers.
 
 An external C declaration returning an untracked `c_string` is also an exact
 text producer. Its pointer validity and retention obligations belong to the
@@ -1930,6 +2040,12 @@ native boundary; the verifier does not require a source body for that call.
 This admission requires C linkage, no source definition, and no result loan or
 borrow contract on the target or call. It does not apply to GTI-owned strings'
 dependent C-string observers or erase an annotated native result's dependency.
+Text read from raw memory, below a raw dereference or raw index with only
+field and element selection after it, is an exact producer for the same
+reason: unsafe code took on its validity and lifetime obligations, and raw
+writes are not checked text stores, so it is an inert native value with no
+GTI owner to reconstruct. A checked dereference below the raw step reads a
+referent elsewhere and keeps the ordinary rules.
 
 A call's result holds what its callee's returns hold, mapped through the
 call's arguments and receiver. `TextContracts` summarizes each source
@@ -1944,7 +2060,20 @@ recursive set to be evaluated repeats its returns, with one evaluation of
 each other member per pass, until no summary of the set grows, and then
 completes them all; a summary that read an unfinished one stays provisional
 until then. A recursive text result is therefore ownerless exactly when its
-other returns are.
+other returns are. A lambda invocation's result holds what the lambda's
+returns hold in its own body; a lambda has no relay contract, so a returned
+formal or capture there is unknown text. Semantics rejects every escape of a
+capture's text (`L-OWN-02`), so such a result reaches only local uses, which
+need no proof. An invocation through a GTI function
+pointer holds what one of its targets returns. A virtual call to a root
+without a result dependency holds ownerless text: each override keeps its
+root's summary, which the dispatch table verification requires, and each
+source override's returns are proven ownerless as any function's are under
+that summary. A pointer value only comes
+from a forming site naming one stateless function or lambda, so the
+program's forming sites of the pointer's type are every target it can reach;
+a target's returned formal or field is unknown text there. This covers
+`std::function_ptr`, `std::function_ref` and any callable built on them.
 
 Text read through a reference that a source call returned is summarized the
 same way: the callee's Return loans name the referent, and its sources are
@@ -2151,7 +2280,7 @@ The verifier admits a publishing call's borrow facts against its target's
 `publishedTextFields` (`dependentTextCallPublication`), as it admits a
 publishing construction against its constructor.
 
-`isOwnerlessTextFieldProjection` excludes a direct text-field
+`isOwnerlessTextStorageProjection` excludes a direct text-field
 place whose object carries a `Stored` loan designating the field: a carrier
 binding of that loan, or the construction's own result value. A write into
 such a field still requires ownerless text. A temporary's field view, whose
@@ -2732,7 +2861,12 @@ A `MirBody` owns:
   `TerminateCleanupFailure`. Production backend emission consumes this verified
   schedule, including admitted partial-construction rollback. New unsupported
   startup shapes must extend its construction and containment proof, not an
-  older source-tree execution path;
+  older source-tree execution path. The argument loop uses ordinary `Load`,
+  `Compute(Add)` and `Assign` instructions rather than a fused `Modify`.
+  `ComputeNextArgumentIndex` and `AdvanceArgumentIndex` bind arithmetic and
+  commit separately. The exact verified loop edge establishes
+  `0 <= index < count <= INT32_MAX`, so adding one cannot overflow; the verifier
+  rejects changes to the step, direction, source value or commit identity;
 - lexical scopes, cleanup edges, loans, carrier bindings, and source/HIR
   provenance.
 
@@ -2748,6 +2882,52 @@ is an explicit hosted-exit operation, not an emitter-added source call. Passive
 data storage uses native per-thread literal-initialized data without dynamic guard or
 registration; owning storage uses a byte slot and explicit object lifetime so
 emergency abandonment cannot accidentally run a native destructor.
+
+Process storage with native-only cleanup retains an exact optional
+`MirProgramInitializationStep::nativeRetirement` recipe. It must equal the
+unique structural cleanup recipe for that root and contain no source
+destructor, owning allocation release, borrowed state, polymorphic cleanup or
+recursive cleanup. This authority composes through ordinary aggregates; it is
+not a named-library exception. Process roots do not acquire lexical drops.
+Publication follows the exact recorded final storage initializer, so failure
+leaves only the successfully constructed prefix live.
+
+`RetireProgramStorage` is a generated hosted-only operation with runtime,
+unknown-write and drop effects, but no user-code or defined-failure effect.
+Normal hosted teardown drains TLS, ends the C-thread runtime, then retires
+native process roots in reverse initialization order. An ordinary failure
+first finishes source cleanup, then drains TLS with the original primary,
+ends the C-thread runtime only if begun, retires native roots and contains the
+failure. Module-initialization failure uses that outer endpoint because TLS
+cleanup may still access already-published globals. Cleanup emergency and
+abort intentionally abandon further teardown. The closed program verifier
+checks this exact schedule and C-thread target; body-local suffix acceptance
+does not authorize an arbitrary call during failure cleanup.
+
+LLVM uses one publication bit per root and a reverse-order helper, clearing
+each bit before native cleanup. Hosted exit and the module unload destructor
+share the idempotent helper. The helper first queries managed-worker retirement
+readiness: terminal automatic-join quarantine pins all native roots and leaves
+their publication bits intact. Explicit hosted failure can then contain its
+original record without invalidating storage still accessible to that worker.
+The unload wrapper rejects any remaining live roots after the helper, rather
+than unmapping pinned storage. C-thread end requires the manual-worker registry
+to be empty, which alone does not prove managed-worker quiescence. Embedding
+shutdown must reject pinned storage; unsafe hosts must independently ensure no
+foreign execution can access unloading storage. This does not enable general source global
+destructors or change embedding activation/context lifetime rules.
+
+`mirOwnedStoragePayloadInitialization` proves the existing compiler-private
+opaque-storage constructor mechanism: one exact owned parameter becomes its
+payload, followed only by that parameter's moved-from cleanup. It requires the
+trusted capability identity, concrete parameter/place, unique active cleanup
+recipe and independently valid cleanup-only body. Extra source code, borrowed
+state, wrong recipes or inactive input cleanup reject. The query does not
+weaken verification, change declared effects or select failure transport.
+Conservative destructor effects remain conservative even though this particular
+parameter cleanup observes moved-from representation state. LLVM consumes the
+witness and uses structural fresh-shell transfer when the payload itself
+contains native mutexes, including selected owning-sum alternatives.
 
 Ambient persistent-storage effects are independently derived from executable
 MIR, not trusted frontend summary claims. `mir_storage_effects.cpp` reuses the
@@ -3464,6 +3644,21 @@ the exact formal, source place, load and unsuspended entry loan; an early loan
 endpoint cannot be hidden behind the loaded SSA value. The base itself still
 cannot retain borrowed state. This permits forwarding a dynamic text view into
 an owning base constructor without mistaking it for a borrowed base object.
+An exact incoming scalar reference can also forward its address into the
+selected base reference formal, with the same referent and compatible access.
+Its `CallInput` names the constructor-initializer ordinal and has no ordinary
+HIR call-site identity; it appears at its source-argument position and
+`InitializeBase` is its sole argument consumer. Other arguments in this bounded
+reference family must be inert literals or direct incoming passive scalar
+formals. Effectful, failing, terminal, or owning later arguments remain valid
+source but need the fuller ordered prepared-input protocol before native staging.
+No terminal-abandonment relaxation is implied. The
+source seal binds the runtime dereference place to the exact HIR formal, not
+another same-typed parameter. A mutable formal retains its existing entry
+`Parameter` loan and permission; no replacement loan or endpoint is invented.
+The complete argument family is checked before publishing any such input, so
+a later unsupported owning argument cannot leave partial staging or a false
+constructor-state anchor. These MIR facts do not extend C++ backend admission.
 Interprocedural effect analysis follows
 the selected base constructor, so its allocation, memory, and other effects
 remain visible in the derived constructor's summary and to the optimizer.
@@ -3701,6 +3896,117 @@ destruction is not a substitute for releasing checked ownership resources.
 
 ## Controlled Optimization Edits
 
+The private `verifyMirBodyWithPlaceQueries` entry observes the same body verifier
+used by ordinary validation. It does not accept a cached proof or mutate MIR.
+Its existing-storage profile covers direct integer/bool/char scalar roots and
+direct non-borrowed-state owned roots with one exact binding/value-drop obligation.
+The canonical scalar-initialization or lifecycle transfer supplies initialization;
+ownership and the ordinary loan verifier's read-access check supply the other
+required facts. Unsupported storage remains `Unknown`, with an `Unproven` reason.
+
+Scalar worklist solving and stable-state observation replay share one transfer
+implementation. Ownership observations run only during the existing stable
+validation replay. Lifecycle observations use its existing stable replay, never
+the path-refined exception used for a consuming operation. Borrow observations
+reuse the ordinary read-access check and replace a block's observations when its
+joined entry changes; cuts are reconsidered only after actual loan-state writes.
+Neither observation changes a transfer or grants a verifier exception.
+A requested readable point requires all applicable proofs; an inactive
+point does not pretend to distinguish a moved/dropped/never-initialized history
+that its current facts cannot establish. Required cuts retain consuming and
+ambiguous CFG-entry boundaries even when later reinitialization restores
+readability. Empty queries take the ordinary verifier path and allocate no
+observation tables. Block entry and the boundary before a terminator are
+distinct points, including in an empty block.
+
+A separate private program-aware entry query checks concrete formal binding
+identities and aliases against the canonical parameter-role comparison, and
+ordinary member receiver roots against their exact concrete owner and access.
+Its observation coverage includes non-borrowed-state member receivers and
+concrete trailing packs whose nontrivial elements each have an exact,
+entry-active Binding obligation. The read-only lifecycle replay requires every
+such obligation to remain available; retiring one element ends whole-pack
+readability. Unmatched overlapping obligations remain unproven. It still
+requires the ordinary ownership and loan-flow observations; body-only queries
+cannot invent these entry facts. Constructors do not acquire an initialized
+whole receiver at entry. Source-local range production consumes the exact
+receiver and concrete-pack entries alongside canonical body observations.
+Lowered parameter fragments preserve the source pack binding, existing root,
+concrete element index and freshly derived readable interval. Independent
+verification reconstructs their complete inventory; missing or forged entries
+cannot become positive debug availability. Borrowed packs without a complete
+canonical referent/dependency proof remain unproven. A separately queried entry
+boundary binds parameter metadata to the actual native entry block. Parameter
+fragments query every instruction boundary and retain continuous proven
+readability across source-inert glue, with explicit lexical, ownership and
+borrow stops. Root-scoped source pack parameters do not need a statement anchor
+to remain lexically visible; ordinary locals do. Generated operations receive
+no invented source statements. Boundary and lexical-end indexes avoid repeated
+body scans in the batched source-local query.
+The semantic receiver-state producer records its accepted concrete type and one
+implicit local with no binding, symbol or source token. HIR verifies that origin
+against its accepted producer; MIR joins it only to an existing, unprojected
+`This` root in the same place domain. A missing root stays unproven: debug
+collection does not create execution places. Constructor partial objects and
+borrowed-state receivers do not acquire blanket availability.
+
+Opt-in lexical-debug transport carries the requested profile into MIR
+and deep-copies collected HIR scopes, concrete local declarations, and source
+membership into `MirBody::sourceDebug`. Initializer-region IDs are flattened
+deterministically within that body. `None` allocates no table. The actual normal
+scope-exit lowering records descriptive local ends even for trivial locals;
+it does not emit fake destruction or change cleanup planning. The builder joins
+source MIR declarations and membership back to exact accepted HIR facts.
+
+Lowered receiver field fragments derive from existing verified scalar `Load`
+results and their exact direct-field place identities. They are intersected
+with freshly queried source-local readability and lexical ranges; unknown
+availability cannot become a positive fragment. Canonical memory effects end a
+cached field value after a possible write, including during an unreadable gap.
+Lifetime and loan boundaries remain owned by canonical readability, not by a
+second debug transfer implementation. Unrelated direct scalar local stores do
+not invalidate caller-owned receiver fields. Fragments do not cross CFG edges,
+and independent lowered verification reconstructs their complete inventory.
+
+`queryMirDebugAvailability` validates local/binding/type/place-domain identity
+before invoking the private canonical place query. It clips positive facts by
+known source membership and lexical ends, returns `Unproven` when membership
+cannot be established, and reports both execution and lexical required cuts.
+Neither this transient batch nor a collected table is a reusable certificate.
+The frontend selects collection before cache lookup. Lowered-program range
+construction queries its owned final MIR, forms block-local half-open intervals
+within known scope segments, and clips them at every required cut. A subsequent
+initialization or assignment can reopen a range only with a fresh readable fact.
+Independent lowered verification recomputes the range inventory, and its full
+serialization participates in the ordinary construction seal. Native emission
+consumes these registered boundaries; full representation coverage and the
+complete two-host debugger matrix remain required for production admission.
+
+`MirSourceValueEvent` binds a concrete local to an existing typed SSA value after
+a specific instruction. Original source-MIR verification reconstructs the event
+inventory from canonical scalar loads, initializations and assignments; ordinary
+SSA dominance/order verification also checks every event. The bounded profile
+requires unique direct scalar binding storage and excludes loans, address
+escape, ownership moves, receiver/drop obligations and place-bearing edge
+transport. It does not infer source readability from a value's type alone.
+Lowering independently derives and verifies block-local value intervals from
+these events, lexical membership and local ends. Indexed scope segments and
+per-local event lists avoid rescanning all events for every range. No range
+crosses an unknown lexical segment or merges values across control-flow edges.
+
+The canonical scalar-promotion, unreachable-block and in-place dead-instruction
+mutators share source-table repair. Promotion invalidates the affected existing
+place; deleting a lexical anchor invalidates that local's value location and
+removes the dangling cut. Declarations and scopes survive as `OptimizedOut`,
+without new storage. Promotion retains eligible value events at the original
+instruction identities, including tombstoned storage operations. Removing a
+referenced value definition, event point or lexical endpoint invalidates that
+local's value events. Optimization provenance replay and independent lowering
+verification bind this repair to the actual transformation. The in-place
+mutator journals changed local policies, removed cuts and value events and
+restores them on refusal. These are transport and repair controls, not an
+alternate lifetime model or permission to fabricate optimized availability.
+
 The compiler-owned optimizer vocabulary gate is described in
 [Optimization](optimization.md#language-growth-conformance-gate). Body
 verification runs its structural admission check before CFG, ownership, and
@@ -3913,6 +4219,46 @@ Without an explicit runtime place, only the exact parameter referent type is
 valid. Carrier membership or a same-typed unrelated alias cannot substitute
 for this executable address evidence.
 
+A lambda body holds each by-reference capture through a `Parameter` entry loan
+on the capture slot, the closure-body analog of a reference formal's entry
+loan. Call and construction lowering resolve a capture-rooted operand through
+that loan exactly as a binding-rooted operand resolves through its binding
+loan. A carrier made by a method of the capture's referent is therefore a child
+of the capture entry, and it borrows the dereferenced capture slot, the
+referent place a reference formal's receiver supplies, not the slot itself. A
+read-only formal entry parents only read-only carriers: an exclusive borrow
+taken through shared access to synchronized storage, such as a mutex guard, is
+a root loan, as it is when the formal has no entry loan. A carrier returned by
+a method of an accessor's result keeps that transient accessor chain alive,
+child-first, up to the semantic owner, exactly as an accessor result passed to
+a constructor does.
+
+The closure environment, not a binding, holds a capture's entry loan for the
+whole call, so that loan has no carriers and a body-local reference alias never
+joins it as a formal's alias joins the formal's entry. The alias carries its
+own physical loan below the entry instead: the call-result loan of an accessor
+on the capture's referent, a fresh `Local` loan of the referent place it names
+through the capture or through another such alias, or the loan of the alias it
+copies. The semantic identity stays on the entry loan, and releasing a finished
+alias never folds the entry in as a transient link, so the body can still use
+the capture after the alias's last use.
+
+Semantics decides structurally whether a closure is a cleanup-bound carrier
+(owner decision 2026-10-27): its environment is an aggregate of its captures,
+so moving in an owner with a destructor beside a borrowing capture leaves an
+ordinary loan that ends at the closure's last use. Only a capture that is
+itself cleanup-bound makes the closure bound. Each lambda instance records
+that decision (`lifecycleBoundBorrowCarrier`, `mir-v118`); program
+verification re-derives it from the captures, as it does for a class from its
+fields. A closure formation that moves such a carrier in produces the
+closure's lifecycle-bound `Stored` loan. That loan follows the closure's
+obligation through moves and by-value parameters, and ends only after the
+closure's drop or a complete handoff, under the same rules as a class
+carrier's. Inside the lambda body a by-value capture belongs to the closure
+environment, which owns any release obligation it contains, as a caller owns
+a method's receiver; the capture's stored entry is therefore not
+cleanup-bound there, so the body is not bound by a destructor it never runs.
+
 A body-local reference may share an existing semantic owner identity while
 capturing an accessor's different runtime referent. Lowering accepts that
 address only when its live, nonescaping call-result chain reaches exactly the
@@ -4108,6 +4454,12 @@ published loans separately from ordinary scope loans and retires them only
 after armed subobject obligations are inactive. Independent verification rejects
 early retirement, missing failure retirement, and retirement on the successful
 constructor path, which must export the dependency to its caller.
+Non-lifecycle-bound constructor entry loans also remain live until rollback
+finishes. A later initializer can publish such a reference into a field and
+change its final loan classification after earlier failure edges were built.
+Those edges retire entry capabilities together with published dependencies,
+child-first after subobject cleanup, rather than ending them before rollback
+based on an incomplete publication inventory.
 
 A read-only operator on an eligible stable-dependency borrowed-class prvalue uses
 the same explicit `ReadTemporaryBorrow` schedule as an ordinary method. Other
@@ -4124,14 +4476,19 @@ input names an exact fresh class/struct producer or a passive payload-enum
 construction, and its selected parameter is read-only `T&`. Lowering
 materializes the producer's exact mutable place, emits `BorrowRead`, and
 attaches one `CallArgument` loan to the `CallInput`;
-a target-free, zero-input ordinary class `Call` can be the generated default
-producer. Body verification recognizes its exact structural shape; independent
+an explicit zero-input ordinary class `Construct` can be the bodyless generated
+default producer. Body verification recognizes its exact structural shape; independent
 program verification also requires the concrete owner's generated default
 constructor and no missing initializer schedule. This shares the receiver
 producer query and preserves all materialization, call-loan and drop checks.
 The shared invocation-target query uses that same shape and concrete lifecycle
 proof to classify this producer as executing no source body, rather than an
-unknown call that could access unrelated persistent storage. A required explicit
+unknown call that could access unrelated persistent storage. Per-instruction
+and transitive summaries retain its initialization without inventing user-code,
+runtime, allocation or escape effects. An unproven construction boundary keeps
+conservative unknown memory/call/trap and escape effects; persistent-storage
+checking cannot dismiss it merely because the instruction is a construction.
+A required explicit
 or implicit field initializer, or inherited-base initializer, instead has an
 exact concrete constructor schedule whose transitive effects remain checked.
 Missing or forged generated-constructor authority cannot suppress those effects.

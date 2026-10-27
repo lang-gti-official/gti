@@ -399,9 +399,10 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
   // Resolve and type-check the complete written call in an isolated semantic
   // snapshot. In particular, a disabled helper still checks its arguments,
   // but their speculative moves, loans and writes never affect caller flow.
-  auto result = std::make_unique<Impl>(
-      target, sourceGraph, toolingOccurrences, nullptr, sources,
-      rawPointerAudit, requireFunctionDefinitions, trustedBodies);
+  auto result = std::make_unique<Impl>(target, sourceGraph, toolingOccurrences,
+                                       nullptr, sources, rawPointerAudit,
+                                       requireFunctionDefinitions,
+                                       trustedBodies, sourceDebugProfile);
   Impl &probe = *result;
   copyRequestSessionForSpeculativeModel(probe);
   // Constraint queries may select another typed macro before this probe has

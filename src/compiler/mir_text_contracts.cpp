@@ -18,6 +18,27 @@ bool textType(const SemanticType &type) {
          type.kind == SemanticType::CString;
 }
 
+// Text that `place` reads from raw memory: below a raw dereference or raw
+// index, selecting only fields and elements within that memory. Unsafe code
+// took on its validity and lifetime obligations, and raw writes are not
+// checked text stores, so the text has no GTI owner to reconstruct: it is an
+// inert native value, as an untracked native C-string result is. A checked
+// dereference below the raw step instead reads a referent elsewhere.
+bool rawMemoryText(const MirPlace &place) {
+  const auto raw = std::find_if(
+      place.projections.rbegin(), place.projections.rend(),
+      [](const MirPlaceProjection &projection) {
+        return projection.kind == MirProjectionKind::RawDereference ||
+               projection.kind == MirProjectionKind::RawIndex;
+      });
+  return raw != place.projections.rend() &&
+         std::all_of(place.projections.rbegin(), raw,
+                     [](const MirPlaceProjection &projection) {
+                       return projection.kind == MirProjectionKind::Field ||
+                              projection.kind == MirProjectionKind::Index;
+                     });
+}
+
 struct TextSources {
   bool known = false;
   std::set<std::size_t> parameters;
@@ -224,6 +245,16 @@ private:
   // Whether a provisional summary grew in the current evaluation.
   bool provisionalGrew = false;
   std::set<std::size_t> activeTemporaries;
+  // Lambdas whose results are being summarized.
+  std::set<HirLambdaId> activeLambdas;
+  // Per GTI function pointer type, the stateless targets of its forming
+  // sites, collected on first use (`pointerTargetsOf`).
+  struct PointerTargets {
+    SemanticType type;
+    std::set<HirFunctionInstanceId> functions;
+    std::set<HirLambdaId> lambdas;
+  };
+  std::optional<std::vector<PointerTargets>> pointerTargets;
 
   // Whether a Return of this body yields exactly `value`.
   static bool returnsValue(const MirBody &body, MirValueId value) {
@@ -698,6 +729,8 @@ private:
           context.body.findPlace(loan ? loan->source : operand.place);
       if (!place || !textType(place->type))
         return {};
+      if (rawMemoryText(*place))
+        return {.known = true};
       // Text read under a nested text class that a call returned by
       // reference is what the call's origin holds under the relayed payload.
       if (place->root == MirPlaceRootKind::Loan && !place->projections.empty())
@@ -728,7 +761,7 @@ private:
       if (const auto formal = contractPlace(context, *place);
           formal && formal->field != 0)
         return {.known = true, .fields = {*formal}};
-      if (isOwnerlessTextFieldProjection(program, context.body, *place))
+      if (isOwnerlessTextStorageProjection(program, context.body, *place))
         return {.known = true};
       // Static storage of text holds only ownerless text: semantics admits
       // only ownerless initializers and stores, and every MIR assignment to it
@@ -740,9 +773,12 @@ private:
           place->projections.empty())
         return temporarySources(context, *place, active);
       if (place->root != MirPlaceRootKind::Binding ||
-          !place->projections.empty() ||
-          !active.emplace(false, place->binding).second)
+          !place->projections.empty())
         return {};
+      // A local already being traced adds nothing new on this path: each of
+      // its writes is traced where it is.
+      if (!active.emplace(false, place->binding).second)
+        return {.known = true};
       TextSources answer;
       const auto formal = std::find(context.bindings.begin(),
                                     context.bindings.end(), place->binding);
@@ -752,8 +788,18 @@ private:
         if (index < context.types.size() && context.types[index] == place->type)
           answer = {.known = true, .parameters = {index}};
       } else {
-        const MirInstruction *initializer = nullptr;
-        bool writable = false;
+        // A local text binding holds what any of its writes stored: its
+        // initialization, each assignment, and a store through a mutable
+        // borrow of it. That store is a checked text store, so it holds
+        // ownerless text or text its function requires ownerless.
+        answer.known = true;
+        bool initialized = false;
+        const auto join = [&](const TextSources &written) {
+          answer.known = answer.known && written.known;
+          answer.parameters.insert(written.parameters.begin(),
+                                   written.parameters.end());
+          answer.fields.insert(written.fields.begin(), written.fields.end());
+        };
         for (const auto &block : context.body.blocks)
           for (const auto &instruction : block.instructions) {
             const auto *destination =
@@ -762,21 +808,18 @@ private:
                     : nullptr;
             if (destination && destination->root == MirPlaceRootKind::Binding &&
                 destination->binding == place->binding) {
-              if (instruction.kind != MirInstructionKind::Initialize ||
-                  initializer)
-                writable = true;
-              initializer = &instruction;
-            }
-            for (const auto &input : instruction.operands) {
-              const auto *written = context.body.findPlace(input.place);
-              if (input.kind == MirOperandKind::BorrowWrite && written &&
-                  written->root == MirPlaceRootKind::Binding &&
-                  written->binding == place->binding)
-                writable = true;
+              initialized = initialized ||
+                            instruction.kind == MirInstructionKind::Initialize;
+              if ((instruction.kind == MirInstructionKind::Initialize ||
+                   instruction.kind == MirInstructionKind::Assign) &&
+                  destination->projections.empty() &&
+                  instruction.operands.size() == 1)
+                join(sources(context, instruction.operands.front(), active));
+              else
+                answer.known = false;
             }
           }
-        if (!writable && initializer && initializer->operands.size() == 1)
-          answer = sources(context, initializer->operands.front(), active);
+        answer.known = answer.known && initialized;
       }
       active.erase({false, place->binding});
       return answer;
@@ -844,14 +887,146 @@ private:
           instruction->borrowOrigin == BorrowOriginKind::None &&
           instruction->borrowFields.empty()) {
         answer.known = true;
+      } else if (target && textType(target->returnType) &&
+                 instruction->dispatch == CallDispatch::Virtual &&
+                 target->virtualMethod &&
+                 target->returnBorrowOrigin == BorrowOriginKind::None &&
+                 target->returnBorrowFields.empty() &&
+                 !target->completeReturnBorrow && !instruction->loan &&
+                 instruction->borrowOrigin == BorrowOriginKind::None) {
+        // A virtual call returns what one of its root's overrides returns,
+        // and each keeps the root's contract: a root without a result
+        // dependency yields text that each source override's returns prove
+        // ownerless below.
+        answer.known = true;
       } else if (target && textType(target->returnType)) {
         answer = callResultSources(context, *instruction, active);
       }
+    } else if (instruction && instruction->kind == MirInstructionKind::Call &&
+               instruction->lambdaTarget && !instruction->functionTarget &&
+               textType(instruction->info.type)) {
+      answer = lambdaResultSources(*instruction->lambdaTarget);
+    } else if (instruction && instruction->kind == MirInstructionKind::Call &&
+               instruction->intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+               textType(instruction->info.type)) {
+      answer = pointerResultSources(*instruction);
     } else if (!instruction) {
       answer = joinSources(context, operand.value, active);
     }
     active.erase({true, operand.value});
     return answer;
+  }
+
+  // What an invocation of a lambda returns: the text its returns hold in its
+  // own body, as a source function's call holds its returns'. A lambda has
+  // no text relay contract, so a returned formal, or a capture, which no
+  // initializer in the body defines, is unknown text.
+  TextSources lambdaResultSources(HirLambdaId id) {
+    const auto lambda = std::find_if(
+        program.lambdaInstances().begin(), program.lambdaInstances().end(),
+        [&](const MirLambdaInstance &candidate) { return candidate.id == id; });
+    if (lambda == program.lambdaInstances().end() ||
+        !activeLambdas.insert(id).second)
+      return {};
+    auto temporaries = std::exchange(activeTemporaries, {});
+    const TextBody body{.body = lambda->body,
+                        .types = lambda->parameterTypes,
+                        .bindings = lambda->parameterBindings};
+    TextSources answer{.known = true};
+    bool returned = false;
+    for (const auto &block : lambda->body.blocks)
+      if (block.terminator.kind == MirTerminatorKind::Return &&
+          block.terminator.value) {
+        returned = true;
+        answer.join(sources(body, *block.terminator.value));
+      }
+    activeTemporaries = std::move(temporaries);
+    activeLambdas.erase(id);
+    if (!returned || !answer.parameters.empty() || !answer.fields.empty())
+      return {};
+    return answer;
+  }
+
+  // What an invocation through a GTI function pointer returns: the text one
+  // of its targets returns. A pointer value only comes from a forming site,
+  // which names one stateless function or lambda, so the program's forming
+  // sites of the pointer's type are every target the invocation can reach. A
+  // target's returned formal or field has no relay through the pointer, and
+  // is unknown text, as it is for a lambda.
+  TextSources pointerResultSources(const MirInstruction &call) {
+    if (call.parameterTypes.empty() ||
+        call.parameterTypes.front().kind != SemanticType::Reference ||
+        call.parameterTypes.front().arguments.size() != 1)
+      return {};
+    const auto *targets =
+        pointerTargetsOf(call.parameterTypes.front().arguments.front());
+    if (targets == nullptr)
+      return {};
+    TextSources answer{.known = true};
+    for (const auto id : targets->functions) {
+      const auto *target = program.findFunctionInstance(id);
+      if (target == nullptr ||
+          target->definitionKind != MirDefinitionKind::Source)
+        return {};
+      const auto returned = returnSources(*target);
+      if (!returned.parameters.empty() || !returned.fields.empty())
+        return {};
+      answer.known = answer.known && returned.known;
+    }
+    for (const auto id : targets->lambdas)
+      answer.join(lambdaResultSources(id));
+    return answer;
+  }
+
+  // The targets the program forms GTI function pointers of `type` from, or
+  // null when it forms none.
+  const PointerTargets *pointerTargetsOf(const SemanticType &type) {
+    if (!pointerTargets) {
+      pointerTargets.emplace();
+      const auto visit = [&](const MirBody &body) {
+        for (const auto &block : body.blocks)
+          for (const auto &instruction : block.instructions) {
+            if (instruction.kind != MirInstructionKind::Call ||
+                instruction.intrinsic != IntrinsicKind::FunctionPointerFromItem)
+              continue;
+            auto entry =
+                std::find_if(pointerTargets->begin(), pointerTargets->end(),
+                             [&](const PointerTargets &candidate) {
+                               return candidate.type == instruction.info.type;
+                             });
+            if (entry == pointerTargets->end())
+              entry = pointerTargets->insert(
+                  pointerTargets->end(),
+                  PointerTargets{.type = instruction.info.type});
+            if (instruction.functionPointerFunctionTarget)
+              entry->functions.insert(
+                  *instruction.functionPointerFunctionTarget);
+            if (instruction.functionPointerLambdaTarget)
+              entry->lambdas.insert(*instruction.functionPointerLambdaTarget);
+          }
+      };
+      visit(program.module());
+      for (const auto &instance : program.classInstances()) {
+        visit(instance.fieldInitializers);
+        visit(instance.staticFieldInitializers);
+      }
+      for (const auto &function : program.functionInstances())
+        visit(function.body);
+      for (const auto &constructor : program.constructorInstances())
+        visit(constructor.body);
+      for (const auto &destructor : program.destructorInstances())
+        visit(destructor.body);
+      for (const auto &lambda : program.lambdaInstances())
+        visit(lambda.body);
+      for (const auto &storage : program.threadLocalStorage())
+        visit(storage.initializer);
+    }
+    const auto found =
+        std::find_if(pointerTargets->begin(), pointerTargets->end(),
+                     [&](const PointerTargets &candidate) {
+                       return candidate.type == type;
+                     });
+    return found == pointerTargets->end() ? nullptr : &*found;
   }
 
   // The instruction that produces `loan`: a Borrow or a Call.
@@ -2581,6 +2756,13 @@ private:
                   require(instruction, instruction.operands[index]);
           }
         }
+        // An array literal stores each text element in array storage, whose
+        // element reads are ownerless (`isOwnerlessTextStorageProjection`).
+        if (instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::Aggregate)
+          for (const auto &element : instruction.operands)
+            if (textType(element.type))
+              require(instruction, element);
         const auto *destination =
             instruction.destination
                 ? context.body.findPlace(*instruction.destination)
@@ -2594,23 +2776,19 @@ private:
                    return projection.kind == MirProjectionKind::RawIndex ||
                           projection.kind == MirProjectionKind::RawDereference;
                  }));
-        // A text field's invariant must survive every safe writer, including
-        // assignments rooted in accessor loans rather than a Field projection.
-        // Raw writes keep their explicit unsafe validity obligations.
-        // A local text binding, or an element of a local text array, is not
-        // field storage: it may hold dynamic text, and no reader treats it as
-        // ownerless.
+        // A text field's or array element's invariant must survive every
+        // safe writer, including assignments rooted in accessor loans rather
+        // than a Field or Index projection. Raw writes keep their explicit
+        // unsafe validity obligations. A local text binding is not text
+        // storage: it may hold dynamic text, and its readers trace its one
+        // initializer instead.
         const bool localTextStorage =
             destination && destination->root == MirPlaceRootKind::Binding &&
-            std::all_of(destination->projections.begin(),
-                        destination->projections.end(),
-                        [](const auto &projection) {
-                          return projection.kind == MirProjectionKind::Index;
-                        });
+            destination->projections.empty();
         const bool checkedTextAssignment =
             destination && textType(destination->type) && !uncheckedWrite &&
             !localTextStorage && instruction.kind == MirInstructionKind::Assign;
-        if (destination && (isOwnerlessTextFieldProjection(
+        if (destination && (isOwnerlessTextStorageProjection(
                                 program, context.body, *destination) ||
                             checkedTextAssignment)) {
           if (instruction.operands.size() == 1)
@@ -3020,20 +3198,19 @@ bool dependentTextCarrierField(const MirBody &body, const MirPlace &place) {
 }
 } // namespace
 
-bool isOwnerlessTextFieldProjection(const MirProgram &program,
-                                    const MirBody &body,
-                                    const MirPlace &place) {
-  // A text field, or an element of a text array reached through a field,
-  // holds only text its checked writers proved ownerless. A local array does
-  // not: it never crosses a field projection.
+bool isOwnerlessTextStorageProjection(const MirProgram &program,
+                                      const MirBody &body,
+                                      const MirPlace &place) {
+  // A text field, or an element of a text array wherever the array lives,
+  // holds only text its checked writers proved ownerless. Semantics never
+  // nests dynamic text in an array (L-OWN-02): an array's elements, its
+  // literal's included, are checked text writes, so a by-value array formal
+  // holds what its caller's ownerless array did. Raw and foreign storage
+  // keep their explicit unsafe obligations instead.
   if (!textType(place.type) || place.foreignStorage ||
       place.projections.empty() ||
       (place.projections.back().kind != MirProjectionKind::Field &&
        place.projections.back().kind != MirProjectionKind::Index) ||
-      std::none_of(place.projections.begin(), place.projections.end(),
-                   [](const auto &projection) {
-                     return projection.kind == MirProjectionKind::Field;
-                   }) ||
       dependentTextCarrierField(body, place))
     return false;
   std::optional<SemanticType> current;

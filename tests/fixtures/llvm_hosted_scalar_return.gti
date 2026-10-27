@@ -1,0 +1,54 @@
+#include <std/panic>
+mut int trace = 0;
+mut int calls = 0;
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  int read() { return this.value; }
+  ~Marker() { trace = trace * 10 + this.value; }
+};
+thread_local Marker early{1};
+thread_local Marker late{2};
+constexpr double compile_time_float() { return 1.25; }
+static_assert(compile_time_float() == double(1.25), "scalar return CTFE agreement");
+double direct_literal() { return 1.25; }
+double widen_float(float value) { return value; }
+double widen_reference(float& value) { return value; }
+int64_t widen_signed(int32_t value) { return value; }
+int64_t widen_unsigned(uint32_t value) { return value; }
+int16_t widen_small(uint8_t value) { return value; }
+double integer_double(int64_t value) { return value; }
+float integer_float(int32_t value) { return value; }
+int8_t contextual_small() { return 7; }
+bool exact_bool(bool value) { return value; }
+char exact_char(char value) { return value; }
+int8_t checked_small(int64_t value) { return int8_t(value); }
+double outslot_float(float value, bool success) {
+  calls++;
+  if (!success) { std::panic("unexpected scalar return failure"); }
+  return value;
+}
+double outslot_integer(int64_t value, bool success) {
+  calls++;
+  if (!success) { std::panic("unexpected scalar return failure"); }
+  return value;
+}
+int main() {
+  [[discard]] early.read();
+  [[discard]] late.read();
+  {
+    Marker local{3};
+    float value = 1.25;
+    if (direct_literal() != double(1.25) || widen_float(value) != double(1.25)) { return 1; }
+    if (widen_reference(value) != double(1.25)) { return 2; }
+    if (widen_signed(-7) != int64_t(-7)) { return 3; }
+    if (widen_unsigned(uint32_t(2147483648)) != int64_t(2147483648)) { return 4; }
+    if (widen_small(uint8_t(255)) != int16_t(255)) { return 5; }
+    if (integer_double(int64_t(-9)) != double(-9) || integer_float(13) != 13.0) { return 6; }
+    if (contextual_small() != int8_t(7) || checked_small(int64_t(-7)) != int8_t(-7)) { return 7; }
+    if (!exact_bool(true) || exact_char('Q') != 'Q') { return 8; }
+    if (outslot_float(value, true) != double(1.25) || outslot_integer(int64_t(-9), true) != double(-9)) { return 9; }
+  }
+  return calls == 2 ? 0 : 10;
+}

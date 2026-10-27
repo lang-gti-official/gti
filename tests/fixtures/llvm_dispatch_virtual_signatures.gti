@@ -1,0 +1,111 @@
+#include <std/memory>
+
+// Virtual calls use each root's shared GTI signature: records, text views,
+// floating and enum arguments, owner transfer, reference results to scalars,
+// records and interfaces, and record results. Shape is reached at a nonzero
+// offset, so every call also adjusts its receiver. Destructors record IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+struct Point {
+  mut int x;
+  mut int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+
+class Tracked {
+  int tag;
+public:
+  Tracked(int tag) : tag(tag) {}
+  ~Tracked() { record(this.tag); }
+  int value() { return this.tag; }
+};
+
+enum class Mode { slow, fast };
+
+interface Shape {
+  Point corner(int scale);
+  int measure(Point p, std::string_view name, double factor, Mode mode);
+  int consume(std::unique_ptr<Tracked> owned) mut;
+  mut Point& anchor() mut;
+  Shape& self_view();
+  bool flag(bool input);
+  Tracked make(int tag);
+};
+
+class Counter {
+  mut int count = 5;
+public:
+  Counter() {}
+  virtual mut int& slot() mut { return this.count; }
+  int read() { return this.count; }
+};
+
+class Box : public Counter, public Shape {
+  mut Point origin{1, 2};
+  mut int consumed = 0;
+public:
+  Box() : Counter() {}
+  Point corner(int scale) override {
+    return Point(this.origin.x * 12 / scale, this.origin.y * scale);
+  }
+  int measure(Point p, std::string_view name, double factor, Mode mode) override {
+    mut int base = p.x + p.y + int(name.size());
+    if (mode == Mode::fast) { base = base * 2; }
+    return base + int(factor);
+  }
+  int consume(std::unique_ptr<Tracked> owned) mut override {
+    this.consumed += owned->value();
+    return this.consumed;
+  }
+  mut Point& anchor() mut override { return this.origin; }
+  Shape& self_view() override { return this; }
+  bool flag(bool input) override { return !input; }
+  Tracked make(int tag) override { return Tracked(tag * 2); }
+  mut int& slot() mut override { return this.consumed; }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+int run(mut Shape& shape) {
+  Point c = shape.corner(3);
+  if (c.x != 4 || c.y != 6) { return 1; }
+  if (shape.measure(Point(4, 5), "abc", double(2.5), Mode::fast) != 26) { return 2; }
+  if (shape.consume(std::make_unique<Tracked>(7)) != 7) { return 3; }
+  if (events != 7) { return 4; }
+  shape.anchor().x = 3;
+  if (shape.corner(1).x != 36) { return 5; }
+  Shape& view = shape.self_view();
+  if (view.corner(2).y != 4) { return 6; }
+  if (shape.flag(true) || !shape.flag(false)) { return 7; }
+  {
+    Tracked made = shape.make(4);
+    if (made.value() != 8) { return 8; }
+  }
+  return events == 78 ? 0 : 9;
+}
+
+int bump(mut Counter& counter) {
+  int previous = counter.slot();
+  counter.slot() = previous + 4;
+  return counter.read();
+}
+
+// VIRTUAL_SIGNATURES_MAIN
+int main() {
+  mut Box box{};
+  int status = run(box);
+  if (status != 0) { return status; }
+  if (bump(box) != 5 || box.slot() != 11) { return 10; }
+  return 0;
+}

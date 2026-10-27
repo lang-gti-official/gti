@@ -1,0 +1,52 @@
+#include <std/memory>
+#include <std/functional>
+
+mut int drops = 0;
+
+class Resource {
+public:
+  Resource() {}
+  int read() { return 9; }
+  ~Resource() { drops++; }
+};
+
+union Bits { mut uint64_t number; mut double real; };
+int increment(int value) { return value + 1; }
+
+// A source-defined owner combines a closure with passive capability and union
+// storage. Relocation must not mistake any of these for an ordinary record.
+class Envelope<F> {
+  F callback;
+  std::function_ptr<int(int)> pointer{increment};
+  std::uninitialized<int> scratch{};
+  Bits bits{uint64_t(31)};
+public:
+  Envelope(F callback) : callback(std::move(callback)) {}
+  int read() {
+    int value = this.callback();
+    unsafe {
+      return value + this.pointer(1) + int(this.bits.number);
+    }
+  }
+};
+
+int exercise<F>(F callback) requires std::relocatable<Envelope<F>> {
+  mut std::uninitialized<Envelope<F>> source{};
+  mut std::uninitialized<Envelope<F>> destination{};
+  unsafe {
+    std::construct_at(source.data(), std::move(callback));
+    std::relocate_at(destination.data(), source.data());
+    Envelope<F>& value = std::assume_ref(destination.data(), destination);
+    if (value.read() != 42 || drops != 0) { return 1; }
+  }
+  unsafe { std::destroy_at(destination.data()); }
+  return drops == 1 ? 0 : 2;
+}
+
+int main() {
+  mut auto owner = std::make_unique<Resource>();
+  auto callback = [owner = std::move(owner)]() -> int {
+    return owner->read();
+  };
+  return exercise(std::move(callback));
+}

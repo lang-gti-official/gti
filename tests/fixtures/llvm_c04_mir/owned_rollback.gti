@@ -1,0 +1,26 @@
+struct Marker {
+  mut int& slot;
+  Marker(mut int& target) : slot(target) {}
+  ~Marker() {
+    if (slot == 0) { slot = 1; }
+    else { slot = 2; }
+  }
+};
+
+struct Owner {
+  mut int& slot;
+  Marker first;
+  Marker second;
+  int value;
+  Owner(int input, mut int& one, mut int& two, mut int& own)
+    : slot(own), first(Marker(one)), second(Marker(two)), value(input + 1) {}
+  ~Owner() {
+    if (slot == 0) { slot = 1; }
+    else { slot = 2; }
+  }
+};
+
+int sample(int input, mut int& first, mut int& second, mut int& own) {
+  Owner owner{input, first, second, own};
+  return input + 1;
+}

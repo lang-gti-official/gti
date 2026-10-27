@@ -290,11 +290,12 @@ completion.
 
 In the concurrent profile, namespace globals and static fields must be
 immutable and share-capable. Ordinary mutable globals/static fields are
-ill-formed; synchronized mutation uses an immutable global atomic or future
-process-wide mutex value with a complete shutdown contract. The implemented
-`std::mutex<T>` remains a local cleanup-owning owner and therefore does not
-fill that global role. Borrowed-state and raw-pointer globals do not qualify
-merely by being immutable, and cleanup-owning process-wide values wait for a
+ill-formed; synchronized mutation uses an immutable share-capable global atomic
+or a value whose cleanup is structurally limited to native resource retirement.
+A mutex with a passive payload, including one inside an ordinary wrapper,
+qualifies without permitting source destructors or owning allocation release.
+Borrowed-state and raw-pointer globals do not qualify
+merely by being immutable, and source-cleanup-owning process-wide values wait for a
 complete shutdown/foreign-thread contract. These restrictions do not change
 current single-threaded mutable globals. The reference compiler reports
 `GTI-S2060` at the process-wide binding when concurrent selection rejects
@@ -1413,17 +1414,37 @@ increment(2);
 
 These are checked references, not raw pointer captures. Each environment field
 retains its origin place, access mode and parent loan. Multiple captures and
-disjoint fields use the same place-overlap rules as ordinary references. Copy
+disjoint fields use the same place-overlap rules as ordinary references.
+Inside the lambda body a by-reference capture behaves as a reference
+parameter: using it while an overlapping reference taken from it is still
+live is rejected, while references to disjoint fields stay independent. A
+capture list borrows only a named local or parameter, not a capture of an
+enclosing lambda. Copy
 and move captures retain any checked dependencies already present in the
-captured value. Shared environments can be copied when all their other fields
-can; an exclusive borrowed capture makes the environment noncopyable. Moving
-the environment transfers its dependencies without moving their referents.
-Borrowed environments cannot be assigned or relocated as independent objects.
+captured value; a lambda's text over a captured view is for local use (see
+[Text a lambda captured](#text-a-lambda-captured)). Shared environments can
+be copied when all their other fields can; an exclusive borrowed capture makes
+the environment noncopyable. Moving the environment transfers its dependencies
+without moving their referents. Borrowed environments cannot be assigned or
+relocated as independent objects.
 
 The restrictions last through the last proven use, or through cleanup when
 the stored type's destructor needs the dependency. An ordinary nested block
 can be the final-use endpoint after its cleanup. Loop backedges and later uses
-keep the dependency live. Concrete generic parameters and user-defined fields
+keep the dependency live.
+
+Owner decision (2026-10-27): a closure environment follows the same structural
+rule as a class. It is an aggregate of its captures with no source destructor:
+its generated cleanup destroys the owned captures and never uses a borrowing
+capture. Moving an owner with a destructor into a closure therefore does not
+extend its borrowing captures to the closure's destruction.
+`[cell = std::move(kept), &base]` borrows `base` only through the closure's last
+use, exactly as a class holding `int& base` beside an owned field does. A
+closure stays a cleanup-bound carrier only when a capture is itself
+cleanup-bound, such as a moved-in guard whose destructor reads its reference;
+that dependency then lasts until the closure is destroyed. Before this decision
+every closure that held borrowed state and needed cleanup was treated as
+cleanup-bound. Concrete generic parameters and user-defined fields
 can store these environments, but cannot let them escape their owners. The
 owning `std::function` family does not acquire permission to erase borrowed
 state, nor can a borrowed environment cross a managed-thread boundary.
@@ -1963,12 +1984,19 @@ from selecting a direct reference field; it needs its own transfer/retirement
 proof. Neither this boundary nor the source-defined propagation protocol is a
 special rule for a standard-library type.
 
-The semantic `GTI-S2061` check implements the recursive active-cleanup
+The semantic `GTI-S2061` check implements the recursive source/owning-cleanup
 restriction after the more-specific unique-owner, private-storage, and
 borrowed-state global diagnostics. Its related information identifies a
 declared cleanup body, cleanup-owning base, or cleanup-owning field when one is
-available. This rule prevents source global/static drop obligations; it does
-not add process-shutdown cleanup.
+available. This rule prevents source global/static drop obligations, including
+infallible source destructors. A native-only root instead retains an exact
+program-retirement recipe. Successfully initialized roots retire in reverse
+order after TLS drain and C-thread shutdown on ordinary hosted exits, including
+ordinary failure. Partial initialization publishes only completed roots;
+constructor rollback still owns incomplete objects. Cleanup emergency/abort
+abandons further cleanup. Unsafe foreign execution must be quiescent before
+module unload; this is not general source-destructor shutdown or a new foreign
+thread attachment permission.
 
 The C++ backend emits generated operations explicitly as `= default`,
 `= delete`, or an active-state move implementation. Its hidden active flag is a
@@ -2041,8 +2069,12 @@ assignment. The compiler derives it through generated movement, concrete
 bases, fields, fixed arrays, payload alternatives, and owned captures. Deleted
 movement and stored borrows deny it. Abstract classes and pointer-only native
 pointee declarations cannot relocate as values. The bounded host-state policy
-also excludes private thread, atomic, mutex, and lock-token state; having a
-native move operation is not itself a relocation proof. Owning allocation
+also excludes private thread, atomic, and lock-token state; having a native
+move operation is not itself a relocation proof. A mutex relocates exactly
+when its payload does: relocation constructs a fresh native mutex in the
+destination, transfers the payload, and retires the source's native identity,
+so no native mutex state moves. A held mutex is borrowed by its lock token and
+cannot be relocated. Owning allocation
 handles relocate independently of their pointee's movability. No class
 annotation or unsafe opt-in is needed.
 
@@ -2456,11 +2488,32 @@ std::string line{"count = 42"};
 std::string_view head = first(line.view(), 3);  // views line
 ```
 
+A virtual call relays what its root declaration relays in the receiver's
+instance of the root's class, whichever override dispatch selects, so an
+override's text result keeps its root's contract. An interface method or other
+root that relays nothing returns ownerless text in every override: a literal,
+a stored view, a lambda's or another call's ownerless result. Returning a view
+of an owned string there reports `GTI-S2045`. A root whose body relays its
+receiver or a parameter lets each override relay the same or return ownerless
+text, and the call keeps that owner borrowed even when the selected override
+returns a literal. A call through a root that relays nothing relays nothing,
+so an erased callable whose call operator returns it, a user-defined one or
+`std::function`, returns ownerless text too.
+
+An overloaded operator's text result relays as a method's does. A call
+operator or `operator[]` whose returns relay its receiver or a parameter keeps
+that owner borrowed while the result is used, so `holder(line.view())`
+prevents mutating `line` until its last use, and a literal-backed argument
+relays nothing.
+
 A recursion that permutes its parameters, returning `s` beside
 `pick(t, s, n - 1)`, may return either one and relays neither: `return s`
 reports `GTI-S2045`. A dynamic view cannot escape a
 local owner, originate from temporary storage, be assigned into existing
-storage, or be nested in a global, static, array, or dynamic container. It
+storage, or be nested in a global, static, array, or dynamic container. An
+array therefore holds only ownerless views: a view copied out of an array
+element, including one of a by-value array parameter, is ownerless and may be
+returned or stored like a literal-backed view. A dynamic view
 reaches a field only through the owner-tracked view fields described below.
 Mutable, multiple-origin, nested, and reassignable view graphs remain
 deliberately unsupported. These restrictions are semantic and survive through
@@ -2475,6 +2528,67 @@ dynamic initializer such as `text(owner.view())` is rejected at its initializer;
 an ordinary view parameter forwarded to a storing constructor is potentially
 dynamic, even if some callers happen to pass literals. Conditional expressions
 cannot erase a dynamic operand's dependency.
+
+### Text a lambda captured
+
+A copy or move capture of a `std::string_view` or `c_string` holds the view its
+closure copied, and a capture is never a lifetime origin. A lambda that returns
+such text, directly, through a local view, through a call that relays it or
+through another lambda over it, therefore produces text whose owner the
+compiler cannot name, whether the captured view was dynamic or literal-backed.
+Callers use that result locally: in an expression, a local binding or a copy
+of one, and a call that only reads it or relays it back for the same local
+use.
+
+A closure over a dynamic view keeps that view's owner borrowed for each use of
+the closure, and so does each call result, local or copy that holds its
+captured text, exactly as a copy of the view itself would. The owner may
+change once the last of those uses is done; changing, moving or replacing it
+while one is still used reports `GTI-S2017`. Like a dynamic view, such text
+cannot be assigned into an existing binding (`GTI-S2045`), so it can never
+outlive its owner through a binding of a wider scope. Text captured from a
+literal-backed view has no owner to keep borrowed and may be reassigned
+locally.
+
+```gti
+mut std::string owner{"dynamic"};
+std::string_view view = owner.view();
+auto name = [view]() -> std::string_view { return view; };
+std::println(name());                  // valid: used in an expression
+std::string_view local = name();       // valid: keeps owner borrowed
+mut std::string_view other = "";
+other = name();                        // GTI-S2045: not reassignable
+owner.append("!");                     // GTI-S2017: local is used below
+std::println(local);
+
+std::string_view leak(std::string_view input) {
+  auto copy = [input]() -> std::string_view { return input; };
+  return copy();                       // GTI-S2045: no owner to relay
+}
+```
+
+Appending after the last use of `local` and of `name` is valid.
+
+Returning it from a function, storing it in a field, an array element
+(`{name()}` included), a payload alternative, an optional, a global or
+thread-local, or through a reference, and passing it to a parameter that
+requires ownerless text each report `GTI-S2045` at that site; so does a lambda
+body that stores its captured view. A generic function that returns what a
+callable argument returns rejects that return in the instance that receives
+such a lambda, and forming a GTI invocation pointer from it, as
+`std::function_ref` does, is rejected because the erased call has no
+result-origin contract to carry the text. A local view that is ever given such
+text holds it for its whole scope, so an escape of that view is rejected even
+where it precedes the assignment. A lambda that returns a literal or other
+ownerless text, such as a captured record's text field, stays storable and
+returnable.
+
+Owner decision (2026-10-27): a lambda's result over a captured view keeps that
+capture's owner borrowed, with the non-lexical extent the view itself has, so
+local use stays sound after the owner changes. A reference or callable view
+of the closure, such as `std::function_ref`, keeps the owner borrowed too. A
+closure copied into owning erased storage, such as `std::function`, a
+container or a field, does not yet keep it borrowed; that remains future work.
 
 ### Owner-tracked view fields
 

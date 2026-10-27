@@ -1,0 +1,23 @@
+mut int trace = 0;
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  int read() { return this.value; }
+  ~Marker() { trace = trace * 10 + this.value; }
+};
+thread_local Marker witness{7};
+union Inner { mut uint32_t value; mut uint64_t other; };
+union Outer { mut Inner value; mut uint64_t other[2]; };
+Inner nested_input() { trace = trace * 10 + 4; return Inner(uint32_t(8)); }
+Outer make_nested_union() { return Outer(nested_input()); }
+int main() {
+  [[discard]] witness.read();
+  Outer nested = make_nested_union();
+  Outer copy = nested;
+  unsafe {
+    if (nested.value.value != uint32_t(8) || copy.value.value != uint32_t(8)) { return 1; }
+  }
+  if (trace != 4) { return 2; }
+  return 0;
+}

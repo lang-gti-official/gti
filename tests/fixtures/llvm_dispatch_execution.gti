@@ -1,0 +1,74 @@
+// Static local objects only: scalar state, checked borrowed receivers and
+// scalar/bool/void virtual signatures. Constructors observe their verified
+// active state; destructors record only their explicitly ordered owner IDs.
+// Virtual observations during destruction remain a pending language contract.
+mut int events = 0;
+mut int empty_destroyed = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Reader { int read(int extra); };
+interface Writer { void write(int value) mut; };
+interface Truth { bool good(bool expected); };
+
+class Root {
+  mut int base;
+public:
+  Root(int value) : base(value) { record(this.phase()); }
+  ~Root() { record(1); }
+  virtual int phase() { return 1; }
+  int base_value() { return this.base; }
+  void set_base(int value) mut { this.base = value; }
+};
+
+// A state-bearing base need not be the first written base.
+class Middle : public Reader, public Root {
+  int bias;
+public:
+  Middle(int value) : Root(value), bias(3) { record(this.phase()); }
+  ~Middle() { record(2); }
+  int phase() override { return 2; }
+  int read(int extra) override {
+    return this.base_value() + this.bias + extra;
+  }
+};
+
+class Leaf : public Writer, public Middle, public Truth {
+  mut int leaf;
+public:
+  Leaf(int value) : Middle(value), leaf(5) { record(this.phase()); }
+  ~Leaf() { record(3); }
+  int phase() override { return 3; }
+  void write(int value) mut override { this.leaf = value; }
+  bool good(bool expected) override {
+    return (this.leaf == 23) == expected;
+  }
+};
+
+// The exact generated-empty path has interface metadata and no language fields.
+class Empty : public Truth, public Reader {
+public:
+  int read(int extra) override { return 4 + extra; }
+  bool good(bool expected) override { return expected; }
+  ~Empty() { empty_destroyed = 4; }
+};
+
+int via_root(Root& value) { return value.phase(); }
+int via_reader(Reader& value, int extra) { return value.read(extra); }
+void via_writer(mut Writer& value, int next) { value.write(next); }
+bool via_truth(Truth& value, bool expected) { return value.good(expected); }
+
+int main() {
+  {
+    mut Leaf value{7};
+    if (via_root(value) != 3 || via_reader(value, 1) != 11) { return 1; }
+    via_writer(value, 23);
+    if (!via_truth(value, true) || !value.good(true)) { return 2; }
+  }
+  if (events != 123321) { return 3; }
+  {
+    Empty value{};
+    if (via_reader(value, 0) != 4 || !via_truth(value, true)) { return 4; }
+  }
+  return empty_destroyed == 4 ? 0 : 5;
+}

@@ -1,0 +1,12 @@
+#include <std/memory>
+
+int main() {
+  mut std::shared_ptr<int> first{};
+  mut auto clone = first.clone();
+  if (first || clone || first.use_count() != uint64_t(0)) { return 1; }
+  first.swap(clone);
+  clone.reset();
+  mut auto moved = std::move(first);
+  moved = nullptr;
+  return moved == nullptr && moved.use_count() == uint64_t(0) ? 0 : 2;
+}

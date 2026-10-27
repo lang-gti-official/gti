@@ -1,0 +1,90 @@
+// Abstract base phases that nothing observes. An abstract base's constructor
+// and destructor run while the object selects pure members; when neither
+// hands the object itself to other code, construction installs only the first
+// concrete state and cleanup keeps it. Destructors record explicit IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+interface Sink { void put(int value) mut; };
+
+class TraceSink : public Sink {
+public:
+  void put(int value) mut override { events = events * 10 + value; }
+};
+
+void record(int value) {
+  mut TraceSink sink{};
+  mut Sink& view = sink;
+  view.put(value);
+}
+
+class Shape {
+public:
+  int sides;
+  int scale = 1;
+  Shape(int sides) : sides(sides) { record(1); }
+  ~Shape() { record(this.sides); }
+  virtual int area() = 0;
+  int perimeter(int side) { return this.sides * side * this.scale; }
+};
+
+// Still abstract: it adds members but no area().
+class Polygon : public Shape {
+public:
+  int side;
+  Polygon(int sides, int side) : Shape(sides), side(side) { record(2); }
+  ~Polygon() { record(8); }
+  virtual int corners() { return this.sides; }
+  int ratio(int divisor) { return this.area() / divisor; }
+};
+
+class Square : public Polygon {
+public:
+  Square(int side) : Polygon(4, side) { record(3); }
+  int area() override { return this.side * this.side; }
+};
+
+// A generated default constructor initializes the abstract base's fields.
+class Counter {
+public:
+  mut int count = 0;
+  virtual int step() mut = 0;
+  int run() mut { return this.step(); }
+};
+
+class Ticker : public Counter {
+public:
+  Ticker() {}
+  int step() mut override {
+    this.count += 2;
+    return this.count;
+  }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// ABSTRACT_PHASES_MAIN
+int main() {
+  {
+    Square square = Square(3);
+    if (events != 123) { return 1; }
+    Shape& shape = square;
+    if (shape.area() != 9 || square.corners() != 4 ||
+        square.perimeter(3) != 12 || square.ratio(3) != 3) {
+      return 2;
+    }
+    events = 0;
+  }
+  if (events != 84) { return 3; }
+  mut Ticker ticker{};
+  if (ticker.run() != 2 || ticker.run() != 4) { return 4; }
+  return 0;
+}

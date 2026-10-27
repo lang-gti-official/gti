@@ -1,0 +1,23 @@
+using Unary = (int32_t) -> int32_t;
+extern "C" { Unary native_unary(); }
+
+Unary read(Unary& callback) { return callback; }
+int32_t clear(mut Unary& callback) { callback = nullptr; return 31; }
+void replace(mut Unary& callback, Unary replacement) { callback = replacement; }
+struct Cleanup {
+  ~Cleanup() { std::println("borrow-cleanup"); }
+};
+
+int main() {
+  Cleanup cleanup{};
+  unsafe {
+    mut Unary selected = native_unary();
+    Unary copied = read(selected);
+    if (copied != selected) return 1;
+    // The receiver snapshot precedes the mutation in its argument.
+    if (selected(clear(selected)) != 42 || selected != nullptr) return 2;
+    replace(selected, copied);
+    if (selected(31) != 42 || read(selected) != copied) return 3;
+  }
+  return 0;
+}

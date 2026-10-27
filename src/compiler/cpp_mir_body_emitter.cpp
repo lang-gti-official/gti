@@ -107,9 +107,13 @@ cleanupValueExpression(const MirProgram &program, const MirDropType &type,
                               : nullptr;
       owner != nullptr &&
       owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
-    if (type.type.arguments.size() != 1 || type.aggregate.size() != 1 ||
-        type.aggregate.front().type != type.type.arguments.front())
+    if (type.type.arguments.size() != 1 || type.aggregate.size() > 1 ||
+        (!type.aggregate.empty() &&
+         type.aggregate.front().type != type.type.arguments.front()))
       throw std::logic_error("MIR mutex cleanup lost its payload recipe");
+    if (type.aggregate.empty())
+      return receiver + ".destroy_value_with_failure(" + arguments +
+             ", [](auto &, ::gti_failure_record_v2 *, bool) { return true; })";
     return receiver + ".destroy_value_with_failure(" + arguments +
            ", [](auto &__gti_value, ::gti_failure_record_v2 *__gti_record, "
            "bool __gti_unwinding) { return " +
@@ -6072,14 +6076,8 @@ directTemporaryBorrow(const MirBody &body, const MirInstruction &call,
   // the exact owner's generated default constructor. Preserve its existing
   // explicit value-slot lifecycle just like a source-declared constructor.
   const bool generatedDefault =
-      producer != nullptr && producer->kind == MirInstructionKind::Call &&
-      !producer->functionTarget && !producer->constructorTarget &&
-      !producer->lambdaTarget && !producer->bodyTarget && !producer->receiver &&
-      !producer->callableInvocation && !producer->loan &&
-      !producer->ownership && producer->operands.empty() &&
-      producer->parameterTypes.empty() &&
-      producer->constructorKind == ConstructorKind::Ordinary &&
-      producer->intrinsic == IntrinsicKind::None;
+      producer != nullptr &&
+      mir_detail::generatedDefaultConstruction(*producer);
   if (value == nullptr || producer == nullptr || slot == nullptr ||
       (borrowedValueStage && value->id != stage.operands.front().value) ||
       (!ordinaryConstruction && !functionCall && !generatedDefault &&
@@ -12274,18 +12272,6 @@ borrowStagedCallInput(const MirBody &body, const MirOperand &operand) {
   return true;
 }
 
-[[nodiscard]] bool
-isHostedStartupArgumentIndexAdvance(const MirBody &body,
-                                    const MirInstruction &instruction) {
-  // The hosted-startup verifier binds every nonzero operation tag to one
-  // exact plan row. It is therefore the sole authority for the generated
-  // Modify/PreIncrement schedule; source Modify remains unsupported here.
-  return body.kind == MirBodyKind::HostedStartup &&
-         instruction.hostedStartupOperation != 0 &&
-         instruction.kind == MirInstructionKind::Modify &&
-         instruction.operation == MirOperation::PreIncrement;
-}
-
 [[nodiscard]] bool instructionHasInvoke(const MirBlock &block,
                                         const MirInstruction &instruction) {
   return block.terminator.kind == MirTerminatorKind::Invoke &&
@@ -17905,10 +17891,9 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
   const MirClassInstance *defaultOwner =
       value == nullptr ? nullptr
                        : uniqueClassInstanceForType(program, value->info.type);
-  // Explicit default construction uses Construct, whereas an implicit
-  // generated default can use Call. Both publish the same exact owning value.
-  // For Construct, keep publication in the final field and prove the real
-  // default initializer body independently of its private empty shell.
+  // Generated default construction publishes its exact owning value through
+  // Construct. Keep publication in the final field and prove the real default
+  // initializer body independently of its private empty shell.
   const bool generatedDefaultConstruct =
       producer != nullptr && producer->kind == MirInstructionKind::Construct &&
       producer->constructorKind == ConstructorKind::Ordinary &&
@@ -17916,9 +17901,7 @@ constructorFieldResultSlot(const MirProgram &program, const MirBody &body,
       passiveConstructorFieldInitializers(program,
                                           defaultOwner->fieldInitializers);
   const bool defaultProducer =
-      commonProducer &&
-      (producer->kind == MirInstructionKind::Call ||
-       generatedDefaultConstruct) &&
+      commonProducer && generatedDefaultConstruct &&
       !producer->functionTarget && !producer->constructorTarget &&
       !producer->receiver && producer->operands.empty() &&
       producer->definedFailure.empty() && !producer->successResultDrop &&
@@ -23318,11 +23301,14 @@ public:
             (row.type.kind != SemanticType::Class && !fixedClassArray) ||
             step == nullptr ||
             step->role != ProgramInitializationStepRole::Initializer ||
-            step->ownerClass != row.owner || step->requiresActiveCleanup ||
+            step->ownerClass != row.owner ||
+            (step->requiresActiveCleanup &&
+             (!step->nativeRetirement ||
+              !mirDropIsNativeRetirement(program, *step->nativeRetirement))) ||
             storage == nullptr || storage->type != row.type) {
           add(CppMirBodyEmissionIssueKind::InvalidRepresentationRow, 0, 0,
-              "runtime lifetime slot is not attached to an exact passive "
-              "class program-initialization step");
+              "runtime lifetime slot is not attached to an exact passive or "
+              "native-only class program-initialization step");
         }
       }
       if (std::find_if(representations.symbols().begin(),
@@ -24353,8 +24339,7 @@ private:
           "MIR operation is outside the exhaustive emitter vocabulary");
       return;
     }
-    if (encoding == CppMirEmissionEncoding::MissingMirAuthority &&
-        !isHostedStartupArgumentIndexAdvance(body, instruction)) {
+    if (encoding == CppMirEmissionEncoding::MissingMirAuthority) {
       // The closed narrowing compound assignment keeps its fused origin
       // by design; the terminal compatibility helper spells it whole
       // and contains the failure at the site. The per-form walks own
@@ -24575,8 +24560,7 @@ private:
           "instruction kind is outside the exhaustive emitter vocabulary");
       return;
     }
-    if (kind == CppMirEmissionEncoding::MissingMirAuthority &&
-        !isHostedStartupArgumentIndexAdvance(body, instruction)) {
+    if (kind == CppMirEmissionEncoding::MissingMirAuthority) {
       add(CppMirBodyEmissionIssueKind::MissingOrderedCompoundMir, block.id,
           instruction.id,
           "Modify lacks the verified read/check/convert/commit schedule");
@@ -24612,6 +24596,7 @@ private:
     case MirInstructionKind::EnsureThreadLocal:
     case MirInstructionKind::DrainThreadLocals:
     case MirInstructionKind::BeginThreadLocals:
+    case MirInstructionKind::RetireProgramStorage:
       requireType(instruction.info.type, block.id, instruction.id);
       break;
     case MirInstructionKind::Count:
@@ -25173,6 +25158,7 @@ CppMirEmissionEncoding classifyCppMirInstructionKind(MirInstructionKind kind) {
   case MirInstructionKind::EnsureThreadLocal:
   case MirInstructionKind::DrainThreadLocals:
   case MirInstructionKind::BeginThreadLocals:
+  case MirInstructionKind::RetireProgramStorage:
   case MirInstructionKind::AllocateObject:
   case MirInstructionKind::InitializeBase:
   case MirInstructionKind::CleanupBeforeAssign:
@@ -25901,13 +25887,15 @@ returnDefaultConstructionDefinition(const MirBody &body, MirValueId value) {
   const MirValue *record = body.findValue(value);
   const MirInstruction *definition =
       record == nullptr ? nullptr : findInstruction(body, record->definition);
-  if (definition == nullptr || definition->kind != MirInstructionKind::Call ||
+  const bool generated = definition != nullptr &&
+                         mir_detail::generatedDefaultConstruction(*definition);
+  const bool parameterDefault =
+      definition != nullptr && definition->kind == MirInstructionKind::Call &&
+      definition->intrinsic == IntrinsicKind::DefaultTypeParameterConstruction;
+  if (definition == nullptr || (!generated && !parameterDefault) ||
       definition->functionTarget || definition->constructorTarget ||
       definition->lambdaTarget || definition->bodyTarget ||
       definition->callableInvocation || definition->receiver ||
-      (definition->intrinsic != IntrinsicKind::None &&
-       definition->intrinsic !=
-           IntrinsicKind::DefaultTypeParameterConstruction) ||
       !definition->operands.empty() || !definition->callableArguments.empty() ||
       !definition->localFailureSites.empty() || !definition->result ||
       !hasUniqueReturnUse(body, value)) {
@@ -33153,12 +33141,13 @@ private:
     if (body == debugBodies.end())
       return;
     const auto location =
-        std::find_if(body->sourceLocations.begin(), body->sourceLocations.end(),
+        std::find_if(body->sourceLocations().begin(),
+                     body->sourceLocations().end(),
                      [&](const LoweredSourceLocation &candidate) {
                        return candidate.block == block &&
                               candidate.instruction == instruction;
                      });
-    if (location == body->sourceLocations.end())
+    if (location == body->sourceLocations().end())
       return;
     output << "\n#line " << location->source.line << " \"";
     for (const unsigned char byte : location->source.source) {
@@ -48425,11 +48414,19 @@ constructedFieldInitializerSchedule(const MirProgram &program,
           nativeRetirements.insert(drop.id);
   ConstructorNoFailureProof noFailure(program);
   std::unordered_set<std::size_t> provedFailureBoundaries;
+  const bool nativeShellPublication = std::any_of(
+      constructor.initializers.begin(), constructor.initializers.end(),
+      [&](const MirConstructorInitializer &initializer) {
+        const auto *fieldOwner =
+            uniqueClassInstanceForType(program, initializer.targetType);
+        return fieldOwner && fieldOwner->compilerCapability ==
+                                 CompilerCapabilityTypeKind::MutexStorage;
+      });
   const auto successSequence = constructorSuccessSequence(
       program, constructor,
       [&](auto target) { return noFailure.prove(target); },
-      &provedFailureBoundaries, false, false, !nativeRetirements.empty(),
-      &nativeRetirements);
+      &provedFailureBoundaries, nativeShellPublication, false,
+      !nativeRetirements.empty(), &nativeRetirements);
   // One straight-line successful prologue with no loans is the only shape
   // whose complete instruction set can be proved here. Empty failure routes
   // are retained in MIR, but cannot execute when their exact callee has no
@@ -48922,7 +48919,10 @@ constructedFieldInitializerSchedule(const MirProgram &program,
           construct->definedFailure.propagation !=
               FailurePropagationKind::Constructor) ||
          construct->ownership || construct->preparedParameterDrop ||
-         construct->successResultDrop || construct->successResultDestination ||
+         (construct->successResultDrop &&
+          constructedOwner->compilerCapability !=
+              CompilerCapabilityTypeKind::MutexStorage) ||
+         construct->successResultDestination ||
          construct->fullExpressionEnd != 0 ||
          construct->earlyExitFullExpressionEnd ||
          construct->cleanupBoundaryEnd != 0 || construct->info != value->info ||
@@ -48986,14 +48986,14 @@ constructedFieldInitializerSchedule(const MirProgram &program,
         const auto position = std::find_if(
             successSequence->begin(), successSequence->end(),
             [&](const auto *candidate) { return candidate->id == input->id; });
-        // The private native mutex constructor takes one cleanup-free payload
-        // directly from the adjacent parameter move. A prepared carrier has no
-        // observable destruction, but its exact initialization and invocation
-        // handoff must still be proved before fusing this native initializer.
+        // A prepared carrier has no observable destruction. The destination
+        // may still own native shell retirement, proved independently below.
         if ((constructedOwner->compilerCapability !=
                  CompilerCapabilityTypeKind::MutexStorage &&
              !passiveMovedArgument && !closureArgument) ||
-            field.requiresActiveCleanup ||
+            (field.requiresActiveCleanup &&
+             constructedOwner->compilerCapability !=
+                 CompilerCapabilityTypeKind::MutexStorage) ||
             materializedConstructorArgumentStage(body, operand.value) !=
                 input ||
             prepared == nullptr || prepared->initiallyActive ||
@@ -49223,7 +49223,11 @@ constructedFieldInitializerSchedule(const MirProgram &program,
       }
     }
     if (preparedNativeInput &&
-        construct->lifecycle.size() != preparedNativeDrops.size())
+        construct->lifecycle.size() !=
+            preparedNativeDrops.size() +
+                (field.requiresActiveCleanup && !construct->successResultDrop
+                     ? 1
+                     : 0))
       return {};
     if (scalarDefault)
       binding.arguments.push_back(
@@ -49266,10 +49270,29 @@ constructedFieldInitializerSchedule(const MirProgram &program,
 
     if (field.requiresActiveCleanup) {
       if (field.dropKind != DropKind::Lexical ||
-          construct->lifecycle.size() != 1) {
+          construct->lifecycle.size() !=
+              preparedNativeDrops.size() +
+                  (construct->successResultDrop ? 0 : 1)) {
         return {};
       }
-      const MirLifecycleEvent &armed = construct->lifecycle.front();
+      const auto activation =
+          std::find_if(construct->lifecycle.begin(), construct->lifecycle.end(),
+                       [](const auto &event) {
+                         return event.kind == MirLifecycleEventKind::Initialize;
+                       });
+      const MirLifecycleEvent *armedEvent =
+          activation != construct->lifecycle.end() ? &*activation : nullptr;
+      if (construct->successResultDrop) {
+        const auto *producer = invokeProducerBlock(body, *construct);
+        if (producer == nullptr ||
+            !invokeSuccessActivates(body, *construct,
+                                    *construct->successResultDrop))
+          return {};
+        armedEvent = &producer->terminator.successLifecycle.front();
+      }
+      if (armedEvent == nullptr)
+        return {};
+      const MirLifecycleEvent &armed = *armedEvent;
       const MirDropObligation *valueDrop =
           body.findDropObligation(armed.target);
       const MirPlace *slot =
@@ -49286,6 +49309,15 @@ constructedFieldInitializerSchedule(const MirProgram &program,
           !slot->projections.empty() || slot->type != initializer.targetType ||
           slot->initiallyAvailable) {
         return {};
+      }
+      if (constructedOwner != nullptr &&
+          constructedOwner->compilerCapability ==
+              CompilerCapabilityTypeKind::MutexStorage) {
+        const auto shell =
+            mirUniqueCleanupType(program, initializer.targetType);
+        if (!shell || !shell->aggregate.empty() ||
+            valueDrop->dropType != *shell)
+          return {};
       }
 
       const std::vector<MirValueUse> uses = nonRootRecordUses(body, value->id);
@@ -49333,6 +49365,11 @@ constructedFieldInitializerSchedule(const MirProgram &program,
           !fieldDrop->dropType.requiresActiveCleanup) {
         return {};
       }
+      if (constructedOwner != nullptr &&
+          constructedOwner->compilerCapability ==
+              CompilerCapabilityTypeKind::MutexStorage &&
+          fieldDrop->dropType != valueDrop->dropType)
+        return {};
       binding.initializeInstruction = initialize->id;
       binding.slotPlace = slot->id;
       binding.fieldPlace = fieldPlace->id;
@@ -50593,6 +50630,22 @@ hostedMarshallingSchedule(const MirProgram &program) {
   }
   MirHostedStartupPlan plan = *program.hostedStartupPlan();
   using Kind = MirHostedStartupOperationKind;
+  const bool nativeRetirement = std::any_of(
+      program.programInitializationPlan().steps.begin(),
+      program.programInitializationPlan().steps.end(),
+      [](const auto &step) { return step.nativeRetirement.has_value(); });
+  if (nativeRetirement) {
+    if (!verifyMirProgram(program).valid())
+      return std::nullopt;
+    const auto *body = program.hostedStartup();
+    std::erase_if(plan.operations, [&](const auto &op) {
+      const auto *block = body->findBlock(op.block);
+      return op.kind == Kind::RetireProgramStorage ||
+             (block && block->activeFailure != 0 &&
+              (op.kind == Kind::DrainThreadLocals ||
+               op.kind == Kind::EndCThreadRuntime));
+    });
+  }
   const auto attachment = std::find_if(
       plan.operations.begin(), plan.operations.end(),
       [](const auto &op) { return op.kind == Kind::BeginThreadLocals; });
@@ -50812,6 +50865,7 @@ bool cppMirHostedStartupOwnedArgumentsSchedule(const MirProgram &program) {
       {Kind::DropFailureCleanup, Behavior::None, false, false, false},
       {Kind::EndFailureCleanup, Behavior::None, false, false, false},
       {Kind::ContainFailure, Behavior::None, true, false, false},
+      {Kind::ComputeNextArgumentIndex, Behavior::None, false, false, false},
       {Kind::AdvanceArgumentIndex, Behavior::None, false, false, false},
       {Kind::ContinueArgumentLoop, Behavior::None, true, false, false},
       {Kind::PrepareEntryCount, Behavior::None, false, false, false},

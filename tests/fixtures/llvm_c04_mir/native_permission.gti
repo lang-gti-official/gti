@@ -1,0 +1,2 @@
+extern "C" { int foreign(const int* input); }
+int sample(int input) { return foreign(&input) + 1; }

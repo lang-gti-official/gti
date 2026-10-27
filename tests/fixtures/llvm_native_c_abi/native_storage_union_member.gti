@@ -1,0 +1,23 @@
+[[c_abi]] struct StorageCell { mut int32_t count; mut double weight; };
+[[c_abi]] union StorageBits { mut uint64_t number; mut double real; };
+[[c_abi]] struct StorageState { mut StorageCell cells[2]; mut StorageBits bits; };
+[[c_abi]] struct StorageUnions { mut StorageBits elements[2]; };
+extern "C" {
+  mut StorageState native_state;
+  mut StorageUnions native_unions;
+  void native_storage_reset();
+  int32_t native_storage_union_index();
+  int32_t native_storage_union_verify();
+}
+int main() {
+  native_storage_reset();
+  unsafe {
+    if (native_state.bits.number != uint64_t(6)) return 1;
+    native_state.bits.number = uint64_t(51);
+    int32_t index = native_storage_union_index();
+    if (native_unions.elements[index].number != uint64_t(9)) return 2;
+    native_unions.elements[index].number = uint64_t(93);
+    if (native_storage_union_verify() != 1) return 3;
+  }
+  return 0;
+}

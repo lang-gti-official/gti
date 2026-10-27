@@ -1,0 +1,7 @@
+extern "C" { int32_t debug_input(); }
+
+int inspect(int input) {
+  int local = 9;
+  return local / input;
+}
+int main() { return inspect(debug_input() - 4); }

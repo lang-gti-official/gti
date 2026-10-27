@@ -1,0 +1,10 @@
+#include "kernel.gti"
+
+int main() {
+  int result = atomic_core();
+  if (result != 0) {
+    return result;
+  }
+  std::println("GTI-BENCH-1 digest:0000000001312d02 work-units:20000000");
+  return 0;
+}

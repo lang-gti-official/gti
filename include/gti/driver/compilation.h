@@ -4,6 +4,7 @@
 #include "gti/configuration_flags.h"
 #include "gti/cpp_standard.h"
 #include "gti/diagnostic.h"
+#include "gti/llvm_backend.h"
 #include "gti/mir.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
@@ -105,6 +106,7 @@ public:
   [[nodiscard]] CppStandard cppStandard() const;
   [[nodiscard]] BackendKind backend() const;
   [[nodiscard]] bool debugInfo() const;
+  [[nodiscard]] LlvmInstrumentationMode llvmInstrumentation() const;
   [[nodiscard]] RawPointerAuditMode rawPointerAudit() const;
   [[nodiscard]] bool rawPointerAuditLibraryFindings() const;
   [[nodiscard]] const std::vector<PackageSourceRoot> &packageSources() const;
@@ -119,6 +121,9 @@ public:
   [[nodiscard]] bool requiresFunctionDefinitions() const;
   [[nodiscard]] CompilationRequest withDefinitionClosure() const;
   [[nodiscard]] CompilationRequest withBackend(BackendKind backend) const;
+  // Requires explicit LLVM selection for any non-None diagnostic mode.
+  [[nodiscard]] CompilationRequest
+  withLlvmInstrumentation(LlvmInstrumentationMode mode) const;
 
 private:
   std::filesystem::path entryPath;
@@ -127,6 +132,7 @@ private:
   OptimizationLevel optimizationLevel;
   CppStandard backendStandard;
   BackendKind selectedBackend = BackendKind::Cpp;
+  LlvmInstrumentationMode instrumentationMode = LlvmInstrumentationMode::None;
   std::vector<PackageSourceRoot> packageSourceRootSet;
   ConfigurationFlags configuredFlags;
   ConfigurationFlags declaredFlags;
@@ -140,6 +146,10 @@ private:
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
   bool reportLibraryAuditFindings = false;
 };
+
+// One driver mapping is shared by object emission and cache identity queries.
+[[nodiscard]] LlvmBackendOptions
+llvmBackendOptions(const CompilationRequest &request);
 
 enum class CompilationStatus {
   Success,

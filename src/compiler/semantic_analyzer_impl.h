@@ -233,13 +233,15 @@ public:
       const SourceManager *sources,
       RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
       bool requireFunctionDefinitions = false,
-      TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete)
+      TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete,
+      SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None)
       : target(std::move(target)), sourceGraph(sourceGraph), sources(sources),
         toolingOccurrences(toolingOccurrences), workMetrics(workMetrics),
         rawPointerAudit(rawPointerAudit),
         requireFunctionDefinitions(requireFunctionDefinitions),
-        trustedBodies(trustedBodies) {
+        trustedBodies(trustedBodies), sourceDebugProfile(sourceDebugProfile) {
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
+    semanticModel.setSourceDebugProfile(sourceDebugProfile);
   }
 
   // Every public analysis entry point establishes one complete request state.
@@ -282,6 +284,9 @@ public:
   [[nodiscard]] SemanticType expressionType() const;
 
   [[nodiscard]] const SemanticModel &model() const;
+  [[nodiscard]] SourceDebugProfile requestedSourceDebugProfile() const {
+    return sourceDebugProfile;
+  }
 
   // Moves the accumulated model out of the visitor. The visitor must not run
   // further analysis (including concrete instance reanalysis) afterwards.
@@ -327,6 +332,14 @@ public:
       visitor.catalog.assertUnchangedSinceSeal();
       visitor.semanticModel.beginInstanceDelta(baseModel,
                                                visitor.instanceSymbolCeiling);
+      if (auto *tables = visitor.semanticModel.sourceDebug_.tables.get())
+        tables->instance = {.concrete = true,
+                            .kind = static_cast<std::uint8_t>(instance.kind),
+                            .declaration = instance.declaration,
+                            .classTypes = instance.classTypes,
+                            .classValues = instance.classValues,
+                            .types = instance.types,
+                            .values = instance.values};
       visitor.requestSession.programExpressionCache = {};
       visitor.requestSession.fullExpressionStates.clear();
       if (visitor.journalNextInstance)
@@ -1232,8 +1245,33 @@ private:
     LoanFlowArmEndpoint endpoint;
   };
 
+  // Text a lambda capture provided has an owner the compiler cannot name: it
+  // may be used locally, but no return or store may let it escape. A local
+  // view that is ever given such text holds it for its whole scope, as MIR,
+  // which sees every write of a local, does: an escape it took while it
+  // still held ownerless text is rejected once the body is complete.
+  enum class LocalTextEscapeKind { Storage, Return, LambdaReturn, Argument };
+  struct LocalTextEscape {
+    // The local view that escapes, or 0 for a capture's text itself.
+    SymbolId local = 0;
+    const Expr *value = nullptr;
+    LocalTextEscapeKind kind = LocalTextEscapeKind::Storage;
+    std::string destination;
+  };
   struct LoanFlowState {
     bool finalized = false;
+    // Local views given text a lambda capture provided, local views each
+    // copies into, and escapes of such text or of local views that held
+    // ownerless text when checked (`finalizeCapturedText`).
+    std::unordered_set<SymbolId> capturedTextLocals;
+    std::vector<std::pair<SymbolId, SymbolId>> localTextFlows;
+    std::vector<LocalTextEscape> localTextEscapes;
+    // Closures over a dynamic view, and local views given a call result
+    // returning such a capture's text, with the views' loans each carries:
+    // a use of the carrier keeps those owners borrowed, as a copy of the view
+    // would (L-OWN-02).
+    std::unordered_map<SymbolId, std::vector<SemanticLoanId>>
+        capturedTextCarriers;
     // A symbolic constexpr branch has unknown control/ownership effects.
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
@@ -1472,11 +1510,31 @@ private:
 
   struct ScopeIdentity {};
   struct Scope : std::unordered_map<std::string, Symbol> {
+    // Value state so existing scope snapshots and transactions retain exact
+    // descriptive identity without another owner registry or semantic IDs.
+    std::optional<std::size_t> sourceDebugBody;
+    const void *sourceDebugOwner = nullptr;
+    SourceScopeId sourceDebugScope = 0;
+    std::size_t sourceDebugNextChild = 0;
     // Only isolated query frames need an identity. Ordinary lexical frames
     // remain allocation-free; snapshots retain the same lexical identity.
     std::shared_ptr<const ScopeIdentity> identity;
   };
   using ScopeStack = std::vector<Scope>;
+
+  // An initializer is a source region, not a new semantic lookup scope.
+  struct SourceDebugRegionGuard {
+    Impl &visitor;
+    std::size_t scopeIndex = 0;
+    bool active = false;
+    std::optional<std::size_t> body;
+    const void *owner = nullptr;
+    SourceScopeId scope = 0;
+    std::size_t nextChild = 0;
+
+    SourceDebugRegionGuard(Impl &visitor, const VariableDecl &declaration);
+    ~SourceDebugRegionGuard();
+  };
 
   enum class ValueControlFlowKind {
     Loop,
@@ -2186,6 +2244,7 @@ private:
   struct ActiveCleanupQuery {
     std::vector<ActiveCleanupEntry> entries;
     std::vector<SemanticType> activeTypes;
+    bool excludeNativeRetirement = false;
   };
 
   [[nodiscard]] static std::size_t
@@ -2200,6 +2259,7 @@ private:
 
   [[nodiscard]] bool requiresActiveCleanup(const SemanticType &type,
                                            ActiveCleanupQuery &query) const;
+  [[nodiscard]] bool requiresSourceCleanupFor(const SemanticType &type) const;
 
   [[nodiscard]] std::optional<ActiveCleanupCause>
   activeCleanupCause(const SemanticType &type) const;
@@ -2239,6 +2299,29 @@ private:
 
   [[nodiscard]] bool
   isOwnerDependentTextExpression(const ExprPtr &expression) const;
+  // Where text an expression yields may come from: a lambda capture, and
+  // the local views it reads that held no such text when it was checked.
+  struct TextValueSources {
+    bool captured = false;
+    std::vector<SymbolId> locals;
+  };
+  [[nodiscard]] TextValueSources textValueSources(const Expr *expression) const;
+  // A local view (a by-value text local or parameter of a body) and whether
+  // it holds text a lambda capture provided.
+  [[nodiscard]] std::optional<SymbolId>
+  localTextView(const Symbol &symbol) const;
+  [[nodiscard]] bool capturedTextSymbol(const Symbol &symbol) const;
+  void noteLocalTextEscape(const ExprPtr &value, LocalTextEscapeKind kind,
+                           std::string destination = {});
+  void noteLocalTextFlow(const ExprPtr &value, SymbolId target);
+  [[nodiscard]] bool finalizeCapturedText();
+  // The loans of the dynamic views whose text an expression's value carries
+  // through copy or move captures: a closure over such a view, a call of a
+  // lambda that returns its captured text, and a local holding either.
+  [[nodiscard]] std::vector<SemanticLoanId>
+  capturedTextLoans(const Expr *expression) const;
+  void recordCapturedTextCarriers(const VariableDecl &declaration);
+  void removeCapturedTextCarrier(const Symbol &carrier);
 
   // A value of a class or payload enum whose type has no borrowed state but
   // whose direct text field holds owner-dependent text (L-OWN-02). The
@@ -2381,6 +2464,18 @@ private:
   [[nodiscard]] std::optional<FieldSourcedTextResult>
   fieldSourcedTextResult(const Call &call,
                          const ResolvedCallInfo &resolved) const;
+  // The receiver, or the argument `parameter` names, that an overloaded
+  // operator's result relays from `origin`; operatorBorrowSource asks it
+  // for the operator's own summary.
+  [[nodiscard]] const ExprPtr *
+  operatorRelayOperand(const Expr &expression,
+                       const ResolvedOperatorInfo &resolved,
+                       BorrowOriginKind origin, std::size_t parameter) const;
+  // An overloaded operator's text result that returns one text field of its
+  // receiver or an argument, as fieldSourcedTextResult finds a call's.
+  [[nodiscard]] std::optional<FieldSourcedTextResult>
+  operatorFieldSourcedTextResult(const Expr &expression,
+                                 const ResolvedOperatorInfo &resolved) const;
   // A call whose callee returns a reference to one direct text field of its
   // receiver: reading the result reads that field of the receiver.
   [[nodiscard]] std::optional<FieldSourcedTextResult>
@@ -2520,7 +2615,16 @@ private:
                                    SymbolId payload = 0);
 
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
-                                       std::string_view destination);
+                                       std::string_view destination,
+                                       bool capturedText = false);
+  void reportOwnerDependentTextStorage(const Expr &expression,
+                                       std::string_view destination,
+                                       bool capturedText = false);
+  // Whether rejected text is a lambda's text over its captures, whose owner
+  // has no name, and the hint and return diagnostic that say so.
+  [[nodiscard]] bool capturedTextValue(const Expr &expression) const;
+  [[nodiscard]] static std::string capturedTextHint(bool cString);
+  void reportCapturedTextReturn(const Expr &value);
 
   [[nodiscard]] std::optional<std::size_t>
   ownerlessTextForwardingParameter(const ExprPtr &expression) const;
@@ -3226,6 +3330,8 @@ private:
     AccessMode access = AccessMode::ReadOnly;
     std::vector<SemanticType> parameterTypes;
     bool deferred = false;
+    // Some return yields text a capture provided (`capturedTextResult`).
+    bool capturedText = false;
   };
   // Set while a lambda body is analyzed, even when the lambda returns an
   // owned value, so returns inside it never read the enclosing function.
@@ -4868,6 +4974,17 @@ private:
       SymbolId field = 0, const SemanticType &ownerType = SemanticType::Unknown,
       bool conditional = false);
 
+  // The declared type of a pure place path over a formal, the receiver, their
+  // fields and array elements, and whether its last step selects stored
+  // state (a field or an element).
+  struct PredeclaredPlace {
+    SemanticType type = SemanticType::Unknown;
+    bool stored = false;
+  };
+  [[nodiscard]] std::optional<PredeclaredPlace>
+  predeclaredPlace(const Expr *expression, const FunctionInfo &function,
+                   SemanticType ownerType);
+
   [[nodiscard]] bool storedTextViewRead(const ExprPtr &expression,
                                         const FunctionInfo &function,
                                         SemanticType ownerType);
@@ -4933,6 +5050,10 @@ private:
   dynamicTextReturnBorrowSummary(
       const FunctionInfo &function,
       const SemanticType &ownerType = SemanticType::Unknown);
+  // `derived` itself or the base it inherits, through classes and
+  // interfaces, that instantiates class `base`.
+  [[nodiscard]] std::optional<SemanticType>
+  inheritedClassInstance(const SemanticType &derived, ClassId base) const;
 
   // The receiver's direct text field, or text payload of a payload-enum
   // field, that every returned reference to text designates, in a
@@ -5441,6 +5562,10 @@ private:
   // Set while the synthesized projection of a reflected field access is
   // analysed: a `[[reflect_private]]` owner then admits its private fields.
   bool analyzingReflectedFieldAccess = false;
+  // Set while a lambda's capture list is analysed. A borrowing capture
+  // borrows a named local or parameter; an enclosing closure's capture is
+  // neither, so it is no place a capture initializer can borrow from.
+  bool analyzingCaptureList = false;
   // ---- Declared attributes ----
   // Evaluates every `[[ns::name(args)]]` application once per declaration at
   // the start of the body phase, before any body can query it.
@@ -6155,6 +6280,15 @@ private:
   void validateLoopBackedge(const ScopeStack &beforeLoop,
                             const ScopeStack &backedge, const Token &location);
 
+  [[nodiscard]] SemanticSourceDebugTables *activeSourceDebugTables();
+  void beginSourceDebugBody(SourceDebugBodyKind kind, const void *source,
+                            const SourceSpan &extent,
+                            std::span<const Parameter> parameters = {},
+                            const void *creator = nullptr,
+                            std::size_t expansion = 0);
+  void recordSourceDebugStatement(const Stmt &statement);
+  void recordSourceDebugExpression(const Expr &expression);
+  void recordSourceDebugLocal(const VariableDecl &declaration);
   void beginScope();
   void endScope();
 
@@ -6661,6 +6795,8 @@ private:
       SemanticType callerFormal = SemanticType::Unknown;
       const ExprPtr *argument = nullptr;
       bool ownerless = false;
+      // The argument is text a lambda capture provided (L-OWN-02).
+      bool capturedText = false;
       bool diagnosed = false;
     };
     struct OwnerlessTextCallableUse {
@@ -7371,6 +7507,7 @@ private:
   // code. Closed executable/library requests need every actual GTI call target.
   bool requireFunctionDefinitions = false;
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
+  SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None;
 
   // ---- Staged constant evaluation worker --------------------------------
   // The model the constants required here stage against: this analyzer's

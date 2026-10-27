@@ -1,4 +1,5 @@
 #include "gti/hir.h"
+#include "gti/instance_analysis_cache.h"
 
 #include <algorithm>
 #include <functional>
@@ -193,6 +194,53 @@ hirInitializerReachability(const HirBody &body,
 
 namespace {
 
+// Substitution leaves a computed type projection such as
+// std::meta::callable_return_type<F> applied to its now-concrete subject,
+// which semantic instantiation reduces to the subject's declared result.
+// Apply that same reduction before comparing a substituted selection with a
+// concrete instance type.
+// Semantic analysis selects a generic class family member, such as a partial
+// specialization, by matching patterns against the argument list. The
+// verifier cannot repeat that selection, but it is a function of the family
+// and the arguments: an instance of the same family with exactly these
+// arguments is the selected class.
+bool sameFamilySelection(const SemanticType &selected,
+                         const SemanticType &instance,
+                         const SemanticModel &semantics) {
+  if (selected == instance)
+    return true;
+  if (selected.kind != SemanticType::Class ||
+      instance.kind != SemanticType::Class)
+    return false;
+  const auto family = [&](ClassId id) {
+    const auto *info = semantics.findClassType(id);
+    return info != nullptr && info->definitionFamilyPrimary != 0
+               ? info->definitionFamilyPrimary
+               : id;
+  };
+  auto member = selected;
+  member.classId = instance.classId;
+  return family(selected.classId) == family(instance.classId) &&
+         member == instance;
+}
+
+SemanticType reduceComputedTypeProjections(SemanticType type,
+                                           const SemanticModel &semantics) {
+  for (auto &argument : type.arguments)
+    argument = reduceComputedTypeProjections(std::move(argument), semantics);
+  if (type.kind != SemanticType::Class || type.arguments.size() != 1 ||
+      !type.valueArguments.empty())
+    return type;
+  const auto *info = semantics.findClassType(type.classId);
+  if (info == nullptr ||
+      info->computedTypeProjection != ComputedTypeProjectionKind::CallableReturn)
+    return type;
+  // The result names a subobject of type; copy it before returning.
+  if (const auto *result = type.arguments.front().callableReturnType())
+    return SemanticType(*result);
+  return type;
+}
+
 template <typename Nodes, typename Ids>
 [[nodiscard]] bool exactInventory(const Nodes &nodes, const Ids &ids) {
   return nodes.size() == ids.size() &&
@@ -319,9 +367,352 @@ HirProgram::valueIdsForSource(const Expr &source) const {
 }
 
 HirProgramPlanVerificationResult
+verifyHirSourceDebug(const SemanticModel &semantics,
+                     const HirProgram &program) {
+  HirProgramPlanVerificationResult result;
+  const auto reject = [&](std::string detail) {
+    result.errors.push_back(std::move(detail));
+  };
+  const auto semanticIssues = semantics.verifySourceDebug();
+  result.errors.insert(result.errors.end(), semanticIssues.begin(),
+                       semanticIssues.end());
+  if (!isValidSourceDebugProfile(program.sourceDebugProfile()) ||
+      program.sourceDebugProfile() != semantics.sourceDebugProfile())
+    reject("HIR source-debug profile differs from its semantic request");
+  const auto check = [&](const HirBody &body, SourceDebugBodyKind kind,
+                         const void *source, bool sourceBody,
+                         const SemanticSourceDebugInstance *instance =
+                             nullptr) {
+    const auto &record = body.sourceDebug;
+    if (!isValidSourceDebugRecord(record)) {
+      reject("HIR source-debug collection/table state is invalid");
+      return;
+    }
+    if (program.sourceDebugProfile() == SourceDebugProfile::None) {
+      if (record.tables ||
+          (sourceBody &&
+           record.collection == SourceDebugCollection::NotApplicable))
+        reject("disabled HIR source-debug profile owns tables");
+      return;
+    }
+    if (!sourceBody) {
+      if (record.tables && (record.tables->sourceFacts().source ||
+                            record.tables->initializers.empty()))
+        reject("source-free HIR body owns source-debug tables");
+      if (!record.tables &&
+          record.collection != SourceDebugCollection::NotApplicable)
+        reject("source-free HIR body lacks its verified not-applicable state");
+      return;
+    }
+    if (record.collection != SourceDebugCollection::CollectedLexicalV1 ||
+        !record.tables) {
+      reject("source HIR body has no collected lexical facts");
+      return;
+    }
+    const auto &tables = *record.tables;
+    const auto &accepted = tables.sourceFacts();
+    if (tables.domain != body.placeDomain || accepted.source != source ||
+        accepted.kind != kind ||
+        accepted.snapshot != body.placeDomain.snapshot ||
+        !accepted.consistent || accepted.scopes.empty() ||
+        (instance && accepted.instance != *instance)) {
+      reject("HIR source facts have a foreign concrete body/analysis domain");
+      return;
+    }
+    if (!accepted.instance.concrete) {
+      const auto *original = semantics.findSourceDebugBody(kind, source);
+      if (!original || !original->facts.tables ||
+          original->facts.tables->scopes != accepted.scopes ||
+          original->facts.tables->statements != accepted.statements ||
+          original->facts.tables->expressions != accepted.expressions)
+        reject(
+            "HIR primary source membership differs from its semantic producer");
+    }
+    for (std::size_t i = 0; i < accepted.scopes.size(); ++i) {
+      const auto &scope = accepted.scopes[i];
+      if (scope.id != i + 1 || scope.parent >= scope.id ||
+          ((i == 0) != (scope.parent == 0)))
+        reject("HIR source scope has an invalid parent relation");
+    }
+    if (tables.locals.size() != accepted.locals.size())
+      reject("HIR source-local inventory differs from its accepted producer");
+    for (std::size_t i = 0;
+         i < std::min(tables.locals.size(), accepted.locals.size()); ++i) {
+      const auto &local = tables.locals[i];
+      const auto &fact = accepted.locals[i];
+      const auto binding = std::find_if(
+          body.bindings.begin(), body.bindings.end(),
+          [&](const auto &candidate) {
+            return (fact.variable && candidate.variable == fact.variable) ||
+                   (fact.parameter && candidate.parameter == fact.parameter);
+          });
+      if (local.id != fact.id || local.scope != fact.scope ||
+          local.symbol != fact.symbol || local.type != fact.type ||
+          local.name != fact.name || local.declaration != fact.declaration ||
+          local.parameter != (fact.parameter != nullptr) ||
+          local.receiver != fact.receiver ||
+          local.binding != (binding == body.bindings.end() ? 0 : binding->id) ||
+          (binding != body.bindings.end() &&
+           (binding->info.symbol != local.symbol ||
+            binding->info.type != local.type)))
+        reject("HIR source local differs from its exact concrete binding/type");
+    }
+    std::vector<SourceDebugAnchor> statements;
+    for (const auto &statement : body.statements)
+      if (const auto scope = accepted.statements.find(statement.source);
+          scope != accepted.statements.end())
+        statements.push_back(
+            {statement.id, scope->second,
+             statement.source->extent().value_or(SourceSpan{})});
+    std::vector<SourceDebugAnchor> values;
+    for (const auto &value : body.values)
+      if (const auto scope = accepted.expressions.find(value.source);
+          scope != accepted.expressions.end())
+        values.push_back({value.id, scope->second,
+                          value.source->writtenOrigin()
+                              ? *value.source->writtenOrigin()
+                              : SourceSpan{}});
+    if (tables.statements != statements || tables.values != values)
+      reject("HIR source anchors differ from accepted semantic membership");
+  };
+  const auto findClass =
+      [&](HirClassInstanceId id) -> const HirClassInstance * {
+    const auto &classes = program.classInstances();
+    return id != 0 && id <= classes.size() && classes[id - 1].id == id
+               ? &classes[id - 1]
+               : nullptr;
+  };
+  using InitializerRoots =
+      std::vector<std::pair<const VariableDecl *, std::vector<HirValueId>>>;
+  const auto checkInitializers = [&](const HirBody &body,
+                                     const InitializerRoots &expected,
+                                     const HirClassInstance *owner = nullptr,
+                                     bool sourceRegionBody = false) {
+    const auto &record = body.sourceDebug;
+    if (!isValidSourceDebugRecord(record)) {
+      reject("HIR initializer source collection/table state is invalid");
+      return;
+    }
+    if (program.sourceDebugProfile() == SourceDebugProfile::None) {
+      if (record.tables ||
+          (sourceRegionBody &&
+           record.collection == SourceDebugCollection::NotApplicable))
+        reject("disabled HIR initializer source profile owns tables");
+      return;
+    }
+    if (!record.tables) {
+      if (!expected.empty() || sourceRegionBody)
+        reject("HIR initializer source region is missing");
+      return;
+    }
+    const auto &tables = *record.tables;
+    if (tables.domain != body.placeDomain ||
+        tables.initializers.size() != expected.size()) {
+      reject("HIR initializer source inventory/domain differs from its owner");
+      return;
+    }
+    std::vector<std::vector<HirValueId>> roots;
+    for (const auto &[declaration, values] : expected)
+      roots.push_back(values);
+    const auto reachable = hirInitializerReachabilityBatch(body, roots);
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+      const auto &region = tables.initializers[i];
+      const auto &facts = region.sourceFacts();
+      const auto &[declaration, values] = expected[i];
+      if (region.id != i + 1 || region.declaration != declaration ||
+          region.roots != values || !reachable[i].complete ||
+          facts.kind != SourceDebugBodyKind::Initializer ||
+          facts.source != declaration || facts.creator || !facts.consistent ||
+          facts.snapshot != body.placeDomain.snapshot || facts.scopes.empty()) {
+        reject("HIR initializer source region has foreign roots or provenance");
+        continue;
+      }
+      if (facts.instance.concrete) {
+        const SemanticSourceDebugInstance instance{
+            .concrete = true,
+            .kind = static_cast<std::uint8_t>(
+                InstanceAnalysisKind::ClassFieldInitializers),
+            .declaration = owner ? owner->declaration : 0,
+            .classTypes =
+                owner ? owner->typeArguments : std::vector<SemanticType>{},
+            .classValues = owner ? owner->valueArguments
+                                 : std::vector<CompileTimeValue>{}};
+        if (!owner || facts.instance != instance)
+          reject("HIR initializer source region has a foreign substitution");
+      } else {
+        const auto *original = semantics.findSourceDebugBody(
+            SourceDebugBodyKind::Initializer, declaration);
+        if (!original || !original->facts.tables ||
+            original->facts.tables->scopes != facts.scopes ||
+            original->facts.tables->statements != facts.statements ||
+            original->facts.tables->expressions != facts.expressions)
+          reject("HIR initializer source membership differs from semantics");
+      }
+      std::vector<HirSourceLocal> locals;
+      for (const auto &local : facts.locals) {
+        const auto binding = std::find_if(
+            body.bindings.begin(), body.bindings.end(), [&](const auto &row) {
+              return reachable[i].bindings.contains(row.id) &&
+                     row.variable == local.variable;
+            });
+        if (binding != body.bindings.end() &&
+            (binding->info.symbol != local.symbol ||
+             binding->info.type != local.type))
+          reject("HIR initializer local differs from its concrete binding");
+        locals.push_back(
+            {.id = local.id,
+             .scope = local.scope,
+             .binding = binding == body.bindings.end() ? 0 : binding->id,
+             .symbol = local.symbol,
+             .type = local.type,
+             .name = local.name,
+             .declaration = local.declaration});
+      }
+      std::vector<SourceDebugAnchor> statements;
+      for (const auto &statement : body.statements)
+        if (reachable[i].statements.contains(statement.id))
+          if (const auto scope = facts.statements.find(statement.source);
+              scope != facts.statements.end())
+            statements.push_back(
+                {statement.id, scope->second,
+                 statement.source->extent().value_or(SourceSpan{})});
+      std::vector<SourceDebugAnchor> expressions;
+      for (const auto &value : body.values)
+        if (reachable[i].values.contains(value.id))
+          if (const auto scope = facts.expressions.find(value.source);
+              scope != facts.expressions.end())
+            expressions.push_back({value.id, scope->second,
+                                   value.source->writtenOrigin()
+                                       ? *value.source->writtenOrigin()
+                                       : SourceSpan{}});
+      if (region.locals != locals || region.statements != statements ||
+          region.values != expressions)
+        reject("HIR initializer source rows differ from exact reachable roots");
+    }
+  };
+  InitializerRoots moduleRoots;
+  for (const auto &step : program.programInitializationPlan().steps)
+    if (step.role == ProgramInitializationStepRole::Initializer &&
+        step.initializer)
+      moduleRoots.emplace_back(step.source,
+                               std::vector<HirValueId>{*step.initializer});
+  checkInitializers(program.module(), moduleRoots, nullptr, true);
+  for (const auto &storage : program.threadLocalStorage()) {
+    InitializerRoots roots;
+    if (storage.source && storage.source->initializer())
+      for (const auto root : storage.initializer.roots)
+        if (const auto *statement = storage.initializer.findStatement(root);
+            statement && statement->value)
+          roots.emplace_back(storage.source,
+                             std::vector<HirValueId>{*statement->value});
+    checkInitializers(storage.initializer, roots, nullptr, true);
+  }
+  for (const auto &instance : program.classInstances()) {
+    InitializerRoots fields;
+    for (const auto &field : instance.fields)
+      if (field.declaration && field.initializer)
+        fields.emplace_back(field.declaration,
+                            std::vector<HirValueId>{*field.initializer});
+    checkInitializers(instance.fieldInitializers, fields, &instance, true);
+    InitializerRoots statics;
+    for (const auto &field : instance.staticFields)
+      if (field.declaration && field.initializer &&
+          instance.staticFieldInitializers.findValue(*field.initializer))
+        statics.emplace_back(field.declaration,
+                             std::vector<HirValueId>{*field.initializer});
+    checkInitializers(instance.staticFieldInitializers, statics, &instance,
+                      true);
+  }
+  for (const auto &function : program.functionInstances()) {
+    checkInitializers(function.body, {});
+    SemanticSourceDebugInstance instance;
+    const auto &record = function.body.sourceDebug;
+    if (record.tables && record.tables->sourceFacts().instance.concrete) {
+      instance = {.concrete = true,
+                  .kind =
+                      static_cast<std::uint8_t>(InstanceAnalysisKind::Function),
+                  .declaration = function.declaration,
+                  .types = function.typeArguments,
+                  .values = function.valueArguments};
+      if (function.owner)
+        if (const auto *owner = findClass(*function.owner)) {
+          instance.classTypes = owner->typeArguments;
+          instance.classValues = owner->valueArguments;
+        }
+    }
+    check(function.body, SourceDebugBodyKind::Function, function.source,
+          function.source && function.source->body(), &instance);
+  }
+  for (const auto &constructor : program.constructorInstances()) {
+    InitializerRoots roots;
+    const auto *owner = findClass(constructor.owner);
+    if (owner)
+      for (const auto &initializer : constructor.initializers)
+        if (!initializer.source &&
+            initializer.kind == ConstructorInitializerTargetKind::Field)
+          for (const auto &field : owner->fields)
+            if (field.info.symbol == initializer.field && field.declaration &&
+                field.initializer)
+              roots.emplace_back(field.declaration, initializer.arguments);
+    checkInitializers(constructor.body, roots, owner);
+    SemanticSourceDebugInstance instance;
+    if (constructor.body.sourceDebug.tables &&
+        constructor.body.sourceDebug.tables->sourceFacts().instance.concrete) {
+      instance = {
+          .concrete = true,
+          .kind = static_cast<std::uint8_t>(InstanceAnalysisKind::Constructor),
+          .declaration = constructor.declaration,
+          .types = constructor.typeArguments,
+          .values = constructor.valueArguments};
+      if (const auto *owner = findClass(constructor.owner)) {
+        instance.classTypes = owner->typeArguments;
+        instance.classValues = owner->valueArguments;
+      }
+    }
+    check(constructor.body, SourceDebugBodyKind::Constructor,
+          constructor.source,
+          !constructor.generatedDefault && constructor.source &&
+              constructor.source->body(),
+          &instance);
+  }
+  for (const auto &destructor : program.destructorInstances()) {
+    checkInitializers(destructor.body, {});
+    SemanticSourceDebugInstance instance;
+    if (destructor.body.sourceDebug.tables &&
+        destructor.body.sourceDebug.tables->sourceFacts().instance.concrete) {
+      const auto *owner = findClass(destructor.owner);
+      instance = {
+          .concrete = true,
+          .kind = static_cast<std::uint8_t>(InstanceAnalysisKind::Destructor),
+          .declaration = owner ? owner->declaration : 0};
+      if (owner) {
+        instance.classTypes = owner->typeArguments;
+        instance.classValues = owner->valueArguments;
+      }
+    }
+    check(destructor.body, SourceDebugBodyKind::Destructor, destructor.source,
+          destructor.source && destructor.source->body(), &instance);
+  }
+  for (const auto &lambda : program.lambdaInstances()) {
+    checkInitializers(lambda.body, {});
+    check(lambda.body, SourceDebugBodyKind::Lambda, lambda.source,
+          lambda.source != nullptr);
+    if (lambda.body.sourceDebug.tables) {
+      const auto &facts = lambda.body.sourceDebug.tables->sourceFacts();
+      if (lambda.type.kind != SemanticType::Lambda ||
+          lambda.type.lambdaId != lambda.declaration || !facts.creator)
+        reject(
+            "HIR source lambda lacks its exact type/declaration/creator join");
+    }
+  }
+  return result;
+}
+
+HirProgramPlanVerificationResult
 verifyHirProgramPlans(const SemanticModel &semantics,
                       const HirProgram &program) {
-  HirProgramPlanVerificationResult result;
+  HirProgramPlanVerificationResult result =
+      verifyHirSourceDebug(semantics, program);
   for (const HirEnum &enumeration : program.enumDeclarations()) {
     if (!enumeration.payload)
       continue;
@@ -658,6 +1049,61 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         substitution.types.emplace(parameter.id,
                                    instance.typeArguments[typeIndex++]);
       }
+    }
+    if (instance.virtualDispatch.size() != owner->virtualDispatch.size())
+      result.errors.emplace_back(
+          "HIR virtual dispatch inventory differs from semantic selection");
+    const auto exactDispatchPath = [&](const auto &path,
+                                       HirClassInstanceId endpoint) {
+      auto current = instance.id;
+      std::unordered_set<HirClassInstanceId> seen{current};
+      for (const auto next : path) {
+        if (!current || current > program.classInstances().size() ||
+            !seen.insert(next).second)
+          return false;
+        const auto &bases = program.classInstances()[current - 1].bases;
+        const auto found =
+            std::find_if(bases.begin(), bases.end(), [&](const auto &base) {
+              return base.instance == next;
+            });
+        if (found == bases.end() || !next ||
+            next > program.classInstances().size() ||
+            program.classInstances()[next - 1].type != found->type)
+          return false;
+        current = next;
+      }
+      return current == endpoint && endpoint != 0 &&
+             endpoint <= program.classInstances().size();
+    };
+    std::unordered_set<HirFunctionInstanceId> dispatchRoots;
+    for (std::size_t index = 0; index < instance.virtualDispatch.size();
+         ++index) {
+      const auto &row = instance.virtualDispatch[index];
+      const auto *root = program.findFunctionInstance(row.root);
+      const auto *target = program.findFunctionInstance(row.target);
+      const auto *selected = index < owner->virtualDispatch.size()
+                                 ? &owner->virtualDispatch[index]
+                                 : nullptr;
+      if (!selected || !root || !target ||
+          !dispatchRoots.insert(row.root).second ||
+          root->declaration != selected->root ||
+          target->declaration != selected->target ||
+          root->owner != row.rootOwner || target->owner != row.targetOwner ||
+          !exactDispatchPath(row.rootPath, row.rootOwner) ||
+          !exactDispatchPath(row.targetPath, row.targetOwner) ||
+          program.classInstances()[row.targetOwner - 1].type !=
+              substituteSemanticType(selected->targetOwner, substitution,
+                                     &semantics) ||
+          !root->virtualMethod || !target->virtualMethod ||
+          root->staticMember || target->staticMember ||
+          root->parameterTypes != target->parameterTypes ||
+          root->returnType != target->returnType ||
+          (target->pureVirtual && !instance.abstract) ||
+          (!target->pureVirtual &&
+           (!target->source || !target->source->body())))
+        result.errors.emplace_back(
+            "HIR virtual dispatch differs from its exact semantic "
+            "root/target/owner/path contract");
     }
     for (std::size_t index = 0; index < instance.typeAliases.size(); ++index) {
       const auto &alias = instance.typeAliases[index];
@@ -1076,7 +1522,181 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             "and shared value identity");
     }
   };
+  std::unordered_map<const HirBody *, GenericSubstitution> constructionContexts;
+  std::vector<const HirBody *> constructionBodies;
+  std::unordered_set<const HirBody *> ambiguousConstructionContexts;
+  const auto addConstructionContext = [&](const HirBody &body,
+                                          GenericSubstitution substitution) {
+    const auto [found, inserted] =
+        constructionContexts.emplace(&body, substitution);
+    if (inserted)
+      constructionBodies.push_back(&body);
+    else if (found->second.types != substitution.types ||
+             found->second.values != substitution.values) {
+      ambiguousConstructionContexts.insert(&body);
+      result.errors.emplace_back(
+          "construction body has ambiguous instance arguments");
+    }
+  };
+  const auto bindConstructionArguments =
+      [&](GenericSubstitution &substitution,
+          const std::vector<GenericParameterInfo> &parameters,
+          const std::vector<SemanticType> &types,
+          const std::vector<CompileTimeValue> &values) {
+        std::size_t typeIndex = 0, valueIndex = 0;
+        for (const auto &parameter : parameters) {
+          if (!parameter.typeArgumentPath.empty()) {
+            if (auto type = projectGenericTypeArgument(
+                    types, parameter.typeArgumentPath, parameter.id,
+                    parameter.pack))
+              if (const auto [found, inserted] =
+                      substitution.types.emplace(parameter.id, *type);
+                  !inserted && found->second != *type)
+                result.errors.emplace_back(
+                    "construction type arguments conflict");
+          } else if (parameter.pack) {
+            if (typeIndex <= types.size()) {
+              std::vector<SemanticType> elements(types.begin() + typeIndex,
+                                                 types.end());
+              const auto pack = SemanticType::concreteTypePack(
+                  parameter.id, std::move(elements));
+              if (const auto [found, inserted] =
+                      substitution.types.emplace(parameter.id, pack);
+                  !inserted && found->second != pack)
+                result.errors.emplace_back(
+                    "construction pack arguments conflict");
+              typeIndex = types.size();
+            }
+          } else if (parameter.value) {
+            if (valueIndex < values.size()) {
+              const auto &argument = values[valueIndex++];
+              if (const auto [found, inserted] =
+                      substitution.values.emplace(parameter.id, argument);
+                  !inserted && found->second != argument)
+                result.errors.emplace_back(
+                    "construction value arguments conflict");
+            }
+          } else if (typeIndex < types.size()) {
+            const auto &argument = types[typeIndex++];
+            if (const auto [found, inserted] =
+                    substitution.types.emplace(parameter.id, argument);
+                !inserted && found->second != argument)
+              result.errors.emplace_back(
+                  "construction type arguments conflict");
+          }
+        }
+      };
+  const auto constructionClassContext = [&](HirClassInstanceId identity) {
+    GenericSubstitution substitution;
+    const auto *instance =
+        identity != 0 && identity <= program.classInstances().size() &&
+                program.classInstances()[identity - 1].id == identity
+            ? &program.classInstances()[identity - 1]
+            : nullptr;
+    const auto *declaration =
+        instance ? semantics.findClassType(instance->declaration) : nullptr;
+    if (declaration)
+      bindConstructionArguments(substitution, declaration->genericParameters,
+                                instance->typeArguments,
+                                instance->valueArguments);
+    return substitution;
+  };
+  addConstructionContext(program.module(), {});
+  for (const auto &storage : program.threadLocalStorage())
+    addConstructionContext(storage.initializer, {});
+  for (const auto &owner : program.classInstances()) {
+    const auto substitution = constructionClassContext(owner.id);
+    addConstructionContext(owner.fieldInitializers, substitution);
+    addConstructionContext(owner.staticFieldInitializers, substitution);
+  }
+  for (const auto &function : program.functionInstances()) {
+    auto substitution = constructionClassContext(function.owner.value_or(0));
+    if (const auto *declaration = semantics.findFunction(function.declaration))
+      bindConstructionArguments(substitution, declaration->genericParameters,
+                                function.typeArguments,
+                                function.valueArguments);
+    addConstructionContext(function.body, std::move(substitution));
+  }
+  for (const auto &constructor : program.constructorInstances()) {
+    auto substitution = constructionClassContext(constructor.owner);
+    if (const auto *declaration =
+            constructor.source ? semantics.findConstructor(*constructor.source)
+                               : nullptr)
+      bindConstructionArguments(substitution, declaration->genericParameters,
+                                constructor.typeArguments,
+                                constructor.valueArguments);
+    addConstructionContext(constructor.body, std::move(substitution));
+  }
+  for (const auto &destructor : program.destructorInstances())
+    addConstructionContext(destructor.body,
+                           constructionClassContext(destructor.owner));
+  // Establish an acyclic exact lexical creator graph before propagating
+  // instance arguments. Every incoming context must agree; a target ID or
+  // an inferred result type cannot supply a missing or conflicting context.
+  std::vector<const HirBody *> contextNodes = constructionBodies;
+  for (const auto &lambda : program.lambdaInstances())
+    contextNodes.push_back(&lambda.body);
+  std::unordered_map<const HirBody *, std::vector<const HirBody *>>
+      contextEdges;
+  std::unordered_map<const HirBody *, std::size_t> incomingContexts;
+  for (const auto *body : contextNodes) {
+    incomingContexts.try_emplace(body, 0);
+    for (const auto &value : body->values) {
+      if (value.kind != HirValueKind::Lambda || !value.lambdaTarget)
+        continue;
+      const auto *lambda = program.findLambda(*value.lambdaTarget);
+      // Macro forcing can expand one written lambda into several expression
+      // nodes that share its semantic identity and therefore one HIR lambda;
+      // the creator is exact when both name that same semantic lambda.
+      const auto *written = exprAs<Lambda>(value.source);
+      const auto sameLambda = [&](const Lambda *creator) {
+        if (creator == written)
+          return creator != nullptr;
+        const auto *selected = written ? semantics.findLambda(*written) : nullptr;
+        const auto *source = creator ? semantics.findLambda(*creator) : nullptr;
+        return selected != nullptr && source != nullptr &&
+               selected->id == source->id;
+      };
+      if (!lambda || !sameLambda(lambda->source) ||
+          lambda->type != value.info.type) {
+        result.errors.emplace_back(
+            "construction context has no exact lambda creator");
+        continue;
+      }
+      contextEdges[body].push_back(&lambda->body);
+      ++incomingContexts[&lambda->body];
+    }
+  }
+  std::vector<const HirBody *> readyContexts;
+  for (const auto *body : contextNodes)
+    if (incomingContexts.at(body) == 0)
+      readyContexts.push_back(body);
+  for (std::size_t index = 0; index < readyContexts.size(); ++index) {
+    const auto *body = readyContexts[index];
+    const auto known = constructionContexts.find(body);
+    if (known == constructionContexts.end()) {
+      result.errors.emplace_back(
+          "construction context is missing its lexical creator");
+    }
+    const bool compatible = known != constructionContexts.end() &&
+                            !ambiguousConstructionContexts.contains(body);
+    const auto inherited = compatible ? known->second : GenericSubstitution{};
+    for (const auto *child : contextEdges[body]) {
+      if (compatible)
+        addConstructionContext(*child, inherited);
+      if (--incomingContexts[child] == 0)
+        readyContexts.push_back(child);
+    }
+  }
+  if (readyContexts.size() != contextNodes.size())
+    result.errors.emplace_back(
+        "construction context contains a lambda creator cycle");
   const auto verifyGeneratedConstructionValues = [&](const HirBody &body) {
+    const auto context = constructionContexts.find(&body);
+    if (context == constructionContexts.end() ||
+        ambiguousConstructionContexts.contains(&body))
+      return;
+    const auto &substitution = context->second;
     verifyDirectInitializations(body);
     for (const auto &value : body.values) {
       if (value.intrinsic == IntrinsicKind::SourceExpressionText)
@@ -1143,15 +1763,62 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto *construction = value.source != nullptr
                                      ? semantics.findConstruction(*value.source)
                                      : nullptr;
-      const auto *type =
-          construction != nullptr && construction->generatedDefault
-              ? semantics.findClassType(construction->constructedType.classId)
-              : nullptr;
+      const SemanticType selectedType =
+          construction != nullptr
+              ? semantics.resolveExactClassSpecialization(
+                    reduceComputedTypeProjections(
+                        substituteSemanticType(construction->constructedType,
+                                               substitution, &semantics),
+                        semantics))
+              : SemanticType::Unknown;
+      const auto *type = construction != nullptr &&
+                                 construction->generatedDefault &&
+                                 construction->kind == ConstructorKind::Ordinary
+                             ? semantics.findClassType(selectedType.classId)
+                             : nullptr;
       const auto *lifecycle =
           type != nullptr && type->declaration != nullptr
               ? semantics.findClassLifecycle(*type->declaration)
               : nullptr;
-      if (lifecycle == nullptr || !lifecycle->generatedDefaultInitializers)
+      if (construction != nullptr &&
+          construction->kind == ConstructorKind::Ordinary &&
+          value.intrinsic == IntrinsicKind::None && lifecycle != nullptr &&
+          lifecycle->defaultConstructor == SpecialMemberStatus::Generated &&
+          !lifecycle->generatedDefaultInitializers) {
+        const HirClassInstance *owner = nullptr;
+        bool unique = true;
+        for (const auto &candidate : program.classInstances()) {
+          if (candidate.type != value.info.type)
+            continue;
+          if (owner != nullptr)
+            unique = false;
+          owner = &candidate;
+        }
+        const bool exactOwner = owner != nullptr && unique &&
+                                !containsUnresolvedGeneric(selectedType) &&
+                                sameFamilySelection(selectedType, owner->type,
+                                                    semantics);
+        if (!exactOwner ||
+            owner->defaultConstructor != SpecialMemberStatus::Generated ||
+            owner->generatedDefaultRequiresSchedule ||
+            value.kind != HirValueKind::DirectInitializer ||
+            value.constructorKind != ConstructorKind::Ordinary ||
+            value.constructorTarget || value.functionTarget ||
+            value.lambdaTarget || value.receiver || value.nativeCalleeType ||
+            value.nativeCallbackAdapter || value.threadTaskAdapter ||
+            !value.scopedThreadTasks.empty() || value.callPlan ||
+            value.callableBoundary || value.callableInvocation ||
+            !value.callableArguments.empty() || !value.operands.empty() ||
+            !value.parameterTypes.empty() || !value.defaultArguments.empty() ||
+            value.info.category != ValueCategory::Value ||
+            value.info.traits != owner->traits || !value.definedFailure.empty())
+          result.errors.emplace_back(
+              "generated default value lost its exact construction selection");
+        continue;
+      }
+      if (lifecycle == nullptr ||
+          lifecycle->defaultConstructor != SpecialMemberStatus::Generated ||
+          !lifecycle->generatedDefaultInitializers)
         continue;
       const auto *target =
           value.constructorTarget
@@ -1187,18 +1854,12 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct
               ? FailurePropagationKind::None
               : FailurePropagationKind::Constructor;
-      // Concrete reanalysis owns generic argument substitution. The base
-      // semantic record may still be the primary's C<T>; retain its exact
-      // declaration identity and validate the concrete value/storage-to-owner
-      // relationship instead of comparing C<T> with C<int>.
-      const bool exactOwner =
-          owner != nullptr &&
-          (containsUnresolvedGeneric(construction->constructedType)
-               ? owner->type.kind == SemanticType::Class &&
-                     owner->type.classId ==
-                         construction->constructedType.classId &&
-                     !containsUnresolvedGeneric(owner->type)
-               : owner->type == construction->constructedType);
+      // Resolve the primary construction through this concrete instance's
+      // declaration-bound arguments, including exact class specializations.
+      // The selected constructor must belong to that exact resolved type.
+      const bool exactOwner = owner != nullptr &&
+                              !containsUnresolvedGeneric(selectedType) &&
+                              owner->type == selectedType;
       if (target == nullptr || !target->generatedDefault || owner == nullptr ||
           !exactOwner || !exactResult ||
           value.definedFailure.propagation != propagation)
@@ -2413,10 +3074,19 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     const ProgramInitializationStep &semantic =
         semanticInitialization.steps[index];
     const HirProgramInitializationStep &step = initialization.steps[index];
+    const BindingInfo *semanticBinding =
+        semantic.declaration == nullptr
+            ? nullptr
+            : semantics.findBinding(*semantic.declaration);
     if (step.id != semantic.id || step.sourceUnit != semantic.sourceUnit ||
         step.kind != semantic.kind || step.role != semantic.role ||
         step.source != semantic.declaration || step.symbol != semantic.symbol ||
-        step.requiresActiveCleanup != semantic.requiresActiveCleanup) {
+        step.requiresActiveCleanup != semantic.requiresActiveCleanup ||
+        step.nativeRetirement.has_value() != semantic.requiresNativeRetirement ||
+        (step.nativeRetirement &&
+         (semanticBinding == nullptr ||
+          step.nativeRetirement->type != semanticBinding->type ||
+          !step.nativeRetirement->requiresActiveCleanup))) {
       result.errors.emplace_back(
           "program initialization step identity differs from semantics");
     }
@@ -2429,10 +3099,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     if (bindingFound != program.module().bindings.end()) {
       binding = &*bindingFound;
     }
-    const BindingInfo *semanticBinding =
-        semantic.declaration == nullptr
-            ? nullptr
-            : semantics.findBinding(*semantic.declaration);
     if (step.binding == 0 || binding == nullptr ||
         binding->variable != semantic.declaration ||
         semanticBinding == nullptr || binding->info != *semanticBinding ||

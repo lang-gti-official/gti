@@ -1,0 +1,28 @@
+// Build from the repository root with an optimized GTI compiler:
+// cc -std=c17 -O3 -c examples/llvm/native-c-function-values-native/operation.c -o /tmp/native-operation.o
+// gti examples/llvm/native-c-function-values.gti --backend llvm -O3 -o /tmp/native-function-values -- /tmp/native-operation.o
+// /tmp/native-function-values
+// Expected output: selected, argument:31, result:42, cleanup (one per line).
+// The C function supplies a process-lifetime code address. The unsafe caller
+// must establish its exact signature, executable lifetime and preconditions.
+using Transform = (int32_t) -> int32_t;
+extern "C" {
+  Transform native_example_select();
+  int32_t native_example_argument(int32_t value);
+  void native_example_cleanup();
+}
+struct Guard {
+  ~Guard() { native_example_cleanup(); }
+};
+int main() {
+  Guard guard{};
+  unsafe {
+    Transform selected = native_example_select();
+    if (selected == nullptr) return 1;
+    Transform copied = selected;
+    // Preparing the argument changes C's next selection. This copied value
+    // must still invoke the operation selected above, exactly once.
+    if (copied(native_example_argument(31)) != 42) return 2;
+  }
+  return 0;
+}

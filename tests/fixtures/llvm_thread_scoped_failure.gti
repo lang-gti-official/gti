@@ -1,0 +1,25 @@
+#include <std/thread>
+
+// The first failing worker in argument order supplies the propagated record
+// after every worker joined and every task value was cleaned.
+[[unsafe_transfer]] class divide {
+  int32_t divisor;
+public:
+  divide(int32_t divisor) : divisor(divisor) {}
+  void operator()() {
+    int32_t quotient = 100 / this.divisor;
+  }
+  ~divide() { std::println("divide cleaned"); }
+};
+
+class holder {
+public:
+  ~holder() { std::println("caller cleanup"); }
+};
+
+int main() {
+  holder held{};
+  [[discard]] std::parallel_invoke(divide(4), divide(0), divide(5));
+  std::println("unreachable");
+  return 0;
+}

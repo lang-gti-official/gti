@@ -5,6 +5,7 @@
 #include <llvm/IR/DerivedTypes.h>
 
 #include <map>
+#include <optional>
 #include <unordered_map>
 
 namespace lang::native_llvm {
@@ -19,13 +20,92 @@ struct TypeLayout {
   std::vector<std::uint64_t> fieldOffsets;
 };
 
+// Storage facts shared by initialization, atomic operations and host parking.
+// This private scalar representation is not a C/C++ atomic-object ABI.
+struct AtomicStorageLayout {
+  SemanticType element;
+  TypeLayout object;
+  llvm::IntegerType *lane = nullptr;
+};
+
+struct MutexStorageLayout {
+  SemanticType element;
+  TypeLayout object;
+  unsigned nativeIndex = 0;
+  unsigned payloadIndex = 1;
+  unsigned payloadActiveIndex = 2;
+  static constexpr unsigned shellLive = 1;
+  static constexpr unsigned payloadLive = 2;
+};
+
+struct PayloadLayout {
+  TypeLayout type;
+  llvm::StructType *storage = nullptr;
+  std::vector<llvm::StructType *> variants;
+  unsigned tagIndex = 0;
+  unsigned payloadIndex = 1;
+  // Verified variants have consecutive indices strictly below this encoding.
+  // It denotes representation-only empty/moved state, never a source case.
+  static constexpr std::uint32_t inactive = UINT32_MAX;
+};
+
+// Private representation only. Allocation, atomics and typed cleanup share
+// these indices; this is not an exported or persistent ABI.
+struct SharedOwnerLayout {
+  TypeLayout handle;
+  TypeLayout block;
+  unsigned handleBlock = 0;
+  unsigned handleView = 1;
+  unsigned blockStrong = 0;
+  unsigned blockAllocation = 1;
+};
+
+// Representation only: an operations descriptor and a cached interface address
+// accompany inline bytes. Relocation must recompute that address, not copy it.
+struct PolymorphicStorageLayout {
+  TypeLayout type;
+  unsigned operationsIndex = 0;
+  unsigned interfaceIndex = 1;
+  unsigned payloadIndex = 2;
+  std::uint64_t capacity = 0;
+  std::uint64_t payloadAlignment = 1;
+};
+
+struct BaseSubobjectLayout {
+  SemanticType type = SemanticType::Unknown;
+  std::uint64_t offset = 0;
+  std::vector<unsigned> indices;
+  friend bool operator==(const BaseSubobjectLayout &,
+                         const BaseSubobjectLayout &) = default;
+};
+
+struct DispatchLocation {
+  BaseSubobjectLayout owner;
+  unsigned index = 0;
+  friend bool operator==(const DispatchLocation &,
+                         const DispatchLocation &) = default;
+};
+
+struct FieldSubobjectLayout {
+  BaseSubobjectLayout owner;
+  unsigned index = 0;
+  SemanticType type = SemanticType::Unknown;
+  std::uint64_t offset = 0;
+};
+
 // All layout queries, allocation sizes and ABI address-only choices share this
 // session-owned map. Opaque LLVM declarations are allocated before their
 // bodies.
 class Layouts final {
 public:
   [[nodiscard]] TypeLayout get(const SemanticType &type);
+  [[nodiscard]] AtomicStorageLayout atomicStorage(const SemanticType &type);
+  [[nodiscard]] MutexStorageLayout mutexStorage(const SemanticType &type);
+  [[nodiscard]] const PayloadLayout &payload(const SemanticType &type);
   [[nodiscard]] llvm::PointerType *pointer() const;
+  [[nodiscard]] const SharedOwnerLayout &sharedOwner();
+  [[nodiscard]] PolymorphicStorageLayout
+  polymorphicStorage(const SemanticType &type);
   [[nodiscard]] const MirClassInstance &
   instance(const SemanticType &type) const;
   [[nodiscard]] unsigned fieldIndex(const SemanticType &type,
@@ -34,6 +114,30 @@ public:
                                    HirClassInstanceId base) const;
   [[nodiscard]] std::optional<unsigned>
   activeIndex(const SemanticType &type) const;
+  [[nodiscard]] unsigned captureIndex(const SemanticType &type,
+                                      std::size_t capture) const;
+  [[nodiscard]] std::optional<unsigned>
+  dispatchIndex(const SemanticType &type) const;
+  [[nodiscard]] std::optional<DispatchLocation>
+  dispatchLocation(const SemanticType &type);
+  [[nodiscard]] const HirBaseInstance *
+  primaryBase(const SemanticType &type) const;
+  [[nodiscard]] BaseSubobjectLayout
+  basePath(const SemanticType &type, std::span<const HirClassInstanceId> path);
+  // `context` names the emission site, so an internal failure identifies the
+  // operation that asserted the relationship rather than only the types.
+  [[nodiscard]] BaseSubobjectLayout baseSubobject(const SemanticType &source,
+                                                  const SemanticType &target,
+                                                  const char *context = "");
+  // Answers whether `target` is actually a sealed base subobject of `source`.
+  // An unrelated pair is an ordinary negative answer, so a shape probe can
+  // decline without an internal failure; malformed sealed input still fails
+  // closed. Emission paths keep `baseSubobject`, whose absent base remains an
+  // upstream producer error rather than an unsupported program.
+  [[nodiscard]] std::optional<BaseSubobjectLayout>
+  findBaseSubobject(const SemanticType &source, const SemanticType &target);
+  [[nodiscard]] FieldSubobjectLayout fieldSubobject(const SemanticType &source,
+                                                    SymbolId field);
 
 private:
   friend class Session;
@@ -46,11 +150,34 @@ private:
     bool building = false;
     std::optional<TypeLayout> layout;
   };
+  struct LambdaRecord {
+    const MirLambdaInstance *instance = nullptr;
+    llvm::StructType *storage = nullptr;
+    bool building = false;
+    std::optional<TypeLayout> layout;
+  };
   Session &session;
   llvm::StructType *textView_ = nullptr;
+  std::optional<SharedOwnerLayout> sharedOwner_;
   std::map<HirClassInstanceId, Record> records;
   std::unordered_map<ClassId, std::vector<HirClassInstanceId>> classes;
+  struct PayloadRecord {
+    bool building = false;
+    std::optional<PayloadLayout> layout;
+  };
+  std::map<const MirPayloadEnum *, PayloadRecord> payloads;
+  std::map<HirLambdaId, LambdaRecord> lambdas;
   [[nodiscard]] TypeLayout record(const SemanticType &type);
+  [[nodiscard]] TypeLayout closure(const SemanticType &type);
+  [[nodiscard]] BaseSubobjectLayout findSubobject(const SemanticType &source,
+                                                  HirClassInstanceId base,
+                                                  SymbolId field,
+                                                  const char *context = "");
+  // Shared traversal. `std::nullopt` means the requested subobject is absent;
+  // ambiguous or unsealed identity still throws.
+  [[nodiscard]] std::optional<BaseSubobjectLayout>
+  lookupSubobject(const SemanticType &source, HirClassInstanceId base,
+                  SymbolId field);
   [[nodiscard]] TypeLayout describe(llvm::Type *storage,
                                     bool addressOnly = false,
                                     llvm::Type *value = nullptr) const;

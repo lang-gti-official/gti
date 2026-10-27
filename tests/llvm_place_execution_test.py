@@ -2,12 +2,14 @@
 """Native places/loans/array/text execution; C++ is a differential endpoint."""
 
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from llvm_evidence_manifest import build_manifest
 
 
 ARRAYS = r'''
@@ -143,6 +145,32 @@ int main() {
 }
 '''
 
+# A sealed integral enum is stored as its underlying integer: a vector of one,
+# raw element reads/writes, pointer arithmetic and local array indexing.
+INTEGRAL_ENUM_POINTERS = r'''
+#include <std/vector>
+enum class Event { dial, ack, data, hangup, reset };
+enum class Phase : uint8_t { idle = 1, open = 3, closed = 9 };
+int main() {
+  mut std::vector<Event> script{};
+  script.push_back(Event::dial);
+  script.push_back(Event::data);
+  script.push_back(Event::hangup);
+  if (script.size() != uint64_t(3) || script[uint64_t(1)] != Event::data) { return 1; }
+  mut Phase phases[3] = {Phase::idle, Phase::open, Phase::closed};
+  mut Phase* first = &phases[0];
+  Phase* last = &phases[2];
+  unsafe {
+    first[1] = Phase::closed;
+    if (*last != Phase::closed || last - first != 2) { return 2; }
+    first += 1;
+    if (*first != Phase::closed) { return 3; }
+  }
+  if (phases[1] != Phase::closed) { return 4; }
+  return 0;
+}
+'''
+
 PRIMITIVE_POINTERS = r'''
 int main() {
   mut int values[3] = {10, 20, 30};
@@ -232,6 +260,47 @@ int main() {
 }
 '''
 
+ERASED_REFERENCES = r'''
+#include <std/memory>
+struct Record { mut int value = 7; };
+int main() {
+  mut Record object{};
+  {
+    std::erased_object& erased = std::erase_ref(object);
+    unsafe { if (std::restore_ref<Record>(erased).value != 7) { return 1; } }
+  }
+  {
+    mut std::erased_object& erased = std::erase_mut(object);
+    unsafe { std::restore_mut<Record>(erased).value += 5; }
+  }
+  return object.value - 12;
+}
+'''
+
+ERASED_REFERENCE_CLEANUP = r'''
+#include <std/memory>
+mut int destroyed = 0;
+struct Record {
+  mut int value = 7;
+  ~Record() { destroyed += this.value; }
+};
+int main() {
+  {
+    mut Record object{};
+    {
+      std::erased_object& erased = std::erase_ref(object);
+      unsafe { if (std::restore_ref<Record>(erased).value != 7) { return 1; } }
+    }
+    {
+      mut std::erased_object& erased = std::erase_mut(object);
+      unsafe { std::restore_mut<Record>(erased).value += 5; }
+    }
+    if (destroyed != 0) { return 2; }
+  }
+  return destroyed == 12 ? 0 : 3;
+}
+'''
+
 RAW_CLAIMS = r'''
 [[borrowed_from(owner)]] unsafe mut int& claim(int* address, mut int& owner) {
   unsafe { return *address; }
@@ -280,20 +349,351 @@ int main() {
 '''
 
 
-def main() -> None:
-    gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
-    selection = sys.argv[3] if len(sys.argv) > 3 else None
-    env = dict(os.environ, GTI_STDLIB_DIR=str(root / 'stdlib'))
-    successes = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS, 'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES, 'references': REFERENCES,
-                 'pointers': POINTERS, 'primitive-pointers': PRIMITIVE_POINTERS, 'text': TEXT,
-                 'owner-addresses': OWNER_ADDRESSES, 'raw-claims': RAW_CLAIMS,
-                 'unsafe-wrapper': UNSAFE_WRAPPER, 'conditional-references': CONDITIONAL_REFERENCES}
-    successes['shipped-example'] = (root / 'examples/llvm/places-and-text.gti').read_text()
-    # The production C++ backend currently rejects this valid nested text
-    # transport in its representation vocabulary. The native expected result
-    # comes from the source byte/count contract, not that backend limitation.
-    native_only = {'nested-text-return': NESTED_TEXT_RETURN}
-    failures = {
+# A fixed-array extent query is a sealed constant: range-for and size() over
+# class, owning-class and payload elements never read an element to count.
+ARRAY_EXTENT_QUERIES = r'''
+#include <std/string>
+struct Counter {
+  int count;
+  Counter(int number) : count(number) {}
+};
+struct Slot {
+  Counter value;
+  Slot(int number) : value(Counter(number)) {}
+};
+struct Named {
+  std::string text;
+  Named(std::string_view spelling) : text(std::string(spelling)) {}
+};
+enum Plain { none, pair(int first, int second) };
+int sum(Plain& value) {
+  switch (value) {
+  case Plain::none: return 0;
+  case Plain::pair(first, second): return first + second;
+  }
+}
+int main() {
+  Slot slots[3] = {Slot(4), Slot(5), Slot(6)};
+  mut int total = 0;
+  for (auto& slot : slots) { total = total * 10 + slot.value.count; }
+  if (total != 456 || slots.size() != uint64_t(3)) { return 1; }
+  Slot grid[2][2] = {{Slot(1), Slot(2)}, {Slot(3), Slot(4)}};
+  mut int weighted = 0;
+  for (auto& row : grid) {
+    for (auto& cell : row) { weighted = weighted * 10 + cell.value.count; }
+  }
+  if (weighted != 1234 || grid.size() != uint64_t(2) || grid[1].size() != uint64_t(2)) {
+    return 2;
+  }
+  Named names[2] = {Named("ab"), Named("cde")};
+  mut uint64_t letters = 0;
+  for (auto& name : names) { letters = letters + name.text.view().size(); }
+  if (letters != uint64_t(5) || names.size() != uint64_t(2)) { return 3; }
+  Plain plains[3] = {Plain::pair(1, 2), Plain::none, Plain::pair(3, 4)};
+  mut int sums = 0;
+  for (auto& plain : plains) { sums = sums * 10 + sum(plain); }
+  return sums == 307 && plains.size() == uint64_t(3) ? 0 : 4;
+}
+'''
+
+# One-dimensional arrays of sealed integral enums use their fixed-width
+# underlying integer storage in a user-defined owner and in std::array.
+INTEGRAL_ENUM_ARRAYS = r'''
+#include <std/array>
+enum class phase : uint8_t { idle, loading, running };
+enum class reach : int64_t { near = 7, far = 6000000000 };
+phase next(phase current) {
+  switch (current) {
+  case phase::idle: return phase::loading;
+  case phase::loading: return phase::running;
+  case phase::running: return phase::idle;
+  default: return phase::idle;
+  }
+}
+// A user-defined owner: aggregate formation, the by-value array parameter
+// and the field publication are the same rule std::array relies on.
+struct Track {
+  phase stops[3];
+  Track(phase initial[3]) : stops(initial) {}
+  phase at(uint64_t index) { return this.stops[index]; }
+};
+Track route(phase first) {
+  phase second = next(first);
+  return Track({first, second, next(second)});
+}
+std::array<phase, 3> cycle(phase first) {
+  phase second = next(first);
+  return std::array<phase, 3>({first, second, next(second)});
+}
+int main() {
+  Track track = route(phase::running);
+  if (track.at(uint64_t(0)) != phase::running || track.at(uint64_t(1)) != phase::idle ||
+      track.at(uint64_t(2)) != phase::loading) {
+    return 1;
+  }
+  std::array<phase, 3> states = cycle(phase::loading);
+  if (states[uint64_t(0)] != phase::loading || states[uint64_t(1)] != phase::running ||
+      states[uint64_t(2)] != phase::idle) {
+    return 2;
+  }
+  mut std::array<phase, 3> copy = states;
+  phase wrapped = next(copy.at(uint64_t(1)));
+  copy.at(uint64_t(0)) = wrapped;
+  if (states.at(uint64_t(0)) != phase::loading || copy.at(uint64_t(0)) != phase::idle ||
+      copy.at(uint64_t(2)) != phase::idle) {
+    return 3;
+  }
+  reach far = reach::far;
+  std::array<reach, 2> reaches = std::array<reach, 2>({far, reach::near});
+  if (reaches[uint64_t(0)] != reach::far || reaches[uint64_t(1)] != reach::near) { return 4; }
+  return 0;
+}
+'''
+
+
+TEXT_VIEW_ARRAYS = r'''
+#include <std/string_view>
+enum class Level : int32_t { low = 1, high = 9 };
+bool holds(std::string_view names[3], uint64_t index, std::string_view text) { return names[index] == text; }
+int32_t total(std::string_view names[3]) {
+  mut int32_t sum = 0;
+  for (std::string_view name : names) { sum += int32_t(name.size()); }
+  return sum;
+}
+int main() {
+  std::string_view names[3] = {"ab", "cde", ""};
+  std::string_view copy[3] = names;
+  if (!holds(copy, uint64_t(1), "cde") || !holds(names, uint64_t(0), "ab")) { return 1; }
+  if (total(names) != 5) { return 2; }
+  mut int32_t empty = 0;
+  for (std::string_view name : names) { if (name.empty()) { empty += 1; } }
+  if (empty != 1) { return 3; }
+  if (!names[2].empty() || names[1].size() != uint64_t(3)) { return 5; }
+  Level levels[3] = {Level::low, Level::high, Level::high};
+  mut int32_t high = 0;
+  for (Level level : levels) { if (level == Level::high) { high += 1; } }
+  return high == 2 ? 0 : 4;
+}
+'''
+
+
+C_STRING_ADDRESSES = r'''
+// C strings are inert native addresses: copied, stored, compared with
+// nullptr and reached through c_string* raw pointers by address.
+int32_t count(c_string* items) {
+  mut int32_t total = 0;
+  unsafe {
+    while (items[total] != nullptr) { total += 1; }
+  }
+  return total;
+}
+void put(c_string* items, int32_t at, c_string value) {
+  unsafe { items[at] = value; }
+}
+bool secondSet(c_string* items) {
+  unsafe {
+    c_string* next = items + 1;
+    return *next != nullptr;
+  }
+}
+int main() {
+  mut c_string slots[4] = {nullptr, nullptr, nullptr, nullptr};
+  mut c_string* items = &slots[0];
+  put(items, 0, "a");
+  put(items, 1, "bc");
+  put(items, 2, "def");
+  if (count(items) != 3 || !secondSet(items)) { return 1; }
+  unsafe { items[1] = nullptr; }
+  if (count(items) != 1 || slots[1] != nullptr || secondSet(items)) { return 2; }
+  c_string copy[4] = slots;
+  if (copy[0] == nullptr || copy[2] == nullptr || copy[1] != nullptr) { return 3; }
+  return 0;
+}
+'''
+
+
+ENUMERATOR_REFERENCES = r'''
+enum class Mode : int8_t { idle = -1, ready = 2, done = 7 };
+bool is_ready(Mode& mode) { return mode == Mode::ready; }
+int32_t weight(Mode& mode) {
+  switch (mode) {
+  case Mode::idle: return 1;
+  case Mode::ready: return 10;
+  case Mode::done: return 100;
+  default: return 0;
+  }
+}
+T& pick<T>(T& value) { return value; }
+int main() {
+  if (!is_ready(Mode::ready) || is_ready(Mode::done)) { return 1; }
+  if (weight(Mode::idle) + weight(Mode::done) != 101) { return 2; }
+  return pick<Mode>(Mode::idle) == Mode::idle ? 0 : 3;
+}
+'''
+
+
+NATIVE_RECORD_REFERENCES = r'''
+#include <std/memory>
+#include <std/vector>
+[[c_abi]]
+struct QuotRem {
+  int64_t quot;
+  int64_t rem;
+};
+extern "C" {
+  QuotRem imaxdiv(int64_t numerator, int64_t denominator);
+}
+class Holder {
+public:
+  QuotRem value;
+  Holder(QuotRem value) : value(value) {}
+  QuotRem& view() { unsafe { return std::assume_ref(&this.value, this); } }
+};
+int64_t recombine(QuotRem& value, int64_t divisor) { return value.quot * divisor + value.rem; }
+int main() {
+  Holder holder{imaxdiv(int64_t(47), int64_t(5))};
+  if (recombine(holder.view(), int64_t(5)) != int64_t(47) || holder.view().rem != int64_t(2)) { return 1; }
+  mut std::vector<QuotRem> history{};
+  history.push_back(imaxdiv(int64_t(-47), int64_t(5)));
+  history.push_back(imaxdiv(int64_t(9), int64_t(4)));
+  return recombine(history[std::size_t(0)], int64_t(5)) == int64_t(-47) &&
+                 history[std::size_t(1)].quot == int64_t(2)
+             ? 0
+             : 2;
+}
+'''
+
+
+NESTED_TEXT_VIEW_ARRAYS = r'''
+#include <std/string_view>
+// Nested and `{}`-formed text view arrays: each element is a view, and a
+// view copied out of one is ownerless, so it may be returned.
+std::string_view pick(std::string_view names[3], uint64_t index) { return names[index]; }
+std::string_view cell(std::string_view grid[2][3], uint64_t row, uint64_t column) { return grid[row][column]; }
+uint64_t total(std::string_view grid[2][3]) {
+  mut uint64_t sum = uint64_t(0);
+  for (std::string_view[3] row : grid) {
+    for (std::string_view word : row) { sum += word.size(); }
+  }
+  return sum;
+}
+int main() {
+  std::string_view names[3] = {"ab", "cde", ""};
+  if (pick(names, uint64_t(1)) != "cde" || !pick(names, uint64_t(2)).empty()) { return 1; }
+  std::string_view grid[2][3] = {{"a", "bb", "ccc"}, {"dddd", "", "f"}};
+  std::string_view copy[2][3] = grid;
+  std::println(cell(copy, uint64_t(1), uint64_t(0)));
+  std::string_view blank[2][3] = {};
+  std::string_view mixed[2][2] = {{}, {"x", "yz"}};
+  mut std::string_view cube[2][2][2] = {{{"a", "b"}, {"c", "d"}}, {{"e", "f"}, {"g", "h"}}};
+  cube[1][0][1] = "changed";
+  std::println(cube[1][0][1]);
+  std::println(mixed[1][1]);
+  if (!blank[1][2].empty() || blank[0][0] != "" || mixed[0][1].size() != uint64_t(0)) { return 2; }
+  if (total(grid) != uint64_t(11) || total(blank) != uint64_t(0)) { return 3; }
+  std::string_view& row = grid[1][0];
+  return row == "dddd" ? 0 : 4;
+}
+'''
+
+
+TEXT_VIEW_POINTERS = r'''
+#include <std/string_view>
+// A text view reached through a raw pointer moves as one bitwise value; the
+// bytes it designates stay where they are.
+std::string_view viewAt(std::string_view* item) { unsafe { return *item; } }
+std::string_view wordAt(std::string_view* items, int32_t index) { unsafe { return items[index]; } }
+std::string_view nextOf(std::string_view* items) { unsafe { std::string_view* next = items + 1; return *next; } }
+std::string_view previousOf(std::string_view* items) { unsafe { std::string_view* previous = items - 1; return *previous; } }
+int64_t distance(std::string_view* first, std::string_view* last) { unsafe { return last - first; } }
+void store(std::string_view* item, std::string_view text) { unsafe { *item = text; } }
+void storeAt(std::string_view* items, int32_t index, std::string_view text) { unsafe { items[index] = text; } }
+int main() {
+  mut std::string_view words[3] = {"alpha", "beta", "gamma"};
+  std::println(viewAt(&words[0]));
+  std::println(wordAt(&words[0], 2));
+  std::println(nextOf(&words[1]));
+  std::println(previousOf(&words[1]));
+  if (distance(&words[0], &words[2]) != int64_t(2)) { return 1; }
+  store(&words[1], "BETA");
+  storeAt(&words[0], 2, "GAMMA");
+  std::println(words[1]);
+  std::println(words[2]);
+  mut std::string_view grid[2][2] = {{"a", "b"}, {"c", "d"}};
+  std::println(viewAt(&grid[1][1]));
+  mut std::string_view single = "single";
+  std::string_view* pointer = &single;
+  unsafe { *pointer = "replaced"; }
+  std::println(single);
+  return viewAt(&words[2]) == "GAMMA" ? 0 : 2;
+}
+'''
+
+
+C_STRING_RETURNS = r'''
+// A C string loaded through a raw pointer is the inert address stored there,
+// whether the pointer is a formal, a field or a reference.
+struct Slots {
+  c_string* items = nullptr;
+  int32_t count = 0;
+};
+void put(c_string* items, int32_t at, c_string value) { unsafe { items[at] = value; } }
+c_string second(c_string* items) { unsafe { c_string* next = items + 1; return *next; } }
+c_string at(c_string* items, int32_t index) { unsafe { return items[index]; } }
+c_string first(Slots slots) { unsafe { return slots.items[0]; } }
+c_string viaReference(c_string*& items) { unsafe { return items[1]; } }
+int main() {
+  mut c_string slots[3] = {nullptr, nullptr, nullptr};
+  if (second(&slots[0]) != nullptr) { return 1; }
+  put(&slots[0], 1, "b");
+  if (second(&slots[0]) != slots[1] || at(&slots[0], 1) != slots[1]) { return 2; }
+  mut c_string* base = &slots[0];
+  Slots view{.items = base, .count = 3};
+  if (first(view) != nullptr || viaReference(base) != slots[1]) { return 3; }
+  return at(&slots[0], 2) == nullptr ? 0 : 4;
+}
+'''
+
+
+def successes(root: Path) -> dict[str, str]:
+    cases = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS,
+             'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES,
+             'references': REFERENCES, 'pointers': POINTERS,
+             'primitive-pointers': PRIMITIVE_POINTERS, 'text': TEXT,
+             'owner-addresses': OWNER_ADDRESSES, 'raw-claims': RAW_CLAIMS,
+             'erased-references': ERASED_REFERENCES,
+             'erased-reference-cleanup': ERASED_REFERENCE_CLEANUP,
+             'unsafe-wrapper': UNSAFE_WRAPPER,
+             'conditional-references': CONDITIONAL_REFERENCES,
+             'array-extent-queries': ARRAY_EXTENT_QUERIES,
+             'integral-enum-arrays': INTEGRAL_ENUM_ARRAYS,
+             'integral-enum-pointers': INTEGRAL_ENUM_POINTERS,
+             'text-view-arrays': TEXT_VIEW_ARRAYS,
+             'c-string-addresses': C_STRING_ADDRESSES,
+             'enumerator-references': ENUMERATOR_REFERENCES,
+             'native-record-references': NATIVE_RECORD_REFERENCES,
+             'nested-text-view-arrays': NESTED_TEXT_VIEW_ARRAYS,
+             'text-view-pointers': TEXT_VIEW_POINTERS,
+             'c-string-returns': C_STRING_RETURNS}
+    cases['shipped-example'] = (
+        root / 'examples/llvm/places-and-text.gti').read_text()
+    cases['enum-references'] = (
+        root / 'tests/fixtures/llvm_enum_references.gti').read_text()
+    cases['enum-payload-borrow'] = (
+        root / 'tests/fixtures/llvm_enum_payload_borrow.gti').read_text()
+    cases['enum-raw-borrow'] = (
+        root / 'tests/fixtures/llvm_enum_raw_borrow.gti').read_text()
+    return cases
+
+
+def native_only_cases() -> dict[str, str]:
+    # The C++ representation vocabulary cannot currently transport nested text.
+    # Native expectations come from GTI's byte/count contract.
+    return {'nested-text-return': NESTED_TEXT_RETURN}
+
+
+def failure_cases() -> dict[str, str]:
+    return {
         'array-high': 'int get(int data[2], uint64_t i) { return data[i]; } int main() { return get({1, 2}, uint64_t(2)); }',
         'array-negative': 'int get(int data[2], int i) { return data[i]; } int main() { return get({1, 2}, -1); }',
         'array-borrow': 'int main() { mut int data[2] = {1, 2}; mut int i = 2; mut int& value = data[i]; return value; }',
@@ -302,29 +702,90 @@ def main() -> None:
         'text-empty': '#include <std/string_view>\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("", 0); return 0; }',
         'text-negative': '#include <std/string_view>\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("ab", -1); return 0; }',
         'reference-failure': 'mut int& get(mut int& v, int n) { v = v / n; return v; } int main() { mut int x = 2; get(x, 0) = 4; return 0; }',
+        'text-array-high': '#include <std/string_view>\nuint64_t size(std::string_view names[2], uint64_t i) { return names[i].size(); } int main() { std::string_view names[2] = {"a", "b"}; [[discard]] size(names, uint64_t(2)); return 0; }',
+        # Container checks report the container MIR recorded for the check.
+        'vector-index-high': '#include <std/vector>\nint get(std::vector<int>& values, uint64_t i) { return values[i]; } int main() { mut std::vector<int> values = std::vector<int>(); values.push_back(1); return get(values, uint64_t(1)); }',
+        'string-index-high': '#include <std/string>\nchar get(std::string& text, uint64_t i) { return text[i]; } int main() { std::string text = std::string("ab"); [[discard]] get(text, uint64_t(2)); return 0; }',
+        'string-position-high': '#include <std/string>\nint main() { std::string text = std::string("abc"); [[discard]] text.substr(text.size() + uint64_t(1)); return 0; }',
     }
-    rejections = {
+
+
+def rejection_cases() -> dict[str, str]:
+    return {
         'unsafe-dereference': 'int main() { int value = 1; int* pointer = &value; return *pointer; }',
         'unsafe-index': 'int main() { int values[2] = {1, 2}; int* pointer = &values[0]; return pointer[1]; }',
         'expired-reference': 'int& expired() { int local = 1; return local; } int main() { return expired(); }',
         'overlapping-mutable': 'int main() { mut int value = 1; mut int& first = value; mut int& second = value; return first + second; }',
         'read-only-reference': 'void change(int& value) { value = 2; } int main() { return 0; }',
+        'erased-restore-unsafe': '#include <std/memory>\nint main() { int value = 1; std::erased_object& erased = std::erase_ref(value); return std::restore_ref<int>(erased); }',
+        'erased-overlapping-mutable': '#include <std/memory>\nint main() { mut int value = 1; mut std::erased_object& first = std::erase_mut(value); mut std::erased_object& second = std::erase_mut(value); unsafe { return std::restore_mut<int>(first) + std::restore_mut<int>(second); } }',
+        'erased-escape': '#include <std/memory>\nstd::erased_object& escape() { int value = 1; return std::erase_ref(value); } int main() { std::erased_object& erased = escape(); return 0; }',
+        'enum-reference-escape': 'enum class E { first }; E& expired() { E value = E::first; return value; } int main() { return 0; }',
+        'enum-reference-mutation': 'enum class E { first, second }; void change(E& value) { value = E::second; } int main() { return 0; }',
     }
-    # Current semantics admits these despite the documented literal-only
-    # contract. Do not reproduce the production backend's unchecked data()
-    # conversion: native admission requires an exact NUL-free literal proof.
-    native_rejections = {
+
+
+def native_rejection_cases(root: Path) -> dict[str, str]:
+    return {
         'array-comparison': 'int main() { int left[2] = {1, 2}; int right[2] = {1, 2}; return left == right ? 0 : 1; }',
         'dynamic-c-string': '#include <std/string_view>\nvoid consume(c_string text) {} void relay(std::string_view text) { consume(text); } int main() { relay("hello"); return 0; }',
         'nul-c-string': 'void consume(c_string text) {} int main() { consume("a\\0b"); return 0; }',
     }
+
+
+def evidence_cases(root: Path) -> dict[str, str]:
+    return {**successes(root), **native_only_cases(), **failure_cases()}
+
+
+def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
+    cases = evidence_cases(root)
+    profiles = {name: (name,) for name in cases}
+    profiles['primitive-pointers'] += ('integral-enum-pointers',
+                                       'text-view-pointers', 'c-string-returns')
+    profiles['array-high'] += ('integral-enum-pointers',)
+    profiles['text-view-arrays'] += ('text-array-high', 'nested-text-view-arrays')
+    assert all(case in cases for profile in profiles.values() for case in profile)
+    return profiles
+
+
+def evidence_manifest(root: Path) -> dict:
+    return build_manifest(
+        'llvm_place_execution', evidence_cases(root), evidence_profiles(root),
+        {'shipped-example': 'examples/llvm/places-and-text.gti',
+         'enum-references': 'tests/fixtures/llvm_enum_references.gti',
+         'enum-payload-borrow': 'tests/fixtures/llvm_enum_payload_borrow.gti',
+         'enum-raw-borrow': 'tests/fixtures/llvm_enum_raw_borrow.gti'})
+
+
+def list_evidence(root: Path) -> None:
+    print(json.dumps(evidence_manifest(root), sort_keys=True))
+
+
+def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == '--list-evidence':
+        list_evidence(Path(sys.argv[2]).resolve())
+        return
+    gti, root = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
+    selection = sys.argv[3] if len(sys.argv) > 3 else None
+    env = dict(os.environ, GTI_STDLIB_DIR=str(root / 'stdlib'))
+    success_cases = successes(root)
+    # The production C++ backend currently rejects this valid nested text
+    # transport in its representation vocabulary. The native expected result
+    # comes from the source byte/count contract, not that backend limitation.
+    native_only = native_only_cases()
+    failures = failure_cases()
+    rejections = rejection_cases()
+    # Current semantics admits these despite the documented literal-only
+    # contract. Do not reproduce the production backend's unchecked data()
+    # conversion: native admission requires an exact NUL-free literal proof.
+    native_rejections = native_rejection_cases(root)
     endpoints = (Endpoint('cpp', 'O3', 'c++20'), Endpoint('cpp', 'O3', 'c++23'),
                  *(Endpoint('llvm', mode) for mode in ('O0', 'O1', 'O2', 'O3')))
-    if selection and selection not in successes and selection not in failures and selection not in native_only and selection not in rejections and selection not in native_rejections:
+    if selection and selection not in success_cases and selection not in failures and selection not in native_only and selection not in rejections and selection not in native_rejections:
         raise ValueError(f'unknown execution case: {selection}')
     with tempfile.TemporaryDirectory(prefix='gti-llvm-places-') as directory:
         work = Path(directory)
-        for name, source_text in {**successes, **failures}.items():
+        for name, source_text in {**success_cases, **failures}.items():
             if selection and selection != name:
                 continue
             source = work / f'{name}.gti'

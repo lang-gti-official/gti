@@ -172,29 +172,25 @@ returningLiteral(const lang::MirProgram &program, std::string_view text) {
   return nullptr;
 }
 
-// Replaces the string literal `text` in a function's body, which each of these
-// functions returns, with a load of its first formal, copied from a load the
-// body already performs.
-bool returnFirstFormal(lang::MirProgram &program,
-                       lang::HirFunctionInstanceId id, std::string_view text) {
-  auto *function =
-      const_cast<lang::MirFunctionInstance *>(program.findFunctionInstance(id));
+// Replaces the string literal `text` in a body with a load of the formal bound
+// to `formal`, copied from a load the body already performs.
+bool loadFormalForLiteral(lang::MirBody &body, lang::HirBindingId formal,
+                          std::string_view text) {
   std::optional<lang::MirInstruction> load;
-  for (const auto &block : function->body.blocks)
+  for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions) {
       const auto *place =
           instruction.kind == lang::MirInstructionKind::Load &&
                   instruction.operands.size() == 1
-              ? function->body.findPlace(instruction.operands.front().place)
+              ? body.findPlace(instruction.operands.front().place)
               : nullptr;
       if (place && place->root == lang::MirPlaceRootKind::Binding &&
-          place->projections.empty() &&
-          place->binding == function->parameterBindings.front())
+          place->projections.empty() && place->binding == formal)
         load = instruction;
     }
   if (!load)
     return false;
-  for (auto &block : function->body.blocks)
+  for (auto &block : body.blocks)
     for (auto &instruction : block.instructions)
       if (instruction.operation == lang::MirOperation::Literal &&
           instruction.literal &&
@@ -208,6 +204,16 @@ bool returnFirstFormal(lang::MirProgram &program,
         return true;
       }
   return false;
+}
+
+// Replaces the string literal `text` in a function's body, which each of these
+// functions returns, with a load of its first formal.
+bool returnFirstFormal(lang::MirProgram &program,
+                       lang::HirFunctionInstanceId id, std::string_view text) {
+  auto *function =
+      const_cast<lang::MirFunctionInstance *>(program.findFunctionInstance(id));
+  return loadFormalForLiteral(function->body,
+                              function->parameterBindings.front(), text);
 }
 
 void testRecursiveOwnerlessReturns() {
@@ -1049,7 +1055,1316 @@ int main() {
   }
 }
 
+// The source function whose qualified name is `name`.
+const lang::MirFunctionInstance *
+namedFunction(const lang::FrontendResult &result, std::string_view name) {
+  for (const auto &function : result.mir.functionInstances()) {
+    const auto *info = result.semantics.findFunction(function.declaration);
+    if (function.definitionKind == lang::MirDefinitionKind::Source &&
+        info != nullptr && info->qualifiedName == name)
+      return &function;
+  }
+  return nullptr;
+}
+
+// Whether a program is rejected at source with `code` and no internal error.
+bool rejectedAtSource(const lang::FrontendResult &result,
+                      const std::string &code) {
+  return !result.canGenerateCode() &&
+         hasDiagnosticCode(result.diagnostics, code) &&
+         std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code.starts_with("GTI-B");
+                      });
+}
+
+// Semantics never nests dynamic text in an array (L-OWN-02), so a view copied
+// out of an array holds what the array holds: ownerless text, wherever the
+// array lives. MIR proves it independently: each element write, an array
+// literal's included, is a checked text store, and an element read is then
+// an ownerless result proof. A user-defined record's array field and a
+// lambda's result follow the same rules.
+const std::string kArrayTextStorage = R"gti(
+#include <std/string>
+struct Shelf {
+  std::string_view titles[2];
+  int count;
+  Shelf() : titles({"x", "yz"}), count(2) {}
+};
+std::string_view table[3] = {"zero", "one", "two"};
+mut std::string_view kept = "";
+std::string_view pick(std::string_view names[3], uint64_t index) {
+  return names[index];
+}
+std::string_view fromTable(uint64_t index) { return table[index]; }
+std::string_view fromLocal(uint64_t index) {
+  std::string_view local[2] = {"left", "right"};
+  return local[index];
+}
+std::string_view fromGrid(uint64_t row, uint64_t column) {
+  std::string_view grid[2][2] = {{"a", "b"}, {"c", "d"}};
+  return grid[row][column];
+}
+std::string_view fromShelf(Shelf shelf, uint64_t index) {
+  return shelf.titles[index];
+}
+std::string_view fromDefault(uint64_t index) {
+  std::string_view empty[2] = {};
+  return empty[index];
+}
+std::string_view place(std::string_view text, uint64_t at) {
+  mut std::string_view slots[2] = {"first", "second"};
+  slots[at] = text;
+  return slots[at];
+}
+uint64_t stamp(std::string_view text, uint64_t at) {
+  std::string_view copy = text;
+  mut std::string_view slots[2] = {"stored", "spare"};
+  slots[at] = "stamped";
+  return slots[at].size() + copy.size();
+}
+std::string_view labelled(std::string_view prefix) {
+  auto label = [](std::string_view unused) -> std::string_view {
+    std::string_view copy = unused;
+    return "label";
+  };
+  std::string_view labels[2] = {label(prefix), "other"};
+  return labels[0];
+}
+std::string_view throughReferences() {
+  mut std::string_view words[2] = {"a", "bc"};
+  for (mut std::string_view& word : words) {
+    word = "q";
+  }
+  std::string_view& last = words[1];
+  return last == "q" ? words[0] : "missed";
+}
+uint64_t guard() {
+  std::string owner{"dynamic"};
+  std::string_view view = owner.view();
+  std::string_view copy = view;
+  mut std::string_view slots[2] = {"first", "second"};
+  slots[0] = "guarded";
+  return slots[0].size() + copy.size();
+}
+)gti";
+
+void testArrayElementTextStorage() {
+  const auto result = analyzeText(kArrayTextStorage + R"gti(
+int main() {
+  std::string_view names[3] = {"ab", "cde", ""};
+  kept = pick(names, uint64_t(1));
+  if (kept != "cde" || fromTable(uint64_t(2)) != "two") { return 1; }
+  if (fromLocal(uint64_t(1)) != "right" ||
+      fromGrid(uint64_t(1), uint64_t(0)) != "c") { return 2; }
+  if (fromShelf(Shelf(), uint64_t(1)) != "yz" ||
+      !fromDefault(uint64_t(0)).empty()) { return 3; }
+  if (place("literal", uint64_t(1)) != "literal" ||
+      stamp("ab", uint64_t(0)) != uint64_t(9)) { return 4; }
+  if (throughReferences() != "q" || guard() != uint64_t(14)) { return 5; }
+  return labelled("prefix") == "label" ? 0 : 6;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a view read from an array element is an ownerless result");
+  if (!result.canGenerateCode())
+    return;
+  for (const char *name :
+       {"pick", "fromTable", "fromLocal", "fromGrid", "fromShelf",
+        "fromDefault", "place", "labelled", "throughReferences"}) {
+    const auto *function = namedFunction(result, name);
+    expect(function != nullptr && textResult(*function) &&
+               function->returnBorrowOrigin == lang::BorrowOriginKind::None,
+           std::string("an array element return is ownerless: ") + name);
+  }
+  const auto *place = namedFunction(result, "place");
+  const auto *stamp = namedFunction(result, "stamp");
+  const auto *labelled = namedFunction(result, "labelled");
+  expect(place && stamp && labelled, "the array writers exist");
+  if (!place || !stamp || !labelled)
+    return;
+  // Storing a formal in an element requires ownerless text from each
+  // caller, as storing it in a field does. MIR derived no such requirement
+  // for a local array, which reported GTI-B0001 against semantics' contract.
+  expect(place->ownerlessTextParameters == std::vector<std::size_t>{0},
+         "an element write of a formal requires ownerless text");
+  {
+    auto changed = result.mir;
+    const_cast<lang::MirFunctionInstance *>(
+        changed.findFunctionInstance(place->id))
+        ->ownerlessTextParameters.clear();
+    expect(functionError(lang::verifyMirProgram(changed), place->id,
+                         "ownerless text input contract differs"),
+           "MIR derives an element write's requirement");
+  }
+  // An element assignment and an array literal element are each a checked
+  // text store: storing the formal there instead of a literal requires it.
+  expect(stamp->ownerlessTextParameters.empty(),
+         "literal elements require nothing");
+  for (const char *literal : {"stamped", "stored"}) {
+    auto changed = result.mir;
+    expect(returnFirstFormal(changed, stamp->id, literal),
+           std::string("the element store reads a formal: ") + literal);
+    expect(functionError(lang::verifyMirProgram(changed), stamp->id,
+                         "ownerless text input contract differs"),
+           std::string("an array element store is checked text storage: ") +
+               literal);
+  }
+  // A local owner's view is not ownerless text: storing it in an element
+  // fails MIR verification, as storing it in a field would.
+  const auto *guard = namedFunction(result, "guard");
+  expect(guard != nullptr, "the guarded store exists");
+  if (guard != nullptr) {
+    auto changed = result.mir;
+    auto *body = &const_cast<lang::MirFunctionInstance *>(
+                      changed.findFunctionInstance(guard->id))
+                      ->body;
+    std::optional<lang::HirBindingId> view;
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *read =
+            instruction.kind == lang::MirInstructionKind::Load &&
+                    instruction.operands.size() == 1
+                ? body->findPlace(instruction.operands.front().place)
+                : nullptr;
+        if (read && read->root == lang::MirPlaceRootKind::Binding &&
+            read->projections.empty() &&
+            read->type.kind == lang::SemanticType::StringView)
+          view = read->binding;
+      }
+    expect(view && loadFormalForLiteral(*body, *view, "guarded"),
+           "the element store reads the local owner's view");
+    expect(functionError(lang::verifyMirProgram(changed), guard->id,
+                         "ownerless text storage or call lacks exact producer "
+                         "evidence"),
+           "a local owner's view cannot fill an array element");
+  }
+  // A lambda's result holds what its returns hold; one returning its formal
+  // has no relay contract, so its result cannot fill an array.
+  auto changed = result.mir;
+  bool mutated = false;
+  for (const auto &lambda : changed.lambdaInstances())
+    if (!lambda.parameterBindings.empty())
+      mutated =
+          mutated || loadFormalForLiteral(
+                         const_cast<lang::MirLambdaInstance &>(lambda).body,
+                         lambda.parameterBindings.front(), "label");
+  expect(mutated, "the lambda returns its formal");
+  expect(functionError(lang::verifyMirProgram(changed), labelled->id,
+                       "ownerless text storage or call lacks exact producer "
+                       "evidence"),
+         "a lambda result stored in an array needs its returns' proof");
+}
+
+// Arrays still never hold a local owner's text, and a view of one still
+// cannot escape: each is rejected at source, before MIR.
+void testArrayElementTextRejections() {
+  for (const std::string body :
+       {"std::string_view names[2] = {owner.view(), \"x\"}; "
+        "return names[1].size() == uint64_t(1) ? 0 : 1;",
+        "mut std::string_view names[2] = {\"a\", \"x\"}; "
+        "names[0] = owner.view(); return names[1].size() == uint64_t(1) ? 0 "
+        ": 1;",
+        "return place(owner.view(), uint64_t(0)).empty() ? 1 : 0;"}) {
+    const auto rejected = analyzeText(
+        kArrayTextStorage + "int main() { std::string owner{\"dynamic\"}; " +
+        body + " }\n");
+    expect(rejectedAtSource(rejected, "GTI-S2045"),
+           "dynamic text cannot reach an array: " + body);
+  }
+  const auto leak = analyzeText(R"gti(
+#include <std/string>
+std::string_view leak() {
+  std::string owner{"local"};
+  std::string_view names[1] = {"static"};
+  return owner.view();
+}
+int main() { return leak().empty() ? 1 : 0; }
+)gti");
+  expect(rejectedAtSource(leak, "GTI-S2045"),
+         "a view of a local owner still cannot be returned");
+}
+
+// Text read through a raw pointer is an inert native value: unsafe code took
+// on its validity, and raw writes are not checked text stores, so it has no
+// GTI owner to relay. A C string reached through `c_string*`, a view through
+// a raw pointer and a user-defined record's text field behind one each
+// return ownerless text.
+void testRawMemoryTextReads() {
+  const auto result = analyzeText(R"gti(
+#include <std/string>
+struct Entry {
+  std::string_view name;
+  int id;
+};
+struct Slots {
+  c_string* items = nullptr;
+  int32_t count = 0;
+};
+mut c_string keptText = nullptr;
+mut std::string_view keptView = "";
+void put(c_string* items, int32_t at, c_string value) {
+  unsafe { items[at] = value; }
+}
+c_string second(c_string* items) {
+  unsafe {
+    c_string* next = items + 1;
+    return *next;
+  }
+}
+c_string at(c_string* items, int32_t index) { unsafe { return items[index]; } }
+c_string viaLocal(c_string* items, int32_t index) {
+  unsafe {
+    c_string* base = items;
+    return base[index];
+  }
+}
+c_string first(Slots slots) { unsafe { return slots.items[0]; } }
+c_string viaReference(c_string*& items) { unsafe { return items[1]; } }
+std::string_view viewAt(std::string_view* item) { unsafe { return *item; } }
+std::string_view wordAt(std::string_view* items, int32_t index) {
+  unsafe { return items[index]; }
+}
+std::string_view nameAt(Entry* entry) { unsafe { return entry->name; } }
+int main() {
+  mut c_string slots[3] = {nullptr, nullptr, nullptr};
+  put(&slots[0], 1, "b");
+  keptText = second(&slots[0]);
+  if (keptText == nullptr || keptText != slots[1] ||
+      at(&slots[0], 1) != keptText || viaLocal(&slots[0], 2) != nullptr) {
+    return 1;
+  }
+  mut c_string* base = &slots[0];
+  Slots view{.items = base, .count = 3};
+  if (first(view) != nullptr || viaReference(base) != keptText) { return 2; }
+  mut std::string_view words[2] = {"word", "other"};
+  keptView = viewAt(&words[0]);
+  mut Entry entry{.name = "entry", .id = 1};
+  if (wordAt(&words[0], 1) != "other" || nameAt(&entry) != "entry") {
+    return 3;
+  }
+  return keptView == "word" ? 0 : 4;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "text read through a raw pointer is an ownerless result");
+  // Semantics and MIR agree: a raw index or `->` through a formal, a field or
+  // a reference reads raw memory, not storage of that origin, and nominates
+  // no relay. Semantics used to relay the pointer formal, and every call
+  // reported GTI-B0001.
+  if (result.canGenerateCode())
+    for (const char *name : {"second", "at", "viaLocal", "first",
+                             "viaReference", "viewAt", "wordAt", "nameAt"}) {
+      const auto *function = namedFunction(result, name);
+      const auto *info =
+          function ? result.semantics.findFunction(function->declaration)
+                   : nullptr;
+      expect(function != nullptr && textResult(*function) &&
+                 function->returnBorrowOrigin == lang::BorrowOriginKind::None &&
+                 info != nullptr &&
+                 info->returnBorrowOrigin == lang::BorrowOriginKind::None,
+             std::string("a raw-memory text return is ownerless: ") + name);
+    }
+  // A GTI owner's C string is not raw memory, inside unsafe code or not.
+  const auto dependent = analyzeText(R"gti(
+#include <std/string>
+c_string leak(c_string* items) {
+  std::string owner{"local"};
+  unsafe {
+    c_string* next = items + 1;
+    if (*next != nullptr) {
+      return *next;
+    }
+  }
+  return owner.c_string();
+}
+int main() { mut c_string slots[2] = {nullptr, nullptr}; return leak(&slots[0]) == nullptr ? 1 : 0; }
+)gti");
+  expect(rejectedAtSource(dependent, "GTI-S2045"),
+         "an owner-dependent C string still cannot escape beside a raw read");
+  // A raw read nominates nothing, so it neither relays a formal nor lets a
+  // dynamic formal escape beside it: validity is unchanged.
+  const auto either = analyzeText(R"gti(
+std::string_view either(std::string_view s, std::string_view* p, bool b) {
+  if (b) {
+    return s;
+  }
+  unsafe { return p[0]; }
+}
+int main() { mut std::string_view v = "x"; return either("a", &v, true) == "a" ? 0 : 1; }
+)gti");
+  expect(rejectedAtSource(either, "GTI-S2045"),
+         "a formal returned beside a raw read still needs one owner");
+}
+
+// Invoking a callable whose result is text yields what the callee returns,
+// however the callee is reached. A GTI invocation pointer only comes from a
+// forming site that names one stateless function or lambda, so invoking it
+// yields what one of the program's targets of that pointer type returns: a
+// user-defined callable class viewed through `std::function_ref`, a lambda,
+// or a function item behind `std::function_ptr` all return ownerless text.
+void testCallableTextResults() {
+  const auto result = analyzeText(R"gti(
+#include <std/functional>
+class Greeter {
+public:
+  std::string_view greeting;
+  Greeter(std::string_view greeting) : greeting(greeting) {}
+  std::string_view operator()() { return this.greeting; }
+};
+std::string_view small(int n) { return n < 10 ? "small" : "large"; }
+std::string_view label(std::string_view unused) {
+  std::string_view copy = unused;
+  return "label";
+}
+std::string_view invoke(std::function_ptr<std::string_view(int)> pick, int n) {
+  return pick(n);
+}
+mut std::string_view kept = "";
+int main() {
+  Greeter hello = Greeter("hello");
+  std::function_ref<std::string_view()> greet{hello};
+  kept = greet();
+  if (kept != "hello") { return 1; }
+  auto lit = []() -> std::string_view { return "lit"; };
+  std::function_ref<std::string_view()> viewed{lit};
+  if (viewed() != "lit") { return 2; }
+  kept = invoke(std::function_ptr<std::string_view(int)>(small), 30);
+  auto zero = [](int n) -> std::string_view { return n == 0 ? "zero" : "other"; };
+  std::function_ptr<std::string_view(int)> viaLambda{zero};
+  std::function_ptr<std::string_view(std::string_view)> named{label};
+  return kept == "large" && viaLambda(0) == "zero" && named("x") == "label"
+             ? 0 : 3;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a callable's text result through an invocation pointer is ownerless");
+  if (!result.canGenerateCode())
+    return;
+  // Invocation methods: each returns what its pointer's targets return.
+  std::vector<lang::HirFunctionInstanceId> invokers;
+  for (const auto &function : result.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (textResult(function) &&
+            instruction.intrinsic ==
+                lang::IntrinsicKind::FunctionPointerInvoke &&
+            std::find(invokers.begin(), invokers.end(), function.id) ==
+                invokers.end())
+          invokers.push_back(function.id);
+  expect(invokers.size() >= 2,
+         "both callable views invoke through a pointer and return its text");
+  const auto *label = namedFunction(result, "label");
+  expect(label != nullptr, "the named target exists");
+  if (label == nullptr)
+    return;
+  // A target that returned its formal would make every invocation of its
+  // pointer type return unknown text: the invocation has no relay.
+  auto changed = result.mir;
+  expect(returnFirstFormal(changed, label->id, "label"),
+         "the target returns its formal");
+  const auto verification = lang::verifyMirProgram(changed);
+  expect(std::any_of(invokers.begin(), invokers.end(),
+                     [&](lang::HirFunctionInstanceId invoker) {
+                       return functionError(verification, invoker,
+                                            "ownerless text return has no "
+                                            "independent result proof");
+                     }),
+         "an invocation returns what its pointer's targets return");
+}
+
+// A lambda's text over a copy or move capture of a view has an owner the
+// compiler cannot name (L-OWN-02): it is used locally. An expression, a local
+// binding, a copy of that binding, a call that only reads or relays it,
+// another lambda over the closure and a user-defined generic method that
+// only reads it each keep it local, and MIR verifies the same program. Each
+// keeps the captured view's owner borrowed only until its last use, so the
+// owner may change afterwards. A captured literal-backed view has no owner
+// and may be reassigned; a captured record's text field and a literal-backed
+// lambda result are ownerless and stay storable.
+void testCapturedTextLocalUse() {
+  const auto result = analyzeText(R"gti(
+#include <std/string>
+struct Note {
+  std::string_view text;
+  int line;
+};
+class Token {
+public:
+  std::string_view text;
+  int n;
+  Token(std::string_view text, int n) : text(text), n(n) {}
+};
+Token shown(std::string_view text, std::string_view label) {
+  std::println(label);
+  return Token(text, 1);
+}
+class Printer {
+public:
+  mut int printed;
+  Printer() : printed(0) {}
+  void show<F>(F view) mut {
+    std::string_view shown = view();
+    std::println(shown);
+    this.printed += 1;
+  }
+};
+uint64_t measure(std::string_view text) { return text.size(); }
+std::string_view same(std::string_view text) { return text; }
+T echo<T>(T value) {
+  auto copy = [value]() -> T { return value; };
+  T local = copy();
+  return value;
+}
+std::string_view keepLocal(std::string_view text) {
+  auto keep = [text]() -> std::string_view { return text; };
+  std::string_view held = keep();
+  std::println(held);
+  return "kept";
+}
+mut std::string_view kept = "";
+int main() {
+  mut std::string owner{"dynamic"};
+  std::string_view view = owner.view();
+  auto captured = [view]() -> std::string_view { return view; };
+  std::println(captured());
+  std::string_view bound = captured();
+  std::string_view copied = bound;
+  std::string_view relayed = same(captured());
+  auto again = captured;
+  auto nested = [again]() -> std::string_view { return again(); };
+  std::string_view inner = [view]() -> std::string_view {
+    std::string_view local = view;
+    return local;
+  }();
+  mut Printer printer{};
+  printer.show(nested);
+  Token token = shown("literal", captured());
+  bool used = measure(bound) == measure(copied) && relayed == inner &&
+              printer.printed == token.n;
+  owner.append("!");
+  std::string_view fixedText = "fixed";
+  auto fixed = [fixedText]() -> std::string_view { return fixedText; };
+  mut std::string_view reassigned = "";
+  reassigned = fixed();
+  mut std::string text = std::string("native");
+  c_string name = text.c_string();
+  auto native = [name]() -> c_string { return name; };
+  c_string got = native();
+  Note note{.text = "noted", .line = 1};
+  auto noted = [note]() -> std::string_view { return note.text; };
+  kept = noted();
+  auto literal = []() -> std::string_view { return "literal"; };
+  std::string_view shelf[1] = {literal()};
+  return used && reassigned == "fixed" && got != nullptr &&
+                 shelf[0] == "literal" &&
+                 keepLocal(owner.view()) == "kept" &&
+                 echo(owner.view()) == "dynamic!"
+             ? 0
+             : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a lambda's captured text may be used locally");
+}
+
+const std::string kCapturedTextEscapes = R"gti(
+#include <std/string>
+#include <std/functional>
+struct Note {
+  std::string_view text;
+  int line;
+};
+class Token {
+public:
+  std::string_view text;
+  int n;
+  Token(std::string_view text, int n) : text(text), n(n) {}
+};
+class Label {
+public:
+  mut std::string_view text;
+  Label() : text("") {}
+  void set(std::string_view text) mut { this.text = text; }
+};
+enum class Message { text(std::string_view value), none };
+mut std::string_view kept = "";
+void keep(std::string_view text) { kept = text; }
+std::string_view same(std::string_view text) { return text; }
+Token make(std::string_view text) { return Token(text, 1); }
+std::string_view call<F>(F view) { return view(); }
+)gti";
+
+// Each `marker`'s last `anchor` starts a GTI-S2045 naming `reason`.
+struct CapturedTextEscape {
+  std::string_view marker;
+  std::string_view anchor;
+  std::string_view reason;
+};
+
+void expectCapturedTextEscapes(const std::string &body,
+                               std::initializer_list<CapturedTextEscape> sites,
+                               std::string_view hint) {
+  const std::string source = kCapturedTextEscapes + body;
+  const auto result = analyzeText(source);
+  expect(rejectedAtSource(result, "GTI-S2045"),
+         "captured text escapes are rejected at source");
+  for (const auto &site : sites) {
+    const auto at = source.find(site.marker);
+    expect(at != std::string::npos &&
+               hasDiagnosticAt(result.diagnostics, "GTI-S2045",
+                               "ownerless-text-contracts.gti",
+                               at + site.marker.rfind(site.anchor),
+                               site.reason),
+           "captured text is rejected at " + std::string(site.marker));
+  }
+  expect(hasDiagnosticHint(result.diagnostics, std::string(hint)),
+         "the rejection says why the text has no owner to name");
+}
+
+// The same text has no path to a return, a field, an array element, a
+// payload, a global, an ownerless parameter or an invocation pointer:
+// semantics reports GTI-S2045 at each site, before MIR could. A local view
+// that is ever given such text holds it for its whole scope, so its escape
+// is rejected even where it precedes the assignment.
+void testCapturedTextEscapes() {
+  const std::string_view escape =
+      "cannot escape without one exact owner dependency";
+  const std::string_view viewHint =
+      "A lambda's view over its captured text has an owner the compiler "
+      "cannot name";
+  expectCapturedTextEscapes(R"gti(
+std::string_view direct(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  return f();
+}
+std::string_view bound(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  std::string_view held = f();
+  return held;
+}
+std::string_view looped(std::string_view v) {
+  std::string_view fixed = "fixed";
+  auto f = [fixed]() -> std::string_view { return fixed; };
+  mut std::string_view out = "x";
+  for (mut int i = 0; i < 2; i += 1) {
+    if (i == 1) { return out; }
+    out = f();
+  }
+  return "y";
+}
+std::string_view relayed(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  return same(f());
+}
+std::string_view nested(std::string_view v) {
+  auto inner = [v]() -> std::string_view { return v; };
+  auto outer = [inner]() -> std::string_view { return inner(); };
+  return outer();
+}
+std::string_view immediate(std::string_view v) {
+  return [v]() -> std::string_view { return v; }();
+}
+int main() { return 0; }
+)gti",
+                            {{"return f();", ")", escape},
+                             {"return held;", "held", escape},
+                             {"return out;", "out", escape},
+                             {"return same(f());", ")", escape},
+                             {"return outer();", ")", escape},
+                             {"return v; }();", ")", escape}},
+                            viewHint);
+  expectCapturedTextEscapes(
+      R"gti(
+c_string native(c_string c) {
+  auto g = [c]() -> c_string { return c; };
+  return g();
+}
+int main() { return 0; }
+)gti",
+      {{"return g();", ")", "owner-dependent c_string cannot escape"}},
+      "A lambda's C string over its captured text");
+  expectCapturedTextEscapes(
+      R"gti(
+int stores(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  kept = f();
+  mut Label label{};
+  label.text = f();
+  Note note{.text = f(), .line = 1};
+  Token token = Token(f(), 1);
+  Token made = make(f());
+  std::string_view shelf[2] = {f(), "x"};
+  mut std::string_view slots[1] = {"x"};
+  slots[0] = f();
+  Message message = Message::text(f());
+  keep(f());
+  label.set(f());
+  return note.line + token.n + made.n;
+}
+int locals(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  std::string_view held = f();
+  kept = held;
+  std::string_view fixed = "fixed";
+  auto g = [fixed]() -> std::string_view { return fixed; };
+  mut std::string_view later = "";
+  kept = later;
+  later = g();
+  auto store = [v]() -> int { kept = v; return 0; };
+  return store();
+}
+class Box {
+public:
+  std::string_view text;
+  Box(std::string_view s) : text([s]() -> std::string_view { return s; }()) {}
+};
+int main() { return stores("x") + locals("y"); }
+)gti",
+      {{"kept = f();", ")", "assigned into an existing binding"},
+       {"label.text = f()", ")", "stored in a field"},
+       {"{.text = f()", ")", "stored in a field"},
+       {"Token(f()", ")", "passed to a constructor that stores it in a field"},
+       {"make(f()", ")", "passed to a function that returns it in a field"},
+       {"{f()", ")", "nested in a fixed array"},
+       {"slots[0] = f()", ")", "assigned through a checked index"},
+       {"Message::text(f()", ")", "stored in a payload-enum field"},
+       {"keep(f()", ")", "passed to a function requiring ownerless text"},
+       {"label.set(f()", ")", "passed to a function requiring ownerless text"},
+       {"kept = held;", "held", "assigned into an existing binding"},
+       {"kept = later;", "later", "assigned into an existing binding"},
+       {"kept = v;", "v", "assigned into an existing binding"},
+       {"return s; }()", ")", "stored in a constructor field"}},
+      viewHint);
+  // A generic function's return of what its callable returns is rejected in
+  // the instance that receives such a lambda, and erasing the lambda into a
+  // GTI invocation pointer would hand its text to callers of the erased
+  // call: neither has an owner to relay.
+  expectCapturedTextEscapes(R"gti(
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view v = owner.view();
+  auto f = [v]() -> std::string_view { return v; };
+  return call(f).size() == uint64_t(7) ? 0 : 1;
+}
+)gti",
+                            {{"return view();", ")", escape}}, viewHint);
+  expectCapturedTextEscapes(
+      R"gti(
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view v = owner.view();
+  auto f = [v]() -> std::string_view { return v; };
+  std::function_ref<std::string_view()> erased{f};
+  return erased().size() == uint64_t(7) ? 0 : 1;
+}
+)gti",
+      {{"erased{f}", "{", "returned through a GTI invocation pointer"}},
+      viewHint);
+}
+
+// A closure over a dynamic view, and each call result, local or copy that
+// holds its captured text, keeps that view's owner borrowed for its uses, as
+// the view itself does; so does a reference or callable view of the closure.
+// A later change, move or replacement of the owner while one is still used
+// reports GTI-S2017 at that operation, and so does one through a user-defined
+// owner's field. Like the view itself, the text cannot be assigned into an
+// existing binding, so it cannot outlive an inner owner through an outer one.
+void testCapturedTextBorrowsOwner() {
+  const std::string prelude = R"gti(
+#include <std/string>
+#include <std/functional>
+struct Doc {
+  mut std::string body;
+  Doc() : body("doc-body") {}
+};
+std::string_view same(std::string_view text) { return text; }
+int main() {
+  mut std::string owner{"dynamic"};
+  std::string_view view = owner.view();
+  auto captured = [view]() -> std::string_view { return view; };
+)gti";
+  struct Case {
+    std::string body;
+    std::string_view marker;
+    std::string_view reason;
+  };
+  const std::vector<Case> cases{
+      {"std::string_view held = captured(); owner.append(\"!\"); "
+       "std::println(held); return 0;",
+       "owner.append(\"!\")",
+       "while a reference borrowed from it may still be live"},
+      {"std::string_view held = captured(); std::string_view copy = held; "
+       "owner.append(\"!\"); std::println(copy); return 0;",
+       "owner.append(\"!\")",
+       "while a reference borrowed from it may still be live"},
+      {"std::string_view held = same(captured()); owner.append(\"!\"); "
+       "std::println(held); return 0;",
+       "owner.append(\"!\")",
+       "while a reference borrowed from it may still be live"},
+      {"auto again = captured; owner.append(\"!\"); std::println(again()); "
+       "return 0;",
+       "owner.append(\"!\")",
+       "while a reference borrowed from it may still be live"},
+      {"auto outer = [captured]() -> std::string_view { return captured(); }; "
+       "owner.append(\"!\"); std::println(outer()); return 0;",
+       "owner.append(\"!\")",
+       "while a reference borrowed from it may still be live"},
+      {"owner.append(\"!\"); return int(captured().size());",
+       "owner.append(\"!\")",
+       "while a reference borrowed from it may still be live"},
+      {"std::string_view held = captured(); std::string moved = "
+       "std::move(owner); std::println(held); return 0;",
+       "owner); std::println", "Cannot move storage"},
+      {"std::string_view held = captured(); owner = std::string(\"other\"); "
+       "std::println(held); return 0;",
+       "owner = std::string", "Cannot assign to storage"},
+      {"auto& alias = captured; owner.append(\"!\"); "
+       "std::println(alias()); return 0;",
+       "owner.append(\"!\")",
+       "while a reference borrowed from it may still be live"},
+      {"auto size = [view]() -> int { return int(view.size()); }; "
+       "std::function_ref<int()> sized{size}; owner.append(\"!\"); "
+       "return sized();",
+       "owner.append(\"!\")",
+       "while a reference borrowed from it may still be live"},
+      {"mut Doc doc{}; std::string_view body = doc.body.view(); auto read = "
+       "[body]() -> std::string_view { return body; }; std::string_view held "
+       "= read(); doc.body.append(\"!\"); std::println(held); return 0;",
+       "doc.body.append(\"!\")",
+       "while a reference borrowed from it may still be live"},
+  };
+  for (const auto &item : cases) {
+    const std::string source = prelude + "  " + item.body + "\n}\n";
+    const auto result = analyzeText(source);
+    const auto at = source.rfind(item.marker);
+    // The owner operation the borrow conflicts with is the primary span.
+    const bool reported =
+        at != std::string::npos &&
+        std::any_of(
+            result.diagnostics.begin(), result.diagnostics.end(),
+            [&](const lang::Diagnostic &diagnostic) {
+              return diagnostic.code == "GTI-S2017" &&
+                     diagnostic.primary.start >= at &&
+                     diagnostic.primary.start < at + item.marker.size() &&
+                     diagnostic.message.find(item.reason) != std::string::npos;
+            });
+    if (!reported)
+      printDiagnostics(result);
+    expect(rejectedAtSource(result, "GTI-S2017") && reported,
+           "captured text keeps its owner borrowed: " + item.body);
+  }
+  expectCapturedTextEscapes(
+      R"gti(
+int sameScope(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  mut std::string_view later = "";
+  later = f();
+  return int(later.size());
+}
+int outerScope() {
+  mut std::string_view outer = "";
+  {
+    std::string inner{"temporary"};
+    std::string_view w = inner.view();
+    auto h = [w]() -> std::string_view { return w; };
+    outer = h();
+  }
+  return int(outer.size());
+}
+int main() { return sameScope("x") + outerScope(); }
+)gti",
+      {{"later = f()", ")", "assigned into an existing binding"},
+       {"outer = h()", ")", "assigned into an existing binding"}},
+      "A lambda's view over its captured text has an owner the compiler "
+      "cannot name");
+}
+
+// A local text binding holds what any of its writes stored: its
+// initialization, each assignment, in any order and in a loop, and a checked
+// store through a mutable borrow of it (MIR TextContracts). Semantics assigns
+// only ownerless text into an existing binding, so a reassigned local returns,
+// stores and fills a field as ownerless text. Were an assignment to store a
+// formal, a function without a relay would return unproven text.
+void testReassignedTextLocals() {
+  const auto result = analyzeText(R"gti(
+#include <std/string>
+struct Note {
+  std::string_view text;
+  int line;
+};
+void setTo(mut std::string_view& out, std::string_view value) { out = value; }
+std::string_view pick(std::string_view unused, bool c) {
+  std::string_view copy = unused;
+  mut std::string_view v = "first";
+  if (c) { v = "second"; }
+  return v;
+}
+std::string_view looped(std::string_view unused, int n) {
+  std::string_view copy = unused;
+  mut std::string_view current = "start";
+  mut std::string_view previous = "none";
+  for (mut int i = 0; i < n; i += 1) {
+    previous = current;
+    current = previous;
+    current = "loop";
+  }
+  return previous;
+}
+std::string_view through(std::string_view unused) {
+  mut std::string_view v = "before";
+  setTo(v, "after");
+  return v;
+}
+mut std::string_view kept = "";
+int main() {
+  mut std::string_view w = "x";
+  w = "y";
+  kept = w;
+  Note note{.text = w, .line = 1};
+  return pick("", true) == "second" && looped("", 2) == "loop" &&
+                 through("") == "after" && kept == "y" && note.text == "y"
+             ? 0
+             : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a reassigned local text binding holds ownerless text");
+  if (!result.canGenerateCode())
+    return;
+  for (const auto &[name, literal] :
+       {std::pair<std::string_view, std::string_view>{"pick", "second"},
+        std::pair<std::string_view, std::string_view>{"looped", "loop"}}) {
+    const auto *function = namedFunction(result, name);
+    expect(function != nullptr, "the function exists: " + std::string(name));
+    if (function == nullptr)
+      continue;
+    auto changed = result.mir;
+    expect(returnFirstFormal(changed, function->id, literal),
+           "an assignment stores the formal");
+    const auto verification = lang::verifyMirProgram(changed);
+    if (!functionError(verification, function->id,
+                       "ownerless text return has no independent result "
+                       "proof"))
+      for (const auto &error : verification.errors)
+        std::cerr << error.message << '\n';
+    expect(functionError(verification, function->id,
+                         "ownerless text return has no independent result "
+                         "proof"),
+           "every write of a returned local is traced: " + std::string(name));
+  }
+}
+
+// A method's relay contract leaves room for ownerless alternatives, as a
+// literal is. A static call of a text function without a dependency, or of a
+// text field relay whose result carries no loan, returns ownerless text,
+// through the receiver's field or a nested one (MIR).
+void testReceiverFieldCallReturns() {
+  const auto result = analyzeText(R"gti(
+#include <std/string_view>
+class Inner {
+public:
+  int n;
+  std::string_view text;
+  Inner(int n) : n(n), text("inner-text") {}
+  std::string_view label() { return this.n < 10 ? "small" : "large"; }
+  std::string_view field() { return this.text; }
+};
+class Middle {
+public:
+  Inner inner;
+  Middle(int n) : inner(Inner(n)) {}
+};
+class Box {
+  Inner inner;
+  Middle middle;
+public:
+  Box(int n) : inner(Inner(n)), middle(Middle(n)) {}
+  std::string_view name() { return this.inner.label(); }
+  std::string_view deep() { return this.middle.inner.label(); }
+  std::string_view relay() { return this.inner.field(); }
+};
+int main() {
+  Box box = Box(3);
+  return box.name() == "small" && box.deep() == "small" &&
+                 box.relay() == "inner-text"
+             ? 0
+             : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "a relay contract may return an ownerless call result");
+  if (!result.canGenerateCode())
+    return;
+  const auto *name = namedFunction(result, "Box::name");
+  const auto *label = namedFunction(result, "Inner::label");
+  expect(name != nullptr && label != nullptr, "the methods exist");
+  if (name == nullptr || label == nullptr)
+    return;
+  // Were the callee's result to depend on its receiver, the returned call
+  // would need the escaping loan that relays it.
+  auto changed = result.mir;
+  auto *target = const_cast<lang::MirFunctionInstance *>(
+      changed.findFunctionInstance(label->id));
+  target->returnBorrowOrigin = lang::BorrowOriginKind::Receiver;
+  const auto verification = lang::verifyMirProgram(changed);
+  if (!functionError(verification, name->id,
+                     "owner-dependent return is missing its escaping loan"))
+    for (const auto &error : verification.errors)
+      std::cerr << error.message << '\n';
+  expect(functionError(verification, name->id,
+                       "owner-dependent return is missing its escaping loan"),
+         "only a dependency-free result is an ownerless alternative");
+}
+
+// A virtual call's text result is its root's contract, and an override keeps
+// it; a lambda's result is what its returns hold; a generic method whose
+// result its instance makes text relays at each call as the instance does.
+// So an erased callable over a literal lambda returns ownerless text through
+// a user-defined interface and through std::function, and MIR verifies it.
+const std::string kErasedTextResults = R"gti(
+#include <std/functional>
+#include <std/polymorphic>
+#include <std/string>
+interface Labeler {
+  std::string_view label();
+};
+class Fixed : public Labeler {
+public:
+  Fixed() {}
+  std::string_view label() override { return "fixed"; }
+};
+class Wrapped<F> : public Labeler {
+  F fn;
+public:
+  Wrapped(F fn) : fn(fn) {}
+  std::string_view label() override { return this.fn(); }
+};
+class Erased {
+  mut std::inline_polymorphic<Labeler, 32, 8> target{};
+public:
+  Erased() {}
+  void set<F>(F fn) mut { this.target.replace(Wrapped<F>(fn)); }
+  std::string_view operator()() { return this.target.get().label(); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R same(R text) { return text; }
+  R operator()(R text) { return text; }
+};
+mut std::string_view kept = "";
+)gti";
+
+void testVirtualAndErasedTextResults() {
+  const std::string valid = kErasedTextResults + R"gti(
+int main() {
+  auto lit = []() -> std::string_view { return "lit"; };
+  mut Erased erased{};
+  erased.set(std::move(lit));
+  kept = erased();
+  mut std::inline_polymorphic<Labeler, 32, 8> slot{};
+  slot.replace(Fixed());
+  std::println(slot.get().label());
+  auto word = []() -> std::string_view { return "word"; };
+  std::function<std::string_view()> fn{word};
+  std::string_view held = fn();
+  Echo<std::string_view> echo{};
+  std::string owner{"echoed"};
+  std::string_view relayed = echo.same(owner.view());
+  std::string_view called = echo(owner.view());
+  return kept == "lit" && held == "word" && relayed == called ? 0 : 1;
+}
+)gti";
+  const auto result = analyzeText(valid);
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "virtual, lambda and generic text results lower through MIR");
+  if (result.canGenerateCode()) {
+    // The interface's bodyless root and the erased call's operator.
+    const lang::MirFunctionInstance *root = nullptr;
+    const lang::MirFunctionInstance *erased = nullptr;
+    for (const auto &function : result.mir.functionInstances()) {
+      const auto *info = result.semantics.findFunction(function.declaration);
+      if (info == nullptr)
+        continue;
+      if (info->qualifiedName == "Labeler::label")
+        root = &function;
+      if (function.definitionKind == lang::MirDefinitionKind::Source &&
+          info->qualifiedName == "Erased::__gti_operator_call")
+        erased = &function;
+    }
+    expect(root != nullptr && erased != nullptr,
+           "the interface root and the erased call exist");
+    if (root != nullptr && erased != nullptr) {
+      // Were the root to relay its receiver, the erased call's result would
+      // be the overrides' receivers' text, which no proof reaches.
+      auto changed = result.mir;
+      auto *target = const_cast<lang::MirFunctionInstance *>(
+          changed.findFunctionInstance(root->id));
+      target->returnBorrowOrigin = lang::BorrowOriginKind::Receiver;
+      const auto verification = lang::verifyMirProgram(changed);
+      if (!functionError(verification, erased->id,
+                         "ownerless text return has no independent result "
+                         "proof"))
+        for (const auto &error : verification.errors)
+          std::cerr << error.message << '\n';
+      expect(functionError(verification, erased->id,
+                           "ownerless text return has no independent result "
+                           "proof"),
+             "a virtual call is ownerless only under a dependency-free root");
+    }
+  }
+  // An override keeps its root's contract: a view of the override's own
+  // string is not ownerless text.
+  const std::string owned = R"gti(
+#include <std/polymorphic>
+#include <std/string>
+interface Named {
+  std::string_view name();
+};
+class Owner : public Named {
+  std::string text;
+public:
+  Owner() : text("owned") {}
+  std::string_view name() override { return this.text.view(); }
+};
+int main() {
+  mut std::inline_polymorphic<Named, 64, 8> slot{};
+  slot.replace(Owner());
+  return int(slot.get().name().size());
+}
+)gti";
+  const auto rejected = analyzeText(owned);
+  const auto at = owned.find("this.text.view()");
+  expect(
+      rejectedAtSource(rejected, "GTI-S2045") && at != std::string::npos &&
+          hasDiagnosticAt(rejected.diagnostics, "GTI-S2045",
+                          "ownerless-text-contracts.gti",
+                          at + std::string_view("this.text.view()").size() - 1,
+                          "cannot escape without one exact owner "
+                          "dependency"),
+      "an override of a dependency-free root returns ownerless text");
+  // A generic result its instance makes text relays at the call, so the
+  // relayed owner stays borrowed while the result is used.
+  const std::string borrowed = kErasedTextResults + R"gti(
+int main() {
+  Echo<std::string_view> echo{};
+  mut std::string owner{"echoed"};
+  std::string_view relayed = echo.same(owner.view());
+  owner.append("!");
+  std::println(relayed);
+  return 0;
+}
+)gti";
+  const auto relayResult = analyzeText(borrowed);
+  expect(rejectedAtSource(relayResult, "GTI-S2017"),
+         "a generic text relay keeps its argument's owner borrowed");
+}
+
+// An override's text result keeps its root's contract in the override's own
+// instance of the root's class: under a generic root that relays its
+// argument, each override relays that argument or returns ownerless text,
+// and each call keeps the argument's owner borrowed (L-OWN-02).
+const std::string kGenericVirtualRoot = R"gti(
+#include <std/string>
+class Picker<T> {
+public:
+  int n;
+  Picker() : n(0) {}
+  virtual T pick(T a) { return a; }
+};
+class Literal : public Picker<std::string_view> {
+public:
+  Literal() : Picker<std::string_view>() {}
+  std::string_view pick(std::string_view a) override { return "literal"; }
+};
+class Same<T> : public Picker<T> {
+public:
+  Same() : Picker<T>() {}
+  T pick(T a) override { return a; }
+};
+)gti";
+
+void testGenericVirtualRootInstances() {
+  const std::string valid = kGenericVirtualRoot + R"gti(
+int main() {
+  std::string owner{"owned"};
+  Literal literal{};
+  Same<std::string_view> same{};
+  Picker<std::string_view>& first = literal;
+  Picker<std::string_view>& second = same;
+  return first.pick(owner.view()) == "literal" &&
+                 second.pick(owner.view()) == "owned"
+             ? 0
+             : 1;
+}
+)gti";
+  const auto result = analyzeText(valid);
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "overrides of a generic relaying root lower through MIR");
+  if (result.canGenerateCode()) {
+    // The root's instance and each override relay the argument, as the
+    // dispatch table requires.
+    std::size_t picks = 0;
+    for (const auto &function : result.mir.functionInstances()) {
+      const auto *info = result.semantics.findFunction(function.declaration);
+      if (info == nullptr ||
+          function.returnType.kind != lang::SemanticType::StringView ||
+          !info->qualifiedName.ends_with("::pick"))
+        continue;
+      ++picks;
+      expect(function.returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+                 function.returnBorrowParameter == 0,
+             "each pick relays its argument: " + info->qualifiedName);
+    }
+    expect(picks == 3, "the root and both overrides are instantiated");
+  }
+  // Whichever override dispatch selects, even one returning a literal, the
+  // argument's owner stays borrowed while the result is used.
+  const std::string mutated = kGenericVirtualRoot + R"gti(
+int main() {
+  mut std::string owner{"owned"};
+  Literal literal{};
+  Picker<std::string_view>& picker = literal;
+  std::string_view picked = picker.pick(owner.view());
+  owner.append("!");
+  return int(picked.size());
+}
+)gti";
+  expect(rejectedAtSource(analyzeText(mutated), "GTI-S2017"),
+         "a virtual relay keeps its argument's owner borrowed");
+  // An override cannot relay what its root does not: its own string.
+  const std::string receiver = kGenericVirtualRoot + R"gti(
+class Owned : public Picker<std::string_view> {
+  std::string text;
+public:
+  Owned() : Picker<std::string_view>(), text("own") {}
+  std::string_view pick(std::string_view a) override {
+    return this.text.view();
+  }
+};
+int main() {
+  Owned owned{};
+  return int(owned.pick("x").size());
+}
+)gti";
+  const auto rejected = analyzeText(receiver);
+  const auto at = receiver.find("this.text.view()");
+  expect(
+      rejectedAtSource(rejected, "GTI-S2045") && at != std::string::npos &&
+          hasDiagnosticAt(rejected.diagnostics, "GTI-S2045",
+                          "ownerless-text-contracts.gti",
+                          at + std::string_view("this.text.view()").size() - 1,
+                          "must derive from read-only parameter 'a'"),
+      "an override relays only what its root's instance relays");
+}
+
+// An overloaded operator's text result relays its receiver or an argument
+// as its summary says, as a method's does (L-OWN-02): the relayed owner stays
+// borrowed while the result is used, and an argument holding ownerless text
+// relays nothing.
+const std::string kOperatorTextRelays = R"gti(
+#include <std/string>
+class Same {
+public:
+  Same() {}
+  std::string_view operator()(std::string_view s) { return s; }
+  std::string_view operator[](std::string_view s) { return s; }
+};
+class Plain {
+  mut std::string s;
+public:
+  Plain() : s("plain") {}
+  std::string_view operator()() { return this.s.view(); }
+  void grow() mut { this.s.append("!"); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R operator()(R text) { return text; }
+};
+)gti";
+
+void testOperatorTextRelays() {
+  const auto valid = analyzeText(kOperatorTextRelays + R"gti(
+int main() {
+  Same same{};
+  mut Plain plain{};
+  Echo<std::string_view> echo{};
+  mut std::string owner{"owned"};
+  bool relayed = same(owner.view()) == same[owner.view()] &&
+                 echo(owner.view()) == "owned";
+  std::string_view literal = same("literal");
+  owner.append("!");
+  bool held = plain() == "plain";
+  plain.grow();
+  return relayed && held && literal == "literal" ? 0 : 1;
+}
+)gti");
+  if (!valid.canGenerateCode())
+    printDiagnostics(valid);
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "operator text relays lower through MIR");
+  for (const auto &[use, mutation] :
+       {std::pair<std::string_view, std::string_view>{
+            "std::string_view kept = same(owner.view());",
+            "owner.append(\"!\");"},
+        std::pair<std::string_view, std::string_view>{
+            "std::string_view kept = same[owner.view()];",
+            "owner.append(\"!\");"},
+        std::pair<std::string_view, std::string_view>{
+            "std::string_view kept = echo(owner.view());",
+            "owner.append(\"!\");"},
+        std::pair<std::string_view, std::string_view>{
+            "std::string_view kept = plain();", "plain.grow();"}}) {
+    const std::string source = kOperatorTextRelays + R"gti(
+int main() {
+  Same same{};
+  mut Plain plain{};
+  Echo<std::string_view> echo{};
+  mut std::string owner{"owned"};
+  )gti" + std::string(use) + "\n  " +
+                               std::string(mutation) + R"gti(
+  return int(kept.size());
+}
+)gti";
+    expect(rejectedAtSource(analyzeText(source), "GTI-S2017"),
+           "an operator's text result keeps its relayed owner borrowed: " +
+               std::string(use));
+  }
+}
+
 constexpr NamedTest kTests[] = {
+    {"testArrayElementTextStorage", testArrayElementTextStorage},
+    {"testArrayElementTextRejections", testArrayElementTextRejections},
+    {"testRawMemoryTextReads", testRawMemoryTextReads},
+    {"testCallableTextResults", testCallableTextResults},
+    {"testCapturedTextLocalUse", testCapturedTextLocalUse},
+    {"testCapturedTextEscapes", testCapturedTextEscapes},
+    {"testCapturedTextBorrowsOwner", testCapturedTextBorrowsOwner},
+    {"testReassignedTextLocals", testReassignedTextLocals},
+    {"testReceiverFieldCallReturns", testReceiverFieldCallReturns},
+    {"testVirtualAndErasedTextResults", testVirtualAndErasedTextResults},
+    {"testGenericVirtualRootInstances", testGenericVirtualRootInstances},
+    {"testOperatorTextRelays", testOperatorTextRelays},
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testAccessorSubjectRelays", testAccessorSubjectRelays},
     {"testAccessorFieldEscapes", testAccessorFieldEscapes},

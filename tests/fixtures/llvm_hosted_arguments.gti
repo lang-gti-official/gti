@@ -1,0 +1,23 @@
+#include <std/string>
+#include <std/vector>
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc < 0 || argv.size() != std::size_t(argc)) {
+    return 1;
+  }
+  if (argc == 0) {
+    return 0;
+  }
+  if (argc == 1) {
+    return argv[std::size_t(0)].empty() ? 2 : 0;
+  }
+  if (argc != 4) {
+    return 3;
+  }
+  if (!argv[std::size_t(1)].empty() ||
+      argv[std::size_t(2)] != "a,b\nc" ||
+      argv[std::size_t(3)] != "é") {
+    return 4;
+  }
+  return argv[std::size_t(3)].size() == std::size_t(2) ? 0 : 5;
+}

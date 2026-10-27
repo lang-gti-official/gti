@@ -1,0 +1,27 @@
+#include <std/panic>
+mut int trace = 0;
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  int read() { return this.value; }
+  ~Marker() { trace = trace * 10 + this.value; }
+};
+thread_local Marker early{1};
+thread_local Marker late{2};
+struct Cleanup {
+  int read() { return 3; }
+  ~Cleanup() { trace = trace * 10 + 3; }
+};
+int fail_later() {
+  std::panic("generated default argument failure");
+}
+int consume(Cleanup& value, int extra) {
+  trace = 9999;
+  return value.read() + extra;
+}
+int main() {
+  [[discard]] early.read();
+  [[discard]] late.read();
+  return consume(Cleanup(), fail_later());
+}

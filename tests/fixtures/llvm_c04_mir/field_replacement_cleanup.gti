@@ -1,0 +1,31 @@
+struct Marker {
+  int* slot = nullptr;
+  int input;
+  Marker(int* target, int value) : slot(target), input(value) {}
+  ~Marker() {
+    unsafe {
+      if (*slot == 0) { *slot = 1; }
+      else { *slot = 2; }
+    }
+    if (input == 2147483647) {
+      int overflow = input + 1;
+    }
+  }
+};
+struct Inner {
+  mut Marker record;
+  Inner(int* target, int input) : record(Marker(target, input)) {}
+  ~Inner() {}
+};
+struct Holder {
+  mut Inner inner;
+  Holder(int* target, int input) : inner(Inner(target, input)) {}
+  ~Holder() {}
+};
+
+int sample(int input, mut int& first, mut int& second, mut int& outer) {
+  Marker local{&outer, 0};
+  mut Holder replaced{&first, input};
+  replaced.inner.record = Marker(&second, 0);
+  return input + 1;
+}

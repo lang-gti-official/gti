@@ -1,0 +1,47 @@
+// Hierarchy objects in program storage: namespace globals and a static
+// field, each constructed in place by its program initialization step from a
+// fresh construction or by-value result, and borrowed through its symbol as a
+// complete object. Program storage carries no source or owning cleanup.
+interface Shape { int area(); };
+
+interface Named { int code(); };
+
+// Named precedes Shape, so the Shape view has a nonzero offset.
+class Square : public Named, public Shape {
+  mut int side;
+public:
+  Square(int side) : side(side) {}
+  int code() override { return this.side + 10; }
+  int area() override { return this.side * this.side; }
+  void grow() mut { this.side = this.side + 1; }
+};
+
+class Counter : public Shape {
+  mut int count = 0;
+public:
+  Counter() {}
+  int area() override { return this.count; }
+  void bump() mut { this.count = this.count + 1; }
+};
+
+Square scaled(int divisor) { return Square(12 / divisor); }
+
+mut Square square = Square(3);
+Square made = scaled(3);
+
+class Registry {
+public:
+  static mut Counter counter = Counter();
+};
+
+// PROGRAM_STORAGE_MAIN
+int main() {
+  if (square.area() != 9 || made.code() != 14 || made.area() != 16) {
+    return 1;
+  }
+  square.grow();
+  if (square.area() != 16 || square.code() != 14) { return 2; }
+  Registry::counter.bump();
+  Registry::counter.bump();
+  return Registry::counter.area() == 2 ? 0 : 3;
+}

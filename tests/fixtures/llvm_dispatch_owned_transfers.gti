@@ -1,0 +1,78 @@
+#include <std/memory>
+#include <std/string>
+
+// Generated moves of owned hierarchy objects: fresh by-value arguments, an
+// owned local or parameter moved into another call's argument storage or into
+// a unique-owner allocation, and an inert local returned to the caller. Every
+// move relocates fields, cleanup state and dispatch headers; each object is
+// destroyed exactly once by its final owner. Destructors record explicit IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Named { int code(); };
+interface Marker { int mark(); };
+
+// Marker precedes Named, so the Named view has a nonzero offset.
+class Badge : public Marker, public Named {
+  std::string label;
+  int id;
+public:
+  Badge(std::string label, int id) : label(std::move(label)), id(id) {}
+  ~Badge() { record(this.id); }
+  int mark() override { return 0; }
+  int code() override { return this.id * 10 + int(this.label.size()); }
+};
+
+class Plain : public Named {
+  mut int value;
+public:
+  Plain(int value) : value(value) {}
+  int code() override { return this.value; }
+};
+
+int consume(Badge badge) { return badge.code(); }
+
+int forward(Badge badge) { return consume(std::move(badge)); }
+
+int divide(Badge badge, int divisor) { return badge.code() / divisor; }
+
+std::unique_ptr<Named> box(Badge badge) {
+  return std::upcast_unique<Named, Badge>(std::make_unique<Badge>(std::move(badge)));
+}
+
+Plain promote(int value) {
+  Plain local = Plain(value * 2);
+  return local;
+}
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// OWNED_TRANSFERS_MAIN
+int main() {
+  if (consume(Badge(std::string("ab"), 1)) != 12 || events != 1) { return 1; }
+  events = 0;
+  {
+    Badge local = Badge(std::string("abc"), 2);
+    if (forward(std::move(local)) != 23 || events != 2) { return 2; }
+  }
+  if (events != 2) { return 3; }
+  events = 0;
+  {
+    std::unique_ptr<Named> owner = box(Badge(std::string("d"), 3));
+    if (owner->code() != 31 || events != 0) { return 4; }
+  }
+  if (events != 3) { return 5; }
+  Plain doubled = promote(21);
+  Named& view = doubled;
+  return view.code() == 42 ? 0 : 6;
+}

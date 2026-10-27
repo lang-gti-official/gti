@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_execution import host_default_backend
+
 
 DEPENDENCY_INJECTING_NATIVE_ENVIRONMENT = (
     "CPATH",
@@ -134,7 +136,7 @@ def test_dependency_warning_policy(gti, root):
         assert str(own) in suppressed.stderr
         assert "Diagnostics: 0 errors, 2 warnings" in suppressed.stdout
     metadata = json.loads(run([gti, "metadata"], cwd=project).stdout)
-    assert metadata["schemaVersion"] == 14
+    assert metadata["schemaVersion"] == 15
     assert [profile["dependencyWarnings"] for profile in metadata["profiles"]] == [
         False, True]
     assert [output["dependencyWarnings"]
@@ -629,7 +631,7 @@ def main():
         configuration_metadata = json.loads(
             run([gti, "metadata"], cwd=configuration_project).stdout
         )
-        assert configuration_metadata["schemaVersion"] == 14
+        assert configuration_metadata["schemaVersion"] == 15
         assert configuration_metadata["targets"][0]["outputs"][0][
             "defines"
         ] == ["MANIFEST_FLAG"]
@@ -761,11 +763,19 @@ def main():
         release = run(
             [gti, "build", "sample", "--release", "--verbose"], cwd=project
         )
-        assert " -O3 " in release.stderr
-        assert " -std=c++20 " in release.stderr
+        assert "gti: configuration -O3, backend=" in release.stderr
         assert "execution-profile=concurrent" in release.stderr
         assert "target sample [release," in release.stderr
         assert "Built sample [release," in release.stdout
+        # The profile's optimization and C++ language level reach the C++
+        # backend's native compile when C++ builds the target.
+        release_cpp = run(
+            [gti, "build", "sample", "--release", "--verbose", "--backend", "cpp"],
+            cwd=project,
+        )
+        assert "gti: configuration -O3, backend=cpp," in release_cpp.stderr
+        assert " -O3 " in release_cpp.stderr
+        assert " -std=c++20 " in release_cpp.stderr
         release_executable = executable_named(project / "build/gti/release", "sample")
         run([str(release_executable)])
         release_generated = (
@@ -812,7 +822,7 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 14
+        assert metadata_document["schemaVersion"] == 15
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["profiles"] == [
@@ -820,6 +830,7 @@ def main():
                 "name": "dev",
                 "optimization": 0,
                 "cppStandard": "c++23",
+                "backend": host_default_backend(),
                 "executionProfile": "single-threaded",
                 "rawPointerAudit": "off",
                 "disabledWarnings": [],
@@ -831,6 +842,7 @@ def main():
                 "name": "release",
                 "optimization": 3,
                 "cppStandard": "c++23",
+                "backend": host_default_backend(),
                 "executionProfile": "concurrent",
                 "rawPointerAudit": "off",
                 "disabledWarnings": ["unused-mut"],
@@ -893,7 +905,7 @@ def main():
         test_metadata = json.loads(
             run([gti, "metadata"], cwd=test_project).stdout
         )
-        assert test_metadata["schemaVersion"] == 14
+        assert test_metadata["schemaVersion"] == 15
         assert [
             (target["name"], target["kind"])
             for target in test_metadata["targets"]
@@ -1104,7 +1116,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 14
+        assert native_document["schemaVersion"] == 15
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [
@@ -1134,11 +1146,15 @@ def main():
         assert "Checked native-project [dev," in checked_native.stdout
         assert not (native_project / "build").exists()
 
+        # Compile arguments precede the generated C++ source in the C++
+        # backend's native command.
         native_build = run(
             [
                 gti,
                 "build",
                 "--verbose",
+                "--backend",
+                "cpp",
                 "--cc",
                 native_c_compiler,
                 "--cxx",
@@ -1211,7 +1227,8 @@ def main():
         )
         assert "native source diagnostics" in failed_c_build.stderr
         assert "native source compiler failed" in failed_c_build.stderr
-        assert "backend 'c++' representation saved" in failed_c_build.stderr
+        assert any(f"backend '{name}' representation saved" in failed_c_build.stderr
+                   for name in ("c++", "llvm")), failed_c_build.stderr
         assert native_object.read_bytes() == previous_object
         run([str(native_executable)])
 
@@ -1234,7 +1251,8 @@ def main():
         )
         assert "native source diagnostics" in failed_cpp_build.stderr
         assert "native source compiler failed for" in failed_cpp_build.stderr
-        assert "backend 'c++' representation saved" in failed_cpp_build.stderr
+        assert any(f"backend '{name}' representation saved" in failed_cpp_build.stderr
+                   for name in ("c++", "llvm")), failed_cpp_build.stderr
         assert native_cpp_object.read_bytes() == previous_cpp_object
         run([str(native_executable)])
 
@@ -1428,7 +1446,7 @@ def main():
         workspace_metadata = json.loads(
             run([gti, "metadata", "--package", "app"], cwd=workspace).stdout
         )
-        assert workspace_metadata["schemaVersion"] == 14
+        assert workspace_metadata["schemaVersion"] == 15
         assert workspace_metadata["workspace"]["declared"] is True
         assert workspace_metadata["workspace"]["selectedPackage"] == "app"
         assert [
@@ -1979,12 +1997,16 @@ def main():
             ]
         )
 
+        # These checks exercise the C++ backend's schema-v4 cache entries;
+        # LLVM's schema-v5 object cache has its own round-trip tests.
         def cache_native_build(expected=0, extra=(), env=None):
             return run(
                 [
                     gti,
                     "build",
                     "--verbose",
+                    "--backend",
+                    "cpp",
                     "--cc",
                     cache_cc,
                     "--cxx",
@@ -2710,7 +2732,7 @@ def main():
         scripted_metadata = json.loads(
             run([gti, "metadata"], cwd=scripted_app).stdout
         )
-        assert scripted_metadata["schemaVersion"] == 14
+        assert scripted_metadata["schemaVersion"] == 15
         assert scripted_metadata["build"]["allowBuildScripts"] == [
             "scripted-native@0.1.0"
         ]
@@ -2727,18 +2749,24 @@ def main():
         assert script_plan["package"] == "scripted-native@0.1.0"
         assert script_plan["source"].endswith("/build.gti")
         assert not (scripted_app / "build").exists()
-        built_scripted = run(
-            [gti, "test", "--jobs", "2"], cwd=scripted_app
-        )
-        assert "Built native dependency scripted-native@0.1.0" in (
-            built_scripted.stderr
-        )
-        reused_scripted = run(
-            [gti, "test", "--jobs", "2"], cwd=scripted_app
-        )
-        assert "Reused native dependency scripted-native@0.1.0" in (
-            reused_scripted.stderr
-        )
+        # Each backend's host program reruns once, then its output is reused:
+        # an LLVM host program's output only together with the exact cached
+        # executable that produced it.
+        for backend in ("cpp", "llvm"):
+            built_scripted = run(
+                [gti, "test", "--jobs", "2", "--backend", backend],
+                cwd=scripted_app,
+            )
+            assert "Built native dependency scripted-native@0.1.0" in (
+                built_scripted.stderr
+            ), (backend, built_scripted.stderr)
+            reused_scripted = run(
+                [gti, "test", "--jobs", "2", "--backend", backend],
+                cwd=scripted_app,
+            )
+            assert "Reused native dependency scripted-native@0.1.0" in (
+                reused_scripted.stderr
+            ), (backend, reused_scripted.stderr)
         (scripted_app / "gti.toml").write_text(
             scripted_manifest.replace(
                 'allow-build-scripts = ["scripted-native@0.1.0"]',
@@ -2863,7 +2891,7 @@ def main():
         composed_native = composed_metadata["targets"][0]["outputs"][0][
             "native"
         ]
-        assert composed_metadata["schemaVersion"] == 14
+        assert composed_metadata["schemaVersion"] == 15
         assert [
             (group["package"], group["cMacroDefinitions"])
             for group in composed_native["dependencyNative"]

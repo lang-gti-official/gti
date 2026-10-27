@@ -66,6 +66,7 @@ MirOptimizationCoverage optimizationCoverage(MirInstructionKind kind) {
   case MirInstructionKind::EnsureThreadLocal:
   case MirInstructionKind::DrainThreadLocals:
   case MirInstructionKind::BeginThreadLocals:
+  case MirInstructionKind::RetireProgramStorage:
     return barrier("exact body effects; no contextual range transfer");
   case MirInstructionKind::AllocateObject:
     return barrier("allocation, failure and rollback effects");

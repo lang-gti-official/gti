@@ -655,7 +655,8 @@ The current structural capability set is intentionally small:
   Construction-only owners can therefore nest without acquiring replacement
   or borrow-reseating permission; the ordinary ownership checks still apply;
 - `relocatable<T>` requires structurally movable, borrow-free state, excluding
-  address-stable private host state; it does not require assignment;
+  address-stable private host state (a mutex rebuilds its native identity and
+  relocates when its payload does); it does not require assignment;
 - `bitwise_relocatable<T>` additionally requires passive scalar/array state or
   a class with only eligible fields, no bases, polymorphism, or declared
   cleanup. It implies `relocatable<T>`; backend representation checks may still

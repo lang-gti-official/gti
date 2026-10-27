@@ -5,7 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import platform
 import subprocess
+import sys
+
+
+def host_default_backend() -> str:
+    """The backend `gti` builds with on this host when none is selected."""
+    machine = platform.machine().lower()
+    return ("llvm" if sys.platform == "darwin" and machine in {"arm64", "aarch64"}
+            else "cpp")
 
 
 @dataclass(frozen=True)
@@ -41,13 +50,8 @@ class ExecutionResult:
         return self.returncode, self.stdout, self.stderr
 
 
-def execute(gti: Path, root: Path, case: Path, source: Path, endpoint: Endpoint,
-            env: dict[str, str], *, concurrent: bool = False,
-            build_timeout: int = 240, run_timeout: int = 15) -> ExecutionResult:
-    case.mkdir(parents=True, exist_ok=True)
-    executable = case / ("program.exe" if os.name == "nt" else "program")
-    if executable.exists():
-        raise ValueError("an execution case must use a fresh artifact destination")
+def plan_compile_command(gti: Path, source: Path, executable: Path, endpoint: Endpoint,
+                         *, concurrent: bool = False) -> list[str]:
     command = [str(gti), str(source), "--backend", endpoint.backend,
                f"-{endpoint.optimization}"]
     if concurrent:
@@ -57,6 +61,17 @@ def execute(gti: Path, root: Path, case: Path, source: Path, endpoint: Endpoint,
     if endpoint.keep_cpp:
         command += ["--keep-cpp"]
     command += ["-o", str(executable)]
+    return command
+
+
+def execute(gti: Path, root: Path, case: Path, source: Path, endpoint: Endpoint,
+            env: dict[str, str], *, concurrent: bool = False,
+            build_timeout: int = 240, run_timeout: int = 15) -> ExecutionResult:
+    case.mkdir(parents=True, exist_ok=True)
+    executable = case / ("program.exe" if os.name == "nt" else "program")
+    if executable.exists():
+        raise ValueError("an execution case must use a fresh artifact destination")
+    command = plan_compile_command(gti, source, executable, endpoint, concurrent=concurrent)
     try:
         built = subprocess.run(command, cwd=root, env=env, text=True,
                                capture_output=True, check=False, timeout=build_timeout)

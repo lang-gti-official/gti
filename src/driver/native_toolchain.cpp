@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <system_error>
 #include <utility>
@@ -366,13 +367,14 @@ NativeCompileRequest::dependencyFile() const {
   return nativeDependencyFile;
 }
 
-NativeLinkRequest::NativeLinkRequest(std::string compiler,
-                                     std::filesystem::path object,
-                                     std::filesystem::path output,
-                                     NativeInputs inputs, bool debugInfo)
+NativeLinkRequest::NativeLinkRequest(
+    std::string compiler, std::filesystem::path object,
+    std::filesystem::path output, NativeInputs inputs, bool debugInfo,
+    std::optional<ForwardedSourcePolicy> forwardedSources)
     : compilerExecutable(std::move(compiler)), objectPath(std::move(object)),
       outputPath(std::move(output)), nativeInputs(std::move(inputs)),
-      sourceDebugInfo(debugInfo) {}
+      sourceDebugInfo(debugInfo),
+      forwardedSourcePolicy(std::move(forwardedSources)) {}
 
 const std::string &NativeLinkRequest::compiler() const {
   return compilerExecutable;
@@ -389,6 +391,11 @@ const std::filesystem::path &NativeLinkRequest::output() const {
 bool NativeLinkRequest::debugInfo() const { return sourceDebugInfo; }
 
 const NativeInputs &NativeLinkRequest::inputs() const { return nativeInputs; }
+
+const std::optional<ForwardedSourcePolicy> &
+NativeLinkRequest::forwardedSources() const {
+  return forwardedSourcePolicy;
+}
 
 void appendNativeTargetPolicy(std::vector<std::string> &command,
                               const NativeTargetPolicy &policy) {
@@ -525,6 +532,10 @@ void appendNativeLinkPlan(std::vector<std::string> &command,
       }
     }
   }
+  if (inputs.instrumentation) {
+    command.insert(command.end(), inputs.instrumentation->linkArguments.begin(),
+                   inputs.instrumentation->linkArguments.end());
+  }
   command.insert(command.end(), inputs.linkerArguments.begin(),
                  inputs.linkerArguments.end());
   command.emplace_back("-o");
@@ -554,6 +565,9 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
       request.compiler(), std::string(standardFlag(request.standard())),
       std::string(optimizationFlag(request.optimization()))};
   const NativeInputs &inputs = request.inputs();
+  if (inputs.instrumentation)
+    throw std::invalid_argument("diagnostic native policy requires separate "
+                                "source compilation and object linking");
   // Driver-owned target selection precedes every forwarded native argument
   // and every input, because it selects which toolchain files the compiler
   // resolves the rest of the command against.
@@ -587,9 +601,32 @@ std::vector<std::string>
 NativeToolchain::command(const NativeLinkRequest &request) const {
   std::vector<std::string> command{request.compiler()};
   const NativeInputs &inputs = request.inputs();
+  // Forwarded sources compile in this invocation exactly as the C++ backend's
+  // invocation compiles them, so a native companion that includes the GTI C
+  // ABI header or needs the selected language level builds either way.
+  const std::optional<ForwardedSourcePolicy> &sources =
+      request.forwardedSources();
+  const bool compilesForwarded =
+      sources.has_value() && !inputs.trailingArguments.empty();
+  if (compilesForwarded) {
+    command.emplace_back(standardFlag(sources->standard));
+    command.emplace_back(optimizationFlag(sources->optimization));
+  }
   appendNativeTargetPolicy(command, inputs.targetPolicy);
+  if (compilesForwarded) {
+    for (const std::filesystem::path &directory : inputs.includeDirectories) {
+      command.emplace_back("-I" + directory.string());
+    }
+    command.insert(command.end(), inputs.compilerArguments.begin(),
+                   inputs.compilerArguments.end());
+  }
   command.push_back(request.object().string());
   appendNativeLinkPlan(command, inputs, request.output());
+  if (compilesForwarded) {
+    command.emplace_back("-fno-fast-math");
+    command.emplace_back("-ffp-contract=off");
+    command.emplace_back("-D__gti_strict_ieee754=1");
+  }
   if (request.debugInfo()) {
     command.emplace_back("-g");
   }

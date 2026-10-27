@@ -1,0 +1,32 @@
+// Unique and shared owners hold mutex-bearing values in their allocation;
+// the mutex keeps its native identity there and is destroyed with the owner.
+#include <std/memory>
+#include <std/mutex>
+class Account {
+public:
+  mut std::mutex<int32_t> balance;
+  int32_t id;
+  Account(int32_t id, int32_t start) : balance(std::mutex<int32_t>(start)), id(id) {}
+};
+int32_t deposit(Account& account, int32_t amount) {
+  mut auto guard = account.balance.lock();
+  mut int32_t& value = guard.get();
+  value += amount;
+  return value;
+}
+int main() {
+  auto shared = std::make_shared<Account>(1, 10);
+  auto other = shared.clone();
+  if (deposit(*other, 5) != 15) { return 1; }
+  if (shared.use_count() != std::size_t(2)) { return 2; }
+  auto unique = std::make_unique<Account>(2, 20);
+  if (deposit(*unique, 1) != 21 || deposit(*shared, 1) != 16) { return 3; }
+  auto counter = std::make_shared<std::mutex<int32_t>>(0);
+  {
+    mut auto guard = counter->lock();
+    mut int32_t& value = guard.get();
+    value += 3;
+  }
+  auto guard = counter->lock();
+  return guard.get() == 3 ? 0 : 4;
+}

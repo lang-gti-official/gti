@@ -78,7 +78,8 @@ public:
       const SourceManager *sources = nullptr,
       RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off,
       bool requireFunctionDefinitions = false,
-      TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete);
+      TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete,
+      SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None);
   ~SemanticVisitor();
 
   SemanticVisitor(const SemanticVisitor &) = delete;

@@ -1,0 +1,38 @@
+#include <std/mutex>
+
+class User {
+  std::mutex<int32_t>& owner;
+public:
+  User(std::mutex<int32_t>& owner) : owner(owner) {}
+  void use() {
+    auto guard = this.owner.lock();
+    std::println(guard.get());
+  }
+};
+class Holder {
+public:
+  std::mutex<int32_t>& owner;
+  Holder(std::mutex<int32_t>& owner) : owner(owner) {}
+};
+class Nested {
+  Holder& holder;
+public:
+  Nested(Holder& holder) : holder(holder) {}
+  void use() {
+    auto guard = this.holder.owner.lock();
+    std::println(guard.get());
+  }
+};
+int main() {
+  std::mutex<int32_t> owner{7};
+  {
+    User user{owner};
+    user.use();
+    Holder holder{owner};
+    Nested nested{holder};
+    nested.use();
+  }
+  auto guard = owner.lock();
+  std::println(guard.get());
+  return 0;
+}

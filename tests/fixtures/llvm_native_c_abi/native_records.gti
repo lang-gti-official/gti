@@ -1,0 +1,93 @@
+[[c_abi]] struct NativeByte { mut int8_t value; };
+[[c_abi]] struct NativeTiny { mut uint8_t a; mut uint8_t b; mut uint8_t c; };
+[[c_abi]] struct NativePacket {
+  mut int8_t tag; mut uint16_t extent; mut int32_t count; mut double ratio;
+};
+[[c_abi]] struct NativeLarge { mut uint64_t values[3]; };
+[[c_abi]] struct NativeHfa { mut float values[4]; };
+[[c_abi]] union NativeUnion { mut uint64_t bits; mut double real; };
+[[c_abi]] struct NativeBox { mut NativeUnion selected; mut uint32_t tag; };
+[[c_abi]] struct NativeNested { mut NativePacket packet; mut NativeHfa hfa; };
+[[c_abi]] struct NativePointer { mut int32_t* address; mut uint32_t tag; };
+[[c_abi]] struct NativeAliases { mut c_long rank; mut c_ulong flags; mut c_bool ready; };
+using NativeUnary = (int32_t) -> int32_t;
+[[c_abi]] struct NativeHook { mut NativeUnary operation; };
+extern "C" { NativeHook native_unadmitted_hook(); }
+extern "C" {
+  NativeByte native_byte_make(int8_t value);
+  NativeByte native_byte_step(NativeByte value);
+  NativeTiny native_tiny_make();
+  NativeTiny native_tiny_step(NativeTiny value);
+  NativePacket native_packet_make(int32_t count);
+  NativePacket native_packet_step(NativePacket value);
+  int32_t native_packet_check(NativePacket value, int32_t count);
+  int32_t native_packet_pressure(int64_t a, int64_t b, int64_t c, int64_t d,
+    int64_t e, int64_t f, NativePacket value, double suffix);
+  NativeLarge native_large_make(uint64_t first);
+  NativeLarge native_large_step(NativeLarge value);
+  int32_t native_large_pressure(int64_t a, int64_t b, int64_t c, int64_t d,
+    int64_t e, int64_t f, NativeLarge value, int64_t suffix);
+  NativeHfa native_hfa_make();
+  NativeHfa native_hfa_step(NativeHfa value);
+  int32_t native_hfa_pressure(double a, double b, double c, double d,
+    double e, double f, double g, double h, NativeHfa value, double suffix);
+  NativeUnion native_union_make();
+  NativeUnion native_union_step(NativeUnion value);
+  NativeBox native_box_make();
+  NativeBox native_box_step(NativeBox value);
+  NativeNested native_nested_make();
+  NativeNested native_nested_step(NativeNested value);
+  NativePointer native_pointer_make();
+  int32_t native_pointer_check(NativePointer value);
+  NativeAliases native_alias_make();
+  int32_t native_alias_check(NativeAliases value);
+  int32_t native_record_counted(NativePacket value, std::string_view text);
+}
+int32_t relay_counted(NativePacket value, std::string_view text) {
+  return native_record_counted(value, text);
+}
+NativePacket relay_packet(NativePacket value) { return value; }
+NativeLarge relay_large(NativeLarge value) { return value; }
+NativePacket chained_packet() { return native_packet_step(native_packet_make(10)); }
+NativeLarge chained_large() { return native_large_step(native_large_make(uint64_t(17))); }
+int main() {
+  unsafe {
+    auto byte = native_byte_step(native_byte_make(int8_t(-97)));
+    if (byte.value != int8_t(-96)) return 18;
+    auto tiny = native_tiny_step(native_tiny_make());
+    if (tiny.a != uint8_t(1) || tiny.b != uint8_t(127) || tiny.c != uint8_t(254)) return 19;
+    auto packet = native_packet_make(41);
+    auto copied = relay_packet(packet);
+    if (packet.tag != int8_t(-7) || packet.extent != uint16_t(54321) ||
+        packet.count != 41 || packet.ratio != 2.5d) return 1;
+    if (native_packet_check(copied, 41) != 1) return 2;
+    std::string_view text = "native";
+    if (relay_counted(copied, text) != 1) return 17;
+    auto changed = native_packet_step(copied);
+    if (changed.count != 42 || changed.ratio != 3.75d || packet.count != 41) return 3;
+    if (chained_packet().count != 11) return 4;
+    if (native_packet_pressure(int64_t(1), int64_t(2), int64_t(3), int64_t(4), int64_t(5), int64_t(6), changed, 9.5d) != 1) return 5;
+    auto large = relay_large(native_large_make(uint64_t(17)));
+    if (large.values[0] != uint64_t(17) || large.values[2] != uint64_t(19)) return 6;
+    auto large_changed = native_large_step(large);
+    if (large.values[0] != uint64_t(17) || large_changed.values[0] != uint64_t(24)) return 16;
+    auto big = chained_large();
+    if (big.values[0] != uint64_t(24) || big.values[2] != uint64_t(26)) return 7;
+    if (native_large_pressure(int64_t(1), int64_t(2), int64_t(3), int64_t(4), int64_t(5), int64_t(6), big, int64_t(9)) != 1) return 8;
+    auto hfa = native_hfa_step(native_hfa_make());
+    if (hfa.values[0] != float(2.25) || hfa.values[3] != float(6)) return 9;
+    if (native_hfa_pressure(1.0d, 2.0d, 3.0d, 4.0d, 5.0d, 6.0d, 7.0d, 8.0d, hfa, 9.5d) != 1) return 10;
+    auto selected = native_union_step(native_union_make());
+    if (selected.bits != uint64_t(1234568)) return 11;
+    auto box = native_box_step(native_box_make());
+    if (box.selected.bits != uint64_t(1234568) || box.tag != uint32_t(100)) return 12;
+    auto nested = native_nested_step(native_nested_make());
+    if (nested.packet.count != 42 || nested.hfa.values[3] != float(6)) return 13;
+    auto pointer = native_pointer_make();
+    if (*pointer.address != 73 || native_pointer_check(pointer) != 1) return 14;
+    auto aliases = native_alias_make();
+    if (aliases.rank != c_long(-7) || aliases.flags != c_ulong(54321) ||
+        !aliases.ready || native_alias_check(aliases) != 1) return 15;
+  }
+  return 0;
+}

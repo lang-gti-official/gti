@@ -7329,48 +7329,42 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
   }
 }
 
-auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
-                                               const FunctionInfo &function,
-                                               SemanticType ownerType) -> bool {
-  // A dynamic view cannot be stored in a field or a fixed array, so reading
-  // that storage copies an ownerless view: like a literal, it carries no
-  // receiver or parameter dependency. Only a pure place path whose final
-  // field or element is declared as the view itself qualifies; a reference
-  // field may name a dependent view shell, and a call proves nothing here.
-  if (!expression || function.declaration == nullptr)
-    return false;
+auto SemanticVisitor::Impl::predeclaredPlace(const Expr *expression,
+                                             const FunctionInfo &function,
+                                             SemanticType ownerType)
+    -> std::optional<PredeclaredPlace> {
+  if (expression == nullptr || function.declaration == nullptr)
+    return std::nullopt;
   if (function.ownerClass != 0 && (ownerType.kind != SemanticType::Class ||
                                    ownerType.classId != function.ownerClass))
     ownerType = substituteType(openClassType(function.ownerClass),
                                instanceTypeSubstitution);
-  struct Path {
-    SemanticType type = SemanticType::Unknown;
-    bool stored = false;
-  };
   const auto referent = [](const SemanticType &type) {
     return type.kind == SemanticType::Reference && type.arguments.size() == 1
                ? SemanticType(type.arguments.front())
                : type;
   };
-  const auto field = [&](const Path &object,
-                         const Token &name) -> std::optional<Path> {
+  const auto field = [&](const PredeclaredPlace &object,
+                         const Token &name) -> std::optional<PredeclaredPlace> {
     const SemanticType owner = referent(object.type);
     const auto *member = findMember(owner, name);
     if (member == nullptr || member->symbol.variableDeclaration == nullptr ||
         member->symbol.staticMember)
       return std::nullopt;
-    return Path{
+    return PredeclaredPlace{
         .type = substituteType(member->symbol.type, classSubstitution(owner)),
         .stored = true};
   };
   const bool receiver = function.ownerClass != 0 && !function.staticMember;
   const auto &parameters = function.bodyDeclaration()->parameters();
-  const auto path = [&](const auto &self,
-                        const Expr *current) -> std::optional<Path> {
+  const auto path =
+      [&](const auto &self,
+          const Expr *current) -> std::optional<PredeclaredPlace> {
     if (const auto *group = exprAs<Grouping>(current))
       return self(self, group->expression().get());
     if (exprAs<This>(current) != nullptr)
-      return receiver ? std::optional<Path>{Path{.type = ownerType}}
+      return receiver ? std::optional<PredeclaredPlace>{PredeclaredPlace{
+                            .type = ownerType}}
                       : std::nullopt;
     if (const auto *variable = exprAs<Variable>(current)) {
       // Parameters take precedence over implicit instance fields, as in
@@ -7380,8 +7374,9 @@ auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
            index < parameters.size() && index < function.parameterTypes.size();
            ++index)
         if (parameters[index].name.lexeme == variable->name().lexeme)
-          return Path{.type = function.parameterTypes[index]};
-      return receiver ? field(Path{.type = ownerType}, variable->name())
+          return PredeclaredPlace{.type = function.parameterTypes[index]};
+      return receiver ? field(PredeclaredPlace{.type = ownerType},
+                              variable->name())
                       : std::nullopt;
     }
     if (const auto *member = exprAs<Get>(current)) {
@@ -7394,12 +7389,23 @@ auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
           object ? referent(object->type) : SemanticType::Unknown;
       if (array.kind != SemanticType::Array || array.arguments.size() != 1)
         return std::nullopt;
-      return Path{.type = SemanticType(array.arguments.front()),
-                  .stored = true};
+      return PredeclaredPlace{.type = SemanticType(array.arguments.front()),
+                              .stored = true};
     }
     return std::nullopt;
   };
-  const auto read = path(path, expression.get());
+  return path(path, expression);
+}
+
+auto SemanticVisitor::Impl::storedTextViewRead(const ExprPtr &expression,
+                                               const FunctionInfo &function,
+                                               SemanticType ownerType) -> bool {
+  // A dynamic view cannot be stored in a field or a fixed array, so reading
+  // that storage copies an ownerless view: like a literal, it carries no
+  // receiver or parameter dependency. Only a pure place path whose final
+  // field or element is declared as the view itself qualifies; a reference
+  // field may name a dependent view shell, and a call proves nothing here.
+  const auto read = predeclaredPlace(expression.get(), function, ownerType);
   return read && read->stored &&
          (read->type.kind == SemanticType::StringView ||
           read->type.kind == SemanticType::CString);
@@ -7563,10 +7569,29 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
       binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
     return predeclaredTextBorrowSource(binary->right(), function, ownerType);
   }
+  // Text read through a raw pointer's index or `->` is raw memory under
+  // unsafe obligations, not storage of the pointer's origin: like text a raw
+  // dereference reads, it has no GTI owner and nominates no relay.
+  const auto rawPointee = [&](const ExprPtr &object) {
+    const auto place = predeclaredPlace(object.get(), function, ownerType);
+    if (!place)
+      return false;
+    const SemanticType &pointer =
+        place->type.kind == SemanticType::Reference &&
+                place->type.arguments.size() == 1
+            ? place->type.arguments.front()
+            : place->type;
+    return pointer.kind == SemanticType::RawPointer;
+  };
   if (const auto *member = exprAs<Get>(expression.get())) {
+    if (member->access().kind == TokenKind::ARROW &&
+        rawPointee(member->object()))
+      return {};
     return predeclaredTextBorrowSource(member->object(), function, ownerType);
   }
   if (const auto *index = exprAs<Index>(expression.get())) {
+    if (rawPointee(index->object()))
+      return {};
     // Like a field, an indexed receiver can nominate the enclosing source.
     // This is only the prospective relay contract: resolved body analysis
     // must still prove the selected access and returned view depend on it.
@@ -7681,6 +7706,131 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
           return *relayed;
       }
     }
+    // A virtual method returns what its root's contract allows, whichever
+    // override dispatch selects (L-OWN-02). A root without a body, as an
+    // interface method is, or whose returns in the receiver's instance of
+    // its class have no dependency returns ownerless text, so the call relays
+    // nothing. The receiver's declared type is found through this method's
+    // formals, fields and the declared results of the methods that reach it.
+    const SemanticType receiverClass =
+        function.ownerClass == 0 || function.staticMember
+            ? SemanticType(SemanticType::Unknown)
+        : ownerType.kind == SemanticType::Class &&
+                ownerType.classId == function.ownerClass
+            ? ownerType
+            : openClassType(function.ownerClass);
+    const auto declaredType = [&](const auto &self,
+                                  const Expr *expression) -> SemanticType {
+      while (const auto *group = exprAs<Grouping>(expression))
+        expression = group->expression() ? group->expression().get() : nullptr;
+      SemanticType type = SemanticType::Unknown;
+      const auto field = [&](const SemanticType &owner, const Token &name) {
+        const MemberInfo *found = owner.kind == SemanticType::Class
+                                      ? findMember(owner, name)
+                                      : nullptr;
+        return found != nullptr &&
+                       found->symbol.type != SemanticType::Function &&
+                       !found->symbol.staticMember
+                   ? substituteType(found->symbol.type,
+                                    classSubstitution(owner))
+                   : SemanticType(SemanticType::Unknown);
+      };
+      if (expression == nullptr) {
+      } else if (exprAs<This>(expression) != nullptr) {
+        type = receiverClass;
+      } else if (const auto *variable = exprAs<Variable>(expression)) {
+        bool parameter = false;
+        for (std::size_t index = 0;
+             index < function.bodyDeclaration()->parameters().size() &&
+             index < function.parameterTypes.size();
+             ++index)
+          if (function.bodyDeclaration()->parameters()[index].name.lexeme ==
+              variable->name().lexeme) {
+            type = function.parameterTypes[index];
+            parameter = true;
+          }
+        if (!parameter)
+          type = field(receiverClass, variable->name());
+      } else if (const auto *get = exprAs<Get>(expression)) {
+        type = field(self(self, get->object().get()), get->name());
+      } else if (const auto *call = exprAs<Call>(expression)) {
+        if (const auto *callee = exprAs<Get>(call->callee().get())) {
+          const SemanticType owner = self(self, callee->object().get());
+          const MemberInfo *found = owner.kind == SemanticType::Class
+                                        ? findMember(owner, callee->name())
+                                        : nullptr;
+          // Overloads that differ only in receiver access, as a read-only
+          // and a mutable accessor do, agree on the referent they return.
+          const auto referent = [](SemanticType result) {
+            return result.kind == SemanticType::Reference &&
+                           result.arguments.size() == 1
+                       ? SemanticType(result.arguments.front())
+                       : result;
+          };
+          if (found != nullptr && !found->symbol.overloads.empty() &&
+              std::all_of(
+                  found->symbol.overloads.begin(),
+                  found->symbol.overloads.end(),
+                  [&](const CallableCandidate &overload) {
+                    return referent(overload.returnType) ==
+                           referent(found->symbol.overloads.front().returnType);
+                  }))
+            type = substituteType(
+                referent(found->symbol.overloads.front().returnType),
+                classSubstitution(owner));
+        }
+      }
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = SemanticType(type.arguments.front());
+      return type;
+    };
+    const auto findInfo = [&](const auto &id) -> const FunctionInfo * {
+      const FunctionInfo *found = semanticModel.findFunction(id);
+      if (found == nullptr && instanceBaseModel != nullptr)
+        found = instanceBaseModel->findFunction(id);
+      return found;
+    };
+    if (const SemanticType object =
+            declaredType(declaredType, member->object().get());
+        object.kind == SemanticType::Class)
+      if (const MemberInfo *method = findMember(object, member->name());
+          method != nullptr && method->symbol.overloads.size() == 1 &&
+          method->symbol.overloads.front().declaration != nullptr &&
+          method->symbol.overloads.front().virtualMethod) {
+        const FunctionInfo *target =
+            findInfo(*method->symbol.overloads.front().declaration);
+        const FunctionInfo *root = target != nullptr &&
+                                           target->overrideMethod &&
+                                           !target->virtualRoots.empty()
+                                       ? findInfo(target->virtualRoots.front())
+                                       : target;
+        const FunctionDecl *rootBody =
+            root != nullptr && root->declaration != nullptr
+                ? root->bodyDeclaration()
+                : nullptr;
+        if (rootBody != nullptr && rootBody->body() == nullptr)
+          return PredeclaredTextBorrowSource{.known = true};
+        const auto base = rootBody != nullptr
+                              ? inheritedClassInstance(object, root->ownerClass)
+                              : std::nullopt;
+        if (base &&
+            std::none_of(
+                rootBody->parameters().begin(), rootBody->parameters().end(),
+                [](const auto &parameter) { return parameter.pack; })) {
+          const GenericSubstitution substitution = classSubstitution(*base);
+          FunctionInfo instance = *root;
+          instance.returnType = substituteType(root->returnType, substitution);
+          for (SemanticType &parameter : instance.parameterTypes)
+            parameter = substituteType(parameter, substitution);
+          if (instance.returnType.kind == SemanticType::StringView ||
+              instance.returnType.kind == SemanticType::CString)
+            if (const auto summary =
+                    dynamicTextReturnBorrowSummary(instance, *base);
+                summary && summary->origin == BorrowOriginKind::None &&
+                summary->fields.empty())
+              return PredeclaredTextBorrowSource{.known = true};
+        }
+      }
     // Predeclare a receiver-rooted relay contract, not a proof that an
     // arbitrary member call borrows its receiver. Body analysis checks the
     // selected call's actual dependency against this contract before HIR.
@@ -7821,11 +7971,57 @@ auto SemanticVisitor::Impl::textBorrowSummaryInProgress(
                      });
 }
 
+auto SemanticVisitor::Impl::inheritedClassInstance(const SemanticType &derived,
+                                                   ClassId base) const
+    -> std::optional<SemanticType> {
+  std::vector<SemanticType> pending{derived};
+  std::unordered_set<ClassId> visited;
+  while (!pending.empty()) {
+    const SemanticType current = std::move(pending.back());
+    pending.pop_back();
+    if (current.kind != SemanticType::Class || current.classId == 0 ||
+        !visited.insert(current.classId).second)
+      continue;
+    if (current.classId == base)
+      return current;
+    if (const ClassInfo *owner = classInfo(current)) {
+      const GenericSubstitution substitution = classSubstitution(current);
+      for (const ClassBaseTypeInfo &declared : owner->bases)
+        pending.push_back(substituteType(declared.type, substitution));
+    }
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
     const FunctionInfo &function, const SemanticType &ownerType)
     -> std::optional<FunctionReturnBorrowSummary> {
   if (function.declaration == nullptr)
     return std::nullopt;
+  // Virtual dispatch selects an override's body, but a call reads its root's
+  // summary: an override's text result keeps its root's contract in the
+  // override's own instance of the root's class, whose signature is the
+  // override's, and body analysis checks its returns against that
+  // (L-OWN-02).
+  if (function.overrideMethod && !function.virtualRoots.empty()) {
+    const FunctionInfo *root =
+        semanticModel.findFunction(function.virtualRoots.front());
+    if (root == nullptr && instanceBaseModel != nullptr)
+      root = instanceBaseModel->findFunction(function.virtualRoots.front());
+    if (root == nullptr || root->declaration == nullptr ||
+        root->declaration == function.declaration || root->overrideMethod)
+      return std::nullopt;
+    FunctionInfo instance = *root;
+    instance.returnType = function.returnType;
+    instance.parameterTypes = function.parameterTypes;
+    const SemanticType owner = ownerType.kind == SemanticType::Class &&
+                                       ownerType.classId == function.ownerClass
+                                   ? ownerType
+                                   : openClassType(function.ownerClass);
+    return dynamicTextReturnBorrowSummary(
+        instance, inheritedClassInstance(owner, root->ownerClass)
+                      .value_or(SemanticType::Unknown));
+  }
   // One query's summaries, from the outermost call: the semantic state they
   // read does not change within it.
   const auto found =
@@ -10291,6 +10487,26 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
                                           ? SemanticType::Unknown
                                           : member->second.symbol.type});
     }
+    std::vector<ClassVirtualDispatch> virtualDispatch;
+    for (const auto &[name, member] : owner.members) {
+      (void)name;
+      for (const auto &candidate : member.symbol.overloads) {
+        if (!candidate.virtualMethod || candidate.staticMember)
+          continue;
+        for (const auto root : candidate.virtualRoots)
+          virtualDispatch.push_back({.root = root,
+                                     .target = candidate.id,
+                                     .targetOwner = candidate.dispatchOwner});
+      }
+    }
+    std::sort(virtualDispatch.begin(), virtualDispatch.end(),
+              [](const auto &left, const auto &right) {
+                return std::tie(left.root, left.target) <
+                       std::tie(right.root, right.target);
+              });
+    virtualDispatch.erase(
+        std::unique(virtualDispatch.begin(), virtualDispatch.end()),
+        virtualDispatch.end());
     semanticModel.recordClassType(
         *owner.declaration,
         ClassTypeInfo{
@@ -10316,6 +10532,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .mutexGuardBorrowCarrier = isDefaultLibraryMutexGuardCarrier(owner),
             .kind = owner.kind,
             .bases = owner.bases,
+            .virtualDispatch = std::move(virtualDispatch),
             .abstract = owner.abstract,
             .polymorphic = owner.polymorphic,
             .cAbiRecord = owner.cAbiRecord,

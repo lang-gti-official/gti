@@ -1,0 +1,27 @@
+#include <std/mutex>
+
+extern "C" {
+  void gti_test_guard_begin();
+  void gti_test_guard_payload_drop(int32_t value);
+  int32_t gti_test_guard_divisor();
+}
+
+class Payload {
+  int32_t value;
+public:
+  Payload(int32_t value) : value(value) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() { gti_test_guard_payload_drop(this.value); }
+};
+
+int main() {
+  gti_test_guard_begin();
+  std::mutex<Payload> owner{Payload(7)};
+  {
+    std::mutex_guard<Payload> first = owner.lock();
+    std::mutex_guard<Payload> moved = std::move(first);
+    int32_t checked = 12 / gti_test_guard_divisor();
+  }
+  return 0;
+}

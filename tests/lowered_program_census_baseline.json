@@ -1025,7 +1025,7 @@
       }
     },
     "066-managed-threads.gti": {
-      "declarations": 1579,
+      "declarations": 1580,
       "bodies": 248,
       "generated_items": 156,
       "generated_kinds": {
@@ -2770,7 +2770,7 @@
     }
   },
   "totals": {
-    "declarations": 187242,
+    "declarations": 187243,
     "bodies": 24130,
     "generated_items": 15141
   }

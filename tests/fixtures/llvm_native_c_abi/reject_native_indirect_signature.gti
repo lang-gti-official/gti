@@ -1,0 +1,7 @@
+using Operation = (int32_t) -> int32_t;
+using Wrong = (double) -> double;
+extern "C" { Operation native_unary(); }
+int main() {
+  unsafe { Wrong incompatible = native_unary(); }
+  return 0;
+}

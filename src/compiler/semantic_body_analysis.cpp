@@ -93,6 +93,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   lexicallyReachableFunctions.clear();
   semanticModel.clear();
   semanticModel.setExecutionProfile(target.executionProfile);
+  semanticModel.setSourceDebugProfile(sourceDebugProfile);
   semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
   semanticModel.setAnalysisSeal(
       program != nullptr
@@ -2098,6 +2099,9 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Constructor,
                                .id = constructorInfo->id};
   beginScope();
+  beginSourceDebugBody(SourceDebugBodyKind::Constructor, &stmt,
+                       stmt.extent().value_or(tokenSpan(stmt.name())),
+                       stmt.parameters(), nullptr, stmt.name().expansion);
   const bool collectingRawFields =
       requestSession.collectingRawResult &&
       requestSession.collectingRawResult->constructor == constructorInfo->id;
@@ -2300,6 +2304,12 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     analyzingConstructorInitializer = enclosingConstructorInitializer;
     requestSession.constructorTextPayloadArguments =
         std::move(enclosingPayloadInputs);
+    if (field != nullptr && initializer.arguments.size() == 1 &&
+        (fieldType.kind == SemanticType::StringView ||
+         fieldType.kind == SemanticType::CString))
+      noteLocalTextEscape(initializer.arguments.front(),
+                          LocalTextEscapeKind::Storage,
+                          "stored in a constructor field");
     if (field != nullptr && initializer.arguments.size() == 1 &&
         (fieldType.kind == SemanticType::StringView ||
          fieldType.kind == SemanticType::CString) &&
@@ -2552,6 +2562,9 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
                                .id = owner.id};
   auto enclosingRawProgramStorage = saveRawProgramStorage();
   beginScope();
+  beginSourceDebugBody(SourceDebugBodyKind::Destructor, &stmt,
+                       stmt.extent().value_or(tokenSpan(stmt.tilde())), {},
+                       nullptr, stmt.tilde().expansion);
   declareReceiverState();
   if (Symbol *receiver = receiverStateSymbol();
       receiver != nullptr && isDirectStoredReferenceType(receiver->type))
@@ -3632,6 +3645,9 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   }
   ++functionDepth;
   beginScope();
+  beginSourceDebugBody(SourceDebugBodyKind::Function, &stmt,
+                       stmt.extent().value_or(tokenSpan(functionToken)),
+                       stmt.parameters(), nullptr, functionToken.expansion);
   if (methodDeclaration && !staticMethod) {
     declareReceiverState();
     if (Symbol *receiver = receiverStateSymbol();
@@ -5914,6 +5930,7 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
 auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
+  const SourceDebugRegionGuard sourceRegion{*this, stmt};
   const std::size_t declarationDiagnosticStart = diagnostics.size();
   if (stmt.isThreadLocal() && !validateThreadLocalDeclaration(stmt))
     return;
@@ -6068,15 +6085,15 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
            "Values carrying stored references cannot have global or static "
            "storage duration.",
            "GTI-S2045");
-  } else if (processStorage && requiresActiveCleanupFor(declaredType)) {
+  } else if (processStorage && requiresSourceCleanupFor(declaredType)) {
     const std::string storageKind =
         currentClass ? "Static field" : "Namespace global";
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2061", DiagnosticPhase::Semantics, stmt.name(),
         storageKind + " '" + stmt.name().lexeme + "' has type '" +
             typeSpelling(declaredType) +
-            "', which requires active cleanup; GTI does not define "
-            "global or static shutdown.");
+            "', which requires source or owning cleanup; global and static "
+            "storage permit only native resource retirement.");
     if (const std::optional<ActiveCleanupCause> cause =
             activeCleanupCause(declaredType);
         cause && cause->source != nullptr) {
@@ -6365,6 +6382,18 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
         target->completeBorrowSet = complete;
     }
   }
+  // A local view holds what its initializer's text came from: a capture's
+  // text, whose owner has no name, or another local view's (L-OWN-02).
+  if ((declaredType.kind == SemanticType::StringView ||
+       declaredType.kind == SemanticType::CString) &&
+      initializer) {
+    if (globalStorage)
+      noteLocalTextEscape(initializer, LocalTextEscapeKind::Storage,
+                          "given static storage duration");
+    else if (const Symbol *declared = resolve(stmt.name()))
+      if (const auto view = localTextView(*declared))
+        noteLocalTextFlow(initializer, *view);
+  }
   if (initializer && declaredType.kind == SemanticType::Reference &&
       exprAs<DirectInitializer>(initializer.get()) == nullptr) {
     validateReferenceBinding(declaredType, initializerType, initializer);
@@ -6405,6 +6434,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       }
     }
   }
+  if (!globalStorage)
+    recordCapturedTextCarriers(stmt);
   if (stmt.isThreadLocal())
     recordThreadLocalDeclaration(stmt);
 }
@@ -6637,6 +6668,22 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     valueType = simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                                  : analyze(expr.value());
   }
+  // A local view may take a capture's text, whose owner has no name; it
+  // then holds that text for its whole scope and cannot escape. Text that
+  // keeps a dynamic view's owner borrowed is not reassignable, as that view
+  // itself is not (L-OWN-02).
+  const bool textTarget =
+      simpleAssignment && (targetType.kind == SemanticType::StringView ||
+                           targetType.kind == SemanticType::CString);
+  if (textTarget && !capturedTextLoans(expr.value().get()).empty())
+    reportOwnerDependentTextStorage(expr.value(),
+                                    "assigned into an existing binding");
+  else if (const auto targetView =
+               simpleAssignment ? localTextView(symbol) : std::nullopt)
+    noteLocalTextFlow(expr.value(), *targetView);
+  else if (textTarget)
+    noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
+                        "assigned into an existing binding");
   if (simpleAssignment &&
       (targetType.kind == SemanticType::StringView ||
        targetType.kind == SemanticType::CString) &&
@@ -6890,6 +6937,10 @@ auto SemanticVisitor::Impl::analyzeCollectionInitializer(
         isOwnerDependentTextExpression(element)) {
       reportOwnerDependentTextStorage(element, "stored in a collection");
       valid = false;
+    } else if (elementType.kind == SemanticType::StringView ||
+               elementType.kind == SemanticType::CString) {
+      noteLocalTextEscape(element, LocalTextEscapeKind::Storage,
+                          "stored in a collection");
     }
   }
   if (valid) {
@@ -6964,6 +7015,10 @@ auto SemanticVisitor::Impl::visitArrayInitializerExpr(
          elementType.kind == SemanticType::CString) &&
         isOwnerDependentTextExpression(element)) {
       reportOwnerDependentTextStorage(element, "nested in a fixed array");
+    } else if (elementType.kind == SemanticType::StringView ||
+               elementType.kind == SemanticType::CString) {
+      noteLocalTextEscape(element, LocalTextEscapeKind::Storage,
+                          "nested in a fixed array");
     }
     if (!isOwnershipAssignable(elementType, valueType, element)) {
       const auto *info = semanticModel.findExpression(*element);
@@ -8825,6 +8880,10 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
       valid = false;
     }
     const auto &member = owner->members.at(name.lexeme);
+    if (types[index].kind == SemanticType::StringView ||
+        types[index].kind == SemanticType::CString)
+      noteLocalTextEscape(expr.arguments()[i], LocalTextEscapeKind::Storage,
+                          "stored in a field");
     if ((types[index].kind == SemanticType::StringView ||
          types[index].kind == SemanticType::CString) &&
         isOwnerDependentTextExpression(expr.arguments()[i])) {
@@ -9050,6 +9109,11 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
   }
   if (simpleAssignment && ownerType.kind != SemanticType::RawPointer &&
       (valueTarget.kind == SemanticType::StringView ||
+       valueTarget.kind == SemanticType::CString))
+    noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
+                        "assigned through a checked reference");
+  if (simpleAssignment && ownerType.kind != SemanticType::RawPointer &&
+      (valueTarget.kind == SemanticType::StringView ||
        valueTarget.kind == SemanticType::CString) &&
       isOwnerDependentTextExpression(expr.value()) &&
       !requireOwnerlessTextParameter(expr.value())) {
@@ -9128,6 +9192,10 @@ auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
   const SemanticType valueType =
       simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                        : analyze(expr.value());
+  if (simpleAssignment && (targetType.kind == SemanticType::StringView ||
+                           targetType.kind == SemanticType::CString))
+    noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
+                        "assigned through a checked reference");
   if (simpleAssignment &&
       (targetType.kind == SemanticType::StringView ||
        targetType.kind == SemanticType::CString) &&
@@ -9610,6 +9678,11 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
       isOwnershipAssignment(elementType, valueType, expr.value(), targetPlace);
   if (simpleAssignment && objectType.kind != SemanticType::RawPointer &&
       (elementType.kind == SemanticType::StringView ||
+       elementType.kind == SemanticType::CString))
+    noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
+                        "assigned through a checked index");
+  if (simpleAssignment && objectType.kind != SemanticType::RawPointer &&
+      (elementType.kind == SemanticType::StringView ||
        elementType.kind == SemanticType::CString) &&
       isOwnerDependentTextExpression(expr.value()) &&
       !requireOwnerlessTextParameter(expr.value())) {
@@ -9765,6 +9838,14 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   std::vector<LambdaCaptureInfo> captures;
   std::vector<SemanticLoanDependency> captureDependencies;
   Scope captureScope;
+  // Capture initializers run in the enclosing scope, where an enclosing
+  // closure's captures are no places; this body's own captures are.
+  struct CaptureListScope {
+    bool &flag;
+    bool enclosing;
+    ~CaptureListScope() { flag = enclosing; }
+  } captureListScope{analyzingCaptureList, analyzingCaptureList};
+  analyzingCaptureList = true;
   for (const LambdaCapture &capture : expr.captures()) {
     if (!capturedNames.insert(capture.name.lexeme).second) {
       report(capture.name,
@@ -9976,6 +10057,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                .bindingKind = SemanticBindingKind::LambdaCapture,
                .toolingSymbol = bindingSymbol});
   }
+  analyzingCaptureList = false;
 
   // Lambda body analysis is isolated, so transfer the enclosing stack
   // after capture initializers have executed left-to-right in that stack.
@@ -10018,6 +10100,12 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   std::optional<ResultUse> enclosingResultUse = contextualResultUse;
   scopes.clear();
   scopes.push_back(std::move(captureScope));
+  beginSourceDebugBody(SourceDebugBodyKind::Lambda, &expr,
+                       tokenSpan(expr.bracket()), expr.parameters(),
+                       enclosingScopes.empty()
+                           ? nullptr
+                           : enclosingScopes.back().sourceDebugOwner,
+                       sourceExpansion);
   currentReturnType = returnType;
   const bool mutableCaptures =
       std::any_of(captures.begin(), captures.end(), [](const auto &capture) {
@@ -10056,9 +10144,20 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     if (carrier == nullptr)
       continue;
     if (!isBorrowingCapture(capture.mode)) {
-      if (isDirectStoredReferenceType(capture.type))
-        recordStoredEntryDependency(*carrier, capture.bindingSymbol,
-                                    capture.type, false);
+      if (!isDirectStoredReferenceType(capture.type))
+        continue;
+      const auto id = recordStoredEntryDependency(
+          *carrier, capture.bindingSymbol, capture.type, false);
+      // The closure environment owns a by-value capture and any release
+      // obligation it contains, as a caller owns a method's receiver; the
+      // body never destroys it. Its entry describes the declared reference
+      // fields only, so a cleanup-bound capture does not bind the body.
+      if (id != 0) {
+        auto loan = *semanticModel.findLoan(id);
+        loan.lifecycleBound = false;
+        semanticModel.recordLoan(std::move(loan));
+        loanFlow.records.at(id).lifecycleBound = false;
+      }
       continue;
     }
     const auto dependency =
@@ -10122,6 +10221,10 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   const BorrowOriginKind lambdaReturnOrigin = currentLambdaReturn->origin;
   const std::size_t lambdaReturnParameter = currentLambdaReturn->parameter;
   const AccessMode lambdaReturnAccess = currentLambdaReturn->access;
+  // A return of text a capture provided, directly or through a local view
+  // that is ever given it, leaves the result for local use (L-OWN-02).
+  const bool lambdaCapturedText =
+      finalizeCapturedText() || currentLambdaReturn->capturedText;
   currentLambdaReturn = enclosingLambdaReturn;
   if (returnType != SemanticType::Void && returnType != SemanticType::Unknown &&
       summarizeFlow(expr.body()).canFallThrough &&
@@ -10201,6 +10304,9 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       functionTypeArguments, classValueArguments, functionValueArguments);
   semanticModel.recordCaptureBorrowDependencies(expr,
                                                 std::move(captureDependencies));
+  const bool capturedTextResult =
+      lambdaCapturedText && (returnType.kind == SemanticType::StringView ||
+                             returnType.kind == SemanticType::CString);
   semanticModel.record(
       expr,
       LambdaInfo{.id = id,
@@ -10218,7 +10324,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                  .rawAccessFreeType =
                      rawAccessFree && !containsOpenTypeParameter(currentType)
                          ? currentType
-                         : SemanticType::Unknown});
+                         : SemanticType::Unknown,
+                 .capturedTextResult = capturedTextResult});
 }
 
 auto SemanticVisitor::Impl::layoutScalarKind(const SemanticType &type)
@@ -11326,6 +11433,10 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
   const SemanticType valueType =
       simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                        : analyze(expr.value());
+  if (simpleAssignment && (targetType.kind == SemanticType::StringView ||
+                           targetType.kind == SemanticType::CString))
+    noteLocalTextEscape(expr.value(), LocalTextEscapeKind::Storage,
+                        "stored in a field");
   if (simpleAssignment &&
       (targetType.kind == SemanticType::StringView ||
        targetType.kind == SemanticType::CString) &&
@@ -14964,6 +15075,8 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
        retainedSymbolicRangeIterator)) {
     recordRetainedBorrow(declaration, declaration.initializer());
   }
+  if (local && !declaration.isThreadLocal())
+    recordCapturedTextCarriers(declaration);
 }
 
 } // namespace lang

@@ -9051,6 +9051,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `function_item_runtime` | exact namespace function items through a source-defined algorithm plus managed `void()` and owned-result tasks; deterministic MIR identity; C++20/O0 and C++23/O3 build and execution without a raw/native function pointer |
 | `atomic_semantic_ir` | closed scalar domain and rejected near misses; dormant-import/profile/target/private-capability boundaries; immutable global admission; exact SC defaults plus every legal explicit load/store/exchange/CAS success/failure order in HIR/MIR; rejection of operation-illegal tag combinations before backend entry; optimizer barrier preservation; sealed C++20/C++23 vocabulary; and fail-closed forged operation/order/provenance mutations |
 | `atomic_end_to_end` / `atomic_tsan` | scalar construction/load/store/exchange/strong-CAS success, failure, observation, movement, and every explicit order overload; managed-thread CAS contention; the SC store-buffer litmus; deterministic release/acquire publication with relaxed payload access; O0/O3 under C++20/C++23; repeated stress; and ThreadSanitizer where supported |
+| `mutex_move_cleanup_runtime` | C++20/23 O0/O3 moved trivial/nontrivial mutex owners and moved guards; exactly-once reverse payload cleanup; inactive moved-from native shells leave primary records unchanged; active secondary failure preserves the emergency envelope and abandons later cleanup. A retained-C++ oracle repair, not native LLVM mutex acceptance. |
 | `expected_wrong_state_runtime` | wrong-state `expected.value()` and `expected.error()` terminate through `GTI-R0009` at O0/O3 under C++20/C++23 rather than inheriting native-library behavior |
 | `expected_propagation_runtime` | exact once-only, left-to-right `?` evaluation; `expected<void, E>` forwarding; named-operand copy versus prvalue/`std::move` move behavior; active-alternative error transport; and ordinary branch/return cleanup at O0/O3 under C++20/C++23 |
 | `expected_transform_error` / `expected_transform_error_lsp` | exact namespace mapper selection, consuming receiver and owned-result diagnostics with source/UTF-16 spans and related declarations, HIR branch/call lowering, verified MIR return and join ownership, fail-closed mutation tests, and compiler-backed completion/hover/definition and recovery |
@@ -10102,6 +10103,336 @@ ownership or entry-signature inference.
 
 ### Native LLVM Admission Gates
 
+`llvm_native_c_outbound_boundary` checks direct and function-pointer C calls
+through real source callbacks at LLVM O0-O3 with C++20/23 controls and native
+helpers at O0/O3. Normal and explicitly translated C results preserve reverse
+GTI cleanup; a translated zero followed by GTI division failure preserves
+cleanup, source attribution and callback terminal containment. A native shim
+that catches and terminates is a distinct negative control. A deliberately
+escaping C++ exception is labeled contract-violating fault injection: the test
+records observed GTI cleanup, but neither promises it nor credits this case to
+production coverage. No exception becomes a GTI failure record. These probes
+do not validate either private C04 transport, select a foreign firewall policy,
+or satisfy generated-code sanitizer gates.
+
+The registered evidence inventory reconciled through `d3585a07d` contains 217
+source cases. It retains every case identity from the prior 143-case inventory
+and adds two class cases, 21 hosted cases, 32 native-interop cases and 17
+dispatch cases, then two concurrent C-thread startup cases. Execution manifests
+use schema v2 with an explicit single-threaded or concurrent profile per group;
+structural probes consume that profile rather than guessing it from source.
+Existing case-context sidecars remain intact. Removing only the two new cases
+and v2 profile metadata reproduces the prior 215-case fingerprint exactly.
+Its count and content fingerprint remain enforced. This
+inventory reconciliation does not mark those cases executed, remove frozen
+baseline obligations, or satisfy any target, sanitizer, cost or promotion gate.
+
+`llvm_cleanup_context_execution` compiles ordinary user classes through C++23 O3
+and LLVM O0-O3, checking normal cleanup, a first failure inside a destructor,
+an inherited secondary failure before callee-local destruction, and scope
+restoration before a later ordinary failure. `llvm_hosted_cleanup_execution`
+uses an explicitly inventoried alternative library to inject constructor and
+destructor failures into owned argument startup. Its exact drop order, original
+primary/secondary messages and source locations are checked on C++ O3 and LLVM
+O0/O3. Instrumented release-return markers additionally check completion after
+each successful string drop and immediate stopping at a secondary failure;
+removing those markers must fail the checker. They do not measure allocator
+calls or freed bytes. These are execution checks, not stock-library census receipts or evidence
+for the pending managed-worker transport. `runtime_failure_boundary` separately
+checks root/nested cleanup tokens, restoration and per-thread isolation.
+
+The optional C04 MIR transport experiment is outside normal production targets
+and CTest acceptance. Configure an optimized compiler build with
+`-DGTI_BUILD_LLVM_C04_EVALUATION=ON`, explicitly build
+`gti_c04_status_emitter` and `gti_c04_unwind_emitter`, then run
+`tests/llvm_c04_mir_evaluation_test.py` with `--root`, `--status-emitter`,
+`--unwind-emitter`, `--runtime` and a new `--output` directory. Use the shared
+build/suite windows. The output retains commands, diagnostics, sealed MIR, IR,
+objects and hash receipts. `--sanitized` instruments the C++ carrier; supply a
+sanitized runtime archive for runtime coverage. It does not instrument generated
+LLVM code and cannot satisfy production generated-code sanitizer gates.
+The narrow supported profile and remaining proof obligations are recorded in
+[C04](../plans/implementation-sequence.md#c04-failure-transport-evaluation).
+The default `scalar-cleanup` profile still rejects native imports. Explicit
+`--profile native-boundary` selects a separate private matrix for declaration-
+backed scalar C calls with exact optional `int*` observer parameters. It binds
+the sealed declaration, signature, staged inputs and pointer-call unsafe
+permission; function-pointer imports, opaque objects, foreign storage and
+callbacks remain outside this evaluation profile. Omitted/default profiles,
+mutated targets/symbols/signatures/stages/permissions and frontend unsafe
+violations reject. No production admission or backend selection is changed.
+
+Both the body and cleanup landingpads forward the actual exception pointer.
+The harness rejects any one-argument channel-transfer call before linking,
+so neither path can silently retain a TLS-only transfer convention.
+
+Every experimental unwind landingpad must supply its actual exception pointer
+to the test-owned carrier transfer helper. Before reading a GTI channel, the
+helper checks the public unwind-header class for the linked libc++abi/libsupc++
+runtime, then compares the opaque pointer returned by `__cxa_get_exception_ptr`
+with the live private carrier object's registered address. TLS activity alone
+is insufficient. This uses the
+[Itanium unwind and C++ accessor contracts](https://itanium-cxx-abi.github.io/cxx-abi/abi-eh.html),
+not private exception-header offsets, payload casts or catch ownership changes.
+Dependent exceptions, other runtime classes and nonmatching objects terminate
+in this private evaluation; cross-runtime and forced-unwind support is not claimed.
+
+The native matrix checks conforming translated C results, subsequent GTI failure
+attribution and source cleanup, plus deliberately violating foreign throws
+before a primary and during its cleanup. The latter includes an unrelated C++
+exception, an unregistered object of the same private type, and a Level-I unwind
+object without any C++ header. Parent-visible cleanup slots and channel-read
+counts distinguish these from the actual active carrier. They terminate without
+reusing a primary record; this is experimental classification, not a newly
+selected outbound containment contract. `llvm_c04_cost.py --fixtures
+native_boundary` consumes only matching native-profile receipts and reports
+the same bounded candidate cost fields as the scalar matrix.
+Use `--call-boundaries fixed` (the default) for the controlled noinline baseline
+and `--call-boundaries optimizable` in a separate output directory for ordinary
+LLVM pipeline decisions. The latter removes only the experiment's `noinline`
+attributes; it does not force inlining or alter the production pipeline. Both
+policies run the same cleanup, attribution and rejection checks. Module metadata
+and receipts identify the policy, and the scalar O3 receipts record the number
+of remaining GTI calls in the entry body. A retained call is a valid optimizer
+decision, not evidence that the optimizable experiment failed.
+These checks cover scalar propagation and exactly-once
+scalar/reference-field cleanup across three frames, including repeated and
+alternating failures. Fallible lifecycle cases check remaining local cleanup,
+non-destruction after a failed constructor, original primary/secondary source
+locations, and terminal stopping before later destructors. The last check uses
+a mapped parent-observable buffer rather than relying on normal process exit.
+Ordinary owned-record fields exercise constructor rollback, cleanup of remaining
+fields after either the containing destructor or one child fails, and terminal
+failure during that drain. Owning parameters check exactly-once cleanup both
+before call entry (a later argument fails) and after transfer to the callee.
+Fresh owning results check both ordinary publication and rollback after a
+remaining local destructor fails. Production `llvm_placement_execution` also
+checks returned borrowed carriers, their referent identity and rollback order;
+its fresh-return chain has an explicit C++ vocabulary comparator gap, while
+the failure-cleanup case retains C++20/23 comparison.
+`llvm_cleanup_context_execution` additionally propagates a long panic message
+with an embedded zero through three source frames, checking every reported byte,
+the original location and deterministic cleanup order against C++23 and LLVM
+O0-O3. A second case preserves two distinct long messages and their original
+sites in the emergency envelope, with no later outer destructor after the
+secondary failure. The C04 retained-input checks reject aggregate-SSA channel
+and emergency-record copies and require the status path's bulk channel transfer.
+Local ordinary-record replacement exercises the paired cleanup/publication
+schedule. Its unsafe `int*` observers count destruction of the old value,
+prepared replacement and surrounding owner when the old destructor fails;
+preparation failure leaves the old owner live until ordinary cleanup, and a
+second failure while draining the prepared RHS terminates before outer cleanup.
+The matrix repeats these cases through a two-field projection chain, retaining
+the parent binding's cleanup while the field's prepared Value is consumed by
+its exact target-zero Replace event. It also admits the existing final Exit
+publication of ConstructionRollback obligations in field-initializer schedules.
+No arbitrary TransferOut or replacement recipe is accepted by that extension.
+The observer storage belongs to the caller and outlives every generated call.
+The experiment permits only typed scalar raw dereferences, not pointer arithmetic
+or allocation. Opaque-pointer/array fields and borrowed-record destinations
+remain rejected before object publication; raw/indexed replacement is outside
+the profile. These are not arbitrary ownership transfer,
+worker or performance
+acceptance and must not substitute for existing backend gates. `generated.ll`
+retains verified pre-object-emission IR; `generated.codegen.ll` retains the
+post-pipeline/target module for inspecting actual inlining. Target emission may
+rewrite `resume` into platform unwind-runtime calls, so the latter is not the
+input-IR oracle. Hash receipts are also printed into the step
+log so managed-runner collection retains them before deleting its build tree.
+
+For bounded transport-cost evidence, run that evaluation without `--sanitized`
+and with `--build-metrics` on macOS or Linux. The latter retains system-time
+output, emission/link wall time and peak RSS (normalized to KiB). It measures
+the fixture compiler invocation and host link, not a full compiler rebuild.
+Then run `python3 tests/llvm_c04_cost.py --evidence <output>/evidence.json
+--output <new-cost-directory>` inside the suite window; provide `--size-tool`
+if `llvm-size` is not on PATH. The reporter verifies object/executable/input
+hashes (including retained codegen IR when present), rejects sanitized receipts,
+mismatched MIR and mixed boundary policies, and checks an independent
+checksum on every timed run. Defaults use two warmups and nine alternating
+samples per candidate for direct/indirect success, failure and mixed entry.
+Each report retains the raw observations, per-call distributions, medians,
+object/executable sizes and code/unwind sections (same-named Mach-O sections
+are summed, with the original tool output retained). Run
+`python3 tests/llvm_c04_cost_test.py` for the automation-only controls; its
+system-time check requires permission to collect child-process memory metrics.
+Use `--fixtures field_replacement_cleanup` to measure the additional nested-field
+case. The default five-workload selection remains compatible with earlier receipts.
+Neither boundary mode's microbenchmarks establish whole-program speedups,
+allocation counts, worker/callback costs, contention isolation or final transport
+acceptance. Keep those missing obligations explicit in the C04 decision.
+
+`tests/llvm_c04_allocations.py` separately relinks validated unsanitized O3
+objects with an allocation observation library; pass `--root`, `--evidence`,
+`--runtime` and a fresh `--output`. It preserves the original object/runtime
+hashes and records the instrumented executable and observation-source identities.
+It is not a timing run. Positive controls require one successful replacement
+C++ `new`/`delete` and one actual `__cxa_allocate_exception` provider call;
+disabled-counter controls precede each measured execution. Direct and indirect
+success, failure and alternating entry retain the execution/cleanup oracle.
+`tests/llvm_c04_allocations_test.py` rejects forged or omitted control/count facts.
+
+Counts cover successful intercepted C++ allocation requests and requested bytes,
+delete calls, and primary exception-provider requests/payload bytes. They do
+not count direct malloc/calloc/realloc, all allocations inside dynamic libraries,
+allocator residency or exception ABI headers. A provider can use pooled storage,
+so an exception request is not evidence of a fresh system allocation. The
+initial Darwin control showed that libc++abi's internal exception-release call
+does not traverse the interposed public symbol; exception deallocation counts
+are therefore explicitly unavailable, not assumed zero. This probe does not
+establish OOM behavior or complete allocation freedom.
+
+The explicit private `--profile dynamic-calls` selects a sealed source root and
+its verified dependency closure, including actual `function_ptr` formation and
+invocation. It does not change or fabricate the production admission plan.
+Both candidates use the central ABI planner; the unwind copy forwards its
+planned direct result instead of interpreting it as a Boolean status. A runtime
+choice between two source targets executes through the real generated adapters.
+Mutation controls reject missing/duplicate/forged roots, missing targets,
+signatures and staged inputs. Scalar-profile omission and the original scalar
+negative fixtures still reject before overwriting an existing object.
+
+The separate `--profile scoped-workers` consumes actual sealed scoped-task
+adapters from public `std::parallel_invoke`. The evaluation-only C envelope uses
+the existing runtime to start and join real workers, retain the first failed
+input's record/artifact, and then drain task-owned cleanup recipes in reverse
+order on the caller. A private entry catches the actual candidate carrier only
+after the GTI worker frames have finished cleanup; only then does it invoke the
+existing C++ managed-worker handoff. That runtime marker never substitutes for
+the primary GTI carrier. The task descriptor/query signature is test-owned,
+not a selected production worker convention.
+
+Worker fixtures cover disjoint borrowed referents, repeated calls, source-local
+cleanup, task-owned cleanup on success and worker failure, first caller-side
+cleanup failure and immediate terminal secondary failure with both original
+sites. Source-destructor task types retain their explicit `unsafe_transfer`
+obligation; omission rejects with GTI-S2084. Exact scope/adapter/target/catch facts
+have mutation controls. Deterministic runtime creation faults exercise zero and
+one started worker, join-all, cleanup of unstarted tasks and immediate reuse.
+Nested scopes and worker-local destructors with failure-capable MIR operations
+remain rejected pending the private emergency-handoff landingpad comparison.
+The ordinary lifetime guards are retained even for leaf destructor bodies.
+These profiles add no public admission, thread lowering, foreign-firewall policy
+or production failure ABI.
+
+Use `--fixtures dynamic_pointer` or `--fixtures scoped_worker` with the cost
+and allocation reporters on the matching profile's receipts. Worker timing
+includes actual host thread start/join, not just a synthetic status loop; choose
+bounded iteration counts and retain raw variation. Worker allocation runs also
+measure an independent empty-task baseline through the same runtime: at least
+two runtime state allocations plus any host thread-library allocations per
+two-worker scope, with balanced deletion. Generated worker execution must match
+that measured allocation/byte baseline. Ordinary failure uses two existing C++
+runtime handoff exceptions in either candidate; the unwind candidate additionally
+allocates two private GTI worker carriers and one caller carrier after join.
+Counts remain provider observations, not total heap or timing evidence.
+
+##### C04 Two-Host Decision Evidence (2026-10-27)
+
+This is a recommendation to the ABI/failure owner, not a selected convention
+or production acceptance. Exact clean source
+`d655441fd77834402147a8eb9a4d2f9e4c364c83` includes the frozen integration
+`aac6bd032d2e1e083331e60091d3311eaf1ac6b6`; later integration source is not
+covered. PR 363 preserves the implementation and dependency histories.
+
+Darwin AArch64 (LLVM 23.1.2) and Linux x86_64 System V (LLVM 21, GCC 14)
+passed, for each fixed/optimizable policy: dynamic 4/4, workers 16/16,
+native boundary 4/4 and scalar cleanup 92/92 observations. Dynamic/worker
+helper ASan/UBSan matrices passed 4/4 and 16/16, respectively; generated
+objects and the runtime archive were not instrumented by those helper flags.
+Both allocation profiles passed 12 observations per policy. Cost controls
+6/6, allocation controls 3/3 and ten affected native/callable/dispatch/storage/
+memory/admission/cleanup gates passed. This is not a full campaign or proof
+of worker-local fallible cleanup, nested scopes, arbitrary erased environments,
+public callback transport or final fallible embedding.
+
+The Linux managed run `run-50f2841a136e46d0b759ad03766fe785` passed, was fetched
+and removed. Snapshot SHA256:
+`1c09ddc805ce024cdbeb4deb348bec919e079492b5fd8cc9289546d1833c4e3e`.
+Its lossless content-addressed archive retains 22,620 artifact paths and 8,932
+unique objects in 20 ZIPs; every CRC, size and SHA256 was verified, with no
+runner truncation. The Mac archive retains the same path count and 8,626 unique
+objects in 20 verified ZIPs. Durable results are under the primary checkout's
+`build-worktrees/llvm-production-native-handoff/{c04-d655-macos,linux-c04-d655-validation}`;
+the handoff records commands, source hashes, archive indexes and older evidence.
+
+O3 dynamic-call medians below are nanoseconds per invocation, status/unwind;
+the ranges cover direct and indirect root entry, not confidence intervals.
+Each entry still performs actual runtime-selected GTI adapter invocation.
+
+| Host / boundaries | Success | Failure unwind/status |
+| --- | --- | --- |
+| Darwin fixed | 7.90 / 8.03-8.22 | 72.8-73.3 |
+| Darwin optimizable | 4.17-4.18 / 2.55-2.81 | 59.2-59.7 |
+| Linux fixed | 12.65-12.68 / 11.03-11.05 | 12.99-13.08 |
+| Linux optimizable | 6.83-7.96 / 3.99-4.01 | 11.30-11.72 |
+
+Linux timing overlapped another registered two-job build; load average was
+about 3.10 on eight CPUs and raw samples vary materially. Darwin load was
+about 4.35-4.47 on twelve CPUs. Neither run establishes isolated whole-program
+speedups. The Darwin optimized dynamic result is nevertheless a concrete
+status hot-path disadvantage (1.36-1.63 ns), not parity. Retained optimized IR
+shows status output slots/branches versus direct scalar return with unwind;
+this is a plausible explanation, not a new ABI contract. Real two-worker
+success medians span 14.8-16.2 us on Darwin and 33.1-37.8 us on Linux, with
+variation and inconsistent winner. Worker failure unwind/status ratios are
+1.60-1.74 on Darwin and 1.10-1.20 on Linux; no worker-success parity claim.
+
+Optimizable dynamic text/unwind bytes are status 1192/488 versus unwind
+984/576 on Darwin, and 1045/416 versus 933/388 on Linux. Optimizable worker
+bytes are 1024/328 versus 848/360 and 963/280 versus 803/272, respectively.
+Receipts retain fixed-policy sizes, complete object/executable sizes, fixture
+emission/link wall time and peak RSS. These are not full compiler build costs.
+
+For 64 dynamic failures, status observed no exception-provider requests and
+unwind observed 64 one-byte payload requests; neither observed C++ new/delete.
+For 64 two-worker scopes, both candidates exactly matched the independently
+measured empty-runtime baseline: Darwin 512 new/delete calls, 248832 requested
+bytes; Linux 256 calls, 238592 bytes. Worker failures observed 128 exception
+requests for status and 320 for unwind, including existing runtime handoffs.
+Success observed no exception requests. These are bounded provider counts,
+not total heap allocations, exception frees, residency or OOM evidence.
+
+**Recommendation:** pursue native unwinding as the proposed hosted internal
+transport, subject to the explicit owner decision and correctness obligations
+below; retain current production status behavior until that migration is
+validated. This revises the earlier native-only provisional status preference:
+actual optimized dynamic adapters expose a successful-path and text-size cost
+that the native-only comparison did not measure. The recommendation prioritizes
+successful internal calls, not an assumed measured application failure rate.
+It explicitly accepts neither the substantial failure-path cost nor the status
+hot-path disadvantage on the owner's behalf. Expected/recoverable source
+results remain ordinary values; do not benchmark a different failure contract
+or hide costs by moving source failures into that protocol.
+
+The owner must accept the measured workload tradeoffs or require optimization
+before selecting either candidate. Required remaining implementation inputs:
+
+- Approve the exact C04-only managed-emergency landingpad extension retained as
+  `c04-managed-emergency-resume.patch` in the handoff. It changes no production
+  owner cleanup or dispatch. Body and cleanup landings must resume an active
+  managed emergency before reading a GTI channel. The existing typed runtime
+  catcher, not TLS alone, establishes handoff identity; foreign exceptions
+  terminate. Prove disposal of a superseded, previously identity-verified GTI
+  carrier only after its LLVM frames exit, without guessed exception headers,
+  double destruction, primary reuse or abandoned-carrier leaks. Until then
+  worker-local fallible cleanup and nesting remain explicit rejections.
+- Select carrier ownership, OOM/emergency storage, personality/unwinder and
+  foreign/forced/dependent-unwind policy for both supported targets. The private
+  C++ marker and test-owned worker query are not production ABI proposals.
+  Ordinary C callbacks remain terminal containment; imports retain their
+  no-foreign-unwind contract. A violating foreign throw is not a GTI failure.
+- Record one convention and migration in ADR 031/C04, then update the single
+  ABI authority, all definitions/call forms/adapters, ABI/cache identity and
+  runtime/package linkage together. Native C signatures stay separate. Define
+  fallible embedding ownership, output publication and unload pinning without
+  letting an internal carrier cross the ordinary C export boundary.
+- Complete generated-code/runtime sanitizer, application-level performance,
+  dynamic-owner lifecycle and installed-consumer checks on the selected source.
+  Retain constructor/result/parameter rollback, original artifact attribution,
+  worker join-all and terminal secondary-failure semantics. Remove the private
+  comparison hooks after migration; no permanent alternate production backend.
+
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves
 as a comparator for its existing supported behavior. Retain valid differential
@@ -10132,21 +10463,144 @@ ownership diagnostics and unsaved-version recovery, without editor-only rules.
 O-LLVM-02 adds the following independent checks while full-language LLVM support
 remains pending:
 
+`llvm_case_context_controls` compares every shipped example's normalized census
+plan to a frozen pre-extraction oracle, including sorted discovery, the exact
+concurrent selections, source hashes, cwd, environment `setdefault`, timeout and
+MIR-count/failure observations. A controlled compiler exercises all plans
+without compiling the example corpus. Deliberate source/profile/option drift
+rejects. One optimized real admission probe remains separate; census emission
+does not supply LLVM execution, target applicability or promotion evidence.
+
+`llvm_scalar_context_controls` freezes the pre-migration manifest and normalized
+plans, keeping source/profile membership, materialized paths, endpoint order,
+environment/cwd/time bounds and full differential assertion policy. Controlled
+observations exercise every case and selection; mutations reject lost failure
+attribution, missing diagnostics, wrong exit/output, replaced sentinel artifacts
+and fabricated sidecar observations. These controls complement
+`backend_execution_protocol` and real selected scalar success/defined-failure
+endpoints; controlled outcomes are not native execution receipts.
+
+`stdlib_surface_context_controls` compares every canonical case with frozen
+setup/build/observation plans and controlled results, deriving membership from
+the validated surface manifest. It preserves hex fixtures, ordered native
+inputs, explicit/absent profile flags, compiler environment overrides, separate
+runtime environment inheritance, time bounds, stdin and exact output. Synthetic
+diagnostic/timeout controls exercise existing branches without changing the
+manifest. The representative real owning check uses the existing implicit
+backend and is reported separately from LLVM admission/execution evidence.
+
+`llvm_canonical_host_controls` exercises the separate canonical-repository,
+actual-host admission contract through the normal public driver pipeline.
+Real selected scalar, memory address-conversion and callable-pointer sources
+run at MIR `O0` and `O3`, retaining admitted-only or unsupported outcomes rather
+than forcing a fixture to pass admission. Relative includes and the mandatory
+prelude are bound from loaded source bytes. Missing entry/prelude, missing
+definitions/entry point, invalid profile/level, changed source/build/resource,
+purpose/closure and profile/capability mutations are controlled independently.
+Missing execution-only runtime resources do not block no-link admission.
+An existing concurrent-source fixture is rejected with `GTI-S2084` under the
+canonical single-threaded profile despite available thread capability; the
+normal LLVM-selected CLI reproduces that diagnostic and preserves its output
+sentinel. Retained raw output, distinct receipts, resumed/interrupt attempts and
+legacy-mode rejection prevent cross-mode evidence reuse. These focused checks
+do not run the corpus, emit native code, execute selected programs or reconcile
+the historical baseline; all broader readiness gates remain open.
+An additional real virtual-call source exercises conservative
+`all-executable-bodies` reachability at `O0`/`O3`; its receipt preserves the
+actual admission result while keeping source definition completeness required.
+Malformed/unknown reachability closures reject. Conservative reachability is
+not a frontend/MIR/observer failure or a source-policy relaxation.
+
+The combined O-LLVM-07/08 scalar-owner probe,
+`gti_llvm_session_tests --payload-unique-owner <source-root>`, retains normal
+source lowering, verified scalar-owner payload extraction and both drops. Its
+C byte-provider shim updates ordinary GTI mutable scalar counters through
+test-only aliases of exact sealed global identities, installed before LLVM
+module verification and optimization. Source checks require one allocation and
+no release while the extracted owner remains live, followed by exactly one
+release after its drop; the shim also rejects double release. These aliases
+are test instrumentation, not production exports or arbitrary foreign-C call
+coverage. General foreign counter getters remain an O-LLVM-11 prerequisite.
+
+The dispatch-layout gate also checks the private active-object descriptor:
+signed target-width displacements use the physical pointer owner's offset;
+ordinary virtual invocation retains two loads; invalid non-class and
+non-dispatch-bearing recovery requests emit no instructions. Native O0/O3
+execution recovers every relocated interface/base view and distinguishes an
+installed base state at a nonzero offset from the complete allocation. These
+are representation checks, not proof of dynamic cleanup or legal downcasting.
+
+The same gate distinguishes static unique/shared owners of ordinary records
+containing hierarchy storage from genuinely polymorphic pointees. Exact static
+recipes emit and reuse their helpers; forged dynamic metadata and genuinely
+dynamic recipes reject before publication, including after cache warming.
+Native O0/O3 probes link the real runtime and exercise passive pointee release,
+shared two-to-one survival, last-owner release, null handles and repeated empty
+cleanup. These checks do not prove source destructor failure paths or dynamic
+deletion, and do not replace their independent execution gates.
+
 | Gate | Evidence |
 | --- | --- |
-| `llvm_admission` | Every typed ledger row has a milestone/predicate; unknown values and sentinels reject; snapshot/target/policy identity survives; sealed entry/dependency reachability separates dormant metadata from required execution, with conservative all-body fallbacks; scalar, array, borrow, cleanup, native and TLS shapes are inventoried; pending generation carries source provenance and emits no artifact. |
+| `llvm_admission` | Every typed ledger row has a milestone/predicate; unknown values and sentinels reject; snapshot/target/policy identity survives; sealed entry/dependency reachability separates dormant metadata from required execution, with conservative all-body fallbacks. Sealed virtual calls retain all matching-root implementations and transitive helpers, including unsupported targets, without demanding unrelated families. Exact hierarchy call/return loans have positive source witnesses and forged producer/access/type/return-loan rejection. Scalar, array, borrow, cleanup, native and TLS shapes are inventoried; pending generation carries source provenance and emits no artifact. |
+| `llvm_dispatch_execution` static-owner/reference composition | The runnable `examples/llvm/borrowed-hierarchy-owners.gti` and derived cases execute readonly/mutable interface and concrete-base returns, forwarding already-adjusted references, unique reset/empty reset, shared cloning/last release and exactly-once cleanup at LLVM O0-O3. Failure cleanup preserves the original failure/source; a wrong-trace mutation must produce secondary failure. Local-reference escape, mutable return from readonly input and owner reset while a view is retained reject with artifact preservation. Exact existing C++ text-vocabulary failures are recorded, not counted as comparison passes. |
+| `llvm_dispatch_execution` nested generated transfers | `examples/llvm/nested-hierarchy-transfer.gti` checks independent copied field state and chained moves through containing records with exact nested cleanup, with C++20/23 O3 and LLVM O0-O3 execution. Failure after movement drains the surviving fields once; a wrong-trace control rejects. The layout gate mutates nested deleted/source-defined/borrowed-field policies and cleanup recipes, and proves fresh moves select the shared generated-relocation helper without publishing during preflight. |
+| `llvm_coverage_evidence` | Every executable implementation claim names a registered execution test and a `gti.llvm.execution-evidence/v2` manifest profile derived from that test's runnable case dictionary, with explicit `execution-profile` metadata. Producers default to `single-threaded`; concurrent profiles explicitly select `concurrent`. The probe models hosted execution, enables thread capability only on supported host targets, and preserves the complete target through analysis and lowering; the audit checks the observed profile key. Missing tags, unknown values (including `sequential`), unknown override keys and v1 manifests reject. CMake producers use one deferred registry service rather than editing the audit; malformed, duplicate, non-CTest or missing-script registrations, a CTest command that runs a different script, and missing/unsupported manifest contracts fail mutation controls. Stable source IDs carry repository/inline origin plus the SHA-256 of the exact UTF-8 source. A test-only admission probe verifies that the profile's real GTI sources reach the exact ledger row; unknown fields, stale hashes, dangling sources, stale tests/profiles, synthetic pending passes and unavailable gates also reject. Reports bind the compiled identity to live repository HEAD/cleanliness and record build configuration, platform, compiler and LLVM identity while retaining distinct `passed`, `failed`, `unrun` and `unavailable` observations. Structural completeness, fully observed execution and production readiness are separate: unrun evidence, dirty/stale source and explicit implemented-evidence gaps remain promotion blockers. Row linkage is not substituted for successful execution, cleanup/failure evidence or a second platform run. |
 | `llvm_coverage_exhaustiveness` | A real host compilation accepts the ledger, then rejects an added terminator member without a count sentinel and an added MIR instruction field. It does not parse C++ enums with a second language parser. |
 | `llvm_backend_dependency_controls` | New helper discovery, configured target ownership (including included build files), source-only literal checks, transitive frontend/optimizer/C++ dependencies, hidden sources and public LLVM exposure are tested with mutations. |
 | `backend_execution_protocol` | Backend selection and mode arguments, native versus retained-C++ artifact contracts, build rejection/missing artifacts, and exit/stdout/stderr preservation. Real execution evidence comes from the corpus, not its mock protocol controls. |
 | `llvm_backend_cli`, `driver_pipeline` | Native scalar object/executable publication, stable `GTI-B0003` for unsupported required shapes, exact optional source spans with entry fallback, unchanged argument validation and preservation of an existing destination on rejection. |
 | `llvm_backend_foundation`, `backend_lowered_program_rejection`, `llvm_backend_library_boundary` | The sealed input still owns generation; malformed input rejects before admission; the installed/public backend interface remains independent of LLVM headers. |
 | `llvm_target_layout_abi` | O-LLVM-03 scalar/array/recursive-record/C-record/union layouts, target mismatch rejection, private result/status/failure signatures, exact C narrow extensions, versioned runtime-record layouts, recursive declaration/provenance, unresolved-definition and LLVM-verifier rejection, diagnostic isolation, and real binary object publication/linking with bidirectional C scalar oracles at O0/O1/O2/O3. Run on macOS arm64 and Linux x86_64. No GTI instruction lowering is claimed. |
+| `llvm_polymorphic_storage_layout` | Private inline-slot representation: real trusted capability instances at capacities 1/4096 and every alignment power 1 through 4096; exact extent, offsets, stride and containing-record alignment; malformed identity/footprint rejection; native C observer checks actual stack/payload addresses and first/last-byte access at O0/O3. Public operation admission must remain rejected until lifecycle support lands. Required on macOS arm64 and Linux x86_64; this is component representation evidence, not callable execution. |
+| `llvm_polymorphic_storage_mechanisms` | Private sealed-operation component: inert construction, occupancy/read/read-mut/reset, descriptor-driven relocation through nested records and empty fields, runtime-selected models with different interface offsets, and moved-from empty state. External C observes actual payload values and rebased addresses at O0/O3. Empty read, occupied construction, insufficient capacity/alignment and read-after-reset trap without a defined-failure channel; detached MIR instructions/constructors, ordinary non-capability constructors and identical relocation addresses reject before publication/writes. Default-constructor entry establishes empty state in nonzero storage. Required on macOS arm64 and Linux x86_64. Public admission remains rejected pending ordinary source lifecycle and boxed-cleanup integration; this is not full callable support. |
+| `llvm_dispatch_layout` | Dispatch/lifetime representation proofs, including inert generated relocation through records, fixed arrays and payload enums: non-publishing preflight, rejection of cleanup-bearing/borrowed inputs and foreign sessions, exact helper reuse, logical field transfer and destination header installation. The relocation component links an external C observer and executes at O0/O3, with distinct physical interface headers and unchanged source headers. Payload cases cover multiple fields, different variants, source-tag retirement, empty/inactive payload bytes and rejection of a cleanup-bearing variant even when inactive. General generated-relocation cases observe exclusive/shared handle transfer and null sources, unchanged reference counts, active/suppressed destructor-permission transfer in records and payloads, deleted-move rejection, and strict inert rejection even after caching a general helper. These component cases prove representation state, not source destructor execution. Required on macOS arm64 and Linux x86_64 before component acceptance; it does not grant source copy/move or private slot operation admission. |
+| `llvm_memory_execution` relocation cases | `typed-relocation` checks `object_relocation.gti`'s destination string, source reuse, and exact destructor trace; `structural-relocation` checks the existing storage/vector fixture's successful growth, relocation and destruction path. Both run C++20/23 O3 and LLVM O0-O3. Each structural binary also runs all six failure-argument cases: capacity, occupied destination, missing source, consumed-source read, and both late-preflight failures with untouched earlier owners and exact cleanup order. Diagnostics retain the owning storage method's source line. `relocation-composition` independently checks an owning-closure wrapper with function-pointer, uninitialized and union fields at LLVM O0-O3, including one final resource destruction. C++ rejects this valid fixture's closure forwarding into `construct_at` in its representation vocabulary; its omission is explicit and is not parity evidence. |
 | `runtime_execution_boundary`, `installed_runtime_execution_boundary` | The real C begin/drain hooks attach the runtime lifetime, preserve reverse registered cleanup and idempotent drain, and link from the installed runtime. |
 | `runtime_abi_inventory` | Clang parses every active runtime C declaration into a target-specific exact-signature/resource/failure/callback inventory retained in the build. Missing declarations and unclassified headers reject. C++ helper wrappers are not C services. |
 | `llvm_clang_coexistence`, `installed_llvm_clang_coexistence` | Both LLVM's private static backend closure and the real libclang C reader load, parse a header and shut down in the same build-tree/installed consumer. Linux ELF archive symbol isolation prevents registry interposition with libclang's shared LLVM. Tests have bounded deadlines. |
-| `llvm_scalar_execution` | Real GTI scalar/control-flow/generic/recursive programs, local/PHI staging, ordered scalar globals, IEEE special values, conversions and wrapping/saturation at native O0/O3 against C++ O3. Checked failures and plain panic compare exact exit/stdout/stderr, including original source attribution. Unsupported polymorphic objects, arrays and TLS reject without replacing an existing output. Includes the shipped `examples/llvm/scalar-control-flow.gti`. Required on macOS arm64 and Linux x86_64. |
+| `llvm_scalar_execution` | Real GTI scalar/control-flow/generic/recursive programs, local/PHI staging, ordered scalar globals, IEEE special values, conversions and wrapping/saturation at native O0/O3 against C++ O3. Checked failures and plain panic compare exact exit/stdout/stderr, including original source attribution. Unsupported polymorphic replacement, arrays and TLS reject without replacing an existing output. The former `polymorphic-owner` rejection is a fresh-local virtual call, not an owner; its verbatim positive executes in `llvm_dispatch_execution`. Includes the shipped `examples/llvm/scalar-control-flow.gti`. Required on macOS arm64 and Linux x86_64. |
+| `llvm_simd_lowering`, `llvm_simd_execution`, `llvm_simd_source` | Exact six trusted float/double 1–64-lane capabilities, strict IEEE arithmetic/ordered comparisons, byte masks, all-inputs-before-output, malformed representation rejection, native O0–O3 plus scalarization, and real GTI/C++20/23 execution/failure attribution. The full source profile also requires copy-range bounds, source semantic negatives and preservation of existing artifacts; its core-only profile is partial evidence. O-LLVM-08 `StorageBoundsCheck` is a named prerequisite for copy helpers, never a passing skip. Run on macOS arm64 and Linux x86_64. |
+| Standalone `llvm_runtime_cost_test.py` and `llvm_runtime_cost_provenance_test.py` | Correctness and code/build observations for the explicitly admitted workload families. Retain validated per-build GTI producer/source-state, native invocation, source/header/runtime and artifact identities. Dirty/unavailable producer state does not establish an exact clean source. Build-report/resource collection adds overhead; per-command RSS is not simultaneous process-tree or whole-compiler memory. Runtime timing requires a coordinated quiet window and a supported common target policy. |
+| Standalone `llvm_allocator_entry_test.py` | Mandatory empty/positive native interposition controls precede 20 real GTI/C++/LLVM observations of five named public C allocator entries. Preserve the production byte provider/runtime. Counts are attempted entries during native begin/end markers, not successful/live allocations or a whole-program no-allocation proof; hidden/internal/custom allocation, escaped work and platform interposition differences remain explicit. `--native-controls-only` is partial mechanism evidence and runs no GTI acceptance cases. |
+| Standalone `llvm_cost_target_test.py`, `llvm_cost_target_probe.cpp` and observer controls | Retain actual C++ input/bitcode/object and LLVM link-object bytes. Compare effective MC feature dependencies through the existing guarded factory, plus target/ABI, deployment, PIC/code model, FP and debug/sanitizer observations. Exercise JSON ownership after MC destruction/heap reuse. `--mismatch-controls-only` proves rejection of unequal actual inputs and establishes no normalized timing acceptance. Reserved target/CPU native overrides remain rejected; a supported configuration path and hardening/code-model proof are prerequisites, never a hidden observer override or unmatched timing fallback. |
 | `llvm_place_execution` | Passive arrays/snapshots/bool storage, staged indexing, primitive/pointer-slot references and checked results, conditional selected returns, raw/null/nested/void addresses, pointer arithmetic and differences, ordinary unsafe calls, identity-bound reference erasure and owner-backed counted/C-string views. C++20/23 O3 and LLVM O0/O1/O2/O3 compare exact execution/failure output. Unsafe, expired, overlapping and read-only accesses remain source errors; unsupported C-string proofs preserve existing outputs. Includes `examples/llvm/places-and-text.gti`; required on macOS arm64 and Linux x86_64. |
 | `llvm_class_execution` | Ordinary/default/overloaded/designated and generic class construction, exact field/method access, staged copies, move-only arguments/returns, nested cleanup, replacement and class arrays. Passive global/static objects and lazy namespace/member TLS compare C++20/23 O3 with LLVM O0-O3, including exact constructor-rollback, recursion and shutdown failures. Dynamic function-local TLS compound operations and checked narrowing/shift errors have native-only controls for a recorded existing C++ vocabulary limitation. Includes `examples/llvm/classes-and-lifetimes.gti`; required on macOS arm64 and Linux x86_64. `llvm_target_layout_abi` additionally observes completed-field rollback after a real checked GTI call returns failure, verifies TLS C layout, and compiles/links a C17 registration oracle. |
+| `llvm_atomic_contracts` / `llvm_atomic_execution` with `atomic.scalar-core` | Identity-bound private storage and exclusive initialization for bool and all eight integer domains; exact load/store/exchange/strong-CAS lanes, observed values and legal order pairs; malformed operation/type/access/target rejection before emission; O0/O3 object-symbol checks for unintended atomic libcalls. The explicit scalar-core execution selector compares C++20/23 O3 with LLVM O0-O3. Required on macOS arm64 and Linux x86_64; neither this selector nor object-symbol absence proves lock freedom, performance, wait/notify or worker support. The default whole-milestone matrix retains the pending checked-fetch and blocking-worker cases. |
+| `llvm_dispatch_execution` | Public native O0/O3 fresh-local multilevel hierarchies, multiple interfaces, borrowed readonly/mutable receiver adjustments, scalar/bool/void calls, verified constructor states, virtual-call failure and partial-construction cleanup order. Explicit destructor IDs prove order, not virtual destructor phases. Supported C++20/23 O3 comparators remain required. Generated scalar-hierarchy Copy/Move into exact fresh locals execute at native O0-O3, including static base-view copies, source preservation, whole-source move chains and exactly-once cleanup after virtual failure. Fresh inline hierarchy fields also execute at O0-O3, including nested interface views, mutation, explicit/default initialization, normal destruction and field-constructor rollback. The former nested-object rejection executes verbatim with its normal exit 1. Rich field-borrow cases and explicit copy through a base-reference Loan retain their precise existing C++20/23 failures and require verified source/MIR plus native evidence; other supported comparisons remain required. General value transport, replacement, array/nonlocal storage, pure active states and destructor/helper virtual observations reject with existing-output preservation and no object. Includes the verbatim former scalar `polymorphic-owner` case and `examples/llvm/inheritance-and-dispatch.gti`; required on macOS arm64 and Linux x86_64. The loop fixture is correctness evidence only, not performance or allocation acceptance. |
+
+The first executable-evidence reconciliation retained thirteen honest gaps.
+The next source-shape audit closed six with a real O0/O3
+`coverage-constructions` profile: comma and unary-positive operations,
+implicit-zero program data, numeric type-parameter conversion, numeric alias
+conversion and default type-parameter construction. It also proved that
+`MirOperation.None` is structural metadata and that the HIR-only exact
+type-parameter construction is erased to MIR identity; a forged executable
+exact-construction intrinsic is rejected by LLVM admission. They are therefore
+verified nonexecuting facts rather than implementation claims.
+
+The composition reconciliation registers the payload, callable and memory
+execution producers and closes 35 former evidence gaps with exact source
+profiles. The public checked-arithmetic case observes successful and
+overflowing add, subtract and multiply through C++20/C++23 O3 and native LLVM
+O0-O3; no compiler-private intrinsic is called merely to satisfy the audit.
+The callable profile now includes the owned-composition fixture, so consuming
+invocation is observed rather than inferred from storage. The same source's
+verified `callableArguments` descriptor observes its `Owned` boundary
+separately from a callable receiver's invocation boundary; confined argument
+and invocation controls remain distinct, and forged descriptor boundaries or
+parameter indexes fail MIR verification. The memory profile contains an
+isolated typed-to-void-to-same-typed conversion. Its admission probe exposed
+and corrected the stale intrinsic-based classifier: verified raw-pointer
+conversions are effect-free `Compute/Convert` operations, while numeric
+conversions remain an explicit nonmatch. The central raw-pointer contract
+still rejects missing operands, nonpointer inputs, const removal, unrelated
+concrete pointees, loans, raw-memory claims and mutable result access.
+
+Two implemented-evidence gaps remain promotion blockers:
+`MirHostedStartupOperationKind.EndFailureCleanup` and
+`MirHostedStartupOperationKind.TerminateCleanupFailure`. They require the
+O-LLVM-12 failure-transport owner; adjacent ordinary cleanup execution is not
+substituted for those hosted startup operations.
 
 The class gate also checks named moved arguments whose later argument fails,
 including reverse prepared-parameter cleanup, constructor calls that never
@@ -10154,6 +10608,16 @@ start, and callee failures after transfer. Each observes the destructor's actual
 field value and exactly-once effect, not just a successful build or a failure
 exit code. C++20/23 O3 and native O0/O1/O2/O3 must agree on source-attributed
 failure output.
+
+The dispatch gate additionally checks nonzero interface/state-base reference
+publication, repeated readonly/mutable alias forwarding, and the original
+complete-object loan's unchanged address. Its nested mutable-reference-chain
+case records both existing C++ text-vocabulary failures explicitly and requires
+independent verified-source/MIR plus native execution; other supported cases
+retain both C++ comparators. Failure/rollback trace guards use checked arithmetic
+without unrelated standard-library imports. A controlled wrong expected trace
+must produce secondary `GTI-R0014` and fail the same exact original-failure
+assertion; it is a discriminating negative oracle, not a passing program.
 
 The existing example oracle now uses `backend_execution.py`. Default C++ runs
 retain both native standards, every marker/count/ownership check, and observable

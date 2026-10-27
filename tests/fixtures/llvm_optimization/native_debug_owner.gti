@@ -1,0 +1,19 @@
+#include <std/memory>
+extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
+mut int released = 0;
+struct Node {
+  int32_t value;
+  Node(int32_t input) : value(input) {}
+  ~Node() { released += 1; }
+};
+int32_t inspect(int32_t input) {
+  int32_t local = input & 31;
+  debug_checkpoint(local);
+  std::unique_ptr<Node> vacant{nullptr};
+  if (vacant != nullptr) { return -1; }
+  mut auto owner = std::make_unique<Node>(local);
+  debug_checkpoint(owner->value);
+  owner.reset();
+  return local;
+}
+int main() { return inspect(debug_input()) == 4 && released == 1 ? 0 : 1; }

@@ -71,6 +71,10 @@ def main() -> None:
         # injects an invalid empty-pack destructor provider outcome; separate
         # Frontend snapshots cannot expose either boundary.
         "tests/thread_local_semantic_tests.cpp",
+        # Analyzes one parsed tree with and without source-debug collection to
+        # prove collection preserves symbol identities and diagnostics;
+        # separate Frontend snapshots would reparse into different trees.
+        "tests/lowered_program_tests.cpp",
     }
     actual: set[str] = set()
     for directory in ("include", "src", "tests"):

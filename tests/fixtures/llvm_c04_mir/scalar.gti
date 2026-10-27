@@ -1,0 +1,3 @@
+int leaf(int input) { return input + 1; }
+int middle(int input) { return leaf(input); }
+int sample(int input) { return middle(input); }

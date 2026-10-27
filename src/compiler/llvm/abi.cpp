@@ -1,27 +1,130 @@
 #include "abi.h"
+#include "native_c_abi.h"
+#include "parameter_packs.h"
 
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Metadata.h>
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace lang::native_llvm {
-namespace {
 
-AbiExtension nativeExtension(const SemanticType &type) {
-  switch (type.kind) {
-  case SemanticType::Bool:
-  case SemanticType::UInt8:
-  case SemanticType::UInt16:
-    return AbiExtension::Unsigned;
-  case SemanticType::Int8:
-  case SemanticType::Int16:
-    return AbiExtension::Signed;
-  default:
-    return AbiExtension::None;
+VirtualRootAbi
+Abi::virtualRoot(HirFunctionInstanceId rootId,
+                 std::span<const HirFunctionInstanceId> implementations) {
+  if (!std::is_sorted(implementations.begin(), implementations.end()) ||
+      std::adjacent_find(implementations.begin(), implementations.end()) !=
+          implementations.end())
+    throw std::invalid_argument("LLVM virtual ABI target set is not canonical");
+  if (const auto found = virtualRoots_.find(rootId);
+      found != virtualRoots_.end()) {
+    if (!std::equal(implementations.begin(), implementations.end(),
+                    found->second.implementations.begin(),
+                    found->second.implementations.end()))
+      throw std::invalid_argument("LLVM virtual ABI target set changed");
+    return found->second;
   }
+  const auto &program = session.program().mir();
+  const auto *root = program.findFunctionInstance(rootId);
+  if (!root || !root->owner || !root->virtualMethod || root->overrideMethod ||
+      root->staticMember || root->linkage != LanguageLinkage::Gti)
+    throw std::invalid_argument("LLVM virtual ABI lacks an exact root");
+  std::vector<HirFunctionInstanceId> expected;
+  for (const auto &owner : program.classInstances())
+    for (const auto &selection : owner.virtualDispatch)
+      if (selection.root == rootId) {
+        const auto *target = program.findFunctionInstance(selection.target);
+        if (!target)
+          throw std::invalid_argument("LLVM virtual ABI lost a sealed target");
+        if (!target->pureVirtual)
+          expected.push_back(target->id);
+      }
+  std::sort(expected.begin(), expected.end());
+  expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
+  if (!std::equal(implementations.begin(), implementations.end(),
+                  expected.begin(), expected.end()))
+    throw std::invalid_argument("LLVM virtual ABI target set is incomplete");
+  if (root->tracksCaller)
+    throw BackendUnsupportedError(
+        "LLVM virtual caller attribution has no admitted source contract");
+  for (const auto id : expected) {
+    const auto &target = *program.findFunctionInstance(id);
+    if (target.returnType != root->returnType ||
+        target.parameterTypes != root->parameterTypes ||
+        target.receiverMutability != root->receiverMutability ||
+        target.overloadedOperator != root->overloadedOperator ||
+        target.returnBorrowOrigin != root->returnBorrowOrigin ||
+        target.returnBorrowParameter != root->returnBorrowParameter ||
+        target.returnBorrowAccess != root->returnBorrowAccess ||
+        target.definitionKind != MirDefinitionKind::Source ||
+        target.tracksCaller)
+      throw BackendUnsupportedError(
+          "LLVM virtual target contradicts its verified root contract");
+  }
+  // A body effect is distinct from the virtual invocation contract. Verified
+  // MIR retains VirtualCall propagation even when the named root body cannot
+  // fail. Keep this interface independent of reachable target subsets; exact
+  // bodies/devirtualized calls retain their own plans. Physical transport is
+  // still entirely Abi::gti's responsibility while C04 remains unresolved.
+  for (const auto address : enumerateMirBodyAddresses(program)) {
+    const auto *body = findMirBody(program, address);
+    if (!body)
+      throw std::logic_error("LLVM virtual ABI lost its sealed body");
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone ||
+            instruction.dispatch != CallDispatch::Virtual ||
+            !instruction.functionTarget)
+          continue;
+        const auto *selected =
+            program.findFunctionInstance(*instruction.functionTarget);
+        const auto *owner = selected && selected->owner
+                                ? program.findClassInstance(*selected->owner)
+                                : nullptr;
+        if (!owner ||
+            std::none_of(owner->virtualDispatch.begin(),
+                         owner->virtualDispatch.end(),
+                         [&](const auto &row) { return row.root == rootId; }))
+          continue;
+        if (instruction.definedFailure.propagation !=
+                FailurePropagationKind::VirtualCall ||
+            block.terminator.kind != MirTerminatorKind::Invoke ||
+            block.terminator.invokeInstruction != instruction.id ||
+            !body->findFailureRecord(block.terminator.failureRecord))
+          throw BackendUnsupportedError(
+              "LLVM virtual invocation lacks its verified failure boundary");
+      }
+  }
+  VirtualRootAbi result{.root = rootId,
+                        .implementations = std::move(expected),
+                        .call = gti(root->returnType, root->parameterTypes,
+                                    true, true, root->tracksCaller),
+                        .mayFail = true,
+                        .tracksCaller = root->tracksCaller};
+  virtualRoots_.emplace(rootId, result);
+  return result;
 }
+
+VirtualAdjustmentAbi
+Abi::virtualAdjustment(const VirtualRootAbi &root,
+                       HirFunctionInstanceId implementation) {
+  const auto authoritative = virtualRoot(root.root, root.implementations);
+  if (root != authoritative ||
+      !std::binary_search(root.implementations.begin(),
+                          root.implementations.end(), implementation))
+    throw std::invalid_argument(
+        "LLVM virtual adjustment has a mismatched plan");
+  const auto *target =
+      session.program().mir().findFunctionInstance(implementation);
+  return {.entry = authoritative.call,
+          .implementation =
+              gti(target->returnType, target->parameterTypes,
+                  target->mayRaiseDefinedFailure, true, target->tracksCaller)};
+}
+
+namespace {
 
 template <typename Callable>
 void applyExtensions(Callable &function, const FunctionAbi &abi) {
@@ -34,6 +137,19 @@ void applyExtensions(Callable &function, const FunctionAbi &abi) {
   for (unsigned index = 0; index < abi.parameters.size(); ++index)
     if (abi.parameters[index].extension != AbiExtension::None)
       function.addParamAttr(index, attribute(abi.parameters[index].extension));
+  for (const auto &memory : abi.nativeMemory) {
+    if (memory.result)
+      function.addParamAttr(memory.index,
+                            llvm::Attribute::getWithStructRetType(
+                                abi.type->getContext(), memory.storage));
+    else if (memory.byValue)
+      function.addParamAttr(memory.index,
+                            llvm::Attribute::getWithByValType(
+                                abi.type->getContext(), memory.storage));
+    function.addParamAttr(memory.index, llvm::Attribute::getWithAlignment(
+                                            abi.type->getContext(),
+                                            llvm::Align(memory.alignment)));
+  }
 }
 
 } // namespace
@@ -81,6 +197,16 @@ Abi::Abi(Session &session, Layouts &layouts)
 FunctionAbi Abi::gti(const SemanticType &result,
                      std::span<const SemanticType> parameters, bool mayFail,
                      bool receiver, bool tracksCaller) {
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+#if !defined(GTI_LLVM_C04_MIR_EVALUATION)
+#error "C04 native transport is restricted to the isolated evaluation target"
+#endif
+  // The test entry validates its bounded lifecycle/call closure before
+  // emission. This changes only physical transport; MIR retains its failure
+  // edges.
+  mayFail = false;
+#endif
+  const auto concreteParameters = flattenConcreteParameters(parameters);
   const auto output = layouts.get(result);
   FunctionAbi plan;
   std::vector<llvm::Type *> types;
@@ -104,8 +230,8 @@ FunctionAbi Abi::gti(const SemanticType &result,
     append(llvm::Type::getInt32Ty(session.context()), AbiChannel::CallerSite);
     append(layouts.pointer(), AbiChannel::CallerArtifact);
   }
-  for (std::size_t index = 0; index < parameters.size(); ++index) {
-    const auto input = layouts.get(parameters[index]);
+  for (std::size_t index = 0; index < concreteParameters.size(); ++index) {
+    const auto input = layouts.get(concreteParameters[index]);
     if (input.value->isVoidTy())
       throw std::logic_error("void GTI ABI parameter");
     append(input.addressOnly ? layouts.pointer() : input.value,
@@ -122,47 +248,7 @@ FunctionAbi Abi::gti(const SemanticType &result,
 
 FunctionAbi Abi::nativeC(const SemanticType &result,
                          std::span<const SemanticType> parameters) {
-  const auto scalar = [&](const SemanticType &type,
-                          bool allowVoid) -> llvm::Type * {
-    switch (type.kind) {
-    case SemanticType::Void:
-      if (allowVoid)
-        return llvm::Type::getVoidTy(session.context());
-      break;
-    case SemanticType::Bool:
-      return llvm::Type::getInt1Ty(session.context());
-    case SemanticType::Int8:
-    case SemanticType::Int16:
-    case SemanticType::Int32:
-    case SemanticType::Int64:
-    case SemanticType::UInt8:
-    case SemanticType::UInt16:
-    case SemanticType::UInt32:
-    case SemanticType::UInt64:
-    case SemanticType::Float:
-    case SemanticType::Double:
-    case SemanticType::RawPointer:
-    case SemanticType::CString:
-    case SemanticType::NativeFunction:
-      return layouts.get(type).value;
-    default:
-      break;
-    }
-    throw BackendUnsupportedError(
-        "LLVM native C ABI supports only exact scalars/pointers here; "
-        "aggregate classification is pending O-LLVM-11");
-  };
-  FunctionAbi plan;
-  auto *returnType = scalar(result, true);
-  plan.resultExtension = nativeExtension(result);
-  std::vector<llvm::Type *> types;
-  for (std::size_t index = 0; index < parameters.size(); ++index) {
-    types.push_back(scalar(parameters[index], false));
-    plan.parameters.push_back({AbiChannel::Argument, index, false,
-                               nativeExtension(parameters[index])});
-  }
-  plan.type = llvm::FunctionType::get(returnType, types, false);
-  return plan;
+  return planNativeCFunction(session, result, parameters).signature;
 }
 
 llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
@@ -184,10 +270,18 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
                    function->mayRaiseDefinedFailure,
                    function->owner.has_value() && !function->staticMember,
                    function->tracksCaller);
-  const auto name = native ? function->externalSymbol
-                           : "__gti_native_v" +
-                                 std::to_string(executionAbiVersion) + "_f" +
-                                 std::to_string(id);
+  constexpr const char *privatePrefix =
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+      "__gti_c04_unwind_v";
+#elif defined(GTI_LLVM_C04_MIR_EVALUATION)
+      "__gti_c04_status_v";
+#else
+      "__gti_native_v";
+#endif
+  const auto name = native
+                        ? function->externalSymbol
+                        : privatePrefix + std::to_string(executionAbiVersion) +
+                              "_f" + std::to_string(id);
   if (name.empty())
     throw std::logic_error(
         "LLVM native declaration has no exact external symbol");
@@ -195,13 +289,17 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
     auto *previous = llvm::dyn_cast<llvm::Function>(existing);
     if (!previous || previous->getFunctionType() != plan.type)
       throw std::logic_error("conflicting LLVM symbol declaration: " + name);
+    if (function->definitionKind == MirDefinitionKind::Source)
+      session.requireSourceDefinition(id, *previous);
+    if (native)
+      verifyNativeCImport(*previous, plan);
     return previous;
   }
   auto *output = llvm::Function::Create(
       plan.type, llvm::GlobalValue::ExternalLinkage, name, session.module());
   plan.applyTo(*output);
   if (function->definitionKind == MirDefinitionKind::Source)
-    session.requireDefinition(*output);
+    session.requireSourceDefinition(id, *output);
   // Provenance survives independently of debug-info generation. This does not
   // manufacture DWARF or change function semantics.
   if (const auto *source = session.program().findFunctionInstance(id)) {

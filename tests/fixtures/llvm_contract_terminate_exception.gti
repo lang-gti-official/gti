@@ -1,0 +1,20 @@
+#include <std/cthread>
+
+// A foreign C++ exception that reaches a GTI callback boundary ends the
+// process through std::terminate on both backends; it never escapes to the
+// native caller.
+using Operation = (int32_t) -> int32_t;
+extern "C" {
+  void contract_terminate_install();
+  int32_t contract_invoke_guarded(Operation operation, int32_t value);
+  int32_t contract_throw(int32_t value);
+}
+[[thread_confined_callback]] int32_t throwing(int32_t value) {
+  return contract_throw(value);
+}
+
+int main() {
+  unsafe { contract_terminate_install(); }
+  Operation operation = throwing;
+  unsafe { return contract_invoke_guarded(operation, 1); }
+}

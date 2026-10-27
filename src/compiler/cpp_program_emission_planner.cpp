@@ -848,7 +848,7 @@ public:
     moduleRuntimeMayRaise = cppMirModuleMayRaiseDefinedFailure(mir);
     const CppMirInitializerScheduleText schedule =
         generalMirInitializerSchedule(moduleAddress);
-    if (!moduleRuntimeMayRaise && schedule.supported) {
+    if (!moduleRuntimeMayRaise && schedule.supported && !hasNativeProgramRetirement()) {
       moduleGeneralSupported = true;
       for (const CppMirFieldInitializerSpelling &field : schedule.fields) {
         moduleGeneralInitializers.emplace(field.field, field.spelling);
@@ -7905,6 +7905,7 @@ public:
             [&] { emitNativeCallbackAdapterDefinitions(); });
     capture(plan, CppProgramTextRole::InitializerAndModuleAdapter, [&] {
       emitThreadLocalDefinitions();
+      emitNativeProgramRetirementDefinition();
       emitRuntimeModuleInitializer();
       if (!moduleRuntimeEmission) {
         writeIndent();
@@ -9176,8 +9177,56 @@ public:
            "&::gti_internal::backend::__gti_failure_artifact_descriptor_v1);\n";
   }
 
-  void emitHostedFailureTermination() {
+  bool hasNativeProgramRetirement() const {
+    return std::any_of(mir.programInitializationPlan().steps.begin(),
+                       mir.programInitializationPlan().steps.end(),
+                       [](const auto &step) { return step.nativeRetirement.has_value(); });
+  }
+
+  void emitNativeProgramRetirementDefinition() {
+    if (!hasNativeProgramRetirement())
+      return;
+    output << "void __gti_program_retire_native() noexcept {\n";
+    ++indentation;
+    output << "if (!::gti_rt_thread_program_storage_retirement_ready_v1()) return;\n";
+    output << "::gti_failure_record_v2 failure{};\n";
+    for (auto step = mir.programInitializationPlan().steps.rbegin();
+         step != mir.programInitializationPlan().steps.rend(); ++step) {
+      if (!step->nativeRetirement)
+        continue;
+      const auto row = std::find_if(generalEmissionMap->symbols().begin(),
+                                    generalEmissionMap->symbols().end(),
+                                    [&](const auto &symbol) {
+        return symbol.kind == CppMirSymbolRepresentationKind::Storage &&
+               symbol.symbol == step->symbol && symbol.owner == step->ownerClass &&
+               symbol.ordinal == 0 && symbol.runtimeLifetimeSlot;
+      });
+      if (row == generalEmissionMap->symbols().end() ||
+          !mirDropIsNativeRetirement(mir, *step->nativeRetirement))
+        throw std::logic_error("C++ native retirement lost exact program storage");
+      writeIndent();
+      output << "if (!" << row->spelling
+             << ".destroy_cleanup_with_failure(&failure, true, false, "
+                "[](auto &value, ::gti_failure_record_v2 *record, bool unwinding) { return "
+             << cppMirCleanupValueExpression(mir, *step->nativeRetirement,
+                                              "value", "record", "unwinding")
+             << "; })) std::terminate();\n";
+    }
+    --indentation;
+    output << "}\n";
+  }
+
+  void emitHostedFailureTermination(bool retireNative = false) {
     emitIncomingCleanupFailureCheck("&__gti_failure_record");
+    if (retireNative && hasNativeProgramRetirement()) {
+      writeIndent();
+      output << "::gti_runtime_detail::drain_thread_local_cleanup("
+                "&__gti_failure_record, &::gti_internal::backend::"
+                "__gti_failure_artifact_descriptor_v1);\n";
+      emitHostedCThreadBoundary(false);
+      writeIndent();
+      output << "::__gti_program::__gti_program_retire_native();\n";
+    }
     writeIndent();
     output << "::gti_rt_failure_terminate_v2(\n";
     ++indentation;
@@ -9225,6 +9274,10 @@ public:
     writeIndent();
     output << "static const bool __gti_program_initialize_once = [] {\n";
     ++indentation;
+    if (hasNativeProgramRetirement()) {
+      writeIndent();
+      output << "[[maybe_unused]] bool __gti_cthread_started = false;\n";
+    }
     if (moduleRuntimeMayRaise) {
       writeIndent();
       output << "::gti_failure_record_v2 __gti_failure_record{};\n";
@@ -9234,7 +9287,7 @@ public:
       writeIndent();
       output << "if (!__gti_program_initialize(&__gti_failure_record)) {\n";
       ++indentation;
-      emitHostedFailureTermination();
+      emitHostedFailureTermination(true);
       --indentation;
       writeIndent();
       output << "}\n";
@@ -9259,6 +9312,10 @@ public:
   }
 
   void emitHostedThreadLocalAttachment() {
+    if (hasNativeProgramRetirement()) {
+      writeIndent();
+      output << "[[maybe_unused]] bool __gti_cthread_started = false;\n";
+    }
     if (mir.threadLocalStorage().empty())
       return;
     writeIndent();
@@ -9274,7 +9331,7 @@ public:
       output << "if (!::__gti_program::__gti_program_initialize("
                 "&__gti_failure_record)) {\n";
       ++indentation;
-      emitHostedFailureTermination();
+      emitHostedFailureTermination(true);
       --indentation;
       writeIndent();
       output << "}\n";
@@ -9294,6 +9351,39 @@ public:
     }
     const std::string name = cppFunctionSpelling(function, row.name);
     output << (failure ? cppMirFailureSiblingSpelling(name) : name);
+  }
+
+  void emitHostedCThreadBoundary(bool begin) {
+    const auto &hosted = mir.hostedStartupPlan();
+    const auto targetId = !hosted ? 0 : begin ? hosted->cThreadBegin : hosted->cThreadEnd;
+    if (targetId == 0)
+      return;
+    const auto *target = mir.findFunctionInstance(targetId);
+    if (!target || target->cThreadOperation != (begin ? CThreadRuntimeOperation::Begin
+                                                     : CThreadRuntimeOperation::End))
+      throw std::logic_error("hosted C-thread boundary lost its exact target");
+    const auto *declaration = loweredProgram.findFunctionDeclaration(target->declaration);
+    const auto *row = loweredFunctionRow(target->declaration);
+    if (!declaration || !row)
+      throw std::logic_error("hosted C-thread boundary lost its declaration identity");
+    const bool guardedEnd = hasNativeProgramRetirement() && !begin;
+    if (guardedEnd) {
+      writeIndent();
+      output << "if (__gti_cthread_started) {\n";
+      ++indentation;
+    }
+    writeIndent();
+    emitLoweredQualifiedFunctionName(*row, *declaration);
+    output << "();\n";
+    if (hasNativeProgramRetirement()) {
+      writeIndent();
+      output << "__gti_cthread_started = " << (begin ? "true" : "false") << ";\n";
+    }
+    if (guardedEnd) {
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    }
   }
 
   void emitLoweredProgramEntryAdapter() {
@@ -9321,32 +9411,16 @@ public:
     // only after the verified entry call and invocation cleanup. Never let a
     // host's truncation turn a nonzero GTI result into a successful exit.
     const auto emitEntryStatus = [&]() {
+      if (hasNativeProgramRetirement()) {
+        writeIndent();
+        output << "::__gti_program::__gti_program_retire_native();\n";
+      }
       writeIndent();
       output << "return (__gti_result >= 0 && __gti_result <= 255) "
                 "? __gti_result : 1;\n";
     };
     const auto emitCThreadBoundary = [&](bool begin) {
-      const auto targetId = begin ? hosted->cThreadBegin : hosted->cThreadEnd;
-      if (targetId == 0) {
-        return;
-      }
-      const MirFunctionInstance *target = mir.findFunctionInstance(targetId);
-      if (target == nullptr ||
-          target->cThreadOperation != (begin ? CThreadRuntimeOperation::Begin
-                                             : CThreadRuntimeOperation::End)) {
-        throw std::logic_error(
-            "hosted C-thread boundary lost its exact target");
-      }
-      writeIndent();
-      const LoweredFunctionDeclaration *declaration =
-          loweredProgram.findFunctionDeclaration(target->declaration);
-      const LoweredDeclaration *row = loweredFunctionRow(target->declaration);
-      if (declaration == nullptr || row == nullptr) {
-        throw std::logic_error(
-            "hosted C-thread boundary lost its declaration identity");
-      }
-      emitLoweredQualifiedFunctionName(*row, *declaration);
-      output << "();\n";
+      emitHostedCThreadBoundary(begin);
     };
     const MirBodyAddress entryAddress{.kind = MirBodyKind::Function,
                                       .owner = entry->id};
@@ -9397,7 +9471,7 @@ public:
         --indentation;
         writeIndent();
         output << "}\n";
-        emitHostedFailureTermination();
+        emitHostedFailureTermination(true);
         --indentation;
         output << "}\n";
         return;
@@ -9600,7 +9674,7 @@ public:
       writeIndent();
       output << "if (!__gti_arguments_success) {\n";
       ++indentation;
-      emitHostedFailureTermination();
+      emitHostedFailureTermination(true);
       --indentation;
       writeIndent();
       output << "}\n";
@@ -9627,7 +9701,7 @@ public:
       ++indentation;
       emitArgumentFailureCleanup(
           MirHostedStartupOperationKind::ConstructArgumentString);
-      emitHostedFailureTermination();
+      emitHostedFailureTermination(true);
       --indentation;
       writeIndent();
       output << "}\n";
@@ -9637,7 +9711,7 @@ public:
              << "(std::move(__gti_argument), &__gti_failure_record)) {\n";
       ++indentation;
       emitArgumentFailureCleanup(MirHostedStartupOperationKind::CallAppend);
-      emitHostedFailureTermination();
+      emitHostedFailureTermination(true);
       --indentation;
       writeIndent();
       output << "}\n";
@@ -9666,7 +9740,7 @@ public:
       --indentation;
       writeIndent();
       output << "}\n";
-      emitHostedFailureTermination();
+      emitHostedFailureTermination(true);
       --indentation;
       writeIndent();
       output << "} catch (...) {\n";

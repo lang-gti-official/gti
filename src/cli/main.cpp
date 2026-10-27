@@ -212,6 +212,7 @@ struct ProjectOptions {
   std::optional<std::string> cxx;
   std::optional<std::string> cc;
   std::optional<lang::CppStandard> standard;
+  std::optional<lang::BackendKind> backend;
   std::optional<lang::OptimizationLevel> optimization;
   std::optional<lang::ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
@@ -347,10 +348,10 @@ void printUsage(std::ostream &stream) {
          "debug symbols.\n"
          "      --no-debug-info  Disable source-level debug info.\n"
          "      --cxx <path>     Select the native compiler.\n"
-         "      --backend <name> Select cpp (default) or llvm. The LLVM "
-         "backend has partial language support; unsupported features report "
-         "GTI-B0003. C++ remains the production "
-         "default.\n"
+         "      --backend <name> Select llvm or cpp. The default is llvm on "
+         "arm64 macOS and cpp on other targets; --std and --keep-cpp select "
+         "cpp. The LLVM backend has partial language support; unsupported "
+         "features report GTI-B0003.\n"
          "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
          "      --execution-profile <name>\n"
          "                       Select single-threaded (default) or "
@@ -413,6 +414,8 @@ void printUsage(std::ostream &stream) {
          "      --format <mode> Test results: human (default), json (JSON "
          "Lines).\n"
          "      --std <version>  Override c++20 or c++23.\n"
+         "      --backend <name> Select llvm or cpp for executable builds "
+         "(default: llvm on arm64 macOS, cpp elsewhere).\n"
          "      --execution-profile <name>\n"
          "                       Override single-threaded or concurrent "
          "semantics.\n"
@@ -1234,6 +1237,27 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.cc = argv[index];
       continue;
     }
+    if (argument == "--backend") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: --backend is not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      if (++index >= argc) {
+        std::cerr << "gti: missing name after --backend\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.backend) {
+        std::cerr << "gti: --backend may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.backend = lang::parseBackendKind(argv[index]);
+      if (!options.backend) {
+        std::cerr << "gti: --backend must be cpp or llvm\n";
+        return ArgumentResult::ExitFailure;
+      }
+      continue;
+    }
     if (argument == "--std") {
       if (!buildsExecutable(options.command)) {
         std::cerr << "gti: --std is not valid for gti "
@@ -1434,6 +1458,11 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
     std::cerr << "gti: --emit-mir and --keep-cpp cannot be used together\n";
     return ArgumentResult::ExitFailure;
   }
+  if (options.emitMir && options.backend) {
+    std::cerr
+        << "gti: --backend requires executable generation, not --emit-mir\n";
+    return ArgumentResult::ExitFailure;
+  }
   if (options.command == ProjectCommand::Test && options.test.exact &&
       !options.test.filter) {
     std::cerr << "gti: --exact requires --filter\n";
@@ -1461,10 +1490,10 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
     return ArgumentResult::ExitFailure;
   }
   if (options.noBuild &&
-      (options.cxx || options.cc || options.standard || options.optimization ||
-       options.executionProfile || options.rawPointerAudit ||
-       options.rawPointerAuditLibraryFindings || options.keepCpp ||
-       options.debugInfo || options.jobs ||
+      (options.cxx || options.cc || options.standard || options.backend ||
+       options.optimization || options.executionProfile ||
+       options.rawPointerAudit || options.rawPointerAuditLibraryFindings ||
+       options.keepCpp || options.debugInfo || options.jobs ||
        !options.configurationFlags.empty() ||
        !options.disabledWarnings.empty() || !options.useCache)) {
     std::cerr << "gti: --no-build cannot be combined with compiler, build, "
@@ -1474,7 +1503,8 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
   if (options.command == ProjectCommand::Install) {
     if (options.list &&
         (options.target || options.package || options.projectPath ||
-         options.profileSelected || options.targetTriple || options.force)) {
+         options.profileSelected || options.targetTriple || options.force ||
+         options.backend)) {
       std::cerr << "gti: gti install --list accepts only --root\n";
       return ArgumentResult::ExitFailure;
     }
@@ -2271,8 +2301,12 @@ void reportBackendDiagnosticLog(const lang::driver::DiagnosticLogResult &log) {
 void reportSavedRepresentation(
     const lang::driver::ExecutableBuildResult &result) {
   if (result.generatedSourceRetained) {
-    std::cerr << "gti: backend 'c++' representation saved at "
-              << result.generatedSource.string() << '\n';
+    const bool object =
+        result.compilation.artifact &&
+        result.compilation.artifact->kind == lang::BackendArtifactKind::Object;
+    std::cerr << "gti: backend '" << (object ? "llvm" : "c++")
+              << "' representation saved at " << result.generatedSource.string()
+              << '\n';
   }
 }
 
@@ -2540,10 +2574,17 @@ int runDirect(const Options &options, const char *driver) {
     return exitCode(ExitStatus::Success);
   }
 
+  // An unselected backend is the target's default; --std and --keep-cpp
+  // keep selecting the C++ backend they configure.
+  const lang::BackendKind backend =
+      options.backendSelected ? options.backend
+      : options.keepCpp || options.standardSelected
+          ? lang::BackendKind::Cpp
+          : lang::defaultBackend(target);
   const std::filesystem::path generatedSource =
       options.keepCpp
           ? std::filesystem::path(options.output.string() + ".gti.cpp")
-      : options.backend == lang::BackendKind::Cpp
+      : backend == lang::BackendKind::Cpp
           ? lang::driver::temporaryCppPath(options.input)
           : lang::driver::temporaryArtifactPath(options.input, ".o");
   lang::driver::NativeInputs nativeInputs;
@@ -2562,7 +2603,7 @@ int runDirect(const Options &options, const char *driver) {
                       lang::RawPointerAuditMode::Off),
                   {}, {},
                   options.rawPointerAuditLibraryFindings.value_or(false))
-                  .withBackend(options.backend),
+                  .withBackend(backend),
               toolchain, generatedSource, options.output,
               lang::driver::discoverNativeCompiler(options.cxx),
               std::move(nativeInputs), options.keepCpp, false, options.verbose,
@@ -2630,8 +2671,11 @@ void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
             << plan.profileName() << ", "
             << lang::driver::targetTriple(plan.target()) << "]\n"
             << "gti: configuration -O"
-            << lang::cli::optimizationNumber(plan.optimization())
-            << ", execution-profile="
+            << lang::cli::optimizationNumber(plan.optimization());
+  if (command != ProjectCommand::Check) {
+    std::cerr << ", backend=" << lang::backendKindName(plan.backend());
+  }
+  std::cerr << ", execution-profile="
             << lang::executionProfileName(plan.target().executionProfile)
             << ", keep-representation=" << (plan.keepCpp() ? "true" : "false")
             << ", debug-info=" << (plan.debugInfo() ? "true" : "false") << '\n';
@@ -2886,7 +2930,8 @@ int buildProjectPlan(
                   plan.warnings(), plan.debugInfo(), plan.packageWarnings(),
                   plan.rawPointerAudit(), plan.programRequest(),
                   plan.declaredConfigurationFlags(),
-                  plan.rawPointerAuditLibraryFindings()),
+                  plan.rawPointerAuditLibraryFindings())
+                  .withBackend(plan.backend()),
               toolchain, plan.generatedSource(), plan.output(), cppCompiler,
               nativeInputs, plan.keepCpp(), true, options.verbose,
               lang::driver::ManagedOutputPolicy{
@@ -2925,6 +2970,7 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
+  overrides.backend = options.backend;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.rawPointerAuditLibraryFindings =
@@ -2991,6 +3037,10 @@ int runProjectBuildAll(const ProjectOptions &options, const char *driver) {
     if (options.standard) {
       command.emplace_back("--std");
       command.emplace_back(lang::cli::cppStandardName(*options.standard));
+    }
+    if (options.backend) {
+      command.emplace_back("--backend");
+      command.emplace_back(lang::backendKindName(*options.backend));
     }
     if (options.optimization) {
       command.emplace_back("-O" + std::to_string(lang::cli::optimizationNumber(
@@ -3213,6 +3263,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
+  overrides.backend = options.backend;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.rawPointerAuditLibraryFindings =
@@ -3477,6 +3528,7 @@ int runProjectVerify(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
+  overrides.backend = options.backend;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit =
       options.rawPointerAudit.value_or(recorded->rawPointerAudit);
@@ -3597,6 +3649,7 @@ int runProjectTests(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
+  overrides.backend = options.backend;
   overrides.executionProfile = options.executionProfile;
   overrides.rawPointerAudit = options.rawPointerAudit;
   overrides.rawPointerAuditLibraryFindings =

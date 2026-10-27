@@ -1,0 +1,105 @@
+// Hierarchy objects constructed directly in their final storage: the caller's
+// return destination, a local initialized from a by-value call, and a
+// full-expression temporary used as a receiver or a borrowed argument. Each
+// object is constructed and destroyed exactly once; destructors record IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Reader { int read(); };
+interface Writer { int write(int value) mut; };
+
+class Root {
+public:
+  Root() { record(1); }
+  ~Root() { record(4); }
+  virtual int fail(int divisor) { return 12 / divisor; }
+};
+
+// Reader precedes the state base, so the Root and Writer views of a fresh
+// object have nonzero offsets from its storage.
+class Leaf : public Reader, public Root, public Writer {
+  mut int payload;
+public:
+  Leaf(int payload) : Root(), payload(12 / payload) { record(2); }
+  ~Leaf() { record(3); }
+  int read() override { return this.payload; }
+  int write(int value) mut override {
+    this.payload += value;
+    return this.payload;
+  }
+  int fail(int divisor) override {
+    record(6);
+    return 120 / divisor;
+  }
+};
+
+class Factory {
+  int scale;
+public:
+  Factory(int scale) : scale(scale) {}
+  virtual Leaf build(int value) { return Leaf(value * this.scale); }
+};
+
+class Doubled : public Factory {
+public:
+  Doubled() : Factory(2) {}
+  Leaf build(int value) override { return Leaf(value * 4); }
+};
+
+Leaf make(int value) {
+  if (value > 6) { return Leaf(6); }
+  return Leaf(value);
+}
+
+Leaf forward(int value) { return make(value); }
+
+int observe(Leaf& leaf) {
+  Reader& reader = leaf;
+  return reader.read();
+}
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+int invoke_failure(Root& value, int divisor) { return value.fail(divisor); }
+
+// FRESH_PUBLICATION_MAIN
+int main() {
+  {
+    Leaf direct = make(3);
+    if (direct.read() != 4 || events != 12) { return 1; }
+    Leaf capped = forward(12);
+    if (capped.read() != 2 || events != 1212) { return 2; }
+  }
+  if (events != 12123434) { return 3; }
+  events = 0;
+  {
+    Factory plain{3};
+    Doubled doubled{};
+    Factory& selected = doubled;
+    Leaf built = plain.build(1);
+    Leaf dynamic = selected.build(1);
+    if (built.read() != 4 || dynamic.read() != 3 || events != 1212) { return 4; }
+  }
+  if (events != 12123434) { return 5; }
+  events = 0;
+  // Temporaries live for their full expression only.
+  int written = Leaf(2).write(3);
+  if (written != 9 || events != 1234) { return 6; }
+  events = 0;
+  int observed = observe(Leaf(4));
+  if (observed != 3 || events != 1234) { return 7; }
+  events = 0;
+  int updated = make(1).write(1);
+  if (updated != 13 || events != 1234) { return 8; }
+  return 0;
+}

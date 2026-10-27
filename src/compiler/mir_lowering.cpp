@@ -2,8 +2,76 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "mir_source_debug.h"
 
 namespace lang {
+
+SourceDebugRecord<MirSourceDebugTables>
+mir_detail::describeHirSourceDebug(const HirBody &body) {
+  SourceDebugRecord<MirSourceDebugTables> result;
+  result.collection = body.sourceDebug.collection;
+  if (!body.sourceDebug.tables)
+    return result;
+  result.tables = std::make_unique<MirSourceDebugTables>();
+  auto &tables = *result.tables;
+  const auto &input = *body.sourceDebug.tables;
+  tables.domain = input.domain;
+  const auto append = [&](const auto &region) {
+    const auto scopeOffset = tables.scopes.size();
+    const auto localOffset = tables.locals.size();
+    for (auto scope : region.sourceFacts().scopes) {
+      scope.id += scopeOffset;
+      if (scope.parent)
+        scope.parent += scopeOffset;
+      tables.scopes.push_back(std::move(scope));
+    }
+    for (auto local : region.locals) {
+      local.id += localOffset;
+      local.scope += scopeOffset;
+      tables.locals.push_back({.declaration = std::move(local)});
+    }
+    for (auto statement : region.statements) {
+      statement.scope += scopeOffset;
+      tables.statements.push_back(std::move(statement));
+    }
+    for (auto value : region.values) {
+      value.scope += scopeOffset;
+      tables.values.push_back(std::move(value));
+    }
+  };
+  append(input);
+  for (const auto &region : input.initializers)
+    append(region);
+  return result;
+}
+
+bool mir_detail::sourceDebugMatchesHir(const HirBody &source,
+                                       const MirBody &body) {
+  if (!isValidSourceDebugRecord(source.sourceDebug) ||
+      !isValidSourceDebugRecord(body.sourceDebug) ||
+      source.placeDomain != body.placeDomain)
+    return false;
+  const auto expected = describeHirSourceDebug(source);
+  if (expected.collection != body.sourceDebug.collection ||
+      static_cast<bool>(expected.tables) !=
+          static_cast<bool>(body.sourceDebug.tables))
+    return false;
+  if (!expected.tables)
+    return true;
+  const auto &wanted = *expected.tables;
+  const auto &actual = *body.sourceDebug.tables;
+  if (actual.domain != wanted.domain || actual.scopes != wanted.scopes ||
+      actual.statements != wanted.statements ||
+      actual.values != wanted.values ||
+      actual.locals.size() != wanted.locals.size())
+    return false;
+  if (actual.valueEvents != deriveMirSourceValueEvents(body))
+    return false;
+  for (std::size_t i = 0; i < wanted.locals.size(); ++i)
+    if (actual.locals[i].declaration != wanted.locals[i].declaration)
+      return false;
+  return true;
+}
 
 namespace {
 
@@ -212,6 +280,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
   }
 
   bool valid = verifyFailureMetadata(failureMetadata).valid();
+  result.program.sourceDebugProfile_ = source.sourceDebugProfile();
   result.program.executionProfile_ = source.executionProfile();
   result.program.programKind_ = source.programKind();
   result.program.foreignStorage_ = source.foreignStorageDeclarations();
@@ -272,6 +341,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .kind = instance.kind,
         .bases = instance.bases,
         .structuralBases = instance.bases,
+        .virtualDispatch = instance.virtualDispatch,
         .abstract = instance.abstract,
         .polymorphic = instance.polymorphic,
         .cAbiRecord = instance.cAbiRecord,
@@ -537,6 +607,33 @@ MirLowerer::lowerProgram(const HirProgram &source,
              &instance.initializers, nullptr, &instance, nullptr, nullptr,
              nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit),
              constructorOwner)});
+    auto &lowered = result.program.constructors.back();
+    if (constructorOwner && constructorOwner->polymorphic &&
+        lowered.definitionKind == MirDefinitionKind::Source) {
+      const auto stateBase = std::find_if(
+          constructorOwner->bases.begin(), constructorOwner->bases.end(),
+          [](const auto &base) { return !base.interface; });
+      if (stateBase == constructorOwner->bases.end()) {
+        lowered.dispatchState =
+            MirConstructorDispatchState{.activeClass = constructorOwner->id};
+      } else {
+        for (const auto &block : lowered.body.blocks)
+          for (const auto &instruction : block.instructions) {
+            const auto *place =
+                instruction.destination
+                    ? lowered.body.findPlace(*instruction.destination)
+                    : nullptr;
+            if (instruction.kind == MirInstructionKind::InitializeBase &&
+                place && place->root == MirPlaceRootKind::This &&
+                place->projections.size() == 1 &&
+                place->projections.front().kind == MirProjectionKind::Base &&
+                place->projections.front().selection == stateBase->instance)
+              lowered.dispatchState = MirConstructorDispatchState{
+                  .activeClass = constructorOwner->id,
+                  .afterBaseInitialization = instruction.id};
+          }
+      }
+    }
   }
 
   result.program.destructors.reserve(source.destructorInstances().size());
@@ -559,6 +656,15 @@ MirLowerer::lowerProgram(const HirProgram &source,
              nullptr, nullptr, nullptr,
              compilerTrustedSourceUnit(source, instance.sourceUnit), nullptr,
              &instance)});
+    // A polymorphic class's source destructor runs under its own class:
+    // the lifecycle-dispatch contract every backend lowers.
+    auto &lowered = result.program.destructors.back();
+    if (const auto *destructorOwner =
+            result.program.findClassInstance(instance.owner);
+        destructorOwner && destructorOwner->polymorphic &&
+        lowered.definitionKind == MirDefinitionKind::Source)
+      lowered.dispatchState =
+          MirDestructorDispatchState{.activeClass = destructorOwner->id};
   }
 
   result.program.lambdas.reserve(source.lambdaInstances().size());
@@ -571,6 +677,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .parameterTypes = instance.parameterTypes,
         .parameterBindings = instance.parameterBindings,
         .capability = instance.capability,
+        .lifecycleBoundBorrowCarrier = instance.lifecycleBoundBorrowCarrier,
         .returnBorrowOrigin = instance.returnBorrowOrigin,
         .returnBorrowParameter = instance.returnBorrowParameter,
         .returnBorrowAccess = instance.returnBorrowAccess};
@@ -696,6 +803,10 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .scoped = adapter.scoped,
          .scopeArgument = adapter.scopeArgument});
   }
+  if (result.program.hostedStartupBody &&
+      result.program.sourceDebugProfile() == SourceDebugProfile::LexicalV1)
+    result.program.hostedStartupBody->sourceDebug.collection =
+        SourceDebugCollection::NotApplicable;
   result.program.valid_ = valid;
   const MirProgramEffectSummaries effectSummaries =
       deriveMirProgramEffectSummaries(result.program);

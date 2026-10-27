@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,39 @@ struct MirVerificationResult {
 
 [[nodiscard]] MirVerificationResult verifyMirBody(const MirBody &body,
                                                   std::size_t owner = 0);
+
+enum class MirDebugReadability { Unknown, Unavailable, DefinitelyReadable };
+enum class MirDebugAvailabilityReason {
+  Unproven,
+  Inactive,
+  Readable,
+  OutOfScope
+};
+
+struct MirDebugAvailabilityRequest {
+  SourceLocalId local = 0;
+  MirDebugPoint point;
+};
+
+struct MirDebugAvailabilityFact {
+  MirDebugAvailabilityRequest request;
+  MirPlaceId place = 0;
+  MirDebugReadability readability = MirDebugReadability::Unknown;
+  MirDebugAvailabilityReason reason = MirDebugAvailabilityReason::Unproven;
+};
+
+struct MirDebugAvailabilityBatch {
+  MirVerificationResult verification;
+  std::vector<MirDebugAvailabilityFact> requested;
+  std::vector<MirSourceLocalEnd> requiredStops;
+};
+
+// Fresh canonical execution facts after joining each source local to its exact
+// body-local binding/type/domain. Lexical ends are additional required cuts,
+// never initialization evidence. This batch is not a construction certificate.
+[[nodiscard]] MirDebugAvailabilityBatch queryMirDebugAvailability(
+    const MirProgram &program, MirBodyAddress address,
+    std::span<const MirDebugAvailabilityRequest> requests);
 
 // The exact type of a canonical concrete parameter-pack element. Complete
 // projections additionally prove their physical type, read-only carrier

@@ -1,0 +1,30 @@
+#include <std/mutex>
+#include <std/utility>
+#include <std/string>
+class Account {
+public:
+  std::mutex<int> balance;
+  std::mutex<std::string> owner;
+  Account(int amount, std::string name) : balance(std::mutex<int>(amount)), owner(std::mutex<std::string>(std::move(name))) {}
+};
+int read(std::mutex<int>& gate) {
+  std::mutex_guard<int> guard = gate.lock();
+  return guard.get();
+}
+int main() {
+  mut std::mutex<int> left{1};
+  mut std::mutex<int> right{2};
+  std::swap(left, right);
+  if (read(left) != 2 || read(right) != 1) { return 1; }
+  std::mutex<int> previous = std::exchange(left, std::mutex<int>(7));
+  if (read(previous) != 2 || read(left) != 7) { return 2; }
+  mut Account first = Account(10, std::string("first"));
+  mut Account second = Account(20, std::string("second"));
+  std::swap(first, second);
+  if (read(first.balance) != 20 || read(second.balance) != 10) { return 3; }
+  {
+    std::mutex_guard<int> held = first.balance.lock();
+    if (held.get() != 20) { return 4; }
+  }
+  return 0;
+}

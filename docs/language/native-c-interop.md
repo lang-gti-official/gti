@@ -143,6 +143,40 @@ The importer reports unsupported storage explicitly, preserves object/pointee
 qualifiers, and emits an external declaration even when it reads a C definition.
 Accessor macros such as `errno` still need a native adapter.
 
+LLVM admits external objects through an exact canonical declaration, symbol,
+root place and storage-access witness. Supported shapes are scalars and native
+integer aliases, raw pointers, exact native function pointers, and passive C
+records/unions with recursively passive scalar, pointer, native-function, record
+and fixed-array fields. The foreign declaration stays external, nonconstant and aligned even
+when source access is read-only; it acquires no GTI initializer or cleanup.
+A record or union passed by value is copied straight out of the external object
+into the parameter, exactly as a load reads it. A native function pointer is
+passive address storage like a raw pointer, so its address, pointers to it and
+arrays of it follow the raw-pointer rules; calling it still requires its exact
+C signature. Loaded function pointers are selected before later call arguments
+execute.
+The runnable [native storage example](../../examples/llvm/native-c-storage.gti)
+shows mutation, function replacement and ordinary wrapper cleanup.
+
+Opaque pointer values retain their exact incomplete identity through native
+calls, out parameters, passive record fields and foreign pointer slots, including
+null replacement. Only the pointer referent metadata is admitted: incomplete
+objects still cannot be passed by value, laid out or dereferenced. Direct
+foreign-union member reads and writes use the canonical field/index path and
+the source union-member unsafe permission. This includes a union inside a
+foreign record or fixed-array field. A field of a selected member, such as
+`storage.member.field`, is an ordinary foreign-storage access: the union-member
+permission belongs to an access whose final selection is the member itself. The backend establishes no active-member
+guarantee for untagged C unions. Whole union snapshots retain the same unsafe
+member-access obligations. Aggregate and recursively nested native-function
+signatures retain the same staged receiver and argument rules as scalar calls.
+Views, owners, TLS and exports remain outside this foreign-object profile.
+
+The C++ comparison backend currently rejects valid foreign checked updates,
+projected record snapshots and record-array element assignments in its text
+vocabulary. LLVM tests retain those source programs, verified MIR and independent
+native-C state checks, alongside C++ controls for its supported storage forms.
+
 The [native variable bindings example](../../examples/native-variable-bindings/README.md)
 imports and links writable/const scalars, pointer objects, replaceable callback
 objects, a passive record and a renamed symbol. Its tests verify generated
@@ -394,6 +428,15 @@ passive `[[c_abi]]` record or used as an `extern "C"` parameter or result. It
 is nullable: initialization, assignment, and comparison with `nullptr` are
 valid. A callback binding requires an explicit initializer.
 
+LLVM preserves ordinary GTI read and mutable references to exact native
+function-value storage when staging source-function arguments. A reference
+is not a C ABI parameter: it selects the GTI binding's storage and retains
+the existing borrow/access checks. A native invocation snapshots its callee
+before evaluating arguments, including an argument that clears that binding.
+Forwarding an aggregate C call result into another call also preserves the
+exact producer and prepared-parameter cleanup; its inherited unsafe-effect
+tag does not authorize a second foreign-memory operation.
+
 This is a native C callable facility, distinct from GTI function items and
 capturing closures. Native callback values cannot be arithmetically manipulated, cast, or formed
 from lambdas, methods, generic functions, `unsafe` functions, declarations
@@ -423,6 +466,14 @@ address. It captures no GTI state and provides no implicit userdata lifetime.
 If the GTI target reports a defined failure, the thunk completes the target's
 verified cleanup and terminates through the runtime failure boundary; a native
 exception is caught and terminates rather than crossing C.
+
+LLVM lowers these source-selected adapters with the same target C classifier
+used for imports and indirect calls. Passive record results, HFA values,
+immutable counted-text inputs and nested native function signatures do not use
+casts from private GTI function pointers. Only adapters required by the sealed
+entry closure are emitted; each retains its exact source target. The wrapper
+consumes the central GTI call/failure plan and adds no C-visible failure channel.
+Ordinary callback failure remains terminal, not a recoverable worker result.
 
 Unannotated general callbacks remain single-threaded. In the concurrent profile, GTI
 adapters support the exact `(void*) -> int32_t` C-thread entry and `() -> void`
@@ -542,7 +593,9 @@ lets user-defined byte consumers operate without constructing a string.
 derefencing or indexing operations. A value returned by C may be null; GTI can
 compare it with `nullptr`, copy it as the same exact type, initialize it from
 `nullptr`, and pass its address as `c_string*` inside the ordinary raw-pointer
-`unsafe` boundary.
+`unsafe` boundary. A `c_string` read back through such a pointer is the inert
+native address stored there, with no GTI owner, so a function may return it as
+ownerless text; its validity remains the unsafe code's obligation.
 
 The only implicit production conversion in the current bounded slice is from
 `std::string_view` to a `c_string` **call parameter**. Only a complete,
@@ -860,6 +913,16 @@ the adapter's exact namespaced identity while hiding all of its
 representation. A C++ exception must never escape through an `extern "C"`
 function; the shim must catch it and translate it to a result allowed by the
 declared boundary. General C++ ABI calls remain outside the language contract.
+
+This applies equally to direct imports and native function-pointer calls.
+An ordinary outbound call is not a GTI containment boundary: an exception
+escaping a faulty shim is not a GTI defined failure, and GTI cleanup during
+that foreign unwind is not guaranteed. The terminating containment of a C
+callback does not turn an intervening outbound call into such a boundary.
+After a conforming shim returns a translated C result, GTI uses that result
+normally; any subsequent GTI defined failure retains its own verified cleanup
+and original source attribution. A shim that terminates instead of returning
+does not provide equivalent cleanup semantics to a GTI defined failure.
 
 ### Objective-C++ Apple API bridges
 

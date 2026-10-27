@@ -1,0 +1,96 @@
+#include <std/thread>
+#include <std/memory>
+
+// User-defined task shapes for managed void workers: read, mutable and
+// consuming call operators, owned captures with worker-side cleanup, a
+// function item, handle transfer, explicit and automatic join.
+class reader_task {
+  int32_t value;
+public:
+  reader_task(int32_t value) : value(value) {}
+  void operator()() { std::println(this.value); }
+};
+
+class stepping_task {
+  mut int32_t steps = 3;
+public:
+  void operator()() mut {
+    this.steps += 4;
+    std::println(this.steps);
+  }
+};
+
+class once_task {
+  int32_t code;
+public:
+  once_task(int32_t code) : code(code) {}
+  void operator()() && { std::println(this.code + 1); }
+};
+
+// A destructor is thread-affine unless audited for transfer.
+[[unsafe_transfer]] class payload {
+  int32_t value;
+public:
+  payload(int32_t value) : value(value) {}
+  int32_t read() { return this.value; }
+  ~payload() { std::println("payload released"); }
+};
+
+class owner_task {
+  payload held;
+public:
+  owner_task(int32_t value) : held(payload(value)) {}
+  void operator()() { std::println(this.held.read()); }
+};
+
+void free_task() { std::println("function item task"); }
+
+int main() {
+  auto first = std::thread::start(reader_task(11));
+  if (!first) { return 1; }
+  std::thread a = std::move(first).value();
+  mut std::thread b = std::move(a);
+  if (!b.joinable()) { return 2; }
+  if (!b.join() || b.joinable()) { return 3; }
+  auto again = b.join();
+  if (again || again.error() != std::thread_errc::not_joinable) { return 4; }
+
+  auto second = std::thread::start(stepping_task());
+  if (!second) { return 5; }
+  mut std::thread c = std::move(second).value();
+  if (!c.join()) { return 6; }
+
+  auto third = std::thread::start(once_task(40));
+  if (!third) { return 7; }
+  mut std::thread d = std::move(third).value();
+  if (!d.join()) { return 8; }
+
+  auto boxed = std::make_unique<payload>(23);
+  auto fourth = std::thread::start([held = std::move(boxed)]() -> void {
+    std::println(held->read());
+  });
+  if (!fourth) { return 9; }
+  mut std::thread e = std::move(fourth).value();
+  if (!e.join()) { return 10; }
+  std::println("joined owned capture");
+
+  auto fifth = std::thread::start(owner_task(31));
+  if (!fifth) { return 11; }
+  mut std::thread f = std::move(fifth).value();
+  if (!f.join()) { return 12; }
+
+  auto sixth = std::thread::start(free_task);
+  if (!sixth) { return 13; }
+  mut std::thread g = std::move(sixth).value();
+  if (!g.join()) { return 14; }
+
+  {
+    auto seventh = std::thread::start([]() -> void {
+      std::println("automatic join task");
+    });
+    if (!seventh) { return 15; }
+    std::thread h = std::move(seventh).value();
+  }
+  std::println("after automatic join");
+  return 0;
+}

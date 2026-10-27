@@ -113,6 +113,8 @@ std::string cacheContext(const FrontendOptions &options) {
       std::string(
           targetEndiannessName(options.target.dataLayout.endianness())) +
       '\n' + std::to_string(options.target.dataLayout.pointerWidthBits());
+  result += "\nsource-debug:";
+  result += sourceDebugProfileName(options.sourceDebugProfile);
   for (const std::string &flag : flags) {
     result += '\n';
     result += flag;
@@ -510,6 +512,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       key.graphEdges.emplace_back(edge.source, edge.target);
     if (!key.units.empty()) {
       preamble = options.preambleCache->lookup(key);
+      if (preamble && !semanticPreambleSupportsSourceDebug(
+                          *preamble, options.sourceDebugProfile))
+        preamble.reset();
       if (preamble == nullptr) {
         const auto buildStart = std::chrono::steady_clock::now();
         StmtList prefix(declarations.begin(),
@@ -518,7 +523,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         SemanticVisitor builder(
             options.target, &result.sourceGraph, options.toolingOccurrences,
             nullptr, &result.sources, RawPointerAuditMode::Off,
-            requireDefinitions, TrustedBodyAnalysis::Complete);
+            requireDefinitions, TrustedBodyAnalysis::Complete,
+            options.sourceDebugProfile);
         preamble = builder.buildPreamble(Program(std::move(prefix)));
         options.preambleCache->store(std::move(key), preamble);
         if (options.workMetrics != nullptr) {
@@ -548,7 +554,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     semanticOwner = std::make_unique<SemanticVisitor>(
         options.target, &result.sourceGraph, options.toolingOccurrences,
         options.workMetrics, &result.sources, options.rawPointerAudit,
-        requireDefinitions, trustedBodies);
+        requireDefinitions, trustedBodies, options.sourceDebugProfile);
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
     semantic.setCancellation(options.cancellation);

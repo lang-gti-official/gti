@@ -1,0 +1,15 @@
+struct Record {
+  int value;
+  Record(int input) : value(input) {}
+  ~Record() {}
+};
+struct Wrapper {
+  mut Record record;
+  Wrapper() : record(Record(0)) {}
+  ~Wrapper() {}
+};
+int sample(int input) {
+  mut Wrapper value{};
+  value.record = Record(input);
+  return input + 1;
+}

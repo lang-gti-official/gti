@@ -26,8 +26,9 @@ verified optimized MIR -> LoweredProgram
                                       -> LlvmBackend -> native object
 ```
 
-`CppBackend` remains the shipped default during the transition, not the primary
-development backend under the policy below. `LlvmBackend` is an installed,
+`CppBackend` remains the default on every target except macOS arm64 during the
+transition ([macOS arm64 promotion](#default-backend-on-macos-arm64-2026-10-27)),
+and it is not the primary development backend under the policy below. `LlvmBackend` is an installed,
 selectable backend which verifies the same `LoweredProgram` and checks native
 admission before initializing the host LLVM target. O-LLVM-04/05/06 admit the
 documented scalar, places/text and ordinary class/lifecycle profiles; other valid programs report the classified
@@ -122,7 +123,9 @@ neither backend selection nor diagnostics: `cpp` remains the current default
 until O-LLVM-16's coverage, safety, runtime-cost and installed-toolchain gates
 pass. LLVM still rejects unsupported required operations before publication;
 there is no hidden C++ fallback. A later default switch is an implemented,
-validated delivery change, not something this policy declares complete.
+validated delivery change, not something this policy declares complete. The
+owner has since made that switch for macOS arm64 alone; see
+[below](#default-backend-on-macos-arm64-2026-10-27).
 
 The LLVM campaign must cover its frozen language baseline and reconcile new
 main features even when they have no C++ implementation. Keep backend support
@@ -199,6 +202,28 @@ remain decisions requiring the named ownership, execution and cost evidence.
 Changes to these contracts require a recorded rationale and affected-consumer validation;
 there is no requirement to preserve an experimental private binary ABI.
 
+## Default Backend On macOS arm64 (2026-10-27)
+
+The owner promoted LLVM to the default executable backend for the macOS arm64
+target. Other targets keep C++ as their default and follow later, each on its
+own evidence. This narrows O-LLVM-16 rather than closing it: its Linux and
+remaining-target gates stay open. The evidence is recorded in the
+[O-LLVM-16 candidate status](../plans/implementation-sequence.md#o-llvm-16-complete-coverage-and-production-promotion).
+
+- `defaultBackend(TargetInfo)` owns the choice: LLVM when the resolved target is
+  macOS arm64, C++ otherwise.
+- An explicit choice wins: `--backend`, then a project profile's `backend`.
+  Without one, the C++-only options `--std`, `--keep-cpp` and a profile's
+  `keep-cpp` select C++ instead of being rejected, because they configure only
+  that backend. Combined with an explicit LLVM selection they are still
+  rejected.
+- There is no fallback. A shape LLVM does not support reports `GTI-B0003`, and
+  `--backend cpp` or a profile's `backend = "cpp"` selects C++.
+- The project cache stores C++ and object artifacts under separate schemas, so
+  no cached build is restored for the other backend and no cache or project
+  migration is needed.
+- C++ stays selectable on every target and bug-fix-only, as above.
+
 ## Current Status
 
 The foundation and O-LLVM-02/03 establish build, package, driver, CLI,
@@ -221,8 +246,8 @@ lowers scalar functions, arithmetic and control flow, including checked
 failure paths rather than only successful execution. Unsupported required
 `LoweredProgram` operations remain classified rejections; mixed per-function
 C++/LLVM emission and a cross-backend private ABI are not permitted. Default
-backend promotion waits for the campaign's complete conformance gate, not the
-first executable milestone.
+promotion on targets other than macOS arm64 still waits for the campaign's
+complete conformance gate.
 
 ## Consequences
 
@@ -232,10 +257,11 @@ first executable milestone.
 - Self-contained toolchains grow by the exact native LLVM static component
   closure for their host architecture. That cost is isolated to the backend
   target and release package rather than broadening `gti_compiler`.
-- Merely selecting LLVM never changes GTI semantics. C++ remains the
-  transitional shipped default, with a bug-fix-only support policy rather than
-  a promise of complete future language coverage. LLVM currently emits the
-  documented admitted profiles rather than the whole language.
+- Merely selecting LLVM never changes GTI semantics. LLVM is the default on
+  macOS arm64; C++ remains the transitional default elsewhere, with a
+  bug-fix-only support policy rather than a promise of complete future language
+  coverage. LLVM rejects a shape it does not support rather than miscompiling
+  it.
 - Boundary tests reject frontend and C++ representation dependencies, forged
-  lowered programs are rejected before LLVM initialization, and CLI tests pin
-  both default-C++ behavior and the explicit foundation limitation.
+  lowered programs are rejected before LLVM initialization, and driver and CLI
+  tests pin each target's default and the explicit limitation diagnostic.

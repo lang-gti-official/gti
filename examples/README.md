@@ -1,5 +1,96 @@
 # GTI examples
 
+[`llvm/native-c-storage.gti`](llvm/native-c-storage.gti) reads and updates
+native library globals, then shows that a loaded native function pointer stays
+selected while argument evaluation replaces the library's next function.
+Its ordinary wrapper runs cleanup once. Build from the repository root:
+
+```sh
+cc -std=c17 -O3 -c examples/llvm/native-c-storage-native/state.c -o /tmp/native-state.o
+gti examples/llvm/native-c-storage.gti --backend llvm -O3 -o /tmp/native-state -- /tmp/native-state.o
+/tmp/native-state
+```
+
+It prints `native-state:13,31` and `cleanup`, one per line. The registered
+`llvm_native_c_storage_execution` harness uses this actual example at LLVM
+O0-O3 against C O0/O3 and supported C++20/23 controls. Like other bounded LLVM
+examples, it is outside the numbered full-language census.
+
+[`llvm/native-c-record-values.gti`](llvm/native-c-record-values.gti) receives
+passive C records from native factories, copies and returns them through
+ordinary GTI functions, and passes a fixed-array record back to C. It checks
+that updating a by-value copy preserves the original and that scoped wrapper
+cleanup runs once. Build and run from the repository root with an optimized GTI
+compiler:
+
+```sh
+cc -std=c17 -O3 -c examples/llvm/native-c-record-values-native/records.c -o /tmp/native-records.o
+gti examples/llvm/native-c-record-values.gti --backend llvm -O3 -o /tmp/native-record-values -- /tmp/native-records.o
+/tmp/native-record-values
+```
+
+It prints `records:7,8` and `cleanup`, one per line. The registered
+`llvm_native_c_aggregate_execution` harness uses the actual example source at
+LLVM O0-O3 against C O0/O3 and C++20/23 controls. Native records carry passive
+representation; factories and ordinary source wrappers provide initialization
+and cleanup policy. Like the other bounded LLVM profiles, this example is
+outside the numbered full-language census.
+
+[`llvm/native-c-function-values.gti`](llvm/native-c-function-values.gti)
+demonstrates an exact scalar function pointer returned by C, its nullable check
+and copied value, native invocation after argument preparation changes C's next
+selection, and exactly-once scoped cleanup. Build and run from the repository
+root with an optimized GTI compiler:
+
+```sh
+cc -std=c17 -O3 -c examples/llvm/native-c-function-values-native/operation.c -o /tmp/native-operation.o
+gti examples/llvm/native-c-function-values.gti --backend llvm -O3 -o /tmp/native-function-values -- /tmp/native-operation.o
+/tmp/native-function-values
+```
+
+It prints `selected`, `argument:31`, `result:42`, and `cleanup`, one per line.
+The registered `llvm_native_c_indirect_execution` harness builds the actual
+example source at LLVM O0-O3 against C O0/O3, with C++20/23 controls. Like the
+other `examples/llvm/` profiles it is outside the numbered full-language census.
+The C host supplies a process-lifetime code address; invocation remains `unsafe`
+and requires the caller to establish its signature, lifetime and preconditions.
+
+[`llvm/payloads-and-unions.gti`](llvm/payloads-and-unions.gti) exercises native
+overlapping union storage, concrete generic alternatives and scoped payload
+borrows. `llvm_payload_execution` runs it at LLVM O0-O3 against C++20/23 O3;
+it is outside the numbered full-language census like the other LLVM profiles.
+
+[`llvm/inheritance-and-dispatch.gti`](llvm/inheritance-and-dispatch.gti)
+demonstrates fresh local objects, a multilevel state base, multiple interfaces,
+checked readonly/mutable borrowed calls, and generated copies/moves into fresh
+locals while preserving the complete object's interface views, and a fresh
+inline hierarchy-valued field with independent dispatch state. Build with
+`gti examples/llvm/inheritance-and-dispatch.gti --backend llvm -O3 -o dispatch`.
+`llvm_dispatch_execution` owns its native O0/O3 checks; dedicated transfer
+fixtures additionally run O1/O2. Dynamic owning polymorphism, general value transport,
+replacement and destructor-observed virtual phases remain pending. This
+bounded profile is outside the numbered full-language census. The shared
+preview collector requires its owning execution gate, along with the other
+`llvm/` example gates; registration does not certify pending language shapes.
+
+[`llvm/borrowed-hierarchy-owners.gti`](llvm/borrowed-hierarchy-owners.gti)
+returns readonly and mutable base/interface views from ordinary functions,
+forwards already-adjusted references, and resets a unique owner of an ordinary
+record with an inline hierarchy field. Its cleanup trace checks exactly-once
+destruction. `llvm_dispatch_execution` validates this example and shared-owner,
+failure-cleanup and invalid-borrow controls at LLVM O0-O3. C++ currently rejects
+these owner compositions before execution; those exact failures are retained
+alongside mandatory source/MIR/native evidence. This is another bounded LLVM
+profile outside the numbered full-language census, not dynamic owner support.
+
+[`llvm/nested-hierarchy-transfer.gti`](llvm/nested-hierarchy-transfer.gti)
+demonstrates generated copy and move through ordinary record fields containing
+independent hierarchy objects. Copies retain independent state; two moves run
+each surviving destructor once. The dispatch execution gate owns C++20/23 O3,
+LLVM O0-O3 and failure-cleanup controls. Like the other bounded LLVM examples,
+this is outside the numbered language census, not general value-transfer
+coverage.
+
 [`llvm/immovable-placement.gti`](llvm/immovable-placement.gti) demonstrates
 deleted-copy/deleted-move objects constructed directly through fresh return
 chains and nested fixed-array elements, with stable addresses and exactly-once
@@ -186,7 +277,7 @@ is a teaching helper, not a production server.
 | `063-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
 | `064-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
 | `065-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
-| `066-managed-threads.gti` | move-only threads, transfer-qualified erased jobs, shared mutex state, scoped disjoint borrows, explicit join, and mandatory autojoin |
+| `066-managed-threads.gti` | move-only threads, transfer-qualified erased jobs, shared mutex state, native-only process mutex retirement, scoped disjoint borrows, explicit join, and mandatory autojoin |
 | `067-forward-iterators.gti` | copied owner-tied read cursors, temporary end-sentinel loops, `std::next`, and forward-iterator binary search |
 | `068-static-assertions.gti` | package, class-dependent, and block-scope compile-time assertions |
 | `069-mutable-field-groups.gti` | grouped mutable fields inside an otherwise immutable-by-default class |
@@ -678,6 +769,12 @@ demonstrates prefix and compound mutation proofs through a mutable reference,
 using the same general mechanism as source-defined iterator movement policy.
 
 ## Complete projects
+
+[`infallible-embedding/`](infallible-embedding/README.md) builds an LLVM shared
+library and its matching C header through `gti build`. Its C host creates a
+context, calls scalar and passive-record exports, destroys the context and
+unloads/reloads the immutable generation. The focused `llvm_embedding_project`
+gate owns this nested example; the numbered executable MIR census is unchanged.
 
 [`annotated-tests/`](annotated-tests/README.md) shows one manifest suite root
 with several `[[test]]` functions, automatic reporting, source-located checks

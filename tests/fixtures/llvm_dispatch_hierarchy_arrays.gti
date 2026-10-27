@@ -1,0 +1,105 @@
+// Fixed arrays of hierarchy storage. Each element is a fresh object
+// constructed in its own slot of the array's final storage, selected through
+// a checked index projection, and destroyed in reverse order with its own
+// complete cleanup. Destructors record explicit IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Shape { int area(); };
+
+interface Named { int code(); };
+
+// Named precedes Shape, so the Shape view has a nonzero offset.
+class Square : public Named, public Shape {
+  int side;
+public:
+  Square(int side) : side(side) {}
+  ~Square() { record(this.side); }
+  int code() override { return this.side + 10; }
+  int area() override { return this.side * this.side; }
+};
+
+// An inert polymorphic element with a defaulted field.
+class Dot : public Shape {
+public:
+  mut int x = 3;
+  Dot() {}
+  int area() override { return this.x; }
+};
+
+Square make(int side) { return Square(12 / side); }
+
+int measure(Shape& shape) { return shape.area(); }
+
+// A record without dispatch state whose field defaults are hierarchy arrays.
+class Board {
+public:
+  mut Square row[2] = {Square(1), Square(2)};
+  mut Dot dots[2] = {};
+  Board() {}
+};
+
+// A constructor initializer publishes a fresh array into its field; moving
+// the record relocates every element with its own dispatch state.
+class Rack {
+public:
+  Square row[2];
+  Rack(int side, int divisor) : row({Square(side), make(divisor)}) {}
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// HIERARCHY_ARRAYS_MAIN
+int main() {
+  {
+    Square squares[3] = {Square(1), make(6), Square(3)};
+    Shape& view = squares[2];
+    if (view.area() != 9 || measure(squares[0]) != 1 ||
+        squares[1].code() != 12) {
+      return 1;
+    }
+    mut Dot dots[2] = {};
+    dots[1].x = 5;
+    if (measure(dots[0]) + measure(dots[1]) != 8) { return 2; }
+    Square grid[2][2] = {{Square(4), Square(5)}, {Square(6), Square(7)}};
+    if (measure(grid[1][0]) != 36 || grid[0][1].code() != 15) { return 3; }
+    {
+      mut Board board{};
+      board.dots[1].x = 4;
+      if (measure(board.row[1]) != 4 || measure(board.dots[1]) != 4) {
+        return 4;
+      }
+    }
+    if (events != 21) { return 5; }
+    events = 0;
+    {
+      Rack first = Rack(4, 4);
+      Rack second = std::move(first);
+      if (measure(second.row[0]) != 16 || second.row[1].code() != 13) {
+        return 6;
+      }
+    }
+    if (events != 34) { return 7; }
+    events = 0;
+    {
+      // Moved elements are relocated into their slots.
+      Square first = Square(1);
+      Square second = Square(2);
+      Square moved[2] = {std::move(first), std::move(second)};
+      if (measure(moved[1]) != 4 || events != 0) { return 9; }
+    }
+    if (events != 21) { return 10; }
+    events = 0;
+  }
+  return events == 7654321 ? 0 : 8;
+}

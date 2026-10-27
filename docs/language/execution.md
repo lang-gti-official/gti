@@ -415,6 +415,32 @@ but does not invoke the enclosing cleanup body. On ordinary destruction, the
 live object's cleanup body runs first, followed by fields in reverse
 declaration order and then the state-bearing base.
 
+A virtual call on an object whose construction or destruction is running
+selects the class whose lifecycle stage is running. It never reaches a derived
+part that is not yet constructed or has already been destroyed:
+
+- Construction records existing behaviour; it is not a new decision. Once a
+  class's state-bearing base is initialized, or at constructor entry when the
+  class has none, a virtual call on `this` selects that class's members. This
+  holds for a direct call and for a call through a helper that receives
+  `this`. A derived constructor's own transition later replaces it. A base
+  whose construction fails never installs the derived class's state.
+- Destruction, by owner decision on 2026-10-27. While a destructor of class
+  `C` runs, a virtual call on `this` resolves as if the object's dynamic type
+  were `C`. The rule covers direct calls and calls through helpers that `C`'s
+  destructor invokes on `this`. It holds from the destructor's entry, through
+  its body, until the cleanup of `C`'s own fields finishes. Each base
+  destructor then runs under its own class. Constructor rollback, which
+  destroys completed bases, follows the same rule.
+
+MIR records the active class at each of these transitions, and backends lower
+that record. A transition that selects a pure member has no target. The native
+backend rejects programs that can reach such a call (`PureDispatchState`). The
+C++ backend does not implement the destruction rule yet: during base
+destruction and constructor rollback it dispatches to the most-derived
+override. That is a known C++ backend defect, not a language rule; see
+[backend lifecycle dispatch](../architecture/backend.md#lifecycle-dispatch).
+
 A closure's captures are initialized left to right and destroyed in reverse
 successful-initialization order. The closure lifetime begins only after every
 capture succeeds. Copy and owned-move capture modes participate in the same

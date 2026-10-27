@@ -205,6 +205,22 @@ gti_failure_report_result_v1
 gti_rt_failure_capture_panic_bytes_v2(gti_failure_record_v2 *record,
                                       const uint8_t *data, uint64_t size);
 
+/* Compiler cleanup context for synchronous calls on the current thread.
+ * The first scope borrows its immutable primary record/artifact until leave;
+ * nested scopes return a null token and cannot replace the primary. The token
+ * is thread-confined and must be left exactly once. No allocation or record
+ * copying occurs on entry. Check only after an operation has failed, before
+ * further language cleanup: an inherited primary takes the terminal cleanup
+ * path, preserving both records. These services do not select a call transport.
+ */
+const gti_failure_record_v2 *gti_rt_failure_cleanup_enter_v1(
+    const gti_failure_record_v2 *record,
+    const gti_failure_artifact_descriptor_v1 *artifact);
+void gti_rt_failure_cleanup_leave_v1(const gti_failure_record_v2 *token);
+void gti_rt_failure_cleanup_check_v1(
+    const gti_failure_record_v2 *secondary,
+    const gti_failure_artifact_descriptor_v1 *artifact);
+
 gti_failure_report_result_v1 gti_rt_failure_write_report_v2(
     const gti_failure_record_v2 *record,
     const gti_failure_artifact_descriptor_v1 *artifact);
@@ -259,6 +275,15 @@ GTI_FAILURE_NORETURN void gti_rt_failure_terminate_cleanup_v2(
 GTI_FAILURE_NORETURN void gti_rt_failure_abort_allocation_v2(
     const gti_failure_record_v2 *record,
     const gti_failure_artifact_descriptor_v1 *artifact);
+
+/* A broken native or private runtime contract that is not a GTI failure: a
+ * foreign exception reaching a GTI callback boundary, a thread-confined
+ * callback bound on a second thread, or a malformed private runtime handle.
+ * This calls std::terminate, so it reaches the C++ terminate handler a host
+ * installed exactly as generated C++ does; without one the process aborts.
+ * It reports nothing, runs no cleanup and never returns.
+ */
+GTI_FAILURE_NORETURN void gti_rt_contract_terminate_v1(void);
 
 #ifdef __cplusplus
 }

@@ -333,6 +333,30 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
       currentType = SemanticType::Unknown;
       return;
     }
+    // A lambda's text over its captures has an owner the compiler cannot
+    // name, which no erased invocation could carry to its callers: only a
+    // direct call may use it, locally (L-OWN-02).
+    if (lambda != 0 && (result.kind == SemanticType::StringView ||
+                        result.kind == SemanticType::CString)) {
+      const LambdaInfo *info = semanticModel.findLambda(lambda);
+      if (info == nullptr && instanceBaseModel != nullptr)
+        info = instanceBaseModel->findLambda(lambda);
+      if (info != nullptr && info->capturedTextResult) {
+        const bool cString = result.kind == SemanticType::CString;
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2045", DiagnosticPhase::Semantics,
+            expressionToken(expr.arguments().front()),
+            std::string(cString ? "An owner-dependent c_string"
+                                : "A dynamic std::string_view") +
+                " cannot be returned through a GTI invocation pointer in the "
+                "single-owner " +
+                (cString ? "text-borrow model." : "view model."));
+        diagnostic.hints.emplace_back(capturedTextHint(cString));
+        diagnostics.emplace_back(std::move(diagnostic));
+        currentType = SemanticType::Unknown;
+        return;
+      }
+    }
     // The target's own result-origin contract must name the signature's
     // origin parameter: the erased invocation relays exactly that borrow.
     if (resultOrigin && !containsOpenTypeParameter(target)) {

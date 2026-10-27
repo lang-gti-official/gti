@@ -870,10 +870,33 @@ claiming that all generic dependencies are known from declaration-time calls.
 Text-return relay predeclaration consults the owning class's registered instance
 fields for implicit receiver spellings as well as explicit `this` paths.
 Parameter names take precedence; static fields/methods do not nominate a
-receiver. This is a candidate contract, not a body-local lifetime proof:
+receiver. Text read through a raw pointer's index or `->` nominates nothing,
+as a raw dereference does: it is raw memory, not storage of the pointer's
+formal or field. This is a candidate contract, not a body-local lifetime proof:
 ordinary body lookup and return-borrow validation must confirm the actual
 origin, rejecting local shadowing and unrelated borrowed call results. HIR/MIR
 and the LSP consume the same validated receiver/argument summary.
+
+A virtual call's text result is its root's contract. An override's summary is
+its root's summary in the override's own instance of the root's class, whose
+signature is the override's: a generic root whose result its instance makes
+text is summarized with those types. MIR's dispatch table verification
+requires the two to agree, and body analysis validates the override's returns
+against that summary, so an override of a root that relays nothing returns
+ownerless text, and an override of a root relaying a parameter relays it or
+returns ownerless text. Predeclaration finds a member call's receiver type
+through formals, fields and the declared results of the accessors that reach
+it (accessors differing only in receiver access agree). A virtual method whose
+root has no body, or whose root's returns in the receiver's instance have no
+dependency, then nominates no relay, rather than the receiver-rooted candidate
+an unknown member call takes. A generic method whose result type becomes text
+in an instance relays at each member or operator call as that instance's own
+analysis derives, so the call's borrow facts equal the instance summary MIR
+checks them against. `classifyExpression` gives an overloaded operator's text
+result the owner its relay summary names, as it does a call's: the result is
+owner dependent unless the relayed operand, or the receiver field a field
+relay reads, holds ownerless text, so the binding retains the loan
+`operatorBorrowSource` names.
 
 `FunctionInfo::completeReturnBorrow` is a separate complete result contract,
 not an inferred owner for an empty alternative. The current dependency-free
@@ -1536,6 +1559,16 @@ relates the earlier borrow; there is no automatic operand-reordering fix.
 
 ## SemanticModel
 
+The optional `LexicalV1` source-debug profile records
+accepted source scopes and bindings independently of semantic identities.
+Program storage, thread-local storage and field initializers enter descriptive
+initializer regions at the existing declaration-analysis decision. Their guard
+saves and restores only source context, including early returns; it creates no
+lookup scope and changes no ownership or constant-evaluation rule. Ordinary
+locals remain in their function or lambda region. Each initializer region must
+resolve to the accepted declaration binding in its exact analysis snapshot.
+
+
 `SemanticModel` is a set of snapshot-owned side tables keyed by AST identity or
 compiler IDs. Important facts include:
 
@@ -2042,6 +2075,13 @@ copy/move captures of borrowed carriers retain their nested dependency paths.
 Multiple independent parents are represented explicitly, rather than collapsing
 all captures onto one parent. Global/field capture spelling and general init
 captures remain rejected; a named local reference may select a field first.
+Inside the lambda body a by-reference capture symbol is a flow place rooted at
+the capture, like a reference parameter: its loan places keep their field
+projections, and every access through it is checked against live overlapping
+loans, so a write through the capture conflicts with a live alias of it while
+disjoint fields stay independent. A capture list still resolves its
+initializers in the enclosing scope, where an enclosing closure's capture is
+not a place; capturing it by reference therefore remains rejected.
 
 ## Confined Callable Contracts
 
@@ -3276,6 +3316,44 @@ and skips the contract pass, because looking up the functions a contract names
 would record them as functions the instance consulted, and demand their
 bodies.
 
+Text a lambda's copy or move capture provided has an owner semantics cannot
+name, because a capture is never a lifetime origin (`L-OWN-02`). Its
+expression traits stay those of a local value, which is what MIR sees too.
+`textValueSources` instead follows a text expression through grouping, the
+comma operator, conditional arms, `std::move` and argument or receiver relays
+to capture symbols, to calls of a lambda whose `LambdaInfo::capturedTextResult`
+is set, and to the local views it reads: by-value text locals and parameters,
+never thread-local storage. Each body's `LoanFlowState` records flows between
+local views and every escape of checked text: a return, a store into a field,
+array element, payload, optional, global or referenced place, a constructor
+field initializer, and an argument its callee publishes in a field or requires
+ownerless. The tracking is flow-insensitive, as MIR, which sees every write of
+a local, is: a local view that is ever given such text holds it for its whole
+scope. `finalizeCapturedText` decides the escapes when the body completes. A
+store or function return reports `GTI-S2045` with a captured-text hint, an
+argument becomes non-ownerless for `finalizeOwnerlessTextContracts`, and a
+lambda return sets the lambda's `capturedTextResult`, which makes each call of
+it captured text again. Forming a GTI invocation pointer from such a lambda is
+`GTI-S2045` too: the erased invocation has no result-origin contract that
+could carry the text to its callers.
+
+A closure over a dynamic view keeps that view's loan, as a copy of the view
+would. `capturedTextLoans` names the loans an expression's value carries: a
+lambda expression's copy and move captures of a view with a retained loan,
+and through a lambda call whose result is captured text, a relaying call, a
+conditional or a local, what its closure carries. `recordCapturedTextCarriers`
+makes each such local binding, and each binding that borrows such a carrier
+(a reference or callable view of the closure), a loan-flow carrier of those
+loans in `LoanFlowState::capturedTextCarriers`. These carriers have no
+retained-loan binding of their own: each use extends the view's loan, a
+carrier in a nested region keeps it to the region's end, and the loan ends
+after the last use, so a later change, move or replacement of the owner is
+`GTI-S2017` exactly where it would be for a copy of the view. HIR and MIR keep
+the view's own loan with that endpoint, and MIR's loan flow checks the owner's
+later accesses against it. Assigning such text into an existing binding is
+`GTI-S2045`, as assigning a dynamic view is. A closure copied into owning
+erased storage does not carry the loans yet.
+
 For a bounded exclusive reborrow, semantics records a distinct child loan and
 its mutable parent. The accepted source place has one stable symbol or receiver
 root and named-field, fixed-array index, or checked-dereference projections.
@@ -3294,6 +3372,18 @@ slice.
 Semantics chooses all proven endpoints and reports invalidation conflicts. HIR
 and MIR preserve those choices; they do not recompute liveness from emitted
 C++ references.
+
+A checked ordinary call or constructor can publish a sole-origin,
+lifecycle-bound stored value with mutable exclusion even when its selected
+input is a shared stored reference. The input's abstract entry loan supplies
+the address and lifetime; it remains read-only. The result receives a distinct
+mutable child at the exact external projection, without claiming that the
+referent occupies the carrier's physical storage. This bounded publication
+requires the checked result summary and an unconditional single dependency;
+it does not permit ordinary read-only reference upgrades. While the result is
+live, overlapping ancestor reads and second publications report `GTI-S2017`.
+Disjoint stored projections remain independent, and destruction of the result
+ends its exclusion even if the result was never read.
 
 An unretained global-origin call loan is a temporary and receives the ordinary
 full-expression endpoint. Retaining a mutable result creates a symbol-rooted
@@ -3377,10 +3467,16 @@ M-LIFE-01 adds the v1 restriction on cleanup-owning namespace globals and
 static fields after the existing more-specific unique-owner, storage, and
 borrowed-state checks. The recursive semantic trait follows arrays, aliases,
 bases, fields, captures, and concrete generic substitutions,
-and treats declared cleanup as an active obligation. `GTI-S2061` reports the
+and treats declared cleanup as an active obligation. A native resource shell
+is independently active even with a passive payload. Process storage permits
+only structural native retirement: the same recursive query excludes the shell
+itself but still follows its payload and every source base/field. Source
+destructors and owning allocation release remain forbidden even when failure
+free; no public type spelling grants an exception. `GTI-S2061` reports the
 outer declaration plus the first available declared-cleanup/base/field cause.
 HIR and MIR can therefore rely on the absence of source global/static drop
-obligations; this does not define global shutdown.
+obligations. The initialization plan marks native-retirement roots explicitly;
+this is not a general source-destructor shutdown policy.
 
 ## Bounded Aggregate Constant Evaluation
 

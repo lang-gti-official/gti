@@ -4,6 +4,8 @@
 #include "gti/failure_metadata.h"
 #include "gti/lowered_program_printer.h"
 #include "lowered_program_closure.h"
+#include "lowered_program_source_debug.h"
+#include "mir_source_debug.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -18,6 +20,21 @@
 
 namespace lang {
 namespace {
+
+// A lowered dispatch selection names exactly the MIR selection's instances.
+template <typename Mir>
+bool sameVirtualDispatch(const std::vector<LoweredVirtualDispatch> &lowered,
+                         const std::vector<Mir> &mir) {
+  return std::equal(lowered.begin(), lowered.end(), mir.begin(), mir.end(),
+                    [](const auto &left, const auto &right) {
+                      return left.root == right.root &&
+                             left.target == right.target &&
+                             left.rootOwner == right.rootOwner &&
+                             left.targetOwner == right.targetOwner &&
+                             left.rootPath == right.rootPath &&
+                             left.targetPath == right.targetPath;
+                    });
+}
 
 [[nodiscard]] bool lifecycleContainsClosure(const SemanticType &type) {
   return type.kind == SemanticType::Lambda ||
@@ -445,6 +462,14 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
         (payload->unionLayout && payload->kind != ClassKind::Union)) {
       return invalid("class declaration payload is unresolved or incoherent");
     }
+    std::unordered_set<FunctionId> roots;
+    for (const auto &selected : payload->virtualDispatch)
+      if (!selected.root || !selected.target ||
+          !roots.insert(selected.root).second ||
+          selected.targetOwner.kind != SemanticType::Class ||
+          !resolvedType(selected.targetOwner))
+        return invalid("class declaration has an invalid virtual dispatch "
+                       "selection");
     break;
   }
   case LoweredDeclarationKind::Enum: {
@@ -772,8 +797,70 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                "attached to a non-executable body",
                body.identity.address);
     }
+    const auto &debug = body.sourceDebug;
+    // A generated default constructor keeps its source definition kind, but
+    // like HIR it has no written body to describe.
+    const MirConstructorInstance *constructor =
+        body.identity.address.kind == MirBodyKind::Constructor
+            ? program.mir_.findConstructorInstance(body.identity.address.owner)
+            : nullptr;
+    const bool generated = body.identity.definition ==
+                               LoweredBodyDefinitionKind::CompilerGenerated ||
+                           body.role != LoweredBodyRole::SourceExecutable ||
+                           (constructor && constructor->generatedDefault);
+    if (!isValidSourceDebugRecord(debug) ||
+        !isValidSourceDebugProfile(program.sourceDebugProfile()) ||
+        (program.sourceDebugProfile() == SourceDebugProfile::None &&
+         debug.tables) ||
+        (program.sourceDebugProfile() == SourceDebugProfile::LexicalV1 &&
+         debug.collection == SourceDebugCollection::Uncollected) ||
+        (debug.collection == SourceDebugCollection::NotApplicable &&
+         !generated) ||
+        (mirBody && (debug.collection != mirBody->sourceDebug.collection ||
+                     static_cast<bool>(debug.tables) !=
+                         static_cast<bool>(mirBody->sourceDebug.tables))))
+      addIssue(
+          issues, LoweredProgramIssueKind::InvalidBodyInventory,
+          "lowered source-debug profile, role or collection state is invalid",
+          body.identity.address);
+    if (debug.tables && mirBody && mirBody->sourceDebug.tables &&
+        (debug.tables->domain != mirBody->placeDomain ||
+         debug.tables->scopes != mirBody->sourceDebug.tables->scopes ||
+         debug.tables->locals != mirBody->sourceDebug.tables->locals))
+      addIssue(issues, LoweredProgramIssueKind::InvalidBodyInventory,
+               "lowered source-debug declarations differ from current MIR",
+               body.identity.address);
+    const mir_detail::MirSourceAnchorIndex anchors(mirBody);
+    if (debug.tables) {
+      if (!mirBody || debug.tables->valueRanges !=
+                          lowered_detail::deriveSourceValueRanges(*mirBody))
+        addIssue(issues, LoweredProgramIssueKind::InvalidBodyInventory,
+                 "source value ranges differ from verified MIR value events",
+                 body.identity.address);
+      const auto ranges = lowered_detail::deriveSourceRanges(
+          program.mir_, body.identity.address);
+      if (!ranges || debug.tables->ranges != *ranges)
+        addIssue(
+            issues, LoweredProgramIssueKind::InvalidBodyInventory,
+            "source-local ranges differ from fresh current MIR availability",
+            body.identity.address);
+      if (!ranges || debug.tables->fragments !=
+                         lowered_detail::deriveSourceFragments(
+                             program.mir_, body.identity.address, *ranges))
+        addIssue(issues, LoweredProgramIssueKind::InvalidBodyInventory,
+                 "source fragments differ from verified field loads and "
+                 "availability",
+                 body.identity.address);
+      if (!ranges || debug.tables->parameterFragments !=
+                         lowered_detail::deriveSourceParameterFragments(
+                             program.mir_, body.identity.address))
+        addIssue(issues, LoweredProgramIssueKind::InvalidBodyInventory,
+                 "source parameter fragments differ from canonical pack "
+                 "availability",
+                 body.identity.address);
+    }
     std::set<std::pair<MirBlockId, MirInstructionId>> debugStages;
-    for (const LoweredSourceLocation &location : body.sourceLocations) {
+    for (const LoweredSourceLocation &location : body.sourceLocations()) {
       const MirBlock *block =
           mirBody == nullptr ? nullptr : mirBody->findBlock(location.block);
       const bool instructionExists =
@@ -784,7 +871,23 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                          return instruction.id == location.instruction &&
                                 !instruction.tombstone;
                        }));
-      if (!instructionExists || location.source.source.empty() ||
+      const SourceDebugAnchor *anchor = nullptr;
+      if (block) {
+        if (!location.instruction)
+          anchor = anchors.find(block->terminator.hirStatement,
+                                block->terminator.hirValue, true);
+        else
+          for (const auto &instruction : block->instructions)
+            if (instruction.id == location.instruction)
+              anchor = anchors.find(instruction.hirStatement,
+                                    instruction.hirValue, true);
+      }
+      if (!instructionExists || !body.sourceDebug.tables ||
+          location.scope == 0 ||
+          location.scope > body.sourceDebug.tables->scopes.size() ||
+          location.source.source.empty() || !anchor ||
+          anchor->source != location.source ||
+          anchor->scope != location.scope ||
           location.source.start >= location.source.end ||
           location.source.line < 1 ||
           !debugStages.emplace(location.block, location.instruction).second) {
@@ -1077,6 +1180,27 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       }
       return type;
     };
+    if (owner->virtualDispatch.size() != instance.virtualDispatch.size())
+      addIssue(issues, LoweredProgramIssueKind::InvalidInstanceInventory,
+               "lowered semantic dispatch inventory differs from MIR");
+    for (std::size_t slot = 0; slot < instance.virtualDispatch.size(); ++slot) {
+      const auto &dispatch = instance.virtualDispatch[slot];
+      const auto *root = program.mir_.findFunctionInstance(dispatch.root);
+      const auto *target = program.mir_.findFunctionInstance(dispatch.target);
+      const auto *targetOwner =
+          program.mir_.findClassInstance(dispatch.targetOwner);
+      const auto *selected = slot < owner->virtualDispatch.size()
+                                 ? &owner->virtualDispatch[slot]
+                                 : nullptr;
+      if (!selected || !root || !target || !targetOwner ||
+          selected->root != root->declaration ||
+          selected->target != target->declaration ||
+          resolveExact(resolveExact, substituteSemanticType(
+                                         selected->targetOwner,
+                                         substitution)) != targetOwner->type)
+        addIssue(issues, LoweredProgramIssueKind::InvalidInstanceInventory,
+                 "lowered dispatch differs from its exact semantic selection");
+    }
     std::size_t aliasIndex = 0;
     for (const auto &row : program.declarations()) {
       const auto *primary =
@@ -1258,6 +1382,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         instance.declaration != mir.declaration ||
         instance.typeArguments != mir.type.arguments ||
         instance.valueArguments != mir.type.valueArguments ||
+        !sameVirtualDispatch(instance.virtualDispatch, mir.virtualDispatch) ||
         !resolvedTypes(instance.typeArguments) ||
         !resolvedValues(instance.valueArguments) ||
         !classDeclarations.contains(instance.declaration)) {
@@ -1337,6 +1462,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         instance.typeArguments != mir.typeArguments ||
         instance.valueArguments != mir.valueArguments || instance.owner == 0 ||
         instance.parameterTypes != mir.parameterTypes ||
+        instance.dispatchState != mir.dispatchState ||
         mir.constexprConstructor !=
             (declaration != nullptr && declaration->constexprConstructor) ||
         mir.requiresUnsafe !=

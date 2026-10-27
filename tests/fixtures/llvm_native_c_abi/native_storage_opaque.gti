@@ -1,0 +1,26 @@
+[[c_opaque]] struct StorageToken;
+[[c_abi]] struct StorageTokenSlot { mut StorageToken* token; };
+extern "C" {
+  mut StorageToken* native_token;
+  void native_storage_reset();
+  int32_t native_storage_token(StorageToken* value);
+  StorageToken* native_storage_get_token();
+  void native_storage_token_out(StorageToken** result);
+  StorageTokenSlot native_storage_token_slot_make(StorageToken* value);
+  StorageTokenSlot native_storage_token_slot(StorageTokenSlot value);
+}
+int main() {
+  native_storage_reset();
+  unsafe {
+    if (native_storage_token(native_token) != 1) return 1;
+    native_token = nullptr;
+    if (native_token != nullptr) return 2;
+    native_token = native_storage_get_token();
+    mut StorageToken* local = nullptr;
+    native_storage_token_out(&local);
+    StorageTokenSlot slot = native_storage_token_slot_make(local);
+    StorageTokenSlot returned = native_storage_token_slot(slot);
+    if (returned.token != native_token || native_storage_token(local) != 1) return 3;
+  }
+  return 0;
+}

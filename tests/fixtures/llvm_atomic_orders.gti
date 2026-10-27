@@ -1,0 +1,54 @@
+#include <std/atomic>
+
+int main() {
+  std::atomic<int32_t> value{0};
+  value.store(1, std::memory_order_relaxed());
+  if (value.load(std::memory_order_relaxed()) != 1) { return 1; }
+  value.store(2, std::memory_order_release());
+  if (value.load(std::memory_order_acquire()) != 2) { return 2; }
+  value.store(3, std::memory_order_seq_cst());
+  if (value.load(std::memory_order_seq_cst()) != 3) { return 3; }
+  if (value.exchange(4, std::memory_order_relaxed()) != 3 ||
+      value.exchange(5, std::memory_order_acquire()) != 4 ||
+      value.exchange(6, std::memory_order_release()) != 5 ||
+      value.exchange(7, std::memory_order_acq_rel()) != 6 ||
+      value.exchange(8, std::memory_order_seq_cst()) != 7) { return 4; }
+  auto one_relaxed = value.compare_exchange_strong(8, 9, std::memory_order_relaxed());
+  auto one_acquire = value.compare_exchange_strong(9, 10, std::memory_order_acquire());
+  auto one_release = value.compare_exchange_strong(10, 11, std::memory_order_release());
+  auto one_acq_rel = value.compare_exchange_strong(11, 12, std::memory_order_acq_rel());
+  auto one_seq_cst = value.compare_exchange_strong(12, 13, std::memory_order_seq_cst());
+  if (!one_relaxed.exchanged() || !one_acquire.exchanged() || !one_release.exchanged() ||
+      !one_acq_rel.exchanged() || !one_seq_cst.exchanged()) { return 5; }
+  auto rr = value.compare_exchange_strong(13, 14, std::memory_order_relaxed(), std::memory_order_relaxed());
+  auto ar = value.compare_exchange_strong(14, 15, std::memory_order_acquire(), std::memory_order_relaxed());
+  auto aa = value.compare_exchange_strong(15, 16, std::memory_order_acquire(), std::memory_order_acquire());
+  auto rel = value.compare_exchange_strong(16, 17, std::memory_order_release(), std::memory_order_relaxed());
+  auto br = value.compare_exchange_strong(17, 18, std::memory_order_acq_rel(), std::memory_order_relaxed());
+  auto ba = value.compare_exchange_strong(18, 19, std::memory_order_acq_rel(), std::memory_order_acquire());
+  auto sr = value.compare_exchange_strong(19, 20, std::memory_order_seq_cst(), std::memory_order_relaxed());
+  auto sa = value.compare_exchange_strong(20, 21, std::memory_order_seq_cst(), std::memory_order_acquire());
+  auto ss = value.compare_exchange_strong(21, 22, std::memory_order_seq_cst(), std::memory_order_seq_cst());
+  if (!rr.exchanged() || !ar.exchanged() || !aa.exchanged() || !rel.exchanged() ||
+      !br.exchanged() || !ba.exchanged() || !sr.exchanged() || !sa.exchanged() ||
+      !ss.exchanged() || value.load() != 22) { return 6; }
+  auto no_rr = value.compare_exchange_strong(0, 1, std::memory_order_relaxed(), std::memory_order_relaxed());
+  auto no_ar = value.compare_exchange_strong(0, 1, std::memory_order_acquire(), std::memory_order_relaxed());
+  auto no_aa = value.compare_exchange_strong(0, 1, std::memory_order_acquire(), std::memory_order_acquire());
+  auto no_rel = value.compare_exchange_strong(0, 1, std::memory_order_release(), std::memory_order_relaxed());
+  auto no_br = value.compare_exchange_strong(0, 1, std::memory_order_acq_rel(), std::memory_order_relaxed());
+  auto no_ba = value.compare_exchange_strong(0, 1, std::memory_order_acq_rel(), std::memory_order_acquire());
+  auto no_sr = value.compare_exchange_strong(0, 1, std::memory_order_seq_cst(), std::memory_order_relaxed());
+  auto no_sa = value.compare_exchange_strong(0, 1, std::memory_order_seq_cst(), std::memory_order_acquire());
+  auto no_ss = value.compare_exchange_strong(0, 1, std::memory_order_seq_cst(), std::memory_order_seq_cst());
+  if (no_rr.exchanged() || no_rr.observed() != 22 ||
+      no_ar.exchanged() || no_ar.observed() != 22 ||
+      no_aa.exchanged() || no_aa.observed() != 22 ||
+      no_rel.exchanged() || no_rel.observed() != 22 ||
+      no_br.exchanged() || no_br.observed() != 22 ||
+      no_ba.exchanged() || no_ba.observed() != 22 ||
+      no_sr.exchanged() || no_sr.observed() != 22 ||
+      no_sa.exchanged() || no_sa.observed() != 22 ||
+      no_ss.exchanged() || no_ss.observed() != 22) { return 7; }
+  return 0;
+}

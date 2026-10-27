@@ -1,0 +1,10 @@
+struct Cleanup { ~Cleanup() { std::println("array-cleanup"); } };
+int index() { return 2; }
+int later() { std::println("later-index"); return 0; }
+int main() {
+  Cleanup cleanup{};
+  mut int value = 1;
+  int* slots[2][2] = {{&value, nullptr}, {nullptr, &value}};
+  int* selected = slots[index()][later()];
+  return selected == nullptr ? 0 : 1;
+}

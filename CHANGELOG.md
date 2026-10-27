@@ -9,6 +9,140 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.0 - Native LLVM correctness and broader language coverage
+
+- On macOS arm64, `gti` now builds with the native LLVM backend by default.
+  Other targets keep the C++ backend as their default. `--backend cpp`, or
+  `backend = "cpp"` in a profile, selects C++ on any target, and `--std`,
+  `--keep-cpp` and a profile's `keep-cpp` still select the C++ backend they
+  configure. A program LLVM does not support yet reports `GTI-B0003` instead
+  of falling back to C++.
+- Native C and C++ sources passed after `--` now build on the LLVM backend as
+  they do on C++: with GTI's include directory, so `<gti/c_abi.h>` resolves,
+  and with the selected C++ language level, optimization and strict floating
+  point.
+- A project build that keeps no C++ output now removes the C++ an earlier
+  build kept, even when the target now builds with LLVM. A failed native
+  build labels a retained LLVM object as an LLVM representation, not as C++,
+  and `gti build --verbose` names the backend a project target builds with.
+- A dependency's GTI build script built with LLVM reuses its previous output
+  when its cached host program is unchanged, instead of rerunning on every
+  build.
+- Fix silently wrong native code for a derived constructor that passes an
+  owned value, such as a moved `std::string`, `std::vector`,
+  `std::unique_ptr` or class with a destructor, to its base constructor
+  (`Derived(std::string t) : Base(std::move(t))`). The base was never
+  constructed, so reading it printed garbage or crashed. The native backend
+  now rejects such constructors with GTI-B0003 until it can run them.
+- Fix a native `switch` carrying a `default` branching to the wrong block. The
+  default was treated as absent, so a value matching no case fell through to
+  the following block. `std::format` selects a decimal digit through such a
+  switch, so every digit 9 printed as 8 and any native program whose output
+  contained a 9 was silently wrong.
+- Fix negative integer, enumerator and switch-label constants on a native
+  backend built against LLVM 23. They kept stray high bits, so above `-O0` a
+  negative enumerator passed to a function could take the wrong branch.
+- Share one constant per text literal, so identical literals observe one
+  address as the C++ backend already does.
+- Fix native `std::vector` and `std::string` bounds checks being dropped. The
+  native lowering reported every container bounds check as private storage,
+  so the checks recorded for vectors and strings were treated as absent: an
+  out-of-range `values[i]`, `text[i]` or `text.substr(position)` read past the
+  container instead of failing with `index_out_of_bounds`. A check whose
+  recorded failure no longer matches its lowering now stops compilation.
+- Fix a copyable enum passed by value from a variable on the native backend.
+  The callee received the caller's object rather than a copy, so moving from
+  or reassigning the parameter changed the caller's variable.
+- Fix consuming (`&&`) calls on a receiver chosen by a conditional on the
+  native backend. A fresh receiver from either arm was never destroyed, and a
+  receiver moved out of a variable was destroyed twice.
+- Native debug builds (`-g`, or `debug-info = true` in a profile) no longer
+  fail on payload enums. Debug info now describes a payload enum by its active
+  alternative and each alternative's fields, and a debug record after an
+  inactive `std::optional` or `std::expected` access no longer invalidates the
+  module, so debug builds that format text or read optional values compile.
+- A reference variable inside a lambda that aliases a by-reference capture,
+  a field reached through it, the reference one of its methods returns, or
+  another such variable now compiles on both backends; it previously failed
+  with an internal compiler error. The lambda can still use the capture after
+  the alias's last use.
+- Inside a lambda, a by-reference capture now follows the borrow rules of a
+  reference parameter: using it while an overlapping reference taken from it
+  is still live reports GTI-S2017, and references to different fields of a
+  captured object stay independent. Both cases previously failed with an
+  internal compiler error.
+- A lambda that moves in a value with a destructor and also captures a
+  variable by reference now borrows that variable only until the lambda's last
+  use, as an equivalent class does, rather than until the lambda is destroyed.
+  Such lambdas previously failed with an internal compiler error. A lambda
+  that moves in a value whose own destructor uses a borrow still keeps that
+  borrow until it is destroyed, and now compiles on both backends instead of
+  failing with an internal compiler error.
+- Fix internal compiler errors on both backends when a value that borrows
+  and has a destructor is returned by a method called through a by-reference
+  lambda capture (for example locking a captured `std::mutex`), when a mutex
+  is locked through a mutable borrow of a `std::unique_ptr` (`this.vault->lock()`
+  in a `mut` method, or a `mut std::unique_ptr<std::mutex<T>>&` parameter),
+  and when a mutex is locked through a reference parameter that the function
+  also returns.
+- On the native backend, a foreign C++ exception reaching a GTI callback, a
+  thread-confined callback bound on another thread, and malformed internal
+  thread or mutex state now end through `std::terminate` as on the C++
+  backend, so a host's terminate handler observes them.
+- `std::mutex<T>` is now `std::relocatable` exactly when `T` is. Relocation
+  builds a fresh native mutex and moves the protected value, so mutexes can
+  be swapped and held in relocating containers; a held mutex still cannot
+  move.
+- Compile on the native backend: destructuring declarations, reads of an
+  integral enum's underlying value, counted text views held as values,
+  arrays of `std::string_view` or `c_string`, `c_string` values read and
+  written through `c_string*`, range `for` over arrays of views or integral
+  enums, constructions, call receivers and call results under declared
+  `unsafe` permission, constant-folded raw field indexing, native function
+  values, C strings, null pointers and array values published into
+  constructor fields, unqualified field names in constructor bodies,
+  enumerators passed to reference parameters, methods called on fields reached
+  through raw pointers, references to `[[c_abi]]` records obtained through
+  `std::assume_ref`, unique and shared owners of mutex-bearing values,
+  references reborrowed from a carrier's stored reference, borrows reached through a
+  carrier's stored reference, and restoring swaps and exchanges
+  (`std::swap`, `std::exchange`, `std::array::swap` and `swap_elements`).
+- Compile threads on the native backend: `std::thread` and
+  `std::thread_result` start, join, automatic join and result take, scoped
+  `std::parallel_invoke`, manual C-thread create/join, once, mutex and
+  condition services, mutexes held by value in lambda captures, and mutexes
+  protecting class values that need no cleanup. Worker failures re-raise at
+  join and cleanup failures report exactly as on the C++ backend. Thread
+  tasks may also hold polymorphic objects, `std::inline_polymorphic` slots or
+  a `std::transfer_function`, and a mutex may protect a polymorphic value, so
+  the managed-threads example now builds with LLVM.
+- Debug builds (`-g`) of a class whose default constructor is generated and
+  whose base is polymorphic no longer fail with an internal error on either
+  backend.
+- Native debug builds (`-g`) of programs using a library macro, such as
+  `std::testing::check_eq` in a `[[test]]` suite, no longer fail with an
+  internal error. A scope the macro opened was recorded under the macro's own
+  file while pointing at the caller's lines.
+- Native builds accept a C record or union passed by value straight from a C
+  global, a field read through a selected member of a C union global, and the
+  address of a C function-pointer variable. The native callback-slots and
+  variable-bindings examples now build with LLVM.
+- Compile inheritance and dynamic dispatch on the native backend:
+  - virtual and interface calls;
+  - polymorphic `std::unique_ptr` and `std::shared_ptr` owners and their
+    upcasts;
+  - `std::function`, `std::move_only_function` and other erased callables
+    held in `std::inline_polymorphic`;
+  - polymorphic objects passed and returned by value, assigned as whole
+    objects, held in fixed arrays or in payload enums such as
+    `std::optional`, and declared as globals or static fields.
+
+  A destructor that calls a virtual method on its own object now runs the
+  destructor's own class's override; it never reaches a derived part that is
+  already destroyed. The C++ backend still calls the most-derived override
+  there, which is a known C++ backend defect. A polymorphic thread result
+  returned through `std::expected` remains rejected on the native backend.
+
 ## 0.480.5 — Faster compile-time requirement policies
 
 - Evaluate each identical staged constant call once per compilation request and

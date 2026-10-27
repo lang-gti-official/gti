@@ -240,6 +240,7 @@ struct BuildProvenance {
   // link and publication, so it describes the exact bytes this invocation
   // produced.
   BuildFileProvenance artifact;
+  std::optional<BuildFileProvenance> embeddingHeader;
 };
 
 struct BuildReportRequest {
@@ -248,6 +249,16 @@ struct BuildReportRequest {
   // Supplied by project commands; direct compilation leaves it empty.
   std::optional<BuildProjectProvenance> project;
 };
+
+// Resolves compiler-rt and native toolchain facts, not backend mode admission.
+// The backend's real toolchain identity may be queried with its default policy;
+// the full object policy is separately checked before compilation/publication.
+[[nodiscard]] std::optional<NativeInstrumentationPlan>
+resolveLlvmNativeRuntime(const std::string &compiler,
+                         const LlvmBackendIdentity &backend,
+                         LlvmInstrumentationMode mode, std::string &error);
+
+struct ExecutableBuildResult;
 
 class ExecutableBuildRequest final {
 public:
@@ -277,6 +288,8 @@ public:
   [[nodiscard]] const std::optional<BuildReportRequest> &buildReport() const;
 
 private:
+  friend ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &,
+                                               ProgressObserver *);
   CompilationRequest compilationRequest;
   ToolchainLayout toolchainLayout;
   std::filesystem::path generatedSourcePath;
@@ -340,6 +353,7 @@ struct ExecutableBuildResult {
   std::optional<DiagnosticLogResult> backendDiagnosticLog;
   BuildCacheResult cache;
   std::optional<BuildProvenance> provenance;
+  std::optional<NativeInstrumentationPlan> nativeInstrumentation;
   bool generatedSourceRetained = false;
 
   [[nodiscard]] bool succeeded() const {

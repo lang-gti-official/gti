@@ -1,0 +1,30 @@
+#include <std/functional>
+
+class Handler<F> {
+  mut F callback;
+public:
+  Handler(F callback) : callback(std::move(callback)) {}
+  int run() mut { return this.callback(); }
+};
+
+Handler<F> store<F>(F callback) {
+  return Handler<F>(std::move(callback));
+}
+
+int main() {
+  mut int ticks = 0;
+  mut auto tick = [mut &ticks]() -> void { ticks += 1; };
+  mut std::function_ref<void() mut> tick_view{tick};
+  tick_view();
+  if (ticks != 1) return 2;
+
+  mut int count = 2;
+  mut auto update = [mut &count]() -> int {
+    count += 3;
+    return count;
+  };
+  mut auto stored = store(std::move(update));
+  int observed = stored.run();
+  if (observed != 5) return 20 + observed;
+  return 0;
+}
