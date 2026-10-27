@@ -1773,11 +1773,18 @@ private:
         value = ir.CreateLoad(ir.getInt32Ty(),
                               payloadTagAddress(ir, layout, value));
       }
+      // A Switch terminator carries its cases in `switchTargets` and its
+      // default in `target`/`targetArguments`, exactly as a Branch carries
+      // `target`/`elseTarget`. Searching the case list for a valueless entry
+      // never found that default, so every switch with a default lowered to
+      // an unreachable fallback and fell through to the following block.
       llvm::BasicBlock *fallback = nullptr;
       for (const auto &target : term.switchTargets)
         if (!target.value) {
           fallback = edge(target.target, target.arguments);
         }
+      if (!fallback && term.target != 0)
+        fallback = edge(term.target, term.targetArguments);
       if (!fallback) {
         fallback = llvm::BasicBlock::Create(session.context(),
                                             "switch.exhaustive", &function);

@@ -1614,8 +1614,8 @@ public:
            constantIntegerDomain(stage.operands[reversed ? 0 : 1].type)
                .has_value();
   }
-  bool pointerArithmeticInput(const MirBlock &block,
-                              const MirInstruction &stage) const {
+  std::optional<Shape> pointerArithmeticInput(const MirBlock &block,
+                                              const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
         stage.callInputRole != MirCallInputRole::Argument ||
         stage.callInputKind != HirCallInputKind::Value || !stage.callSite ||
@@ -1630,18 +1630,18 @@ public:
         stage.bodyTarget || stage.lambdaTarget || stage.nativeCalleeType ||
         stage.ownership || !stage.lifecycle.empty() ||
         !stage.definedFailure.empty() || !stage.localFailureSites.empty())
-      return false;
+      return std::nullopt;
     const auto &input = stage.operands.front();
     if (input.kind != MirOperandKind::Value || !input.value || input.place ||
         input.loan || input.literal ||
         input.type.kind != SemanticType::RawPointer)
-      return false;
+      return std::nullopt;
     auto destination = stage.info.type;
     destination.pointerAccess = input.type.pointerAccess;
     if (destination != input.type ||
         (input.type.pointerAccess == AccessMode::ReadOnly &&
          stage.info.type.pointerAccess == AccessMode::Mutable))
-      return false;
+      return std::nullopt;
     // Call-input staging transports an already evaluated pointer; it does not
     // perform another arithmetic operation or discharge another unsafe action.
     for (const auto &producer : block.instructions) {
@@ -1652,9 +1652,16 @@ public:
           producer.hirValue == stage.hirValue &&
           producer.info.type == input.type &&
           producer.unsafeOperation == UnsafeOperationKind::PointerArithmetic)
-        return nativePointerArithmetic(producer);
+        // Report the shape the producer's own arithmetic was admitted under.
+        // Staging transports that evaluated pointer unchanged, so a primitive
+        // pointee must not be reported as class raw access.
+        return nativePointerArithmetic(producer)
+                   ? std::optional(Shape::NativeClassRawAccess)
+               : primitivePointerArithmetic(producer)
+                   ? std::optional(Shape::PrimitiveRawAccess)
+                   : std::nullopt;
     }
-    return false;
+    return std::nullopt;
   }
   bool nativeRawFieldStage(const MirBody &mir,
                            const MirInstruction &stage) const {
@@ -3050,6 +3057,10 @@ public:
               callee->linkage == LanguageLinkage::Gti &&
               callee->requiresUnsafe &&
               stage.unsafeOperation == UnsafeOperationKind::DeclaredUnsafeCall;
+          const auto stagedPointerArithmetic =
+              stage.unsafeOperation == UnsafeOperationKind::PointerArithmetic
+                  ? pointerArithmeticInput(mirBlock, stage)
+                  : std::nullopt;
           add(stage.unsafeOperation,
               (stage.unsafeOperation == UnsafeOperationKind::ForeignStorage ||
                stage.unsafeOperation == UnsafeOperationKind::UnionMember) &&
@@ -3117,8 +3128,8 @@ public:
                       stage.unsafeOperation == UnsafeOperationKind::RawMember &&
                       nativeRawFieldStage(mir, stage)
                   ? std::optional(Shape::NativeClassRawAccess)
-              : (rawClassStage || classArithmetic ||
-                 pointerArithmeticInput(mirBlock, stage)) &&
+              : stagedPointerArithmetic ? stagedPointerArithmetic
+              : (rawClassStage || classArithmetic) &&
                       (stage.unsafeOperation ==
                            UnsafeOperationKind::RawDereference ||
                        stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
@@ -3156,6 +3167,16 @@ public:
                   stage.unsafeOperation ==
                       UnsafeOperationKind::PointerArithmetic))
                   ? std::optional(Shape::PrimitiveRawAccess)
+              // The marker records the caller's declared permission for a
+              // construction; the executable work is that construction's own
+              // selected constructor and storage, which is admitted on its
+              // own terms. Granting the construction's storage shape keeps
+              // one rule instead of a second permission vocabulary.
+              : stage.unsafeOperation ==
+                        UnsafeOperationKind::DeclaredUnsafeConstruction &&
+                    stage.kind == MirInstructionKind::Construct &&
+                    stage.constructorTarget
+                  ? classShape(stage.info.type)
                   : std::nullopt);
         }
         if (stage.payloadExtractionKind)

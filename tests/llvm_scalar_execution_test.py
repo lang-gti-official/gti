@@ -167,6 +167,46 @@ mut int value = initialize();
 bool enabled = true;
 int main() { value += 1; if (!enabled) { return 1; } return value - 4; }
 ''',
+            'switch-default': '''
+int pick(uint8_t selector) {
+  switch (selector) {
+  case uint8_t(0): return 100;
+  case uint8_t(1): return 101;
+  case uint8_t(2): return 102;
+  default: return 999;
+  }
+}
+int only_default(uint8_t selector) {
+  switch (selector) {
+  case uint8_t(0): return 10;
+  default: return 20;
+  }
+}
+int main() {
+  if (pick(uint8_t(0)) != 100) { return 1; }
+  if (pick(uint8_t(1)) != 101) { return 2; }
+  if (pick(uint8_t(2)) != 102) { return 3; }
+  // The default arm must not fall through to the last case's block.
+  if (pick(uint8_t(3)) != 999) { return 4; }
+  if (pick(uint8_t(200)) != 999) { return 5; }
+  if (only_default(uint8_t(0)) != 10) { return 6; }
+  if (only_default(uint8_t(5)) != 20) { return 7; }
+  mut int taken = 0;
+  mut uint8_t probe = uint8_t(7);
+  switch (probe) {
+  case uint8_t(7): taken = 1; break;
+  default: taken = 2; break;
+  }
+  if (taken != 1) { return 8; }
+  probe = uint8_t(8);
+  switch (probe) {
+  case uint8_t(7): taken = 1; break;
+  default: taken = 2; break;
+  }
+  if (taken != 2) { return 9; }
+  return 0;
+}
+''',
             'integral-enum-underlying': '''
 enum class Opcode : uint8_t { halt = 0, load = 7, store = 9 }
 enum class Wide : int32_t { low = -5, high = 1000 }
