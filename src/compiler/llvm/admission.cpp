@@ -1257,6 +1257,12 @@ public:
     };
     return supported(supported, type);
   }
+  // A value whose representation relocation may transfer: an admitted native
+  // value, or a mutex-bearing representation, whose native mutex identity is
+  // rebuilt rather than moved.
+  bool relocatableRepresentation(const SemanticType &type) const {
+    return nativeValue(type) || mutexShape(type).has_value();
+  }
   // The restoring exchanges move objects between disjoint initialized places
   // of one type without copying or running cleanup, so each is a sequence of
   // typed relocations of an admitted native value shape. The verifier proves
@@ -1291,7 +1297,7 @@ public:
     const auto relocation = mirTypeRelocationKind(program, type);
     if (relocation == RelocationKind::Unavailable ||
         !mirTypeRelocationIsDefinedFailureFree(program, type) ||
-        !nativeValue(type))
+        !relocatableRepresentation(type))
       return false;
     return relocation == RelocationKind::Bitwise ||
            dispatchProofs.generatedRelocation(type);
@@ -1571,7 +1577,7 @@ public:
     if (stage.intrinsic == IntrinsicKind::ObjectRelocate ||
         stage.intrinsic == IntrinsicKind::ObjectRelocateRange)
       return mir_detail::objectRelocate(program, stage) &&
-             nativeValue(stage.parameterTypes[0].arguments[0]);
+             relocatableRepresentation(stage.parameterTypes[0].arguments[0]);
     if (stage.intrinsic == IntrinsicKind::ObjectDestroy)
       return mir_detail::objectDestroy(program, stage) &&
              nativeValue(stage.parameterTypes[0].arguments[0]);

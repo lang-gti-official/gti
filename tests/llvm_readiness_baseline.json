@@ -11,13 +11,13 @@
       "kind": "source-census",
       "manifest": "tests/mir_census_baseline.json",
       "member_count": 173,
-      "inventory_sha256": "36ff4dc88e845aa9a6fe9b6d7c99055865846c24c0f1a1975cbb2aa947e735ee"
+      "inventory_sha256": "bdd5e59b376df78e188dcf4f3b68e140355ee2bd60f4b580a08e5df4a0038121"
     },
     {
       "id": "registered-llvm-evidence",
       "kind": "registered-evidence-manifests",
-      "member_count": 270,
-      "inventory_sha256": "dd9efad0172cd50c70ee06508df0bdcb8ced1a5943a8e48295d6dc24dbfc4498"
+      "member_count": 271,
+      "inventory_sha256": "8e1a08fab101019bd25cd33500ec62dd3f651f63f11066c0688a2b73e03d892e"
     },
     {
       "id": "stdlib-surface",

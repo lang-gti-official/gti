@@ -2049,8 +2049,12 @@ assignment. The compiler derives it through generated movement, concrete
 bases, fields, fixed arrays, payload alternatives, and owned captures. Deleted
 movement and stored borrows deny it. Abstract classes and pointer-only native
 pointee declarations cannot relocate as values. The bounded host-state policy
-also excludes private thread, atomic, mutex, and lock-token state; having a
-native move operation is not itself a relocation proof. Owning allocation
+also excludes private thread, atomic, and lock-token state; having a native
+move operation is not itself a relocation proof. A mutex relocates exactly
+when its payload does: relocation constructs a fresh native mutex in the
+destination, transfers the payload, and retires the source's native identity,
+so no native mutex state moves. A held mutex is borrowed by its lock token and
+cannot be relocated. Owning allocation
 handles relocate independently of their pointee's movability. No class
 annotation or unsafe opt-in is needed.
 

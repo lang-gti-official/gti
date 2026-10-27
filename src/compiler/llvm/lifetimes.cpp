@@ -766,6 +766,14 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
         path.pop_back();
         return;
       }
+      if (!inert && nativeMutexElement(program, selected,
+                                       CompilerCapabilityTypeKind::MutexStorage)) {
+        // A mutex relocates by rebuilding its native identity; only its
+        // payload transfers, through the payload's own relocation.
+        self(self, session.layouts().mutexStorage(selected).element, false);
+        path.pop_back();
+        return;
+      }
       if (!inert &&
           owner.compilerCapability != CompilerCapabilityTypeKind::None &&
           mirTypeRelocationKind(program, selected) == RelocationKind::Bitwise) {
@@ -928,6 +936,41 @@ llvm::Function *Lifetimes::generatedRelocation(const SemanticType &type) {
       if (sharedOwnerRepresentation(session.program().mir(), owner)) {
         ir.CreateStore(ir.CreateLoad(layout.storage, source), destination);
         ir.CreateStore(llvm::Constant::getNullValue(layout.storage), source);
+        return;
+      }
+      if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+        // Native mutex state never moves. The destination receives a fresh
+        // native mutex and the relocated payload; the source's native
+        // identity is retired and its storage left without live state.
+        const auto mutex = session.layouts().mutexStorage(selected);
+        auto *from = ir.CreateStructGEP(mutex.object.storage, source,
+                                        mutex.payloadActiveIndex);
+        auto *bits = ir.CreateLoad(ir.getInt8Ty(), from);
+        Mutexes mutexes(session, ir);
+        mutexes.initializeShell(destination, selected);
+        auto *payload = llvm::BasicBlock::Create(session.context(),
+                                                 "mutex.payload", function);
+        auto *retire = llvm::BasicBlock::Create(session.context(),
+                                                "mutex.retire", function);
+        ir.CreateCondBr(
+            ir.CreateICmpNE(
+                ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::payloadLive)),
+                ir.getInt8(0)),
+            payload, retire);
+        ir.SetInsertPoint(payload);
+        ir.CreateCall(generatedRelocation(mutex.element),
+                      {ir.CreateStructGEP(mutex.object.storage, destination,
+                                          mutex.payloadIndex),
+                       ir.CreateStructGEP(mutex.object.storage, source,
+                                          mutex.payloadIndex)});
+        ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive |
+                                  MutexStorageLayout::payloadLive),
+                       ir.CreateStructGEP(mutex.object.storage, destination,
+                                          mutex.payloadActiveIndex));
+        ir.CreateBr(retire);
+        ir.SetInsertPoint(retire);
+        ir.CreateStore(ir.getInt8(0), from);
+        mutexes.destroyShell(source, selected);
         return;
       }
       if (owner.unionLayout ||

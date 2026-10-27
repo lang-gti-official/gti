@@ -20,6 +20,7 @@ def source_fixtures():
         "array-cleanup": "llvm_mutex_array_lifecycle.gti",
         "process-retirement": "llvm_native_process_storage.gti",
         "payload-cleanup": "llvm_mutex_source_lifecycle.gti",
+        "relocation": "mutex_relocation.gti",
     }
 
 
@@ -306,6 +307,13 @@ def main():
                 for fault in faults:
                     run(f"public-{family}-{fault}-{mode}", [public_program],
                         expected=70, failure_mode=fault)
+            # A swapped or exchanged mutex rebuilds its native identity and
+            # relocates only its payload, including inside an owning class.
+            relocation_program = output / f"public-relocation-{mode}"
+            run(f"public-relocation-build-{mode}", [args.public_gti.resolve(),
+                "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
+                root / "tests/fixtures" / fixtures["relocation"], "-o", relocation_program])
+            run(f"public-relocation-execute-{mode}", [relocation_program])
             guard_program = output / f"public-basic-{mode}"
             run(f"public-basic-build-{mode}", [args.public_gti.resolve(),
                 "--backend", "llvm", "--execution-profile", "concurrent", f"-{mode}",
@@ -328,6 +336,12 @@ def main():
                 "--std", standard, "-O3", root / "tests/fixtures/mutex_basic.gti",
                 "-o", program])
             run(f"cpp-guard-execute-{standard}", [program])
+            relocation = output / f"cpp-relocation-{standard}"
+            run(f"cpp-relocation-build-{standard}", [args.public_gti.resolve(),
+                "--backend", "cpp", "--execution-profile", "concurrent",
+                "--std", standard, "-O3", root / "tests/fixtures/mutex_relocation.gti",
+                "-o", relocation])
+            run(f"cpp-relocation-execute-{standard}", [relocation])
 
     if args.gti:
         run("cpp-source-observer", [args.cc, "-std=c17", *flags, "-DGTI_CPP_ORACLE", "-c",

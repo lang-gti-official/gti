@@ -21,6 +21,10 @@ for what minor and patch releases mean.
   negative enumerator passed to a function could take the wrong branch.
 - Share one constant per text literal, so identical literals observe one
   address as the C++ backend already does.
+- `std::mutex<T>` is now `std::relocatable` exactly when `T` is. Relocation
+  builds a fresh native mutex and moves the protected value, so mutexes can
+  be swapped and held in relocating containers; a held mutex still cannot
+  move.
 - Compile on the native backend: destructuring declarations, reads of an
   integral enum's underlying value, counted text views held as values,
   constructions and call receivers under declared `unsafe` permission,
