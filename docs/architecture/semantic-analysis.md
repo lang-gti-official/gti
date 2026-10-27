@@ -1862,6 +1862,18 @@ and an analysis with the raw-pointer audit enabled never uses it.
   the pass. Diagnostics for the open file are therefore those of bounded
   analysis, and a library body nothing reaches stays the library's own
   `gti check` concern.
+- **Shared concept proofs.** A preamble also owns the requirements proved of
+  argument types built only from its own classes and enums
+  (`SemanticPreamble::ConceptProofKey`), shared by every analysis that adopts
+  it. Eligible are a named preamble concept, or a requirement written in a
+  prefix declaration and queried with that declaration's lookup scope; both
+  are evaluated in their declaring unit, which sees only its direct includes,
+  so no later unit can change them. Only satisfied requirements are recorded,
+  and only from an evaluation without assumptions over closed arguments: when
+  a substituted instance's constraint is active, the query is evaluated once
+  without the active requirement scopes, and a failure falls back to the
+  ordinary assumption-aware query. Reuses and records are reported as
+  `semanticConceptProofReuses` and `semanticConceptProofRecords`.
 - **Identity.** Registration of the prefix is literally the preamble's, so
   trusted declaration identities, the instance-reuse registration fingerprint
   and symbol identities below the prefix ceiling are the same in every

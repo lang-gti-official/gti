@@ -4581,6 +4581,10 @@ private:
          static_cast<std::int64_t>(metrics.semanticInstanceReuseStores)},
         {"instanceReuseMicroseconds",
          static_cast<std::int64_t>(metrics.semanticInstanceReuseMicroseconds)},
+        {"conceptProofReuses",
+         static_cast<std::int64_t>(metrics.semanticConceptProofReuses)},
+        {"conceptProofRecords",
+         static_cast<std::int64_t>(metrics.semanticConceptProofRecords)},
         {"semanticBorrowSummaryCandidateInspections",
          static_cast<std::int64_t>(
              metrics.semanticBorrowSummaryCandidateInspections)},
