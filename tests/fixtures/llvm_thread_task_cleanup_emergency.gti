@@ -1,0 +1,24 @@
+#include <std/thread>
+
+// The worker body fails and destroying the transferred task then fails too:
+// task cleanup completes the worker's exact two-record envelope.
+[[unsafe_transfer]] class fails_on_cleanup {
+public:
+  ~fails_on_cleanup() {
+    int32_t zero = 0;
+    int32_t value = 7 / zero;
+  }
+};
+
+int main() {
+  fails_on_cleanup guard = fails_on_cleanup();
+  auto task = [owned = std::move(guard)]() -> void {
+    int32_t zero = 0;
+    int32_t value = 3 / zero;
+  };
+  auto started = std::thread::start(std::move(task));
+  if (!started) { return 1; }
+  mut std::thread worker = std::move(started).value();
+  [[discard]] worker.join();
+  return 0;
+}

@@ -1,0 +1,99 @@
+#include <std/memory>
+#include <std/mutex>
+#include <std/thread>
+
+// Mutex storage as the pointee of unique and shared owners. The owners move
+// only their handles; each mutex is built, locked and retired in place.
+class account {
+  int32_t id;
+  mut int32_t balance;
+public:
+  account(int32_t id, int32_t balance) : id(id), balance(balance) {}
+  void deposit(int32_t amount) mut { this.balance = this.balance + amount; }
+  int32_t read() { return this.balance; }
+  ~account() {
+    std::println("account closed");
+    std::println(this.id);
+  }
+};
+
+class tally {
+  mut int32_t count;
+public:
+  tally(int32_t count) : count(count) {}
+  void add(int32_t amount) mut { this.count = this.count + amount; }
+  int32_t read() { return this.count; }
+};
+
+class bank {
+  mut std::unique_ptr<std::mutex<account>> vault;
+public:
+  bank() : vault(std::unique_ptr<std::mutex<account>>(nullptr)) {}
+  void open(int32_t id) mut {
+    this.vault = std::make_unique<std::mutex<account>>(account(id, 100));
+  }
+  int32_t deposit(int32_t amount) {
+    mut auto guard = this.vault->lock();
+    guard.get().deposit(amount);
+    return guard.get().read();
+  }
+};
+
+// A node holds its mutex inline and owns its successor through a handle.
+class node {
+  std::mutex<int32_t> value;
+  mut std::unique_ptr<node> next;
+public:
+  node(int32_t value)
+      : value(std::mutex<int32_t>(value)), next(std::unique_ptr<node>(nullptr)) {}
+  void link(std::unique_ptr<node> successor) mut { this.next = std::move(successor); }
+  int32_t sum() {
+    mut int32_t total = 0;
+    {
+      auto guard = this.value.lock();
+      total = guard.get();
+    }
+    if (this.next) total = total + this.next->sum();
+    return total;
+  }
+};
+
+int main() {
+  {
+    mut bank first = bank();
+    first.open(1);
+    if (first.deposit(5) != 105) return 1;
+    std::println("bank scope ends");
+  }
+  auto shared = std::make_shared<std::mutex<tally>>(tally(10));
+  auto left_view = shared.clone();
+  auto right_view = shared.clone();
+  auto left_started = std::thread::start([view = std::move(left_view)]() -> void {
+    for (mut int32_t step = 0; step < 100; step++) {
+      mut auto guard = view->lock();
+      guard.get().add(1);
+    }
+  });
+  if (!left_started) return 2;
+  mut auto left = std::move(left_started).value();
+  auto right_started = std::thread::start([view = std::move(right_view)]() -> void {
+    for (mut int32_t step = 0; step < 100; step++) {
+      mut auto guard = view->lock();
+      guard.get().add(2);
+    }
+  });
+  if (!right_started) return 3;
+  mut auto right = std::move(right_started).value();
+  if (!left.join() || !right.join()) return 4;
+  {
+    auto guard = shared->lock();
+    if (guard.get().read() != 310) return 5;
+  }
+  mut auto head = std::make_unique<node>(1);
+  head->link(std::make_unique<node>(2));
+  if (head->sum() != 3) return 6;
+  auto last = std::make_shared<std::mutex<account>>(account(3, 0));
+  auto alias = last.clone();
+  std::println("owned mutexes done");
+  return 0;
+}

@@ -1316,6 +1316,11 @@ add_test(NAME text_reference_accessors_runtime
                  "${PROJECT_SOURCE_DIR}/tests/text_reference_accessors_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(text_reference_accessors_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME text_storage_provenance_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/text_storage_provenance_runtime_test.py"
+                 $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
+set_tests_properties(text_storage_provenance_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME view_field_payloads_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/view_field_payloads_runtime_test.py"
@@ -2044,6 +2049,9 @@ target_link_libraries(gti_runtime_execution_tests PRIVATE gti_runtime)
 add_test(NAME runtime_execution_boundary COMMAND gti_runtime_execution_tests)
 add_executable(gti_llvm_thread_lifecycle_contract_tests llvm_thread_lifecycle_contract_tests.cpp)
 target_include_directories(gti_llvm_thread_lifecycle_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+# Header-only C record layout comparison; the backend links no runtime here.
+target_include_directories(gti_llvm_thread_lifecycle_contract_tests PRIVATE
+                           "${PROJECT_SOURCE_DIR}/runtime/include")
 target_link_libraries(gti_llvm_thread_lifecycle_contract_tests PRIVATE gti_llvm_backend)
 add_test(NAME llvm_thread_lifecycle_contracts
          COMMAND gti_llvm_thread_lifecycle_contract_tests "${PROJECT_SOURCE_DIR}")
@@ -2056,6 +2064,13 @@ if(Python3_Interpreter_FOUND)
   gti_register_llvm_evidence_manifest(
     llvm_cthread_startup_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_cthread_startup_execution_test.py")
+  add_test(NAME llvm_thread_execution
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_thread_execution_test.py"
+            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}" --cxx "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(llvm_thread_execution PROPERTIES TIMEOUT 1200)
+  gti_register_llvm_evidence_manifest(
+    llvm_thread_execution
+    "${PROJECT_SOURCE_DIR}/tests/llvm_thread_execution_test.py")
 endif()
 add_executable(gti_llvm_tls_contract_tests llvm_tls_contract_tests.cpp)
 target_include_directories(gti_llvm_tls_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})

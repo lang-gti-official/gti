@@ -18,6 +18,27 @@ bool textType(const SemanticType &type) {
          type.kind == SemanticType::CString;
 }
 
+// Text that `place` reads from raw memory: below a raw dereference or raw
+// index, selecting only fields and elements within that memory. Unsafe code
+// took on its validity and lifetime obligations, and raw writes are not
+// checked text stores, so the text has no GTI owner to reconstruct: it is an
+// inert native value, as an untracked native C-string result is. A checked
+// dereference below the raw step instead reads a referent elsewhere.
+bool rawMemoryText(const MirPlace &place) {
+  const auto raw = std::find_if(
+      place.projections.rbegin(), place.projections.rend(),
+      [](const MirPlaceProjection &projection) {
+        return projection.kind == MirProjectionKind::RawDereference ||
+               projection.kind == MirProjectionKind::RawIndex;
+      });
+  return raw != place.projections.rend() &&
+         std::all_of(place.projections.rbegin(), raw,
+                     [](const MirPlaceProjection &projection) {
+                       return projection.kind == MirProjectionKind::Field ||
+                              projection.kind == MirProjectionKind::Index;
+                     });
+}
+
 struct TextSources {
   bool known = false;
   std::set<std::size_t> parameters;
@@ -224,6 +245,8 @@ private:
   // Whether a provisional summary grew in the current evaluation.
   bool provisionalGrew = false;
   std::set<std::size_t> activeTemporaries;
+  // Lambdas whose results are being summarized.
+  std::set<HirLambdaId> activeLambdas;
 
   // Whether a Return of this body yields exactly `value`.
   static bool returnsValue(const MirBody &body, MirValueId value) {
@@ -698,6 +721,8 @@ private:
           context.body.findPlace(loan ? loan->source : operand.place);
       if (!place || !textType(place->type))
         return {};
+      if (rawMemoryText(*place))
+        return {.known = true};
       // Text read under a nested text class that a call returned by
       // reference is what the call's origin holds under the relayed payload.
       if (place->root == MirPlaceRootKind::Loan && !place->projections.empty())
@@ -728,7 +753,7 @@ private:
       if (const auto formal = contractPlace(context, *place);
           formal && formal->field != 0)
         return {.known = true, .fields = {*formal}};
-      if (isOwnerlessTextFieldProjection(program, context.body, *place))
+      if (isOwnerlessTextStorageProjection(program, context.body, *place))
         return {.known = true};
       // Static storage of text holds only ownerless text: semantics admits
       // only ownerless initializers and stores, and every MIR assignment to it
@@ -847,10 +872,44 @@ private:
       } else if (target && textType(target->returnType)) {
         answer = callResultSources(context, *instruction, active);
       }
+    } else if (instruction && instruction->kind == MirInstructionKind::Call &&
+               instruction->lambdaTarget && !instruction->functionTarget &&
+               textType(instruction->info.type)) {
+      answer = lambdaResultSources(*instruction->lambdaTarget);
     } else if (!instruction) {
       answer = joinSources(context, operand.value, active);
     }
     active.erase({true, operand.value});
+    return answer;
+  }
+
+  // What an invocation of a lambda returns: the text its returns hold in its
+  // own body, as a source function's call holds its returns'. A lambda has
+  // no text relay contract, so a returned formal, or a capture, which no
+  // initializer in the body defines, is unknown text.
+  TextSources lambdaResultSources(HirLambdaId id) {
+    const auto lambda = std::find_if(
+        program.lambdaInstances().begin(), program.lambdaInstances().end(),
+        [&](const MirLambdaInstance &candidate) { return candidate.id == id; });
+    if (lambda == program.lambdaInstances().end() ||
+        !activeLambdas.insert(id).second)
+      return {};
+    auto temporaries = std::exchange(activeTemporaries, {});
+    const TextBody body{.body = lambda->body,
+                        .types = lambda->parameterTypes,
+                        .bindings = lambda->parameterBindings};
+    TextSources answer{.known = true};
+    bool returned = false;
+    for (const auto &block : lambda->body.blocks)
+      if (block.terminator.kind == MirTerminatorKind::Return &&
+          block.terminator.value) {
+        returned = true;
+        answer.join(sources(body, *block.terminator.value));
+      }
+    activeTemporaries = std::move(temporaries);
+    activeLambdas.erase(id);
+    if (!returned || !answer.parameters.empty() || !answer.fields.empty())
+      return {};
     return answer;
   }
 
@@ -2581,6 +2640,13 @@ private:
                   require(instruction, instruction.operands[index]);
           }
         }
+        // An array literal stores each text element in array storage, whose
+        // element reads are ownerless (`isOwnerlessTextStorageProjection`).
+        if (instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::Aggregate)
+          for (const auto &element : instruction.operands)
+            if (textType(element.type))
+              require(instruction, element);
         const auto *destination =
             instruction.destination
                 ? context.body.findPlace(*instruction.destination)
@@ -2594,23 +2660,19 @@ private:
                    return projection.kind == MirProjectionKind::RawIndex ||
                           projection.kind == MirProjectionKind::RawDereference;
                  }));
-        // A text field's invariant must survive every safe writer, including
-        // assignments rooted in accessor loans rather than a Field projection.
-        // Raw writes keep their explicit unsafe validity obligations.
-        // A local text binding, or an element of a local text array, is not
-        // field storage: it may hold dynamic text, and no reader treats it as
-        // ownerless.
+        // A text field's or array element's invariant must survive every
+        // safe writer, including assignments rooted in accessor loans rather
+        // than a Field or Index projection. Raw writes keep their explicit
+        // unsafe validity obligations. A local text binding is not text
+        // storage: it may hold dynamic text, and its readers trace its one
+        // initializer instead.
         const bool localTextStorage =
             destination && destination->root == MirPlaceRootKind::Binding &&
-            std::all_of(destination->projections.begin(),
-                        destination->projections.end(),
-                        [](const auto &projection) {
-                          return projection.kind == MirProjectionKind::Index;
-                        });
+            destination->projections.empty();
         const bool checkedTextAssignment =
             destination && textType(destination->type) && !uncheckedWrite &&
             !localTextStorage && instruction.kind == MirInstructionKind::Assign;
-        if (destination && (isOwnerlessTextFieldProjection(
+        if (destination && (isOwnerlessTextStorageProjection(
                                 program, context.body, *destination) ||
                             checkedTextAssignment)) {
           if (instruction.operands.size() == 1)
@@ -3020,20 +3082,19 @@ bool dependentTextCarrierField(const MirBody &body, const MirPlace &place) {
 }
 } // namespace
 
-bool isOwnerlessTextFieldProjection(const MirProgram &program,
-                                    const MirBody &body,
-                                    const MirPlace &place) {
-  // A text field, or an element of a text array reached through a field,
-  // holds only text its checked writers proved ownerless. A local array does
-  // not: it never crosses a field projection.
+bool isOwnerlessTextStorageProjection(const MirProgram &program,
+                                      const MirBody &body,
+                                      const MirPlace &place) {
+  // A text field, or an element of a text array wherever the array lives,
+  // holds only text its checked writers proved ownerless. Semantics never
+  // nests dynamic text in an array (L-OWN-02): an array's elements, its
+  // literal's included, are checked text writes, so a by-value array formal
+  // holds what its caller's ownerless array did. Raw and foreign storage
+  // keep their explicit unsafe obligations instead.
   if (!textType(place.type) || place.foreignStorage ||
       place.projections.empty() ||
       (place.projections.back().kind != MirProjectionKind::Field &&
        place.projections.back().kind != MirProjectionKind::Index) ||
-      std::none_of(place.projections.begin(), place.projections.end(),
-                   [](const auto &projection) {
-                     return projection.kind == MirProjectionKind::Field;
-                   }) ||
       dependentTextCarrierField(body, place))
     return false;
   std::optional<SemanticType> current;

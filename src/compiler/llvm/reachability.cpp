@@ -1,6 +1,7 @@
 #include "reachability.h"
 #include "gti/mir_effects.h"
 #include "native_c_contract.h"
+#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -292,14 +293,34 @@ Reachability reachableProgram(const LoweredProgram &program) {
               mir, program.target(), *input, instruction);
           const bool callback = nativeCCallbackStageContract(
               mir, program.target(), *input, instruction);
+          // A managed task adapter statically selects its exact entry body;
+          // its task and result values are cleaned by their sealed recipes.
+          const auto task = [&](MirThreadTaskAdapterId id) {
+            const auto *adapter = mir.findThreadTaskAdapter(id);
+            if (!adapter || adapter->functionTarget.has_value() ==
+                                adapter->lambdaTarget.has_value())
+              return false;
+            if (adapter->functionTarget)
+              body({MirBodyKind::Function, *adapter->functionTarget});
+            else
+              body({MirBodyKind::Lambda, *adapter->lambdaTarget});
+            for (const auto *type : {&adapter->taskType, &adapter->resultType})
+              if (*type != SemanticType::Void)
+                if (const auto recipe = mirUniqueCleanupType(mir, *type))
+                  cleanup(*recipe);
+            return true;
+          };
+          bool exactTasks = true;
+          if (instruction.threadTaskAdapter)
+            exactTasks = task(*instruction.threadTaskAdapter);
+          for (const auto &scoped : instruction.scopedThreadTasks)
+            exactTasks = task(scoped.adapter) && exactTasks;
           if ((instruction.dispatch == CallDispatch::Virtual &&
                !virtualCall(instruction)) ||
               (instruction.nativeCalleeType && !nativeCall) ||
               (instruction.callableInvocation && !instruction.lambdaTarget &&
                !instruction.functionTarget && !nativeCall) ||
-              (instruction.nativeCallbackAdapter && !callback) ||
-              instruction.threadTaskAdapter ||
-              !instruction.scopedThreadTasks.empty())
+              (instruction.nativeCallbackAdapter && !callback) || !exactTasks)
             result.conservative = true;
         }
     }

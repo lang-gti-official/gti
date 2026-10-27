@@ -13762,68 +13762,36 @@ void testNestedOwnedFieldAssignment() {
           .analyzeProgram()
           .ready(),
       "implicit and explicit receiver paths must admit the same replacement");
-  std::size_t implicitAssignments = 0;
-  const auto checkImplicit = [&](lang::MirBodyAddress address,
-                                 const lang::MirBody &body) {
+  // An unqualified field in a constructor body is the same receiver
+  // projection as `this.field`, exactly as in a method, so no body keeps a
+  // Symbol-rooted field path for the emitter to replace.
+  std::size_t symbolRootedFields = 0;
+  std::size_t receiverRootedFields = 0;
+  const auto countImplicit = [&](const lang::MirBody &body, bool constructor) {
     for (const auto &block : body.blocks) {
       for (const auto &instruction : block.instructions) {
         const auto *destination = instruction.destination
                                       ? body.findPlace(*instruction.destination)
                                       : nullptr;
         if (instruction.kind != lang::MirInstructionKind::Assign ||
-            !destination ||
-            destination->root != lang::MirPlaceRootKind::Symbol ||
-            destination->projections.size() != 2)
+            !destination || destination->projections.empty())
           continue;
-        ++implicitAssignments;
-        for (int mutation = 0; mutation != 5; ++mutation) {
-          auto malformed = implicit.mir;
-          auto *changedBody = lang::findMirBody(malformed, address);
-          auto &changed = changedBody->places[destination->id - 1];
-          if (mutation == 0)
-            changed.symbol = 0;
-          else if (mutation == 1)
-            changed.projections.front().field = 0;
-          else if (mutation == 2)
-            changed.projections.back().kind =
-                lang::MirProjectionKind::Dereference;
-          else if (mutation == 3)
-            changed.capture = 1;
-          else {
-            for (const auto &instance : malformed.classInstances()) {
-              auto *owner = const_cast<lang::MirClassInstance *>(&instance);
-              for (auto &field : owner->declaredFields)
-                if (field.symbol == destination->symbol)
-                  field.access = lang::AccessMode::ReadOnly;
-            }
-          }
-          expect(!lang::CppMirBodyEmitter(malformed, implicitMap)
-                      .analyzeProgram()
-                      .ready(),
-                 "implicit receiver replacement rejects invalid root, suffix, "
-                 "capture, and immutable containing field");
-        }
-        auto missingRows = implicitRows;
-        std::erase_if(missingRows.symbols, [&](const auto &row) {
-          return row.kind == lang::CppMirSymbolRepresentationKind::Field &&
-                 row.symbol == destination->symbol;
-        });
-        const lang::CppMirBodyEmissionMap missing(std::move(missingRows));
-        expect(!lang::CppMirBodyEmitter(implicit.mir, missing)
-                    .analyzeProgram()
-                    .ready(),
-               "implicit receiver root requires its exact representation row");
+        if (destination->root == lang::MirPlaceRootKind::Symbol)
+          ++symbolRootedFields;
+        else if (constructor &&
+                 destination->root == lang::MirPlaceRootKind::This &&
+                 destination->projections.size() == 3)
+          ++receiverRootedFields;
       }
     }
   };
   for (const auto &constructor : implicit.mir.constructorInstances())
-    checkImplicit({lang::MirBodyKind::Constructor, constructor.id},
-                  constructor.body);
+    countImplicit(constructor.body, true);
   for (const auto &function : implicit.mir.functionInstances())
-    checkImplicit({lang::MirBodyKind::Function, function.id}, function.body);
-  expect(implicitAssignments == 2,
-         "constructor must replace two nested Symbol-rooted fields; methods "
-         "already use canonical This-rooted paths");
+    countImplicit(function.body, false);
+  expect(symbolRootedFields == 0 && receiverRootedFields == 2,
+         "constructor bodies lower both unqualified nested field replacements "
+         "to canonical This-rooted paths, as methods do");
 
   const auto freshFixture = std::filesystem::path(__FILE__).parent_path() /
                             "fixtures/constexpr_dependent_branches.gti";

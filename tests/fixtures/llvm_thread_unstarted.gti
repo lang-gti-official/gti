@@ -1,0 +1,30 @@
+#include <std/thread>
+
+// Result-bearing handles that never start a worker. The program has no task
+// adapter, so join, automatic join and transfer of an empty handle are
+// lowered without worker containment.
+class tally {
+  int32_t count;
+public:
+  tally(int32_t count) : count(count) {}
+  int32_t read() { return this.count; }
+  ~tally() { std::println("tally released"); }
+};
+
+int main() {
+  mut std::thread_result<tally> pending = std::thread_result<tally>();
+  if (pending.joinable()) { return 1; }
+  auto joined = pending.join();
+  if (joined || joined.error() != std::thread_errc::not_joinable) { return 2; }
+  std::println("unstarted join rejected");
+
+  mut std::thread_result<tally> moved = std::move(pending);
+  if (moved.joinable()) { return 3; }
+  auto again = moved.join();
+  if (again || again.error() != std::thread_errc::not_joinable) { return 4; }
+  {
+    std::thread_result<int32_t> dropped = std::thread_result<int32_t>();
+  }
+  std::println("unstarted handles dropped");
+  return 0;
+}

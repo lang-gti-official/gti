@@ -24,8 +24,10 @@
 #include "text.h"
 #include "thread_locals.h"
 #include "thread_lifecycle.h"
+#include "threads.h"
 
 #include <algorithm>
+#include <llvm/IR/Intrinsics.h>
 #include <array>
 #include <map>
 #include <set>
@@ -88,6 +90,10 @@ public:
             [&](MirBodyAddress address) { return signature(address); }),
         callables(
             session, [&](MirBodyAddress address) { return function(address); },
+            [&](MirBodyAddress address) { return signature(address); }),
+        threads(
+            session, failures, lifetimes,
+            [&](MirBodyAddress address) { return function(address); },
             [&](MirBodyAddress address) { return signature(address); }) {
     dispatch.bindCompleteCleanup([this](HirClassInstanceId activeClass) {
       return lifetimes.completeCleanup(activeClass);
@@ -105,6 +111,7 @@ private:
   Lifetimes lifetimes;
   ThreadLocals threadLocals;
   Callables callables;
+  ThreadTasks threads;
   std::map<SymbolId, llvm::GlobalVariable *> globals;
   std::map<std::pair<MirBodyKind, std::size_t>, llvm::Function *> functions;
   [[nodiscard]] llvm::Function *function(MirBodyAddress address);
@@ -122,7 +129,7 @@ public:
        std::span<const ConcretePackParameter> packs,
        std::span<const HirBindingId> sourceBindings,
        const std::map<SymbolId, llvm::GlobalVariable *> &globals,
-       Callables &callables,
+       Callables &callables, ThreadTasks &threads,
        std::function<llvm::Function *(MirBodyAddress)> findFunction,
        std::function<FunctionAbi(MirBodyAddress)> bodyAbi,
        const MirClassInstance *owner, const MirConstructorInstance *constructor,
@@ -133,7 +140,7 @@ public:
         globals(globals), ir(session.context()), lifetimes(lifetimes),
         threadLocals(threadLocals), bodyAbi(std::move(bodyAbi)), owner(owner),
         constructor(constructor), receiverType(std::move(receiverType)),
-        callables(callables),
+        callables(callables), threads(threads),
         scalars(session, ir,
                 [&](llvm::Value *condition, DefinedFailureOutcome outcome) {
                   guard(condition, outcome);
@@ -199,6 +206,7 @@ private:
   const MirConstructorInstance *constructor;
   std::optional<SemanticType> receiverType;
   Callables &callables;
+  ThreadTasks &threads;
   Scalars scalars;
   Atomics atomics;
   std::function<llvm::Function *(MirBodyAddress)> findFunction;
@@ -685,11 +693,38 @@ private:
   void jump(MirBlockId target, std::span<const MirOperand> arguments) {
     ir.CreateBr(edge(target, arguments));
   }
+  // A published managed-worker emergency abandons every generated frame up
+  // to the task boundary: no further cleanup runs and the frame reports
+  // failure status. Only native managed workers can request this.
+  void abandonFrame() {
+    if (abi.statusResult) {
+      ir.CreateRet(ir.getFalse());
+      return;
+    }
+    ir.CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type *>{},
+                       {});
+    ir.CreateUnreachable();
+  }
+  void abandonIfRequested() {
+    if (!failures.workerContainment())
+      return;
+    auto *abandon =
+        llvm::BasicBlock::Create(session.context(), "worker.abandon", &function);
+    auto *resume = llvm::BasicBlock::Create(session.context(),
+                                            "worker.continue", &function);
+    ir.CreateCondBr(failures.abandoning(ir), abandon, resume);
+    ir.SetInsertPoint(abandon);
+    abandonFrame();
+    ir.SetInsertPoint(resume);
+  }
   void failedOperation() {
     const auto &term = current->terminator;
     if (term.kind != MirTerminatorKind::Invoke || !term.failureRecord)
       throw std::logic_error("LLVM failed operation lost its Invoke record");
+    // An abandoned callee wrote no record; never read its channel.
+    abandonIfRequested();
     failures.checkIncomingCleanup(ir, channels.at(term.failureRecord));
+    abandonIfRequested();
     if (cleanupToken)
       ir.CreateStore(failures.enterCleanup(ir, channels.at(term.failureRecord)),
                      cleanupToken);
@@ -1031,6 +1066,39 @@ private:
         for (const auto &source : instruction.operands)
           inputs.push_back(operand(source));
         return Mutexes(session, ir).emit(input, instruction, inputs);
+      }
+      if (ThreadTasks::handles(instruction.intrinsic)) {
+        std::vector<llvm::Value *> inputs;
+        for (const auto &source : instruction.operands)
+          inputs.push_back(operand(source));
+        const auto &term = current->terminator;
+        const bool checked = term.kind == MirTerminatorKind::Invoke &&
+                             term.invokeInstruction == instruction.id;
+        const ThreadTasks::Stage threadStage{
+            .address = address,
+            .body = input,
+            .instruction = instruction,
+            .inputs = inputs,
+            .failure = checked ? channels.at(term.failureRecord) : nullptr,
+            .failed = checked ? std::function<void()>([this] {
+              failedOperation();
+            })
+                              : std::function<void()>{},
+            .destination =
+                [&] {
+                  if (!instruction.result)
+                    throw std::logic_error(
+                        "LLVM managed-thread result lost its value");
+                  return destination(*instruction.result);
+                },
+            .store = [this](llvm::Value *target, llvm::Value *value,
+                            const SemanticType &type) {
+              store(value, target, type);
+            },
+            .load = [this](llvm::Value *source, const SemanticType &type) {
+              return load(source, type);
+            }};
+        return threads.emit(ir, threadStage);
       }
       if (instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem)
         return formFunctionPointer(instruction);
@@ -2138,6 +2206,8 @@ private:
     case MirTerminatorKind::TerminateCleanupFailure:
       failures.terminateCleanup(ir, channels.at(block.activeFailure),
                                 channels.at(term.failureRecord));
+      if (failures.workerContainment())
+        abandonFrame();
       break;
     case MirTerminatorKind::Exit:
       if (abi.statusResult)
@@ -2527,7 +2597,7 @@ void Bodies::body(MirBodyAddress address) {
       session, failures, dispatch, lifetimes, threadLocals, *output,
       address, input, plan, parameters.concrete.lanes,
       parameters.concrete.packs, parameters.sourceBindings, globals, callables,
-      [&](MirBodyAddress target) { return function(target); },
+      threads, [&](MirBodyAddress target) { return function(target); },
       [&](MirBodyAddress target) { return signature(target); }, classOwner,
       address.kind == MirBodyKind::Constructor
           ? session.program().mir().findConstructorInstance(address.owner)

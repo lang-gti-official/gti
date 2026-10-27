@@ -1,0 +1,61 @@
+#include <std/thread>
+
+// User-defined result shapes crossing back from managed workers: a scalar, a
+// cleanup-owning class taken exactly once, an unobserved result destroyed by
+// automatic join, and a second start on a joinable handle.
+[[unsafe_transfer]] class reading {
+  int32_t value;
+public:
+  reading(int32_t value) : value(value) {}
+  reading(reading& other) = delete;
+  reading(reading&& other) = default;
+  int32_t get() { return this.value; }
+  ~reading() { std::println("reading retired"); }
+};
+
+class producer {
+  int32_t seed;
+public:
+  producer(int32_t seed) : seed(seed) {}
+  reading operator()() && { return reading(this.seed * 2); }
+};
+
+class doubler {
+  int32_t base;
+public:
+  doubler(int32_t base) : base(base) {}
+  int32_t operator()() { return this.base + this.base; }
+};
+
+int main() {
+  mut std::thread_result<int32_t> scalar{};
+  if (!scalar.start(doubler(17))) { return 1; }
+  auto counted = scalar.join();
+  if (!counted) { return 2; }
+  std::println(std::move(counted).value());
+
+  mut std::thread_result<reading> owned{};
+  if (!owned.start(producer(21))) { return 3; }
+  auto joined = owned.join();
+  if (!joined) { return 4; }
+  reading taken = std::move(joined).value();
+  std::println(taken.get());
+
+  mut std::thread_result<reading> twice{};
+  if (!twice.start(producer(5))) { return 5; }
+  auto refused = twice.start(producer(6));
+  if (refused || refused.error() != std::thread_errc::operation_not_permitted) {
+    return 6;
+  }
+  {
+    mut std::thread_result<reading> unobserved{};
+    if (!unobserved.start([]() -> reading { return reading(1); })) {
+      return 7;
+    }
+  }
+  std::println("after unobserved result");
+  auto late = twice.join();
+  if (!late) { return 8; }
+  std::println(std::move(late).value().get());
+  return 0;
+}

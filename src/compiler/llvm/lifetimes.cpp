@@ -6,6 +6,7 @@
 #include "payloads.h"
 #include "polymorphic_storage.h"
 #include "runtime_abi.h"
+#include "threads.h"
 
 #include <algorithm>
 #include <llvm/IR/Intrinsics.h>
@@ -1275,6 +1276,15 @@ llvm::Function *Lifetimes::moveHelper(const SemanticType &type) {
       ir.CreateRetVoid();
       return function;
     }
+    if (owner.compilerCapability == CompilerCapabilityTypeKind::ThreadHandle) {
+      // The join obligation (and any joined result) moved with the bytes.
+      if (!nativeThreadHandle(session.program().mir(), type))
+        throw BackendUnsupportedError(
+            "LLVM thread handle move requires its exact capability");
+      ir.CreateStore(llvm::Constant::getNullValue(storage), address);
+      ir.CreateRetVoid();
+      return function;
+    }
     if (sharedOwnerRepresentation(session.program().mir(), owner)) {
       ir.CreateStore(llvm::Constant::getNullValue(storage), address);
       ir.CreateRetVoid();
@@ -1357,7 +1367,8 @@ bool Lifetimes::needsMoveState(const SemanticType &type) const {
     return false;
   const auto &owner = session.layouts().instance(type);
   if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexLockToken ||
-      owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage)
+      owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage ||
+      owner.compilerCapability == CompilerCapabilityTypeKind::ThreadHandle)
     return true;
   if (sharedOwnerRepresentation(session.program().mir(), owner))
     return true;
@@ -1748,7 +1759,23 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
           llvm::BasicBlock::Create(session.context(), "next", function);
       ir.CreateCondBr(status, next, bad);
       ir.SetInsertPoint(bad);
+      // A published managed-worker emergency abandons the remaining schedule
+      // by status. An abandoned child wrote no record to read.
+      const auto abandonIfRequested = [&] {
+        if (!failures.workerContainment())
+          return;
+        auto *abandon = llvm::BasicBlock::Create(session.context(),
+                                                 "worker.abandon", function);
+        auto *resume = llvm::BasicBlock::Create(session.context(),
+                                                "worker.continue", function);
+        ir.CreateCondBr(failures.abandoning(ir), abandon, resume);
+        ir.SetInsertPoint(abandon);
+        ir.CreateRet(ir.getFalse());
+        ir.SetInsertPoint(resume);
+      };
+      abandonIfRequested();
       failures.checkIncomingCleanup(ir, scratch);
+      abandonIfRequested();
       auto *secondary =
           llvm::BasicBlock::Create(session.context(), "secondary", function);
       auto *first =
@@ -1756,6 +1783,8 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       ir.CreateCondBr(ir.CreateLoad(ir.getInt1Ty(), failed), secondary, first);
       ir.SetInsertPoint(secondary);
       failures.terminateCleanup(ir, output, scratch);
+      if (failures.workerContainment())
+        ir.CreateRet(ir.getFalse());
       ir.SetInsertPoint(first);
       failures.copyChannel(ir, output, scratch);
       auto *resume =

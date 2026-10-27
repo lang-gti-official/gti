@@ -1,4 +1,5 @@
 #include "native_c_abi.h"
+#include "thread_lifecycle.h"
 #include "debug_info.h"
 #include "failure.h"
 #include "native_c_contract.h"
@@ -160,7 +161,8 @@ bool nativeCDeclarationContract(const MirProgram &program,
       !function.typeArguments.empty() || !function.valueArguments.empty() ||
       function.virtualMethod ||
       function.processMemoryOperation != ProcessMemoryRuntimeOperation::None ||
-      function.cThreadOperation != CThreadRuntimeOperation::None ||
+      (function.cThreadOperation != CThreadRuntimeOperation::None &&
+       !nativeCThreadOperationBinding(program, function)) ||
       !function.callableParameters.empty() ||
       !nativeCValueContract(program, target, function.returnType,
                             NativeCValueRole::Result))
@@ -1540,6 +1542,9 @@ void emitNativeCCallbacks(
     if (auto *debug = session.debugInfo())
       debug->beginNativeCallback(adapter.id, ir);
     callbackAttachment(session, ir, adapter, *wrapper, true);
+    // A native callback is terminal containment even on a managed worker; a
+    // cleanup emergency inside it is never published as worker output.
+    auto *previousWorker = failures.suspendWorker(ir);
     const auto inputs = decodeNativeCArguments(session, ir, native, *wrapper);
     llvm::Value *output = nullptr;
     if (gti.resultDestination)
@@ -1616,6 +1621,7 @@ void emitNativeCCallbacks(
       failures.terminate(ir, failure);
       ir.SetInsertPoint(success);
     }
+    failures.restoreWorker(ir, previousWorker);
     callbackAttachment(session, ir, adapter, *wrapper, false);
     llvm::Value *result = output;
     if (!native.result.storage.addressOnly && output)
