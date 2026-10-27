@@ -4797,6 +4797,17 @@ private:
       SymbolId field = 0, const SemanticType &ownerType = SemanticType::Unknown,
       bool conditional = false);
 
+  // The declared type of a pure place path over a formal, the receiver, their
+  // fields and array elements, and whether its last step selects stored
+  // state (a field or an element).
+  struct PredeclaredPlace {
+    SemanticType type = SemanticType::Unknown;
+    bool stored = false;
+  };
+  [[nodiscard]] std::optional<PredeclaredPlace>
+  predeclaredPlace(const Expr *expression, const FunctionInfo &function,
+                   SemanticType ownerType);
+
   [[nodiscard]] bool storedTextViewRead(const ExprPtr &expression,
                                         const FunctionInfo &function,
                                         SemanticType ownerType);

@@ -82,24 +82,34 @@ int main() {
 '''
 
 RAW_C_STRINGS = r'''
+struct Slots {
+  c_string* items = nullptr;
+  int32_t count = 0;
+};
 mut c_string kept = nullptr;
 void put(c_string* items, int32_t at, c_string value) { unsafe { items[at] = value; } }
 c_string second(c_string* items) { unsafe { c_string* next = items + 1; return *next; } }
-c_string at(c_string* items, int32_t index) {
+c_string at(c_string* items, int32_t index) { unsafe { return items[index]; } }
+c_string viaLocal(c_string* items, int32_t index) {
   unsafe {
     c_string* base = items;
     return base[index];
   }
 }
+c_string first(Slots slots) { unsafe { return slots.items[0]; } }
+c_string viaReference(c_string*& items) { unsafe { return items[1]; } }
 int main() {
   mut c_string slots[3] = {nullptr, nullptr, nullptr};
   if (second(&slots[0]) != nullptr) { return 1; }
   put(&slots[0], 1, "b");
   kept = second(&slots[0]);
   if (kept == nullptr || kept != slots[1] || at(&slots[0], 1) != kept) { return 2; }
-  if (at(&slots[0], 0) != nullptr || at(&slots[0], 2) != nullptr) { return 3; }
+  if (viaLocal(&slots[0], 0) != nullptr || at(&slots[0], 2) != nullptr) { return 3; }
+  mut c_string* base = &slots[0];
+  Slots view{.items = base, .count = 3};
+  if (first(view) != nullptr || viaReference(base) != kept) { return 4; }
   unsafe { slots[1] = nullptr; }
-  return second(&slots[0]) == nullptr ? 0 : 4;
+  return second(&slots[0]) == nullptr ? 0 : 5;
 }
 '''
 

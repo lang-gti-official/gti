@@ -1299,6 +1299,10 @@ struct Entry {
   std::string_view name;
   int id;
 };
+struct Slots {
+  c_string* items = nullptr;
+  int32_t count = 0;
+};
 mut c_string keptText = nullptr;
 mut std::string_view keptView = "";
 void put(c_string* items, int32_t at, c_string value) {
@@ -1310,40 +1314,59 @@ c_string second(c_string* items) {
     return *next;
   }
 }
-c_string at(c_string* items, int32_t index) {
+c_string at(c_string* items, int32_t index) { unsafe { return items[index]; } }
+c_string viaLocal(c_string* items, int32_t index) {
   unsafe {
     c_string* base = items;
     return base[index];
   }
 }
+c_string first(Slots slots) { unsafe { return slots.items[0]; } }
+c_string viaReference(c_string*& items) { unsafe { return items[1]; } }
 std::string_view viewAt(std::string_view* item) { unsafe { return *item; } }
-std::string_view nameAt(Entry* entry) {
-  unsafe {
-    Entry* base = entry;
-    return base->name;
-  }
+std::string_view wordAt(std::string_view* items, int32_t index) {
+  unsafe { return items[index]; }
 }
+std::string_view nameAt(Entry* entry) { unsafe { return entry->name; } }
 int main() {
   mut c_string slots[3] = {nullptr, nullptr, nullptr};
   put(&slots[0], 1, "b");
   keptText = second(&slots[0]);
   if (keptText == nullptr || keptText != slots[1] ||
-      at(&slots[0], 2) != nullptr) { return 1; }
-  mut std::string_view word = "word";
-  keptView = viewAt(&word);
+      at(&slots[0], 1) != keptText || viaLocal(&slots[0], 2) != nullptr) {
+    return 1;
+  }
+  mut c_string* base = &slots[0];
+  Slots view{.items = base, .count = 3};
+  if (first(view) != nullptr || viaReference(base) != keptText) { return 2; }
+  mut std::string_view words[2] = {"word", "other"};
+  keptView = viewAt(&words[0]);
   mut Entry entry{.name = "entry", .id = 1};
-  return keptView == "word" && nameAt(&entry) == "entry" ? 0 : 2;
+  if (wordAt(&words[0], 1) != "other" || nameAt(&entry) != "entry") {
+    return 3;
+  }
+  return keptView == "word" ? 0 : 4;
 }
 )gti");
   if (!result.canGenerateCode())
     printDiagnostics(result);
   expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
          "text read through a raw pointer is an ownerless result");
+  // Semantics and MIR agree: a raw index or `->` through a formal, a field or
+  // a reference reads raw memory, not storage of that origin, and nominates
+  // no relay. Semantics used to relay the pointer formal, and every call
+  // reported GTI-B0001.
   if (result.canGenerateCode())
-    for (const char *name : {"second", "at", "viewAt", "nameAt"}) {
+    for (const char *name : {"second", "at", "viaLocal", "first",
+                             "viaReference", "viewAt", "wordAt", "nameAt"}) {
       const auto *function = namedFunction(result, name);
+      const auto *info =
+          function ? result.semantics.findFunction(function->declaration)
+                   : nullptr;
       expect(function != nullptr && textResult(*function) &&
-                 function->returnBorrowOrigin == lang::BorrowOriginKind::None,
+                 function->returnBorrowOrigin == lang::BorrowOriginKind::None &&
+                 info != nullptr &&
+                 info->returnBorrowOrigin == lang::BorrowOriginKind::None,
              std::string("a raw-memory text return is ownerless: ") + name);
     }
   // A GTI owner's C string is not raw memory, inside unsafe code or not.
@@ -1363,6 +1386,19 @@ int main() { mut c_string slots[2] = {nullptr, nullptr}; return leak(&slots[0]) 
 )gti");
   expect(rejectedAtSource(dependent, "GTI-S2045"),
          "an owner-dependent C string still cannot escape beside a raw read");
+  // A raw read nominates nothing, so it neither relays a formal nor lets a
+  // dynamic formal escape beside it: validity is unchanged.
+  const auto either = analyzeText(R"gti(
+std::string_view either(std::string_view s, std::string_view* p, bool b) {
+  if (b) {
+    return s;
+  }
+  unsafe { return p[0]; }
+}
+int main() { mut std::string_view v = "x"; return either("a", &v, true) == "a" ? 0 : 1; }
+)gti");
+  expect(rejectedAtSource(either, "GTI-S2045"),
+         "a formal returned beside a raw read still needs one owner");
 }
 
 constexpr NamedTest kTests[] = {
