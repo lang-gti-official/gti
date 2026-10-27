@@ -43,9 +43,13 @@ bool passiveArrayElement(const SemanticType &type) {
   // Pointer storage is passive regardless of its referent. Accessing that
   // referent still requires its own typed projection and unsafe witness. A C
   // string is such an inert native address; it is compared only by address.
+  // So is a C function pointer: calling one is admitted separately, against
+  // its C signature.
   return (isPassiveScalarValueType(type) && type.kind != SemanticType::Void) ||
-         (type.kind == SemanticType::RawPointer && type.arguments.size() == 1) ||
-         type.kind == SemanticType::CString;
+         (type.kind == SemanticType::RawPointer &&
+          type.arguments.size() == 1) ||
+         type.kind == SemanticType::CString ||
+         type.kind == SemanticType::NativeFunction;
 }
 
 // A one-dimensional fixed array of counted text views. Each element is a
