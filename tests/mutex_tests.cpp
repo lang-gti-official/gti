@@ -1606,6 +1606,125 @@ int main() {
          "unrelated shared carriers retain overlapping read permission");
 }
 
+// A guard is an exclusive borrow taken through shared access to synchronized
+// storage. Through a read-only formal that has an entry loan (a by-reference
+// capture, or a reference formal whose return borrows from it) it is a root
+// loan rather than a child of that shared entry. Through a mutable formal's
+// accessor result it keeps the transient accessor chain to the stable owner.
+void testSynchronizedGuardsThroughFormals() {
+  const auto check = [](std::string_view name, std::string source,
+                        auto &&inspect) {
+    const auto result = analyze(name, std::move(source));
+    if (!result.canGenerateCode())
+      printDiagnostics(result);
+    expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+           std::string(name) + " lowers to verified MIR");
+    if (result.canGenerateCode())
+      inspect(result.mir);
+  };
+  const auto guardLoans = [](const lang::MirBody &body) {
+    std::vector<const lang::MirLoan *> loans;
+    for (const auto &loan : body.loans)
+      if (loan.kind == lang::MirLoanKind::Stored && loan.lifecycleBound &&
+          loan.access == lang::AccessMode::Mutable)
+        loans.push_back(&loan);
+    return loans;
+  };
+  check("guard-through-reference-capture", R"(
+#include <std/mutex>
+int main() {
+  std::mutex<int32_t> passive{4};
+  auto reader = [&passive]() -> int32_t {
+    auto guard = passive.lock();
+    return guard.get();
+  };
+  return reader() == 4 ? 0 : 1;
+}
+)",
+        [&](const lang::MirProgram &program) {
+          bool root = false;
+          for (const auto &lambda : program.lambdaInstances())
+            for (const auto *loan : guardLoans(lambda.body)) {
+              const auto *source = lambda.body.findPlace(loan->source);
+              root = root ||
+                     (loan->parent == 0 && source &&
+                      source->root == lang::MirPlaceRootKind::Symbol &&
+                      source->capture != 0 && !source->projections.empty() &&
+                      source->projections.front().kind ==
+                          lang::MirProjectionKind::Dereference);
+            }
+          expect(root, "a captured mutex guard is a root loan on the referent");
+        });
+  check("guard-through-returned-reference-formal", R"(
+#include <std/mutex>
+std::mutex<int32_t>& touch(std::mutex<int32_t>& shared) {
+  {
+    auto guard = shared.lock();
+    if (guard.get() != 4) { return shared; }
+  }
+  return shared;
+}
+int main() {
+  std::mutex<int32_t> value{4};
+  auto guard = touch(value).lock();
+  return guard.get() == 4 ? 0 : 1;
+}
+)",
+        [&](const lang::MirProgram &program) {
+          bool root = false;
+          for (const auto &function : program.functionInstances())
+            for (const auto *loan : guardLoans(function.body))
+              root = root || (loan->parent == 0 &&
+                              std::any_of(function.body.loans.begin(),
+                                          function.body.loans.end(),
+                                          [](const auto &entry) {
+                                            return entry.entry &&
+                                                   entry.kind ==
+                                                       lang::MirLoanKind::Parameter;
+                                          }));
+          expect(root, "a guard through a shared entry formal is a root loan");
+        });
+  check("guard-through-mutable-owner-accessor", R"(
+#include <std/memory>
+#include <std/mutex>
+int32_t drain(mut std::unique_ptr<std::mutex<int32_t>>& vault) {
+  mut auto guard = vault->lock();
+  int32_t value = guard.get();
+  guard.get() = 0;
+  return value;
+}
+class bank {
+  mut std::unique_ptr<std::mutex<int32_t>> vault;
+public:
+  bank() : vault(std::make_unique<std::mutex<int32_t>>(1)) {}
+  int32_t bump() mut {
+    mut auto guard = this.vault->lock();
+    guard.get() += 1;
+    return guard.get();
+  }
+};
+int main() {
+  mut auto vault = std::make_unique<std::mutex<int32_t>>(7);
+  mut bank account = bank();
+  return drain(vault) == 7 && account.bump() == 2 ? 0 : 1;
+}
+)",
+        [&](const lang::MirProgram &program) {
+          bool chained = false;
+          for (const auto &function : program.functionInstances())
+            for (const auto *loan : guardLoans(function.body)) {
+              const auto *accessor = function.body.findLoan(loan->parent);
+              const auto *owner =
+                  accessor ? function.body.findLoan(accessor->parent) : nullptr;
+              chained = chained ||
+                        (accessor &&
+                         accessor->kind == lang::MirLoanKind::CallResult &&
+                         owner && owner->entry);
+            }
+          expect(chained, "an accessor-held guard keeps its accessor chain");
+        });
+}
+
 void testStoredPublicationRecursion() {
   const auto frontend = analyze("mutex-recursive-publication.gti", R"gti(
 #include <std/mutex>
@@ -1730,5 +1849,6 @@ int main(int argc, char **argv) {
   testVerifierMutations();
   testStoredReceiverPublication();
   testStoredPublicationRecursion();
+  testSynchronizedGuardsThroughFormals();
   return failures == 0 ? 0 : 1;
 }

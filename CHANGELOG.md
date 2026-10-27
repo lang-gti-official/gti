@@ -38,6 +38,13 @@ for what minor and patch releases mean.
   alternative and each alternative's fields, and a debug record after an
   inactive `std::optional` or `std::expected` access no longer invalidates the
   module, so debug builds that format text or read optional values compile.
+- Fix internal compiler errors on both backends when a value that borrows
+  and has a destructor is returned by a method called through a by-reference
+  lambda capture (for example locking a captured `std::mutex`), when a mutex
+  is locked through a mutable borrow of a `std::unique_ptr` (`this.vault->lock()`
+  in a `mut` method, or a `mut std::unique_ptr<std::mutex<T>>&` parameter),
+  and when a mutex is locked through a reference parameter that the function
+  also returns.
 - `std::mutex<T>` is now `std::relocatable` exactly when `T` is. Relocation
   builds a fresh native mutex and moves the protected value, so mutexes can
   be swapped and held in relocating containers; a held mutex still cannot

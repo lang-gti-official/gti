@@ -4178,6 +4178,20 @@ Without an explicit runtime place, only the exact parameter referent type is
 valid. Carrier membership or a same-typed unrelated alias cannot substitute
 for this executable address evidence.
 
+A lambda body holds each by-reference capture through a `Parameter` entry loan
+on the capture slot, the closure-body analog of a reference formal's entry
+loan. Call and construction lowering resolve a capture-rooted operand through
+that loan exactly as a binding-rooted operand resolves through its binding
+loan. A carrier made by a method of the capture's referent is therefore a child
+of the capture entry, and it borrows the dereferenced capture slot, the
+referent place a reference formal's receiver supplies, not the slot itself. A
+read-only formal entry parents only read-only carriers: an exclusive borrow
+taken through shared access to synchronized storage, such as a mutex guard, is
+a root loan, as it is when the formal has no entry loan. A carrier returned by
+a method of an accessor's result keeps that transient accessor chain alive,
+child-first, up to the semantic owner, exactly as an accessor result passed to
+a constructor does.
+
 A body-local reference may share an existing semantic owner identity while
 capturing an accessor's different runtime referent. Lowering accepts that
 address only when its live, nonescaping call-result chain reaches exactly the
