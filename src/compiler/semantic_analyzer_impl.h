@@ -2374,6 +2374,18 @@ private:
   [[nodiscard]] std::optional<FieldSourcedTextResult>
   fieldSourcedTextResult(const Call &call,
                          const ResolvedCallInfo &resolved) const;
+  // The receiver, or the argument `parameter` names, that an overloaded
+  // operator's result relays from `origin`; operatorBorrowSource asks it
+  // for the operator's own summary.
+  [[nodiscard]] const ExprPtr *
+  operatorRelayOperand(const Expr &expression,
+                       const ResolvedOperatorInfo &resolved,
+                       BorrowOriginKind origin, std::size_t parameter) const;
+  // An overloaded operator's text result that returns one text field of its
+  // receiver or an argument, as fieldSourcedTextResult finds a call's.
+  [[nodiscard]] std::optional<FieldSourcedTextResult>
+  operatorFieldSourcedTextResult(const Expr &expression,
+                                 const ResolvedOperatorInfo &resolved) const;
   // A call whose callee returns a reference to one direct text field of its
   // receiver: reading the result reads that field of the receiver.
   [[nodiscard]] std::optional<FieldSourcedTextResult>
@@ -4932,6 +4944,10 @@ private:
   dynamicTextReturnBorrowSummary(
       const FunctionInfo &function,
       const SemanticType &ownerType = SemanticType::Unknown);
+  // `derived` itself or the base it inherits, through classes and
+  // interfaces, that instantiates class `base`.
+  [[nodiscard]] std::optional<SemanticType>
+  inheritedClassInstance(const SemanticType &derived, ClassId base) const;
 
   // The receiver's direct text field, or text payload of a payload-enum
   // field, that every returned reference to text designates, in a

@@ -2065,7 +2065,11 @@ returns hold in its own body; a lambda has no relay contract, so a returned
 formal or capture there is unknown text. Semantics rejects every escape of a
 capture's text (`L-OWN-02`), so such a result reaches only local uses, which
 need no proof. An invocation through a GTI function
-pointer holds what one of its targets returns. A pointer value only comes
+pointer holds what one of its targets returns. A virtual call to a root
+without a result dependency holds ownerless text: each override keeps its
+root's summary, which the dispatch table verification requires, and each
+source override's returns are proven ownerless as any function's are under
+that summary. A pointer value only comes
 from a forming site naming one stateless function or lambda, so the
 program's forming sites of the pointer's type are every target it can reach;
 a target's returned formal or field is unknown text there. This covers

@@ -2029,6 +2029,329 @@ int main() {
          "only a dependency-free result is an ownerless alternative");
 }
 
+// A virtual call's text result is its root's contract, and an override keeps
+// it; a lambda's result is what its returns hold; a generic method whose
+// result its instance makes text relays at each call as the instance does.
+// So an erased callable over a literal lambda returns ownerless text through
+// a user-defined interface and through std::function, and MIR verifies it.
+const std::string kErasedTextResults = R"gti(
+#include <std/functional>
+#include <std/polymorphic>
+#include <std/string>
+interface Labeler {
+  std::string_view label();
+};
+class Fixed : public Labeler {
+public:
+  Fixed() {}
+  std::string_view label() override { return "fixed"; }
+};
+class Wrapped<F> : public Labeler {
+  F fn;
+public:
+  Wrapped(F fn) : fn(fn) {}
+  std::string_view label() override { return this.fn(); }
+};
+class Erased {
+  mut std::inline_polymorphic<Labeler, 32, 8> target{};
+public:
+  Erased() {}
+  void set<F>(F fn) mut { this.target.replace(Wrapped<F>(fn)); }
+  std::string_view operator()() { return this.target.get().label(); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R same(R text) { return text; }
+  R operator()(R text) { return text; }
+};
+mut std::string_view kept = "";
+)gti";
+
+void testVirtualAndErasedTextResults() {
+  const std::string valid = kErasedTextResults + R"gti(
+int main() {
+  auto lit = []() -> std::string_view { return "lit"; };
+  mut Erased erased{};
+  erased.set(std::move(lit));
+  kept = erased();
+  mut std::inline_polymorphic<Labeler, 32, 8> slot{};
+  slot.replace(Fixed());
+  std::println(slot.get().label());
+  auto word = []() -> std::string_view { return "word"; };
+  std::function<std::string_view()> fn{word};
+  std::string_view held = fn();
+  Echo<std::string_view> echo{};
+  std::string owner{"echoed"};
+  std::string_view relayed = echo.same(owner.view());
+  std::string_view called = echo(owner.view());
+  return kept == "lit" && held == "word" && relayed == called ? 0 : 1;
+}
+)gti";
+  const auto result = analyzeText(valid);
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "virtual, lambda and generic text results lower through MIR");
+  if (result.canGenerateCode()) {
+    // The interface's bodyless root and the erased call's operator.
+    const lang::MirFunctionInstance *root = nullptr;
+    const lang::MirFunctionInstance *erased = nullptr;
+    for (const auto &function : result.mir.functionInstances()) {
+      const auto *info = result.semantics.findFunction(function.declaration);
+      if (info == nullptr)
+        continue;
+      if (info->qualifiedName == "Labeler::label")
+        root = &function;
+      if (function.definitionKind == lang::MirDefinitionKind::Source &&
+          info->qualifiedName == "Erased::__gti_operator_call")
+        erased = &function;
+    }
+    expect(root != nullptr && erased != nullptr,
+           "the interface root and the erased call exist");
+    if (root != nullptr && erased != nullptr) {
+      // Were the root to relay its receiver, the erased call's result would
+      // be the overrides' receivers' text, which no proof reaches.
+      auto changed = result.mir;
+      auto *target = const_cast<lang::MirFunctionInstance *>(
+          changed.findFunctionInstance(root->id));
+      target->returnBorrowOrigin = lang::BorrowOriginKind::Receiver;
+      const auto verification = lang::verifyMirProgram(changed);
+      if (!functionError(verification, erased->id,
+                         "ownerless text return has no independent result "
+                         "proof"))
+        for (const auto &error : verification.errors)
+          std::cerr << error.message << '\n';
+      expect(functionError(verification, erased->id,
+                           "ownerless text return has no independent result "
+                           "proof"),
+             "a virtual call is ownerless only under a dependency-free root");
+    }
+  }
+  // An override keeps its root's contract: a view of the override's own
+  // string is not ownerless text.
+  const std::string owned = R"gti(
+#include <std/polymorphic>
+#include <std/string>
+interface Named {
+  std::string_view name();
+};
+class Owner : public Named {
+  std::string text;
+public:
+  Owner() : text("owned") {}
+  std::string_view name() override { return this.text.view(); }
+};
+int main() {
+  mut std::inline_polymorphic<Named, 64, 8> slot{};
+  slot.replace(Owner());
+  return int(slot.get().name().size());
+}
+)gti";
+  const auto rejected = analyzeText(owned);
+  const auto at = owned.find("this.text.view()");
+  expect(
+      rejectedAtSource(rejected, "GTI-S2045") && at != std::string::npos &&
+          hasDiagnosticAt(rejected.diagnostics, "GTI-S2045",
+                          "ownerless-text-contracts.gti",
+                          at + std::string_view("this.text.view()").size() - 1,
+                          "cannot escape without one exact owner "
+                          "dependency"),
+      "an override of a dependency-free root returns ownerless text");
+  // A generic result its instance makes text relays at the call, so the
+  // relayed owner stays borrowed while the result is used.
+  const std::string borrowed = kErasedTextResults + R"gti(
+int main() {
+  Echo<std::string_view> echo{};
+  mut std::string owner{"echoed"};
+  std::string_view relayed = echo.same(owner.view());
+  owner.append("!");
+  std::println(relayed);
+  return 0;
+}
+)gti";
+  const auto relayResult = analyzeText(borrowed);
+  expect(rejectedAtSource(relayResult, "GTI-S2017"),
+         "a generic text relay keeps its argument's owner borrowed");
+}
+
+// An override's text result keeps its root's contract in the override's own
+// instance of the root's class: under a generic root that relays its
+// argument, each override relays that argument or returns ownerless text,
+// and each call keeps the argument's owner borrowed (L-OWN-02).
+const std::string kGenericVirtualRoot = R"gti(
+#include <std/string>
+class Picker<T> {
+public:
+  int n;
+  Picker() : n(0) {}
+  virtual T pick(T a) { return a; }
+};
+class Literal : public Picker<std::string_view> {
+public:
+  Literal() : Picker<std::string_view>() {}
+  std::string_view pick(std::string_view a) override { return "literal"; }
+};
+class Same<T> : public Picker<T> {
+public:
+  Same() : Picker<T>() {}
+  T pick(T a) override { return a; }
+};
+)gti";
+
+void testGenericVirtualRootInstances() {
+  const std::string valid = kGenericVirtualRoot + R"gti(
+int main() {
+  std::string owner{"owned"};
+  Literal literal{};
+  Same<std::string_view> same{};
+  Picker<std::string_view>& first = literal;
+  Picker<std::string_view>& second = same;
+  return first.pick(owner.view()) == "literal" &&
+                 second.pick(owner.view()) == "owned"
+             ? 0
+             : 1;
+}
+)gti";
+  const auto result = analyzeText(valid);
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+         "overrides of a generic relaying root lower through MIR");
+  if (result.canGenerateCode()) {
+    // The root's instance and each override relay the argument, as the
+    // dispatch table requires.
+    std::size_t picks = 0;
+    for (const auto &function : result.mir.functionInstances()) {
+      const auto *info = result.semantics.findFunction(function.declaration);
+      if (info == nullptr ||
+          function.returnType.kind != lang::SemanticType::StringView ||
+          !info->qualifiedName.ends_with("::pick"))
+        continue;
+      ++picks;
+      expect(function.returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+                 function.returnBorrowParameter == 0,
+             "each pick relays its argument: " + info->qualifiedName);
+    }
+    expect(picks == 3, "the root and both overrides are instantiated");
+  }
+  // Whichever override dispatch selects, even one returning a literal, the
+  // argument's owner stays borrowed while the result is used.
+  const std::string mutated = kGenericVirtualRoot + R"gti(
+int main() {
+  mut std::string owner{"owned"};
+  Literal literal{};
+  Picker<std::string_view>& picker = literal;
+  std::string_view picked = picker.pick(owner.view());
+  owner.append("!");
+  return int(picked.size());
+}
+)gti";
+  expect(rejectedAtSource(analyzeText(mutated), "GTI-S2017"),
+         "a virtual relay keeps its argument's owner borrowed");
+  // An override cannot relay what its root does not: its own string.
+  const std::string receiver = kGenericVirtualRoot + R"gti(
+class Owned : public Picker<std::string_view> {
+  std::string text;
+public:
+  Owned() : Picker<std::string_view>(), text("own") {}
+  std::string_view pick(std::string_view a) override {
+    return this.text.view();
+  }
+};
+int main() {
+  Owned owned{};
+  return int(owned.pick("x").size());
+}
+)gti";
+  const auto rejected = analyzeText(receiver);
+  const auto at = receiver.find("this.text.view()");
+  expect(
+      rejectedAtSource(rejected, "GTI-S2045") && at != std::string::npos &&
+          hasDiagnosticAt(rejected.diagnostics, "GTI-S2045",
+                          "ownerless-text-contracts.gti",
+                          at + std::string_view("this.text.view()").size() - 1,
+                          "must derive from read-only parameter 'a'"),
+      "an override relays only what its root's instance relays");
+}
+
+// An overloaded operator's text result relays its receiver or an argument
+// as its summary says, as a method's does (L-OWN-02): the relayed owner stays
+// borrowed while the result is used, and an argument holding ownerless text
+// relays nothing.
+const std::string kOperatorTextRelays = R"gti(
+#include <std/string>
+class Same {
+public:
+  Same() {}
+  std::string_view operator()(std::string_view s) { return s; }
+  std::string_view operator[](std::string_view s) { return s; }
+};
+class Plain {
+  mut std::string s;
+public:
+  Plain() : s("plain") {}
+  std::string_view operator()() { return this.s.view(); }
+  void grow() mut { this.s.append("!"); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R operator()(R text) { return text; }
+};
+)gti";
+
+void testOperatorTextRelays() {
+  const auto valid = analyzeText(kOperatorTextRelays + R"gti(
+int main() {
+  Same same{};
+  mut Plain plain{};
+  Echo<std::string_view> echo{};
+  mut std::string owner{"owned"};
+  bool relayed = same(owner.view()) == same[owner.view()] &&
+                 echo(owner.view()) == "owned";
+  std::string_view literal = same("literal");
+  owner.append("!");
+  bool held = plain() == "plain";
+  plain.grow();
+  return relayed && held && literal == "literal" ? 0 : 1;
+}
+)gti");
+  if (!valid.canGenerateCode())
+    printDiagnostics(valid);
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "operator text relays lower through MIR");
+  for (const auto &[use, mutation] :
+       {std::pair<std::string_view, std::string_view>{
+            "std::string_view kept = same(owner.view());",
+            "owner.append(\"!\");"},
+        std::pair<std::string_view, std::string_view>{
+            "std::string_view kept = same[owner.view()];",
+            "owner.append(\"!\");"},
+        std::pair<std::string_view, std::string_view>{
+            "std::string_view kept = echo(owner.view());",
+            "owner.append(\"!\");"},
+        std::pair<std::string_view, std::string_view>{
+            "std::string_view kept = plain();", "plain.grow();"}}) {
+    const std::string source = kOperatorTextRelays + R"gti(
+int main() {
+  Same same{};
+  mut Plain plain{};
+  Echo<std::string_view> echo{};
+  mut std::string owner{"owned"};
+  )gti" + std::string(use) + "\n  " +
+                               std::string(mutation) + R"gti(
+  return int(kept.size());
+}
+)gti";
+    expect(rejectedAtSource(analyzeText(source), "GTI-S2017"),
+           "an operator's text result keeps its relayed owner borrowed: " +
+               std::string(use));
+  }
+}
+
 constexpr NamedTest kTests[] = {
     {"testArrayElementTextStorage", testArrayElementTextStorage},
     {"testArrayElementTextRejections", testArrayElementTextRejections},
@@ -2039,6 +2362,9 @@ constexpr NamedTest kTests[] = {
     {"testCapturedTextBorrowsOwner", testCapturedTextBorrowsOwner},
     {"testReassignedTextLocals", testReassignedTextLocals},
     {"testReceiverFieldCallReturns", testReceiverFieldCallReturns},
+    {"testVirtualAndErasedTextResults", testVirtualAndErasedTextResults},
+    {"testGenericVirtualRootInstances", testGenericVirtualRootInstances},
+    {"testOperatorTextRelays", testOperatorTextRelays},
     {"testOwnerlessForwarding", testOwnerlessForwarding},
     {"testAccessorSubjectRelays", testAccessorSubjectRelays},
     {"testAccessorFieldEscapes", testAccessorFieldEscapes},
