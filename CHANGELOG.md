@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.480.5 — Faster compile-time requirement policies
+
+- Evaluate each identical staged constant call once per compilation request and
+  replay its proved result, step charge and warnings elsewhere. Programs whose
+  iterator and range requirements are checked by reflection-based policies
+  compile and update in the editor several times faster (an ordered-search
+  fixture: 60 s to 15 s); results, limits and diagnostics are unchanged.
+
 ## 0.480.4 — Faster editor finalization
 
 - `gti_lsp` analyses the initializer and storage effects of each
