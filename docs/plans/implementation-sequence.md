@@ -11682,6 +11682,27 @@ retires a separate allocation rather than replacing live inline hierarchy
 storage. General by-value transport and dynamic cleanup remain separate
 integration prerequisites.
 
+Boxed polymorphic ownership is implemented. Each concrete polymorphic class
+that an admitted body allocates as a unique-owner pointee publishes its
+complete-object cleanup in its dispatch descriptors, after the displacement.
+A dynamic owner drop reads the complete object and that cleanup from one
+descriptor load before any lifecycle transition, runs it, then releases the
+complete allocation; the allocation site demands and admits the recipe, so a
+polymorphic drop no longer forces the conservative closure. Owner upcasts
+select the static base view; selected source constructors and the exact
+generated empty default construct into the allocation. Virtual and direct
+member calls on proved views accept the root's general shared signature,
+including reference results, records and owners. Ordinary constructions and
+by-value call results publish directly in the ABI return destination, a fresh
+whole local or their own full-expression temporary, which may be a borrowed
+receiver or argument. `llvm_dispatch_execution` profiles
+`polymorphic-ownership`, `virtual-invocation` and `fresh-publication` carry
+C++20/23 and native O0-O3 evidence, including failure unwinding and rollback;
+examples 025, 071 and 149 now match the C++ oracle at O0-O3. By-value
+hierarchy arguments, returns of existing objects, consuming receivers of
+inline hierarchy storage, shared polymorphic owners and public inline slots
+remain open.
+
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
   milestone completion: generated scalar-hierarchy copies/moves now have exact
@@ -11958,9 +11979,7 @@ not size the work.
 
 | blocker | examples | nature |
 | --- | --- | --- |
-| O-LLVM-10 public polymorphic-storage admission | 086, 135 | milestone; `nativeValue` refuses any capability-bearing type, and the inline slot's public admission waits on boxed-owner dynamic cleanup |
-| O-LLVM-10 polymorphic transfer and virtual-call shapes | 071, 025 | milestone |
-| O-LLVM-07/10 hierarchy containment on a receiver stage | 149 | milestone; the receiver's type merely contains hierarchy storage |
+| O-LLVM-10 polymorphism | 025, 071, 086, 135, 149 | milestone; these now match the C++ oracle at O0-O3: inline polymorphic slots, owned hierarchy transfers, consuming and temporary receivers, closure models and unobservable abstract phases are admitted (see O-LLVM-10) |
 | O-LLVM-10 erased transfer callable | 066 | 076 and 175 now execute with native managed workers, and owner-held mutex storage has its own witness, so the `shared_ptr<mutex<T>>` receiver and its empty-owner field default now lower; 066 still needs `std::transfer_function` (inline polymorphic storage and virtual invocation). With that use removed, 066 matches the C++ oracle at O0-O3 |
 | element and pointee eligibility | 127, 129, 142 | admission only; the emitters are element-agnostic. `ArraySize`/`ArrayRangeBegin` return constants yet demand a passive element; a payload-enum pointee and an array of sealed integral enums have implemented shapes that the eligibility predicates do not reach |
 | unsafe receiver on a `Call` stage | 121 | admission only; a receiver-role `Call` with a mutable-temporary-borrow input kind and no call target |

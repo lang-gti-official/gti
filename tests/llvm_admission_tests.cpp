@@ -2368,8 +2368,9 @@ int main() { unsafe { return identity(0); } }
          "exact unsafe source calls keep ordinary body admission");
   const auto unsafeOwner = lang::planLlvmAdmission(lower(R"(
 class Owner { public: virtual int read() { return 0; } };
-unsafe int create() { mut Owner value{}; Owner other{}; value = other; return 0; }
-int main() { unsafe { return create(); } }
+class Derived : public Owner {};
+unsafe int create(mut Owner& value, Owner& other) { value = other; return 0; }
+int main() { mut Derived first{}; Derived second{}; unsafe { return create(first, second); } }
 )"));
   expect(!unsafeOwner.admitted() &&
              has(unsafeOwner, "Shape", "PolymorphicTransfer"),
@@ -2503,19 +2504,34 @@ int main() { Slot object{}; unsafe { const Slot* pointer = &object; return point
 class Dynamic { public: int value = 7; virtual int read() { return this.value; } };
 int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->read(); } }
 )"));
-  expect(!virtualMethod.admitted(),
-         "a virtual method reached through a raw pointer stays refused");
+  // The pointee of a raw class pointer is a checked dispatch view under the
+  // program's unsafe obligation; the virtual call keeps its own witness.
+  bool rawVirtual = false;
+  for (const auto &use : virtualMethod.requirements())
+    rawVirtual |= use.required && use.implementedShape &&
+                  use.implementedShape->name == "NativeVirtualInvocation";
+  if (!virtualMethod.admitted())
+    std::cerr << "raw virtual admission: " << virtualMethod.limitation()
+              << '\n';
+  expect(virtualMethod.admitted() && rawVirtual,
+         "a virtual method reached through a raw pointer dispatches through "
+         "the pointee's checked view");
   const auto unsupported = lang::planLlvmAdmission(lower(R"(
 class Dynamic { public: int value = 7; virtual int read() { return this.value; } };
 int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->value; } }
 )"));
-  bool unsupportedRejected = false;
+  // Exact hierarchy metadata now supplies the static field layout of the
+  // pointee; only the virtual call above still needs a dispatch view.
+  bool fieldWitnessed = false;
   for (const auto &use : unsupported.requirements())
-    unsupportedRejected |=
+    fieldWitnessed |=
         use.required && use.entry->family == "UnsafeOperationKind" &&
-        use.entry->name == "RawMember" && !use.implementedShape;
-  expect(unsupportedRejected,
-         "unknown dynamic owner layout cannot borrow the field witness");
+        use.entry->name == "RawMember" && use.implementedShape &&
+        use.implementedShape->name == "NativeClassRawAccess";
+  expect(unsupported.admitted() && fieldWitnessed,
+         "a raw field read of hierarchy storage uses its exact metadata "
+         "layout: " +
+             unsupported.limitation());
   for (const auto &invalid :
        {"class Slot { public: mut int value = 0; }; int main() { Slot "
         "object{}; unsafe { const Slot* pointer = &object; pointer->value = 1; "
@@ -2829,7 +2845,7 @@ int main() { Base value{}; return invoke(value); }
          "virtual dependency order is deterministic in sealed inventory order");
   const auto unsupported = planLlvmAdmission(lower(R"(
 class Base { public: virtual int read() { return 1; } };
-int unsupported_helper() { Base values[1] = {Base()}; return values[0].read(); }
+int unsupported_helper() { Base values[1] = {Base()}; Base copied[1] = values; return copied[0].read(); }
 class Alternative : public Base {
 public:
   int read() override { return unsupported_helper(); }
@@ -3181,7 +3197,9 @@ void testDispatchPerUseWitnesses() {
       P() : value(1) {}
       virtual int read() { return this.value; }
     };
+    class Q : public P {};
     void take(P value) {}
+    void assign(mut P& target, P& source) { target = source; }
     int main() {
       mut P first{};
       P second{};
@@ -3189,12 +3207,14 @@ void testDispatchPerUseWitnesses() {
       P copied = P(first);
       take(P());
       first = second;
+      mut Q derived{};
+      assign(derived, second);
       return copied.read();
     }
   )");
   const auto plan = planLlvmAdmission(input);
   bool goodConstruct = false, goodFreshCopy = false, badTransfer = false,
-       badConstruct = false;
+       goodArgument = false, goodReplacement = false;
   for (const auto &use : plan.requirements()) {
     if (!use.required)
       continue;
@@ -3205,15 +3225,25 @@ void testDispatchPerUseWitnesses() {
       goodFreshCopy |=
           use.implementedShape &&
           use.implementedShape->name == "NativeFreshHierarchyTransfer";
-      badConstruct |= !use.implementedShape;
+      goodArgument |=
+          use.implementedShape &&
+          use.implementedShape->name == "NativeFreshHierarchyPublication";
     }
+    goodReplacement |=
+        use.entry->key() == "MirInstructionKind.Assign" &&
+        use.implementedShape &&
+        use.implementedShape->name == "NativeHierarchyReplacement";
     badTransfer |= use.entry->key() == "Shape.PolymorphicTransfer" &&
                    !use.implementedShape && use.instruction != 0;
   }
-  expect(!plan.admitted() && goodConstruct && goodFreshCopy && badConstruct &&
-             badTransfer,
-         "fresh-local copy and prepared by-value construction in one body keep "
-         "distinct witnesses and explicit pending transfer requirements");
+  // Replacing the complete local keeps its own witness; replacing an object
+  // through a base view could change an enclosing object's dynamic type.
+  expect(!plan.admitted() && goodConstruct && goodFreshCopy && goodArgument &&
+             goodReplacement && badTransfer,
+         "fresh-local copy, a by-value argument published in its prepared "
+         "storage, complete-object replacement and base-view assignment in "
+         "one program keep distinct witnesses and explicit pending transfer "
+         "requirements");
   const auto copyInput = lower(R"(
     class P {
     public:
@@ -3317,15 +3347,19 @@ void testDispatchPerUseWitnesses() {
       P() : value(1) {}
       virtual int read() { return this.value; }
     };
-    int main() {
-      mut P first{}; P second{};
+    class Q : public P {};
+    int poke(mut P& view, P& source) {
+      mut P first{};
       first.value = 5;
-      first = second;
-      return first.read();
+      first = source;
+      view = source;
+      return first.read() + view.read();
     }
+    int main() { mut Q derived{}; P second{}; return poke(derived, second); }
   )");
   const auto mutationPlan = planLlvmAdmission(mutations);
-  bool scalarMutation = false, objectMutation = false, objectCopy = false;
+  bool scalarMutation = false, objectMutation = false, objectCopy = false,
+       objectReplacement = false;
   for (const auto address : mutationPlan.requiredBodies()) {
     const auto *body = findMirBody(mutations.program().mir(), address);
     std::size_t transfers = 0;
@@ -3350,28 +3384,61 @@ void testDispatchPerUseWitnesses() {
         const auto *place = body->findPlace(*stage.destination);
         if (place->type == SemanticType::Int32)
           scalarMutation |= !rejected;
-        if (place->type.kind == SemanticType::Class)
-          objectMutation |= transfers == 2;
+        if (place->type.kind != SemanticType::Class)
+          continue;
+        const bool replaced = std::any_of(
+            mutationPlan.requirements().begin(),
+            mutationPlan.requirements().end(), [&](const auto &use) {
+              return use.required && use.body == address &&
+                     use.block == block.id && use.instruction == stage.id &&
+                     use.implementedShape &&
+                     use.implementedShape->name ==
+                         "NativeHierarchyReplacement";
+            });
+        objectReplacement |= replaced && !rejected;
+        objectMutation |= !replaced && transfers == 2;
       }
   }
-  expect(scalarMutation && objectCopy && objectMutation,
-         "scalar writes remain distinct from the coalesced source copy and "
-         "whole-object assignment exclusions in the same body");
+  expect(scalarMutation && objectCopy && objectMutation && objectReplacement,
+         "scalar writes and a complete local's replacement remain distinct "
+         "from the base view's coalesced source copy and assignment "
+         "exclusions in the same body");
+  // Its initialization step constructs a namespace object in place; the
+  // receiver borrows that complete object through its symbol.
   const auto global = planLlvmAdmission(lower(R"(
     class P { public: P() {} virtual int read() { return 1; } };
     P value{};
     int main() { return value.read(); }
   )"));
-  expect(!global.admitted() &&
+  expect(global.admitted() &&
              std::any_of(
                  global.requirements().begin(), global.requirements().end(),
                  [](const auto &use) {
                    return use.required &&
                           use.entry->key() == "Shape.PolymorphicTransfer" &&
-                          !use.implementedShape;
+                          use.implementedShape &&
+                          use.implementedShape->name ==
+                              "NativeProgramHierarchyStorage";
                  }),
-         "nonlocal storage keeps an explicit transfer exclusion even when an "
-         "unsupported global receiver has the preferred diagnostic span");
+         "a namespace hierarchy object constructed in place by its "
+         "initialization step carries its program-storage witness: " +
+             global.limitation());
+  const auto threadLocal = planLlvmAdmission(lower(R"(
+    class P { public: P() {} virtual int read() { return 1; } };
+    thread_local P value{};
+    int main() { return value.read(); }
+  )"));
+  expect(!threadLocal.admitted() &&
+             std::any_of(threadLocal.requirements().begin(),
+                         threadLocal.requirements().end(),
+                         [](const auto &use) {
+                           return use.required &&
+                                  use.entry->key() ==
+                                      "Shape.PolymorphicTransfer" &&
+                                  !use.implementedShape;
+                         }),
+         "thread-local storage keeps an explicit transfer exclusion even "
+         "when an unsupported receiver has the preferred diagnostic span");
 }
 
 } // namespace

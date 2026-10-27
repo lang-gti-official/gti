@@ -53,6 +53,22 @@ SUCCESS_FILES = {
     "nested-hierarchy-transfer": "examples/llvm/nested-hierarchy-transfer.gti",
     "dispatch-cost-correctness": "tests/fixtures/llvm_dispatch_execution_cost.gti",
     "shipped-example": "examples/llvm/inheritance-and-dispatch.gti",
+    "polymorphic-owners": "tests/fixtures/llvm_dispatch_polymorphic_owners.gti",
+    "virtual-signatures": "tests/fixtures/llvm_dispatch_virtual_signatures.gti",
+    "fresh-publication": "tests/fixtures/llvm_dispatch_fresh_publication.gti",
+    "inline-slots": "tests/fixtures/llvm_dispatch_inline_slots.gti",
+    "owned-transfers": "tests/fixtures/llvm_dispatch_owned_transfers.gti",
+    "consuming-receivers": "tests/fixtures/llvm_dispatch_consuming_receivers.gti",
+    "closure-models": "tests/fixtures/llvm_dispatch_closure_models.gti",
+    "abstract-phases": "tests/fixtures/llvm_dispatch_abstract_phases.gti",
+    "temporary-receivers": "tests/fixtures/llvm_dispatch_temporary_receivers.gti",
+    "replacements": "tests/fixtures/llvm_dispatch_replacements.gti",
+    "hierarchy-arrays": "tests/fixtures/llvm_dispatch_hierarchy_arrays.gti",
+    # A field default's closure is lowered by each body running that default;
+    # its instances agree on captures, so the model relocates into its slot.
+    "field-default-closure-former-reject": "tests/fixtures/constructor_callback_field.gti",
+    "program-storage": "tests/fixtures/llvm_dispatch_program_storage.gti",
+    "shared-polymorphic-owners": "tests/fixtures/llvm_dispatch_shared_owners.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -123,6 +139,25 @@ public:
 };
 """
 
+SUCCESS_SOURCES_CYCLE = """mut int observed = 0;
+class Numeric {
+  int value = 7;
+public:
+  Numeric() {}
+  virtual int read() { return this.value; }
+  int payload() { return this.value; }
+  static int first(Numeric& value, int remaining) {
+    if (remaining == 0) { return value.payload(); }
+    return Numeric::second(value, remaining - 1);
+  }
+  static int second(Numeric& value, int remaining) {
+    return Numeric::first(value, remaining);
+  }
+  ~Numeric() { observed = Numeric::first(this, 2); }
+};
+int main() { { Numeric value{}; } return observed == 7 ? 0 : 1; }
+"""
+
 TRANSFER_SUCCESS_SOURCES = {
     # Verbatim former rejections. Their normal exit1 is successful execution of
     # these source contracts, not a failed runtime check or a rewritten oracle.
@@ -130,21 +165,11 @@ TRANSFER_SUCCESS_SOURCES = {
     "generated-move-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second = std::move(first); return second.read(); }\n", 1),
     "fresh-copy-former-cli-control": ("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", 0),
     "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain(); };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
-}
-
-REJECTIONS = {
-    "reject-move-construction": PLAIN + "int main() { mut Plain first{}; Plain second = Plain(std::move(first)); return second.read(); }\n",
-    "reject-assignment": PLAIN + "int main() { mut Plain first{}; Plain second{}; first = second; return first.read(); }\n",
-    "reject-base-assignment": PLAIN + """class Derived : public Plain {};
-void replace(mut Plain& destination, Plain& source) { destination = source; }
-int main() { mut Derived first{}; Derived second{}; replace(first, second); return first.read(); }
-""",
-    "reject-fresh-value-argument": PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n",
-    "reject-fresh-return": PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n",
-    "reject-array": PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n",
-    "reject-global": PLAIN + "Plain value{};\nint main() { return value.read(); }\n",
-    "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
-    "reject-pure-active-phase": """class Base {
+    "fresh-value-argument-former-reject": (PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n", 0),
+    "fresh-return-former-reject": (PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n", 1),
+    "local-return-former-reject": (PLAIN + "Plain make() { Plain local{}; return local; }\nint main() { Plain value = make(); return value.read(); }\n", 1),
+    # An abstract phase that nothing observes installs no pure state.
+    "pure-active-phase-former-reject": ("""class Base {
 public:
   Base() {}
   virtual int read() = 0;
@@ -155,16 +180,18 @@ public:
   int read() override { return 1; }
 };
 int main() { Derived value{}; return value.read(); }
-""",
-    "reject-destructor-virtual-observation": """class Observed {
+""", 1),
+    # A destructor of a class nothing derives from runs under the object's
+    # own complete state, so its dispatch observes nothing ambiguous.
+    "destructor-virtual-observation-former-reject": ("""class Observed {
 public:
   Observed() {}
   virtual int read() { return 1; }
   ~Observed() { int observed = this.read(); }
 };
 int main() { Observed value{}; return value.read() - 1; }
-""",
-    "reject-destructor-helper-observation": """class Observed {
+""", 0),
+    "destructor-helper-observation-former-reject": ("""class Observed {
 public:
   Observed() {}
   virtual int read() { return 1; }
@@ -172,6 +199,125 @@ public:
   ~Observed() { int observed = this.observe(); }
 };
 int main() { Observed value{}; return value.read() - 1; }
+""", 0),
+    "read-borrow-cleanup-observation-former-reject": ("""class Observed {
+public:
+  Observed() {}
+  virtual int read() { return 1; }
+  static int through(Observed& value) { return value.read(); }
+  ~Observed() { int observed = Observed::through(this); }
+};
+int main() { Observed value{}; return 0; }
+""", 0),
+    "mut-borrow-cleanup-observation-former-reject": ("""class Observed {
+public:
+  mut int value = 0;
+  Observed() {}
+  virtual void touch() mut { this.value += 1; }
+  static void through(mut Observed& value) { value.touch(); }
+  ~Observed() { Observed::through(this); }
+};
+int main() { Observed value{}; return 0; }
+""", 0),
+    "owned-destructor-observation-former-reject": ("""#include <std/memory>
+class Observed {
+public:
+  Observed() {}
+  virtual int read() { return 1; }
+  ~Observed() { int observed = this.read(); }
+};
+int main() { auto owner = std::make_unique<Observed>(); return owner->read() - 1; }
+""", 0),
+    "cleanup-helper-cycle-observation-former-reject": (SUCCESS_SOURCES_CYCLE.replace(
+        "return value.payload();", "return value.read();"), 0),
+    # A constructor publishing an interface reference field stores the view.
+    "stored-interface-reference": ("""interface Widget { int width(); };
+class Button : public Widget {
+  int size;
+public:
+  Button(int size) : size(size) {}
+  int width() override { return this.size; }
+};
+class Measurer {
+  Widget& target;
+public:
+  Measurer(Widget& target) : target(target) {}
+  int twice() { return this.target.width() * 2; }
+};
+int main() {
+  Button button = Button(7);
+  Measurer measurer = Measurer(button);
+  return measurer.twice() == 14 ? 0 : 1;
+}
+""", 0),
+    # Copy assignment of a complete inert polymorphic object.
+    "assignment-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second{}; first = second; return first.read(); }\n", 1),
+    "array-former-reject": (PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n", 1),
+    "global-former-reject": (PLAIN + "Plain value{};\nint main() { return value.read(); }\n", 1),
+    # A moved owned local with active cleanup leaves through the return edge.
+    "returned-owned-move": ("""mut int dropped = 0;
+class Owned {
+  int id;
+public:
+  Owned(int id) : id(id) {}
+  ~Owned() { dropped = dropped * 10 + this.id; }
+  virtual int read() { return this.id; }
+};
+Owned relay(Owned value) {
+  mut Owned local = std::move(value);
+  return std::move(local);
+}
+int main() {
+  {
+    Owned kept = relay(Owned(4));
+    if (kept.read() != 4 || dropped != 0) { return 1; }
+  }
+  return dropped == 4 ? 0 : 2;
+}
+""", 0),
+    "heap-polymorphic-owner-former-reject": ("""#include <std/memory>
+mut int dropped = 0;
+class HeapValue {
+  int value;
+public:
+  HeapValue(int value) : value(value) {}
+  ~HeapValue() { dropped += this.value; }
+  virtual int read() { return this.value; }
+};
+int main() {
+  { auto owner = std::make_unique<HeapValue>(7);
+    if (owner->read() != 7) { return 1; }
+  }
+  return dropped == 7 ? 0 : 2;
+}
+""", 0),
+}
+
+REJECTIONS = {
+    "reject-move-construction": PLAIN + "int main() { mut Plain first{}; Plain second = Plain(std::move(first)); return second.read(); }\n",
+    "reject-base-assignment": PLAIN + """class Derived : public Plain {};
+void replace(mut Plain& destination, Plain& source) { destination = source; }
+int main() { mut Derived first{}; Derived second{}; replace(first, second); return first.read(); }
+""",
+    # Arrays publish fresh elements in place; copying or passing a whole
+    # hierarchy array still transports its objects.
+    "reject-array-copy": PLAIN + "int main() { Plain values[1] = {Plain()}; Plain copied[1] = values; return copied[0].read(); }\n",
+    "reject-array-argument": PLAIN + "int sum(Plain values[1]) { return values[0].read(); }\nint main() { Plain values[1] = {Plain()}; return sum(values); }\n",
+    "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
+    # A pure member selected while a constructor that never hands the object to
+    # other code runs is unobservable; this phase is not, so it stays gated.
+    "reject-observed-pure-phase": """class Base {
+public:
+  Base() { int observed = this.describe(); }
+  virtual int read() = 0;
+  virtual int describe() { return 2; }
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+  int read() override { return 1; }
+};
+int main() { Derived value{}; return value.read(); }
 """,
     "reject-rollback-virtual-observation": """class Base {
 public:
@@ -187,47 +333,46 @@ public:
 };
 int main() { Derived value{0}; return value.read(); }
 """,
-    "reject-read-borrow-cleanup-observation": """class Observed {
-public:
-  Observed() {}
-  virtual int read() { return 1; }
-  static int through(Observed& value) { return value.read(); }
-  ~Observed() { int observed = Observed::through(this); }
-};
-int main() { Observed value{}; return 0; }
-""",
-    "reject-mut-borrow-cleanup-observation": """class Observed {
-public:
-  mut int value = 0;
-  Observed() {}
-  virtual void touch() mut { this.value += 1; }
-  static void through(mut Observed& value) { value.touch(); }
-  ~Observed() { Observed::through(this); }
-};
-int main() { Observed value{}; return 0; }
-""",
-    "reject-heap-polymorphic-owner": """#include <std/memory>
-mut int dropped = 0;
-class HeapValue {
-  int value;
-public:
-  HeapValue(int value) : value(value) {}
-  ~HeapValue() { dropped += this.value; }
-  virtual int read() { return this.value; }
-};
-int main() {
-  { auto owner = std::make_unique<HeapValue>(7);
-    if (owner->read() != 7) { return 1; }
-  }
-  return dropped == 7 ? 0 : 2;
-}
-""",
 }
 
-# The same terminating call cycle must not hide its reachable virtual observer.
+# The same terminating call cycle must not hide its reachable virtual
+# observer when the destructor runs as a base phase of a derived object.
 REJECTIONS["reject-cleanup-helper-cycle-observation"] = SUCCESS_SOURCES[
     "nonobserving-cleanup-helper-cycle"].replace(
-        "return value.payload();", "return value.read();")
+        "return value.payload();", "return value.read();").replace(
+        "int main() { { Numeric value{}; } return observed == 7 ? 0 : 1; }",
+        "class Wider : public Numeric {\npublic:\n  Wider() : Numeric() {}\n"
+        "  int read() override { return 8; }\n};\n"
+        "int main() { { Wider value{}; } return observed == 7 ? 0 : 1; }")
+# A base destructor observes the phase of a derived object directly or
+# through a helper; that phase rule stays gated.
+REJECTIONS["reject-base-destructor-observation"] = """class Base {
+public:
+  Base() {}
+  virtual int read() { return 1; }
+  ~Base() { int observed = this.read(); }
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+  int read() override { return 2; }
+};
+int main() { Derived value{}; return value.read() - 2; }
+"""
+REJECTIONS["reject-base-helper-observation"] = """class Base {
+public:
+  Base() {}
+  virtual int read() { return 1; }
+  static int through(Base& value) { return value.read(); }
+  ~Base() { int observed = Base::through(this); }
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+  int read() override { return 2; }
+};
+int main() { Derived value{}; return 0; }
+"""
 
 SOURCE_REJECTIONS = {
     "reject-source-return-local-view": PLAIN + "Plain& invalid() { Plain local{}; return local; }\nint main() { return invalid().read(); }\n",
@@ -353,8 +498,8 @@ def reject_case(gti: Path, root: Path, work: Path, name: str,
             if result.returncode != 65 or "GTI-B0003" not in result.stderr or not preserved:
                 raise AssertionError(f"{name} {mode} existing={existing}: {result}")
             expected = ("DestructorDispatchObservation" if "observation" in name
-                        else "PureDispatchState" if name == "reject-pure-active-phase"
-                        else None if name in {"reject-global", "reject-thread-local", "reject-heap-polymorphic-owner"}
+                        else "PureDispatchState" if name == "reject-observed-pure-phase"
+                        else None if name in {"reject-global", "reject-thread-local"}
                         else "PolymorphicTransfer")
             if expected and f"Shape.{expected}" not in result.stderr:
                 raise AssertionError(f"{name}: rejection did not exercise {expected}: {result}")
@@ -1045,7 +1190,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1169,6 +1314,284 @@ int main() {
         raise AssertionError("cleanup oracle mutation anchor is not unique")
     add("cleanup-oracle-wrong-trace", lifecycle.replace(anchor, "mut int expected_cleanup = 1234322;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle="return 120 / divisor;")
+    owners = (root / SUCCESS_FILES["polymorphic-owners"]).read_text(encoding="utf-8")
+    owners_marker = "// POLYMORPHIC_OWNERS_MAIN\n"
+    if owners.count(owners_marker) != 1:
+        raise AssertionError("polymorphic owner main marker is not unique")
+    owners_prefix = owners.split(owners_marker, 1)[0]
+    owner_failure = owners_prefix + """int main() {
+  expected_cleanup = 1263549;
+  Guard guard{};
+  std::unique_ptr<Reader> first = make_reader(false);
+  std::unique_ptr<Root> owner = std::upcast_unique<Root, Leaf>(std::make_unique<Leaf>(6));
+  return invoke_failure(*owner, 0);
+}
+"""
+    add("polymorphic-owner-virtual-failure", owner_failure, "defined-failure",
+        expected_exit=70, failure_needle="return 120 / divisor;", endpoints=TRANSFER_ENDPOINTS)
+    add("polymorphic-owner-wrong-cleanup",
+        owner_failure.replace("expected_cleanup = 1263549;", "expected_cleanup = 1263548;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle="return 120 / divisor;",
+        endpoints=TRANSFER_ENDPOINTS)
+    add("polymorphic-owner-constructor-rollback", owners_prefix + """int main() {
+  expected_cleanup = 149;
+  Guard guard{};
+  std::unique_ptr<Reader> first = make_reader(false);
+  std::unique_ptr<Reader> failed = std::upcast_unique<Reader, Leaf>(std::make_unique<Leaf>(0));
+  return 0;
+}
+""", "defined-failure", expected_exit=70, failure_needle="payload(12 / payload)",
+        endpoints=TRANSFER_ENDPOINTS)
+    signatures = (root / SUCCESS_FILES["virtual-signatures"]).read_text(encoding="utf-8")
+    signatures_marker = "// VIRTUAL_SIGNATURES_MAIN\n"
+    if signatures.count(signatures_marker) != 1:
+        raise AssertionError("virtual signature main marker is not unique")
+    signature_failure = signatures.split(signatures_marker, 1)[0] + """int main() {
+  expected_cleanup = 3;
+  Guard guard{};
+  mut Box box{};
+  Tracked held{3};
+  Shape& shape = box;
+  Point failed = shape.corner(0);
+  return failed.x;
+}
+"""
+    signature_needle = "return Point(this.origin.x * 12 / scale"
+    add("virtual-signature-failure", signature_failure, "defined-failure",
+        expected_exit=70, failure_needle=signature_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("virtual-signature-wrong-cleanup",
+        signature_failure.replace("expected_cleanup = 3;", "expected_cleanup = 4;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=signature_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    publication = (root / SUCCESS_FILES["fresh-publication"]).read_text(encoding="utf-8")
+    publication_marker = "// FRESH_PUBLICATION_MAIN\n"
+    if publication.count(publication_marker) != 1:
+        raise AssertionError("fresh publication main marker is not unique")
+    publication_prefix = publication.split(publication_marker, 1)[0]
+    temporary_failure = publication_prefix + """int main() {
+  expected_cleanup = 12634;
+  Guard guard{};
+  return Leaf(2).fail(0);
+}
+"""
+    add("fresh-temporary-virtual-failure", temporary_failure, "defined-failure",
+        expected_exit=70, failure_needle="return 120 / divisor;", endpoints=TRANSFER_ENDPOINTS)
+    add("fresh-temporary-wrong-cleanup",
+        temporary_failure.replace("expected_cleanup = 12634;", "expected_cleanup = 12635;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle="return 120 / divisor;",
+        endpoints=TRANSFER_ENDPOINTS)
+    add("fresh-return-constructor-rollback", publication_prefix + """int main() {
+  expected_cleanup = 121434;
+  Guard guard{};
+  Leaf held = make(3);
+  Leaf failed = make(0);
+  return failed.read() + held.read();
+}
+""", "defined-failure", expected_exit=70, failure_needle="payload(12 / payload)",
+        endpoints=TRANSFER_ENDPOINTS)
+    slots = (root / SUCCESS_FILES["inline-slots"]).read_text(encoding="utf-8")
+    slots_marker = "// INLINE_SLOTS_MAIN\n"
+    if slots.count(slots_marker) != 1:
+        raise AssertionError("inline slot main marker is not unique")
+    slot_failure = slots.split(slots_marker, 1)[0] + """int main() {
+  expected_cleanup = 3;
+  Guard guard{};
+  mut GaugeSlot boxed{};
+  boxed.replace(Logged(std::string("ab"), 3));
+  mut GaugeSlot faulty{};
+  faulty.replace(Faulty(0));
+  return drive(faulty, 1) + drive(boxed, 1);
+}
+"""
+    slot_needle = "int sample(int tick) mut override { return 120 / this.divisor; }"
+    add("inline-slot-virtual-failure", slot_failure, "defined-failure",
+        expected_exit=70, failure_needle=slot_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("inline-slot-wrong-cleanup",
+        slot_failure.replace("expected_cleanup = 3;", "expected_cleanup = 4;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=slot_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    owned = (root / SUCCESS_FILES["owned-transfers"]).read_text(encoding="utf-8")
+    owned_marker = "// OWNED_TRANSFERS_MAIN\n"
+    if owned.count(owned_marker) != 1:
+        raise AssertionError("owned transfer main marker is not unique")
+    owned_failure = owned.split(owned_marker, 1)[0] + """int main() {
+  expected_cleanup = 54;
+  Guard guard{};
+  Badge held = Badge(std::string("x"), 4);
+  return divide(Badge(std::string("yy"), 5), 0) + held.code();
+}
+"""
+    owned_needle = "int divide(Badge badge, int divisor) { return badge.code() / divisor; }"
+    add("owned-transfer-failure", owned_failure, "defined-failure",
+        expected_exit=70, failure_needle=owned_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("owned-transfer-wrong-cleanup",
+        owned_failure.replace("expected_cleanup = 54;", "expected_cleanup = 55;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=owned_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    consuming = (root / SUCCESS_FILES["consuming-receivers"]).read_text(encoding="utf-8")
+    consuming_marker = "// CONSUMING_RECEIVERS_MAIN\n"
+    if consuming.count(consuming_marker) != 1:
+        raise AssertionError("consuming receiver main marker is not unique")
+    consuming_failure = consuming.split(consuming_marker, 1)[0] + """int main() {
+  expected_cleanup = 68991;
+  Guard guard{};
+  Task held = Task(1, std::string("x"), 1);
+  Runner runner = Runner(boxed(6, 0), 700);
+  return std::move(runner).run(8) + held.rank();
+}
+"""
+    consuming_needle = "return (input + taken.read() * 10 + int(this.label.size())) / this.divisor;"
+    add("consuming-receiver-failure", consuming_failure, "defined-failure",
+        expected_exit=70, failure_needle=consuming_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("consuming-receiver-wrong-cleanup",
+        consuming_failure.replace("expected_cleanup = 68991;", "expected_cleanup = 68992;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=consuming_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    closures = (root / SUCCESS_FILES["closure-models"]).read_text(encoding="utf-8")
+    closures_marker = "// CLOSURE_MODELS_MAIN\n"
+    if closures.count(closures_marker) != 1:
+        raise AssertionError("closure model main marker is not unique")
+    closure_failure = closures.split(closures_marker, 1)[0] + """int main() {
+  expected_cleanup = 748;
+  Guard guard{};
+  auto first = std::make_unique<Token>(8);
+  std::unique_ptr<Callback> kept = boxed(
+      [owned = std::move(first)](int input) -> int { return input + owned->read(); });
+  auto second = std::make_unique<Token>(4);
+  auto held = retained(
+      [owned = std::move(second)](int input) -> int { return 840 / (input - owned->read()); });
+  Token last = Token(7);
+  Callback& view = held;
+  return view.call(4) + kept->call(1) + last.read();
+}
+"""
+    closure_needle = "return 840 / (input - owned->read());"
+    add("closure-model-failure", closure_failure, "defined-failure",
+        expected_exit=70, failure_needle=closure_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("closure-model-wrong-cleanup",
+        closure_failure.replace("expected_cleanup = 748;", "expected_cleanup = 749;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=closure_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    phases = (root / SUCCESS_FILES["abstract-phases"]).read_text(encoding="utf-8")
+    phases_marker = "// ABSTRACT_PHASES_MAIN\n"
+    if phases.count(phases_marker) != 1:
+        raise AssertionError("abstract phase main marker is not unique")
+    phase_failure = phases.split(phases_marker, 1)[0] + """int main() {
+  expected_cleanup = 12384;
+  Guard guard{};
+  Square square = Square(3);
+  return square.ratio(0);
+}
+"""
+    phase_needle = "int ratio(int divisor) { return this.area() / divisor; }"
+    add("abstract-phase-failure", phase_failure, "defined-failure",
+        expected_exit=70, failure_needle=phase_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("abstract-phase-wrong-cleanup",
+        phase_failure.replace("expected_cleanup = 12384;", "expected_cleanup = 12385;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=phase_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    temporaries = (root / SUCCESS_FILES["temporary-receivers"]).read_text(encoding="utf-8")
+    temporaries_marker = "// TEMPORARY_RECEIVERS_MAIN\n"
+    if temporaries.count(temporaries_marker) != 1:
+        raise AssertionError("temporary receiver main marker is not unique")
+    temporary_failure = temporaries.split(temporaries_marker, 1)[0] + """int main() {
+  expected_cleanup = 62;
+  Guard guard{};
+  Source kept = Source(2);
+  return joined(false, 0) + kept.share(1);
+}
+"""
+    temporary_needle = "virtual int share(int divisor) { return 60 / divisor; }"
+    add("temporary-receiver-failure", temporary_failure, "defined-failure",
+        expected_exit=70, failure_needle=temporary_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("temporary-receiver-wrong-cleanup",
+        temporary_failure.replace("expected_cleanup = 62;", "expected_cleanup = 63;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=temporary_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    replacements = (root / SUCCESS_FILES["replacements"]).read_text(encoding="utf-8")
+    replacements_marker = "// REPLACEMENTS_MAIN\n"
+    if replacements.count(replacements_marker) != 1:
+        raise AssertionError("replacement main marker is not unique")
+    replacement_failure = replacements.split(replacements_marker, 1)[0] + """int main() {
+  expected_cleanup = 72;
+  Guard guard{};
+  mut Square square = Square(2);
+  Square kept = Square(7);
+  square = make(0);
+  return square.area() + kept.area();
+}
+"""
+    replacement_needle = "Square make(int side) { return Square(12 / side); }"
+    add("replacement-failure", replacement_failure, "defined-failure",
+        expected_exit=70, failure_needle=replacement_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("replacement-wrong-cleanup",
+        replacement_failure.replace("expected_cleanup = 72;", "expected_cleanup = 73;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=replacement_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    shared = (root / SUCCESS_FILES["shared-polymorphic-owners"]).read_text(encoding="utf-8")
+    shared_marker = "// SHARED_OWNERS_MAIN\n"
+    if shared.count(shared_marker) != 1:
+        raise AssertionError("shared owner main marker is not unique")
+    shared_failure = shared.split(shared_marker, 1)[0] + """int main() {
+  expected_cleanup = 76;
+  Guard guard{};
+  auto keep = std::make_shared<Square>(6);
+  std::shared_ptr<Shape> shape =
+      std::upcast_shared<Shape, Square>(std::make_shared<Square>(7));
+  return shape->area(0) + keep->code();
+}
+"""
+    shared_needle = "int area(int scale) override { return this.side * this.side / scale; }"
+    add("shared-polymorphic-owner-failure", shared_failure, "defined-failure",
+        expected_exit=70, failure_needle=shared_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("shared-polymorphic-owner-wrong-cleanup",
+        shared_failure.replace("expected_cleanup = 76;", "expected_cleanup = 77;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=shared_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    storage = (root / SUCCESS_FILES["program-storage"]).read_text(encoding="utf-8")
+    storage_marker = "// PROGRAM_STORAGE_MAIN\n"
+    if storage.count(storage_marker) != 1:
+        raise AssertionError("program storage main marker is not unique")
+    add("program-storage-failure", storage.split(storage_marker, 1)[0] + """Square broken = scaled(0);
+
+int main() { return broken.area() + square.area(); }
+""", "defined-failure", expected_exit=70,
+        failure_needle="Square scaled(int divisor) { return Square(12 / divisor); }",
+        endpoints=TRANSFER_ENDPOINTS)
+    arrays = (root / SUCCESS_FILES["hierarchy-arrays"]).read_text(encoding="utf-8")
+    arrays_marker = "// HIERARCHY_ARRAYS_MAIN\n"
+    if arrays.count(arrays_marker) != 1:
+        raise AssertionError("hierarchy array main marker is not unique")
+    arrays_prefix = arrays.split(arrays_marker, 1)[0]
+    array_failure = arrays_prefix + """int main() {
+  expected_cleanup = 14;
+  Guard guard{};
+  Square kept = Square(4);
+  Square squares[3] = {Square(1), make(0), Square(3)};
+  return squares[0].area() + kept.area();
+}
+"""
+    array_field_failure = arrays_prefix + """int main() {
+  expected_cleanup = 54;
+  Guard guard{};
+  Square kept = Square(4);
+  Rack rack = Rack(5, 0);
+  return rack.row[0].area() + kept.area();
+}
+"""
+    array_needle = "Square make(int side) { return Square(12 / side); }"
+    add("hierarchy-array-failure", array_failure, "defined-failure",
+        expected_exit=70, failure_needle=array_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-array-wrong-cleanup",
+        array_failure.replace("expected_cleanup = 14;", "expected_cleanup = 15;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=array_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-array-field-failure", array_field_failure, "defined-failure",
+        expected_exit=70, failure_needle=array_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-array-field-wrong-cleanup",
+        array_field_failure.replace("expected_cleanup = 54;", "expected_cleanup = 55;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=array_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -1185,20 +1608,63 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "base-interface-adjustments": ("static-dispatch", "shipped-example",
                                        "inline-hierarchy-fields", "nested-object-former-reject",
                                        "inline-field-virtual-failure", "inline-field-constructor-rollback",
-                                       "inline-field-wrong-cleanup-trace"),
+                                       "inline-field-wrong-cleanup-trace",
+                                       "abstract-phases", "abstract-phase-failure",
+                                       "abstract-phase-wrong-cleanup",
+                                       "pure-active-phase-former-reject",
+                                       "destructor-virtual-observation-former-reject",
+                                       "destructor-helper-observation-former-reject",
+                                       "read-borrow-cleanup-observation-former-reject",
+                                       "mut-borrow-cleanup-observation-former-reject",
+                                       "owned-destructor-observation-former-reject",
+                                       "cleanup-helper-cycle-observation-former-reject",
+                                       "stored-interface-reference"),
         "mut-borrow-scalar-bool": ("borrowed-dispatch", "borrowed-mut-reference-chain",
                                   "hierarchy-reference-results", "owner-reference-failure",
                                   "owner-reference-wrong-cleanup", "shared-owner-reference",
-                                  "owner-failure-before-reference"),
-        "scalar-virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
-                                      "static-dispatch", "dispatch-cost-correctness"),
+                                  "owner-failure-before-reference", "replacements"),
+        "virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
+                               "static-dispatch", "dispatch-cost-correctness",
+                               "virtual-signatures", "virtual-signature-failure",
+                               "virtual-signature-wrong-cleanup", "temporary-receivers",
+                               "temporary-receiver-failure",
+                               "temporary-receiver-wrong-cleanup"),
         "dispatch-lifecycle": ("virtual-failure-cleanup", "constructor-rollback",
                                "cleanup-oracle-wrong-trace", "nonobserving-cleanup-helper-cycle"),
         "fresh-local-generated-transfers": (
             "fresh-hierarchy-transfer", "fresh-hierarchy-copy-view",
             "nested-hierarchy-transfer", "nested-transfer-failure", "nested-transfer-wrong-cleanup",
             "generated-copy-former-reject", "generated-move-former-reject",
-            "fresh-copy-former-cli-control", "generated-move-virtual-failure"),
+            "fresh-copy-former-cli-control", "generated-move-virtual-failure",
+            "owned-transfers", "owned-transfer-failure", "owned-transfer-wrong-cleanup",
+            "local-return-former-reject", "returned-owned-move"),
+        "fresh-publication": (
+            "fresh-publication", "fresh-return-former-reject",
+            "fresh-value-argument-former-reject",
+            "fresh-temporary-virtual-failure", "fresh-temporary-wrong-cleanup",
+            "fresh-return-constructor-rollback"),
+        "inline-polymorphic-slot": (
+            "inline-slots", "inline-slot-virtual-failure", "inline-slot-wrong-cleanup",
+            "field-default-closure-former-reject"),
+        "consuming-receivers": (
+            "consuming-receivers", "consuming-receiver-failure",
+            "consuming-receiver-wrong-cleanup"),
+        "hierarchy-replacement": (
+            "replacements", "replacement-failure", "replacement-wrong-cleanup",
+            "assignment-former-reject"),
+        "hierarchy-arrays": (
+            "hierarchy-arrays", "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
+            "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
+            "array-former-reject"),
+        "program-hierarchy-storage": (
+            "program-storage", "program-storage-failure", "global-former-reject"),
+        "polymorphic-ownership": (
+            "polymorphic-owners", "heap-polymorphic-owner-former-reject",
+            "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
+            "polymorphic-owner-constructor-rollback", "closure-models",
+            "closure-model-failure", "closure-model-wrong-cleanup",
+            "shared-polymorphic-owners", "shared-polymorphic-owner-failure",
+            "shared-polymorphic-owner-wrong-cleanup"),
     }
     cases = evidence_cases(root)
     if {name for members in profiles.values() for name in members} != set(cases):
@@ -1238,6 +1704,22 @@ def main() -> None:
              "shared-owner-reference", "reject-source-reset-retained-view",
              "owner-failure-before-reference",
              "nested-transfer-failure", "nested-transfer-wrong-cleanup",
+             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
+             "polymorphic-owner-constructor-rollback",
+             "virtual-signature-failure", "virtual-signature-wrong-cleanup",
+             "fresh-temporary-virtual-failure", "fresh-temporary-wrong-cleanup",
+             "fresh-return-constructor-rollback",
+             "inline-slot-virtual-failure", "inline-slot-wrong-cleanup",
+             "owned-transfer-failure", "owned-transfer-wrong-cleanup",
+             "consuming-receiver-failure", "consuming-receiver-wrong-cleanup",
+             "closure-model-failure", "closure-model-wrong-cleanup",
+             "abstract-phase-failure", "abstract-phase-wrong-cleanup",
+             "temporary-receiver-failure", "temporary-receiver-wrong-cleanup",
+             "replacement-failure", "replacement-wrong-cleanup",
+             "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
+             "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
+             "program-storage-failure",
+             "shared-polymorphic-owner-failure", "shared-polymorphic-owner-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

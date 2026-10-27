@@ -208,12 +208,14 @@ def main():
         linked_inputs = {value for command in native_commands[command_start:]
                          for value in command if value.endswith(".gti.o")}
         assert len(linked_inputs) == 2, ("expected native script and application links", linked_inputs)
-        # Keep a real backend boundary in the script path: replacing a live
-        # polymorphic object is not the supported fresh/scalar dispatch shape.
+        # Keep a real backend boundary in the script path: replacing a
+        # polymorphic base view inside a derived object stays unsupported.
         replacement = (
             "class Owner { public: virtual int read() { return 0; } };\n"
-            "unsafe int replace_owner() { mut Owner value{}; Owner other{}; "
-            "value = other; return 0; }\n")
+            "class Derived : public Owner {};\n"
+            "void assign_owner(mut Owner& value, Owner& other) { value = other; }\n"
+            "unsafe int replace_owner() { mut Derived value{}; Derived other{}; "
+            "assign_owner(value, other); return 0; }\n")
         script.write_text(replacement + hosted_script.replace(
             "  mut auto context", "  unsafe { [[discard]] replace_owner(); }\n  mut auto context"),
             encoding="utf-8")

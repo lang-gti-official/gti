@@ -258,8 +258,10 @@ def main() -> None:
                       "supported native import did not retain admission-only evidence")
         unsupported = member(
             "unsupported", "class Owner { public: virtual int read() { return 0; } };\n"
-            "unsafe int create() { mut Owner value{}; Owner other{}; value = other; return 0; }\n"
-            "int main() { unsafe { return create(); } }\n", [single])
+            "class Derived : public Owner {};\n"
+            "unsafe int create(mut Owner& value, Owner& other) { value = other; return 0; }\n"
+            "int main() { mut Derived first{}; Derived second{}; "
+            "unsafe { return create(first, second); } }\n", [single])
         failed = member("frontend-failure", "int main( { return 0; }\n", [single])
         rejection = member("rejection-control", failed["source"]["inline"], [single],
                            role="expected-rejection-control")

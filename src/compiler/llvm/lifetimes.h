@@ -36,6 +36,11 @@ public:
   void freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
                      llvm::Value *source, const MirBody &body,
                      const MirInstruction &instruction);
+  // The exact generated copy of a scalar/record hierarchy into fresh storage:
+  // logical fields only, then the destination's own dispatch state. Callers
+  // must already own MIR authority for the copy and its fresh destination.
+  void generatedCopy(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                     llvm::Value *source, const SemanticType &type);
   // Representation mechanism for an already-authorized generated relocation
   // into fresh storage. This is not source move/copy admission. Inert records
   // and arrays rebuild destination dispatch state without source callbacks;
@@ -69,6 +74,13 @@ public:
                       const MirConstructorInstance *constructor = nullptr);
   [[nodiscard]] llvm::Function *cleanup(const MirDropType &recipe,
                                         bool replacement = false);
+  // The complete-object cleanup a dynamically owned active class publishes
+  // in its dispatch descriptors. It never releases the allocation itself.
+  [[nodiscard]] llvm::Function *completeCleanup(HirClassInstanceId activeClass);
+  // The exact complete recipe of a concrete polymorphic active class, or none
+  // when its complete object has no observable cleanup.
+  [[nodiscard]] static std::optional<MirDropType>
+  completeCleanupRecipe(Session &session, HirClassInstanceId activeClass);
 
 private:
   Session &session;
@@ -76,6 +88,7 @@ private:
   Dispatch &dispatch;
   FindBody findBody;
   std::vector<std::pair<MirDropType, llvm::Function *>> cleanups;
+  llvm::Function *inertCleanup = nullptr;
   std::map<llvm::Type *, llvm::Function *> moves;
   std::map<llvm::Type *, llvm::Function *> mutexTransfers;
   struct ProgramStorage {

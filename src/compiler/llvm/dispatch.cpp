@@ -284,6 +284,38 @@ Dispatch::planAdjustment(HirClassInstanceId activeClass,
           .directResult = directResult};
 }
 
+bool Dispatch::pureState(HirClassInstanceId activeClass) {
+  for (const auto &view : views(activeClass))
+    for (const auto &slot : view.slots)
+      if (slot.pure)
+        return true;
+  return false;
+}
+
+bool Dispatch::abstractPhase(HirClassInstanceId activeClass) {
+  const auto *active = session.program().mir().findClassInstance(activeClass);
+  if (!active)
+    throw std::invalid_argument("LLVM dispatch phase has no sealed class");
+  if (!pureState(activeClass))
+    return false;
+  if (!active->abstract)
+    throw std::logic_error("LLVM dispatch phase selects a pure concrete state");
+  return true;
+}
+
+void Dispatch::preflightPhase(HirClassInstanceId activeClass) {
+  if (abstractPhase(activeClass))
+    preflightSourceBodies(activeClass);
+  else
+    preflightState(activeClass);
+}
+
+void Dispatch::installPhase(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
+                            HirClassInstanceId activeClass) {
+  if (!abstractPhase(activeClass))
+    install(ir, completeObject, activeClass);
+}
+
 void Dispatch::preflightState(HirClassInstanceId activeClass) {
   preflightSourceBodies(activeClass);
   const auto &active = *session.program().mir().findClassInstance(activeClass);
@@ -388,10 +420,80 @@ llvm::Function *Dispatch::adjustment(HirClassInstanceId activeClass,
 }
 
 llvm::StructType *Dispatch::tableType(std::size_t slots) const {
+  // Fixed header: the active-object displacement, then the complete-object
+  // cleanup selected at allocation (null unless dynamically owned). The slot
+  // array follows at a position independent of the active class.
   auto *offset = session.dataLayout().getIndexType(session.layouts().pointer());
   return llvm::StructType::get(
       session.context(),
-      {offset, llvm::ArrayType::get(session.layouts().pointer(), slots)});
+      {offset, session.layouts().pointer(),
+       llvm::ArrayType::get(session.layouts().pointer(), slots)});
+}
+
+bool Dispatch::dynamicallyOwned(HirClassInstanceId activeClass) {
+  if (!dynamicOwners_) {
+    std::set<HirClassInstanceId> owned;
+    const auto &program = session.program();
+    const auto visit = [&](MirBodyAddress address) {
+      const auto *body = findMirBody(program.mir(), address);
+      if (!body)
+        throw std::logic_error("LLVM dynamic owner demand lost its body");
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          if (const auto selected =
+                  dynamicOwnerAllocation(program.mir(), instruction))
+            owned.insert(*selected);
+    };
+    // Bound sessions consume exactly the admitted closure; an unbound
+    // structural probe conservatively inspects every sealed body.
+    if (admission)
+      for (const auto address : admission->requiredBodies())
+        visit(address);
+    else
+      for (const auto address : enumerateMirBodyAddresses(program.mir()))
+        visit(address);
+    for (const auto id : owned) {
+      const auto *object = program.mir().findClassInstance(id);
+      if (!object || !object->polymorphic || object->abstract ||
+          object->kind == ClassKind::Interface)
+        throw std::logic_error(
+            "LLVM dynamic owner allocation lost its concrete active class");
+    }
+    dynamicOwners_ = std::move(owned);
+  }
+  return dynamicOwners_->contains(activeClass);
+}
+
+void Dispatch::bindCompleteCleanup(CompleteCleanup provider) {
+  if (!provider || completeCleanup_)
+    throw std::logic_error(
+        "LLVM complete cleanup selection must be bound exactly once");
+  completeCleanup_ = std::move(provider);
+}
+
+LoadedCompleteCleanup
+Dispatch::loadCompleteCleanup(llvm::IRBuilder<> &ir, llvm::Value *view,
+                              const SemanticType &viewType) {
+  if (!view || view->getType() != session.layouts().pointer() ||
+      viewType.kind != SemanticType::Class)
+    throw std::invalid_argument(
+        "LLVM complete cleanup requires an exact class view address");
+  const auto &owner = session.layouts().instance(viewType);
+  const auto location = session.layouts().dispatchLocation(viewType);
+  if (!owner.polymorphic || !location)
+    throw BackendUnsupportedError(
+        "LLVM complete cleanup requires a dispatch-bearing class view");
+  auto *physical = projectBase(session, ir, view, viewType, location->owner);
+  auto *field =
+      ir.CreateStructGEP(session.layouts().get(location->owner.type).storage,
+                         physical, location->index);
+  auto *table = ir.CreateLoad(session.layouts().pointer(), field);
+  auto *header = tableType(0);
+  auto *offset = ir.CreateLoad(header->getElementType(0),
+                               ir.CreateStructGEP(header, table, 0));
+  auto *cleanup = ir.CreateLoad(session.layouts().pointer(),
+                                ir.CreateStructGEP(header, table, 1));
+  return {ir.CreateGEP(ir.getInt8Ty(), physical, offset), cleanup};
 }
 
 llvm::GlobalVariable *Dispatch::table(HirClassInstanceId activeClass,
@@ -408,21 +510,35 @@ llvm::GlobalVariable *Dispatch::table(HirClassInstanceId activeClass,
                      view->location.index};
   if (const auto found = tables_.find(key); found != tables_.end())
     return found->second;
-  std::vector<llvm::Constant *> slots;
-  for (const auto &slot : view->slots)
-    slots.push_back(adjustment(activeClass, view->profileOwner, slot.root));
-  auto *type = tableType(slots.size());
-  auto *offsetType = llvm::cast<llvm::IntegerType>(type->getElementType(0));
-  auto *offset = llvm::ConstantInt::getSigned(
-      offsetType, -static_cast<std::int64_t>(view->location.owner.offset));
-  auto *entries = llvm::ConstantArray::get(
-      llvm::cast<llvm::ArrayType>(type->getElementType(1)), slots);
+  // Publish the descriptor identity before selecting its contents: the
+  // complete cleanup may itself install this active state.
+  auto *type = tableType(view->slots.size());
   auto *table = new llvm::GlobalVariable(
-      session.module(), type, true, llvm::GlobalValue::InternalLinkage,
-      llvm::ConstantStruct::get(type, {offset, entries}),
+      session.module(), type, true, llvm::GlobalValue::InternalLinkage, nullptr,
       "__gti_dispatch_table_" + std::to_string(activeClass) + "_" +
           std::to_string(view->profileOwner));
   tables_.emplace(key, table);
+  std::vector<llvm::Constant *> slots;
+  for (const auto &slot : view->slots)
+    slots.push_back(adjustment(activeClass, view->profileOwner, slot.root));
+  auto *offsetType = llvm::cast<llvm::IntegerType>(type->getElementType(0));
+  auto *offset = llvm::ConstantInt::getSigned(
+      offsetType, -static_cast<std::int64_t>(view->location.owner.offset));
+  llvm::Constant *cleanup =
+      llvm::ConstantPointerNull::get(session.layouts().pointer());
+  if (dynamicallyOwned(activeClass)) {
+    if (!completeCleanup_)
+      throw std::logic_error(
+          "LLVM dynamically owned descriptor has no bound cleanup selection");
+    cleanup = completeCleanup_(activeClass);
+    if (!cleanup)
+      throw std::logic_error(
+          "LLVM dynamically owned descriptor lost its complete cleanup");
+  }
+  auto *entries = llvm::ConstantArray::get(
+      llvm::cast<llvm::ArrayType>(type->getElementType(2)), slots);
+  table->setInitializer(
+      llvm::ConstantStruct::get(type, {offset, cleanup, entries}));
   return table;
 }
 
@@ -487,6 +603,12 @@ VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
       instruction.functionTarget
           ? program.findFunctionInstance(*instruction.functionTarget)
           : nullptr;
+  // A reference result is presented as a place of its referent type.
+  const auto resultContract =
+      instruction.info.category == ValueCategory::Place
+          ? SemanticType::referenceTo(instruction.info.type,
+                                      instruction.info.access)
+          : instruction.info.type;
   if (instruction.kind != MirInstructionKind::Call ||
       instruction.dispatch != CallDispatch::Virtual || !selected ||
       !selected->virtualMethod || selected->staticMember || !selected->owner ||
@@ -494,7 +616,7 @@ VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
       selected->requiresUnsafe != (instruction.unsafeOperation ==
                                    UnsafeOperationKind::DeclaredUnsafeCall) ||
       instruction.parameterTypes != selected->parameterTypes ||
-      instruction.info.type != selected->returnType ||
+      resultContract != selected->returnType ||
       instruction.definedFailure.propagation !=
           FailurePropagationKind::VirtualCall)
     throw std::invalid_argument(
@@ -584,7 +706,7 @@ LoadedVirtualCall Dispatch::loadCall(llvm::IRBuilder<> &ir,
       session.layouts().get(plan.location.owner.type).storage, receiver,
       plan.location.index);
   auto *table = ir.CreateLoad(session.layouts().pointer(), field);
-  auto *entries = ir.CreateStructGEP(tableType(0), table, 1);
+  auto *entries = ir.CreateStructGEP(tableType(0), table, 2);
   auto *slot = ir.CreateGEP(session.layouts().pointer(), entries,
                             ir.getInt64(plan.slot));
   return {ir.CreateLoad(session.layouts().pointer(), slot), receiver};

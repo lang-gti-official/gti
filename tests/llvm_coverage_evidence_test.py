@@ -866,9 +866,11 @@ def focused_use_probes(evidence: Path, root: Path, report: dict) -> dict[str, di
         # control, not a native import that now has an implemented ABI witness.
         unsupported.write_text(
             "class Owner { public: virtual int read() { return 0; } };\n"
-            "unsafe int create() { mut Owner value{}; Owner other{}; "
+            "class Derived : public Owner {};\n"
+            "unsafe int create(mut Owner& value, Owner& other) { "
             "value = other; return 0; }\n"
-            "int main() { unsafe { return create(); } }\n", encoding="utf-8")
+            "int main() { mut Derived first{}; Derived second{}; "
+            "unsafe { return create(first, second); } }\n", encoding="utf-8")
         malformed = directory / "malformed.gti"
         malformed.write_text("int main( { return 0; }\n", encoding="utf-8")
         probes = {

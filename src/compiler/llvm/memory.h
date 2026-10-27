@@ -22,6 +22,8 @@ public:
     llvm::Value *last = nullptr;
     llvm::Value *allocation = nullptr;
     llvm::Value *block = nullptr;
+    // The released handle's own pointee view.
+    llvm::Value *view = nullptr;
   };
 
   Memory(Session &session, llvm::IRBuilder<> &ir, Cleanup cleanup,

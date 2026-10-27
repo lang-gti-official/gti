@@ -94,7 +94,11 @@ public:
         threads(
             session, failures, lifetimes,
             [&](MirBodyAddress address) { return function(address); },
-            [&](MirBodyAddress address) { return signature(address); }) {}
+            [&](MirBodyAddress address) { return signature(address); }) {
+    dispatch.bindCompleteCleanup([this](HirClassInstanceId activeClass) {
+      return lifetimes.completeCleanup(activeClass);
+    });
+  }
   void lower(const LlvmAdmissionPlan &admission);
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
   void lowerEvaluation(std::span<const MirBodyAddress> bodies, bool fixedCallBoundaries);
@@ -331,9 +335,14 @@ private:
       if (target->place) {
         if (hierarchy) {
           bool exactProducer =
-              stage && freshConstructionDestination(session.program().mir(),
-                                                    address, input, placement,
-                                                    *stage) == target->place;
+              stage &&
+              (freshConstructionDestination(session.program().mir(), address,
+                                            input, placement,
+                                            *stage) == target->place ||
+               (stage->result == value &&
+                freshObjectStorage(session.program().mir(), address, input,
+                                   placement, *stage) ==
+                    FreshObjectStorage::Argument));
           if (stage && isFreshHierarchyTransferProducer(*stage)) {
             const auto transfer = planFreshHierarchyTransfer(
                 session.program().mir(), input, *stage);
@@ -348,17 +357,41 @@ private:
         return memory.address(target->place);
       }
       if (target->returned) {
-        if (hierarchy)
+        if (hierarchy && (!stage || stage->result != value ||
+                          freshObjectStorage(session.program().mir(), address,
+                                             input, placement, *stage) !=
+                              FreshObjectStorage::Returned))
           throw BackendUnsupportedError(
-              "LLVM hierarchy return storage is not admitted");
+              "LLVM hierarchy return storage requires its exact fresh "
+              "producer");
         if (!returnDestination)
           throw std::logic_error("LLVM object return lost its ABI destination");
         return returnDestination;
       }
-      if (hierarchy)
-        throw BackendUnsupportedError(
-            "LLVM nested hierarchy destination is not admitted");
       const auto &type = input.findValue(target->aggregate)->info.type;
+      if (hierarchy) {
+        // A fresh element of a fresh hierarchy aggregate is constructed in
+        // its slot of the aggregate's own final storage.
+        if (!stage || stage->result != value || target->variant ||
+            freshObjectStorage(session.program().mir(), address, input,
+                               placement, *stage) !=
+                FreshObjectStorage::Element)
+          throw BackendUnsupportedError(
+              "LLVM nested hierarchy destination is not admitted");
+        const MirInstruction *outer = nullptr;
+        for (const auto &block : input.blocks)
+          for (const auto &candidate : block.instructions)
+            if (!candidate.tombstone && candidate.result == target->aggregate)
+              outer = &candidate;
+        if (!outer)
+          throw std::logic_error("LLVM hierarchy element lost its aggregate");
+        const auto *element = stage;
+        stage = outer;
+        auto *storage = destination(target->aggregate);
+        stage = element;
+        return ir.CreateGEP(session.layouts().get(type).storage, storage,
+                            {ir.getInt64(0), ir.getInt64(target->element)});
+      }
       if (target->variant)
         return payloadFieldAddress(ir, session.layouts().payload(type),
                                    destination(target->aggregate),
@@ -367,7 +400,12 @@ private:
                           destination(target->aggregate),
                           {ir.getInt64(0), ir.getInt64(target->element)});
     }
-    if (hierarchy)
+    if (const auto found = temporaries.find(value); found != temporaries.end())
+      return found->second;
+    if (hierarchy &&
+        (!stage || stage->result != value ||
+         freshObjectStorage(session.program().mir(), address, input, placement,
+                            *stage) != FreshObjectStorage::Temporary))
       throw BackendUnsupportedError(
           "LLVM hierarchy construction requires its final local destination");
     auto [entry, inserted] = temporaries.try_emplace(value, nullptr);
@@ -565,11 +603,38 @@ private:
     const auto transfer = Lifetimes::preflightFreshTransfer(session, dispatch,
                                                             input, instruction);
     const auto *target = placement.target(*instruction.result);
-    if (!target || target->place != transfer.destination || target->aggregate ||
-        target->returned || transfer.source != instruction.operands.front())
+    if (transfer.publishes == FreshHierarchyPublication::Slot) {
+      // The slot construction relocates the inert payload from the moved
+      // binding into its own storage; this value names that binding only.
+      if (target || transfer.source != instruction.operands.front())
+        throw BackendUnsupportedError("LLVM slot transfer lost its exact "
+                                      "source/publication placement");
+      return memory.selected(transfer.source);
+    }
+    if (transfer.publishes == FreshHierarchyPublication::Receiver ||
+        transfer.publishes == FreshHierarchyPublication::Replacement) {
+      // The moved object lives in this value's own storage, which the
+      // consuming call receives or the replacing assignment relocates, and
+      // the value obligation otherwise drops.
+      if (target || transfer.source != instruction.operands.front())
+        throw BackendUnsupportedError("LLVM consumed receiver lost its exact "
+                                      "source/publication placement");
+      auto *address = memory.temporary(instruction.info.type);
+      lifetimes.freshTransfer(ir, address, memory.selected(transfer.source),
+                              input, instruction);
+      return address;
+    }
+    const bool returned =
+        transfer.publishes == FreshHierarchyPublication::Returned;
+    if (!target || target->aggregate || target->returned != returned ||
+        (!returned && target->place != transfer.destination) ||
+        transfer.source != instruction.operands.front())
       throw BackendUnsupportedError("LLVM hierarchy transfer lost its exact "
                                     "source/publication placement");
-    auto *address = destination(*instruction.result);
+    auto *address = returned ? returnDestination
+                             : destination(*instruction.result);
+    if (!address)
+      throw std::logic_error("LLVM returned transfer lost its ABI destination");
     // Selecting the sealed source view does not materialize an object snapshot
     // or suppress its cleanup. The typed transfer commits source state last.
     auto *source = memory.selected(transfer.source);
@@ -913,6 +978,18 @@ private:
       argumentOffset = 1;
       if (!instruction.constructorTarget) {
         const auto &type = instruction.parameterTypes[0].arguments[0];
+        if (instruction.operands.size() == 2 &&
+            containsHierarchyStorage(session.program().mir(), type)) {
+          // A moved owned argument relocates with its exact cleanup state; a
+          // copy writes logical fields and installs its own dispatch state.
+          auto *value = operand(instruction.operands[1]);
+          if (instruction.constructorKind == ConstructorKind::Move)
+            ir.CreateCall(lifetimes.generatedRelocation(type),
+                          {constructed, value});
+          else
+            lifetimes.generatedCopy(ir, constructed, value, type);
+          return nullptr;
+        }
         if (instruction.operands.size() == 2) {
           auto *value = operand(instruction.operands[1]);
           store(value, constructed, type);
@@ -948,6 +1025,24 @@ private:
         constructed = objectMemory.allocateObject(instruction);
       }
       if (!instruction.constructorTarget) {
+        if (type.kind == SemanticType::Class &&
+            containsHierarchyStorage(session.program().mir(), type) &&
+            (session.layouts().instance(type).polymorphic ||
+             !instruction.operands.empty())) {
+          if (instruction.constructorKind == ConstructorKind::Copy)
+            // Copies logical fields from the checked source view, then
+            // installs the allocation's own dispatch state.
+            lifetimes.generatedCopy(ir, constructed,
+                                    operand(instruction.operands.at(0)), type);
+          else if (instruction.constructorKind == ConstructorKind::Move)
+            // Relocates the moved owned argument with its cleanup state.
+            ir.CreateCall(lifetimes.generatedRelocation(type),
+                          {constructed, operand(instruction.operands.at(0))});
+          else
+            // Installs the exact active dispatch state and arms cleanup.
+            lifetimes.generatedEmpty(ir, constructed, input, instruction);
+          return constructed;
+        }
         if (instruction.operands.empty()) {
           ir.CreateStore(
               llvm::Constant::getNullValue(session.layouts().get(type).storage),
@@ -1385,8 +1480,14 @@ private:
       ir.SetInsertPoint(done);
       return;
     }
+    // Replacing a complete object ends it like any other cleanup; only a
+    // possibly enclosed polymorphic view keeps the replacement restriction.
     auto *cleanup = lifetimes.cleanup(
-        *recipe, instruction.kind == MirInstructionKind::CleanupBeforeAssign);
+        *recipe,
+        instruction.kind == MirInstructionKind::CleanupBeforeAssign &&
+            !(instruction.destination &&
+              completeObjectPlace(session.program().mir(),
+                                  *input.findPlace(*instruction.destination))));
 #if defined(GTI_LLVM_C04_NATIVE_UNWIND)
     auto *status = evaluationCall(
         cleanup->getFunctionType(), cleanup,
@@ -1639,17 +1740,19 @@ private:
         result = memory.address(slot->id);
         break;
       }
+      // Only a planned producer transfers; another place-category Load of
+      // hierarchy storage observes its address for a reference consumer.
       if (isFreshHierarchyTransferProducer(instruction) &&
           containsHierarchyStorage(session.program().mir(),
-                                   instruction.info.type)) {
+                                   instruction.info.type) &&
+          (instruction.info.category != ValueCategory::Place ||
+           placement.fresh(*instruction.result))) {
         result = freshTransfer(instruction);
         break;
       }
       if (instruction.kind == MirInstructionKind::Load &&
           instruction.info.category == ValueCategory::Place &&
-          addressValue(session.program().mir(), instruction.info.type) &&
-          !containsHierarchyStorage(session.program().mir(),
-                                    instruction.info.type)) {
+          addressValue(session.program().mir(), instruction.info.type)) {
         // A place observation preserves identity; only value materialization
         // may copy/transfer its representation into another storage slot.
         result = memory.selected(instruction.operands.at(0));
@@ -1722,6 +1825,29 @@ private:
     case MirInstructionKind::Initialize:
     case MirInstructionKind::Assign: {
       const auto &place = *input.findPlace(*instruction.destination);
+      if (instruction.kind == MirInstructionKind::Assign &&
+          instruction.operation == MirOperation::Assign &&
+          instruction.operands.size() == 1 &&
+          addressValue(session.program().mir(), place.type) &&
+          containsHierarchyStorage(session.program().mir(), place.type)) {
+        // The paired cleanup, if any, ended the previous object. A replacing
+        // value relocates with its cleanup state; an observed checked view is
+        // copied by logical fields. Either installs the destination's state.
+        const auto &source = instruction.operands.front();
+        const auto *value = source.kind == MirOperandKind::Value
+                                ? input.findValue(source.value)
+                                : nullptr;
+        if (!value)
+          throw BackendUnsupportedError(
+              "LLVM hierarchy replacement requires a value or checked view");
+        auto *target = memory.address(place.id);
+        if (value->info.category == ValueCategory::Place)
+          lifetimes.generatedCopy(ir, target, operand(source), place.type);
+        else
+          ir.CreateCall(lifetimes.generatedRelocation(place.type),
+                        {target, operand(source)});
+        break;
+      }
       if (instruction.operands.empty()) {
         if (owner &&
             isMirDeclarationOnlyFieldInitialization(*owner, input, instruction))
@@ -1784,8 +1910,8 @@ private:
       // retains its own phase and cannot install any derived dispatch state.
       if (constructor->dispatchState &&
           constructor->dispatchState->afterBaseInitialization == instruction.id)
-        dispatch.install(ir, thisAddress,
-                         constructor->dispatchState->activeClass);
+        dispatch.installPhase(ir, thisAddress,
+                              constructor->dispatchState->activeClass);
       break;
     }
     case MirInstructionKind::Construct: {
@@ -2322,8 +2448,8 @@ private:
     }
     if (constructor && constructor->dispatchState &&
         constructor->dispatchState->afterBaseInitialization == 0)
-      dispatch.install(ir, thisAddress,
-                       constructor->dispatchState->activeClass);
+      dispatch.installPhase(ir, thisAddress,
+                            constructor->dispatchState->activeClass);
     // A constructor's entry Stored loans are the sealed field-publication
     // contract. Their referent address, not the Load of its scalar contents,
     // initializes the physical reference field.

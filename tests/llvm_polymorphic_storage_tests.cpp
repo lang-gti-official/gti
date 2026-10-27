@@ -117,8 +117,23 @@ int run(int mode) {
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
   if (!input)
     throw std::runtime_error("slot operation source failed MIR seal");
-  expect(!planLlvmAdmission(*input).admitted(),
-         "private mechanism alone does not grant public slot admission");
+  // Public slot operations now have their own exact admission shape; the
+  // component checks below still exercise the private mechanism directly.
+  const auto admission = planLlvmAdmission(*input);
+  if (!admission.admitted())
+    std::cerr << "slot admission limitation: " << admission.limitation()
+              << '\n';
+  expect(admission.admitted(),
+         "exact slot operations are admitted by NativeInlinePolymorphicSlot");
+  bool slotWitness = false;
+  for (const auto &use : admission.requirements())
+    slotWitness |= use.required &&
+                   use.entry->key() ==
+                       "IntrinsicKind.PolymorphicStorageConstruct" &&
+                   use.implementedShape &&
+                   use.implementedShape->name == "NativeInlinePolymorphicSlot";
+  expect(slotWitness,
+         "slot construction carries the exact inline-slot operation witness");
   const auto &program = input->program().mir();
   const auto namedClass =
       [&](std::string_view name) -> const MirClassInstance & {

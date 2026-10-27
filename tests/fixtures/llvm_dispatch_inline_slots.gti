@@ -1,0 +1,120 @@
+#include <std/polymorphic>
+#include <std/string>
+#include <std/vector>
+
+// std::inline_polymorphic owns one object through a user-defined interface.
+// A small cleanup-free model may live in the inline slot; a model with source
+// cleanup is always boxed and destroyed through its dispatch descriptor.
+// Inline placement of a cleanup-free model follows each backend's object
+// layout, so it is not observed here. Moving the owner relocates the model;
+// replacement and reset end the previous object exactly once. Destructors
+// record explicit IDs.
+mut int events = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Gauge {
+  int sample(int tick) mut;
+  int peek();
+};
+
+// Reader-like interface first, so Gauge sits at a nonzero offset.
+interface Tagged { int tag(); };
+
+class Counter : public Tagged, public Gauge {
+  mut int count = 0;
+  int step;
+public:
+  Counter(int step) : step(step) {}
+  int tag() override { return 1; }
+  int sample(int tick) mut override {
+    this.count += this.step;
+    return this.count;
+  }
+  int peek() override { return this.count; }
+};
+
+class Logged : public Gauge {
+  std::string label;
+  int id;
+public:
+  Logged(std::string label, int id) : label(std::move(label)), id(id) {}
+  ~Logged() { record(this.id); }
+  int sample(int tick) mut override { return tick * 10 + int(this.label.size()); }
+  int peek() override { return this.id; }
+};
+
+class Faulty : public Gauge {
+  int divisor;
+public:
+  Faulty(int divisor) : divisor(divisor) {}
+  int sample(int tick) mut override { return 120 / this.divisor; }
+  int peek() override { return this.divisor; }
+};
+
+mut int expected_cleanup = 0;
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+using GaugeSlot = std::inline_polymorphic<Gauge, 32, 8>;
+
+int drive(mut GaugeSlot& slot, int tick) { return slot.get().sample(tick); }
+
+// INLINE_SLOTS_MAIN
+int main() {
+  {
+    mut GaugeSlot empty{};
+    if (empty.has_value() || empty.is_inline()) { return 1; }
+    mut GaugeSlot counter{};
+    counter.replace(Counter(3));
+    if (!counter.has_value() || drive(counter, 1) != 3 || drive(counter, 2) != 6) {
+      return 2;
+    }
+    mut GaugeSlot logged{};
+    logged.replace(Logged(std::string("abc"), 7));
+    if (logged.is_inline() || drive(logged, 4) != 43 || logged.get().peek() != 7) {
+      return 3;
+    }
+    // A moved owner keeps its model state at the new address.
+    mut GaugeSlot moved = std::move(counter);
+    if (!moved.has_value() || drive(moved, 3) != 9) { return 4; }
+    // Replacing a boxed model frees the box once.
+    logged.replace(Counter(5));
+    if (events != 7 || !logged.has_value() || drive(logged, 1) != 5) { return 5; }
+    logged.replace(Logged(std::string("de"), 8));
+    logged.reset();
+    if (events != 78 || logged.has_value()) { return 6; }
+    logged.replace(Logged(std::string("f"), 9));
+  }
+  if (events != 789) { return 7; }
+  events = 0;
+  {
+    // Growth relocates inline models and boxed owners; nothing is copied.
+    mut std::vector<GaugeSlot> slots{};
+    for (mut int index = 0; index < 6; index++) {
+      mut GaugeSlot slot{};
+      if (index % 3 == 2) {
+        slot.replace(Logged(std::string("x"), index));
+      } else {
+        slot.replace(Counter(index + 1));
+      }
+      slots.push_back(std::move(slot));
+    }
+    mut int sum = 0;
+    for (mut std::size_t index = 0; index < slots.size(); index++) {
+      mut GaugeSlot& slot = slots[index];
+      sum += slot.get().sample(2);
+    }
+    if (sum != 1 + 2 + 21 + 4 + 5 + 21 || events != 0) { return 8; }
+  }
+  // The vector destroys its elements in reverse order.
+  return events == 52 ? 0 : 9;
+}

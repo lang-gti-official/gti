@@ -1,0 +1,78 @@
+#include <std/memory>
+
+// Shared owners of polymorphic objects. An upcast keeps the control block and
+// every alias while viewing the same allocation through a base; whichever
+// handle releases last, through whatever view, runs the complete object's
+// cleanup selected by its installed descriptor. Destructors record explicit
+// IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Named { int code(); };
+
+interface Shape { int area(int scale); };
+
+// Named precedes Shape, so the Shape view has a nonzero offset.
+class Square : public Named, public Shape {
+  int side;
+public:
+  Square(int side) : side(side) {}
+  ~Square() { record(this.side); }
+  int code() override { return this.side + 10; }
+  int area(int scale) override { return this.side * this.side / scale; }
+};
+
+// A record holding shared interface handles.
+class Gallery {
+  std::shared_ptr<Shape> first;
+  std::shared_ptr<Shape> second;
+public:
+  Gallery(std::shared_ptr<Shape> first, std::shared_ptr<Shape> second)
+      : first(std::move(first)), second(std::move(second)) {}
+  int total(int scale) {
+    return this.first->area(scale) + this.second->area(scale);
+  }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// SHARED_OWNERS_MAIN
+int main() {
+  {
+    // The concrete-typed alias becomes the last owner.
+    mut auto concrete = std::make_shared<Square>(2);
+    auto alias = concrete.clone();
+    std::shared_ptr<Shape> shape =
+        std::upcast_shared<Shape, Square>(std::move(concrete));
+    if (shape->area(1) != 4 || shape.use_count() != 2) { return 1; }
+  }
+  if (events != 2) { return 2; }
+  {
+    auto concrete = std::make_shared<Square>(3);
+    mut std::shared_ptr<Shape> shape =
+        std::upcast_shared<Shape, Square>(concrete.clone());
+    std::shared_ptr<Named> named =
+        std::upcast_shared<Named, Square>(concrete.clone());
+    if (named->code() != 13 || shape.use_count() != 3) { return 3; }
+    shape.reset();
+    if (concrete.use_count() != 2 || events != 2) { return 4; }
+  }
+  if (events != 23) { return 5; }
+  {
+    // Base-typed handles in a record are the last owners.
+    Gallery gallery{std::upcast_shared<Shape, Square>(std::make_shared<Square>(4)),
+                    std::upcast_shared<Shape, Square>(std::make_shared<Square>(5))};
+    if (gallery.total(1) != 41) { return 6; }
+  }
+  return events == 2354 ? 0 : 7;
+}

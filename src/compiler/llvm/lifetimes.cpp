@@ -20,6 +20,74 @@ Lifetimes::Lifetimes(Session &session, Failures &failures, Dispatch &dispatch,
     : session(session), failures(failures), dispatch(dispatch),
       findBody(std::move(findBody)) {}
 
+namespace {
+// The exact dynamically typed unique-owner recipe: the owner's static pointee
+// names only a view. Its complete object, cleanup and allocation identity all
+// come from the installed dispatch descriptor at drop time.
+const MirClassInstance &dynamicOwnerView(Session &session,
+                                         const MirDropType &recipe) {
+  if (!recipe.polymorphicCleanup ||
+      recipe.type.kind != SemanticType::UniqueOwner ||
+      recipe.type.arguments.size() != 1 ||
+      recipe.type.arguments.front().kind != SemanticType::Class ||
+      !recipe.requiresActiveCleanup || !recipe.uniquePointeeClass ||
+      recipe.classInstance || recipe.lambdaInstance || recipe.destructor ||
+      recipe.fixedArray || recipe.recursiveCleanup || !recipe.aggregate.empty())
+    throw std::logic_error(
+        "LLVM dynamic owner cleanup lost its exact descriptor recipe");
+  const auto &view = session.layouts().instance(recipe.type.arguments.front());
+  if (view.id != *recipe.uniquePointeeClass || !view.polymorphic)
+    throw std::logic_error(
+        "LLVM dynamic owner cleanup lost its polymorphic pointee view");
+  if (!session.layouts().dispatchLocation(view.type))
+    throw BackendUnsupportedError(
+        "LLVM dynamic owner cleanup requires a dispatch-bearing pointee view");
+  return view;
+}
+} // namespace
+
+std::optional<MirDropType>
+Lifetimes::completeCleanupRecipe(Session &session,
+                                 HirClassInstanceId activeClass) {
+  const auto &program = session.program().mir();
+  const auto *object = program.findClassInstance(activeClass);
+  if (!object || !object->polymorphic || object->abstract ||
+      object->kind == ClassKind::Interface)
+    throw std::logic_error(
+        "LLVM complete cleanup requires a concrete polymorphic class");
+  auto recipe = mirUniqueCleanupType(program, object->type);
+  if (!recipe) {
+    if (object->requiresActiveCleanup)
+      throw std::logic_error(
+          "LLVM dynamic owner lost its complete cleanup recipe");
+    return std::nullopt;
+  }
+  if (recipe->type != object->type || recipe->classInstance != object->id ||
+      recipe->polymorphicCleanup || recipe->recursiveCleanup)
+    throw std::logic_error(
+        "LLVM complete cleanup recipe lost its exact active class");
+  return recipe;
+}
+
+llvm::Function *Lifetimes::completeCleanup(HirClassInstanceId activeClass) {
+  if (const auto recipe = completeCleanupRecipe(session, activeClass))
+    return cleanup(*recipe);
+  if (!inertCleanup) {
+    auto *pointer = session.layouts().pointer();
+    inertCleanup = llvm::Function::Create(
+        llvm::FunctionType::get(
+            llvm::Type::getInt1Ty(session.context()),
+            {pointer, pointer, llvm::Type::getInt1Ty(session.context())},
+            false),
+        llvm::GlobalValue::InternalLinkage, "__gti_native_inert_cleanup",
+        session.module());
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", inertCleanup));
+    ir.CreateRet(ir.getTrue());
+  }
+  return inertCleanup;
+}
+
 void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
                                  const MirDropType &recipe, bool replacement) {
   if (!dispatch.boundTo(session))
@@ -28,10 +96,21 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
   std::vector<HirClassInstanceId> path;
   const auto visit = [&](const auto &self,
                          const MirDropType &selected) -> void {
-    if (selected.polymorphicCleanup || selected.recursiveCleanup ||
-        selected.uniquePointeeClass || selected.lambdaInstance ||
-        selected.payloadVariant || selected.captureIndex ||
-        selected.payloadField)
+    if (selected.polymorphicCleanup) {
+      // An owner handle holds no inline hierarchy storage. Its pointee's
+      // complete cleanup is proved where that object was allocated.
+      static_cast<void>(dynamicOwnerView(session, selected));
+      return;
+    }
+    // A subobject without inline hierarchy storage has an ordinary recipe:
+    // the shared cleanup planner proves and emits its owner, closure or
+    // payload schedule, and preflights hierarchy pointees at owned edges.
+    if (&selected != &recipe &&
+        !containsHierarchyStorage(session.program().mir(), selected.type))
+      return;
+    if (selected.recursiveCleanup || selected.uniquePointeeClass ||
+        selected.lambdaInstance || selected.payloadVariant ||
+        selected.captureIndex || selected.payloadField)
       throw BackendUnsupportedError(
           "LLVM cleanup requires its later ownership/dispatch milestone");
     if (selected.type.kind == SemanticType::Class) {
@@ -40,11 +119,13 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
           std::find(path.begin(), path.end(), owner.id) != path.end())
         throw std::logic_error(
             "LLVM static cleanup lost its finite class identity");
-      if (replacement && owner.polymorphic)
+      // Only the replaced object itself may be a view inside a larger
+      // object; its inline fields and bases are complete subobjects.
+      if (replacement && owner.polymorphic && &selected == &recipe)
         throw BackendUnsupportedError("LLVM polymorphic replacement requires a "
                                       "verified cleanup dispatch context");
       if (owner.polymorphic && selected.requiresActiveCleanup)
-        dispatch.preflightState(owner.id);
+        dispatch.preflightPhase(owner.id);
       path.push_back(owner.id);
     } else if (selected.requiresActiveCleanup &&
                selected.type.kind != SemanticType::Array) {
@@ -115,6 +196,28 @@ llvm::Function *Lifetimes::cleanupObservation(const MirDropType &recipe) {
   // the original guarded bodies and complete child cleanup still run.
   if (!recipe.requiresActiveCleanup) {
     ir.CreateRet(ir.getFalse());
+    return function;
+  }
+  // Only ordinary class and fixed-array storage expose exact per-subobject
+  // active states. A live owner handle has cleanup to run; any other owned
+  // representation (closure, payload or capability storage) conservatively
+  // counts as observed, which only permits the enclosing header store.
+  const auto ordinaryClass = [&](const MirDropType &selected) {
+    if (selected.type.kind != SemanticType::Class || !selected.classInstance ||
+        selected.lambdaInstance)
+      return false;
+    const auto &owner = session.layouts().instance(selected.type);
+    return owner.id == *selected.classInstance &&
+           owner.compilerCapability == CompilerCapabilityTypeKind::None &&
+           !sharedOwnerRepresentation(session.program().mir(), owner);
+  };
+  if (!recipe.fixedArray && !ordinaryClass(recipe)) {
+    if (recipe.type.kind == SemanticType::UniqueOwner) {
+      ir.CreateRet(ir.CreateIsNotNull(
+          ir.CreateLoad(session.layouts().pointer(), address)));
+      return function;
+    }
+    ir.CreateRet(ir.getTrue());
     return function;
   }
   auto *observed =
@@ -488,17 +591,39 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
         "LLVM generated-empty preflight uses a foreign sealed body");
   const bool construct = instruction.kind == MirInstructionKind::Construct;
   const bool base = instruction.kind == MirInstructionKind::InitializeBase;
-  if ((!construct && !base) || instruction.tombstone ||
+  // A unique-owner allocation constructs its pointee in the exact storage its
+  // ObjectAllocation obligation already holds.
+  const bool allocation =
+      instruction.kind == MirInstructionKind::Call &&
+      instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+      instruction.objectAllocation != 0 && instruction.result &&
+      !instruction.destination && instruction.constructorInitializer == 0 &&
+      !constructor && instruction.info.type.kind == SemanticType::UniqueOwner &&
+      instruction.info.type.arguments.size() == 1;
+  const auto &objectType = allocation ? instruction.info.type.arguments.front()
+                                      : instruction.info.type;
+  // A construction may name the hidden temporary MIR materializes for its
+  // result as its own destination; placement proves that exact publication.
+  const auto *materialized =
+      construct && instruction.destination
+          ? body.findPlace(*instruction.destination)
+          : nullptr;
+  const bool hidden = materialized &&
+                      materialized->root == MirPlaceRootKind::Temporary &&
+                      materialized->projections.empty() &&
+                      materialized->type == objectType;
+  if ((!construct && !base && !allocation) || instruction.tombstone ||
       instruction.constructorTarget ||
       instruction.constructorKind != ConstructorKind::Ordinary ||
       !instruction.operands.empty() || !instruction.parameterTypes.empty() ||
       !instruction.definedFailure.empty() || instruction.functionTarget ||
       instruction.bodyTarget || instruction.receiver ||
-      instruction.objectAllocation != 0 || instruction.rawMemoryAccess ||
-      instruction.objectLayoutType ||
-      instruction.intrinsic != IntrinsicKind::None ||
-      instruction.info.type.kind != SemanticType::Class ||
-      (construct && (!instruction.result || instruction.destination ||
+      (!allocation && instruction.objectAllocation != 0) ||
+      instruction.rawMemoryAccess || instruction.objectLayoutType ||
+      (!allocation && instruction.intrinsic != IntrinsicKind::None) ||
+      objectType.kind != SemanticType::Class ||
+      (construct && (!instruction.result ||
+                     (instruction.destination && !hidden) ||
                      instruction.constructorInitializer != 0 || constructor)) ||
       (base && instruction.result))
     throw std::invalid_argument("LLVM generated-empty initialization requires "
@@ -512,7 +637,7 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
   if (!present)
     throw std::invalid_argument(
         "LLVM generated-empty operation belongs to another body");
-  if (construct) {
+  if (construct || allocation) {
     const auto *result = body.findValue(*instruction.result);
     if (!result || result->id != *instruction.result ||
         result->definition != instruction.id ||
@@ -520,7 +645,16 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
       throw std::invalid_argument(
           "LLVM generated-empty construction lost its exact result type");
   }
-  const auto &object = session.layouts().instance(instruction.info.type);
+  if (allocation) {
+    const auto *obligation =
+        body.findDropObligation(instruction.objectAllocation);
+    if (!obligation ||
+        obligation->kind != MirDropObligationKind::ObjectAllocation ||
+        obligation->dropType.type != instruction.info.type)
+      throw std::invalid_argument(
+          "LLVM generated-empty allocation lost its exact storage obligation");
+  }
+  const auto &object = session.layouts().instance(objectType);
   if ((object.kind != ClassKind::Class && object.kind != ClassKind::Struct) ||
       object.defaultConstructor != SpecialMemberStatus::Generated ||
       object.generatedDefaultRequiresSchedule ||
@@ -607,7 +741,7 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
           "LLVM generated-empty base lost its selected type or destination");
   }
   if (object.polymorphic)
-    dispatch.preflightState(object.id);
+    dispatch.preflightPhase(object.id);
   return object;
 }
 
@@ -625,12 +759,12 @@ void Lifetimes::generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
   // interface subobjects and private metadata exist here, never language
   // fields or existing assignment storage. Preflight every table before any
   // store; observable pure phases retain their separate rejection.
-  if (object.polymorphic)
+  if (object.polymorphic && !dispatch.pureState(object.id))
     for (const auto &view : dispatch.views(object.id))
       static_cast<void>(dispatch.table(object.id, view.viewClass));
   ir.CreateStore(llvm::Constant::getNullValue(storage), address);
   if (object.polymorphic)
-    dispatch.install(ir, address, object.id);
+    dispatch.installPhase(ir, address, object.id);
   active(ir, address, object.type, true);
 }
 
@@ -709,6 +843,19 @@ void Lifetimes::freshTransfer(llvm::IRBuilder<> &ir, llvm::Value *destination,
     ir.CreateCall(generatedRelocation(owner.type), {destination, source});
     return;
   }
+  generatedCopy(ir, destination, source, owner.type);
+}
+
+void Lifetimes::generatedCopy(llvm::IRBuilder<> &ir, llvm::Value *destination,
+                              llvm::Value *source, const SemanticType &type) {
+  if (!destination || !source || !destination->getType()->isPointerTy() ||
+      !source->getType()->isPointerTy() || destination == source)
+    throw std::invalid_argument(
+        "LLVM generated copy requires distinct object addresses");
+  preflightGeneratedHierarchyCopy(session.program().mir(), type);
+  const auto &owner = session.layouts().instance(type);
+  if (owner.polymorphic)
+    dispatch.preflightState(owner.id);
   // Generated inert copy has no source callback or runtime failure point.
   // Copy logical fields only. Even a byte-identical static layout does not
   // authorize transporting source vptrs, padding, or active-state bytes.
@@ -1341,9 +1488,12 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     if (selectedHeader != expectedHeader ||
         selected.aggregate.size() != expected.aggregate.size())
       throw std::logic_error("LLVM cleanup lost its exact sealed recipe graph");
-    if (selected.polymorphicCleanup)
-      throw BackendUnsupportedError(
-          "LLVM cleanup requires its later ownership/dispatch milestone");
+    if (selected.polymorphicCleanup) {
+      // Dynamic selection happens through the descriptor at drop time; the
+      // static recipe has no pointee children to prove here.
+      static_cast<void>(dynamicOwnerView(session, selected));
+      return {.recipe = &selected};
+    }
     CleanupProof result{.recipe = &selected};
     if (selected.recursiveCleanup) {
       for (std::size_t index = ancestors.size(); index != 0; --index) {
@@ -1555,8 +1705,12 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       ir.SetInsertPoint(done);
       ir.CreateRet(ir.getTrue());
       ir.SetInsertPoint(last);
+      // A polymorphic pointee is released through this handle's own view,
+      // from which its descriptor selects the complete object and cleanup.
       sharedPointee = ir.CreateAlloca(pointer);
-      ir.CreateStore(released.allocation, sharedPointee);
+      ir.CreateStore(recipe.aggregate[0].polymorphicCleanup ? released.view
+                                                            : released.allocation,
+                     sharedPointee);
     }
     llvm::Value *allocation = nullptr;
     if (unique) {
@@ -1590,7 +1744,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       ir.CreateCondBr(ir.CreateCall(cleanupObservation(recipe), {address}),
                       install, ready);
       ir.SetInsertPoint(install);
-      dispatch.install(ir, address, *recipe.classInstance);
+      dispatch.installPhase(ir, address, *recipe.classInstance);
       ir.CreateBr(ready);
       ir.SetInsertPoint(ready);
     }
@@ -1660,7 +1814,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     // A native exception must not skip the remaining verified child recipes.
     // Convert only this helper's unwind edge into the existing cleanup state;
     // after the schedule drains, resume the original token, never swallow it.
-    const auto evaluationCall = [&](llvm::Function *callee,
+    const auto evaluationCall = [&](llvm::FunctionCallee callee,
                                     llvm::ArrayRef<llvm::Value *> arguments) {
       if (!unwindState) {
         auto personality = session.module().getOrInsertFunction(
@@ -1714,12 +1868,34 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       observe(ir.CreateCall(target, arguments));
 #endif
     };
+    llvm::Value *release = allocation;
     if (shared) {
       child(recipe.aggregate[0], sharedPointee);
       Memory memory(session, ir, {}, {}, {});
       memory.releaseBytes(sharedBlock);
+    } else if (recipe.polymorphicCleanup) {
+      // Capture the complete object and its selected cleanup from the live
+      // descriptor before any lifecycle transition; that cleanup reinstalls
+      // base states. The complete object's address is the allocation.
+      const auto &view = dynamicOwnerView(session, recipe);
+      if (!unique || objectType != view.type)
+        throw std::logic_error(
+            "LLVM dynamic owner cleanup lost its exact owner handle");
+      const auto selected =
+          dispatch.loadCompleteCleanup(ir, address, view.type);
+      auto *type = llvm::FunctionType::get(
+          ir.getInt1Ty(), {pointer, pointer, ir.getInt1Ty()}, false);
+      const std::vector<llvm::Value *> arguments{
+          selected.complete, scratch,
+          ir.CreateOr(duringFailure, ir.CreateLoad(ir.getInt1Ty(), failed))};
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+      evaluationCall(llvm::FunctionCallee(type, selected.cleanup), arguments);
+#else
+      observe(ir.CreateCall(type, selected.cleanup, arguments));
+#endif
+      release = selected.complete;
     } else if (nativeMutexElement(program, recipe.type,
-                                   CompilerCapabilityTypeKind::MutexStorage)) {
+                                  CompilerCapabilityTypeKind::MutexStorage)) {
       const auto expected = mirUniqueCleanupType(program, recipe.type);
       if (!expected || !recipe.requiresActiveCleanup ||
           recipe.classInstance != expected->classInstance ||
@@ -1907,7 +2083,7 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     }
     if (unique) {
       Memory memory(session, ir, {}, {}, {});
-      memory.releaseBytes(allocation);
+      memory.releaseBytes(release);
     }
     if (cleanupToken) {
       auto *failedResult = ir.CreateLoad(ir.getInt1Ty(), failed);

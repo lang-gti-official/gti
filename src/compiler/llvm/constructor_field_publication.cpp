@@ -1,4 +1,5 @@
 #include "constructor_field_publication.h"
+#include "placement.h"
 
 #include "../mir_verification_queries.h"
 
@@ -50,11 +51,12 @@ publicationTransport(const MirProgram &program,
   exactSourceNull.literal = instruction.literal;
   exactSourceNull.literalProvenance.kind = MirLiteralProvenanceKind::Source;
   exactSourceNull.info = instruction.info;
+  // A unique owner of a polymorphic view is one handle; its pointee need not
+  // be a complete object type.
   const auto pointerTarget =
       (targetType.kind == SemanticType::UniqueOwner &&
        targetType.arguments.size() == 1 &&
-       mir_detail::completeObjectType(program,
-                                      targetType.arguments.front())) ||
+       uniqueOwnerPointee(program, targetType.arguments.front())) ||
       targetType.kind == SemanticType::CString ||
       (targetType.kind == SemanticType::RawPointer &&
        targetType.arguments.size() == 1);

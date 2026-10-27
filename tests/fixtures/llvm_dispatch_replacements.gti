@@ -1,0 +1,99 @@
+#include <std/memory>
+
+// Assignments that replace a whole object containing hierarchy storage. The
+// previous object is destroyed exactly once, then a fresh or moved value is
+// relocated, or a checked view copied, into the destination with its own
+// dispatch state. Polymorphic destinations are complete objects: locals,
+// fields and objects whose class nothing derives from. Destructors record
+// explicit IDs.
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Shape { int area(); };
+
+interface Named { int code(); };
+
+// Named precedes Shape, so the Shape view has a nonzero offset.
+class Square : public Named, public Shape {
+  int side;
+  std::unique_ptr<int> label;
+public:
+  Square(int side) : side(side), label(std::make_unique<int>(side + 1)) {}
+  ~Square() { record(this.side); }
+  int code() override { return *this.label; }
+  int area() override { return this.side * this.side; }
+};
+
+// An inert polymorphic class: no cleanup, copied by logical fields.
+class Point : public Shape {
+  int x;
+public:
+  Point(int x) : x(x) {}
+  int area() override { return this.x; }
+};
+
+// A record without dispatch state that holds a polymorphic field.
+class Frame {
+public:
+  mut Square square;
+  int tag;
+  Frame() : square(Square(1)), tag(0) {}
+  Frame(int side) : square(Square(side)), tag(side) {}
+};
+
+Square make(int side) { return Square(12 / side); }
+
+// A user accessor naming a complete hierarchy object: assigning through it
+// is a reserved two-phase borrow store into that object.
+class Holder {
+  mut Square square;
+public:
+  Holder(int side) : square(Square(side)) {}
+  mut Square& operator*() mut { return this.square; }
+  int area() { return this.square.area(); }
+};
+
+void reframe(mut Frame& frame, int side) { frame = Frame(side); }
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// REPLACEMENTS_MAIN
+int main() {
+  {
+    mut Square square = Square(2);
+    square = make(4);
+    if (events != 2) { return 1; }
+    square = Square(5);
+    Shape& view = square;
+    if (events != 23 || view.area() != 25 || square.code() != 6) { return 2; }
+    mut Square other = Square(7);
+    square = std::move(other);
+    if (events != 235 || square.area() != 49) { return 3; }
+    mut Point point = Point(8);
+    Point copy = Point(9);
+    point = copy;
+    Shape& shape = point;
+    if (shape.area() != 9) { return 4; }
+    mut Frame frame{};
+    frame.square = Square(6);
+    if (events != 2351 || frame.square.area() != 36) { return 5; }
+    reframe(frame, 3);
+    if (events != 23516 || frame.square.area() != 9 || frame.tag != 3) {
+      return 6;
+    }
+    mut Holder holder = Holder(4);
+    *holder = Square(1);
+    if (events != 235164 || holder.area() != 1) { return 8; }
+  }
+  return events == 235164137 ? 0 : 7;
+}

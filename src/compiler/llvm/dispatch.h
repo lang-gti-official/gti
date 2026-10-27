@@ -4,6 +4,9 @@
 
 #include <llvm/IR/IRBuilder.h>
 
+#include <functional>
+#include <optional>
+#include <set>
 #include <tuple>
 
 namespace lang::native_llvm {
@@ -44,6 +47,14 @@ struct LoadedVirtualCall {
   llvm::Value *receiver = nullptr;
 };
 
+// The installed active class's complete-object address and the cleanup it
+// selected when it was allocated as a unique-owner pointee. Both come from one
+// descriptor load, before any lifecycle transition can replace that state.
+struct LoadedCompleteCleanup {
+  llvm::Value *complete = nullptr;
+  llvm::Value *cleanup = nullptr;
+};
+
 // Native representation of already-selected virtual targets. This planner
 // never resolves names, signatures or final overrides. All state is scoped
 // to the immutable input and LLVM context of one emission session.
@@ -62,6 +73,16 @@ public:
   // Validate the entire active state without declaring functions, demanding
   // source definitions, or publishing adapters/tables into the module.
   void preflightState(HirClassInstanceId activeClass);
+  // Whether an active state selects a pure member. Such a state has no
+  // executable table and is never installed.
+  [[nodiscard]] bool pureState(HirClassInstanceId activeClass);
+  // The state of a construction or cleanup phase. Only an abstract class's
+  // phase can select pure members, and admission proves that nothing running
+  // in such a phase observes it; that phase validates and installs nothing.
+  // Every other state is validated and installed exactly.
+  void preflightPhase(HirClassInstanceId activeClass);
+  void installPhase(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
+                    HirClassInstanceId activeClass);
   // Entry receivers are the physical dispatch-pointer owner, not the logical
   // source view. Public native polymorphism remains independently gated.
   [[nodiscard]] llvm::Function *adjustment(HirClassInstanceId activeClass,
@@ -84,6 +105,19 @@ public:
   [[nodiscard]] llvm::Value *directReceiver(llvm::IRBuilder<> &ir,
                                             const MirInstruction &instruction,
                                             llvm::Value *evaluatedReceiver);
+  // A concrete polymorphic class whose complete object a required body
+  // allocates as a unique-owner pointee. Its descriptors carry that complete
+  // cleanup; every other descriptor's cleanup entry is null.
+  [[nodiscard]] bool dynamicallyOwned(HirClassInstanceId activeClass);
+  // Supplies the exact complete-object cleanup published in a dynamically
+  // owned class's descriptors. The cleanup owner binds it once per session.
+  using CompleteCleanup = std::function<llvm::Function *(HirClassInstanceId)>;
+  void bindCompleteCleanup(CompleteCleanup provider);
+  // Recover the complete object and its selected cleanup through a live,
+  // fully constructed view. Callers own the allocation identity afterwards.
+  [[nodiscard]] LoadedCompleteCleanup
+  loadCompleteCleanup(llvm::IRBuilder<> &ir, llvm::Value *view,
+                      const SemanticType &viewType);
 
 private:
   // Only the owning structural test defines this access shim. Production
@@ -91,6 +125,7 @@ private:
   friend struct DispatchStructuralTestAccess;
   explicit Dispatch(Session &session);
   void preflightSourceBodies(HirClassInstanceId activeClass) const;
+  [[nodiscard]] bool abstractPhase(HirClassInstanceId activeClass);
   [[nodiscard]] llvm::StructType *tableType(std::size_t slots) const;
   struct AdjustmentPlan {
     DispatchSlotPlan selected;
@@ -115,6 +150,8 @@ private:
       std::tuple<HirClassInstanceId, std::vector<unsigned>, unsigned>;
   std::map<AdjustmentKey, llvm::Function *> adjustments_;
   std::map<TableKey, llvm::GlobalVariable *> tables_;
+  std::optional<std::set<HirClassInstanceId>> dynamicOwners_;
+  CompleteCleanup completeCleanup_;
 };
 
 } // namespace lang::native_llvm
