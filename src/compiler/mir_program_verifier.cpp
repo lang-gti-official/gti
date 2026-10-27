@@ -4292,21 +4292,6 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             "call-result loan producer does not match its call or construct",
             block.id, instruction.id);
       }
-      // Text a call returns by value under a loan holds the relayed owner's
-      // text, so the result carries borrowed state for as long as it is used;
-      // a value without it would end the loan while the text is still read. A
-      // reference result is a place that its own loan keeps.
-      if (instruction.kind == MirInstructionKind::Call &&
-          instruction.info.category == ValueCategory::Value &&
-          (instruction.info.type.kind == SemanticType::StringView ||
-           instruction.info.type.kind == SemanticType::CString) &&
-          (!instruction.info.traits.containsBorrowedState ||
-           (resultValue != nullptr &&
-            !resultValue->info.traits.containsBorrowedState))) {
-        return verificationFailure(
-            body, owner, "text call result keeps a loan without borrowed state",
-            block.id, instruction.id);
-      }
 
       std::vector<MirLoanDependency> mappedCallSources;
       for (const auto &mapping : instruction.borrowFields) {

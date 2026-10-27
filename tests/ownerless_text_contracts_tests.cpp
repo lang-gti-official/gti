@@ -2323,41 +2323,6 @@ int main() {
     printDiagnostics(valid);
   expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
          "operator text relays lower through MIR");
-  // MIR requires a text call result that keeps a loan to carry borrowed
-  // state: without it the loan would end while the text is still read, as it
-  // did before an operator's relayed text was owner dependent.
-  const auto *caller = namedFunction(valid, "main");
-  const auto *callee = namedFunction(valid, "Same::__gti_operator_call");
-  expect(caller != nullptr && callee != nullptr,
-         "the caller and the call operator exist");
-  if (caller != nullptr && callee != nullptr) {
-    auto changed = valid.mir;
-    auto *function = const_cast<lang::MirFunctionInstance *>(
-        changed.findFunctionInstance(caller->id));
-    bool cleared = false;
-    for (auto &block : function->body.blocks)
-      for (auto &instruction : block.instructions)
-        if (!cleared && instruction.kind == lang::MirInstructionKind::Call &&
-            instruction.functionTarget &&
-            *instruction.functionTarget == callee->id && instruction.loan &&
-            instruction.result) {
-          instruction.info.traits.containsBorrowedState = false;
-          for (auto &value : function->body.values)
-            if (value.id == *instruction.result)
-              value.info.traits.containsBorrowedState = false;
-          cleared = true;
-        }
-    expect(cleared, "the call operator's relayed result keeps a loan");
-    const auto verification = lang::verifyMirProgram(changed);
-    if (!functionError(verification, caller->id,
-                       "text call result keeps a loan without borrowed state"))
-      for (const auto &error : verification.errors)
-        std::cerr << error.message << '\n';
-    expect(functionError(verification, caller->id,
-                         "text call result keeps a loan without borrowed "
-                         "state"),
-           "a text call result that keeps a loan carries borrowed state");
-  }
   for (const auto &[use, mutation] :
        {std::pair<std::string_view, std::string_view>{
             "std::string_view kept = same(owner.view());",
@@ -2385,6 +2350,35 @@ int main() {
            "an operator's text result keeps its relayed owner borrowed: " +
                std::string(use));
   }
+}
+
+// A call relaying ownerless text may keep a loan on its argument while its
+// result carries no borrowed state, because the relayed text has no owner.
+// MIR accepts that shape whether the result is used within its full
+// expression or bound to a local, as llvm_place_execution's
+// nested-text-return case uses it.
+void testOwnerlessTextRelayLoans() {
+  const auto result = analyzeText(R"gti(
+#include <std/string_view>
+std::string_view relay(std::string_view value) { return value; }
+int inspect(std::string_view value) {
+  if (value.size() != uint64_t(4) || value[1] != '\0' || value[3] != 'c') { return 1; }
+  return 0;
+}
+int main() {
+  std::string_view text = "a\0bc";
+  std::string_view kept = relay(text);
+  return inspect(relay(text)) + inspect(kept);
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  const auto verification = lang::verifyMirProgram(result.mir);
+  if (result.canGenerateCode() && !verification.valid())
+    for (const auto &error : verification.errors)
+      std::cerr << error.message << '\n';
+  expect(result.canGenerateCode() && verification.valid(),
+         "a relay of ownerless text verifies without borrowed state");
 }
 
 // An invocation pointer's text result is ownerless (owner decision
@@ -2612,6 +2606,7 @@ constexpr NamedTest kTests[] = {
     {"testVirtualAndErasedTextResults", testVirtualAndErasedTextResults},
     {"testGenericVirtualRootInstances", testGenericVirtualRootInstances},
     {"testOperatorTextRelays", testOperatorTextRelays},
+    {"testOwnerlessTextRelayLoans", testOwnerlessTextRelayLoans},
     {"testInvocationPointerTextTargets", testInvocationPointerTextTargets},
     {"testInheritedTextFields", testInheritedTextFields},
     {"testOwnerlessForwarding", testOwnerlessForwarding},

@@ -1999,12 +1999,14 @@ upcast call argument borrows the carrier's place, a call relaying it borrows
 the carrier's shell, and an upcast reference return publishes the parameter's
 exact referent.
 
-A call that returns text by value under a loan, whatever it calls (a
-function, an overloaded operator, a lambda or an invocation pointer), carries
-borrowed state in its result. `verifyMirBorrowProducers` rejects such a result
-without it (`text call result keeps a loan without borrowed state`), because
-the loan would end with the full expression while a binding still read the
-text. A reference result is a place its own loan keeps, and is exempt.
+MIR does not yet check that a call returning text by value under a loan
+carries borrowed state in its result. Lowering keeps a conservative loan on
+the argument of a call that relays ownerless text, as `relay(text)` does over
+a literal-backed `text`, and semantics correctly gives that result no borrowed
+state, so requiring borrowed state of every such result rejects valid
+programs. The precise rule is open: it needs `TextContracts`' ownerless
+provenance, so that a text call result must carry borrowed state only when its
+loan's source holds owner-dependent text.
 
 A dynamic-text return summary is an upper bound on dependent alternatives,
 not a requirement to invent an owner for static storage. A read-only summarized
