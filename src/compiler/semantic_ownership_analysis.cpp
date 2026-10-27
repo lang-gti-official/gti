@@ -2226,6 +2226,27 @@ auto SemanticVisitor::Impl::fieldSourcedTextResult(
   return result;
 }
 
+auto SemanticVisitor::Impl::operatorFieldSourcedTextResult(
+    const Expr &expression, const ResolvedOperatorInfo &resolved) const
+    -> std::optional<FieldSourcedTextResult> {
+  if ((resolved.returnType.kind != SemanticType::StringView &&
+       resolved.returnType.kind != SemanticType::CString) ||
+      resolved.borrowFields.size() != 1)
+    return std::nullopt;
+  const BorrowedFieldOrigin &mapping = resolved.borrowFields.front();
+  if (mapping.sourceFields.size() != 1 || !mapping.resultFields.empty() ||
+      !mapping.resultConditions.empty() || !mapping.sourceConditions.empty())
+    return std::nullopt;
+  const ExprPtr *origin = operatorRelayOperand(
+      expression, resolved, mapping.origin, mapping.parameter);
+  if (origin == nullptr || !*origin)
+    return std::nullopt;
+  return FieldSourcedTextResult{.origin = origin,
+                                .receiver = mapping.origin ==
+                                            BorrowOriginKind::Receiver,
+                                .field = mapping.sourceFields.front()};
+}
+
 auto SemanticVisitor::Impl::textReferenceRelay(
     const Call &call, const ResolvedCallInfo &resolved) const
     -> std::optional<FieldSourcedTextResult> {
@@ -7575,47 +7596,53 @@ auto SemanticVisitor::Impl::movedVariable(const ExprPtr &expression)
 auto SemanticVisitor::Impl::operatorBorrowSource(
     const ExprPtr &expression, const ResolvedOperatorInfo &resolved) const
     -> const ExprPtr * {
+  return expression ? operatorRelayOperand(*expression, resolved,
+                                           resolved.borrowOrigin,
+                                           resolved.borrowArgument)
+                    : nullptr;
+}
+
+auto SemanticVisitor::Impl::operatorRelayOperand(
+    const Expr &expression, const ResolvedOperatorInfo &resolved,
+    BorrowOriginKind origin, std::size_t parameter) const -> const ExprPtr * {
   // A conversion's receiver is the converted value and it has no parameters.
   if (const ExprPtr *receiver =
-          expression ? explicitConversionReceiver(*expression, resolved)
-                     : nullptr) {
-    return resolved.borrowOrigin == BorrowOriginKind::Receiver ? receiver
-                                                               : nullptr;
+          explicitConversionReceiver(expression, resolved)) {
+    return origin == BorrowOriginKind::Receiver ? receiver : nullptr;
   }
-  if (resolved.borrowOrigin == BorrowOriginKind::Receiver) {
-    if (const auto *call = exprAs<Call>(expression.get())) {
+  if (origin == BorrowOriginKind::Receiver) {
+    if (const auto *call = exprAs<Call>(&expression)) {
       return &call->callee();
     }
-    if (const auto *binary = exprAs<Binary>(expression.get())) {
+    if (const auto *binary = exprAs<Binary>(&expression)) {
       return &binary->left();
     }
-    if (const auto *member = exprAs<Get>(expression.get())) {
+    if (const auto *member = exprAs<Get>(&expression)) {
       return &member->object();
     }
-    if (const auto *index = exprAs<Index>(expression.get())) {
+    if (const auto *index = exprAs<Index>(&expression)) {
       return &index->object();
     }
-    if (const auto *postfix = exprAs<Postfix>(expression.get())) {
+    if (const auto *postfix = exprAs<Postfix>(&expression)) {
       return &postfix->expression();
     }
-    if (const auto *unary = exprAs<Unary>(expression.get())) {
+    if (const auto *unary = exprAs<Unary>(&expression)) {
       return &unary->right();
     }
     return nullptr;
   }
-  if (resolved.borrowOrigin != BorrowOriginKind::Argument) {
+  if (origin != BorrowOriginKind::Argument) {
     return nullptr;
   }
-  if (const auto *call = exprAs<Call>(expression.get())) {
-    return resolved.borrowArgument < call->arguments().size()
-               ? &call->arguments()[resolved.borrowArgument]
-               : nullptr;
+  if (const auto *call = exprAs<Call>(&expression)) {
+    return parameter < call->arguments().size() ? &call->arguments()[parameter]
+                                                : nullptr;
   }
-  if (const auto *binary = exprAs<Binary>(expression.get())) {
-    return resolved.borrowArgument == 0 ? &binary->right() : nullptr;
+  if (const auto *binary = exprAs<Binary>(&expression)) {
+    return parameter == 0 ? &binary->right() : nullptr;
   }
-  if (const auto *index = exprAs<Index>(expression.get())) {
-    return resolved.borrowArgument == 0 ? &index->index() : nullptr;
+  if (const auto *index = exprAs<Index>(&expression)) {
+    return parameter == 0 ? &index->index() : nullptr;
   }
   return nullptr;
 }

@@ -2470,6 +2470,24 @@ std::string line{"count = 42"};
 std::string_view head = first(line.view(), 3);  // views line
 ```
 
+A virtual call relays what its root declaration relays in the receiver's
+instance of the root's class, whichever override dispatch selects, so an
+override's text result keeps its root's contract. An interface method or other
+root that relays nothing returns ownerless text in every override: a literal,
+a stored view, a lambda's or another call's ownerless result. Returning a view
+of an owned string there reports `GTI-S2045`. A root whose body relays its
+receiver or a parameter lets each override relay the same or return ownerless
+text, and the call keeps that owner borrowed even when the selected override
+returns a literal. A call through a root that relays nothing relays nothing,
+so an erased callable whose call operator returns it, a user-defined one or
+`std::function`, returns ownerless text too.
+
+An overloaded operator's text result relays as a method's does. A call
+operator or `operator[]` whose returns relay its receiver or a parameter keeps
+that owner borrowed while the result is used, so `holder(line.view())`
+prevents mutating `line` until its last use, and a literal-backed argument
+relays nothing.
+
 A recursion that permutes its parameters, returning `s` beside
 `pick(t, s, n - 1)`, may return either one and relays neither: `return s`
 reports `GTI-S2045`. A dynamic view cannot escape a
