@@ -9834,6 +9834,14 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   std::vector<LambdaCaptureInfo> captures;
   std::vector<SemanticLoanDependency> captureDependencies;
   Scope captureScope;
+  // Capture initializers run in the enclosing scope, where an enclosing
+  // closure's captures are no places; this body's own captures are.
+  struct CaptureListScope {
+    bool &flag;
+    bool enclosing;
+    ~CaptureListScope() { flag = enclosing; }
+  } captureListScope{analyzingCaptureList, analyzingCaptureList};
+  analyzingCaptureList = true;
   for (const LambdaCapture &capture : expr.captures()) {
     if (!capturedNames.insert(capture.name.lexeme).second) {
       report(capture.name,
@@ -10045,6 +10053,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                .bindingKind = SemanticBindingKind::LambdaCapture,
                .toolingSymbol = bindingSymbol});
   }
+  analyzingCaptureList = false;
 
   // Lambda body analysis is isolated, so transfer the enclosing stack
   // after capture initializers have executed left-to-right in that stack.
@@ -10131,9 +10140,20 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     if (carrier == nullptr)
       continue;
     if (!isBorrowingCapture(capture.mode)) {
-      if (isDirectStoredReferenceType(capture.type))
-        recordStoredEntryDependency(*carrier, capture.bindingSymbol,
-                                    capture.type, false);
+      if (!isDirectStoredReferenceType(capture.type))
+        continue;
+      const auto id = recordStoredEntryDependency(
+          *carrier, capture.bindingSymbol, capture.type, false);
+      // The closure environment owns a by-value capture and any release
+      // obligation it contains, as a caller owns a method's receiver; the
+      // body never destroys it. Its entry describes the declared reference
+      // fields only, so a cleanup-bound capture does not bind the body.
+      if (id != 0) {
+        auto loan = *semanticModel.findLoan(id);
+        loan.lifecycleBound = false;
+        semanticModel.recordLoan(std::move(loan));
+        loanFlow.records.at(id).lifecycleBound = false;
+      }
       continue;
     }
     const auto dependency =

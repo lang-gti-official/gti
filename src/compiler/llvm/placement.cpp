@@ -995,6 +995,17 @@ public:
             // its value obligation through the full expression.
             result.publication = &stage;
             result.publishes = FreshHierarchyPublication::Receiver;
+          } else if (result.kind == ConstructorKind::Move &&
+                     stage.kind == MirInstructionKind::Call &&
+                     stage.intrinsic == IntrinsicKind::ThreadSpawn &&
+                     stage.threadTaskAdapter && index == 1 &&
+                     stage.operands.size() == 2 && !stage.destination &&
+                     !stage.receiver && stage.scopedThreadTasks.empty()) {
+            // The moved object waits in its own value storage until the
+            // spawn relocates it into the runtime task box with this type's
+            // generated relocation; the spawn takes over its obligation.
+            result.publication = &stage;
+            result.publishes = FreshHierarchyPublication::Task;
           } else if (result.kind == ConstructorKind::Move && index == 0 &&
                      stage.kind == MirInstructionKind::Assign &&
                      stage.destination &&
@@ -1160,6 +1171,11 @@ public:
                          }))
           unsupported("LLVM element transfer must hand its value obligation "
                       "to its aggregate");
+      } else if (result.publishes == FreshHierarchyPublication::Task) {
+        if (result.valueDrop &&
+            !spawnedObligation(result.valueDrop, result.publication))
+          unsupported("LLVM thread task transfer must hand its value "
+                      "obligation to the spawn");
       } else if (!local && !argument &&
                  (owner.requiresActiveCleanup || result.valueDrop ||
                   (result.publishes == FreshHierarchyPublication::Slot &&
@@ -1386,6 +1402,34 @@ private:
         }
       }
     return true;
+  }
+  // The moved value's obligation ends only through one unconditional
+  // TransferOut at the spawn that relocates it into its task box, or through
+  // a failure-path drop before that spawn.
+  bool spawnedObligation(MirDropObligationId obligation,
+                         const MirInstruction *spawn) const {
+    bool released = false;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone)
+          continue;
+        for (const auto &event : stage.lifecycle) {
+          if (event.target == obligation &&
+              event.kind != MirLifecycleEventKind::Move)
+            return false;
+          if (event.source != obligation)
+            continue;
+          if (event.kind == MirLifecycleEventKind::Drop &&
+              stage.kind == MirInstructionKind::Drop)
+            continue;
+          if (released || &stage != spawn ||
+              event.kind != MirLifecycleEventKind::TransferOut ||
+              event.target || event.conditional || event.failureCleanup)
+            return false;
+          released = true;
+        }
+      }
+    return released;
   }
   // A receiver input used exactly once, as the receiver of a direct or
   // virtual call to a consuming member of a class.
@@ -1635,9 +1679,9 @@ Placement::Placement(const MirProgram &program, const MirBody &body) {
       hierarchyTransfers.insert(*stage.result);
       // Bind only the exact proven publication. Do not replay the generic
       // CallInput/aggregate/return scan after enabling hierarchy freshness.
-      // A slot construction relocates from the moved binding itself.
-      // A slot construction relocates from the moved binding itself, and a
-      // consumed receiver or replacing value lives in its own value storage.
+      // A slot construction relocates from the moved binding itself, a
+      // consumed receiver, replacing value or spawned task lives in its own
+      // value storage, and an element lives in its aggregate's slot.
       if (transfer->publishes == FreshHierarchyPublication::Returned)
         bind(*stage.result, {.returned = true});
       else if (transfer->publishes == FreshHierarchyPublication::Element)
@@ -1650,7 +1694,8 @@ Placement::Placement(const MirProgram &program, const MirBody &body) {
                              : std::nullopt});
       else if (transfer->publishes != FreshHierarchyPublication::Slot &&
                transfer->publishes != FreshHierarchyPublication::Receiver &&
-               transfer->publishes != FreshHierarchyPublication::Replacement)
+               transfer->publishes != FreshHierarchyPublication::Replacement &&
+               transfer->publishes != FreshHierarchyPublication::Task)
         bind(*stage.result, {.place = transfer->destination});
     }
 }

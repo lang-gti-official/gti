@@ -86,6 +86,20 @@ int main() {
   };
   std::println("sum {}", sum());
 
+  // A mutable alias of one field leaves the sibling field reachable through
+  // the capture, as for a reference parameter.
+  mut Pair swapped = Pair();
+  {
+    mut auto swap = [mut &swapped]() -> void {
+      mut int32_t& left = swapped.left;
+      int32_t saved = left;
+      left = swapped.right;
+      swapped.right = saved;
+    };
+    swap();
+  }
+  std::println("swapped {}", swapped.left * 10 + swapped.right);
+
   // A closure nested in a capturing closure aliases its own capture.
   auto outer = [&box]() -> int32_t {
     int32_t local = 10;

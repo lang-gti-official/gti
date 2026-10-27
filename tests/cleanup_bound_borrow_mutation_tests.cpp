@@ -210,6 +210,72 @@ lang::MirInstructionId freshInstructionId(const lang::MirBody &body) {
   return result + 1;
 }
 
+// A closure that moves in a cleanup-bound carrier is itself one: the lambda
+// instance records semantics' decision, which MIR re-derives from its
+// captures, and the closure formation's loan lives until the closure drops.
+void checkClosureCarrier() {
+  const auto control = analyze("closure-carrier", R"gti(
+int main() {
+  mut Resource first{};
+  {
+    Guard guard = Guard(first);
+    auto held = [kept = std::move(guard)]() -> int { return 1; };
+    observed = held();
+  }
+  first.reset(); return 0;
+}
+)gti");
+  if (!control)
+    return;
+  bool flagged = false;
+  for (const auto &lambda : control->lambdaInstances())
+    flagged = flagged || lambda.lifecycleBoundBorrowCarrier;
+  expect(flagged, "closure holding a cleanup-bound carrier is itself one");
+  {
+    auto cleared = *control;
+    for (const auto &lambda : cleared.lambdaInstances())
+      const_cast<lang::MirLambdaInstance &>(lambda)
+          .lifecycleBoundBorrowCarrier = false;
+    rejected(std::move(cleared), "closure carrier decision cannot be cleared",
+             "closure cleanup-bound dependency retention");
+  }
+  bool checkedEnd = false;
+  for (const auto &function : control->functionInstances()) {
+    const BodyKey key{lang::MirBodyKind::Function, function.id};
+    for (const auto &loan : function.body.loans) {
+      if (!loan.lifecycleBound || loan.entry || loan.escapes)
+        continue;
+      const lang::MirInstruction *formation = nullptr;
+      for (const auto &block : function.body.blocks)
+        for (const auto &candidate : block.instructions)
+          if (candidate.loan == loan.id &&
+              candidate.kind == lang::MirInstructionKind::Compute &&
+              candidate.operation == lang::MirOperation::Closure)
+            formation = &candidate;
+      const auto end = loanEnd(function.body, loan.id);
+      if (formation == nullptr || !end)
+        continue;
+      std::optional<lang::MirInstructionId> drop;
+      for (const auto &block : function.body.blocks)
+        if (block.activeFailure == 0)
+          for (const auto &candidate : block.instructions)
+            if (candidate.kind == lang::MirInstructionKind::Drop &&
+                candidate.info.type == formation->info.type)
+              drop = candidate.id;
+      if (!drop)
+        continue;
+      auto early = *control;
+      expect(moveBefore(body(early, key), *end, *drop),
+             "closure carrier loan end moves before the closure drop");
+      rejected(std::move(early),
+               "closure carrier loan cannot end before the closure drops",
+               "ends before carrier drop");
+      checkedEnd = true;
+    }
+  }
+  expect(checkedEnd, "closure carrier fixture exercises its formation loan");
+}
+
 void checkOwnedCall() {
   const auto control = analyze("owned-call", R"gti(
 void consume(Guard first, Guard second, int divisor) {
@@ -1852,6 +1918,7 @@ int main() {
   expect(checkedMoves,
          "entry movement mutations exercise independent parameters");
   checkOwnedCall();
+  checkClosureCarrier();
   checkNestedPublication();
   checkReturnedAndNestedLifetime();
   checkCompleteDependencySet();

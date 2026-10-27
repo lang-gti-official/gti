@@ -43,12 +43,18 @@ for what minor and patch releases mean.
   another such variable now compiles on both backends; it previously failed
   with an internal compiler error. The lambda can still use the capture after
   the alias's last use.
+- Inside a lambda, a by-reference capture now follows the borrow rules of a
+  reference parameter: using it while an overlapping reference taken from it
+  is still live reports GTI-S2017, and references to different fields of a
+  captured object stay independent. Both cases previously failed with an
+  internal compiler error.
 - A lambda that moves in a value with a destructor and also captures a
   variable by reference now borrows that variable only until the lambda's last
   use, as an equivalent class does, rather than until the lambda is destroyed.
   Such lambdas previously failed with an internal compiler error. A lambda
   that moves in a value whose own destructor uses a borrow still keeps that
-  borrow until it is destroyed.
+  borrow until it is destroyed, and now compiles on both backends instead of
+  failing with an internal compiler error.
 - Fix internal compiler errors on both backends when a value that borrows
   and has a destructor is returned by a method called through a by-reference
   lambda capture (for example locking a captured `std::mutex`), when a mutex
@@ -83,7 +89,10 @@ for what minor and patch releases mean.
   `std::parallel_invoke`, manual C-thread create/join, once, mutex and
   condition services, mutexes held by value in lambda captures, and mutexes
   protecting class values that need no cleanup. Worker failures re-raise at
-  join and cleanup failures report exactly as on the C++ backend.
+  join and cleanup failures report exactly as on the C++ backend. Thread
+  tasks may also hold polymorphic objects, `std::inline_polymorphic` slots or
+  a `std::transfer_function`, and a mutex may protect a polymorphic value, so
+  the managed-threads example now builds with LLVM.
 - Debug builds (`-g`) of a class whose default constructor is generated and
   whose base is polymorphic no longer fail with an internal error on either
   backend.
@@ -108,9 +117,9 @@ for what minor and patch releases mean.
   A destructor that calls a virtual method on its own object now runs the
   destructor's own class's override; it never reaches a derived part that is
   already destroyed. The C++ backend still calls the most-derived override
-  there, which is a known C++ backend defect. Erased callables moved into
-  threads remain rejected on the native backend. C++ remains the production
-  default.
+  there, which is a known C++ backend defect. A polymorphic thread result
+  returned through `std::expected` remains rejected on the native backend.
+  C++ remains the production default.
 
 ## 0.480.1 — Lambda argument formatting
 

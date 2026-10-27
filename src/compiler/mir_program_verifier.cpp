@@ -16209,14 +16209,39 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
                ? instance
                : nullptr;
   };
-  // The Call, Construct or Borrow that produces each loan, absent when none
-  // or several do.
+  // A closure environment semantics marked as a cleanup-bound carrier: one
+  // of its captures keeps a borrow until it is destroyed.
+  const auto carrierLambda =
+      [&](const SemanticType &type) -> const MirLambdaInstance * {
+    if (type.kind != SemanticType::Lambda)
+      return nullptr;
+    const MirLambdaInstance *selected = nullptr;
+    for (const MirLambdaInstance &candidate : program.lambdaInstances())
+      if (candidate.type == type) {
+        if (selected != nullptr)
+          return nullptr;
+        selected = &candidate;
+      }
+    return selected != nullptr && selected->lifecycleBoundBorrowCarrier
+               ? selected
+               : nullptr;
+  };
+  const auto boundCarrier = [&](const SemanticType &type) {
+    return carrierClass(type) != nullptr || carrierLambda(type) != nullptr;
+  };
+  const auto closureFormation = [](const MirInstruction &instruction) {
+    return instruction.kind == MirInstructionKind::Compute &&
+           instruction.operation == MirOperation::Closure;
+  };
+  // The Call, Construct, Borrow or closure formation that produces each
+  // loan, absent when none or several do.
   std::unordered_map<MirLoanId, std::optional<InstructionLocation>> producers;
   for (const auto &[_, location] : locations) {
     if (!location.instruction->loan ||
         (location.instruction->kind != MirInstructionKind::Call &&
          location.instruction->kind != MirInstructionKind::Construct &&
-         location.instruction->kind != MirInstructionKind::Borrow)) {
+         location.instruction->kind != MirInstructionKind::Borrow &&
+         !closureFormation(*location.instruction))) {
       continue;
     }
     const auto [entry, first] =
@@ -16341,7 +16366,8 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
     if (loan.entry && !loan.escapes && loan.kind == MirLoanKind::Stored &&
         !producer && loan.producedBy == 0 && loan.parent == 0 && source &&
         source->root == MirPlaceRootKind::Binding &&
-        source->type.kind == SemanticType::Class &&
+        (source->type.kind == SemanticType::Class ||
+         carrierLambda(source->type) != nullptr) &&
         std::find(loan.carriers.begin(), loan.carriers.end(),
                   source->binding) != loan.carriers.end() &&
         parameters && parameterTypes) {
@@ -16388,7 +16414,8 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
         ((loan.kind == MirLoanKind::Stored && !loan.escapes &&
           producingInstruction->result &&
           (producingInstruction->kind == MirInstructionKind::Call ||
-           producingInstruction->kind == MirInstructionKind::Construct)) ||
+           producingInstruction->kind == MirInstructionKind::Construct ||
+           closureFormation(*producingInstruction))) ||
          (((loan.kind == MirLoanKind::Return &&
             body.returnType == carrierType) ||
            (loan.kind == MirLoanKind::Stored && loan.storedField != 0 &&
@@ -16402,7 +16429,7 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
       // by-value entries and owning result/publication records inherit its
       // mandatory destructor-bound retention; clearing the marker cannot
       // downgrade them to an ordinary last-use loan.
-      if ((ownedEntry || owningPublication) && carrierClass(carrierType))
+      if ((ownedEntry || owningPublication) && boundCarrier(carrierType))
         return verificationFailure(
             body, owner,
             "owned cleanup-bound carrier dependency lost lifecycle retention",
@@ -16413,7 +16440,9 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
     if (source == nullptr || loan.twoPhase ||
         (!ownedEntry && (!producer || loan.producedBy == 0 ||
                          producer->instruction->hirValue != loan.producedBy)) ||
-        carrierClass(carrierType) == nullptr) {
+        !boundCarrier(carrierType) ||
+        (producer && closureFormation(*producer->instruction) &&
+         loan.kind != MirLoanKind::Stored)) {
       return verificationFailure(
           body, owner,
           "lifecycle-bound loan is not produced by one exact cleanup-bound "
@@ -16577,7 +16606,10 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
         (loan.kind == MirLoanKind::Stored && !loan.entry && !loan.escapes &&
          loan.storedField == 0 &&
          (producer->instruction->kind == MirInstructionKind::Call ||
-          producer->instruction->kind == MirInstructionKind::Construct) &&
+          producer->instruction->kind == MirInstructionKind::Construct ||
+          // A closure formation retains a moved-in capture's dependency.
+          (closureFormation(*producer->instruction) &&
+           carrierLambda(carrierType) != nullptr)) &&
          producer->instruction->result &&
          producer->instruction->borrowAccess == loan.access &&
          (producer->instruction->borrowOrigin == BorrowOriginKind::Receiver ||
@@ -18507,12 +18539,39 @@ verifyMirProgramContracts(const MirProgram &program) {
       const auto *owner = uniqueMirClassInstanceForType(program, current);
       if (current.kind == SemanticType::Class && owner == nullptr)
         return true;
+      // A closure's traits are its captures'; the semantic type alone does
+      // not record them.
       const auto traits =
-          owner != nullptr ? owner->traits : semanticTraits(current);
+          owner != nullptr ? owner->traits
+          : current.kind == SemanticType::Lambda
+              ? concreteMirTypeTraits(program, current, 0)
+                    .value_or(semanticTraits(current))
+              : semanticTraits(current);
       const auto active =
           typeRequiresActiveCleanup(current, typeRequiresActiveCleanup);
       if (!traits.containsBorrowedState || (active && !*active))
         return false;
+      // A closure environment is an aggregate of its captures with no source
+      // destructor: it is bound exactly when a capture is.
+      if (current.kind == SemanticType::Lambda) {
+        const MirLambdaInstance *lambda = nullptr;
+        for (const MirLambdaInstance &candidate : program.lambdaInstances())
+          if (candidate.type == current) {
+            if (lambda != nullptr)
+              return true;
+            lambda = &candidate;
+          }
+        if (lambda == nullptr || !active ||
+            std::find(visiting.begin(), visiting.end(), current) !=
+                visiting.end())
+          return true;
+        visiting.push_back(current);
+        bool bound = false;
+        for (const auto &capture : lambda->captureTypes)
+          bound = bound || self(self, capture);
+        visiting.pop_back();
+        return bound;
+      }
       if (owner == nullptr || !active ||
           std::find(visiting.begin(), visiting.end(), current) !=
               visiting.end() ||
@@ -18548,6 +18607,14 @@ verifyMirProgramContracts(const MirProgram &program) {
       }
     }
   }
+  for (const MirLambdaInstance &lambda : program.lambdaInstances())
+    if (lambda.lifecycleBoundBorrowCarrier !=
+        lifecycleBoundDependency(lambda.type))
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Lambda,
+           .owner = lambda.id,
+           .message = "closure cleanup-bound dependency retention does not "
+                      "match its captures' dependency release"});
   std::vector<SemanticType> integralEnumIds;
   for (const MirIntegralEnum &enumeration : program.integralEnums()) {
     if (enumeration.declaration == 0 || enumeration.sourceUnit == 0 ||

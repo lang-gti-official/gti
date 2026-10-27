@@ -677,6 +677,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .parameterTypes = instance.parameterTypes,
         .parameterBindings = instance.parameterBindings,
         .capability = instance.capability,
+        .lifecycleBoundBorrowCarrier = instance.lifecycleBoundBorrowCarrier,
         .returnBorrowOrigin = instance.returnBorrowOrigin,
         .returnBorrowParameter = instance.returnBorrowParameter,
         .returnBorrowAccess = instance.returnBorrowAccess};

@@ -9070,10 +9070,16 @@ auto SemanticVisitor::Impl::receiverStateSymbol() -> Symbol * {
 }
 
 auto SemanticVisitor::Impl::placeForSymbol(Symbol &symbol) -> SemanticPlace {
+  // A by-reference capture is a checked reference held by the closure
+  // environment. Inside the body its referent places follow the same overlap
+  // rules as a reference parameter's.
   if (symbol.bindingKind == SemanticBindingKind::LocalVariable ||
       symbol.bindingKind == SemanticBindingKind::Parameter ||
       symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
-      symbol.bindingKind == SemanticBindingKind::StaticField) {
+      symbol.bindingKind == SemanticBindingKind::StaticField ||
+      (symbol.bindingKind == SemanticBindingKind::LambdaCapture &&
+       symbol.type.kind == SemanticType::Reference &&
+       !analyzingCaptureList)) {
     return {.root = &symbol, .rootIdentity = toolingSymbolFor(symbol)};
   }
   if (symbol.bindingKind == SemanticBindingKind::Field &&

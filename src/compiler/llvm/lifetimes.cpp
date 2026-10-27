@@ -186,6 +186,13 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
       throw BackendUnsupportedError(
           "LLVM static cleanup requires its exact aggregate representation");
     }
+    // Exact mutex storage keeps its payload inline behind the native shell:
+    // its single child is that complete payload object.
+    const auto mutexPayload =
+        selected.type.kind == SemanticType::Class
+            ? nativeMutexElement(session.program().mir(), selected.type,
+                                 CompilerCapabilityTypeKind::MutexStorage)
+            : std::nullopt;
     for (const auto &child : selected.aggregate) {
       if (payload) {
         // Each payload child names one exact field of one alternative.
@@ -205,6 +212,9 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
         else if (child.uniqueOwnerBase)
           static_cast<void>(session.layouts().baseIndex(
               selected.type, *child.uniqueOwnerBase));
+        else if (mutexPayload && selected.aggregate.size() == 1 &&
+                 child.type == *mutexPayload)
+          static_cast<void>(session.layouts().mutexStorage(selected.type));
         else
           throw BackendUnsupportedError(
               "LLVM cleanup subobject requires its later capability milestone");

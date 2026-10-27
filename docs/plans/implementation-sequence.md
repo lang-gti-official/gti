@@ -11858,18 +11858,24 @@ thread-local hierarchy objects and observable pure phases stay
   payload, lower natively with their own witnesses (`threads.mutex-composition`,
   including a payload cleanup failure on a worker re-raised at join); a
   program without task adapters joins a never-started handle without worker
-  containment. Of the 47 recorded threading programs, 43 match the oracle at
-  O0 and O2; the remaining four (066, `scoped_parallel_threads`,
-  `transfer_function_threads`, `panic_runtime`) are refused only at erased
-  `std::transfer_function`/`std::function` storage and match with that use
-  removed. Broken native or private runtime contracts (a foreign exception
+  containment. Tasks holding hierarchy storage (polymorphic objects, inline
+  slots, `std::transfer_function`) cross task boxes through their generated
+  relocation, and scoped ones run in place (`threads.hierarchy-tasks`); a
+  mutex may protect a hierarchy payload (`threads.hierarchy-mutexes`). All 47
+  recorded threading programs match the oracle at O0 and O2, and 066,
+  `scoped_parallel_threads`, `transfer_function_threads` and `panic_runtime`
+  match at O0-O3 under both the repository and legacy roots. A thread result
+  holding hierarchy storage still crosses `std::expected` by value, which is
+  an O-LLVM-10 `PolymorphicTransfer` into a payload enum. Broken native or
+  private runtime contracts (a foreign exception
   at a callback boundary, a wrong-thread confined-callback binding, malformed
   thread or mutex state) end through `std::terminate` as in C++, so a host
   terminate handler observes both backends alike. Known non-semantic
   divergence: the C++-only nothrow-`operator new` allocation oracle
   (`scoped_parallel_allocations`) does not observe native task boxes, which
   use the process memory provider. Remaining:
-  erased transfer callables (O-LLVM-10), Linux execution evidence,
+  hierarchy-bearing thread results (O-LLVM-10 payload enums), Linux execution
+  evidence,
   generated-code TSan, the terminal containment of a defined failure inside an
   unattached native callback invoked on a managed worker (it still calls the
   legacy runtime endpoint), and the workload/synchronization cost report.
@@ -12011,7 +12017,6 @@ not size the work.
 | blocker | examples | nature |
 | --- | --- | --- |
 | O-LLVM-10 polymorphism | 025, 071, 086, 135, 149 | milestone; these now match the C++ oracle at O0-O3: inline polymorphic slots, owned hierarchy transfers, consuming and temporary receivers, closure models, whole-object replacement, hierarchy arrays, program-storage objects, shared polymorphic owners, unobservable abstract phases and destructor lifecycle dispatch are admitted (see O-LLVM-10) |
-| O-LLVM-10 erased transfer callable | 066 | 076 and 175 now execute with native managed workers, and owner-held mutex storage has its own witness, so the `shared_ptr<mutex<T>>` receiver and its empty-owner field default now lower; inline slots and virtual invocation are admitted, but 066 still moves a `std::transfer_function` into a thread spawn, which needs the O-LLVM-13 task transfer of hierarchy storage. With that use removed, 066 matches the C++ oracle at O0-O3 |
 | element and pointee eligibility | 127, 129, 142 | admission only; the emitters are element-agnostic. `ArraySize`/`ArrayRangeBegin` return constants yet demand a passive element; a payload-enum pointee and an array of sealed integral enums have implemented shapes that the eligibility predicates do not reach |
 | unsafe receiver on a `Call` stage | 121 | admission only; a receiver-role `Call` with a mutable-temporary-borrow input kind and no call target |
 | remaining field projection | 042 | admission only; progressed from the earlier reference-adjustment refusal |

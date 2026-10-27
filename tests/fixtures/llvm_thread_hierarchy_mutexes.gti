@@ -1,0 +1,136 @@
+#include <std/mutex>
+#include <std/thread>
+#include <std/memory>
+#include <std/polymorphic>
+#include <std/string>
+
+// Mutex storage protecting hierarchy payloads: a polymorphic object whose
+// interface view sits at a nonzero offset, a record holding one, and an
+// inline polymorphic slot. Construction and moves relocate the payload with
+// its generated relocation, which rebuilds its dispatch state inside a fresh
+// native shell. A guard borrows the shell as a whole; views of the payload
+// keep their own dispatch proofs. A shared owner carries one mutex to a
+// worker, and each payload is destroyed exactly once before its shell.
+std::mutex<int32_t> retired{0};
+
+void retire(int32_t id) {
+  mut auto guard = retired.lock();
+  mut int32_t& count = guard.get();
+  count = count * 10 + id;
+}
+
+int32_t retirements() {
+  auto guard = retired.lock();
+  return guard.get();
+}
+
+[[transfer]] interface Gauge {
+  int32_t read();
+  void bump(int32_t by) mut;
+};
+
+[[transfer]] interface Tagged {
+  int32_t tag();
+};
+
+// Tagged precedes Gauge, so the Gauge view has a nonzero offset.
+[[unsafe_transfer]] class Meter : public Tagged, public Gauge {
+  std::string label;
+  mut int32_t value;
+public:
+  Meter(std::string label, int32_t value)
+      : label(std::move(label)), value(value) {}
+  ~Meter() { retire(this.value); }
+  int32_t tag() override { return int32_t(this.label.size()); }
+  int32_t read() override { return this.value; }
+  void bump(int32_t by) mut override { this.value += by; }
+};
+
+class Small : public Gauge {
+  mut int32_t value;
+public:
+  Small(int32_t value) : value(value) {}
+  int32_t read() override { return this.value; }
+  void bump(int32_t by) mut override { this.value += by; }
+};
+
+// A record holding a polymorphic object beside a plain field.
+class Panel {
+public:
+  mut Meter meter;
+  int32_t extra;
+  Panel(Meter meter, int32_t extra) : meter(std::move(meter)), extra(extra) {}
+};
+
+int32_t sample(Gauge& gauge) { return gauge.read(); }
+
+void advance(mut Gauge& gauge, int32_t by) { gauge.bump(by); }
+
+int32_t total(std::mutex<Meter> owned) {
+  auto guard = owned.lock();
+  return sample(guard.get());
+}
+
+int main() {
+  {
+    std::mutex<Meter> guarded{Meter(std::string("ab"), 4)};
+    {
+      mut auto guard = guarded.lock();
+      mut Meter& meter = guard.get();
+      advance(meter, 3);
+      std::println(sample(meter) * 10 + meter.tag());
+    }
+    {
+      auto guard = guarded.lock();
+      std::println(sample(guard.get()));
+    }
+    // Moving the mutex rebuilds the shell around the relocated payload; the
+    // by-value parameter destroys it.
+    std::mutex<Meter> moved = std::move(guarded);
+    {
+      mut auto guard = moved.lock();
+      advance(guard.get(), 2);
+    }
+    std::println(total(std::move(moved)));
+  }
+  std::println(retirements());
+
+  {
+    std::mutex<Panel> panel{Panel(Meter(std::string("xyz"), 5), 2)};
+    mut auto guard = panel.lock();
+    mut Panel& held = guard.get();
+    advance(held.meter, held.extra);
+    std::println(sample(held.meter) + held.meter.tag());
+  }
+  std::println(retirements());
+
+  {
+    std::mutex<std::inline_polymorphic<Gauge, 32, 8>> slot{
+        std::inline_polymorphic<Gauge, 32, 8>()};
+    {
+      mut auto guard = slot.lock();
+      guard.get().replace(Small(6));
+      advance(guard.get().get(), 4);
+    }
+    auto guard = slot.lock();
+    std::println(sample(guard.get().get()));
+  }
+
+  auto shared = std::make_shared<std::mutex<Meter>>(Meter(std::string("w"), 1));
+  auto worker_state = shared.clone();
+  mut std::thread_result<int32_t> worker{};
+  if (!worker.start([state = std::move(worker_state)]() -> int32_t {
+        mut auto guard = state->lock();
+        advance(guard.get(), 8);
+        return sample(guard.get());
+      }))
+    return 1;
+  auto joined = worker.join();
+  if (!joined) return 2;
+  std::println(std::move(joined).value());
+  {
+    auto guard = shared->lock();
+    std::println(sample(guard.get()) + guard.get().tag());
+  }
+  return 0;
+}

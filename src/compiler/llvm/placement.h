@@ -53,9 +53,10 @@ isFreshHierarchyTransferProducer(const MirInstruction &instruction);
 // local or constructor field (Initialize), a prepared by-value argument
 // (CallInput), the body's ABI return destination, an inline polymorphic slot
 // whose construction relocates the moved object itself, or the value's own
-// storage as the receiver of one consuming call or as the replacement an
-// assignment relocates into its destination, or in its slot of a fresh array
-// or payload alternative that is itself published.
+// storage as the receiver of one consuming call, as the replacement an
+// assignment relocates into its destination, in its slot of a fresh array
+// or payload alternative that is itself published, or as the task a
+// managed-thread spawn relocates into its runtime task box.
 enum class FreshHierarchyPublication {
   Local,
   Argument,
@@ -63,7 +64,8 @@ enum class FreshHierarchyPublication {
   Slot,
   Receiver,
   Replacement,
-  Element
+  Element,
+  Task
 };
 
 struct FreshHierarchyTransfer {

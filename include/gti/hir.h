@@ -590,6 +590,9 @@ struct HirLambda {
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::vector<bool> captureRequiresActiveCleanup;
   SemanticTypeTraits traits{};
+  // Semantics' structural decision: the environment keeps a borrow until it
+  // is destroyed only when a capture is itself such a carrier.
+  bool lifecycleBoundBorrowCarrier = false;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
