@@ -372,6 +372,21 @@ private:
                                   const SemanticType &type) {
     return memory.load(address, type);
   }
+  // A counted text view is a body value, not an object with identity. A place
+  // or loan receiver names storage holding one, so its view is loaded from
+  // that address; an already evaluated receiver is the view itself and has no
+  // address to load from. The MIR operand decides which, never the emitted
+  // representation.
+  [[nodiscard]] llvm::Value *countedTextValue(const MirOperand &receiver) {
+    if (!receiver.place && !receiver.loan && receiver.value) {
+      auto *evaluated = values.at(receiver.value);
+      if (!evaluated)
+        throw std::logic_error(
+            "LLVM counted text receiver lost its dominating value");
+      return evaluated;
+    }
+    return load(memory.selected(receiver), SemanticType::StringView);
+  }
   void store(llvm::Value *value, llvm::Value *address,
              const SemanticType &type) {
     if (!lifetimes.transferMutexes(ir, address, value, type))
@@ -858,14 +873,10 @@ private:
       switch (instruction.intrinsic) {
       case IntrinsicKind::StringViewSize:
         return ir.CreateExtractValue(
-            load(memory.selected(*instruction.receiver),
-                 SemanticType::StringView),
-            1);
+            countedTextValue(*instruction.receiver), 1);
       case IntrinsicKind::StringViewEmpty:
         return ir.CreateICmpEQ(
-            ir.CreateExtractValue(load(memory.selected(*instruction.receiver),
-                                       SemanticType::StringView),
-                                  1),
+            ir.CreateExtractValue(countedTextValue(*instruction.receiver), 1),
             ir.getInt64(0));
       case IntrinsicKind::ArraySize:
         return ir.getInt64(instruction.receiver->type.arrayLength);
