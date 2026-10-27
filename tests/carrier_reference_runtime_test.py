@@ -52,18 +52,26 @@ def main():
     upcasts = pathlib.Path(__file__).parent / "fixtures/carrier_upcast_references.gti"
     cases.append(("upcast-views", upcasts.read_text(),
                   (0, "6\n6\n6\n6\n6\n5\n15\n", "")))
-    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
+    # The upcast forms the native backend runs as well: an upcast argument and
+    # an interface relay, each ending before the carrier moves.
+    native_upcasts = pathlib.Path(__file__).parent / "fixtures/carrier_upcast_native.gti"
+    native_cases = [("upcast-native", native_upcasts.read_text(),
+                     (0, "6\n6\n6\n5\n15\n", ""))]
+    cases += native_cases
+    modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [], cases)
              for standard in ("c++20", "c++23") for level in ("O0", "O1", "O3")]
-    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
+    modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"], cases),
               ("asan-ubsan", ["--std", "c++23", "-O1"],
-               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+               ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"], cases)]
+    modes += [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [], native_cases)
+              for level in ("O0", "O1", "O2", "O3")]
     if args.quick:
         modes = modes[:1]
     with tempfile.TemporaryDirectory(prefix="gti-carrier-reference-") as temporary:
         root = pathlib.Path(temporary)
         source = root / fixture.name
-        for mode, flags, native in modes:
-            for name, text, expected in cases:
+        for mode, flags, native, selected in modes:
+            for name, text, expected in selected:
                 source.write_text(text)
                 binary = root / f"{mode}-{name}"
                 command = [str(compiler), str(source), *flags, "-o", str(binary)]
@@ -76,7 +84,7 @@ def main():
                 actual = (executed.returncode, executed.stdout, executed.stderr)
                 if actual != expected:
                     raise AssertionError(f"{mode}/{name}: {actual!r} != {expected!r}")
-            print(f"carrier references: {mode} passed ({len(cases)} outcomes)", flush=True)
+            print(f"carrier references: {mode} passed ({len(selected)} outcomes)", flush=True)
 
 
 if __name__ == "__main__":
