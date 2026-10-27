@@ -229,6 +229,9 @@ public:
                      SemanticType::Reference)) {
               continue;
             }
+            if (ownedBaseArgument(initializer, index) &&
+                stagedBaseShape(initializer) != nullptr)
+              continue;
             const HirValue *argument = findValue(initializer.arguments[index]);
             if (argument != nullptr && argument->dropObligation) {
               constructorUnarmedTransfer = true;
@@ -247,9 +250,30 @@ public:
           const bool stageReferenceInputs = stagedBase(initializer) != nullptr;
           std::vector<std::optional<MirOperand>> preparedBaseInputs(
               initializer.arguments.size());
+          std::vector<MirDropObligationId> preparedBaseDrops;
           for (std::size_t argumentIndex = 0;
                argumentIndex < initializer.arguments.size(); ++argumentIndex) {
             const HirValueId argument = initializer.arguments[argumentIndex];
+            if (stageReferenceInputs &&
+                ownedBaseArgument(initializer, argumentIndex)) {
+              // The owned value moves into its prepared parameter, which the
+              // InitializeBase hands to the base constructor.
+              const auto &parameter =
+                  program
+                      .findConstructorInstance(*initializer.constructorTarget)
+                      ->parameterTypes[argumentIndex];
+              MirOperand operand = valueOperand(argument);
+              if (terminated())
+                break;
+              auto prepared = prepareCallInput(
+                  0, argument, parameter, HirCallInputKind::MoveValue,
+                  MirCallInputRole::Argument, argumentIndex, std::move(operand),
+                  true, false, 0, initializerIndex + 1);
+              preparedBaseInputs[argumentIndex] = std::move(prepared.operand);
+              if (prepared.parameterDrop != 0)
+                preparedBaseDrops.push_back(prepared.parameterDrop);
+              continue;
+            }
             if (stageReferenceInputs &&
                 forwardedBaseReference(initializer, argumentIndex)) {
               const auto &parameter =
@@ -276,7 +300,7 @@ public:
               (void)emitValue(argument);
           }
           stageBaseInitializer(initializer, initializerIndex,
-                               preparedBaseInputs);
+                               preparedBaseInputs, preparedBaseDrops);
           const auto constructorOwnerIterator =
               constructor == nullptr
                   ? program.classInstances().end()
@@ -681,14 +705,49 @@ private:
             source.referenceAccess == AccessMode::Mutable);
   }
 
+  // An owned argument a base initializer moves into a by-value parameter of
+  // its selected constructor: staged as a prepared parameter whose obligation
+  // the InitializeBase hands to the base constructor, as a construction does.
+  bool ownedBaseArgument(const HirConstructorInitializer &initializer,
+                         std::size_t index) const {
+    const auto *target =
+        initializer.constructorTarget
+            ? program.findConstructorInstance(*initializer.constructorTarget)
+            : nullptr;
+    if (initializer.kind != ConstructorInitializerTargetKind::Base || !target ||
+        index >= target->parameterTypes.size() ||
+        index >= initializer.arguments.size() ||
+        std::any_of(target->parameterTypes.begin(),
+                    target->parameterTypes.end(), [](const auto &type) {
+                      return type.kind == SemanticType::Reference;
+                    }))
+      return false;
+    const auto &parameter = target->parameterTypes[index];
+    const auto *value = findValue(initializer.arguments[index]);
+    return (parameter.kind == SemanticType::Class ||
+            parameter.kind == SemanticType::Enum ||
+            parameter.kind == SemanticType::Lambda) &&
+           value != nullptr && value->dropObligation &&
+           value->info.type == parameter &&
+           value->info.category == ValueCategory::Value &&
+           value->info.traits.movable &&
+           value->info.traits.drop != DropKind::Trivial &&
+           !resolvedTraits(parameter).containsBorrowedState &&
+           preparedParameterDropType(parameter).has_value();
+  }
+
   const HirClassInstance *
   stagedBase(const HirConstructorInitializer &initializer) const {
+    return constructorUnarmedTransfer ? nullptr : stagedBaseShape(initializer);
+  }
+
+  const HirClassInstance *
+  stagedBaseShape(const HirConstructorInitializer &initializer) const {
     // A base is a distinct under-construction place. Its exact selected
     // initializer completes before derived fields and arms one rollback token.
     // Argument effects stay in this MIR prefix; a backend must prove how that
     // prefix executes before its native base initializer, not move it later.
     if (constructor == nullptr || constructorOwner == nullptr ||
-        constructorUnarmedTransfer ||
         initializer.kind != ConstructorInitializerTargetKind::Base ||
         (!initializer.constructorTarget && !initializer.generatedDefault) ||
         initializer.storesReference || initializer.ownedParameter ||
@@ -752,7 +811,8 @@ private:
                       return type.kind == SemanticType::Reference;
                     });
     for (std::size_t index = 0; index < initializer.arguments.size(); ++index) {
-      if (forwardedBaseReference(initializer, index))
+      if (forwardedBaseReference(initializer, index) ||
+          ownedBaseArgument(initializer, index))
         continue;
       const auto *value = findValue(initializer.arguments[index]);
       if (!value ||
@@ -792,7 +852,8 @@ private:
   void
   stageBaseInitializer(const HirConstructorInitializer &initializer,
                        std::size_t initializerIndex,
-                       std::span<const std::optional<MirOperand>> prepared) {
+                       std::span<const std::optional<MirOperand>> prepared,
+                       std::span<const MirDropObligationId> preparedDrops) {
     // Check the entire initializer before preparing any input. Unsupported
     // later arguments must not leave orphaned, partly staged CallInputs.
     const auto *base = stagedBase(initializer);
@@ -807,9 +868,14 @@ private:
     for (std::size_t index = 0; index < initializer.arguments.size(); ++index) {
       const auto argument = initializer.arguments[index];
       const HirValue *value = findValue(argument);
-      if (forwardedBaseReference(initializer, index)) {
+      if (forwardedBaseReference(initializer, index) ||
+          ownedBaseArgument(initializer, index)) {
         const auto &parameter = selectedConstructor->parameterTypes[index];
-        arguments.push_back(prepared[index].value());
+        if (!prepared[index]) {
+          valid = false;
+          return;
+        }
+        arguments.push_back(*prepared[index]);
         parameterTypes.push_back(parameter);
         continue;
       }
@@ -855,6 +921,13 @@ private:
                                   .category = ValueCategory::Place,
                                   .access = AccessMode::Mutable,
                                   .traits = traits}};
+    // The base constructor owns each prepared parameter once it begins.
+    for (const MirDropObligationId drop : preparedDrops) {
+      if (!removeTemporary(drop))
+        valid = false;
+      stage.lifecycle.push_back(
+          {.kind = MirLifecycleEventKind::TransferOut, .source = drop});
+    }
     if (propagation == FailurePropagationKind::None)
       stage.lifecycle.push_back(
           {.kind = MirLifecycleEventKind::Initialize, .target = rollback});
@@ -1623,7 +1696,10 @@ private:
   appendPreparedParameterDrop(HirValueId callSite, HirValueId sourceValue,
                               MirValueId result, const ExpressionInfo &info,
                               const MirDropType &dropType) {
-    const HirValue *call = findValue(callSite);
+    // A base initializer's input has no call value; its argument's full
+    // expression is the initializer's.
+    const HirValue *call =
+        callSite != 0 ? findValue(callSite) : findValue(sourceValue);
     if (call == nullptr || call->fullExpression == 0 || result == 0) {
       valid = false;
       return 0;

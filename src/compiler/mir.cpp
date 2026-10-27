@@ -8190,11 +8190,16 @@ bool mirBodyRoutesFailureEdges(const MirBody &body) {
         // callee begins.
         if (source != nullptr &&
             source->kind == MirDropObligationKind::PreparedParameter &&
-            (instruction.kind == MirInstructionKind::Call ||
-             (instruction.kind == MirInstructionKind::Construct &&
+            (((instruction.kind == MirInstructionKind::Call ||
+               (instruction.kind == MirInstructionKind::Construct &&
+                instruction.constructorTarget &&
+                instruction.constructorKind == ConstructorKind::Ordinary)) &&
+              instruction.callSite != 0) ||
+             // A base initializer hands its prepared parameters to the
+             // selected base constructor as a construction does.
+             (instruction.kind == MirInstructionKind::InitializeBase &&
               instruction.constructorTarget &&
-              instruction.constructorKind == ConstructorKind::Ordinary)) &&
-            instruction.callSite != 0) {
+              instruction.constructorInitializer != 0))) {
           continue;
         }
         // A completed owning result supplied directly as a by-value argument
@@ -12242,7 +12247,34 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           instruction.successResultDrop
               ? body.findDropObligation(*instruction.successResultDrop)
               : nullptr;
+      // A staged base hands each owned prepared parameter to its selected
+      // constructor before that constructor begins, as a construction does.
+      const auto transfers = static_cast<std::size_t>(
+          std::find_if(instruction.lifecycle.begin(),
+                       instruction.lifecycle.end(),
+                       [](const MirLifecycleEvent &event) {
+                         return event.kind !=
+                                MirLifecycleEventKind::TransferOut;
+                       }) -
+          instruction.lifecycle.begin());
+      const bool preparedTransfers = std::all_of(
+          instruction.lifecycle.begin(),
+          instruction.lifecycle.begin() +
+              static_cast<std::ptrdiff_t>(transfers),
+          [&](const MirLifecycleEvent &event) {
+            const MirDropObligation *prepared =
+                body.findDropObligation(event.source);
+            return instruction.constructorTarget && prepared != nullptr &&
+                   prepared->kind ==
+                       MirDropObligationKind::PreparedParameter &&
+                   event.target == 0 && !event.conditional &&
+                   !event.failureCleanup;
+          });
+      const std::span<const MirLifecycleEvent> settled(
+          instruction.lifecycle.data() + transfers,
+          instruction.lifecycle.size() - transfers);
       return body.kind == MirBodyKind::Constructor && noOperation &&
+             preparedTransfers &&
              !hasResult && base != nullptr && rollback != nullptr &&
              !instruction.receiver && instruction.constructorInitializer != 0 &&
              instruction.operands.size() == instruction.parameterTypes.size() &&
@@ -12271,15 +12303,13 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
              ((instruction.constructorTarget &&
                instruction.definedFailure.propagation ==
                    FailurePropagationKind::Constructor &&
-               instruction.lifecycle.empty()) ||
-              (instruction.definedFailure.empty() &&
-               instruction.lifecycle.size() == 1 &&
-               instruction.lifecycle.front().kind ==
-                   MirLifecycleEventKind::Initialize &&
-               instruction.lifecycle.front().source == 0 &&
-               instruction.lifecycle.front().target == rollback->id &&
-               !instruction.lifecycle.front().conditional &&
-               !instruction.lifecycle.front().failureCleanup)) &&
+               settled.empty()) ||
+              (instruction.definedFailure.empty() && settled.size() == 1 &&
+               settled.front().kind == MirLifecycleEventKind::Initialize &&
+               settled.front().source == 0 &&
+               settled.front().target == rollback->id &&
+               !settled.front().conditional &&
+               !settled.front().failureCleanup)) &&
              base->root == MirPlaceRootKind::This &&
              base->projections.size() == 1 &&
              base->projections.front().kind == MirProjectionKind::Base &&
@@ -13035,6 +13065,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               break;
             case MirInstructionKind::Call:
             case MirInstructionKind::Construct:
+            case MirInstructionKind::InitializeBase:
               consuming = index < instruction.parameterTypes.size() &&
                           instruction.parameterTypes[index].kind !=
                               SemanticType::Reference;
@@ -13804,7 +13835,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                  instruction.kind == MirInstructionKind::Initialize ||
                  instruction.kind == MirInstructionKind::CallInput ||
                  instruction.kind == MirInstructionKind::Call ||
-                 instruction.kind == MirInstructionKind::Construct) &&
+                 instruction.kind == MirInstructionKind::Construct ||
+                 instruction.kind == MirInstructionKind::InitializeBase) &&
                 instructionConsumesObligation(instruction, *source)) ||
                // An Assign converting its owning source into a distinct
                // wrapper type transfers the source out of its lifetime.
@@ -15518,9 +15550,16 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     }
     return false;
   };
+  // A base stage has no call site: its constructor initializer identifies its
+  // inputs, and its cleanup-free by-value arguments are passed directly.
+  const auto baseStage = [](const MirInstruction &invocation) {
+    return invocation.kind == MirInstructionKind::InitializeBase &&
+           invocation.callSite == 0 && invocation.constructorInitializer != 0;
+  };
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &invocation : block.instructions) {
-      if (!orderedInvocation(invocation) || invocation.callSite == 0) {
+      if (!orderedInvocation(invocation) ||
+          (invocation.callSite == 0 && !baseStage(invocation))) {
         continue;
       }
       std::vector<const MirInstruction *> inputs;
@@ -15542,6 +15581,18 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         const MirInstruction *argument =
             callInputFor(invocation.operands[index]);
         const SemanticType &parameter = invocation.parameterTypes[index];
+        if (baseStage(invocation) && argument == nullptr &&
+            parameter.kind != SemanticType::Reference) {
+          const MirOperand &operand = invocation.operands[index];
+          const MirValue *value = operand.kind == MirOperandKind::Value
+                                      ? body.findValue(operand.value)
+                                      : nullptr;
+          if (operand.kind == MirOperandKind::Constant ||
+              (value != nullptr &&
+               value->info.traits.drop == DropKind::Trivial)) {
+            continue;
+          }
+        }
         const bool mutableStorageInput =
             argument != nullptr && index == 0 &&
             argument->callInputKind == HirCallInputKind::MutableBorrow &&
@@ -15673,7 +15724,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           }
         }
         if ((invocation.kind == MirInstructionKind::Call ||
-             stagedPayloadConstruction(invocation) || preparedConstructor) &&
+             stagedPayloadConstruction(invocation) || preparedConstructor ||
+             baseStage(invocation)) &&
             owningInput && receiverLifetime == nullptr) {
           if (!input->preparedParameterDrop ||
               !preparedDrops.insert(*input->preparedParameterDrop).second) {
