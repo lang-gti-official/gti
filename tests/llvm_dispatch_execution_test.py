@@ -72,6 +72,8 @@ SUCCESS_FILES = {
     "lifecycle-phases": "tests/fixtures/llvm_dispatch_lifecycle_phases.gti",
     "generated-empty-former-reject": "tests/fixtures/llvm_dispatch_generated_empty.gti",
     "hierarchy-payloads": "tests/fixtures/llvm_dispatch_hierarchy_payloads.gti",
+    "owned-base-arguments": "tests/fixtures/llvm_owned_base_arguments.gti",
+    "reference-base-arguments": "tests/fixtures/llvm_reference_base_arguments.gti",
     "payload-moves": "tests/fixtures/llvm_dispatch_payload_moves.gti",
     "borrowed-carriers": "tests/fixtures/llvm_dispatch_borrowed_carriers.gti",
     "moved-carriers": "tests/fixtures/llvm_dispatch_moved_carriers.gti",
@@ -92,6 +94,8 @@ CPP_LIMITATIONS = {
     "inline-field-constructor-rollback": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "borrowed-mut-reference-chain": "outside the complete C++ text vocabulary",
     "fresh-hierarchy-copy-view": "generated copy/move construction lacks the complete generic destination and cleanup schedule",
+    "owned-base-arguments": "outside the complete C++ text vocabulary",
+    "reference-base-arguments": "outside the complete C++ text vocabulary",
 }
 
 # Known C++-backend divergences, not oracle evidence (ADR 031: C++ is not an
@@ -326,9 +330,12 @@ int main() {
 }
 
 
-def unstaged_base(prefix: str, held: str, argument: str, member: str = "",
-                  use: str = "std::println(\"ann\");") -> str:
-    """A derived constructor forwarding an owned value to its base."""
+def owned_base(prefix: str, held: str, argument: str, check: str,
+               member: str = "", derived_member: str = "") -> str:
+    """A derived constructor forwarding an owned value to its base constructor.
+
+    These were UnstagedBaseInitializer rejection controls until MIR staged
+    owned base arguments as prepared parameters; `check` reads the base."""
     return f"""{prefix}class Base {{
 public:
   {held} held;
@@ -338,13 +345,276 @@ public:
 class Derived : public Base {{
 public:
   Derived({held} value) : Base(std::move(value)) {{}}
+  {derived_member}
 }};
 int main() {{
   Derived value{{{argument}}};
-  {use}
-  return 0;
+  return {check} ? 0 : 1;
 }}
 """
+
+
+# MIR stages an owned base argument, moved in or created in place, as a
+# prepared parameter that InitializeBase alone hands to the base constructor.
+# The C++ backend does not represent that staging, so these stay LLVM-only.
+OWNED_BASE_CPP_LIMITATION = "outside the complete C++ text vocabulary"
+
+OWNED_BASE_SOURCES = {
+    "owned-base-text": owned_base(
+        "#include <std/string>\n", "std::string", 'std::string("ann")',
+        'value.held.size() == std::size_t(3) && value.held.starts_with("ann")'),
+    "owned-base-virtual": owned_base(
+        "#include <std/string>\n", "std::string", 'std::string("ann")',
+        'value.held.starts_with("ann") && read(value) == 2',
+        member="virtual int tag() { return 1; }",
+        derived_member="int tag() override { return 2; }").replace(
+            "int main() {", "int read(Base& base) { return base.tag(); }\nint main() {"),
+    "owned-base-vector": owned_base(
+        "#include <std/vector>\n", "std::vector<int>", "three()",
+        "value.held.size() == std::size_t(3) && value.held[std::size_t(2)] == 6").replace(
+            "int main() {", "std::vector<int> three() {\n  mut std::vector<int> values{};\n"
+            "  values.push_back(4);\n  values.push_back(5);\n  values.push_back(6);\n"
+            "  return values;\n}\nint main() {"),
+    "owned-base-unique": owned_base(
+        "#include <std/memory>\n", "std::unique_ptr<int>", "std::make_unique<int>(9)",
+        "value.held != nullptr && *value.held == 9"),
+    "owned-base-cleanup": """mut int drops = 0;
+class Noisy {
+public:
+  int id;
+  Noisy(int id) : id(id) {}
+  ~Noisy() { drops += 1; }
+};
+class Base {
+public:
+  Noisy held;
+  Base(Noisy value) : held(std::move(value)) {}
+};
+class Derived : public Base {
+public:
+  Derived(Noisy value) : Base(std::move(value)) {}
+};
+int main() {
+  {
+    Derived value{Noisy(3)};
+    if (value.held.id != 3 || drops != 0) { return 1; }
+  }
+  return drops == 1 ? 0 : 2;
+}
+""",
+    # The form d21f4ec3f did not control: owned arguments created in the base
+    # initializer itself, as a temporary or a call result.
+    "owned-base-fresh": """#include <std/string>
+mut int drops = 0;
+class Noisy {
+public:
+  int id;
+  Noisy(int id) : id(id) {}
+  ~Noisy() { drops += 1; }
+};
+Noisy make(int id) { return Noisy(id); }
+class Base {
+public:
+  Noisy first;
+  std::string text;
+  Base(Noisy first, std::string text) : first(std::move(first)), text(std::move(text)) {}
+};
+class Temporary : public Base {
+public:
+  Temporary() : Base(Noisy(3), std::string("ann")) {}
+};
+class Called : public Base {
+public:
+  Called(int id) : Base(make(id), std::string("bob")) {}
+};
+int main() {
+  {
+    Temporary first{};
+    Called second{4};
+    if (first.first.id != 3 || !first.text.starts_with("ann") ||
+        second.first.id != 4 || !second.text.starts_with("bob") || drops != 0) { return 1; }
+  }
+  return drops == 2 ? 0 : 2;
+}
+""",
+    # The lifecycle-dispatch rule with an owned base argument: the base phase
+    # selects Base::code while the base constructor and destructor run.
+    "owned-base-phases": """mut int64_t events = 0;
+class Mark {
+  int id;
+public:
+  Mark(int id) : id(id) {}
+  Mark(Mark& other) = delete;
+  Mark(Mark&& other) = default;
+  ~Mark() { events = events * 10 + int64_t(this.id); }
+  int value() { return this.id; }
+};
+class Base {
+public:
+  Mark held;
+  Base(Mark held) : held(std::move(held)) { events = events * 10 + int64_t(this.code()); }
+  ~Base() { events = events * 10 + int64_t(this.code()); }
+  virtual int code() { return 1; }
+};
+class Derived : public Base {
+public:
+  Derived(Mark held) : Base(std::move(held)) { events = events * 10 + int64_t(this.code()); }
+  ~Derived() { events = events * 10 + int64_t(this.code()); }
+  int code() override { return 2; }
+};
+int observe(Base& base) { return base.code(); }
+int main() {
+  {
+    Derived value{Mark(7)};
+    if (events != 12 || observe(value) != 2 || value.held.value() != 7) { return 1; }
+  }
+  return events == 12217 ? 0 : 2;
+}
+""",
+}
+
+# A Guard checks the cleanup trace while a defined failure leaves main; a
+# wrong trace raises a secondary failure. Each failure starts from a staged
+# owned base argument.
+OWNED_BASE_FAILURE_PRELUDE = """mut int64_t events = 0;
+mut int live = 0;
+class Mark {
+  int id;
+public:
+  Mark(int id) : id(id) { live += 1; }
+  Mark(Mark& other) = delete;
+  Mark(Mark&& other) = default;
+  ~Mark() { live -= 1; events = events * 10 + int64_t(this.id); }
+  int value() { return this.id; }
+};
+class Guard {
+public:
+  ~Guard() {
+    if (events != EXPECTED_TRACE || live != 0) { int zero = 0; int checked_cleanup = 1 / zero; }
+  }
+};
+"""
+
+OWNED_BASE_FAILURES = {
+    # A later argument fails: the earlier prepared parameter is dropped once.
+    "owned-base-argument-failure": ("""class Base {
+public:
+  Mark first;
+  int count;
+  Base(Mark first, int count) : first(std::move(first)), count(count) {}
+};
+class Derived : public Base {
+public:
+  Derived(Mark first, int divisor) : Base(std::move(first), 120 / divisor) {}
+};
+int main() {
+  Guard guard{};
+  int divisor = 0;
+  Derived value{Mark(5), divisor};
+  return value.count;
+}
+""", "5", "Base(std::move(first), 120 / divisor)"),
+    # The base constructor fails after taking its owned parameter: it drops
+    # what it built, and the derived constructor drops nothing twice.
+    "owned-base-constructor-failure": ("""class Base {
+public:
+  Mark first;
+  Mark second;
+  Base(Mark first, int divisor) : first(std::move(first)), second(Mark(120 / divisor)) {}
+};
+class Derived : public Base {
+public:
+  Mark own;
+  Derived(Mark first, int divisor) : Base(std::move(first), divisor), own(Mark(3)) {}
+};
+int main() {
+  Guard guard{};
+  int divisor = 0;
+  Derived value{Mark(1), divisor};
+  return value.own.value();
+}
+""", "1", "second(Mark(120 / divisor))"),
+    # A derived field fails after the base is built: the completed base rolls
+    # back, its destructor first, and the derived destructor never runs.
+    "owned-base-derived-rollback": ("""class Base {
+public:
+  Mark first;
+  Mark second;
+  Base(Mark first) : first(std::move(first)), second(Mark(2)) {}
+  ~Base() { events = events * 10 + 9; }
+};
+class Derived : public Base {
+public:
+  Mark own;
+  Derived(Mark first, int divisor) : Base(std::move(first)), own(Mark(120 / divisor)) {}
+  ~Derived() { events = events * 10 + 8; }
+};
+int main() {
+  Guard guard{};
+  int divisor = 0;
+  Derived value{Mark(1), divisor};
+  return value.own.value();
+}
+""", "921", "own(Mark(120 / divisor))"),
+    # A forwarded class reference: the base constructor reads through it,
+    # builds an owned field, then fails and drops only that field.
+    "reference-base-constructor-failure": ("""class Point {
+public:
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+class Base {
+public:
+  Mark first;
+  Mark second;
+  Base(Point& point, int divisor) : first(Mark(point.x)), second(Mark(120 / divisor)) {}
+};
+class Derived : public Base {
+public:
+  Derived(Point& point, int divisor) : Base(point, divisor) {}
+};
+int main() {
+  Guard guard{};
+  Point point{3, 4};
+  int divisor = 0;
+  Derived value{point, divisor};
+  return value.first.value();
+}
+""", "3", "second(Mark(120 / divisor))"),
+    # A derived field fails after a base built from a forwarded reference: the
+    # base rolls back, its destructor first.
+    "reference-base-derived-rollback": ("""class Point {
+public:
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+class Base {
+public:
+  Mark first;
+  Base(Point& point) : first(Mark(point.x)) {}
+  ~Base() { events = events * 10 + 9; }
+};
+class Derived : public Base {
+public:
+  Mark own;
+  Derived(Point& point, int divisor) : Base(point), own(Mark(point.y / divisor)) {}
+  ~Derived() { events = events * 10 + 8; }
+};
+int main() {
+  Guard guard{};
+  Point point{3, 4};
+  int divisor = 0;
+  Derived value{point, divisor};
+  return value.own.value();
+}
+""", "93", "own(Mark(point.y / divisor))"),
+}
+
+
+def owned_base_wrong_cleanup(name: str) -> str:
+    return name.removesuffix("-failure") + "-wrong-cleanup"
 
 
 REJECTIONS = {
@@ -362,23 +632,64 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     "reject-payload-copy": PLAIN + "enum Mark { none, held(Plain value) };\nint main() { Mark first = Mark::held(Plain()); Mark second = first; switch (second) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-payload-return": PLAIN + "enum Mark { none, held(Plain value) };\nMark make() { return Mark::held(Plain()); }\nint main() { Mark mark = make(); switch (mark) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
-    # MIR leaves a base initializer unstaged when an argument owns cleanup: no
-    # InitializeBase runs the base constructor, so LLVM refuses the constructor
-    # instead of leaving its base unconstructed. Each control must become an
-    # execution case once MIR stages owned base arguments.
-    "reject-unstaged-base-text": unstaged_base(
-        "#include <std/string>\n", "std::string", 'std::string("ann")',
-        use="std::println(value.held);"),
-    "reject-unstaged-base-virtual": unstaged_base(
-        "#include <std/string>\n", "std::string", 'std::string("ann")',
-        member="virtual int tag() { return 1; }", use="std::println(value.held);"),
-    "reject-unstaged-base-vector": unstaged_base(
-        "#include <std/vector>\n", "std::vector<int>", "std::vector<int>()"),
-    "reject-unstaged-base-unique": unstaged_base(
-        "#include <std/memory>\n", "std::unique_ptr<int>", "std::make_unique<int>(9)"),
-    "reject-unstaged-base-cleanup": unstaged_base(
-        "class Noisy {\npublic:\n  int id;\n  Noisy(int id) : id(id) {}\n"
-        "  ~Noisy() { std::println(\"drop\"); }\n};\n", "Noisy", "Noisy(3)"),
+    # MIR stages owned base arguments and forwarded class or enum references,
+    # but still leaves these base initializers unstaged: an owned argument
+    # beside a reference formal, a borrow carrier passed by value and an array
+    # of owning elements passed by value. No InitializeBase runs the base
+    # constructor, so LLVM refuses the constructor instead of leaving its base
+    # unconstructed.
+    "reject-unstaged-base-array": """class Mark {
+public:
+  int id;
+  Mark(int id) : id(id) {}
+  ~Mark() {}
+};
+class Base {
+public:
+  Mark[2] held;
+  Base(Mark[2] held) : held(std::move(held)) {}
+};
+class Derived : public Base {
+public:
+  Derived(Mark[2] held) : Base(std::move(held)) {}
+};
+int main() { mut Mark[2] marks = {Mark(1), Mark(2)}; Derived value{std::move(marks)}; return value.held[1].id - 2; }
+""",
+    "reject-unstaged-base-owned-with-reference": """class Mark {
+public:
+  int id;
+  Mark(int id) : id(id) {}
+  ~Mark() {}
+};
+class Base {
+public:
+  Mark held;
+  int seen;
+  Base(Mark held, int& counter) : held(std::move(held)), seen(counter) {}
+};
+class Derived : public Base {
+public:
+  Derived(Mark held, int& counter) : Base(std::move(held), counter) {}
+};
+int main() { int counter = 5; Derived value{Mark(1), counter}; return value.seen - 5; }
+""",
+    "reject-unstaged-base-carrier": """class Window {
+public:
+  int& scale;
+  Window(int& s) : scale(s) {}
+  int read() { return this.scale; }
+};
+class Base {
+public:
+  int total;
+  Base(Window window) : total(window.read()) {}
+};
+class Derived : public Base {
+public:
+  Derived(Window window) : Base(window) {}
+};
+int main() { int scale = 7; Window window{scale}; Derived value{window}; return value.total - 7; }
+""",
     # A pure member selected while a constructor that never hands the object to
     # other code runs is unobservable; this phase is not, so it stays gated.
     "reject-observed-pure-phase": """class Base {
@@ -625,9 +936,6 @@ def reject_case(gti: Path, root: Path, work: Path, name: str,
             if result.returncode != 65 or "GTI-B0003" not in result.stderr or not preserved:
                 raise AssertionError(f"{name} {mode} existing={existing}: {result}")
             expected = ("DestructorDispatchObservation" if "observation" in name
-                        # The polymorphic form is refused first at its construction:
-                        # MIR leaves its dispatch state unrepresented with the base.
-                        else None if name == "reject-unstaged-base-virtual"
                         else "UnstagedBaseInitializer" if name.startswith("reject-unstaged-base-")
                         else "PureDispatchState" if name == "reject-observed-pure-phase"
                         else None if name in {"reject-global", "reject-thread-local"}
@@ -1326,11 +1634,21 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers", "owned-base-arguments", "reference-base-arguments"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
         add(name, source, expected_exit=expected_exit, endpoints=TRANSFER_ENDPOINTS)
+    for name, source in OWNED_BASE_SOURCES.items():
+        add(name, source, endpoints=TRANSFER_ENDPOINTS, cpp_limitation=OWNED_BASE_CPP_LIMITATION)
+    for name, (body, trace, needle) in OWNED_BASE_FAILURES.items():
+        add(name, OWNED_BASE_FAILURE_PRELUDE.replace("EXPECTED_TRACE", trace) + body,
+            "defined-failure", expected_exit=70, failure_needle=needle,
+            endpoints=TRANSFER_ENDPOINTS, cpp_limitation=OWNED_BASE_CPP_LIMITATION)
+        add(owned_base_wrong_cleanup(name),
+            OWNED_BASE_FAILURE_PRELUDE.replace("EXPECTED_TRACE", trace + "0") + body,
+            "wrong-cleanup-trace", expected_exit=70, failure_needle=needle,
+            endpoints=TRANSFER_ENDPOINTS[2:])
     source = (root / SUCCESS_FILES["static-dispatch"]).read_text(encoding="utf-8")
     nested = (root / SUCCESS_FILES["nested-hierarchy-transfer"]).read_text(encoding="utf-8")
     nested_failure = nested.replace("// NESTED_TRANSFER_MAIN", """
@@ -1871,6 +2189,10 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "shared-polymorphic-owners", "shared-polymorphic-owner-failure",
             "shared-polymorphic-owner-wrong-cleanup"),
     }
+    profiles["staged-base-initializers"] = (
+        "owned-base-arguments", "reference-base-arguments", *OWNED_BASE_SOURCES,
+        *OWNED_BASE_FAILURES,
+        *(owned_base_wrong_cleanup(name) for name in OWNED_BASE_FAILURES))
     cases = evidence_cases(root)
     if {name for members in profiles.values() for name in members} != set(cases):
         raise AssertionError("dispatch profiles differ from default positive execution sources")
@@ -1929,6 +2251,8 @@ def main() -> None:
              "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
              "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup",
              "payload-move-failure",
+             *OWNED_BASE_SOURCES, *OWNED_BASE_FAILURES,
+             *(owned_base_wrong_cleanup(name) for name in OWNED_BASE_FAILURES),
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

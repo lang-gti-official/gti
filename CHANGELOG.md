@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.3 - Owned and forwarded base-constructor arguments on LLVM
+
+- A derived constructor can now pass an owned value to its base constructor
+  on the native LLVM backend, as in `Derived(std::string t) :
+  Base(std::move(t))` or `Derived() : Base(make_value())`. The value can be a
+  `std::string`, `std::vector`, `std::unique_ptr`, a payload enum, a closure
+  or a class with a destructor, moved in or created in place. Earlier versions
+  rejected these constructors with `GTI-B0003`. If a later argument or the base
+  constructor fails, each owned value is still destroyed exactly once. A
+  derived constructor can also forward its own reference to a class or enum,
+  such as `Point&` or `std::string&`, to its base constructor. An owned value
+  beside a reference, a value holding a reference or an array of owning values
+  passed to a base constructor still reports `GTI-B0003`, and the C++ backend
+  does not compile these constructors. The language is unchanged.
+
 ## 0.484.2 - Text and borrow soundness fixes
 
 - Fix a use-after-move through an interface or base-class reference. `Gauge&
