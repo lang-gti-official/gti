@@ -4585,6 +4585,10 @@ private:
          static_cast<std::int64_t>(metrics.semanticConceptProofReuses)},
         {"conceptProofRecords",
          static_cast<std::int64_t>(metrics.semanticConceptProofRecords)},
+        {"effectQueryReuses",
+         static_cast<std::int64_t>(metrics.semanticEffectQueryReuses)},
+        {"effectQueryRecords",
+         static_cast<std::int64_t>(metrics.semanticEffectQueryRecords)},
         {"semanticBorrowSummaryCandidateInspections",
          static_cast<std::int64_t>(
              metrics.semanticBorrowSummaryCandidateInspections)},

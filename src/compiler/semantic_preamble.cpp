@@ -284,7 +284,7 @@ auto SemanticVisitor::Impl::reachPreambleBodies(
       diagnostics.push_back(diagnostic);
     }
   }
-  if (workMetrics != nullptr)
+  if (workMetrics != nullptr && countsPreambleReach)
     workMetrics->semanticPreambleReachedBodies += reached.size();
   return errors;
 }

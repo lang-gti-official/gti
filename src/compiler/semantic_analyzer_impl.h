@@ -214,6 +214,15 @@ public:
                                    const std::vector<SemanticType> &types,
                                    const std::vector<CompileTimeValue> &values,
                                    const SourceSpan &site);
+  // The index of the query for this exact concrete target, registered if new.
+  static std::size_t
+  concreteProgramQueryHash(ProgramEffectOwner target, const SemanticType &owner,
+                           const std::vector<SemanticType> &types,
+                           const std::vector<CompileTimeValue> &values);
+  static std::size_t concreteProgramQuery(
+      ProgramConcreteEffectState &state, ProgramEffectOwner target,
+      const SemanticType &owner, const std::vector<SemanticType> &types,
+      const std::vector<CompileTimeValue> &values, const SourceSpan &site);
   void closeConcreteProgramEffects(const ProgramInitializationPlan &plan);
   void preserveInvalidProgramEffectDiagnostics(
       const InstanceAnalysisKey &key, SemanticInstanceAnalysis &analysis) const;
@@ -256,6 +265,10 @@ public:
         cancellation->load(std::memory_order_relaxed))
       throw AnalysisCancelled{};
   }
+  // An initializer-effect worker reaches preamble bodies in its own copy of
+  // the analysis; only the analysis it serves reports them, so only that one
+  // counts them in `semanticPreambleReachedBodies`.
+  bool countsPreambleReach = true;
 
   bool check(const Expr &expr);
 
@@ -3327,6 +3340,14 @@ private:
   // preamble declaration and queried with that declaration's lookup scope.
   [[nodiscard]] bool preambleConceptProofApplies(
       const AppliedConceptRequirement &requirement) const;
+  // A closed type built only from the adopted preamble's classes and enums.
+  [[nodiscard]] bool preambleClosedType(const SemanticType &type) const;
+  // Whether a concrete effect query may use the adopted preamble's shared
+  // effect results: a preamble target over preamble types.
+  [[nodiscard]] bool
+  preambleEffectQuery(const ProgramConcreteEffectQuery &query) const;
+  // A stable preamble owner an exported effect edge may name directly.
+  [[nodiscard]] bool preambleEffectOwner(ProgramEffectOwner owner) const;
 
   [[nodiscard]] static bool
   hasConstraintFailure(const ConstraintFailure &failure);
@@ -7378,7 +7399,64 @@ public:
     }
   }
 
+  // Initializer-effect results of concrete instances whose target and type
+  // arguments are this preamble's own declarations, shared by every analysis
+  // that adopts it (see Impl::closeConcreteProgramEffects). Such an instance
+  // analysis reads only preamble declarations, so its exported effect graph
+  // is the same in every adopting program. Nodes keep their order; an edge to
+  // ConcreteLocal{i + 1} names nodes[i], and an edge to ConcreteInstance{j +
+  // 1} names queries[j] by identity, registered again on replay.
+  struct EffectQueryKey {
+    SemanticVisitor::Impl::ProgramEffectOwner target;
+    SemanticType owner = SemanticType::Unknown;
+    std::vector<SemanticType> types;
+    std::vector<CompileTimeValue> values;
+    friend bool operator==(const EffectQueryKey &,
+                           const EffectQueryKey &) = default;
+  };
+  // Only clean, valid analyses are recorded; an invalid query is analysed
+  // again so its diagnostics keep their ordinary provider.
+  struct EffectQueryResult {
+    std::vector<std::pair<SemanticVisitor::Impl::ProgramEffectOwner,
+                          SemanticVisitor::Impl::ProgramEffectSummary>>
+        nodes;
+    std::optional<std::size_t> root;
+    std::vector<std::pair<EffectQueryKey, SourceSpan>> queries;
+  };
+  [[nodiscard]] std::shared_ptr<const EffectQueryResult>
+  effectQuery(std::size_t hash, const EffectQueryKey &key) const {
+    const std::lock_guard lock(effectQueryMutex);
+    const auto bucket = effectQueries.find(hash);
+    if (bucket == effectQueries.end())
+      return nullptr;
+    for (const auto &[candidate, result] : bucket->second)
+      if (candidate == key)
+        return result;
+    return nullptr;
+  }
+  void recordEffectQuery(std::size_t hash, EffectQueryKey key,
+                         EffectQueryResult result) const {
+    const std::lock_guard lock(effectQueryMutex);
+    if (effectQueryCount >= 65536)
+      return;
+    auto &bucket = effectQueries[hash];
+    for (const auto &[candidate, _] : bucket)
+      if (candidate == key)
+        return;
+    bucket.emplace_back(
+        std::move(key),
+        std::make_shared<const EffectQueryResult>(std::move(result)));
+    ++effectQueryCount;
+  }
+
 private:
+  mutable std::mutex effectQueryMutex;
+  mutable std::unordered_map<
+      std::size_t,
+      std::vector<
+          std::pair<EffectQueryKey, std::shared_ptr<const EffectQueryResult>>>>
+      effectQueries;
+  mutable std::size_t effectQueryCount = 0;
   mutable std::mutex conceptProofMutex;
   mutable std::map<std::pair<ConceptId, const ConceptApplication *>,
                    std::vector<ConceptProofKey>>

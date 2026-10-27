@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.480.4 — Faster editor finalization
+
+- `gti_lsp` analyses the initializer and storage effects of each
+  standard-library instance once per include graph instead of on every edit.
+  On an eight-include file the finalization of each edit drops from about
+  520 ms to about 70 ms, and a whole edit's analysis from about 0.85 s to
+  about 0.2 s. Diagnostics are unchanged; `gti check` and builds are not
+  affected.
+
 ## 0.480.3 — Faster editor analysis with standard-library concepts
 
 - `gti_lsp` proves each standard-library concept for standard-library types
