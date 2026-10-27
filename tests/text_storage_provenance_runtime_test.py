@@ -145,12 +145,39 @@ int main() {
 }
 '''
 
+RAW_TEXT_VIEWS = r'''
+#include <std/string_view>
+// A view read through a raw pointer, its index or `->` is the view stored
+// there; the pointer formal is not its owner.
+struct Entry {
+  std::string_view name;
+  int id;
+};
+std::string_view viewAt(std::string_view* item) { unsafe { return *item; } }
+std::string_view wordAt(std::string_view* items, int32_t index) { unsafe { return items[index]; } }
+std::string_view nameAt(Entry* entry) { unsafe { return entry->name; } }
+mut std::string_view kept = "";
+int main() {
+  mut std::string_view words[2] = {"alpha", "beta"};
+  kept = wordAt(&words[0], 1);
+  std::println(kept);
+  std::println(viewAt(&words[0]));
+  mut Entry entry{.name = "entry", .id = 1};
+  std::println(nameAt(&entry));
+  std::string_view blank[2] = {};
+  std::string_view grid[2][2] = {{"a", "b"}, {"c", "d"}};
+  std::println(grid[1][0]);
+  return blank[1].empty() && kept == "beta" ? 0 : 1;
+}
+'''
+
 CASES = {
     'array-elements': (ARRAY_ELEMENTS, (0, 'cde\nab\ntwo\nright\nplaced\n', '')),
     'array-fields-and-lambdas': (ARRAY_FIELDS_AND_LAMBDAS, (0, 'yz\nlabel\n', '')),
     'element-references': (ELEMENT_REFERENCES, (0, 'zz\n', '')),
     'callable-results': (CALLABLE_RESULTS, (0, 'hello\nlit\nlarge\nother\n', '')),
     'raw-c-strings': (RAW_C_STRINGS, (0, '', '')),
+    'raw-text-views': (RAW_TEXT_VIEWS, (0, 'beta\nalpha\nentry\nc\n', '')),
 }
 
 ENDPOINTS = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),

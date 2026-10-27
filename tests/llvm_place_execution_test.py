@@ -564,6 +564,97 @@ int main() {
 '''
 
 
+NESTED_TEXT_VIEW_ARRAYS = r'''
+#include <std/string_view>
+// Nested and `{}`-formed text view arrays: each element is a view, and a
+// view copied out of one is ownerless, so it may be returned.
+std::string_view pick(std::string_view names[3], uint64_t index) { return names[index]; }
+std::string_view cell(std::string_view grid[2][3], uint64_t row, uint64_t column) { return grid[row][column]; }
+uint64_t total(std::string_view grid[2][3]) {
+  mut uint64_t sum = uint64_t(0);
+  for (std::string_view[3] row : grid) {
+    for (std::string_view word : row) { sum += word.size(); }
+  }
+  return sum;
+}
+int main() {
+  std::string_view names[3] = {"ab", "cde", ""};
+  if (pick(names, uint64_t(1)) != "cde" || !pick(names, uint64_t(2)).empty()) { return 1; }
+  std::string_view grid[2][3] = {{"a", "bb", "ccc"}, {"dddd", "", "f"}};
+  std::string_view copy[2][3] = grid;
+  std::println(cell(copy, uint64_t(1), uint64_t(0)));
+  std::string_view blank[2][3] = {};
+  std::string_view mixed[2][2] = {{}, {"x", "yz"}};
+  mut std::string_view cube[2][2][2] = {{{"a", "b"}, {"c", "d"}}, {{"e", "f"}, {"g", "h"}}};
+  cube[1][0][1] = "changed";
+  std::println(cube[1][0][1]);
+  std::println(mixed[1][1]);
+  if (!blank[1][2].empty() || blank[0][0] != "" || mixed[0][1].size() != uint64_t(0)) { return 2; }
+  if (total(grid) != uint64_t(11) || total(blank) != uint64_t(0)) { return 3; }
+  std::string_view& row = grid[1][0];
+  return row == "dddd" ? 0 : 4;
+}
+'''
+
+
+TEXT_VIEW_POINTERS = r'''
+#include <std/string_view>
+// A text view reached through a raw pointer moves as one bitwise value; the
+// bytes it designates stay where they are.
+std::string_view viewAt(std::string_view* item) { unsafe { return *item; } }
+std::string_view wordAt(std::string_view* items, int32_t index) { unsafe { return items[index]; } }
+std::string_view nextOf(std::string_view* items) { unsafe { std::string_view* next = items + 1; return *next; } }
+std::string_view previousOf(std::string_view* items) { unsafe { std::string_view* previous = items - 1; return *previous; } }
+int64_t distance(std::string_view* first, std::string_view* last) { unsafe { return last - first; } }
+void store(std::string_view* item, std::string_view text) { unsafe { *item = text; } }
+void storeAt(std::string_view* items, int32_t index, std::string_view text) { unsafe { items[index] = text; } }
+int main() {
+  mut std::string_view words[3] = {"alpha", "beta", "gamma"};
+  std::println(viewAt(&words[0]));
+  std::println(wordAt(&words[0], 2));
+  std::println(nextOf(&words[1]));
+  std::println(previousOf(&words[1]));
+  if (distance(&words[0], &words[2]) != int64_t(2)) { return 1; }
+  store(&words[1], "BETA");
+  storeAt(&words[0], 2, "GAMMA");
+  std::println(words[1]);
+  std::println(words[2]);
+  mut std::string_view grid[2][2] = {{"a", "b"}, {"c", "d"}};
+  std::println(viewAt(&grid[1][1]));
+  mut std::string_view single = "single";
+  std::string_view* pointer = &single;
+  unsafe { *pointer = "replaced"; }
+  std::println(single);
+  return viewAt(&words[2]) == "GAMMA" ? 0 : 2;
+}
+'''
+
+
+C_STRING_RETURNS = r'''
+// A C string loaded through a raw pointer is the inert address stored there,
+// whether the pointer is a formal, a field or a reference.
+struct Slots {
+  c_string* items = nullptr;
+  int32_t count = 0;
+};
+void put(c_string* items, int32_t at, c_string value) { unsafe { items[at] = value; } }
+c_string second(c_string* items) { unsafe { c_string* next = items + 1; return *next; } }
+c_string at(c_string* items, int32_t index) { unsafe { return items[index]; } }
+c_string first(Slots slots) { unsafe { return slots.items[0]; } }
+c_string viaReference(c_string*& items) { unsafe { return items[1]; } }
+int main() {
+  mut c_string slots[3] = {nullptr, nullptr, nullptr};
+  if (second(&slots[0]) != nullptr) { return 1; }
+  put(&slots[0], 1, "b");
+  if (second(&slots[0]) != slots[1] || at(&slots[0], 1) != slots[1]) { return 2; }
+  mut c_string* base = &slots[0];
+  Slots view{.items = base, .count = 3};
+  if (first(view) != nullptr || viaReference(base) != slots[1]) { return 3; }
+  return at(&slots[0], 2) == nullptr ? 0 : 4;
+}
+'''
+
+
 def successes(root: Path) -> dict[str, str]:
     cases = {'passive-arrays': PASSIVE_ARRAYS, 'global-arrays': GLOBAL_ARRAYS,
              'arrays': ARRAYS, 'basic-references': BASIC_REFERENCES,
@@ -580,7 +671,10 @@ def successes(root: Path) -> dict[str, str]:
              'text-view-arrays': TEXT_VIEW_ARRAYS,
              'c-string-addresses': C_STRING_ADDRESSES,
              'enumerator-references': ENUMERATOR_REFERENCES,
-             'native-record-references': NATIVE_RECORD_REFERENCES}
+             'native-record-references': NATIVE_RECORD_REFERENCES,
+             'nested-text-view-arrays': NESTED_TEXT_VIEW_ARRAYS,
+             'text-view-pointers': TEXT_VIEW_POINTERS,
+             'c-string-returns': C_STRING_RETURNS}
     cases['shipped-example'] = (
         root / 'examples/llvm/places-and-text.gti').read_text()
     cases['enum-references'] = (
@@ -646,9 +740,10 @@ def evidence_cases(root: Path) -> dict[str, str]:
 def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
     cases = evidence_cases(root)
     profiles = {name: (name,) for name in cases}
-    profiles['primitive-pointers'] += ('integral-enum-pointers',)
+    profiles['primitive-pointers'] += ('integral-enum-pointers',
+                                       'text-view-pointers', 'c-string-returns')
     profiles['array-high'] += ('integral-enum-pointers',)
-    profiles['text-view-arrays'] += ('text-array-high',)
+    profiles['text-view-arrays'] += ('text-array-high', 'nested-text-view-arrays')
     assert all(case in cases for profile in profiles.values() for case in profile)
     return profiles
 
