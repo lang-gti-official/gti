@@ -1690,6 +1690,125 @@ void checkProtectedEscapeAnalysis() {
          "abstract formal source");
 }
 
+// A reference of a base or interface type to a borrow carrier borrows the
+// carrier object as a reference of the carrier's own type does: the base hides
+// the stored references, not the object's lifetime. A local binding, a call
+// relaying an upcast argument and an upcast return each keep the carrier
+// borrowed while the view is used, so moving it then is GTI-S2017, and moving
+// it after the view's last use is valid. MIR rejects a carrier reference
+// backed only by the carrier's Stored loan, which designates the external
+// referent rather than the carrier.
+const std::string upcastCarriers = R"gti(
+#include <std/utility>
+interface Gauge { int32_t read(); };
+class Scaled : public Gauge {
+  int32_t value;
+  int32_t& scale;
+public:
+  Scaled(int32_t v, int32_t& s) : value(v), scale(s) {}
+  int32_t read() override { return this.value * this.scale; }
+};
+class Base {
+public:
+  int32_t value;
+  Base(int32_t v) : value(v) {}
+  int32_t get() { return this.value; }
+};
+class Plain : public Base {
+  int32_t& scale;
+public:
+  Plain(int32_t v, int32_t& s) : Base(v), scale(s) {}
+  int32_t read() { return this.value * this.scale; }
+};
+Gauge& pick(Gauge& gauge) { return gauge; }
+Gauge& up(Scaled& scaled) { return scaled; }
+int32_t sample(Gauge& gauge) { return gauge.read(); }
+)gti";
+
+lang::FrontendResult analyzeUpcast(const std::string &body) {
+  return lang::Frontend().analyze(
+      "upcast-carrier-references.gti",
+      upcastCarriers + "int main() {\n  int32_t scale = 3;\n" + body + "\n}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+}
+
+bool rejectedBorrow(const lang::FrontendResult &result) {
+  return !result.canGenerateCode() &&
+         hasDiagnosticCode(result.diagnostics, "GTI-S2017") &&
+         std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code.starts_with("GTI-B");
+                      });
+}
+
+void checkUpcastCarrierReferences() {
+  for (const std::string view :
+       {"Gauge& view = direct;", "Gauge& view = pick(direct);",
+        "Gauge& view = up(direct);"}) {
+    const auto valid =
+        analyzeUpcast("  Scaled direct{2, scale};\n  " + view +
+                      "\n  int32_t first = view.read();\n"
+                      "  Scaled moved = std::move(direct);\n"
+                      "  return first + moved.read() + sample(moved);");
+    if (!valid.canGenerateCode())
+      for (const auto &diagnostic : valid.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+           "an upcast view may end before its carrier moves: " + view);
+    expect(
+        rejectedBorrow(analyzeUpcast("  Scaled direct{2, scale};\n  " + view +
+                                     "\n  Scaled moved = std::move(direct);\n"
+                                     "  return view.read() + moved.read();")),
+        "an upcast view keeps its carrier borrowed: " + view);
+  }
+  expect(rejectedBorrow(analyzeUpcast("  Plain direct{2, scale};\n"
+                                      "  Base& view = direct;\n"
+                                      "  Plain moved = std::move(direct);\n"
+                                      "  return view.get() + moved.read();")),
+         "a base-class view keeps its carrier borrowed");
+  const auto valid = analyzeUpcast("  Scaled direct{2, scale};\n"
+                                   "  Gauge& view = direct;\n"
+                                   "  return view.read();");
+  expect(valid.canGenerateCode(), "an interface view of a carrier lowers");
+  if (!valid.canGenerateCode())
+    return;
+  // Backing the view by the carrier's Stored loan, as lowering did before,
+  // leaves the carrier itself unprotected.
+  bool mutated = false;
+  auto changed = valid.mir;
+  for (const auto &function : valid.mir.functionInstances()) {
+    auto &body = const_cast<lang::MirFunctionInstance *>(
+                     changed.findFunctionInstance(function.id))
+                     ->body;
+    const auto stored = std::find_if(
+        body.loans.begin(), body.loans.end(), [](const auto &loan) {
+          return loan.kind == lang::MirLoanKind::Stored;
+        });
+    if (stored == body.loans.end())
+      continue;
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions) {
+        const auto *destination = instruction.destination
+                                      ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+        if (mutated ||
+            instruction.kind != lang::MirInstructionKind::Initialize ||
+            destination == nullptr ||
+            destination->type.kind != lang::SemanticType::Reference ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != lang::MirOperandKind::Loan)
+          continue;
+        instruction.operands.front().loan = stored->id;
+        mutated = true;
+      }
+  }
+  expect(mutated, "the interface view is initialized from a carrier loan");
+  expect(hasMirVerificationError(lang::verifyMirProgram(changed),
+                                 "reference to a borrow carrier is not "
+                                 "backed by a loan on the carrier"),
+         "MIR rejects a carrier reference backed by its Stored loan");
+}
+
 void checkAbstractCarrierAliasResult() {
   const auto frontend = lang::Frontend().analyze(
       "abstract-carrier-alias-result.gti", R"gti(
@@ -2111,6 +2230,7 @@ int main() {
 } // namespace
 
 int main() {
+  checkUpcastCarrierReferences();
   checkSharedAccessorRange();
   checkAccessorReturnedTextCarriers();
   checkAbstractCarrierAliasResult();

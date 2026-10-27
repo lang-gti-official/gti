@@ -1989,6 +1989,25 @@ loan's pointer local; re-borrowing the provenance place would re-point the
 published reference at the receiver's storage instead of the returned
 element.
 
+A reference to a borrowed carrier, of the carrier's own type or a base or
+interface type, is initialized from a loan on the carrier object, as a `Borrow`
+of a same-class reference publishes it. `verifyMirBorrowProducers` rejects one
+backed only by the carrier's `Stored` loan (`reference to a borrow carrier is
+not backed by a loan on the carrier`), because that loan designates the
+external referent and leaves the carrier movable while the view lives. An
+upcast call argument borrows the carrier's place, a call relaying it borrows
+the carrier's shell, and an upcast reference return publishes the parameter's
+exact referent.
+
+MIR does not yet check that a call returning text by value under a loan
+carries borrowed state in its result. Lowering keeps a conservative loan on
+the argument of a call that relays ownerless text, as `relay(text)` does over
+a literal-backed `text`, and semantics correctly gives that result no borrowed
+state, so requiring borrowed state of every such result rejects valid
+programs. The precise rule is open: it needs `TextContracts`' ownerless
+provenance, so that a text call result must carry borrowed state only when its
+loan's source holds owner-dependent text.
+
 A dynamic-text return summary is an upper bound on dependent alternatives,
 not a requirement to invent an owner for static storage. A read-only summarized
 function may return a literal-backed text view or a null C-string alternative
@@ -2304,6 +2323,14 @@ place whose object carries a `Stored` loan designating the field: a carrier
 binding of that loan, or the construction's own result value. A write into
 such a field still requires ownerless text. A temporary's field view, whose
 value has no unprojected place, takes its record type from that value.
+
+A text field a base class declares is a field of each derived value, which
+`isOwnerlessTextStorageProjection` finds through the instance's
+non-interface bases. A class with a base keeps its text fields ownerless.
+`initializerTextInputs` gives a constructor each requirement of the base
+constructor its base initializer passes a formal to, settled over every base
+chain, and `scan` applies a body's `InitializeBase` operands to the base
+constructor's requirements as it does a `Construct`'s.
 
 That exclusion, `dependentDesignationPath` and the relay-result check read
 carrier lists, so a list must not omit a binding that holds a published

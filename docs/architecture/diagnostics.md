@@ -443,7 +443,16 @@ ownerless text (`GTI-S2045`) relates the callee parameter with the note
 forwards it.` Text a lambda capture provided reports `GTI-S2045` at the
 return, store, argument or invocation-pointer formation that would let it
 escape, with a hint that the lambda's text has an owner the compiler cannot
-name. A local view's escape decided when its body completes is reported at
+name. An invocation pointer formed from a namespace function whose text
+result depends on a parameter reports `GTI-S2045` at the formation (inside
+`std::function_ptr`, at its construction), relates the relayed parameter with
+`The target's result relays this parameter's text.`, and hints at an ownerless
+target or a direct call. Dynamic text passed to a derived constructor that
+forwards it to a base constructor storing it reports `GTI-S2045` at the
+argument, relates the base initializer with `This base initializer passes the
+view to a base constructor that stores it, so it requires an ownerless
+argument.`, and hints that a class with a base keeps its text fields
+ownerless. A local view's escape decided when its body completes is reported at
 that escape, not at the later assignment that gave the view captured text.
 Changing, moving or replacing a dynamic view's owner while a closure over the
 view, or a local holding its call result, is still used reports the ordinary

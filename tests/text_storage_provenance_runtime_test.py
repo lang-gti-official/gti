@@ -8,10 +8,12 @@ MIR proves each result ownerless, as it does a reassigned local's text, a
 method's call result through its receiver's field, and an erased callable's
 result through a virtual root or std::function. An override keeps its root's
 relay in its own instance of the root's class, and an overloaded operator's
-text result keeps its relayed owner borrowed. A lambda's view over its
-captured text is used only locally and keeps the captured view's owner
-borrowed. Each program must build and behave identically on C++ and LLVM at
--O0 and -O2.
+text result keeps its relayed owner borrowed. An invocation pointer's text
+result is ownerless, so only a target returning ownerless text forms one, and
+a derived method returns an inherited view field as ownerless text. A lambda's
+view over its captured text is used only locally and keeps the captured view's
+owner borrowed. Each program must build and behave identically on C++ and LLVM
+at -O0 and -O2.
 
     python3 tests/text_storage_provenance_runtime_test.py <gti> <repo-root>
 """
@@ -448,6 +450,82 @@ int main() {
 }
 '''
 
+INVOCATION_POINTER_TARGETS = r'''
+#include <std/functional>
+#include <std/string>
+// An invocation pointer's text result is ownerless (owner decision
+// 2026-10-27): a function or lambda returning ownerless text forms one, and
+// its results keep no argument's owner borrowed.
+std::string_view tag(std::string_view s) {
+  if (s.empty()) { return "empty"; }
+  return "full";
+}
+std::string_view call(std::function_ptr<std::string_view(std::string_view)> pointer,
+                      std::string_view text) {
+  return pointer(text);
+}
+int main() {
+  auto quiet = [](std::string_view s) -> std::string_view {
+    return s.empty() ? "none" : "some";
+  };
+  std::function_ptr<std::string_view(std::string_view)> named{tag};
+  std::function_ptr<std::string_view(std::string_view)> lambda{quiet};
+  mut std::string owner{"owned"};
+  std::string_view first = named(owner.view());
+  std::string_view second = lambda(owner.view());
+  owner.append("!");
+  std::println(first);
+  std::println(second);
+  std::println(call(named, ""));
+  std::println(call(lambda, owner.view()));
+  return 0;
+}
+'''
+
+INHERITED_TEXT_FIELDS = r'''
+#include <std/string>
+// A view field a base class declares is the derived value's field too, and a
+// class with a base keeps its text fields ownerless: a derived method,
+// virtual or not, returns an inherited view field as ownerless text.
+class Base {
+public:
+  std::string_view text;
+  Base(std::string_view text) : text(text) {}
+  virtual std::string_view name() { return "base"; }
+};
+class Derived : public Base {
+public:
+  Derived(std::string_view text) : Base(text) {}
+  std::string_view name() override { return this.text; }
+  std::string_view plain() { return this.text; }
+};
+class Holder<T> {
+public:
+  std::string_view text;
+  T value;
+  Holder(std::string_view text, T value) : text(text), value(value) {}
+  virtual std::string_view name() { return this.text; }
+};
+class Special<T> : public Holder<T> {
+public:
+  Special(T value) : Holder<T>("special", value) {}
+  std::string_view name() override { return this.text; }
+};
+Derived make(std::string_view text) { return Derived(text); }
+int main() {
+  Derived derived = make("derived");
+  Base& base = derived;
+  Special<int> special{1};
+  Holder<int>& holder = special;
+  Holder<int> plain{"held", 2};
+  std::println(base.name());
+  std::println(derived.plain());
+  std::println(holder.name());
+  std::println(plain.name());
+  return 0;
+}
+'''
+
 CASES = {
     'array-elements': (ARRAY_ELEMENTS, (0, 'cde\nab\ntwo\nright\nplaced\n', '')),
     'array-fields-and-lambdas': (ARRAY_FIELDS_AND_LAMBDAS, (0, 'yz\nlabel\n', '')),
@@ -468,6 +546,10 @@ CASES = {
         0, 'owned\nliteral\nowned\n', '')),
     'operator-text-relays': (OPERATOR_TEXT_RELAYS, (
         0, 'owned\nowned\nowned\nliteral\nplain\nplain!\nowned!\n', '')),
+    'invocation-pointer-targets': (INVOCATION_POINTER_TARGETS, (
+        0, 'full\nsome\nempty\nsome\n', '')),
+    'inherited-text-fields': (INHERITED_TEXT_FIELDS, (
+        0, 'derived\nderived\nspecial\nheld\n', '')),
 }
 
 ENDPOINTS = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
