@@ -10152,6 +10152,40 @@ sanitized runtime archive for runtime coverage. It does not instrument generated
 LLVM code and cannot satisfy production generated-code sanitizer gates.
 The narrow supported profile and remaining proof obligations are recorded in
 [C04](../plans/implementation-sequence.md#c04-failure-transport-evaluation).
+The default `scalar-cleanup` profile still rejects native imports. Explicit
+`--profile native-boundary` selects a separate private matrix for declaration-
+backed scalar C calls with exact optional `int*` observer parameters. It binds
+the sealed declaration, signature, staged inputs and pointer-call unsafe
+permission; function-pointer imports, opaque objects, foreign storage and
+callbacks remain outside this evaluation profile. Omitted/default profiles,
+mutated targets/symbols/signatures/stages/permissions and frontend unsafe
+violations reject. No production admission or backend selection is changed.
+
+Both the body and cleanup landingpads forward the actual exception pointer.
+The harness rejects any one-argument channel-transfer call before linking,
+so neither path can silently retain a TLS-only transfer convention.
+
+Every experimental unwind landingpad must supply its actual exception pointer
+to the test-owned carrier transfer helper. Before reading a GTI channel, the
+helper checks the public unwind-header class for the linked libc++abi/libsupc++
+runtime, then compares the opaque pointer returned by `__cxa_get_exception_ptr`
+with the live private carrier object's registered address. TLS activity alone
+is insufficient. This uses the
+[Itanium unwind and C++ accessor contracts](https://itanium-cxx-abi.github.io/cxx-abi/abi-eh.html),
+not private exception-header offsets, payload casts or catch ownership changes.
+Dependent exceptions, other runtime classes and nonmatching objects terminate
+in this private evaluation; cross-runtime and forced-unwind support is not claimed.
+
+The native matrix checks conforming translated C results, subsequent GTI failure
+attribution and source cleanup, plus deliberately violating foreign throws
+before a primary and during its cleanup. The latter includes an unrelated C++
+exception, an unregistered object of the same private type, and a Level-I unwind
+object without any C++ header. Parent-visible cleanup slots and channel-read
+counts distinguish these from the actual active carrier. They terminate without
+reusing a primary record; this is experimental classification, not a newly
+selected outbound containment contract. `llvm_c04_cost.py --fixtures
+native_boundary` consumes only matching native-profile receipts and reports
+the same bounded candidate cost fields as the scalar matrix.
 Use `--call-boundaries fixed` (the default) for the controlled noinline baseline
 and `--call-boundaries optimizable` in a separate output directory for ordinary
 LLVM pipeline decisions. The latter removes only the experiment's `noinline`
@@ -10226,6 +10260,177 @@ case. The default five-workload selection remains compatible with earlier receip
 Neither boundary mode's microbenchmarks establish whole-program speedups,
 allocation counts, worker/callback costs, contention isolation or final transport
 acceptance. Keep those missing obligations explicit in the C04 decision.
+
+`tests/llvm_c04_allocations.py` separately relinks validated unsanitized O3
+objects with an allocation observation library; pass `--root`, `--evidence`,
+`--runtime` and a fresh `--output`. It preserves the original object/runtime
+hashes and records the instrumented executable and observation-source identities.
+It is not a timing run. Positive controls require one successful replacement
+C++ `new`/`delete` and one actual `__cxa_allocate_exception` provider call;
+disabled-counter controls precede each measured execution. Direct and indirect
+success, failure and alternating entry retain the execution/cleanup oracle.
+`tests/llvm_c04_allocations_test.py` rejects forged or omitted control/count facts.
+
+Counts cover successful intercepted C++ allocation requests and requested bytes,
+delete calls, and primary exception-provider requests/payload bytes. They do
+not count direct malloc/calloc/realloc, all allocations inside dynamic libraries,
+allocator residency or exception ABI headers. A provider can use pooled storage,
+so an exception request is not evidence of a fresh system allocation. The
+initial Darwin control showed that libc++abi's internal exception-release call
+does not traverse the interposed public symbol; exception deallocation counts
+are therefore explicitly unavailable, not assumed zero. This probe does not
+establish OOM behavior or complete allocation freedom.
+
+The explicit private `--profile dynamic-calls` selects a sealed source root and
+its verified dependency closure, including actual `function_ptr` formation and
+invocation. It does not change or fabricate the production admission plan.
+Both candidates use the central ABI planner; the unwind copy forwards its
+planned direct result instead of interpreting it as a Boolean status. A runtime
+choice between two source targets executes through the real generated adapters.
+Mutation controls reject missing/duplicate/forged roots, missing targets,
+signatures and staged inputs. Scalar-profile omission and the original scalar
+negative fixtures still reject before overwriting an existing object.
+
+The separate `--profile scoped-workers` consumes actual sealed scoped-task
+adapters from public `std::parallel_invoke`. The evaluation-only C envelope uses
+the existing runtime to start and join real workers, retain the first failed
+input's record/artifact, and then drain task-owned cleanup recipes in reverse
+order on the caller. A private entry catches the actual candidate carrier only
+after the GTI worker frames have finished cleanup; only then does it invoke the
+existing C++ managed-worker handoff. That runtime marker never substitutes for
+the primary GTI carrier. The task descriptor/query signature is test-owned,
+not a selected production worker convention.
+
+Worker fixtures cover disjoint borrowed referents, repeated calls, source-local
+cleanup, task-owned cleanup on success and worker failure, first caller-side
+cleanup failure and immediate terminal secondary failure with both original
+sites. Source-destructor task types retain their explicit `unsafe_transfer`
+obligation; omission rejects with GTI-S2084. Exact scope/adapter/target/catch facts
+have mutation controls. Deterministic runtime creation faults exercise zero and
+one started worker, join-all, cleanup of unstarted tasks and immediate reuse.
+Nested scopes and worker-local destructors with failure-capable MIR operations
+remain rejected pending the private emergency-handoff landingpad comparison.
+The ordinary lifetime guards are retained even for leaf destructor bodies.
+These profiles add no public admission, thread lowering, foreign-firewall policy
+or production failure ABI.
+
+Use `--fixtures dynamic_pointer` or `--fixtures scoped_worker` with the cost
+and allocation reporters on the matching profile's receipts. Worker timing
+includes actual host thread start/join, not just a synthetic status loop; choose
+bounded iteration counts and retain raw variation. Worker allocation runs also
+measure an independent empty-task baseline through the same runtime: at least
+two runtime state allocations plus any host thread-library allocations per
+two-worker scope, with balanced deletion. Generated worker execution must match
+that measured allocation/byte baseline. Ordinary failure uses two existing C++
+runtime handoff exceptions in either candidate; the unwind candidate additionally
+allocates two private GTI worker carriers and one caller carrier after join.
+Counts remain provider observations, not total heap or timing evidence.
+
+##### C04 Two-Host Decision Evidence (2026-10-27)
+
+This is a recommendation to the ABI/failure owner, not a selected convention
+or production acceptance. Exact clean source
+`d655441fd77834402147a8eb9a4d2f9e4c364c83` includes the frozen integration
+`aac6bd032d2e1e083331e60091d3311eaf1ac6b6`; later integration source is not
+covered. PR 363 preserves the implementation and dependency histories.
+
+Darwin AArch64 (LLVM 23.1.2) and Linux x86_64 System V (LLVM 21, GCC 14)
+passed, for each fixed/optimizable policy: dynamic 4/4, workers 16/16,
+native boundary 4/4 and scalar cleanup 92/92 observations. Dynamic/worker
+helper ASan/UBSan matrices passed 4/4 and 16/16, respectively; generated
+objects and the runtime archive were not instrumented by those helper flags.
+Both allocation profiles passed 12 observations per policy. Cost controls
+6/6, allocation controls 3/3 and ten affected native/callable/dispatch/storage/
+memory/admission/cleanup gates passed. This is not a full campaign or proof
+of worker-local fallible cleanup, nested scopes, arbitrary erased environments,
+public callback transport or final fallible embedding.
+
+The Linux managed run `run-50f2841a136e46d0b759ad03766fe785` passed, was fetched
+and removed. Snapshot SHA256:
+`1c09ddc805ce024cdbeb4deb348bec919e079492b5fd8cc9289546d1833c4e3e`.
+Its lossless content-addressed archive retains 22,620 artifact paths and 8,932
+unique objects in 20 ZIPs; every CRC, size and SHA256 was verified, with no
+runner truncation. The Mac archive retains the same path count and 8,626 unique
+objects in 20 verified ZIPs. Durable results are under the primary checkout's
+`build-worktrees/llvm-production-native-handoff/{c04-d655-macos,linux-c04-d655-validation}`;
+the handoff records commands, source hashes, archive indexes and older evidence.
+
+O3 dynamic-call medians below are nanoseconds per invocation, status/unwind;
+the ranges cover direct and indirect root entry, not confidence intervals.
+Each entry still performs actual runtime-selected GTI adapter invocation.
+
+| Host / boundaries | Success | Failure unwind/status |
+| --- | --- | --- |
+| Darwin fixed | 7.90 / 8.03-8.22 | 72.8-73.3 |
+| Darwin optimizable | 4.17-4.18 / 2.55-2.81 | 59.2-59.7 |
+| Linux fixed | 12.65-12.68 / 11.03-11.05 | 12.99-13.08 |
+| Linux optimizable | 6.83-7.96 / 3.99-4.01 | 11.30-11.72 |
+
+Linux timing overlapped another registered two-job build; load average was
+about 3.10 on eight CPUs and raw samples vary materially. Darwin load was
+about 4.35-4.47 on twelve CPUs. Neither run establishes isolated whole-program
+speedups. The Darwin optimized dynamic result is nevertheless a concrete
+status hot-path disadvantage (1.36-1.63 ns), not parity. Retained optimized IR
+shows status output slots/branches versus direct scalar return with unwind;
+this is a plausible explanation, not a new ABI contract. Real two-worker
+success medians span 14.8-16.2 us on Darwin and 33.1-37.8 us on Linux, with
+variation and inconsistent winner. Worker failure unwind/status ratios are
+1.60-1.74 on Darwin and 1.10-1.20 on Linux; no worker-success parity claim.
+
+Optimizable dynamic text/unwind bytes are status 1192/488 versus unwind
+984/576 on Darwin, and 1045/416 versus 933/388 on Linux. Optimizable worker
+bytes are 1024/328 versus 848/360 and 963/280 versus 803/272, respectively.
+Receipts retain fixed-policy sizes, complete object/executable sizes, fixture
+emission/link wall time and peak RSS. These are not full compiler build costs.
+
+For 64 dynamic failures, status observed no exception-provider requests and
+unwind observed 64 one-byte payload requests; neither observed C++ new/delete.
+For 64 two-worker scopes, both candidates exactly matched the independently
+measured empty-runtime baseline: Darwin 512 new/delete calls, 248832 requested
+bytes; Linux 256 calls, 238592 bytes. Worker failures observed 128 exception
+requests for status and 320 for unwind, including existing runtime handoffs.
+Success observed no exception requests. These are bounded provider counts,
+not total heap allocations, exception frees, residency or OOM evidence.
+
+**Recommendation:** pursue native unwinding as the proposed hosted internal
+transport, subject to the explicit owner decision and correctness obligations
+below; retain current production status behavior until that migration is
+validated. This revises the earlier native-only provisional status preference:
+actual optimized dynamic adapters expose a successful-path and text-size cost
+that the native-only comparison did not measure. The recommendation prioritizes
+successful internal calls, not an assumed measured application failure rate.
+It explicitly accepts neither the substantial failure-path cost nor the status
+hot-path disadvantage on the owner's behalf. Expected/recoverable source
+results remain ordinary values; do not benchmark a different failure contract
+or hide costs by moving source failures into that protocol.
+
+The owner must accept the measured workload tradeoffs or require optimization
+before selecting either candidate. Required remaining implementation inputs:
+
+- Approve the exact C04-only managed-emergency landingpad extension retained as
+  `c04-managed-emergency-resume.patch` in the handoff. It changes no production
+  owner cleanup or dispatch. Body and cleanup landings must resume an active
+  managed emergency before reading a GTI channel. The existing typed runtime
+  catcher, not TLS alone, establishes handoff identity; foreign exceptions
+  terminate. Prove disposal of a superseded, previously identity-verified GTI
+  carrier only after its LLVM frames exit, without guessed exception headers,
+  double destruction, primary reuse or abandoned-carrier leaks. Until then
+  worker-local fallible cleanup and nesting remain explicit rejections.
+- Select carrier ownership, OOM/emergency storage, personality/unwinder and
+  foreign/forced/dependent-unwind policy for both supported targets. The private
+  C++ marker and test-owned worker query are not production ABI proposals.
+  Ordinary C callbacks remain terminal containment; imports retain their
+  no-foreign-unwind contract. A violating foreign throw is not a GTI failure.
+- Record one convention and migration in ADR 031/C04, then update the single
+  ABI authority, all definitions/call forms/adapters, ABI/cache identity and
+  runtime/package linkage together. Native C signatures stay separate. Define
+  fallible embedding ownership, output publication and unload pinning without
+  letting an internal carrier cross the ordinary C export boundary.
+- Complete generated-code/runtime sanitizer, application-level performance,
+  dynamic-owner lifecycle and installed-consumer checks on the selected source.
+  Retain constructor/result/parameter rollback, original artifact attribution,
+  worker join-all and terminal secondary-failure semantics. Remove the private
+  comparison hooks after migration; no permanent alternate production backend.
 
 Under [the backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25),
 LLVM owns new backend development; C++ is bug-fix-only through v1.0 and serves

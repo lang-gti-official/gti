@@ -1306,8 +1306,9 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       ir.CreateStore(landing, unwindState);
       auto transfer = session.module().getOrInsertFunction(
           "__gti_c04_evaluate_current",
-          llvm::FunctionType::get(ir.getVoidTy(), {pointer}, false));
-      ir.CreateCall(transfer, {scratch})->setDoesNotThrow();
+          llvm::FunctionType::get(ir.getVoidTy(), {pointer, pointer}, false));
+      ir.CreateCall(transfer, {scratch, ir.CreateExtractValue(landing, 0)})
+          ->setDoesNotThrow();
       observe(ir.getFalse());
       ir.CreateBr(next);
       ir.SetInsertPoint(next);

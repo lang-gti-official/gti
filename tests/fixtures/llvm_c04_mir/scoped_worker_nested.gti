@@ -1,0 +1,16 @@
+#include <std/thread>
+struct Task {
+  mut int& slot;
+  Task(mut int& target) : slot(target) {}
+  void operator()() mut { slot = 1; }
+};
+struct Nested {
+  mut int& slot;
+  Nested(mut int& target) : slot(target) {}
+  void operator()() mut { [[discard]] std::parallel_invoke(Task(slot)); }
+};
+int sample(int input, mut int& first, mut int& second, mut int& outer) {
+  [[discard]] std::parallel_invoke(Nested(first), Nested(second));
+  outer = 1;
+  return input + 1;
+}

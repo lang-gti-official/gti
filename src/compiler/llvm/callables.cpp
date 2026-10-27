@@ -107,6 +107,15 @@ llvm::Function *Callables::pointerAdapter(const MirInstruction &formation) {
 
   auto *call = ir.CreateCall(findBody(target), inputs);
   inward.applyTo(*call);
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+  if (inward.type->getReturnType() != outward.type->getReturnType())
+    throw std::logic_error("C04 invocation adapter return plans disagree");
+  if (call->getType()->isVoidTy())
+    ir.CreateRetVoid();
+  else
+    ir.CreateRet(call);
+  return adapter;
+#endif
   if (inward.statusResult) {
     ir.CreateRet(call);
     return adapter;

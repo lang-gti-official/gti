@@ -1,0 +1,21 @@
+#include <std/thread>
+
+struct Marker {
+  mut int& slot;
+  Marker(mut int& target) : slot(target) {}
+  ~Marker() { if (slot == 0) { slot = 1; } else { slot = 2; } }
+};
+struct Task {
+  int input;
+  mut int& slot;
+  Task(int value, mut int& target) : input(value), slot(target) {}
+  void operator()() mut {
+    Marker marker{slot};
+    int result = input + 1;
+  }
+};
+int sample(int input, mut int& first, mut int& second, mut int& outer) {
+  Marker marker{outer};
+  [[discard]] std::parallel_invoke(Task(input, first), Task(input, second));
+  return input + 1;
+}

@@ -8,7 +8,7 @@ get_target_property(c04_backend_sources gti_llvm_backend SOURCES)
 list(TRANSFORM c04_backend_sources PREPEND "${PROJECT_SOURCE_DIR}/")
 foreach(mode IN ITEMS status unwind)
   add_library(gti_c04_${mode}_backend STATIC EXCLUDE_FROM_ALL
-    ${c04_backend_sources} llvm_c04_admission.cpp)
+    ${c04_backend_sources} llvm_c04_admission.cpp llvm_c04_workers.cpp)
   target_include_directories(gti_c04_${mode}_backend PUBLIC
     "${PROJECT_SOURCE_DIR}/include")
   target_include_directories(gti_c04_${mode}_backend SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})

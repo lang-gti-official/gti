@@ -1,0 +1,8 @@
+using Operation = (int) -> int;
+extern "C" { Operation select_operation(); }
+int sample(int input) {
+  unsafe {
+    Operation operation = select_operation();
+    return operation(input) + 1;
+  }
+}

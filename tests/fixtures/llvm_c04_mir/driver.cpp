@@ -1,3 +1,4 @@
+#include "carrier.h"
 #include "generated.h"
 
 #include <chrono>
@@ -10,32 +11,45 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#ifndef GTI_C04_TASK_CLEANUP
+#define GTI_C04_TASK_CLEANUP 0
+#endif
+
+#if defined(GTI_C04_ALLOCATIONS)
+#include "allocation_probe.h"
+
+bool allocationControls() {
+  c04_allocation_begin();
+  auto *(*volatile allocate)(std::size_t) = &::operator new;
+  void (*volatile release)(void *) noexcept = &::operator delete;
+  release(allocate(37));
+  try {
+    throw 7;
+  } catch (int value) {
+    if (value != 7)
+      return false;
+  }
+  const auto counted = c04_allocation_end();
+  release(allocate(41));
+  const auto disabled = c04_allocation_end();
+  return counted.newCalls == 1 && counted.newBytes == 37 &&
+         counted.deleteCalls == 1 && counted.exceptionCalls == 1 &&
+         counted.exceptionBytes == sizeof(int) &&
+         disabled.newCalls == counted.newCalls &&
+         disabled.deleteCalls == counted.deleteCalls;
+}
+#endif
+
+#if GTI_C04_NATIVE_BOUNDARY
+#include "native_boundary_driver.h"
+#endif
+#if GTI_C04_SCOPED_WORKERS
+#include "worker_driver.h"
+#endif
+
 struct Observation {
   int32_t slots[3]{};
 };
-
-// The isolated experimental edge is explicitly unwind-permitted. It does not
-// alter any production C callback/runtime service contract. C++ exception
-// storage/OOM/foreign exception handling are not validated by this experiment.
-#if !GTI_C04_STATUS
-namespace {
-struct EvaluationFailure {};
-thread_local Channel activeFailure{};
-thread_local bool unwinding = false;
-} // namespace
-extern "C" [[noreturn]] void __gti_c04_evaluate_raise(const Channel *channel) {
-  if (unwinding)
-    std::terminate();
-  activeFailure = *channel;
-  unwinding = true;
-  throw EvaluationFailure{};
-}
-extern "C" void __gti_c04_evaluate_current(Channel *channel) noexcept {
-  if (!unwinding)
-    std::terminate();
-  *channel = activeFailure;
-}
-#endif
 
 bool call(int32_t input, int32_t &value, Channel &failure, bool indirect,
           int32_t (&slots)[3]) {
@@ -46,23 +60,42 @@ bool call(int32_t input, int32_t &value, Channel &failure, bool indirect,
 #define GTI_C04_ARGUMENTS input
 #endif
 #if GTI_C04_STATUS
-  return indirect ? target(&value, &failure, GTI_C04_ARGUMENTS)
-                  : GTI_C04_ENTRY(&value, &failure, GTI_C04_ARGUMENTS);
+#if GTI_C04_NATIVE_BOUNDARY
+  try {
+#endif
+    return indirect ? target(&value, &failure, GTI_C04_ARGUMENTS)
+                    : GTI_C04_ENTRY(&value, &failure, GTI_C04_ARGUMENTS);
+#if GTI_C04_NATIVE_BOUNDARY
+  } catch (...) {
+    std::fputs("C04 foreign exception outside channel\n", stderr);
+    std::_Exit(86);
+  }
+#endif
 #else
   try {
     value =
         indirect ? target(GTI_C04_ARGUMENTS) : GTI_C04_ENTRY(GTI_C04_ARGUMENTS);
     return true;
-  } catch (const EvaluationFailure &) {
-    failure = activeFailure;
-    unwinding = false;
+  } catch (const c04_test::EvaluationFailure &caught) {
+    if (!c04_test::unwinding || &caught != c04_test::activeCarrier)
+      c04_test::foreignException();
+    failure = c04_test::activeFailure;
+    c04_test::unwinding = false;
     return false;
+#if GTI_C04_NATIVE_BOUNDARY
+  } catch (...) {
+    c04_test::foreignException();
+#endif
   }
 #endif
 #undef GTI_C04_ARGUMENTS
 }
 
 int main(int argc, char **argv) {
+#if defined(GTI_C04_ALLOCATIONS)
+  if (!allocationControls())
+    return 9;
+#endif
   const bool failureCase = argc > 1 && argv[1][0] == 'f';
   const bool mixed = argc > 1 && argv[1][0] == 'm';
   const bool indirect = argc > 2 && argv[2][0] == 'i';
@@ -86,6 +119,26 @@ int main(int argc, char **argv) {
   Channel failure{};
   int32_t value = 0;
   std::uint64_t sum = 0;
+#if defined(GTI_C04_ALLOCATIONS)
+  C04AllocationCounts runtimeBaseline{};
+#if GTI_C04_SCOPED_WORKERS
+  int inert = 0;
+  C04Task task{
+#if GTI_C04_STATUS
+      +[](Channel *, void *) -> bool { return true; },
+#else
+      +[](void *) {},
+#endif
+      &inert};
+  C04Task tasks[2]{task, task};
+  c04_allocation_begin();
+  for (unsigned long index = 0; index < iterations; ++index)
+    if (__gti_c04_worker_scope(&failure, tasks, 2) != GTI_THREAD_SPAWN_OK_V1)
+      return 11;
+  runtimeBaseline = c04_allocation_end();
+#endif
+  c04_allocation_begin();
+#endif
   const auto started = std::chrono::steady_clock::now();
   for (unsigned long index = 0; index < iterations; ++index) {
     const bool failing = failureCase || (mixed && index % 2 != 0);
@@ -95,10 +148,21 @@ int main(int argc, char **argv) {
     auto &slots = observation ? observation->slots : localSlots;
     for (auto &slot : slots)
       slot = 0;
+    unsigned startedWorkers = 2;
+#if GTI_C04_SCOPED_WORKERS
+    if (const char *fault = std::getenv("GTI_C04_WORKER_FAIL_AFTER")) {
+      startedWorkers = static_cast<unsigned>(std::strtoul(fault, nullptr, 10));
+      if (startedWorkers > 1 || failing)
+        return 12;
+      gti::runtime::detail::setScopedThreadTestFailureAfter(startedWorkers);
+    }
+#endif
     const bool succeeded = call(input, value, failure, indirect, slots);
 #if GTI_C04_BORROWED_CLEANUP
     const auto leafDrops =
-#if GTI_C04_FAILED_CONSTRUCTION
+#if GTI_C04_TASK_CLEANUP
+        2;
+#elif GTI_C04_FAILED_CONSTRUCTION
         failing ? 0 : 1;
 #else
         1;
@@ -109,7 +173,9 @@ int main(int argc, char **argv) {
 #else
         1;
 #endif
-    if (slots[0] != leafDrops || slots[1] != 1 || slots[2] != ownerDrops)
+    const auto expectedFirst = startedWorkers > 0 ? leafDrops : GTI_C04_TASK_CLEANUP ? 3 : 0;
+    const auto expectedSecond = startedWorkers > 1 ? (GTI_C04_TASK_CLEANUP ? 2 : 1) : GTI_C04_TASK_CLEANUP ? 3 : 0;
+    if (slots[0] != expectedFirst || slots[1] != expectedSecond || slots[2] != ownerDrops)
       return 6;
 #endif
     if (succeeded == failing || (!failing && value != input + 1))
@@ -125,6 +191,30 @@ int main(int argc, char **argv) {
       sum += static_cast<std::uint32_t>(value);
     }
   }
+#if defined(GTI_C04_ALLOCATIONS)
+  const auto counted = c04_allocation_end();
+  const char *report = std::getenv("GTI_C04_ALLOCATION_REPORT");
+  FILE *file = report ? std::fopen(report, "w") : nullptr;
+  if (!file)
+    return 10;
+  std::fprintf(file,
+               "{\"controls\":true,\"new_calls\":%llu,\"new_bytes\":%llu,"
+               "\"delete_calls\":%llu,\"exception_calls\":%llu,"
+               "\"exception_bytes\":%llu,\"runtime_new_calls\":%llu,"
+               "\"runtime_new_bytes\":%llu,\"runtime_delete_calls\":%llu,"
+               "\"runtime_exception_calls\":%llu,\"runtime_exception_bytes\":%llu}\n",
+               static_cast<unsigned long long>(counted.newCalls),
+               static_cast<unsigned long long>(counted.newBytes),
+               static_cast<unsigned long long>(counted.deleteCalls),
+               static_cast<unsigned long long>(counted.exceptionCalls),
+               static_cast<unsigned long long>(counted.exceptionBytes),
+               static_cast<unsigned long long>(runtimeBaseline.newCalls),
+               static_cast<unsigned long long>(runtimeBaseline.newBytes),
+               static_cast<unsigned long long>(runtimeBaseline.deleteCalls),
+               static_cast<unsigned long long>(runtimeBaseline.exceptionCalls),
+               static_cast<unsigned long long>(runtimeBaseline.exceptionBytes));
+  std::fclose(file);
+#endif
   const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
                            std::chrono::steady_clock::now() - started)
                            .count();

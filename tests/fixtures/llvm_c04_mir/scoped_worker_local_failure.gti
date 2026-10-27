@@ -1,0 +1,21 @@
+#include <std/thread>
+struct Cleanup {
+  int input;
+  mut int& slot;
+  Cleanup(int value, mut int& target) : input(value), slot(target) {}
+  ~Cleanup() { slot = 1; int result = input + 1; }
+};
+struct Task {
+  int input;
+  mut int& slot;
+  Task(int value, mut int& target) : input(value), slot(target) {}
+  void operator()() mut {
+    Cleanup cleanup{input, slot};
+    int result = input + 1;
+  }
+};
+int sample(int input, mut int& first, mut int& second, mut int& outer) {
+  [[discard]] std::parallel_invoke(Task(input, first), Task(input, second));
+  outer = 1;
+  return input + 1;
+}
