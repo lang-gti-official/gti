@@ -1,0 +1,175 @@
+// A derived constructor forwards its own reference formals to its base
+// constructor. The referents are classes and enums that hold no borrowed
+// state of their own: plain and owning classes, a payload enum, a polymorphic
+// class and an interface view. MIR stages each forwarded reference as a borrow
+// input to the base initialization; the base reads or mutates the referent
+// but cannot retain it. The C++ backend does not represent this staging.
+#include <std/string>
+
+mut int64_t events = 0;
+
+void note(int code) { events = events * 10 + int64_t(code); }
+
+class Mark {
+  int id;
+public:
+  Mark(int id) : id(id) {}
+  Mark(Mark& other) = delete;
+  Mark(Mark&& other) = default;
+  ~Mark() { note(this.id); }
+  int value() { return this.id; }
+};
+
+class Point {
+public:
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+
+class Counter {
+public:
+  mut int count;
+  Counter() : count(0) {}
+};
+
+enum Parcel { empty, held(Mark mark) };
+
+int parcel_value(Parcel& parcel) {
+  switch (parcel) {
+  case Parcel::empty: return 0;
+  case Parcel::held(auto& mark): return mark.value();
+  }
+}
+
+class Animal {
+public:
+  int legs;
+  Animal(int legs) : legs(legs) {}
+  virtual int sound() { return 1; }
+};
+
+class Dog : public Animal {
+public:
+  Dog() : Animal(4) {}
+  int sound() override { return 2; }
+};
+
+interface Shape {
+  int sides();
+};
+
+class Square : public Shape {
+public:
+  int sides() override { return 4; }
+};
+
+// Read-only and mutable class referents, beside a literal and a scalar formal.
+class Measured {
+public:
+  int sum;
+  int scale;
+  int weight;
+  Measured(Point& point, mut Counter& counter, int scale, int weight)
+      : sum(point.x + point.y), scale(scale), weight(weight) {
+    counter.count += 1;
+  }
+};
+
+class Placed : public Measured {
+public:
+  Placed(Point& point, mut Counter& counter, int weight)
+      : Measured(point, counter, 10, weight) {}
+};
+
+// An owning referent is read; the base keeps its own copy.
+class Named {
+public:
+  std::string name;
+  Named(std::string& source) : name(source.clone()) {}
+};
+
+class Labeled : public Named {
+public:
+  Labeled(std::string& source) : Named(source) {}
+};
+
+// Enum, polymorphic and interface referents.
+class Observed {
+public:
+  int parcel;
+  int animal;
+  int shape;
+  Observed(Parcel& parcel, Animal& animal, Shape& shape)
+      : parcel(parcel_value(parcel)), animal(animal.legs * 10 + animal.sound()),
+        shape(shape.sides()) {}
+};
+
+class Watcher : public Observed {
+public:
+  Watcher(Parcel& parcel, Animal& animal, Shape& shape) : Observed(parcel, animal, shape) {}
+};
+
+// Each level forwards the reference it received.
+class Root {
+public:
+  Mark root;
+  Root(Point& point) : root(Mark(point.x)) {}
+  ~Root() { note(9); }
+};
+
+class Middle : public Root {
+public:
+  Middle(Point& point) : Root(point) {}
+  ~Middle() { note(8); }
+};
+
+class Leaf : public Middle {
+public:
+  Mark leaf;
+  Leaf(Point& point) : Middle(point), leaf(Mark(point.y)) {}
+  ~Leaf() { note(7); }
+};
+
+int check() {
+  Point point{3, 4};
+  mut Counter counter{};
+  {
+    Placed first{point, counter, 1};
+    Placed second{point, counter, 2};
+    if (first.sum != 7 || first.scale != 10 || second.weight != 2 || counter.count != 2)
+      return 1;
+  }
+  std::string source = std::string("a source string long enough for the heap");
+  {
+    Labeled labeled{source};
+    if (labeled.name.size() != source.size() || !labeled.name.starts_with("a source"))
+      return 2;
+  }
+  if (source.size() != std::size_t(40))
+    return 3;
+  {
+    Parcel parcel = Parcel::held(Mark(5));
+    Dog dog{};
+    Square square{};
+    Watcher watcher{parcel, dog, square};
+    if (watcher.parcel != 5 || watcher.animal != 42 || watcher.shape != 4)
+      return 4;
+  }
+  // Only the parcel's mark is owned; it ends with the parcel.
+  if (events != 5)
+    return 5;
+  events = 0;
+  {
+    Leaf leaf{point};
+    if (leaf.root.value() != 3 || leaf.leaf.value() != 4)
+      return 6;
+  }
+  // ~Leaf, its own mark, ~Middle, ~Root, then the root's mark.
+  if (events != 74893)
+    return 7;
+  return 0;
+}
+
+// REFERENCE_BASE_MAIN
+int main() { return check(); }

@@ -4519,7 +4519,8 @@ public:
                               }));
                 }))
           add(Shape::StoredFieldPublication);
-      // A base initializer that MIR leaves unstaged has no InitializeBase in
+      // MIR stages owned base arguments as prepared parameters. A base
+      // initializer that MIR still leaves unstaged has no InitializeBase in
       // this body. Its arguments are evaluated and their obligations handed
       // on, but only a backend constructing the base from the record would
       // run the base constructor, and LLVM never does: lowering the body

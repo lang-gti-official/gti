@@ -26,6 +26,13 @@
 namespace lang {
 namespace {
 
+// A base constructor's by-value parameter that a staged initializer may hand
+// an owned prepared argument: an owning class, payload enum or closure.
+[[nodiscard]] bool ownedBaseParameterKind(const SemanticType &type) {
+  return type.kind == SemanticType::Class ||
+         type.kind == SemanticType::Enum || type.kind == SemanticType::Lambda;
+}
+
 [[nodiscard]] const MirClassInstance *
 exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
                         CompilerCapabilityTypeKind capability);
@@ -1083,6 +1090,20 @@ concreteMirTypeTraits(const MirProgram &program, const SemanticType &type,
     traits.moveAssignable = false;
   }
   return traits;
+}
+
+// A base constructor's reference formal that a staged initializer may
+// forward: a passive scalar, or a class or enum object that the catalog
+// records as holding no borrowed state of its own.
+[[nodiscard]] bool forwardableBaseReferent(const MirProgram &program,
+                                           const SemanticType &referent) {
+  if (isPassiveScalarValueType(referent))
+    return true;
+  if (referent.kind != SemanticType::Class &&
+      referent.kind != SemanticType::Enum)
+    return false;
+  const auto traits = concreteMirTypeTraits(program, referent);
+  return traits && !traits->containsBorrowedState;
 }
 
 // Storage owns its element lifetime but carries no external-owner loan. Read
@@ -20218,26 +20239,36 @@ verifyMirProgramContracts(const MirProgram &program) {
                       target->parameterTypes.end(), [](const auto &type) {
                         return type.kind == SemanticType::Reference;
                       });
-      const bool hasReferenceStage =
-          !referenceFamily ||
-          std::any_of(
-              instance.body.blocks.begin(), instance.body.blocks.end(),
-              [&](const auto &block) {
-                return std::any_of(
-                    block.instructions.begin(), block.instructions.end(),
-                    [&](const auto &instruction) {
-                      return instruction.kind ==
-                                 MirInstructionKind::InitializeBase &&
-                             instruction.constructorInitializer != 0 &&
-                             instruction.constructorInitializer <=
-                                 instance.initializers.size() &&
-                             &instance.initializers
-                                     [instruction.constructorInitializer - 1] ==
-                                 &initializer;
-                    });
-              });
+      // An owned by-value parameter (an owning class, payload enum or
+      // closure) moves through a prepared parameter that the stage hands to
+      // the selected constructor. Reference and owned families stay unstaged
+      // when lowering cannot prove every argument.
+      const bool ownedFamily =
+          target && !referenceFamily &&
+          std::any_of(target->parameterTypes.begin(),
+                      target->parameterTypes.end(), [&](const auto &type) {
+                        const auto traits = concreteMirTypeTraits(program, type);
+                        return traits && traits->drop != DropKind::Trivial;
+                      });
+      const bool hasStage = std::any_of(
+          instance.body.blocks.begin(), instance.body.blocks.end(),
+          [&](const auto &block) {
+            return std::any_of(
+                block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind ==
+                             MirInstructionKind::InitializeBase &&
+                         instruction.constructorInitializer != 0 &&
+                         instruction.constructorInitializer <=
+                             instance.initializers.size() &&
+                         &instance.initializers
+                                 [instruction.constructorInitializer - 1] ==
+                             &initializer;
+                });
+          });
       const bool selectedConstructor =
-          target != nullptr && base != nullptr && hasReferenceStage &&
+          target != nullptr && base != nullptr &&
+          (!referenceFamily || hasStage) && (!ownedFamily || hasStage) &&
           target->owner == base->id &&
           target->generatedDefault == initializer.generatedDefault &&
           target->parameterTypes.size() == initializer.arguments.size() &&
@@ -20246,11 +20277,12 @@ verifyMirProgramContracts(const MirProgram &program) {
               [&](const SemanticType &type) {
                 if (type.kind == SemanticType::Reference)
                   return type.arguments.size() == 1 &&
-                         isPassiveScalarValueType(type.arguments.front());
+                         forwardableBaseReferent(program,
+                                                 type.arguments.front());
                 const auto traits = concreteMirTypeTraits(program, type);
-                return traits && traits->drop == DropKind::Trivial &&
-                       !traits->containsBorrowedState &&
-                       type.kind != SemanticType::Reference;
+                return traits && !traits->containsBorrowedState &&
+                       (traits->drop == DropKind::Trivial ||
+                        (ownedFamily && ownedBaseParameterKind(type)));
               });
       const bool selectedGeneratedDefault =
           !initializer.constructorTarget && initializer.generatedDefault &&
@@ -20469,7 +20501,8 @@ verifyMirProgramContracts(const MirProgram &program) {
                       MirPlaceProjection{.kind =
                                              MirProjectionKind::Dereference} &&
                   parameter->arguments.size() == 1 &&
-                  isPassiveScalarValueType(parameter->arguments.front()) &&
+                  forwardableBaseReferent(program,
+                                          parameter->arguments.front()) &&
                   place->type == parameter->arguments.front() && source &&
                   source->kind == SemanticType::Reference &&
                   source->arguments == parameter->arguments &&
@@ -20494,11 +20527,63 @@ verifyMirProgramContracts(const MirProgram &program) {
             const MirValue *value = operand.kind == MirOperandKind::Value
                                         ? instance.body.findValue(operand.value)
                                         : nullptr;
+            const MirInstruction *staged =
+                value ? linearDefinition(instance.body, value->id) : nullptr;
+            if (staged && staged->kind == MirInstructionKind::CallInput &&
+                parameter) {
+              // An owned argument moves into one prepared parameter, which
+              // this stage alone hands to the selected base constructor.
+              const MirDropObligation *prepared =
+                  staged->preparedParameterDrop
+                      ? instance.body.findDropObligation(
+                            *staged->preparedParameterDrop)
+                      : nullptr;
+              // The concrete type catalog, not the staged value's own traits,
+              // decides that this formal owns cleanup.
+              const auto ownedTraits =
+                  concreteMirTypeTraits(program, *parameter);
+              exactArguments =
+                  ownedBaseParameterKind(*parameter) && ownedTraits &&
+                  ownedTraits->drop != DropKind::Trivial &&
+                  !ownedTraits->containsBorrowedState &&
+                  staged->callSite == 0 &&
+                  staged->constructorInitializer ==
+                      instruction.constructorInitializer &&
+                  staged->callInputRole == MirCallInputRole::Argument &&
+                  staged->callInputIndex == index &&
+                  staged->callInputKind == HirCallInputKind::MoveValue &&
+                  staged->hirValue == initializer.arguments[index] &&
+                  staged->info.type == *parameter &&
+                  value->sourceValue == initializer.arguments[index] &&
+                  value->info.type == *parameter &&
+                  value->info.traits.drop != DropKind::Trivial &&
+                  !value->info.traits.containsBorrowedState &&
+                  operand.type == *parameter &&
+                  operand.type == instruction.parameterTypes[index] &&
+                  prepared != nullptr &&
+                  prepared->kind == MirDropObligationKind::PreparedParameter &&
+                  prepared->dropType.type == *parameter &&
+                  std::count_if(instruction.lifecycle.begin(),
+                                instruction.lifecycle.end(),
+                                [&](const MirLifecycleEvent &event) {
+                                  return event.kind ==
+                                             MirLifecycleEventKind::
+                                                 TransferOut &&
+                                         event.source == prepared->id;
+                                }) == 1;
+              continue;
+            }
+            // A formal the catalog records as owning cleanup accepts only
+            // the prepared input above, whatever traits a value claims.
+            const auto passiveTraits =
+                concreteMirTypeTraits(program, operand.type);
             exactArguments =
                 value != nullptr &&
                 value->sourceValue == initializer.arguments[index] &&
                 value->info.type == operand.type &&
                 value->info.traits.drop == DropKind::Trivial &&
+                passiveTraits && passiveTraits->drop == DropKind::Trivial &&
+                !passiveTraits->containsBorrowedState &&
                 liveForwardedBorrow(*value) &&
                 value->info.type.kind != SemanticType::Reference &&
                 operand.type == instruction.parameterTypes[index] &&

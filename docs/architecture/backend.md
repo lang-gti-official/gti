@@ -4953,19 +4953,31 @@ constructor, physical destination and current shared ABI; a failed base never
 installs derived state. MIR retains all base/subobject rollback publication and
 ordering. Unstaged polymorphic source constructors remain unsupported.
 
-MIR leaves a base initializer unstaged when it cannot yet express the base
-call, for example when an argument owns cleanup: a moved string, vector, unique
-owner or a class with a destructor. Such a constructor body evaluates the
-arguments and hands their obligations on, but contains no `InitializeBase`,
-because only a backend that builds the base from the constructor record would
-run the base constructor. LLVM never builds a base from the record, so
+An owned base argument, such as a moved or freshly created string, vector,
+unique owner, payload enum, closure or class with a destructor, is staged by
+MIR as a prepared parameter that the `InitializeBase` hands to the selected
+base constructor (see the base-subobject family in
+[MIR](mir.md)). LLVM lowers that stage through the same call path as an
+ordinary construction with prepared parameters, including the polymorphic
+form, whose dispatch state now has its base anchor.
+
+A forwarded reference formal whose referent is a class or enum object without
+borrowed state, such as `Point&`, `std::string&`, a payload enum, a
+polymorphic class or an interface view, is staged as a borrow input and lowers
+the same way.
+
+MIR still leaves a base initializer unstaged when it cannot yet express the
+base call: an owned argument beside a reference formal, a reference formal
+whose referent holds borrowed state, a borrow carrier passed by value or an
+array of owning elements passed by value. Such a constructor body evaluates
+the arguments and hands
+their obligations on, but contains no `InitializeBase`, because only a backend
+that builds the base from the constructor record would run the base
+constructor. LLVM never builds a base from the record, so
 `UnstagedBaseInitializer` refuses any constructor with a class-base initializer
 that has no `InitializeBase` in its body. Stateless interface bases are exempt.
-The polymorphic form is refused earlier, at the derived object's construction,
-because its dispatch state stays unrepresented with the base. Until
-2026-10-27 LLVM lowered the non-polymorphic form without its base and read an
-unconstructed base. The correct lowering is for MIR to stage owned base
-arguments through the prepared-input protocol that calls already use.
+Until 2026-10-27 LLVM lowered such a constructor without its base and read an
+unconstructed base.
 
 An exact generated ordinary default with no source schedule can initialize
 fresh metadata-only class/struct storage directly: no declared fields or
