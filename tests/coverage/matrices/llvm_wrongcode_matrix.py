@@ -23,6 +23,7 @@ Matrices (axes):
   order      class shape x end of lifetime, checking destruction order
   dispatch   hierarchy x helper x owner, checking virtual calls during
              construction and destruction (no C++ oracle exists)
+  library    standard-library containers holding owned values
 """
 import argparse
 import concurrent.futures
@@ -36,12 +37,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from llvm_wrongcode import (bases, callables, containers,  # noqa: E402
-                            dispatch, enums, flow, hierarchy, order,
-                            transfer)
+                            dispatch, enums, flow, hierarchy, library,
+                            order, transfer)
 
 MATRICES = {"transfer": transfer, "containers": containers, "flow": flow,
             "hierarchy": hierarchy, "bases": bases, "enums": enums,
-            "callables": callables, "order": order, "dispatch": dispatch}
+            "callables": callables, "order": order, "dispatch": dispatch,
+            "library": library}
 ENDPOINTS = (("cpp", "O0"), ("llvm", "O0"), ("llvm", "O2"))
 
 
