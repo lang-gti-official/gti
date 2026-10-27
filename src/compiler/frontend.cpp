@@ -557,6 +557,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         requireDefinitions, trustedBodies, options.sourceDebugProfile);
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
+    semantic.setCancellation(options.cancellation);
     if (preamble != nullptr) {
       semantic.adoptPreamble(preamble, preambleDeclarations);
       if (options.workMetrics != nullptr)
@@ -584,6 +585,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       const PhaseTimeScope timeScope("gti-semantics");
       const ProgressScope progress(options.progress, ProgressPhase::Checking);
       result.semanticValid = semantic.check(result.program);
+      if (semantic.cancelled()) {
+        // A superseded editor snapshot: no later phase runs and no instance
+        // analysis is published.
+        result.cancelled = true;
+        return result;
+      }
       if (result.semanticValid) {
         result.semanticValid =
             semantic.applyProgramRequest(result.program, options.program);

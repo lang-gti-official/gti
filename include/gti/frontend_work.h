@@ -64,12 +64,23 @@ struct FrontendWorkMetrics {
   // Time spent looking up, validating and copying reusable entries (part of
   // HIR time, like the analyses they replace).
   std::size_t semanticInstanceReuseMicroseconds = 0;
+  // Requirements answered from, and proofs added to, the adopted preamble's
+  // shared concept proofs (see SemanticPreamble::ConceptProofKey).
+  std::size_t semanticConceptProofReuses = 0;
+  std::size_t semanticConceptProofRecords = 0;
+  // Concrete initializer-effect queries answered from, and added to, the
+  // adopted preamble's shared effect results.
+  std::size_t semanticEffectQueryReuses = 0;
+  std::size_t semanticEffectQueryRecords = 0;
   // Instance bodies HIR omitted as library-only; see
   // FrontendOptions::lowerLibraryOnlyInstanceBodies.
   std::size_t hirOmittedInstanceBodies = 0;
   std::size_t semanticBorrowSummaryCandidateInspections = 0;
   std::size_t semanticBorrowSummaryFunctions = 0;
   std::size_t constexprMirExecutions = 0;
+  // Staged constant evaluations replayed from an earlier success of the same
+  // request instead of executing again.
+  std::size_t constexprStagedReuses = 0;
   std::size_t semanticRawAuditQueries = 0;
 
   void clear() {
@@ -109,10 +120,15 @@ struct FrontendWorkMetrics {
     semanticInstanceReuseIneligible = 0;
     semanticInstanceReuseStores = 0;
     semanticInstanceReuseMicroseconds = 0;
+    semanticConceptProofReuses = 0;
+    semanticConceptProofRecords = 0;
+    semanticEffectQueryReuses = 0;
+    semanticEffectQueryRecords = 0;
     hirOmittedInstanceBodies = 0;
     semanticBorrowSummaryCandidateInspections = 0;
     semanticBorrowSummaryFunctions = 0;
     constexprMirExecutions = 0;
+    constexprStagedReuses = 0;
     semanticRawAuditQueries = 0;
   }
 };

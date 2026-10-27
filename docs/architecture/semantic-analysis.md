@@ -1895,6 +1895,34 @@ and an analysis with the raw-pointer audit enabled never uses it.
   the pass. Diagnostics for the open file are therefore those of bounded
   analysis, and a library body nothing reaches stays the library's own
   `gti check` concern.
+- **Shared concept proofs.** A preamble also owns the requirements proved of
+  argument types built only from its own classes and enums
+  (`SemanticPreamble::ConceptProofKey`), shared by every analysis that adopts
+  it. Eligible are a named preamble concept, or a requirement written in a
+  prefix declaration and queried with that declaration's lookup scope; both
+  are evaluated in their declaring unit, which sees only its direct includes,
+  so no later unit can change them. Only satisfied requirements are recorded,
+  and only from an evaluation without assumptions over closed arguments: when
+  a substituted instance's constraint is active, the query is evaluated once
+  without the active requirement scopes, and a failure falls back to the
+  ordinary assumption-aware query. Reuses and records are reported as
+  `semanticConceptProofReuses` and `semanticConceptProofRecords`.
+- **Shared initializer-effect results.** Program finalization closes
+  initializer and storage-borrow effects over every concrete instance the
+  program's bodies reach (`closeConcreteProgramEffects`), each analysed by a
+  worker. A query whose target and type arguments are all the preamble's own
+  declarations reads only the preamble, so its exported effect graph is the
+  same in every adopting program; the preamble records it
+  (`SemanticPreamble::EffectQueryResult`) in symbolic form: nodes in order,
+  edges to other queries by identity, and only stable preamble owners
+  otherwise. A later snapshot replays it with fresh local identities and
+  registers and schedules the referenced queries exactly as the analysis
+  did. Only clean, valid analyses are recorded, and a result with
+  storage-use syntax, storage-borrow checks or non-preamble owners is not
+  shared. The worker's own reaching of held-back preamble bodies affects only
+  its private copy, so it is not counted in `semanticPreambleReachedBodies`.
+  Replays and records are reported as `semanticEffectQueryReuses` and
+  `semanticEffectQueryRecords`.
 - **Identity.** Registration of the prefix is literally the preamble's, so
   trusted declaration identities, the instance-reuse registration fingerprint
   and symbol identities below the prefix ceiling are the same in every
@@ -3550,6 +3578,26 @@ probe's demand sink and a batch's call journal, which do not outlive that
 analysis. Tests retain enclosing locals and live loans across this boundary.
 Concrete semantic diagnostics are authoritative and cannot fall back to legacy
 execution.
+
+A staged evaluation is a pure function of its target (function, or the exact
+resolved construction), substitution, argument and receiver constants, and of
+its environment: whether a concrete reanalysis is open, the constexpr
+definitions and constructors its worker may execute (those declared before the
+current point) and those HIR may lower. One request therefore records each
+successful evaluation once (`StagedConstantResults`, shared like the work
+budget by the primary analysis, its reanalyses and every worker they stage
+through) and replays it wherever all of those match. A replay charges the steps
+the evaluation consumed and reports its warnings again, and is used only where
+the evaluation's limits still hold: the current steps plus that charge stay
+within the 4096-step budget, and the current staging plus call depth is no
+deeper than the one it succeeded at. Otherwise, and for every failure, the call
+executes as before, so exhaustion and failure diagnostics are unchanged.
+Results holding an executor-local transient owner are never recorded, and
+neither is a call made while the outer authority retains an invalid effect
+query. Requirement policies written with reflection repeat a few such calls
+across every instance that checks them; on the ordered-query fixtures this
+removes over 95% of staged executions. The record dies with the request,
+including in an editor snapshot that adopts a preamble.
 
 Unsupported closures/profile operations still use the existing AST driver;
 work already executed consumes the shared limit, and arithmetic/resource

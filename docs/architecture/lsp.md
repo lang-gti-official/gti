@@ -731,17 +731,26 @@ answered last after a shared-dependency edit.
 
 An edit-triggered analysis (the edited document's own, and each dependant's)
 does not start at once. It waits for the document's median recent analysis
-time, bounded to 50-500 ms, and every further edit restarts the wait, so a
-typing burst is analysed once from its final text instead of once per
-keystroke with the newest edit queued behind an obsolete analysis. A semantic
-request waiting on the document, shutdown, opening a document, and project
-invalidation (manifest, lockfile, profile) run immediately. This is clangd's
-update-debounce policy; it was adopted after measuring that every keystroke
-re-runs semantic analysis and concrete HIR discovery (the recorded baseline was
-about 600 ms for a 73-line file with eight includes). Later entry-scoped HIR
-reduces that work; the old timing is not a current performance guarantee.
-`GTI_LSP_UPDATE_DEBOUNCE_MS` pins a fixed wait, and `0`
-disables it, for benchmarks and tests.
+time, bounded to 50-150 ms, and every further edit restarts the wait, so a
+typing burst is analysed once from its final text. A semantic request waiting
+on the document, shutdown, opening a document, and project invalidation
+(manifest, lockfile, profile) run immediately. This is clangd's
+update-debounce policy, adopted after measuring that every keystroke re-runs
+semantic analysis and concrete HIR discovery; the old timings are not current
+performance guarantees. `GTI_LSP_UPDATE_DEBOUNCE_MS` pins a fixed wait, and
+`0` disables it, for benchmarks and tests.
+
+An edit that arrives while its document is being analysed also cancels that
+analysis (`FrontendOptions::cancellation`), so the wait can stay short: the
+newest text never queues behind an obsolete analysis. Semantic analysis checks
+the flag at safe points (after registration, before finalization, at each
+top-level statement and each concrete-effect owner) and stops by unwinding to
+`SemanticVisitor::check`; the frontend then returns a result marked
+`cancelled` before HIR, so the instance cache receives nothing from it. A
+preamble built before the stop is complete and stays cached. The stopped run
+is not published, does not count toward the debounce median, and is traced as
+`kind: "cancelled"` under `GTI_LSP_FRONTEND_TRACE`. Raw-pointer audits are not
+cancelled; they run only when the pool is idle.
 
 `workspace/semanticTokens/refresh` is not sent per publication. A client
 re-requests tokens for a document it edited or opened itself. Only an analysis
@@ -817,7 +826,11 @@ include graph pays for the build; a changed or re-parsed library unit selects
 a new preamble. The trace reports `preambleBuilds`,
 `preambleBuildMicroseconds`, `preambleAdoptions`,
 `preambleAdoptMicroseconds`, `preambleBodies`, `preambleReachedBodies`, the
-cache's occupancy and, for every analysis, `includeSuggestionsRequested`. The background raw-pointer audit never uses a
+cache's occupancy, `conceptProofReuses` and `conceptProofRecords` (concept
+proofs the preamble shares across snapshots; see "Shared concept proofs"),
+`effectQueryReuses` and `effectQueryRecords` (initializer-effect results it
+shares; see "Shared initializer-effect results") and,
+for every analysis, `includeSuggestionsRequested`. The background raw-pointer audit never uses a
 preamble.
 
 Before analysis and completion, the LSP asks the driver for immutable

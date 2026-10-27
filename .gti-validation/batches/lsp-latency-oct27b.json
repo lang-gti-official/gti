@@ -1,0 +1,310 @@
+{
+  "schema": 1,
+  "base": "3151bce72b2c19407b79c8f87f0b01236809d9d2",
+  "members": [
+    {
+      "task": "lsp-constraint-proofs",
+      "pr": 367,
+      "head": "b6987101d17c630b05596f8edc25cec2fb246ca3",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Editor latency: semantic analysis gains cooperative cancellation (FrontendOptions::cancellation, safe points in check/checkResumed, the lexical pass and concrete-effect closure, unwinding to SemanticVisitor::check) and gti_lsp cancels a document's running analysis on a newer edit and shortens the adaptive debounce cap from 500 to 150 ms. Semantic and frontend shared paths make this T2; without a flag the checkpoints are inert, and a cancelled result stops before HIR so no instance analysis or partial state reaches the caches.",
+        "regressions": [
+          "lsp_protocol"
+        ],
+        "owning": [
+          "frontend_cache_invalidation",
+          "instance_reuse",
+          "body_analysis_order",
+          "trusted_body_analysis"
+        ],
+        "unaffected": "Without FrontendOptions::cancellation the new safe points do nothing, so gti check, builds, HIR, MIR and the backend run exactly as before; only gti_lsp sets the flag.",
+        "broader": [
+          "interface_static_lsp",
+          "atomic_lsp",
+          "mutex_lsp",
+          "member_requirement_lsp",
+          "source_modules_lsp",
+          "borrowing_composition_lsp",
+          "thread_local_lsp"
+        ],
+        "targets": [
+          "gti",
+          "gti_lsp",
+          "gti_frontend_cache_tests",
+          "gti_instance_reuse_tests",
+          "gti_body_analysis_order_tests",
+          "gti_trusted_body_analysis_tests"
+        ],
+        "platforms": [
+          "darwin"
+        ],
+        "reproduction": {
+          "revision": "3151bce72b2c19407b79c8f87f0b01236809d9d2",
+          "command": [
+            "python3",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti/19240385-1dd9-4fa9-aef6-42965a0a6f4d/scratchpad/lsp/error_cycle_probe.py",
+            "/Users/lucas/Documents/gti/toolchain/bin/gti_lsp",
+            "/Users/lucas/Documents/gti/toolchain/share/gti/stdlib",
+            "/Users/lucas/Documents/gti/examples/089-library-workflow.gti",
+            "3"
+          ],
+          "failure": "each edit takes about 1.4-1.6 s for its error to appear or clear in example 089; with GTI_LSP_UPDATE_DEBOUNCE_MS=0 it is about 0.6 s shorter, the adaptive debounce wait",
+          "log": "sha256:fda438d2b8ddfac884af7b26ec7cef1b23a578591595ab9bcd6a5564bc034032"
+        },
+        "additional_checks": [
+          [
+            "git",
+            "diff",
+            "--check",
+            "origin/main...HEAD"
+          ],
+          [
+            "python3",
+            "scripts/check_release_version.py",
+            "origin/main",
+            "HEAD"
+          ],
+          [
+            "python3",
+            "scripts/clang_format.py",
+            "--check"
+          ]
+        ]
+      }
+    },
+    {
+      "task": "lsp-requirement-reuse",
+      "pr": 369,
+      "head": "fa4f20294ccef5bf70f4893729690696b3f78463",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Editor analysis cost: concept requirements proved of argument types built only from the adopted preamble's own declarations are shared through the SemanticPreamble (ConceptProofKey) across every analysis that adopts it. Named preamble concepts and preamble-declared requirements queried with their declaration's lookup scope are evaluated in their declaring unit, which sees only its direct includes; only satisfied requirements are recorded, and only from an evaluation without assumptions over closed arguments. Semantic shared path makes this T2; only preamble-adopting analyses (gti_lsp) change.",
+        "regressions": [
+          "lsp_protocol"
+        ],
+        "owning": [
+          "trusted_body_analysis",
+          "thread_local_semantic",
+          "instance_reuse",
+          "body_analysis_order",
+          "frontend_cache_invalidation"
+        ],
+        "unaffected": "Only analyses that adopt a SemanticPreamble use the shared proofs; gti check, builds, HIR, MIR and the backend never adopt one, and a reused proof answers a query exactly as its evaluation did.",
+        "broader": [
+          "member_requirement_lsp",
+          "interface_static_lsp",
+          "source_modules_lsp",
+          "atomic_lsp",
+          "mutex_lsp",
+          "thread_local_lsp",
+          "borrowing_composition_lsp"
+        ],
+        "targets": [
+          "gti",
+          "gti_lsp",
+          "gti_trusted_body_analysis_tests",
+          "gti_thread_local_semantic_tests",
+          "gti_instance_reuse_tests",
+          "gti_body_analysis_order_tests",
+          "gti_frontend_cache_tests"
+        ],
+        "platforms": [
+          "darwin"
+        ],
+        "reproduction": {
+          "revision": "3151bce72b2c19407b79c8f87f0b01236809d9d2",
+          "command": [
+            "python3",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti/19240385-1dd9-4fa9-aef6-42965a0a6f4d/scratchpad/lsp/step2/error_cycle_probe.py",
+            "/Users/lucas/Documents/gti/toolchain/bin/gti_lsp",
+            "/Users/lucas/Documents/gti/toolchain/share/gti/stdlib",
+            "/Users/lucas/Documents/gti/examples/089-library-workflow.gti",
+            "2"
+          ],
+          "failure": "every edit of example 089 re-proves standard-library concepts over standard-library types: about 430 ms of semantic body time per edit (GTI_LSP_FRONTEND_TRACE semanticBodyMicroseconds), identical every snapshot",
+          "log": "sha256:511b4fdd0b653fd7052892b62d8ea2474ddbb3253c8d073afa65b3a98c57115d"
+        },
+        "additional_checks": [
+          [
+            "git",
+            "diff",
+            "--check",
+            "origin/main...HEAD"
+          ],
+          [
+            "python3",
+            "scripts/check_release_version.py",
+            "origin/main",
+            "HEAD"
+          ],
+          [
+            "python3",
+            "scripts/clang_format.py",
+            "--check"
+          ]
+        ]
+      }
+    },
+    {
+      "task": "lsp-effect-closure",
+      "pr": 370,
+      "head": "f1e38dfcdb45caec0372a0502d85cdbb956f546c",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Editor finalization cost: closeConcreteProgramEffects analyses every concrete instance a program reaches. A query whose target, owner and type arguments are all the adopted preamble's own declarations reads only the preamble, so after a clean, valid analysis its exported effect graph is recorded on the SemanticPreamble in symbolic form (nodes in order, referenced queries by identity, stable preamble owners) and later snapshots replay it, registering and scheduling the referenced queries as the analysis would. Results with storage-use expressions, storage-borrow checks or non-preamble owners are refused. Stacked on lsp-requirement-reuse. Semantic shared path makes this T2; only preamble-adopting analyses (gti_lsp) change. Warm-snapshot diagnostics of 612 programs (examples, storage fixtures, rejection fixtures) are unchanged against lsp-requirement-reuse.",
+        "regressions": [
+          "lsp_protocol"
+        ],
+        "owning": [
+          "trusted_body_analysis",
+          "thread_local_semantic",
+          "instance_reuse",
+          "body_analysis_order",
+          "frontend_cache_invalidation"
+        ],
+        "unaffected": "Only analyses that adopt a SemanticPreamble record or replay effect queries; gti check, builds, HIR, MIR and the backend never adopt one, and a replayed query contributes exactly the graph its analysis exported.",
+        "broader": [
+          "member_requirement_lsp",
+          "interface_static_lsp",
+          "source_modules_lsp",
+          "atomic_lsp",
+          "mutex_lsp",
+          "thread_local_lsp",
+          "borrowing_composition_lsp"
+        ],
+        "targets": [
+          "gti",
+          "gti_lsp",
+          "gti_trusted_body_analysis_tests",
+          "gti_thread_local_semantic_tests",
+          "gti_instance_reuse_tests",
+          "gti_body_analysis_order_tests",
+          "gti_frontend_cache_tests"
+        ],
+        "platforms": [
+          "darwin"
+        ],
+        "reproduction": {
+          "revision": "3151bce72b2c19407b79c8f87f0b01236809d9d2",
+          "command": [
+            "python3",
+            "/private/tmp/claude-501/-Users-lucas-Documents-gti/19240385-1dd9-4fa9-aef6-42965a0a6f4d/scratchpad/lsp/step2/error_cycle_probe.py",
+            "/Users/lucas/Documents/gti/toolchain/bin/gti_lsp",
+            "/Users/lucas/Documents/gti/toolchain/share/gti/stdlib",
+            "/Users/lucas/Documents/gti/examples/089-library-workflow.gti",
+            "2"
+          ],
+          "failure": "every edit of example 089 re-analyses the same standard-library instances during initializer-effect closure: about 660 ms of semantic finalization per edit (GTI_LSP_FRONTEND_TRACE semanticFinalizationMicroseconds), identical every snapshot",
+          "log": "sha256:511b4fdd0b653fd7052892b62d8ea2474ddbb3253c8d073afa65b3a98c57115d"
+        },
+        "additional_checks": [
+          [
+            "git",
+            "diff",
+            "--check",
+            "origin/main...HEAD"
+          ],
+          [
+            "python3",
+            "scripts/check_release_version.py",
+            "origin/main",
+            "HEAD"
+          ],
+          [
+            "python3",
+            "scripts/clang_format.py",
+            "--check"
+          ]
+        ]
+      }
+    },
+    {
+      "task": "constexpr-staged-reuse",
+      "pr": 371,
+      "head": "cb1712a7d728043c509b9a790bf0cac58613105d",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Compile-time and editor cost: since the source concept policies (0.472.0) iterator and range requirements run reflection-based constexpr policies, and every concrete instance that checks them re-executes the same staged constexpr calls (ordered_search: 25 distinct calls executed 1020 times, 81848 nested). StagedConstantResults records each successful staged evaluation once per request, keyed by target, substitution, arguments, receiver and the exact set of constexpr definitions and constructors it may execute, and replays it (value, step charge, warnings) only where its step and depth limits still hold. Failures always re-run. Semantic shared path (all constant evaluation) makes this T2. Only staged evaluation inside semantics changes; a 1242-program differential (examples and tests/fixtures) of emitted C++, exit codes and diagnostics against main shows no change.",
+        "regressions": [
+          "ordered_search_runtime"
+        ],
+        "owning": [
+          "compiler_pipeline",
+          "reflection_semantics",
+          "protocol_concepts",
+          "constexpr_library_runtime",
+          "constexpr_dependent_branches_runtime",
+          "generic_callable_concepts_runtime"
+        ],
+        "cross_phase": [
+          "constexpr_results_runtime",
+          "constexpr_asset_table_runtime",
+          "constexpr_readonly_references_runtime",
+          "reflection_runtime"
+        ],
+        "broader": [
+          "trusted_body_analysis",
+          "instance_reuse",
+          "lsp_protocol",
+          "protocol_concepts_runtime",
+          "container_iterator_movement",
+          "storage_lane_iterator_runtime"
+        ],
+        "targets": [
+          "gti",
+          "gti_lsp",
+          "gti_reflection_tests",
+          "gti_protocol_concept_tests",
+          "gti_trusted_body_analysis_tests",
+          "gti_instance_reuse_tests",
+          "gti_compiler_frontend_tests",
+          "gti_compiler_declarations_tests",
+          "gti_compiler_ownership_tests",
+          "gti_compiler_constexpr_tests",
+          "gti_compiler_diagnostics_tests",
+          "gti_compiler_e2e_tests"
+        ],
+        "platforms": [
+          "darwin"
+        ],
+        "reproduction": {
+          "revision": "3151bce72b2c19407b79c8f87f0b01236809d9d2",
+          "command": [
+            "python3",
+            "tests/ordered_search_runtime_test.py",
+            "/Users/lucas/Documents/gti/toolchain/bin/gti",
+            "--fixture",
+            "ordered_search",
+            "--mode",
+            "c++20-O0",
+            "--no-negative",
+            "--jobs",
+            "1"
+          ],
+          "failure": "one ordered_search fixture compile takes about 60 s of CPU on main (0.467.0: 1.5 s); ordered_search_runtime's 28 compiles exceed its 600 s CTest timeout under suite load (batch lsp-latency-oct27, 2026-10-27)",
+          "log": "sha256:a1a1779fe253c7095bd67ddd47f3177e485d7f3c7323f5318b65ec8847acd612"
+        },
+        "additional_checks": [
+          [
+            "git",
+            "diff",
+            "--check",
+            "origin/main...HEAD"
+          ],
+          [
+            "python3",
+            "scripts/check_release_version.py",
+            "origin/main",
+            "HEAD"
+          ],
+          [
+            "python3",
+            "scripts/clang_format.py",
+            "--check"
+          ]
+        ]
+      }
+    }
+  ]
+}

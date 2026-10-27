@@ -978,11 +978,172 @@ def test_analysis_pool_runs_one_analysis_per_document(executable, root):
                 record["generation"],
             )
             for record in records
-            if record["kind"] == "analysis"
+            if record["kind"] in ("analysis", "cancelled")
         )
         assert len(intervals) >= 2, intervals
         for earlier, later in zip(intervals, intervals[1:]):
             assert earlier[1] <= later[0], intervals
+    finally:
+        if not closed:
+            session.close()
+
+
+def test_newer_edit_cancels_running_analysis(executable, root):
+    # An edit that arrives while its document is being analysed stops that
+    # analysis at a safe point: only the newer text is published, and the
+    # stopped run is traced as cancelled rather than completed.
+    path = root / "cancel-burst.gti"
+    source = "".join(f"int cancel_{index} = {index};\n" for index in range(8000))
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    trace_path = root / "cancel-trace.jsonl"
+    trace_path.unlink(missing_ok=True)
+    session = LspSession(
+        executable,
+        environment=dict(
+            os.environ,
+            GTI_LSP_FRONTEND_TRACE=str(trace_path),
+            GTI_LSP_UPDATE_DEBOUNCE_MS="0",
+        ),
+    )
+    closed = False
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+        for version, text in (
+            (2, source + "int cancel_error = cancel_missing;\n"),
+            (3, source),
+        ):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": {"uri": uri, "version": version},
+                        "contentChanges": [{"text": text}],
+                    },
+                }
+            )
+            time.sleep(0.05)
+        published = []
+
+        def until_final(message):
+            if (
+                message.get("method") != "textDocument/publishDiagnostics"
+                or message["params"]["uri"] != uri
+            ):
+                return False
+            published.append(message["params"].get("version"))
+            return message["params"].get("version") == 3
+
+        final = session.receive_until(until_final, timeout=60)
+        assert not has_error_diagnostics(final["params"]), final
+        assert 2 not in published, published
+        session.close()
+        closed = True
+        records = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+        ]
+        kinds = {
+            record["generation"]: record["kind"]
+            for record in records
+            if record["kind"] in ("analysis", "cancelled")
+        }
+        assert kinds.get(2) == "cancelled", records
+        assert kinds.get(3) == "analysis", records
+    finally:
+        if not closed:
+            session.close()
+
+
+def test_preamble_concept_proofs_across_snapshots(executable, root):
+    # A concept proved of standard-library types, and a concrete effect query
+    # over standard-library instances, in one snapshot are reused by the next
+    # snapshot that adopts the same preamble; the reuse does not change what
+    # the edit reports.
+    path = root / "concept-proofs.gti"
+    source = (
+        "#include <std/string>\n#include <std/vector>\n"
+        "int count(std::vector<std::string>& names) {\n"
+        "  return int(names.size());\n}\n"
+        "int main() {\n  mut std::vector<std::string> names{};\n"
+        "  names.push_back(std::string(\"a\"));\n  return count(names) - 1;\n}\n"
+    )
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    trace_path = root / "concept-proofs.jsonl"
+    trace_path.unlink(missing_ok=True)
+    session = LspSession(
+        executable,
+        environment=dict(
+            os.environ,
+            GTI_LSP_FRONTEND_TRACE=str(trace_path),
+            GTI_LSP_UPDATE_DEBOUNCE_MS="0",
+            GTI_LSP_ANALYSIS_WORKERS="1",
+        ),
+    )
+    closed = False
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        open_document(session, uri, source)
+        for version, text, broken in (
+            (2, source + "int broken = missing_name;\n", True),
+            (3, source, False),
+        ):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": {"uri": uri, "version": version},
+                        "contentChanges": [{"text": text}],
+                    },
+                }
+            )
+            published = session.receive_until(
+                lambda message: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == uri
+                and message["params"].get("version") == version,
+                timeout=60,
+            )
+            assert has_error_diagnostics(published["params"]) == broken, published
+        session.close()
+        closed = True
+        records = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+            if json.loads(line)["kind"] == "analysis"
+        ]
+        assert len(records) >= 3, records
+        assert records[0]["conceptProofRecords"] > 0, records[0]
+        assert all(record["conceptProofReuses"] > 0 for record in records[1:]), records
+        # Concrete initializer-effect queries over standard-library instances
+        # are analysed once and replayed by every later snapshot.
+        assert records[0]["effectQueryRecords"] > 0, records[0]
+        assert all(
+            record["effectQueryReuses"] > 0 and record["effectQueryRecords"] == 0
+            for record in records[1:]
+        ), records
     finally:
         if not closed:
             session.close()
@@ -9814,7 +9975,7 @@ def test_preamble_across_snapshots(executable, root):
     trace_path = root / "preamble-trace.jsonl"
     trace_path.unlink(missing_ok=True)
 
-    def root_analyses():
+    def root_analyses(kinds=("analysis",)):
         if not trace_path.exists():
             return []
         return [
@@ -9823,7 +9984,7 @@ def test_preamble_across_snapshots(executable, root):
                 json.loads(line)
                 for line in trace_path.read_text(encoding="utf-8").splitlines()
             )
-            if record["kind"] == "analysis" and record["uri"] == uri
+            if record["kind"] in kinds and record["uri"] == uri
         ]
 
     def wait_for_analyses(count):
@@ -9916,11 +10077,17 @@ def test_preamble_across_snapshots(executable, root):
             expect_clean=False,
         )
         # Opening the library re-analyses its dependant; that analysis or the
-        # next edit builds the new preamble, and the latest one adopts it.
+        # next edit builds the new preamble, and the latest one adopts it. The
+        # next edit may stop the re-analysis after its build (`cancelled`).
         session.send(full_change(uri, 4, edited))
         publication_for(session, uri, 4)
         later = wait_for_analyses(4)[3:]
-        assert any(record["preambleBuilds"] == 1 for record in later), later
+        rebuilt = [
+            record
+            for record in root_analyses(("analysis", "cancelled"))
+            if record["generation"] > third["generation"]
+        ]
+        assert any(record["preambleBuilds"] == 1 for record in rebuilt), rebuilt
         assert later[-1]["preambleAdoptions"] == 1, later[-1]
         assert later[-1]["preambleCache"]["entries"] >= 1, later[-1]
         assert queries() == (tokens, hover, definition)
@@ -11343,6 +11510,14 @@ def main():
                 test_analysis_pool_runs_one_analysis_per_document(
                     sys.argv[1], pathlib.Path(root)
                 )
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-cancel-") as root:
+                test_newer_edit_cancels_running_analysis(
+                    sys.argv[1], pathlib.Path(root)
+                )
+            with tempfile.TemporaryDirectory(prefix="gti-lsp-proofs-") as root:
+                test_preamble_concept_proofs_across_snapshots(
+                    sys.argv[1], pathlib.Path(root)
+                )
             with tempfile.TemporaryDirectory(prefix="gti-lsp-open-") as root:
                 test_opening_unchanged_dependencies_keeps_dependants(
                     sys.argv[1], pathlib.Path(root)
@@ -12336,6 +12511,8 @@ def main():
     test_unsaved_dependency_reanalysis(sys.argv[1], root)
     test_dependency_chain_reanalysis_count(sys.argv[1], root)
     test_analysis_pool_runs_one_analysis_per_document(sys.argv[1], root)
+    test_newer_edit_cancels_running_analysis(sys.argv[1], root)
+    test_preamble_concept_proofs_across_snapshots(sys.argv[1], root)
     test_opening_unchanged_dependencies_keeps_dependants(sys.argv[1], root)
     test_duplicate_dependency_diagnostics_keep_include_context(sys.argv[1], root)
     test_direct_dependency_visibility(sys.argv[1], root)
