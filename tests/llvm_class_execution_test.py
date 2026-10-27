@@ -215,6 +215,131 @@ int main() {
   return point.x == 4 && point.y == 5 && first.read() == 3 && second.read() == 6 ? 0 : 1;
 }
 ''',
+    # A field reborrowed through a reference names a loan root no place spells.
+    "loan-root-field-reborrow": r'''
+class Counter {
+public:
+  mut int value;
+  Counter(int initial) : value(initial) {}
+};
+void bump(mut Counter& parent) {
+  mut int& field = parent.value;
+  field += 3;
+}
+int main() {
+  mut Counter counter = Counter(10);
+  mut Counter& parent = counter;
+  mut int& field = parent.value;
+  field += 2;
+  bump(counter);
+  return counter.value == 15 ? 0 : 1;
+}
+''',
+    # A by-value unsafe call result receives further calls through a temporary borrow.
+    "unsafe-value-receiver": r'''
+class Source {
+public:
+  int base;
+  Source(int initial) : base(initial) {}
+  unsafe expected<int, int> fetch(int offset) {
+    if (offset < 0) { return unexpected(offset); }
+    return this.base + offset;
+  }
+};
+int main() {
+  Source source = Source(40);
+  mut int result = 0;
+  mut bool present = false;
+  unsafe {
+    result = source.fetch(2).expect("fetch failed");
+    present = source.fetch(-1).has_value();
+  }
+  if (present) { return 2; }
+  return result == 42 ? 0 : 1;
+}
+''',
+    # A type recursing through its own unique owner, built, read and destroyed.
+    "recursive-owned-links": r'''
+#include <std/memory>
+mut int destroyed = 0;
+struct Link {
+  mut int value;
+  mut std::unique_ptr<Link> next = std::unique_ptr<Link>();
+  Link(int initial) : value(initial) {}
+  ~Link() { destroyed += 1; }
+};
+class Chain {
+public:
+  mut std::unique_ptr<Link> head = std::unique_ptr<Link>();
+  Chain() {}
+  void push(int value) mut {
+    mut std::unique_ptr<Link> node = std::make_unique<Link>(value);
+    node->next = std::move(this.head);
+    this.head = std::move(node);
+  }
+};
+int total(Chain& chain) {
+  mut int sum = 0;
+  if (chain.head != nullptr) {
+    sum += chain.head->value;
+    if (chain.head->next != nullptr) {
+      sum += chain.head->next->value;
+    }
+  }
+  return sum;
+}
+int main() {
+  {
+    mut Chain chain = Chain();
+    chain.push(1);
+    chain.push(2);
+    chain.push(3);
+    if (total(chain) != 5) { return 1; }
+  }
+  return destroyed == 3 ? 0 : 2;
+}
+''',
+    # Destructor-bearing results produced inside conditional operands are materialized in place.
+    "conditional-temporary-materialization": r'''
+mut int events = 0;
+class Tracked {
+public:
+  int value;
+  Tracked(int initial) : value(initial) {}
+  int read() { return this.value; }
+  ~Tracked() { events = events * 10 + this.value; }
+};
+Tracked make(int value) { return Tracked(value); }
+int main() {
+  bool early = false;
+  if (early || make(7).read() != 7) { return 1; }
+  if (!early && make(8).read() != 8) { return 2; }
+  int chosen = early ? 0 : make(9).read();
+  if (chosen != 9) { return 3; }
+  return events == 789 ? 0 : 4;
+}
+''',
+    # A stored borrow carrier returned by value only states its provenance.
+    "returned-view-provenance": r'''
+class IntView {
+public:
+  int& target;
+  IntView(int& value) : target(value) {}
+  int read() { return this.target; }
+};
+class Holder {
+public:
+  IntView view;
+  Holder(int& value) : view(IntView(value)) {}
+  IntView get() { return this.view; }
+};
+int main() {
+  int value = 41;
+  Holder holder = Holder(value);
+  IntView copy = holder.get();
+  return copy.read() == 41 ? 0 : 1;
+}
+''',
 }
 
 FAILURES = {

@@ -428,6 +428,48 @@ private:
   // its source place must carry exactly the operand type, and the provenance
   // loan must protect a differently typed carrier. Anything else keeps the
   // ordinary selection path, which fails closed on its own.
+  // An opaque stored entry loan is self-sourced at its carrier binding and
+  // never published: its slot holds no address. This is the condition under
+  // which Places::selected refuses such an operand.
+  [[nodiscard]] bool opaqueEntryProvenance(const MirOperand &operand) const {
+    const auto *record = input.findLoan(operand.loan);
+    const auto *source = record ? input.findPlace(record->source) : nullptr;
+    return record && record->kind == MirLoanKind::Stored && record->entry &&
+           record->protectsSource(record->source) && source &&
+           source->type != operand.type;
+  }
+  // Whether any place, operand or receiver of this body reads the runtime
+  // address published for a loan. Ending or retiring a loan reads nothing.
+  [[nodiscard]] bool loanAddressRead(MirLoanId id) const {
+    if (std::any_of(input.places.begin(), input.places.end(),
+                    [&](const MirPlace &place) {
+                      return place.root == MirPlaceRootKind::Loan &&
+                             place.loan == id;
+                    }))
+      return true;
+    const auto reads = [&](const MirOperand &operand) {
+      return operand.loan == id;
+    };
+    const auto anyReads = [&](const std::vector<MirOperand> &operands) {
+      return std::any_of(operands.begin(), operands.end(), reads);
+    };
+    for (const auto &block : input.blocks) {
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && (anyReads(stage.operands) ||
+                                 (stage.receiver && reads(*stage.receiver))))
+          return true;
+      const auto &term = block.terminator;
+      // A reference return reads its loan through the returned operand; the
+      // terminator's return loan itself records provenance only.
+      if ((term.value && reads(*term.value)) ||
+          anyReads(term.targetArguments) || anyReads(term.elseArguments))
+        return true;
+      for (const auto &target : term.switchTargets)
+        if (anyReads(target.arguments))
+          return true;
+    }
+    return false;
+  }
   [[nodiscard]] bool
   provenanceOnlyCarrierBorrow(const MirOperand &operand,
                               const MirLoan &produced) const {
@@ -1680,7 +1722,15 @@ private:
           throw std::logic_error(
               "LLVM payload reference lost its dominating selected address");
       } else if (const auto &borrowed = instruction.operands.at(0);
+                 !instruction.result && !publication.matched() &&
                  borrowed.kind == MirOperandKind::Loan && borrowed.place == 0 &&
+                 opaqueEntryProvenance(borrowed) && !loanAddressRead(loan.id)) {
+        // The operand names an opaque stored entry loan, which carries
+        // provenance only, and nothing in this body reads the produced loan's
+        // address: it only states the provenance of a value this body passes
+        // on, such as a returned view. There is no runtime address to publish.
+        break;
+      } else if (borrowed.kind == MirOperandKind::Loan && borrowed.place == 0 &&
                  provenanceOnlyCarrierBorrow(borrowed, loan)) {
         // The operand names an opaque stored entry loan, which is
         // self-sourced at its carrier binding and carries provenance only.

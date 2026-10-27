@@ -896,7 +896,8 @@ private:
                       operand.type.referenceAccess == AccessMode::Mutable);
     if (mut && access != AccessMode::Mutable)
       return {};
-    source = unreference(source);
+    // unreference names a subobject of source; copy it before assigning.
+    source = SemanticType(unreference(source));
     return source.kind == SemanticType::Class &&
                    (contains(source) || contains(target))
                ? std::optional(source)
@@ -1117,8 +1118,15 @@ public:
   const MirBody *currentBody = nullptr;
 
   bool nativeValue(const SemanticType &type) const {
+    // `visiting` and `payloads` hold the current inline containment path. An
+    // owner's pointee lives behind a handle, so it starts a new path, and a
+    // class or payload enum reached again beneath an owner (a node owning its
+    // successor) is decided by its enclosing check rather than rejected as an
+    // inline cycle.
     std::set<HirClassInstanceId> visiting;
     std::set<const MirPayloadEnum *> payloads;
+    std::set<HirClassInstanceId> crossed;
+    std::set<const MirPayloadEnum *> crossedPayloads;
     const auto supported = [&](const auto &self,
                                const SemanticType &selected) -> bool {
       if (passiveReferenceType(selected) || passiveAddress(selected) ||
@@ -1154,6 +1162,8 @@ public:
                selected.arguments[0].kind != SemanticType::TypeParameter;
       if (selected.kind == SemanticType::Enum) {
         if (const auto *payload = program.findPayloadEnum(selected)) {
+          if (crossedPayloads.contains(payload))
+            return true;
           if (!payloads.insert(payload).second)
             return false;
           bool valid = true;
@@ -1189,8 +1199,18 @@ public:
         // An owner transports its handle, not the pointee's object bytes.
         // Exact hierarchy layout can therefore establish representation here;
         // construction, borrowing and cleanup retain independent use proofs.
-        return self(self, pointee) ||
-               dispatchProofs.metadata(pointee).has_value();
+        auto inlineClasses = std::exchange(visiting, {});
+        auto inlinePayloads = std::exchange(payloads, {});
+        const auto enclosingClasses = crossed;
+        const auto enclosingPayloads = crossedPayloads;
+        crossed.insert(inlineClasses.begin(), inlineClasses.end());
+        crossedPayloads.insert(inlinePayloads.begin(), inlinePayloads.end());
+        const bool valid = self(self, pointee);
+        visiting = std::move(inlineClasses);
+        payloads = std::move(inlinePayloads);
+        crossed = enclosingClasses;
+        crossedPayloads = enclosingPayloads;
+        return valid || dispatchProofs.metadata(pointee).has_value();
       }
       if (selected.kind != SemanticType::Class)
         return false;
@@ -1213,6 +1233,8 @@ public:
         return self(self,
                     SemanticType::uniqueOwnerOf(owner->type.arguments[0]));
       if (native_llvm::uninitializedStorageRepresentation(program, *owner)) {
+        if (crossed.contains(owner->id))
+          return true;
         if (!visiting.insert(owner->id).second)
           return false;
         const bool valid = self(self, owner->type.arguments[0]);
@@ -1221,8 +1243,11 @@ public:
       }
       if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
           owner->polymorphic || owner->abstract || owner->cOpaqueHandle ||
-          !owner->bases.empty() || !owner->structuralBases.empty() ||
-          !visiting.insert(owner->id).second)
+          !owner->bases.empty() || !owner->structuralBases.empty())
+        return false;
+      if (crossed.contains(owner->id))
+        return true;
+      if (!visiting.insert(owner->id).second)
         return false;
       bool valid = true;
       for (const auto &field : owner->declaredFields)
@@ -1914,7 +1939,34 @@ public:
         if (sameStorageRoot(root, place))
           if (const auto selected = representationShape(root.type))
             return selected;
+    if (place.root == MirPlaceRootKind::Loan && currentBody)
+      if (const auto root = loanRootType(*currentBody, place.loan))
+        return representationShape(*root);
     return {};
+  }
+  // The object a loan root designates when no unprojected place names it,
+  // typed exactly as native place lowering types the loan slot: the result of
+  // the borrow, call or construction producing the loan, otherwise the
+  // referent of the loan's source place.
+  static std::optional<SemanticType> loanRootType(const MirBody &body,
+                                                  MirLoanId id) {
+    const auto *loan = id ? body.findLoan(id) : nullptr;
+    const auto *source = loan ? body.findPlace(loan->source) : nullptr;
+    std::optional<SemanticType> type;
+    if (source)
+      type = source->type.kind == SemanticType::Reference &&
+                     source->type.arguments.size() == 1
+                 ? source->type.arguments.front()
+                 : source->type;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.loan == id &&
+            (stage.kind == MirInstructionKind::Call ||
+             stage.kind == MirInstructionKind::CallBody ||
+             stage.kind == MirInstructionKind::Construct ||
+             stage.kind == MirInstructionKind::Borrow))
+          type = stage.info.type;
+    return type;
   }
 
   bool opaqueReferent(const SemanticType &type) const {
@@ -2290,6 +2342,66 @@ public:
            !loan->escapes && loan->producedBy == stage.hirValue &&
            loan->access == place->access && loan->access == requiredAccess &&
            unsafeCallResultProducer(body, block, stage, *loan, referent);
+  }
+
+  // A by-value result of an unsafe call that receives a further call is
+  // staged as a temporary borrow of the place materializing that result. The
+  // staging shares the unsafe call's HIR value, and so its unsafe operation,
+  // but performs none: it transports the address of the exact object the
+  // admitted unsafe call returned.
+  bool unsafeCallValueReceiver(const MirBody &body,
+                               const MirInstruction &stage) const {
+    const bool mutableInput =
+        stage.callInputKind == HirCallInputKind::MutableTemporaryBorrow;
+    if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
+        stage.callInputRole != MirCallInputRole::Receiver ||
+        (stage.callInputKind != HirCallInputKind::ReadTemporaryBorrow &&
+         !mutableInput) ||
+        stage.hirValue == 0 || stage.rawMemoryAccess ||
+        stage.unsafeOperation != UnsafeOperationKind::DeclaredUnsafeCall ||
+        stage.intrinsic != IntrinsicKind::None ||
+        stage.operands.size() != 1 || stage.destination || stage.receiver ||
+        stage.loan || stage.functionTarget || stage.constructorTarget ||
+        stage.lambdaTarget || stage.bodyTarget || stage.nativeCalleeType ||
+        stage.callableInvocation)
+      return false;
+    const auto &input = stage.operands.front();
+    const auto *place = body.findPlace(input.place);
+    if (input.kind != (mutableInput ? MirOperandKind::BorrowWrite
+                                    : MirOperandKind::BorrowRead) ||
+        input.loan || input.value || !place ||
+        place->root != MirPlaceRootKind::Value ||
+        !place->projections.empty() || place->value == 0 ||
+        place->type != stage.info.type)
+      return false;
+    const auto *value = body.findValue(place->value);
+    const auto *block = value ? body.findBlock(value->definitionBlock) : nullptr;
+    if (!block)
+      return false;
+    const auto producer = std::find_if(
+        block->instructions.begin(), block->instructions.end(),
+        [&](const MirInstruction &candidate) {
+          return candidate.id == value->definition;
+        });
+    if (producer == block->instructions.end())
+      return false;
+    const auto *target =
+        producer->functionTarget
+            ? program.findFunctionInstance(*producer->functionTarget)
+            : nullptr;
+    return !producer->tombstone &&
+           producer->kind == MirInstructionKind::Call &&
+           producer->result == place->value &&
+           producer->hirValue == stage.hirValue &&
+           producer->unsafeOperation ==
+               UnsafeOperationKind::DeclaredUnsafeCall &&
+           producer->intrinsic == IntrinsicKind::None &&
+           !producer->rawMemoryAccess && !producer->nativeCalleeType &&
+           !producer->lambdaTarget &&
+           producer->dispatch == CallDispatch::Static && target &&
+           target->definitionKind == MirDefinitionKind::Source &&
+           target->linkage == LanguageLinkage::Gti && target->requiresUnsafe &&
+           target->returnType == place->type;
   }
 
   const MirLoan *directReturnSourceLoan(const MirBody &body,
@@ -3320,6 +3432,7 @@ public:
                   ? std::optional(Shape::NativeMemoryOperation)
               : (ordinaryUnsafe || unsafeCallResultLoad(mir, mirBlock, stage) ||
                  unsafeCallResultInput(mir, mirBlock, stage) ||
+                 unsafeCallValueReceiver(mir, stage) ||
                  unsafeCallResultReturn(mir, mirBlock, stage))
                   ? std::optional(Shape::OrdinaryUnsafeInvocation)
               : (stage.unsafeOperation ==

@@ -931,6 +931,22 @@ void Placement::collect(const MirProgram *program, const MirBody &body) {
         body.returnType == term.value->type)
       bind(term.value->value, {.returned = true});
   }
+  // MIR gives no destination to a producer whose result it materializes in a
+  // hidden temporary, such as a call result that receives a further call or
+  // carries a value drop inside a conditional operand. That temporary is the
+  // result object, so the producer constructs directly into its storage
+  // rather than into a fresh slot the temporary never sees.
+  for (const auto &place : body.places) {
+    if (place.root != MirPlaceRootKind::Temporary ||
+        !place.projections.empty() || !storesAddress(place.type))
+      continue;
+    const auto materialization =
+        findMirTemporaryMaterialization(body, place, place.sourceValue);
+    if (materialization &&
+        materialization.value->info.type == place.type &&
+        !targets.contains(materialization.value->id))
+      bind(materialization.value->id, {.place = place.id});
+  }
 }
 
 bool Placement::fresh(MirValueId value) const {
