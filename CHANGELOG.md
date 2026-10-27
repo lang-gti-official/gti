@@ -16,18 +16,21 @@ for what minor and patch releases mean.
   the following block. `std::format` selects a decimal digit through such a
   switch, so every digit 9 printed as 8 and any native program whose output
   contained a 9 was silently wrong.
+- Fix negative integer, enumerator and switch-label constants on a native
+  backend built against LLVM 23. They kept stray high bits, so above `-O0` a
+  negative enumerator passed to a function could take the wrong branch.
 - Share one constant per text literal, so identical literals observe one
   address as the C++ backend already does.
 - Compile on the native backend: destructuring declarations, reads of an
   integral enum's underlying value, counted text views held as values,
   constructions and call receivers under declared `unsafe` permission,
   constant-folded raw field indexing, native function values published into
-  constructor fields, and borrows reached through a carrier's stored
-  reference.
+  constructor fields, borrows reached through a carrier's stored reference,
+  and restoring swaps and exchanges (`std::swap`, `std::exchange`,
+  `std::array::swap` and `swap_elements`).
 - C++ remains the production default. Polymorphic ownership, dynamic dispatch
-  transfer, thread-handle construction and restoring swap remain rejected on
-  the native backend, and a negative enumerator crossing a function argument
-  is still answered wrongly above `-O0`.
+  transfer and thread-handle construction remain rejected on the native
+  backend.
 
 ## 0.480.1 — Lambda argument formatting
 

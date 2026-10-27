@@ -11889,11 +11889,11 @@ following block. `std::format` picks a decimal digit through such a switch, so
 every digit 9 printed as 8 and any program whose output contained a 9 was
 silently wrong. Fixed, with a registered `switch-default` execution case.
 
-A negative enumerator crossing a function argument is answered wrongly at O1
-and above, while O0 and the C++ backend are correct. It needs no stdlib, no
-formatting and no switch, and it predates this campaign. Not yet fixed; the
-reduction and the ruled-out causes are recorded with the remaining work below.
-This is a promotion blocker independent of the unimplemented milestones.
+A negative enumerator crossing a function argument was answered wrongly at O1
+and above, while O0 and the C++ backend were correct. Native lowering built
+negative constants that LLVM 23 does not canonicalize; the record is with the
+remaining work below. Fixed, with negative enumerators and negative case labels
+added to the `integral-enum-underlying` and `switch-default` execution cases.
 
 #### Remaining Executable Gaps (2026-10-27)
 
@@ -11907,14 +11907,12 @@ not size the work.
 | O-LLVM-10 polymorphic transfer and virtual-call shapes | 071, 025 | milestone |
 | O-LLVM-07/10 hierarchy containment on a receiver stage | 149 | milestone; the receiver's type merely contains hierarchy storage |
 | O-LLVM-13 thread-handle construction | 066, 076, 175 | milestone; the handle's own construction is outside admission |
-| O-LLVM-08 `RestoringSwap` | 103, 104 | no emission exists; needs a layout-width three-step exchange honouring both restored loans |
 | element and pointee eligibility | 127, 129, 142 | admission only; the emitters are element-agnostic. `ArraySize`/`ArrayRangeBegin` return constants yet demand a passive element; a payload-enum pointee and an array of sealed integral enums have implemented shapes that the eligibility predicates do not reach |
 | unsafe receiver on a `Call` stage | 121 | admission only; a receiver-role `Call` with a mutable-temporary-borrow input kind and no call target |
 | remaining field projection | 042 | admission only; progressed from the earlier reference-adjustment refusal |
 | undetermined | 143, 144, 166 | 143 refuses a `Construct` although `nativeValue` accepts its type; 144 fails an internal `vector` length check during representation generation; 166 compiles and then never terminates, with a correctly lowered reverse-destroy loop reading an implausible count |
 
-**Negative enumerator across an argument (O1 and above).** Reduced to five
-lines with no stdlib, no formatting, no switch and no ownership:
+**Negative constants above O0 (fixed).** The five-line reduction
 
 ```gti
 enum class E : int32_t { a = -5, b = 1000 };
@@ -11922,48 +11920,20 @@ int32_t f(E v) { if (v == E::a) { return 1; } return 2; }
 int main() { if (f(E::a) != 1) { return 10; } if (f(E::b) != 2) { return 20; } return 0; }
 ```
 
-Native O0 exits 0; O1, O2 and O3 exit 20 because `f(E::b)` takes the
-`v == E::a` branch. The C++ backend is correct at O3. The defect needs all
-three of a negative enumerator, the enum crossing an argument boundary, and
-the optimizer: the same shape with both enumerators positive, with a
-`uint8_t` underlying type, compared in `main` without a call, or with a plain
-`int32_t` parameter is correct at every level.
-
-**The emitted IR is correct and the fault is inside the compiler's own
-pipeline run.** Dumping the module immediately before optimization shows
-exactly what it should:
-
-```llvm
-define internal i32 @__gti_native_v2_f4(i32 %0) { ... %3 = icmp eq i32 %2, -5 ... }
-...
-  %2 = call i32 @__gti_native_v2_f4(i32 -5)    ; expects 1
-  %4 = call i32 @__gti_native_v2_f4(i32 1000)  ; expects 2
-```
-
-Dumping the same module immediately after `pipeline.run` shows
-`store i32 20` where the only correct fold is `store i32 0`. Feeding that
-byte-identical pre-optimization module to `opt --passes='default<O1>'` from
-the same LLVM 23.1.2 yields `store i32 0`, and the two optimized modules are
-otherwise identical, including every inferred attribute.
-
-Ruled out by direct experiment, each reproducing the correct fold on the same
-module: the printed IR itself; the LLVM version; linking the shared
-`libLLVM` or the static archives; GTI's exact `TargetMachine`, built from the
-default triple with CPU `generic`, no features, PIC and
-`CodeGenOptLevel::Less`; a consumer compiled as C++17 or as C++20; and
-loading `libclang`, so the second LLVM copy that `libclang` brings into the
-process is not the cause. Also ruled out by reading: both enumerators
-materialize correctly in `Scalars::constant`; `Scalars::domain` returns the
-sealed underlying type, so the compare is a signed `i32` compare;
-`layouts().get` delegates an enum to that integer; the private call ABI sets
-no extension attribute, and the native-C `extension()` only widens 8/16-bit C
-scalars and is not on this path.
-
-So an identical pipeline over an identical module behaves differently inside
-`gti` than outside it. The next step is to bisect inside the process, printing
-the module after each pass through `PassInstrumentation`, and identify the
-pass whose result differs. The backend has no IR dump option, which is what
-made this expensive to localize.
+exited 20 at native O1 and above. Native lowering built every negative integer,
+enumerator and switch-label constant as
+`ConstantInt::get(type, uint64_t(0) - magnitude)`. Through LLVM 22 that call
+truncated implicitly. LLVM 23 made truncation opt-in, and a release-built
+`APInt` keeps an unfitted payload's high bits rather than asserting, so the
+emitted `i32 -5` carried the raw word `0xfffffffffffffffb`: it printed as
+`-5` but was a different constant from the canonical `-5` and compared unequal
+to it. IPSCCP then concluded `f` always returns 1 and folded `f(E::b) != 2` to
+true. Printing and reparsing a module canonicalizes the constant, which is why
+`opt` on a dumped module was always correct while the in-process pipeline was
+not, and `CloneModule` preserves it. Comparing a reparsed copy with a clone
+pass by pass localized the divergence to IPSCCP's input. One `integerConstant`
+helper now builds each such constant at its type's width. Builds against the
+bundled LLVM 20.1.0 were unaffected; every build against LLVM 23 was.
 
 **Not on this path.** The C04 failure-transport comparison recommends native
 unwinding as a proposal to the ABI owner and states that production keeps
