@@ -2772,13 +2772,14 @@ returned only over a reference parameter's referent (see
 [Conversions, field relays and returns](#conversions-field-relays-and-returns)).
 Each of the others is `GTI-S2045`. For the same reason a
 class with a destructor, a base or virtual methods keeps the ownerless field
-rule. A derived constructor that passes a formal to a base constructor storing
-it therefore requires ownerless text for that formal (`GTI-S2045` where the
-derived class is constructed), and any method of a derived class, virtual or
-not, reads an inherited view field as ownerless text. So does a constructor with a non-empty body, which could read the
-published field back through `this` as ownerless text. A value holds dynamic
-text from at most one owner, and that owner must be a named place: a view of a
-temporary owner is rejected as before.
+rule. So does a constructor with a non-empty body, which could read the
+published field back through `this` as ownerless text. Because a class with a
+base keeps that rule, a derived constructor that passes a formal to a base
+constructor storing it requires ownerless text for that formal (`GTI-S2045`
+where the derived class is constructed), and any method of a derived class,
+virtual or not, reads an inherited view field as ownerless text. A value holds
+dynamic text from at most one owner, and that owner must be a named place: a
+view of a temporary owner is rejected as before.
 
 A method or function that returns a reference to text, such as
 `std::string_view& ref() { return this.text; }`, `T& get()` over a text field,
