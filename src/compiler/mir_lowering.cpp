@@ -656,6 +656,15 @@ MirLowerer::lowerProgram(const HirProgram &source,
              nullptr, nullptr, nullptr,
              compilerTrustedSourceUnit(source, instance.sourceUnit), nullptr,
              &instance)});
+    // A polymorphic class's source destructor runs under its own class:
+    // the lifecycle-dispatch contract every backend lowers.
+    auto &lowered = result.program.destructors.back();
+    if (const auto *destructorOwner =
+            result.program.findClassInstance(instance.owner);
+        destructorOwner && destructorOwner->polymorphic &&
+        lowered.definitionKind == MirDefinitionKind::Source)
+      lowered.dispatchState =
+          MirDestructorDispatchState{.activeClass = destructorOwner->id};
   }
 
   result.program.lambdas.reserve(source.lambdaInstances().size());

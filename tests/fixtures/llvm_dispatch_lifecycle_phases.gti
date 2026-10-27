@@ -1,0 +1,83 @@
+// Lifecycle dispatch: while a destructor of class C runs, the object
+// dispatches as a C. A virtual call on `this`, directly or through a helper,
+// selects C's members and never reaches a destroyed derived part; each base
+// destructor then runs under its own class. MIR records the transition at
+// each destructor and the backend lowers that record. Destructors record
+// explicit IDs.
+#include <std/memory>
+
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Named { int code(); };
+
+class Base {
+public:
+  Base() {}
+  virtual int read() { return 1; }
+  ~Base() { record(this.read()); }
+};
+
+int describe(Base& value) { return value.read(); }
+
+// Named follows Base, so the Named view has a nonzero offset.
+class Mid : public Base, public Named {
+public:
+  Mid() : Base() {}
+  int read() override { return 2; }
+  int code() override { return 4; }
+  ~Mid() {
+    record(describe(this));
+    Named& named = this;
+    record(named.code());
+  }
+};
+
+class Leaf : public Mid {
+  int quotient;
+public:
+  Leaf(int divisor) : Mid(), quotient(12 / divisor) {}
+  int read() override { return 3; }
+  int code() override { return 5; }
+  ~Leaf() {
+    record(this.read());
+    record(this.code());
+  }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// LIFECYCLE_MAIN
+int main() {
+  {
+    Leaf leaf{1};
+    if (leaf.read() != 3 || describe(leaf) != 3) { return 1; }
+  }
+  if (events != 35241) { return 2; }
+  events = 0;
+  {
+    Mid mid{};
+    if (mid.code() != 4) { return 3; }
+  }
+  if (events != 241) { return 4; }
+  events = 0;
+  {
+    std::unique_ptr<Base> owner =
+        std::upcast_unique<Base, Leaf>(std::make_unique<Leaf>(2));
+    if (owner->read() != 3) { return 5; }
+  }
+  if (events != 35241) { return 6; }
+  events = 0;
+  { Base base{}; }
+  return events == 1 ? 0 : 7;
+}

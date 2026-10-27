@@ -872,7 +872,8 @@ void runChecks(const std::filesystem::path &self) {
           "C++ build must not replace a native-object cache entry");
   const auto validSource = read(project / "main.gti");
   const auto validMetadata = read(first.cache.entry / "metadata");
-  write(project / "main.gti", read(project / "polymorphic_owner.gti"));
+  // A still-refused native shape; it moves as LLVM coverage grows.
+  write(project / "main.gti", read(project / "unadmitted_dispatch.gti"));
   require(checkCompilation(compilation().forExecutable()).succeeded(),
           "backend rejection fixture must pass source-language checking");
   const auto rejectedAdmission = [&](const ExecutableBuildResult &result) {
@@ -887,7 +888,7 @@ void runChecks(const std::filesystem::path &self) {
             !result.nativeProcess &&
             result.cache.status == BuildCacheStatus::Miss &&
             result.cache.key != first.cache.key,
-        "unadmitted polymorphic ownership must fail before link or restore");
+        "unadmitted base-view replacement must fail before link or restore");
   };
   const auto admission = build(retained);
   rejectedAdmission(admission);

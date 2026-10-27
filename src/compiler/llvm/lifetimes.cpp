@@ -21,6 +21,27 @@ Lifetimes::Lifetimes(Session &session, Failures &failures, Dispatch &dispatch,
       findBody(std::move(findBody)) {}
 
 namespace {
+// The class a polymorphic class step of a cleanup recipe runs under: the
+// lifecycle-dispatch transition MIR records for its source destructor, or the
+// step's own class while a generated cleanup ends its fields. The backend
+// never selects a destructor's phase itself.
+HirClassInstanceId destructionPhase(const MirProgram &program,
+                                    const MirDropType &recipe) {
+  if (!recipe.classInstance)
+    throw std::logic_error("LLVM destruction phase lost its class step");
+  const auto active = *recipe.classInstance;
+  if (!recipe.destructor || recipe.fixedArray)
+    return active;
+  const auto *destructor = program.findDestructorInstance(*recipe.destructor);
+  if (!destructor || destructor->owner != active)
+    throw std::logic_error("LLVM destruction phase lost its destructor");
+  if (!destructor->dispatchState ||
+      destructor->dispatchState->activeClass != active)
+    throw BackendUnsupportedError(
+        "LLVM destructor requires its recorded lifecycle-dispatch transition");
+  return destructor->dispatchState->activeClass;
+}
+
 // The exact dynamically typed unique-owner recipe: the owner's static pointee
 // names only a view. Its complete object, cleanup and allocation identity all
 // come from the installed dispatch descriptor at drop time.
@@ -125,7 +146,8 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
         throw BackendUnsupportedError("LLVM polymorphic replacement requires a "
                                       "verified cleanup dispatch context");
       if (owner.polymorphic && selected.requiresActiveCleanup)
-        dispatch.preflightPhase(owner.id);
+        dispatch.preflightPhase(
+            destructionPhase(session.program().mir(), selected));
       path.push_back(owner.id);
     } else if (selected.requiresActiveCleanup &&
                selected.type.kind != SemanticType::Array) {
@@ -1744,7 +1766,8 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       ir.CreateCondBr(ir.CreateCall(cleanupObservation(recipe), {address}),
                       install, ready);
       ir.SetInsertPoint(install);
-      dispatch.installPhase(ir, address, *recipe.classInstance);
+      dispatch.installPhase(ir, address,
+                            destructionPhase(session.program().mir(), recipe));
       ir.CreateBr(ready);
       ir.SetInsertPoint(ready);
     }
