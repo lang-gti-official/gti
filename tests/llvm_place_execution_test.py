@@ -145,6 +145,32 @@ int main() {
 }
 '''
 
+# A sealed integral enum is stored as its underlying integer: a vector of one,
+# raw element reads/writes, pointer arithmetic and local array indexing.
+INTEGRAL_ENUM_POINTERS = r'''
+#include <std/vector>
+enum class Event { dial, ack, data, hangup, reset };
+enum class Phase : uint8_t { idle = 1, open = 3, closed = 9 };
+int main() {
+  mut std::vector<Event> script{};
+  script.push_back(Event::dial);
+  script.push_back(Event::data);
+  script.push_back(Event::hangup);
+  if (script.size() != uint64_t(3) || script[uint64_t(1)] != Event::data) { return 1; }
+  mut Phase phases[3] = {Phase::idle, Phase::open, Phase::closed};
+  mut Phase* first = &phases[0];
+  Phase* last = &phases[2];
+  unsafe {
+    first[1] = Phase::closed;
+    if (*last != Phase::closed || last - first != 2) { return 2; }
+    first += 1;
+    if (*first != Phase::closed) { return 3; }
+  }
+  if (phases[1] != Phase::closed) { return 4; }
+  return 0;
+}
+'''
+
 PRIMITIVE_POINTERS = r'''
 int main() {
   mut int values[3] = {10, 20, 30};
@@ -436,7 +462,8 @@ def successes(root: Path) -> dict[str, str]:
              'unsafe-wrapper': UNSAFE_WRAPPER,
              'conditional-references': CONDITIONAL_REFERENCES,
              'array-extent-queries': ARRAY_EXTENT_QUERIES,
-             'integral-enum-arrays': INTEGRAL_ENUM_ARRAYS}
+             'integral-enum-arrays': INTEGRAL_ENUM_ARRAYS,
+             'integral-enum-pointers': INTEGRAL_ENUM_POINTERS}
     cases['shipped-example'] = (
         root / 'examples/llvm/places-and-text.gti').read_text()
     cases['enum-references'] = (
@@ -497,6 +524,8 @@ def evidence_cases(root: Path) -> dict[str, str]:
 def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
     cases = evidence_cases(root)
     profiles = {name: (name,) for name in cases}
+    profiles['primitive-pointers'] += ('integral-enum-pointers',)
+    profiles['array-high'] += ('integral-enum-pointers',)
     assert all(case in cases for profile in profiles.values() for case in profile)
     return profiles
 
