@@ -1874,6 +1874,22 @@ and an analysis with the raw-pointer audit enabled never uses it.
   without the active requirement scopes, and a failure falls back to the
   ordinary assumption-aware query. Reuses and records are reported as
   `semanticConceptProofReuses` and `semanticConceptProofRecords`.
+- **Shared initializer-effect results.** Program finalization closes
+  initializer and storage-borrow effects over every concrete instance the
+  program's bodies reach (`closeConcreteProgramEffects`), each analysed by a
+  worker. A query whose target and type arguments are all the preamble's own
+  declarations reads only the preamble, so its exported effect graph is the
+  same in every adopting program; the preamble records it
+  (`SemanticPreamble::EffectQueryResult`) in symbolic form: nodes in order,
+  edges to other queries by identity, and only stable preamble owners
+  otherwise. A later snapshot replays it with fresh local identities and
+  registers and schedules the referenced queries exactly as the analysis
+  did. Only clean, valid analyses are recorded, and a result with
+  storage-use syntax, storage-borrow checks or non-preamble owners is not
+  shared. The worker's own reaching of held-back preamble bodies affects only
+  its private copy, so it is not counted in `semanticPreambleReachedBodies`.
+  Replays and records are reported as `semanticEffectQueryReuses` and
+  `semanticEffectQueryRecords`.
 - **Identity.** Registration of the prefix is literally the preamble's, so
   trusted declaration identities, the instance-reuse registration fingerprint
   and symbol identities below the prefix ceiling are the same in every

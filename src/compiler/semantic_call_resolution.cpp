@@ -1797,6 +1797,16 @@ auto SemanticVisitor::Impl::preambleConceptProofApplies(
             adoptedPrefixDeclarations)
       return false;
   }
+  return std::all_of(requirement.arguments.begin(), requirement.arguments.end(),
+                     [&](const SemanticType &argument) {
+                       return preambleClosedType(argument);
+                     });
+}
+
+auto SemanticVisitor::Impl::preambleClosedType(
+    const SemanticType &candidate) const -> bool {
+  if (adoptedPreamble == nullptr || adoptedPreamble->state == nullptr)
+    return false;
   const Impl &preamble = *adoptedPreamble->state;
   const auto preambleType = [&](const auto &self,
                                 const SemanticType &type) -> bool {
@@ -1842,10 +1852,7 @@ auto SemanticVisitor::Impl::preambleConceptProofApplies(
         type.arguments.begin(), type.arguments.end(),
         [&](const SemanticType &argument) { return self(self, argument); });
   };
-  return std::all_of(requirement.arguments.begin(), requirement.arguments.end(),
-                     [&](const SemanticType &argument) {
-                       return preambleType(preambleType, argument);
-                     });
+  return preambleType(preambleType, candidate);
 }
 
 auto SemanticVisitor::Impl::firstConceptApplicationFailure(

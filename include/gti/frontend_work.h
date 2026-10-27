@@ -68,6 +68,10 @@ struct FrontendWorkMetrics {
   // shared concept proofs (see SemanticPreamble::ConceptProofKey).
   std::size_t semanticConceptProofReuses = 0;
   std::size_t semanticConceptProofRecords = 0;
+  // Concrete initializer-effect queries answered from, and added to, the
+  // adopted preamble's shared effect results.
+  std::size_t semanticEffectQueryReuses = 0;
+  std::size_t semanticEffectQueryRecords = 0;
   // Instance bodies HIR omitted as library-only; see
   // FrontendOptions::lowerLibraryOnlyInstanceBodies.
   std::size_t hirOmittedInstanceBodies = 0;
@@ -115,6 +119,8 @@ struct FrontendWorkMetrics {
     semanticInstanceReuseMicroseconds = 0;
     semanticConceptProofReuses = 0;
     semanticConceptProofRecords = 0;
+    semanticEffectQueryReuses = 0;
+    semanticEffectQueryRecords = 0;
     hirOmittedInstanceBodies = 0;
     semanticBorrowSummaryCandidateInspections = 0;
     semanticBorrowSummaryFunctions = 0;

@@ -989,9 +989,10 @@ def test_analysis_pool_runs_one_analysis_per_document(executable, root):
 
 
 def test_preamble_concept_proofs_across_snapshots(executable, root):
-    # A concept proved of standard-library types in one snapshot is reused by
-    # the next snapshot that adopts the same preamble, and the reuse does not
-    # change what the edit reports.
+    # A concept proved of standard-library types, and a concrete effect query
+    # over standard-library instances, in one snapshot are reused by the next
+    # snapshot that adopts the same preamble; the reuse does not change what
+    # the edit reports.
     path = root / "concept-proofs.gti"
     source = (
         "#include <std/string>\n#include <std/vector>\n"
@@ -1058,6 +1059,13 @@ def test_preamble_concept_proofs_across_snapshots(executable, root):
         assert len(records) >= 3, records
         assert records[0]["conceptProofRecords"] > 0, records[0]
         assert all(record["conceptProofReuses"] > 0 for record in records[1:]), records
+        # Concrete initializer-effect queries over standard-library instances
+        # are analysed once and replayed by every later snapshot.
+        assert records[0]["effectQueryRecords"] > 0, records[0]
+        assert all(
+            record["effectQueryReuses"] > 0 and record["effectQueryRecords"] == 0
+            for record in records[1:]
+        ), records
     finally:
         if not closed:
             session.close()

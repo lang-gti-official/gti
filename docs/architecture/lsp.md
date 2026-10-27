@@ -818,7 +818,9 @@ a new preamble. The trace reports `preambleBuilds`,
 `preambleBuildMicroseconds`, `preambleAdoptions`,
 `preambleAdoptMicroseconds`, `preambleBodies`, `preambleReachedBodies`, the
 cache's occupancy, `conceptProofReuses` and `conceptProofRecords` (concept
-proofs the preamble shares across snapshots; see "Shared concept proofs") and,
+proofs the preamble shares across snapshots; see "Shared concept proofs"),
+`effectQueryReuses` and `effectQueryRecords` (initializer-effect results it
+shares; see "Shared initializer-effect results") and,
 for every analysis, `includeSuggestionsRequested`. The background raw-pointer audit never uses a
 preamble.
 
