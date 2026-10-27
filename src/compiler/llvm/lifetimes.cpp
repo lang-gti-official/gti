@@ -129,11 +129,18 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
     if (&selected != &recipe &&
         !containsHierarchyStorage(session.program().mir(), selected.type))
       return;
+    // A payload field step names one exact field of one alternative; its
+    // own recipe is that field's complete cleanup.
     if (selected.recursiveCleanup || selected.uniquePointeeClass ||
-        selected.lambdaInstance || selected.payloadVariant ||
-        selected.captureIndex || selected.payloadField)
+        selected.lambdaInstance || selected.captureIndex ||
+        selected.payloadVariant.has_value() !=
+            selected.payloadField.has_value())
       throw BackendUnsupportedError(
           "LLVM cleanup requires its later ownership/dispatch milestone");
+    const auto *payload =
+        selected.type.kind == SemanticType::Enum
+            ? session.program().mir().findPayloadEnum(selected.type)
+            : nullptr;
     if (selected.type.kind == SemanticType::Class) {
       const auto &owner = session.layouts().instance(selected.type);
       if (selected.classInstance != owner.id ||
@@ -150,7 +157,7 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
             destructionPhase(session.program().mir(), selected));
       path.push_back(owner.id);
     } else if (selected.requiresActiveCleanup &&
-               selected.type.kind != SemanticType::Array) {
+               selected.type.kind != SemanticType::Array && !payload) {
       throw BackendUnsupportedError(
           "LLVM static cleanup requires addressable class/array recipes");
     }
@@ -175,12 +182,23 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
         throw std::logic_error(
             "LLVM array cleanup lost its sealed element recipe");
     } else if (!selected.aggregate.empty() &&
-               selected.type.kind != SemanticType::Class) {
+               selected.type.kind != SemanticType::Class && !payload) {
       throw BackendUnsupportedError(
           "LLVM static cleanup requires its exact aggregate representation");
     }
     for (const auto &child : selected.aggregate) {
-      if (!selected.fixedArray) {
+      if (payload) {
+        // Each payload child names one exact field of one alternative.
+        if (!child.payloadVariant || !child.payloadField ||
+            *child.payloadVariant >= payload->variants.size() ||
+            *child.payloadField >=
+                payload->variants[*child.payloadVariant].payloadTypes.size() ||
+            payload->variants[*child.payloadVariant]
+                    .payloadTypes[*child.payloadField] != child.type)
+          throw std::logic_error(
+              "LLVM payload cleanup lost its exact alternative field");
+        static_cast<void>(session.layouts().payload(selected.type));
+      } else if (!selected.fixedArray) {
         if (child.uniqueOwnerField)
           static_cast<void>(session.layouts().fieldIndex(
               selected.type, child.uniqueOwnerField));

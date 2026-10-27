@@ -5045,7 +5045,8 @@ these destinations:
   receiver;
 - an inline polymorphic slot (`NativeInlinePolymorphicSlot`);
 - the caller's return destination;
-- a constructor field, through its exact field initializer.
+- a constructor field, through its exact field initializer;
+- its slot in a fresh array or payload alternative that is itself published.
 
 `NativeConsumingHierarchyReceiver` admits several consuming-call receivers: a
 moved binding relocated into its own value storage, a retained owned field
@@ -5070,6 +5071,18 @@ into the final storage, nested arrays included. Elements are complete objects
 selected through checked index projections. Cleanup runs each element's
 complete cleanup in reverse order. Whole-array copies and by-value array
 transport stay `PolymorphicTransfer`.
+
+`NativeHierarchyPayload` admits payload enums that hold hierarchy storage,
+such as `std::optional` of an erased callable. Each payload field of an
+alternative is published directly in its slot: either a fresh construction or
+by-value result, or a moved object relocated there. The payload construction
+itself publishes into a whole local, a class field or, as a replacing value,
+its own storage. Borrows of the enum select it, and its checked borrowing
+extractions select payloads as complete objects. Cleanup runs the active
+alternative's field cleanup. Every payload enum place is a complete object, so
+assigning a new alternative ends the old one exactly once and relocates the
+fresh value. Enum copies and payload values returned by value stay
+`PolymorphicTransfer`.
 
 `NativeProgramHierarchyStorage` admits a hierarchy object in namespace or
 static-field storage that its program initialization step constructs in

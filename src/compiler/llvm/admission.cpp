@@ -408,11 +408,11 @@ public:
                 place.type.concretePack &&
                 place.root == MirPlaceRootKind::Binding &&
                 place.projections.empty()) &&
-              !hierarchyArray(place.type)) ||
+              !hierarchyContainer(place.type)) ||
              (place.root == MirPlaceRootKind::Symbol &&
               !programObject(place)) ||
              place.foreignStorage ||
-             (place.type.kind == SemanticType::Array && place.capture)))
+             (place.type.kind != SemanticType::Class && place.capture)))
           bodyProof.transfer = true;
       for (const auto &drop : body.dropObligations) {
         bodyProof.pure |= pureCleanup(drop.dropType);
@@ -426,7 +426,9 @@ public:
           const bool fresh = freshConstruction(address, body, placement, stage);
           const bool published =
               freshStorage(address, body, placement, stage).has_value();
-          const bool transfer = freshTransfer(body, stage);
+          const bool transfer = freshTransfer(body, stage) &&
+                                publishedElement(address, body, placement,
+                                                 stage);
           const bool initialization =
               freshInitialization(address, body, placement, stage);
           const bool declaration = declarationOnlyField(address, body, stage);
@@ -563,7 +565,9 @@ public:
   }
   bool referent(const SemanticType &type) const {
     return type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
-           type.arguments.front().kind == SemanticType::Class &&
+           (type.arguments.front().kind == SemanticType::Class ||
+            (type.arguments.front().kind == SemanticType::Enum &&
+             program.findPayloadEnum(type.arguments.front()))) &&
            contains(type.arguments.front());
   }
   bool related(const SemanticType &type) const {
@@ -634,6 +638,38 @@ public:
     if (type.kind == SemanticType::RawPointer && type.arguments.size() == 1 &&
         type.arguments.front().kind == SemanticType::Array)
       return metadata(type.arguments.front());
+    // A reference to a payload enum holding hierarchy storage is a view.
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+        type.arguments.front().kind == SemanticType::Enum)
+      return metadata(type.arguments.front())
+                 ? std::optional(Shape::NativeBorrowedDispatchView)
+                 : std::nullopt;
+    // A payload enum holds one complete object per payload field of its
+    // active alternative; every alternative's storage must be represented.
+    if (type.kind == SemanticType::Enum) {
+      const auto *payload = program.findPayloadEnum(type);
+      if (!payload || !contains(type))
+        return {};
+      for (const auto &variant : payload->variants)
+        for (const auto &field : variant.payloadTypes) {
+          if (!contains(field)) {
+            if (!natives(field))
+              return {};
+            continue;
+          }
+          const auto shape = metadata(field);
+          if (shape != Shape::NativeStaticDispatchStorage &&
+              shape != Shape::NativeHierarchyArray &&
+              shape != Shape::NativeHierarchyPayload)
+            return {};
+        }
+      try {
+        static_cast<void>(session->layouts().payload(type));
+      } catch (const BackendUnsupportedError &) {
+        return {};
+      }
+      return Shape::NativeHierarchyPayload;
+    }
     // A fixed array of hierarchy storage holds complete element objects.
     if (type.kind == SemanticType::Array) {
       if (type.arguments.size() != 1 || type.arrayLengthParameterId ||
@@ -724,6 +760,8 @@ public:
                                                replacement);
       return recipe.type.kind == SemanticType::Array
                  ? Shape::NativeHierarchyArray
+             : recipe.type.kind == SemanticType::Enum
+                 ? Shape::NativeHierarchyPayload
                  : Shape::NativeStaticDispatchStorage;
     } catch (const BackendUnsupportedError &) {
       return {};
@@ -748,6 +786,31 @@ public:
   }
   std::optional<Shape> borrowed(const MirBody &body,
                                 const MirOperand &operand) {
+    // A borrow of a payload enum holding hierarchy storage names that enum;
+    // a payload is selected only by its own checked extraction.
+    if ((operand.kind == MirOperandKind::BorrowRead ||
+         operand.kind == MirOperandKind::BorrowWrite ||
+         operand.kind == MirOperandKind::Address) &&
+        unreference(operand.type).kind == SemanticType::Enum) {
+      const auto &target = unreference(operand.type);
+      const auto *place = body.findPlace(operand.place);
+      if (!program.findPayloadEnum(target) || !place ||
+          place->type != target || place->foreignStorage || place->capture ||
+          !payloadPlace(body, *place))
+        return {};
+      const bool mut = operand.kind == MirOperandKind::BorrowWrite ||
+                       (operand.type.kind == SemanticType::Reference &&
+                        operand.type.referenceAccess == AccessMode::Mutable);
+      if (mut && place->access != AccessMode::Mutable)
+        return {};
+      return metadata(target);
+    }
+    if (operand.kind == MirOperandKind::Value &&
+        unreference(operand.type).kind == SemanticType::Enum) {
+      const auto *staged = stagedBorrow(body, operand);
+      return staged ? borrowed(body, staged->operands.front())
+                    : std::nullopt;
+    }
     // The checked address of a hierarchy array place names that storage;
     // its elements are selected by their own checked projections.
     if (operand.kind == MirOperandKind::Address &&
@@ -785,6 +848,44 @@ public:
     } catch (const BackendUnsupportedError &) {
       return {};
     }
+  }
+  // A selected place of a payload enum: a local, field, element, parameter
+  // view or extracted payload, never captured or foreign storage.
+  bool payloadPlace(const MirBody &body, const MirPlace &place) const {
+    if ((place.root != MirPlaceRootKind::Binding &&
+         place.root != MirPlaceRootKind::This &&
+         place.root != MirPlaceRootKind::Value &&
+         place.root != MirPlaceRootKind::Loan) ||
+        std::any_of(place.projections.begin(), place.projections.end(),
+                    [](const auto &projection) {
+                      return projection.kind != MirProjectionKind::Field &&
+                             projection.kind != MirProjectionKind::Index &&
+                             projection.kind != MirProjectionKind::Dereference;
+                    }))
+      return false;
+    if (place.root == MirPlaceRootKind::Loan) {
+      const auto *loan = body.findLoan(place.loan);
+      return loan && supportedLoan(body, *loan);
+    }
+    return place.root != MirPlaceRootKind::Value ||
+           payloadView(body, place.value);
+  }
+  // The place-category result of a borrowing payload extraction: a view of
+  // the payload of a selected enum place, which its switch arm checked.
+  bool payloadView(const MirBody &body, MirValueId value) const {
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.result == value)
+          return stage.kind == MirInstructionKind::Compute &&
+                 stage.operation == MirOperation::PayloadExtract &&
+                 stage.payloadExtractionKind ==
+                     PayloadExtractionKind::BorrowValue &&
+                 stage.info.category == ValueCategory::Place &&
+                 stage.operands.size() == 1 && stage.operands.front().place &&
+                 body.findPlace(stage.operands.front().place) &&
+                 payloadPlace(body,
+                              *body.findPlace(stage.operands.front().place));
+    return false;
   }
   bool borrowedUse(const MirBody &body, const MirOperand &operand) const {
     if (related(operand.type))
@@ -930,16 +1031,8 @@ private:
     bool valid =
         std::all_of(owner.declaredFields.begin(), owner.declaredFields.end(),
                     [&](const auto &field) {
-                      if (contains(field.type)) {
-                        // A fixed array field holds complete elements.
-                        const auto *leaf = &field.type;
-                        while (leaf->kind == SemanticType::Array &&
-                               leaf->arguments.size() == 1 &&
-                               !leaf->arrayLengthParameterId)
-                          leaf = &leaf->arguments.front();
-                        return leaf->kind == SemanticType::Class &&
-                               metadataClass(instance(*leaf), path);
-                      }
+                      if (contains(field.type))
+                        return metadataStorage(field.type, path);
                       return field.type != SemanticType::Void &&
                              natives(field.type);
                     });
@@ -958,6 +1051,27 @@ private:
       valid &= base(row);
     path.erase(owner.id);
     return valid;
+  }
+  // Inline hierarchy storage of a field: a class, a fixed array of it, or a
+  // payload enum whose alternatives hold it.
+  bool metadataStorage(const SemanticType &type,
+                       std::set<HirClassInstanceId> &path) const {
+    if (type.kind == SemanticType::Array)
+      return type.arguments.size() == 1 && !type.arrayLengthParameterId &&
+             metadataStorage(type.arguments.front(), path);
+    if (type.kind == SemanticType::Enum) {
+      const auto *payload = program.findPayloadEnum(type);
+      if (!payload)
+        return false;
+      for (const auto &variant : payload->variants)
+        for (const auto &field : variant.payloadTypes)
+          if (contains(field) ? !metadataStorage(field, path)
+                              : !natives(field))
+            return false;
+      return true;
+    }
+    return type.kind == SemanticType::Class &&
+           metadataClass(instance(type), path);
   }
   bool pureState(HirClassInstanceId owner) const {
     const auto *selected = program.findClassInstance(owner);
@@ -1187,6 +1301,20 @@ private:
                      native_llvm::FreshHierarchyPublication::Returned;
     return false;
   }
+  // A planned element transfer relocates into a fresh aggregate that is
+  // itself published in planned storage; other transfers need no aggregate.
+  bool publishedElement(MirBodyAddress address, const MirBody &body,
+                        const native_llvm::Placement &placement,
+                        const MirInstruction &stage) const {
+    if (plannedTransfer(body, stage) !=
+        native_llvm::FreshHierarchyPublication::Element)
+      return true;
+    const auto plan =
+        native_llvm::planFreshHierarchyTransfer(program, body, stage);
+    return plan.publication &&
+           freshStorage(address, body, placement, *plan.publication)
+               .has_value();
+  }
   std::optional<native_llvm::FreshHierarchyPublication>
   plannedTransfer(const MirBody &body, const MirInstruction &stage) const {
     if (!freshTransfer(body, stage))
@@ -1243,12 +1371,17 @@ private:
         stage.operands.size() != 1 || stage.receiver || stage.loan)
       return false;
     const auto *place = body.findPlace(*stage.destination);
-    if (!place || place->type.kind != SemanticType::Class ||
+    const auto *payload = place && place->type.kind == SemanticType::Enum
+                              ? program.findPayloadEnum(place->type)
+                              : nullptr;
+    if (!place ||
+        (place->type.kind != SemanticType::Class && !payload) ||
         place->type != stage.info.type || !contains(place->type))
       return false;
     // Structural only: this also runs while exclusions are gathered, before
-    // any target session exists. The operation proof adds the metadata.
-    if (instance(place->type).polymorphic &&
+    // any target session exists. The operation proof adds the metadata. A
+    // payload enum has no derived type, so every enum place is complete.
+    if (!payload && instance(place->type).polymorphic &&
         !native_llvm::completeObjectPlace(program, *place))
       return false;
     // An object with active cleanup is ended by its paired cleanup stage;
@@ -1266,7 +1399,8 @@ private:
           !cleanup->replacementCleanup ||
           cleanup->replacementCleanup->type != place->type)
         return false;
-    } else if (instance(place->type).requiresActiveCleanup) {
+    } else if (payload ? payload->requiresActiveCleanup
+                       : instance(place->type).requiresActiveCleanup) {
       return false;
     }
     const auto &source = stage.operands.front();
@@ -1488,14 +1622,19 @@ private:
            !input.loan && !input.value && fresh &&
            unreference(stage.info.type) == place->type;
   }
-  // A fixed array whose leaf elements are classes.
-  static bool hierarchyArray(const SemanticType &type) {
+  // A fixed array whose leaf elements are classes or payload enums, or a
+  // payload enum: containers of complete hierarchy objects.
+  bool hierarchyContainer(const SemanticType &type) const {
+    if (type.kind == SemanticType::Enum)
+      return program.findPayloadEnum(type) != nullptr;
     const auto *leaf = &type;
     while (leaf->kind == SemanticType::Array && leaf->arguments.size() == 1 &&
            !leaf->arrayLengthParameterId)
       leaf = &leaf->arguments.front();
     return type.kind == SemanticType::Array &&
-           leaf->kind == SemanticType::Class;
+           (leaf->kind == SemanticType::Class ||
+            (leaf->kind == SemanticType::Enum &&
+             program.findPayloadEnum(*leaf)));
   }
   bool freshConstruction(MirBodyAddress address, const MirBody &body,
                          const native_llvm::Placement &placement,
@@ -1795,7 +1934,9 @@ private:
           (place->root != MirPlaceRootKind::Binding &&
            place->root != MirPlaceRootKind::This &&
            place->root != MirPlaceRootKind::Loan && !freshTemporary(*place) &&
-           !raw && !hidden && !programObject(*place)) ||
+           !raw && !hidden && !programObject(*place) &&
+           !(place->root == MirPlaceRootKind::Value &&
+             payloadView(body, place->value))) ||
           std::any_of(place->projections.begin() + (raw ? 1 : 0),
                       place->projections.end(), [](const auto &projection) {
                         return projection.kind != MirProjectionKind::Base &&
@@ -1882,6 +2023,14 @@ private:
       return {};
     }
   }
+  // An element published in its slot of a fresh array or payload alternative.
+  static Shape elementShape(const native_llvm::Placement &placement,
+                            const MirInstruction &stage) {
+    const auto *target =
+        stage.result ? placement.target(*stage.result) : nullptr;
+    return target && target->variant ? Shape::NativeHierarchyPayload
+                                     : Shape::NativeHierarchyArray;
+  }
   std::optional<Shape> proveOperation(MirBodyAddress address,
                                       const MirBody &body,
                                       const native_llvm::Placement &placement,
@@ -1910,10 +2059,12 @@ private:
           metadata(stage.operands.front().type))
         return Shape::NativeFreshHierarchyTransfer;
       const auto storage = freshStorage(address, body, placement, stage);
-      // A fresh hierarchy aggregate publishes its elements' slots in place.
+      // A fresh hierarchy aggregate publishes its elements' slots in place:
+      // in its final storage or, for a replacing value, in its own storage.
       if (native_llvm::isFreshHierarchyAggregate(program, stage) &&
           (storage == native_llvm::FreshObjectStorage::Local ||
-           storage == native_llvm::FreshObjectStorage::Element))
+           storage == native_llvm::FreshObjectStorage::Element ||
+           storage == native_llvm::FreshObjectStorage::Temporary))
         return metadata(stage.info.type);
       if (stage.kind == MirInstructionKind::Construct && storage) {
         if (!metadata(stage.info.type))
@@ -1933,7 +2084,7 @@ private:
         return *storage == native_llvm::FreshObjectStorage::Local
                    ? Shape::NativeStaticDispatchStorage
                : *storage == native_llvm::FreshObjectStorage::Element
-                   ? Shape::NativeHierarchyArray
+                   ? elementShape(placement, stage)
                    : Shape::NativeFreshHierarchyPublication;
       }
       if (stage.kind == MirInstructionKind::Initialize &&
@@ -1941,6 +2092,8 @@ private:
           metadata(stage.operands.front().type))
         return stage.operands.front().type.kind == SemanticType::Array
                    ? Shape::NativeHierarchyArray
+               : stage.operands.front().type.kind == SemanticType::Enum
+                   ? Shape::NativeHierarchyPayload
                    : Shape::NativeStaticDispatchStorage;
       if (stage.kind == MirInstructionKind::InitializeBase &&
           address.kind == MirBodyKind::Constructor) {
@@ -2091,8 +2244,9 @@ private:
         // A complete object ends like any other cleanup.
         const auto *place = body.findPlace(*stage.destination);
         return place && cleanup(*stage.replacementCleanup,
-                                !native_llvm::completeObjectPlace(program,
-                                                                  *place))
+                                place->type.kind == SemanticType::Class &&
+                                    !native_llvm::completeObjectPlace(program,
+                                                                      *place))
                    ? std::optional(Shape::NativeHierarchyReplacement)
                    : std::nullopt;
       }
@@ -2191,7 +2345,7 @@ private:
       if (stage.kind == MirInstructionKind::Call && storage &&
           metadata(stage.info.type))
         return storage == native_llvm::FreshObjectStorage::Element
-                   ? Shape::NativeHierarchyArray
+                   ? elementShape(placement, stage)
                    : Shape::NativeFreshHierarchyPublication;
     } catch (const BackendUnsupportedError &) {
     }
@@ -4037,7 +4191,7 @@ public:
       const SemanticType &type = *pending.back();
       pending.pop_back();
       if (program.findPayloadEnum(type))
-        add(Shape::PayloadEnum, classShape(type));
+        add(Shape::PayloadEnum, representationShape(type));
       if (type.kind == SemanticType::Class)
         for (const auto &owner : program.classInstances())
           if (owner.type == type && owner.unionLayout)
@@ -4572,7 +4726,7 @@ public:
                   ? std::optional(Shape::NativeCCallback)
               : stage.operation == MirOperation::PayloadConstruct ||
                       stage.operation == MirOperation::PayloadExtract
-                  ? classShape(mirInstructionEnumType(stage))
+                  ? representationShape(mirInstructionEnumType(stage))
               : nativeAddressConversion(stage) && validRaw
                   ? std::optional(Shape::NativeObjectAddress)
               : (nativeRawIndex(stage) && validRaw) || classArithmetic
@@ -4925,7 +5079,7 @@ public:
         }
         if (stage.payloadExtractionKind)
           add(*stage.payloadExtractionKind,
-              classShape(mirInstructionEnumType(stage)));
+              representationShape(mirInstructionEnumType(stage)));
         for (const auto &argument : stage.callableArguments)
           add(argument.boundary);
         if (stage.callableBoundary)

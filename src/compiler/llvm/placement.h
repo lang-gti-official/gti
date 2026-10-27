@@ -27,9 +27,10 @@ namespace lang::native_llvm {
 // view (possibly an interface or abstract class) whose complete object the
 // owner's dispatch descriptor identifies. Either way the owner is one handle.
 // A place that always denotes a complete object of its class: a whole
-// binding, value or hidden temporary, a field, array or pack element, or any
-// place of a class nothing in the sealed program derives from. Replacing such
-// an object cannot change the dynamic type of an enclosing object.
+// binding, value or hidden temporary, a field, array or pack element, any
+// place of a class nothing in the sealed program derives from, or any place of
+// a payload enum. Replacing such an object cannot change the dynamic type of
+// an enclosing object.
 [[nodiscard]] bool completeObjectPlace(const MirProgram &program,
                                        const MirPlace &place);
 
@@ -53,14 +54,16 @@ isFreshHierarchyTransferProducer(const MirInstruction &instruction);
 // (CallInput), the body's ABI return destination, an inline polymorphic slot
 // whose construction relocates the moved object itself, or the value's own
 // storage as the receiver of one consuming call or as the replacement an
-// assignment relocates into its destination.
+// assignment relocates into its destination, or in its slot of a fresh array
+// or payload alternative that is itself published.
 enum class FreshHierarchyPublication {
   Local,
   Argument,
   Returned,
   Slot,
   Receiver,
-  Replacement
+  Replacement,
+  Element
 };
 
 struct FreshHierarchyTransfer {
@@ -72,6 +75,8 @@ struct FreshHierarchyTransfer {
   HirClassInstanceId owner = 0;
   MirDropObligationId sourceDrop = 0;
   MirDropObligationId valueDrop = 0;
+  // An Element publication's slot in its fresh aggregate.
+  std::size_t element = 0;
 };
 
 [[nodiscard]] FreshHierarchyTransfer

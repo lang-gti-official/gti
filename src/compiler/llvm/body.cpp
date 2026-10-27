@@ -371,8 +371,9 @@ private:
       const auto &type = input.findValue(target->aggregate)->info.type;
       if (hierarchy) {
         // A fresh element of a fresh hierarchy aggregate is constructed in
-        // its slot of the aggregate's own final storage.
-        if (!stage || stage->result != value || target->variant ||
+        // its slot of the aggregate's own storage: an array element or one
+        // field of a payload alternative.
+        if (!stage || stage->result != value ||
             freshObjectStorage(session.program().mir(), address, input,
                                placement, *stage) !=
                 FreshObjectStorage::Element)
@@ -389,6 +390,10 @@ private:
         stage = outer;
         auto *storage = destination(target->aggregate);
         stage = element;
+        if (target->variant)
+          return payloadFieldAddress(ir, session.layouts().payload(type),
+                                     storage, *target->variant,
+                                     target->element);
         return ir.CreateGEP(session.layouts().get(type).storage, storage,
                             {ir.getInt64(0), ir.getInt64(target->element)});
       }
@@ -620,6 +625,31 @@ private:
         throw BackendUnsupportedError("LLVM consumed receiver lost its exact "
                                       "source/publication placement");
       auto *address = memory.temporary(instruction.info.type);
+      lifetimes.freshTransfer(ir, address, memory.selected(transfer.source),
+                              input, instruction);
+      return address;
+    }
+    if (transfer.publishes == FreshHierarchyPublication::Element) {
+      // The moved object is relocated into its slot of the fresh aggregate's
+      // own storage, which that aggregate's planned publication selects.
+      if (!target || !target->aggregate ||
+          target->aggregate != *transfer.publication->result ||
+          target->element != transfer.element ||
+          transfer.source != instruction.operands.front())
+        throw BackendUnsupportedError("LLVM element transfer lost its exact "
+                                      "source/publication placement");
+      const auto &type = input.findValue(target->aggregate)->info.type;
+      const auto *element = stage;
+      stage = transfer.publication;
+      auto *storage = destination(target->aggregate);
+      stage = element;
+      auto *address =
+          target->variant
+              ? payloadFieldAddress(ir, session.layouts().payload(type),
+                                    storage, *target->variant,
+                                    target->element)
+              : ir.CreateGEP(session.layouts().get(type).storage, storage,
+                             {ir.getInt64(0), ir.getInt64(target->element)});
       lifetimes.freshTransfer(ir, address, memory.selected(transfer.source),
                               input, instruction);
       return address;

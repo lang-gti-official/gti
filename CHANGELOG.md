@@ -84,15 +84,15 @@ for what minor and patch releases mean.
   - `std::function`, `std::move_only_function` and other erased callables
     held in `std::inline_polymorphic`;
   - polymorphic objects passed and returned by value, assigned as whole
-    objects, held in fixed arrays, and declared as globals or static fields.
+    objects, held in fixed arrays or in payload enums such as
+    `std::optional`, and declared as globals or static fields.
 
   A destructor that calls a virtual method on its own object now runs the
   destructor's own class's override; it never reaches a derived part that is
   already destroyed. The C++ backend still calls the most-derived override
-  there, which is a known C++ backend defect. Payload enums such as
-  `std::optional` holding polymorphic values, and erased callables moved
-  into threads, remain rejected on the native backend. C++ remains the
-  production default.
+  there, which is a known C++ backend defect. Erased callables moved into
+  threads remain rejected on the native backend. C++ remains the production
+  default.
 
 ## 0.480.1 — Lambda argument formatting
 

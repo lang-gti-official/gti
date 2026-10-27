@@ -11708,20 +11708,25 @@ including failure and wrong-trace variants:
   erased callables;
 - consuming, temporary, retained and prepared receivers;
 - whole-object replacement, including through a reserved two-phase accessor;
-- fixed hierarchy arrays in locals and fields;
+- fixed hierarchy arrays in locals and fields, with fresh or moved
+  elements;
+- payload enums holding hierarchy storage, including `std::optional` of an
+  erased callable;
 - program-storage hierarchy objects;
 - shared polymorphic owners and upcasts;
 - unobservable abstract phases.
 
 Destructor dispatch follows the owner's lifecycle decision. Shipped examples
 025, 071, 086, 135 and 149 match at O0-O3. Of the 217 corpus programs that
-C++ compiled and LLVM refused, 205 now match at O0 and O2. The remainder are:
-- three thread programs whose erased callable crosses a thread spawn
-  (O-LLVM-13 owns the spawn);
-- `std::optional` of a hierarchy payload (payload enums with inline hierarchy
-  storage);
-- a mutex protecting a hierarchy payload;
-- the shapes still gated as `PolymorphicTransfer` or `PureDispatchState`.
+C++ compiled and LLVM refused, 210 now match at O0 and O2. The remaining
+seven belong to the threads track, which builds on this branch:
+- three thread programs whose erased callable crosses a thread spawn, each
+  under both roots (O-LLVM-13 task transfer of hierarchy storage);
+- a mutex protecting a hierarchy payload.
+
+Base-view replacement, enum copies, payload values returned by value,
+thread-local hierarchy objects and observable pure phases stay
+`PolymorphicTransfer` or `PureDispatchState`.
 
 - **Component status:** the bounded fresh-local/nonpure borrowed-dispatch slice
   has a dedicated public native execution gate and runnable example. It is not
@@ -11736,7 +11741,7 @@ C++ compiled and LLVM refused, 205 now match at O0 and O2. The remainder are:
   transfer and nonlocal/value-return publication remain prerequisites.
   Rich field-borrow and owner cases retain the existing C++ text-vocabulary
   rejection and require independent source/MIR/native results;
-  base-view replacement, payload-enum hierarchy storage, observable pure
+  base-view replacement, enum copies and payload returns, observable pure
   active states, exact optimized cost evidence and combined O14/O16
   source/evidence identities remain open. The loop fixture checks results,
   not retained dispatch or allocations.

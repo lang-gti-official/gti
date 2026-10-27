@@ -70,6 +70,7 @@ SUCCESS_FILES = {
     "program-storage": "tests/fixtures/llvm_dispatch_program_storage.gti",
     "shared-polymorphic-owners": "tests/fixtures/llvm_dispatch_shared_owners.gti",
     "lifecycle-phases": "tests/fixtures/llvm_dispatch_lifecycle_phases.gti",
+    "hierarchy-payloads": "tests/fixtures/llvm_dispatch_hierarchy_payloads.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -318,6 +319,10 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     # hierarchy array still transports its objects.
     "reject-array-copy": PLAIN + "int main() { Plain values[1] = {Plain()}; Plain copied[1] = values; return copied[0].read(); }\n",
     "reject-array-argument": PLAIN + "int sum(Plain values[1]) { return values[0].read(); }\nint main() { Plain values[1] = {Plain()}; return sum(values); }\n",
+    # A payload alternative publishes its fields in place; copying the enum or
+    # returning a payload value by value still transports its objects.
+    "reject-payload-copy": PLAIN + "enum Mark { none, held(Plain value) };\nint main() { Mark first = Mark::held(Plain()); Mark second = first; switch (second) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
+    "reject-payload-return": PLAIN + "enum Mark { none, held(Plain value) };\nMark make() { return Mark::held(Plain()); }\nint main() { Mark mark = make(); switch (mark) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
     # A pure member selected while a constructor that never hands the object to
     # other code runs is unobservable; this phase is not, so it stays gated.
@@ -1221,7 +1226,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "hierarchy-payloads"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1565,6 +1570,25 @@ int main() {
         "defined-failure", expected_exit=70,
         failure_needle="Derived(int divisor) : Base(), quotient(12 / divisor) {}",
         endpoints=TRANSFER_ENDPOINTS)
+    payloads = (root / SUCCESS_FILES["hierarchy-payloads"]).read_text(encoding="utf-8")
+    payloads_marker = "// PAYLOADS_MAIN\n"
+    if payloads.count(payloads_marker) != 1:
+        raise AssertionError("payload main marker is not unique")
+    payload_failure = payloads.split(payloads_marker, 1)[0] + """int main() {
+  expected_cleanup = 45;
+  Guard guard{};
+  Square kept = Square(5);
+  Slot both = Slot::pair(Square(4), make(0));
+  return measure(both) + kept.area();
+}
+"""
+    payload_needle = "Square make(int side) { return Square(12 / side); }"
+    add("hierarchy-payload-failure", payload_failure, "defined-failure",
+        expected_exit=70, failure_needle=payload_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-payload-wrong-cleanup",
+        payload_failure.replace("expected_cleanup = 45;", "expected_cleanup = 46;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=payload_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     lifecycle = (root / SUCCESS_FILES["lifecycle-phases"]).read_text(encoding="utf-8")
     lifecycle_marker = "// LIFECYCLE_MAIN\n"
     if lifecycle.count(lifecycle_marker) != 1:
@@ -1693,7 +1717,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "generated-copy-former-reject", "generated-move-former-reject",
             "fresh-copy-former-cli-control", "generated-move-virtual-failure",
             "owned-transfers", "owned-transfer-failure", "owned-transfer-wrong-cleanup",
-            "local-return-former-reject", "returned-owned-move"),
+            "local-return-former-reject", "returned-owned-move",
+            "hierarchy-arrays", "hierarchy-payloads"),
         "fresh-publication": (
             "fresh-publication", "fresh-return-former-reject",
             "fresh-value-argument-former-reject",
@@ -1714,6 +1739,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "array-former-reject"),
         "program-hierarchy-storage": (
             "program-storage", "program-storage-failure", "global-former-reject"),
+        "hierarchy-payloads": (
+            "hierarchy-payloads", "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup"),
         "lifecycle-dispatch": (
             "lifecycle-phases", "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
             "base-destructor-observation-former-reject",
@@ -1784,6 +1811,7 @@ def main() -> None:
              "shared-polymorphic-owner-failure", "shared-polymorphic-owner-wrong-cleanup",
              *LIFECYCLE_FORMER_REJECTS, "rollback-virtual-observation-former-reject",
              "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
+             "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)
