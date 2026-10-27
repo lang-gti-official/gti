@@ -1162,11 +1162,15 @@ private:
                 ? program.findConstructorInstance(*stage.constructorTarget)
                 : nullptr;
         if (!native_llvm::nativeUniqueConstructionShape(program, stage) ||
-            !target || target->owner != object.id ||
-            target->definitionKind != MirDefinitionKind::Source ||
-            !metadata(object.type) || !planner() ||
-            !this->body({MirBodyKind::Constructor, target->id}) ||
-            !this->body({MirBodyKind::Constructor, target->id})->shape)
+            !metadata(object.type) || !planner())
+          return {};
+        if (!stage.constructorTarget)
+          static_cast<void>(native_llvm::Lifetimes::preflightGeneratedEmpty(
+              *session, *dispatch, body, stage));
+        else if (!target || target->owner != object.id ||
+                 target->definitionKind != MirDefinitionKind::Source ||
+                 !this->body({MirBodyKind::Constructor, target->id}) ||
+                 !this->body({MirBodyKind::Constructor, target->id})->shape)
           return {};
         // Its descriptors publish this exact complete cleanup.
         dispatch->preflightState(object.id);

@@ -560,16 +560,27 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
         "LLVM generated-empty preflight uses a foreign sealed body");
   const bool construct = instruction.kind == MirInstructionKind::Construct;
   const bool base = instruction.kind == MirInstructionKind::InitializeBase;
-  if ((!construct && !base) || instruction.tombstone ||
+  // A unique-owner allocation constructs its pointee in the exact storage its
+  // ObjectAllocation obligation already holds.
+  const bool allocation =
+      instruction.kind == MirInstructionKind::Call &&
+      instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+      instruction.objectAllocation != 0 && instruction.result &&
+      !instruction.destination && instruction.constructorInitializer == 0 &&
+      !constructor && instruction.info.type.kind == SemanticType::UniqueOwner &&
+      instruction.info.type.arguments.size() == 1;
+  const auto &objectType = allocation ? instruction.info.type.arguments.front()
+                                      : instruction.info.type;
+  if ((!construct && !base && !allocation) || instruction.tombstone ||
       instruction.constructorTarget ||
       instruction.constructorKind != ConstructorKind::Ordinary ||
       !instruction.operands.empty() || !instruction.parameterTypes.empty() ||
       !instruction.definedFailure.empty() || instruction.functionTarget ||
       instruction.bodyTarget || instruction.receiver ||
-      instruction.objectAllocation != 0 || instruction.rawMemoryAccess ||
-      instruction.objectLayoutType ||
-      instruction.intrinsic != IntrinsicKind::None ||
-      instruction.info.type.kind != SemanticType::Class ||
+      (!allocation && instruction.objectAllocation != 0) ||
+      instruction.rawMemoryAccess || instruction.objectLayoutType ||
+      (!allocation && instruction.intrinsic != IntrinsicKind::None) ||
+      objectType.kind != SemanticType::Class ||
       (construct && (!instruction.result || instruction.destination ||
                      instruction.constructorInitializer != 0 || constructor)) ||
       (base && instruction.result))
@@ -584,7 +595,7 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
   if (!present)
     throw std::invalid_argument(
         "LLVM generated-empty operation belongs to another body");
-  if (construct) {
+  if (construct || allocation) {
     const auto *result = body.findValue(*instruction.result);
     if (!result || result->id != *instruction.result ||
         result->definition != instruction.id ||
@@ -592,7 +603,16 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
       throw std::invalid_argument(
           "LLVM generated-empty construction lost its exact result type");
   }
-  const auto &object = session.layouts().instance(instruction.info.type);
+  if (allocation) {
+    const auto *obligation =
+        body.findDropObligation(instruction.objectAllocation);
+    if (!obligation ||
+        obligation->kind != MirDropObligationKind::ObjectAllocation ||
+        obligation->dropType.type != instruction.info.type)
+      throw std::invalid_argument(
+          "LLVM generated-empty allocation lost its exact storage obligation");
+  }
+  const auto &object = session.layouts().instance(objectType);
   if ((object.kind != ClassKind::Class && object.kind != ClassKind::Struct) ||
       object.defaultConstructor != SpecialMemberStatus::Generated ||
       object.generatedDefaultRequiresSchedule ||

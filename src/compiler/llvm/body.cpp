@@ -868,6 +868,12 @@ private:
         constructed = objectMemory.allocateObject(instruction);
       }
       if (!instruction.constructorTarget) {
+        if (type.kind == SemanticType::Class &&
+            session.layouts().instance(type).polymorphic) {
+          // Installs the exact active dispatch state and arms cleanup.
+          lifetimes.generatedEmpty(ir, constructed, input, instruction);
+          return constructed;
+        }
         if (instruction.operands.empty()) {
           ir.CreateStore(
               llvm::Constant::getNullValue(session.layouts().get(type).storage),

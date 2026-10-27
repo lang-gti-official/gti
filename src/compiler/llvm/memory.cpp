@@ -486,10 +486,16 @@ bool nativeUniqueConstructionShape(const MirProgram &program,
   if (found == program.classInstances().end() || found->abstract ||
       found->kind == ClassKind::Interface)
     return false;
-  // A concrete polymorphic object is constructed only through its selected
-  // source constructor, which installs its exact active dispatch state.
+  // A concrete polymorphic object is constructed through its selected source
+  // constructor or the exact generated empty default; either installs its
+  // exact active dispatch state in the allocation.
   if (found->polymorphic && !instruction.constructorTarget)
-    return false;
+    return instruction.constructorKind == ConstructorKind::Ordinary &&
+           instruction.operands.empty() &&
+           mir_detail::generatedUniqueConstruction(instruction) &&
+           found->defaultConstructor == SpecialMemberStatus::Generated &&
+           !found->generatedDefaultRequiresSchedule &&
+           found->declaredFields.empty();
   if (instruction.constructorTarget) {
     const auto *target =
         program.findConstructorInstance(*instruction.constructorTarget);

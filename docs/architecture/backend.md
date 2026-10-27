@@ -4765,19 +4765,31 @@ planner's provisional transport, not resolution of C04. Pure-bearing tables
 and infallible terminal targets remain explicitly gated; no failure meaning,
 null callee, trap or unreachable continuation is invented.
 
-Each immutable table has a target address-index-width signed displacement
-before its slot array. The displacement maps the physical dispatch-pointer
-owner to the installed active class, not the logical interface view or the
-pointer field itself. Slot lookup skips this fixed descriptor header; object
-layout and root ABI channels are unchanged. `Dispatch::activeObject` loads that
-displacement for an exact live class view. It does not provide a source downcast,
-grant ownership, select a destructor, or authorize deallocation. In a base
+Each immutable table has a fixed descriptor header before its slot array: a
+target address-index-width signed displacement, then a complete-object cleanup
+entry. The displacement maps the physical dispatch-pointer owner to the
+installed active class, not the logical interface view or the pointer field
+itself. Slot lookup skips this header; object layout and root ABI channels are
+unchanged. `Dispatch::activeObject` loads that displacement for an exact live
+class view. It does not provide a source downcast or grant ownership. In a base
 construction/destruction state it recovers that base's active object, not the
-enclosing allocation. A future dynamic cleanup operation must capture its
-complete-object/deallocation identity before any lifecycle transition. Native
-O0/O3 probes cover all views after relocation, a nonzero physical state-base
-offset, and reinstalling the base state. This is representation groundwork;
-boxed polymorphic cleanup remains independently unimplemented.
+enclosing allocation. Native O0/O3 probes cover all views after relocation, a
+nonzero physical state-base offset, and reinstalling the base state.
+
+The cleanup entry is non-null only for a concrete polymorphic class that some
+required body allocates as a unique-owner pointee (`dynamicOwnerAllocation`
+over the admitted closure). It is that class's canonical complete recipe, or a
+shared inert helper when the complete object has no observable cleanup. Each
+such allocation site, not the drop site, demands and admits the recipe:
+reachability follows its destructors and active-state bodies, and admission
+preflights it, including the destructor-dispatch-observation gate. A dynamic
+owner drop (`polymorphicCleanup`) loads the descriptor once through the owner's
+static view, capturing the complete object and its cleanup before any lifecycle
+transition (the recipe itself reinstalls base states), calls that cleanup
+indirectly, then releases the complete object, which is the allocation. A
+second failure while unwinding stops before release, as for static owners.
+Owner upcasts select the verified static base view and keep the allocation;
+null stays null. A polymorphic drop no longer forces the conservative closure.
 
 The body call path consumes the named function instance's sealed root-family
 rows and the receiver's exact concrete root identities. It loads the stable
@@ -4854,10 +4866,12 @@ containing an inline polymorphic subobject has an exact static recipe. Its
 owned children receive the same non-publishing hierarchy/dispatch preflight as
 a root static object, including replacement restrictions; recursive owner edges
 reuse their already-proved ancestor. A genuinely polymorphic pointee still
-carries `polymorphicCleanup` and requires the separate dynamic-cleanup mechanism.
+carries `polymorphicCleanup` and uses the descriptor-selected dynamic cleanup
+described above.
 Native component probes exercise real allocation/release of passive
 hierarchy-containing records, shared last-owner release and repeated empty
-cleanup. They do not grant public owner construction or dynamic deletion.
+cleanup. Public polymorphic owner construction and deletion are admitted by
+`NativePolymorphicOwnership` at each allocation and dynamic drop.
 
 Polymorphic replacement cleanup remains explicitly rejected: its invocation
 context must establish the receiver-state policy without inferring destruction
@@ -4873,9 +4887,20 @@ cleanup. "Static" describes the
 representation, not permission for global or thread-local storage.
 `NativeBorrowedDispatchView` describes checked selected class/base/interface
 addresses with preserved access; `NativeVirtualInvocation` requires the exact
-sealed root, one evaluated receiver, physical adjustment and scalar-or-void
-signature through the existing shared ABI and MIR failure edge. Abstract
-interface metadata is not an executable pure active state.
+sealed root, one evaluated receiver and physical adjustment, through the
+root's shared ABI and MIR failure edge. Its signature is otherwise general:
+arguments, results and their loans keep their own proofs, a reference result
+is planned as a place of its referent, and a call-result loan whose
+non-hierarchy referent a proved member call selected is proved by that call.
+By-value hierarchy arguments remain transfers. Abstract interface metadata is
+not an executable pure active state.
+`NativeFreshHierarchyPublication` admits an ordinary hierarchy construction or
+by-value GTI call result published directly in its exact final storage: the
+body's own ABI return destination when every return does so, a fresh whole
+local, or its own full-expression temporary that is only borrowed through its
+value-rooted places (including the verifier-owned argument loan) and dropped
+there. The callee's own returns carry the proof for a call result. Returning a
+named local, by-value arguments and other copies/moves stay `PolymorphicTransfer`.
 
 Admission first records excluded transfers and complete required-body demand,
 then independently preflights exact uses in an options/snapshot-bound temporary
@@ -4919,8 +4944,12 @@ The cost follows logical payload, hierarchy headers and existing active flags;
 this structural model is not measured allocation or runtime-cost acceptance.
 
 `PolymorphicTransfer` still rejects unproved class-value copies/moves, assignment,
-replacement, by-value arguments/returns, captures, arrays and non-generated wrappers,
-nonlocal destinations and ownership/callback/native/thread combinations.
+replacement, by-value arguments, returns of existing objects, captures, arrays and
+non-generated wrappers, nonlocal destinations and callback/native/thread
+combinations. A unique owner of a polymorphic view (including an interface or
+abstract class) is one handle; its pointee need not be a complete object type.
+`uniqueOwnerPointee` states that representation rule for placement, admission
+and null-owner field publication alike.
 The shared inline-storage exclusion follows exact fields/state bases and array
 elements, stops at references/raw pointers, and fails closed on unknown or cyclic
 storage. It grants no layout or borrow authority. Body and memory-store guards
@@ -4947,7 +4976,7 @@ reject until an approved backend-neutral lifecycle-dispatch contract exists.
 This is a missing prerequisite, not a permanent source-language prohibition.
 The native execution gate uses verified constructor states and explicit numeric
 destructor IDs to check cleanup order without asserting that missing rule.
-Pure active states, dynamic owners and in-place hierarchy replacement remain
+Pure active states and in-place hierarchy replacement remain
 separately pending. Resetting a unique/shared handle to an ordinary record is
 not in-place replacement of that record: its exact static pointee recipe retires
 the allocation, including inline hierarchy fields. Canonical recursive recipe

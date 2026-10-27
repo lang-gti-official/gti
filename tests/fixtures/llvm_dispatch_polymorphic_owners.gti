@@ -57,6 +57,14 @@ public:
   void write(int value) mut override { this.value = value; }
 };
 
+// A stateless implementation uses its generated empty default, which
+// installs its dispatch state directly in the allocation.
+class Silent : public Writer, public Reader {
+public:
+  int read() override { return 11; }
+  void write(int value) mut override {}
+};
+
 class Guard {
 public:
   Guard() {}
@@ -117,5 +125,7 @@ int main() {
     std::unique_ptr<Reader> moved = std::upcast_unique<Reader, Leaf>(std::move(exact));
     if (moved->read() != 8) { return 9; }
   }
-  return events == 12354 ? 0 : 10;
+  if (events != 12354) { return 10; }
+  std::unique_ptr<Reader> silent = std::upcast_unique<Reader, Silent>(std::make_unique<Silent>());
+  return silent->read() == 11 ? 0 : 11;
 }
