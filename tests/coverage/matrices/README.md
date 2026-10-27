@@ -31,6 +31,20 @@ the server consumes memory without bound on that input.
 | `lsp_survival.py` | files × `gti_lsp` staying alive and answering | that S13's memory exhaustion is reachable through the editor |
 | `payload_enum_matrix.py` | payload kind × operation | S15 — a class payload with no destructor |
 | `concurrency_matrix.py` | threading construct × execution profile | nothing — 10/10 under `concurrent`, correctly rejected under the default |
+| `llvm_wrongcode_matrix.py` | owned value kind × transfer × class shape, plus container, control-flow, hierarchy, concrete-base, payload-enum, erased-callable, destruction-order, lifecycle-dispatch and standard-library-container sweeps on LLVM | at `b69828811`: an owned base-initializer argument left the base unconstructed on LLVM — silent wrong code when moved in, `Derived(T v) : Base(std::move(v))` (35 cells, every owned kind, plain and generic bases, one defect), and an internal error when created in place, `Base(make())`. At `bcf538640` both are refused as `UnstagedBaseInitializer` (GTI-B0003) and all 534 cells are clean: 384 run correctly on LLVM, 96 are refused with GTI-B0003, 54 are rejected by semantics |
+
+`llvm_wrongcode_matrix.py` differs from the others: its programs check their
+own results against values derived from the literal inputs and count tracked
+destructions, so an LLVM cell needs no C++ oracle. That matters where the C++
+backend cannot compile a shape at all, which is where its silent miscompiles
+hid. It builds each cell on LLVM at O0 and O2 and on C++ at O0, runs them under
+a watchdog, and exits non-zero when an LLVM cell computes the wrong answer.
+The `order` and `dispatch` sweeps compare sequences, not counts: each
+destructor body and tracked field reports a code, and the program checks the
+order that `docs/language/execution.md` specifies. At `bcf538640`, 55 cells run
+correctly on LLVM where C++ does not. In 45 of them C++ builds and dispatches
+to the most-derived override during base destruction, the known C++ backend
+defect; the other 10 are refused by the C++ backend with GTI-B0001.
 
 ## Reading the output
 
