@@ -282,7 +282,9 @@ def rejections() -> dict[str, str]:
         # dispatch harness. Replacing a polymorphic base view inside a derived
         # object still rejects.
         'polymorphic-replacement': 'class Owner { public: virtual int read() { return 0; } }; class Derived : public Owner {}; void replace(mut Owner& value, Owner& other) { value = other; } int main() { mut Derived value{}; Derived other{}; replace(value, other); return value.read(); }',
-        'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; return data[0].read(); }',
+        # Fresh elements publish in their array slots; copying the whole
+        # array still transports its objects.
+        'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; Owner copied[2] = data; return copied[0].read(); }',
         'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }',
     }
 

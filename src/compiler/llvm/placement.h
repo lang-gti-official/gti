@@ -119,10 +119,17 @@ private:
 [[nodiscard]] bool isFreshObjectProducer(const MirProgram &program,
                                          const MirInstruction &producer);
 
+// A fixed array of hierarchy storage aggregated from its elements. Each
+// element is a fresh object constructed directly in its slot of the array's
+// own final storage; the aggregate itself moves no object bytes.
+[[nodiscard]] bool isFreshHierarchyAggregate(const MirProgram &program,
+                                             const MirInstruction &producer);
+
 // Ordinary construction publishes directly into fresh final storage. This is
 // not copy/move permission. Both admission and emission use the same verified
 // producer/publication identity for locals and constructor field destinations.
-// A fresh by-value call result publishes the same way.
+// A fresh by-value call result, or a fresh hierarchy aggregate, publishes the
+// same way.
 [[nodiscard]] std::optional<MirPlaceId>
 freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
                              const MirBody &body, const Placement &placement,
@@ -132,8 +139,9 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
 // a whole fresh local or constructor field, the body's own ABI return
 // destination, the producer's own full-expression temporary, which is only
 // borrowed through its value-rooted places and dropped there, or the exact
-// prepared storage of a by-value argument whose ownership the callee takes.
-enum class FreshObjectStorage { Local, Returned, Temporary, Argument };
+// prepared storage of a by-value argument whose ownership the callee takes,
+// or its slot in a fresh hierarchy aggregate that publishes in final storage.
+enum class FreshObjectStorage { Local, Returned, Temporary, Argument, Element };
 [[nodiscard]] std::optional<FreshObjectStorage>
 freshObjectStorage(const MirProgram &program, MirBodyAddress address,
                    const MirBody &body, const Placement &placement,

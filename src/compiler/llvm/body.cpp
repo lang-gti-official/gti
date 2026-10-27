@@ -368,10 +368,30 @@ private:
           throw std::logic_error("LLVM object return lost its ABI destination");
         return returnDestination;
       }
-      if (hierarchy)
-        throw BackendUnsupportedError(
-            "LLVM nested hierarchy destination is not admitted");
       const auto &type = input.findValue(target->aggregate)->info.type;
+      if (hierarchy) {
+        // A fresh element of a fresh hierarchy aggregate is constructed in
+        // its slot of the aggregate's own final storage.
+        if (!stage || stage->result != value || target->variant ||
+            freshObjectStorage(session.program().mir(), address, input,
+                               placement, *stage) !=
+                FreshObjectStorage::Element)
+          throw BackendUnsupportedError(
+              "LLVM nested hierarchy destination is not admitted");
+        const MirInstruction *outer = nullptr;
+        for (const auto &block : input.blocks)
+          for (const auto &candidate : block.instructions)
+            if (!candidate.tombstone && candidate.result == target->aggregate)
+              outer = &candidate;
+        if (!outer)
+          throw std::logic_error("LLVM hierarchy element lost its aggregate");
+        const auto *element = stage;
+        stage = outer;
+        auto *storage = destination(target->aggregate);
+        stage = element;
+        return ir.CreateGEP(session.layouts().get(type).storage, storage,
+                            {ir.getInt64(0), ir.getInt64(target->element)});
+      }
       if (target->variant)
         return payloadFieldAddress(ir, session.layouts().payload(type),
                                    destination(target->aggregate),

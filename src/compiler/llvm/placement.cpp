@@ -41,6 +41,24 @@ bool isFreshObjectProducer(const MirProgram &program,
               : target->definitionKind == MirDefinitionKind::Source);
 }
 
+bool isFreshHierarchyAggregate(const MirProgram &program,
+                               const MirInstruction &producer) {
+  if (producer.tombstone || !producer.result || producer.destination ||
+      producer.kind != MirInstructionKind::Compute ||
+      producer.operation != MirOperation::Aggregate || producer.receiver ||
+      producer.loan || producer.info.category != ValueCategory::Value ||
+      producer.info.type.kind != SemanticType::Array ||
+      producer.info.type.arguments.size() != 1 ||
+      producer.info.type.arrayLengthParameterId ||
+      producer.info.type.arrayLength != producer.operands.size())
+    return false;
+  try {
+    return containsHierarchyStorage(program, producer.info.type);
+  } catch (const BackendUnsupportedError &) {
+    return false;
+  }
+}
+
 std::optional<MirPlaceId>
 freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
                              const MirBody &body, const Placement &placement,
@@ -58,7 +76,8 @@ freshConstructionDestination(const MirProgram &program, MirBodyAddress address,
        address.kind != MirBodyKind::Constructor &&
        address.kind != MirBodyKind::Destructor &&
        address.kind != MirBodyKind::FieldInitializers) ||
-      (!isFreshObjectProducer(program, producer) && !materialized))
+      (!isFreshObjectProducer(program, producer) && !materialized &&
+       !isFreshHierarchyAggregate(program, producer)))
     return {};
   const auto *target = placement.target(*producer.result);
   const auto *place =
@@ -196,8 +215,9 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
                    const MirInstruction &producer) {
   if (freshConstructionDestination(program, address, body, placement, producer))
     return FreshObjectStorage::Local;
+  const bool aggregate = isFreshHierarchyAggregate(program, producer);
   if (findMirBody(program, address) != &body ||
-      !isFreshObjectProducer(program, producer))
+      (!isFreshObjectProducer(program, producer) && !aggregate))
     return {};
   const auto value = *producer.result;
   const auto *definition = body.findValue(value);
@@ -228,6 +248,45 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
            obligation.kind != MirDropObligationKind::ReturnResult))
         return {};
   const auto *target = placement.target(value);
+  if (target && target->aggregate && !target->variant) {
+    // An element constructed directly in its slot of a fresh hierarchy
+    // aggregate. Its one use is that slot's operand; the aggregate takes its
+    // value obligation, and itself publishes into final storage.
+    const MirInstruction *outer = nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.result == target->aggregate)
+          outer = &stage;
+    if (!outer || !isFreshHierarchyAggregate(program, *outer) ||
+        target->element >= outer->operands.size() ||
+        outer->operands[target->element].kind != MirOperandKind::Value ||
+        outer->operands[target->element].value != value ||
+        outer->info.type.arguments.front() != producer.info.type ||
+        !freshObjectStorage(program, address, body, placement, *outer) ||
+        *freshObjectStorage(program, address, body, placement, *outer) ==
+            FreshObjectStorage::Temporary)
+      return {};
+    for (const auto &use : body.usesOf(value))
+      if (use.kind != MirValueUseKind::PlaceRoot &&
+          (use.kind != MirValueUseKind::InstructionOperand ||
+           use.instruction != outer->id ||
+           use.operandIndex != target->element))
+        return {};
+    for (const auto &obligation : body.dropObligations)
+      if (whole && obligation.place == whole->id &&
+          std::none_of(outer->lifecycle.begin(), outer->lifecycle.end(),
+                       [&](const auto &event) {
+                         return event.source == obligation.id &&
+                                event.kind ==
+                                    MirLifecycleEventKind::TransferOut &&
+                                !event.target && !event.conditional &&
+                                !event.failureCleanup;
+                       }))
+        return {};
+    return FreshObjectStorage::Element;
+  }
+  if (aggregate)
+    return {};
   if (target && target->place && !target->aggregate && !target->returned) {
     // A by-value argument constructed directly in its prepared storage.
     const auto *place = body.findPlace(target->place);
@@ -874,10 +933,14 @@ public:
           } else if (result.kind == ConstructorKind::Move &&
                      stage.kind == MirInstructionKind::CallInput &&
                      stage.callInputKind == HirCallInputKind::MoveValue &&
-                     stage.callInputRole == MirCallInputRole::Argument &&
+                     (stage.callInputRole == MirCallInputRole::Argument ||
+                      (stage.callInputRole == MirCallInputRole::Receiver &&
+                       stage.result && consumingReceiver(*stage.result))) &&
                      stage.destination && stage.preparedParameterDrop &&
                      stage.operands.size() == 1 &&
                      stage.info.type == owner.type) {
+            // A by-value argument, or the receiver of a consuming call,
+            // relocated into its exact prepared slot.
             result.publication = &stage;
             result.destination = *stage.destination;
             result.publishes = FreshHierarchyPublication::Argument;

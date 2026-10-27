@@ -63,6 +63,7 @@ SUCCESS_FILES = {
     "abstract-phases": "tests/fixtures/llvm_dispatch_abstract_phases.gti",
     "temporary-receivers": "tests/fixtures/llvm_dispatch_temporary_receivers.gti",
     "replacements": "tests/fixtures/llvm_dispatch_replacements.gti",
+    "hierarchy-arrays": "tests/fixtures/llvm_dispatch_hierarchy_arrays.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -246,6 +247,7 @@ int main() {
 """, 0),
     # Copy assignment of a complete inert polymorphic object.
     "assignment-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second{}; first = second; return first.read(); }\n", 1),
+    "array-former-reject": (PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n", 1),
     # A moved owned local with active cleanup leaves through the return edge.
     "returned-owned-move": ("""mut int dropped = 0;
 class Owned {
@@ -291,7 +293,10 @@ REJECTIONS = {
 void replace(mut Plain& destination, Plain& source) { destination = source; }
 int main() { mut Derived first{}; Derived second{}; replace(first, second); return first.read(); }
 """,
-    "reject-array": PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n",
+    # Arrays publish fresh elements in place; copying or passing a whole
+    # hierarchy array still transports its objects.
+    "reject-array-copy": PLAIN + "int main() { Plain values[1] = {Plain()}; Plain copied[1] = values; return copied[0].read(); }\n",
+    "reject-array-argument": PLAIN + "int sum(Plain values[1]) { return values[0].read(); }\nint main() { Plain values[1] = {Plain()}; return sum(values); }\n",
     "reject-global": PLAIN + "Plain value{};\nint main() { return value.read(); }\n",
     "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
     # A pure member selected while a constructor that never hands the object to
@@ -1180,7 +1185,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1518,6 +1523,40 @@ int main() {
         replacement_failure.replace("expected_cleanup = 72;", "expected_cleanup = 73;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=replacement_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    arrays = (root / SUCCESS_FILES["hierarchy-arrays"]).read_text(encoding="utf-8")
+    arrays_marker = "// HIERARCHY_ARRAYS_MAIN\n"
+    if arrays.count(arrays_marker) != 1:
+        raise AssertionError("hierarchy array main marker is not unique")
+    arrays_prefix = arrays.split(arrays_marker, 1)[0]
+    array_failure = arrays_prefix + """int main() {
+  expected_cleanup = 14;
+  Guard guard{};
+  Square kept = Square(4);
+  Square squares[3] = {Square(1), make(0), Square(3)};
+  return squares[0].area() + kept.area();
+}
+"""
+    array_field_failure = arrays_prefix + """int main() {
+  expected_cleanup = 54;
+  Guard guard{};
+  Square kept = Square(4);
+  Rack rack = Rack(5, 0);
+  return rack.row[0].area() + kept.area();
+}
+"""
+    array_needle = "Square make(int side) { return Square(12 / side); }"
+    add("hierarchy-array-failure", array_failure, "defined-failure",
+        expected_exit=70, failure_needle=array_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-array-wrong-cleanup",
+        array_failure.replace("expected_cleanup = 14;", "expected_cleanup = 15;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=array_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-array-field-failure", array_field_failure, "defined-failure",
+        expected_exit=70, failure_needle=array_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-array-field-wrong-cleanup",
+        array_field_failure.replace("expected_cleanup = 54;", "expected_cleanup = 55;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=array_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -1548,7 +1587,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "mut-borrow-scalar-bool": ("borrowed-dispatch", "borrowed-mut-reference-chain",
                                   "hierarchy-reference-results", "owner-reference-failure",
                                   "owner-reference-wrong-cleanup", "shared-owner-reference",
-                                  "owner-failure-before-reference"),
+                                  "owner-failure-before-reference", "replacements"),
         "virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
                                "static-dispatch", "dispatch-cost-correctness",
                                "virtual-signatures", "virtual-signature-failure",
@@ -1577,6 +1616,10 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "hierarchy-replacement": (
             "replacements", "replacement-failure", "replacement-wrong-cleanup",
             "assignment-former-reject"),
+        "hierarchy-arrays": (
+            "hierarchy-arrays", "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
+            "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
+            "array-former-reject"),
         "polymorphic-ownership": (
             "polymorphic-owners", "heap-polymorphic-owner-former-reject",
             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
@@ -1633,6 +1676,8 @@ def main() -> None:
              "abstract-phase-failure", "abstract-phase-wrong-cleanup",
              "temporary-receiver-failure", "temporary-receiver-wrong-cleanup",
              "replacement-failure", "replacement-wrong-cleanup",
+             "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
+             "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

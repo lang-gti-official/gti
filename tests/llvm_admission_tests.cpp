@@ -2845,7 +2845,7 @@ int main() { Base value{}; return invoke(value); }
          "virtual dependency order is deterministic in sealed inventory order");
   const auto unsupported = planLlvmAdmission(lower(R"(
 class Base { public: virtual int read() { return 1; } };
-int unsupported_helper() { Base values[1] = {Base()}; return values[0].read(); }
+int unsupported_helper() { Base values[1] = {Base()}; Base copied[1] = values; return copied[0].read(); }
 class Alternative : public Base {
 public:
   int read() override { return unsupported_helper(); }

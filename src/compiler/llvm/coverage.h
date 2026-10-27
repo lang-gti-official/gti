@@ -108,6 +108,7 @@ enum class Shape {
   NativeInlinePolymorphicSlot,
   NativeConsumingHierarchyReceiver,
   NativeHierarchyReplacement,
+  NativeHierarchyArray,
   PolymorphicTransfer,
   PureDispatchState,
   DestructorDispatchObservation,

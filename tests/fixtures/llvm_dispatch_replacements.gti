@@ -45,6 +45,16 @@ public:
 
 Square make(int side) { return Square(12 / side); }
 
+// A user accessor naming a complete hierarchy object: assigning through it
+// is a reserved two-phase borrow store into that object.
+class Holder {
+  mut Square square;
+public:
+  Holder(int side) : square(Square(side)) {}
+  mut Square& operator*() mut { return this.square; }
+  int area() { return this.square.area(); }
+};
+
 void reframe(mut Frame& frame, int side) { frame = Frame(side); }
 
 class Guard {
@@ -81,6 +91,9 @@ int main() {
     if (events != 23516 || frame.square.area() != 9 || frame.tag != 3) {
       return 6;
     }
+    mut Holder holder = Holder(4);
+    *holder = Square(1);
+    if (events != 235164 || holder.area() != 1) { return 8; }
   }
-  return events == 2351637 ? 0 : 7;
+  return events == 235164137 ? 0 : 7;
 }
