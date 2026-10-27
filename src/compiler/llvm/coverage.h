@@ -41,6 +41,7 @@ enum class Shape {
   GeneratedDependencies,
   FixedArray,
   NativeScalar,
+  NativeIntegralEnumValue,
   TypeArguments,
   Tombstone,
   BorrowedCarrier,

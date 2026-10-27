@@ -167,6 +167,23 @@ mut int value = initialize();
 bool enabled = true;
 int main() { value += 1; if (!enabled) { return 1; } return value - 4; }
 ''',
+            'integral-enum-underlying': '''
+enum class Opcode : uint8_t { halt = 0, load = 7, store = 9 }
+enum class Wide : int32_t { low = -5, high = 1000 }
+uint8_t opcode(Opcode value) { return std::to_underlying<uint8_t, Opcode>(value); }
+int32_t wide(Wide value) { return std::to_underlying<int32_t, Wide>(value); }
+int main() {
+  if (opcode(Opcode::halt) != uint8_t(0)) { return 1; }
+  if (opcode(Opcode::load) != uint8_t(7)) { return 2; }
+  if (opcode(Opcode::store) != uint8_t(9)) { return 3; }
+  if (wide(Wide::low) != -5) { return 4; }
+  if (wide(Wide::high) != 1000) { return 5; }
+  mut Opcode selected = Opcode::store;
+  selected = Opcode::load;
+  if (opcode(selected) != uint8_t(7)) { return 6; }
+  return 0;
+}
+''',
             'dormant-owner': '''
 class Unused { public: Unused() {} ~Unused() {} };
 int unused() { Unused value{}; return 1; }

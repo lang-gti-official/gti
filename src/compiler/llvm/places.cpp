@@ -130,6 +130,14 @@ void Places::allocate(
 llvm::Value *Places::load(llvm::Value *address, const SemanticType &type) {
   if (addressValue(session.program().mir(), type))
     return address;
+  // A value-form type is loaded from storage, so the operand must be an
+  // address. Emitting a load from an already-loaded aggregate produces a
+  // module LLVM rejects only after the whole program is generated, which
+  // hides the operation that lost its address.
+  if (!address || !address->getType()->isPointerTy())
+    throw std::logic_error(
+        "LLVM load of a value-form type requires an address operand, kind " +
+        std::to_string(static_cast<int>(type.kind)));
   auto *value = ir.CreateLoad(session.layouts().get(type).storage, address);
   return type == SemanticType::Bool ? ir.CreateTrunc(value, ir.getInt1Ty())
                                     : value;
@@ -234,6 +242,17 @@ void Places::parameter(const ParameterLane &lane, llvm::Value *argument,
 Places::Root Places::root(const MirPlace &place) {
   if (auto found = roots.find(key(place)); found != roots.end())
     return found->second;
+  // A destructuring declaration's element place carries the introduced name in
+  // `symbol` while the binding's own storage root carries none. For a
+  // binding-rooted place the binding is the storage identity, so fall back to
+  // it instead of treating the introduced name as separate storage. The exact
+  // key above still wins, so a named root keeps its own storage.
+  if (place.root == MirPlaceRootKind::Binding && place.symbol != 0) {
+    MirPlace storage = place;
+    storage.symbol = 0;
+    if (auto found = roots.find(key(storage)); found != roots.end())
+      return found->second;
+  }
   if (place.root == MirPlaceRootKind::Symbol && place.capture != 0) {
     if (body.kind != MirBodyKind::Lambda || !lambda || !receiverAddress ||
         receiverType != lambda->type ||

@@ -903,6 +903,7 @@ LLVM_COVERAGE_ENTRY(CheckedArrayProjection, 5, LLVM_COVERAGE_IMPLEMENTED("llvm_p
 LLVM_COVERAGE_ENTRY(ObjectArtifact, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_scalar_execution", "scalars"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
 LLVM_COVERAGE_ENTRY(CheckedFailure, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_scalar_execution", "defined-failures"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
 LLVM_COVERAGE_ENTRY(SuccessResultPublication, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_scalar_execution", "numeric-intrinsics"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
+LLVM_COVERAGE_ENTRY(NativeIntegralEnumValue, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_scalar_execution", "integral-enum-underlying"), None, "exact sealed integral enum read into its own declared underlying integer type; no payload alternative, widening or implicit enum/integer conversion")
 LLVM_COVERAGE_ENTRY(PreparedOwnerInput, 6, Pending, None, "prepared parameter retains cleanup until exact transfer")
 LLVM_COVERAGE_ENTRY(CallerLocation, 4, LLVM_COVERAGE_IMPLEMENTED("llvm_scalar_execution", "defined-failures"), None, "scalar native execution; unsupported storage, ownership and dispatch remain separately gated")
 LLVM_COVERAGE_ENTRY(RawMemory, 5, Pending, None, "raw access uses verified unsafe obligations")

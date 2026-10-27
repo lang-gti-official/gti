@@ -919,6 +919,15 @@ private:
             session.layouts().get(instruction.info.type).value);
       if (instruction.intrinsic == IntrinsicKind::Move)
         return operand(instruction.operands.at(0));
+      if (instruction.intrinsic == IntrinsicKind::EnumUnderlyingValue) {
+        // A sealed integral enum is already represented by its own underlying
+        // integer type, so this reads that value in its declared domain.
+        // Admission established that the result is exactly that sealed
+        // underlying type, so no range check applies.
+        return scalars.convert(operand(instruction.operands.at(0)),
+                               instruction.operands.at(0).type,
+                               instruction.info.type, false);
+      }
       if (integerArithmeticIntrinsic(instruction.intrinsic)) {
         std::vector<llvm::Value *> inputs;
         for (const auto &value : instruction.operands)

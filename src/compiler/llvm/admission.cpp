@@ -101,15 +101,24 @@ bool primitiveRawAccess(const MirBody &body, const MirPlace &place) {
           place.projections.front().kind == MirProjectionKind::RawDereference);
 }
 
+// The unprojected place that owns a projected place's storage. A projected
+// element introduced by a destructuring declaration carries the introduced
+// name in `symbol` while its storage root carries none, so requiring equal
+// symbols found no root for it. `symbol` stays authoritative for a
+// symbol-rooted place, where it is the storage identity itself.
+bool sameStorageRoot(const MirPlace &candidate, const MirPlace &place) {
+  return candidate.projections.empty() && candidate.root == place.root &&
+         candidate.binding == place.binding &&
+         (candidate.symbol == place.symbol ||
+          (place.root != MirPlaceRootKind::Symbol && candidate.symbol == 0)) &&
+         candidate.temporary == place.temporary &&
+         candidate.value == place.value && candidate.loan == place.loan;
+}
+
 bool arrayProjection(const MirBody &body, const MirPlace &place) {
   const auto root = std::find_if(
-      body.places.begin(), body.places.end(), [&](const auto &candidate) {
-        return candidate.projections.empty() && candidate.root == place.root &&
-               candidate.binding == place.binding &&
-               candidate.symbol == place.symbol &&
-               candidate.temporary == place.temporary &&
-               candidate.value == place.value && candidate.loan == place.loan;
-      });
+      body.places.begin(), body.places.end(),
+      [&](const auto &candidate) { return sameStorageRoot(candidate, place); });
   if (root == body.places.end())
     return false;
   auto type = root->type;
@@ -1210,6 +1219,20 @@ public:
     };
     return supported(supported, type);
   }
+  // Exactly one sealed integral enum operand read into that enum's own
+  // declared underlying integer type. No conversion, widening or payload
+  // alternative is admitted here.
+  bool sealedIntegralUnderlyingValue(const MirInstruction &stage) const {
+    if (stage.intrinsic != IntrinsicKind::EnumUnderlyingValue ||
+        stage.kind != MirInstructionKind::Call || stage.functionTarget ||
+        stage.receiver || stage.operands.size() != 1 ||
+        stage.parameterTypes.size() != 1 ||
+        stage.parameterTypes[0] != stage.operands[0].type)
+      return false;
+    const auto *sealed = program.findIntegralEnum(stage.operands[0].type);
+    return sealed && sealed->underlyingType == stage.info.type &&
+           isPassiveScalarValueType(stage.info.type);
+  }
   std::optional<Shape> mutexShape(const SemanticType &type) const {
     if (program.executionProfile() != ExecutionProfile::Concurrent ||
         !program.target().runtimeCapabilities.threads)
@@ -1522,8 +1545,11 @@ public:
       if (projection.kind == MirProjectionKind::Index ||
           projection.kind == MirProjectionKind::RawIndex) {
         const auto *index = mir.findValue(projection.index);
-        if (static_cast<bool>(projection.index) ==
-                projection.constantIndex.has_value() ||
+        // A constant-folded index legitimately retains both its evaluated
+        // value and the folded constant; emission prefers the value and falls
+        // back to the constant, so requiring exactly one refused a shape it
+        // already lowers. An index carrying neither remains malformed.
+        if ((!projection.index && !projection.constantIndex.has_value()) ||
             (projection.index &&
              (!index || !constantIntegerDomain(index->info.type))))
           return false;
@@ -1750,9 +1776,7 @@ public:
     }
     if (currentBody)
       for (const auto &root : currentBody->places)
-        if (root.root == place.root && root.binding == place.binding &&
-            root.symbol == place.symbol && root.temporary == place.temporary &&
-            root.projections.empty())
+        if (sameStorageRoot(root, place))
           if (const auto selected = representationShape(root.type))
             return selected;
     return {};
@@ -2256,6 +2280,11 @@ public:
       // carries no ownership and borrows no owning text storage.
       if (plan.targetType == SemanticType::StringView)
         return Shape::CountedText;
+      // An exact native function value is one pointer with the already
+      // verified canonical signature contract; publishing it is that store.
+      if (plan.targetType.kind == SemanticType::NativeFunction &&
+          nativeValue(plan.targetType))
+        return Shape::NativeCFunctionValue;
       const auto storage = classShape(plan.targetType);
       return storage && *storage != Shape::CallableMetadata ? storage
                                                             : std::nullopt;
@@ -2899,6 +2928,12 @@ public:
                       passiveAddress(stage.info.type) &&
                       passiveAddress(stage.operands[0].type)
                   ? std::optional(Shape::PassiveAddressValue)
+              // A sealed integral enum already carries its underlying integer
+              // representation, so reading that value is the ordinary scalar
+              // shape. The sealed inventory supplies the exact underlying
+              // type; a payload enum has no underlying value to read.
+              : sealedIntegralUnderlyingValue(stage)
+                  ? std::optional(Shape::NativeIntegralEnumValue)
               : textQuery ? std::optional(Shape::CountedText)
               : stage.receiver &&
                       stage.receiver->type.kind == SemanticType::Array &&
