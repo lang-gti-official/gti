@@ -299,8 +299,11 @@ public:
       if (const auto handle =
               native_llvm::nativeThreadHandle(program, selected))
         // The handle stores runtime pointers only; a joined result lives in
-        // its runtime box until take, so its type must itself be native.
-        return !handle->resultBearing || self(self, handle->result);
+        // its runtime box until take. Like an owner's pointee, the result is
+        // a native value or hierarchy storage with exact dispatch metadata;
+        // the box relocates and destroys it under independent use proofs.
+        return !handle->resultBearing || self(self, handle->result) ||
+               pointee(handle->result);
       if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
           owner->polymorphic || owner->abstract || owner->cOpaqueHandle ||
           !owner->bases.empty() || !owner->structuralBases.empty())
@@ -485,8 +488,13 @@ public:
           // A place-category Load that only names an inline slot for its
           // operations observes that slot's address, and a hidden temporary's
           // materialization names that object in place; nothing moves.
+          // Extracting a field without hierarchy storage from a payload
+          // enum transports only that field, never a hierarchy object.
+          const bool plainField =
+              stage.operation == MirOperation::PayloadExtract &&
+              !contains(stage.info.type);
           if (!placeObservation(body, stage) && !materialization && !replaced &&
-              !replacementCopy(address, body, placement, stage))
+              !replacementCopy(address, body, placement, stage) && !plainField)
             for (const auto &operand : stage.operands)
               proof.transfer |= transferred(operand) && !transfer;
           if (stage.receiver)
@@ -1064,10 +1072,12 @@ private:
         owner.cAbiRecord || owner.cAbiLayout || owner.cOpaqueHandle ||
         owner.unionLayout ||
         owner.compilerCapability != CompilerCapabilityTypeKind::None ||
-        owner.traits.containsBorrowedState || !path.insert(owner.id).second)
+        !path.insert(owner.id).second)
       return false;
     // Inline hierarchy fields keep this exact metadata proof; every other
-    // field uses its ordinary native value representation.
+    // field uses its ordinary native value representation. Borrowed state
+    // is such a field: a reference or view is an address, and its loans are
+    // MIR facts with no runtime state beside the dispatch metadata.
     bool valid =
         std::all_of(owner.declaredFields.begin(), owner.declaredFields.end(),
                     [&](const auto &field) {
@@ -1828,6 +1838,14 @@ private:
   bool supportedLoan(const MirBody &body, const MirLoan &loan) const {
     if (simpleLoan(loan))
       return true;
+    // A borrow carrier received by reference: the parameter's stored
+    // dependency only protects the external owners the carrier borrows and
+    // has no representation, as for a call result.
+    if (loan.kind == MirLoanKind::Parameter && loan.entry &&
+        loan.storedDependency && !loan.referenceSelection &&
+        loan.additionalDependencies.empty() && loan.conditions.empty() &&
+        !loan.lifecycleBound && !loan.twoPhase && !loan.escapes)
+      return true;
     if (loan.referenceSelection || !loan.additionalDependencies.empty() ||
         !loan.conditions.empty() || loan.lifecycleBound || loan.entry)
       return false;
@@ -2111,6 +2129,12 @@ private:
             return {};
           return Shape::NativeHierarchyThreadTask;
         }
+        // A payload enum moved whole, or a hierarchy field moved out of its
+        // payload alternative, relocates under the payload contract.
+        if (transfer.type.kind == SemanticType::Enum || transfer.sourceVariant)
+          return generatedRelocation(transfer.type)
+                     ? std::optional(Shape::NativeHierarchyPayload)
+                     : std::nullopt;
         return Shape::NativeFreshHierarchyTransfer;
       }
       if (freshTransferInitialization(body, stage) &&
@@ -4559,8 +4583,24 @@ public:
       // the pointer's own storage is an ordinary native borrow.
       const bool hierarchy = origin && dispatchProofs.related(origin->type) &&
                              origin->type.kind != SemanticType::RawPointer;
+      // An entry record that a referenced carrier stores a borrow in its
+      // fields names that external referent; like other borrow metadata it
+      // has no representation beside the carrier's own layout.
+      const bool storedRecord =
+          hierarchy && loan.kind == MirLoanKind::Stored && loan.entry &&
+          !loan.storedDependency && !loan.designatedFields.empty() &&
+          !loan.referenceSelection && loan.additionalDependencies.empty() &&
+          loan.conditions.empty() && !loan.twoPhase &&
+          dispatchProofs
+              .metadata(origin->type.kind == SemanticType::Reference &&
+                                origin->type.arguments.size() == 1
+                            ? origin->type.arguments.front()
+                            : origin->type)
+              .has_value();
       const auto view =
-          hierarchy ? dispatchProofs.loan(mir, loan) : std::nullopt;
+          storedRecord ? std::optional(Shape::NativeBorrowMetadata)
+          : hierarchy  ? dispatchProofs.loan(mir, loan)
+                       : std::nullopt;
       add(loan.kind, hierarchy     ? (view || !mutexShellLoan(mir, loan.id)
                                           ? view
                                           : std::optional(

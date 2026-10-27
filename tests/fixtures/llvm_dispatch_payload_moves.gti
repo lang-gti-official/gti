@@ -1,0 +1,56 @@
+#include <std/optional>
+
+// Payload enums holding hierarchy storage move as whole values, and the
+// hierarchy field of a one-field alternative moves out by value: the consuming
+// value() of expected and of optional, an enum moved between locals and a
+// by-move switch binding. Each object is destroyed exactly once, in order.
+mut int32_t drops = 0;
+
+interface Gauge {
+  int32_t read();
+};
+
+class Meter : public Gauge {
+  int32_t value;
+public:
+  Meter(int32_t value) : value(value) {}
+  ~Meter() { drops = drops * 10 + this.value; }
+  int32_t read() override { return this.value; }
+};
+
+enum Mark { none, held(Meter meter) };
+
+expected<Meter, int32_t> make(int32_t value) {
+  if (value > 8) return unexpected(value);
+  return Meter(value);
+}
+
+int32_t sample(Gauge& gauge) { return gauge.read(); }
+
+int32_t unwrap(int32_t value, int32_t divisor) {
+  auto made = make(value);
+  Meter taken = std::move(made).value();
+  return sample(taken) / divisor;
+}
+
+int32_t present(int32_t value) {
+  mut std::optional<Meter> held{};
+  held.emplace(value);
+  Meter taken = std::move(held).value();
+  return sample(taken);
+}
+
+int32_t switched(int32_t value) {
+  Mark mark = Mark::held(Meter(value));
+  Mark moved = std::move(mark);
+  switch (std::move(moved)) {
+  case Mark::held(meter): return sample(meter);
+  case Mark::none: return 0;
+  }
+}
+
+// PAYLOAD_MOVES_MAIN
+int main() {
+  int32_t total = unwrap(2, 1) * 100 + present(3) * 10 + switched(4);
+  return total == 234 && drops == 234 ? 0 : 1;
+}

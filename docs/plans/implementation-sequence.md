@@ -11713,22 +11713,31 @@ including failure and wrong-trace variants:
 - fixed hierarchy arrays in locals and fields, with fresh or moved
   elements;
 - payload enums holding hierarchy storage, including `std::optional` of an
-  erased callable;
+  erased callable, moved whole or out of a consuming accessor such as
+  `std::move(made).value()`, and `std::thread_result` of a hierarchy type
+  joined back through `std::expected`;
 - program-storage hierarchy objects;
 - shared polymorphic owners and upcasts;
 - unobservable abstract phases.
 
 Destructor dispatch follows the owner's lifecycle decision. Shipped examples
-025, 071, 086, 135 and 149 match at O0-O3. Of the 217 corpus programs that
-C++ compiled and LLVM refused, 210 now match at O0 and O2. The remaining
-seven belong to the threads track, which builds on this branch:
-- three thread programs whose erased callable crosses a thread spawn, each
-  under both roots (O-LLVM-13 task transfer of hierarchy storage);
-- a mutex protecting a hierarchy payload.
+025, 071, 086, 135 and 149 match at O0-O3. All 217 corpus programs that C++
+compiled and LLVM refused now match at O0 and O2, with the threads track's
+task transfer of hierarchy storage merged (2026-10-27). One of them is a
+fixture since renamed into a refusal control; its former program still
+matches at O0-O3.
 
-Base-view replacement, enum copies, payload values returned by value,
-thread-local hierarchy objects and observable pure phases stay
-`PolymorphicTransfer` or `PureDispatchState`.
+Hierarchy storage beside borrowed state is admitted. It is constructed in
+place, borrowed by reference and destroyed. It also moves, including scoped
+thread tasks passed by value. A carrier's generated value move relocates it
+under `mirTypeMoveRelocationKind`, while `std::relocatable` is unchanged
+(owner decision 2026-10-28). A carrier borrowed through an upcast interface
+view waits on a MIR soundness fix: such a borrow takes no `Local` loan on the
+carrier.
+
+Base-view replacement, enum copies, enums moved into arguments or returns,
+payload values returned by value, thread-local hierarchy objects and
+observable pure phases stay `PolymorphicTransfer` or `PureDispatchState`.
 A derived constructor passing an owned value to its base constructor, moved
 in or created in place, now runs natively: MIR stages each owned argument as a
 prepared parameter that `InitializeBase` hands to the base constructor

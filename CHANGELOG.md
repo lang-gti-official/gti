@@ -9,18 +9,35 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.485.0 - Owned base-constructor arguments on LLVM
+## 0.484.2 - Owned base-constructor arguments on LLVM
 
 - A derived constructor can now pass an owned value to its base constructor
   on the native LLVM backend, as in `Derived(std::string t) :
   Base(std::move(t))` or `Derived() : Base(make_value())`. The value can be a
   `std::string`, `std::vector`, `std::unique_ptr`, a payload enum, a closure
-  or a class with a destructor, moved in or created in place. 0.484.0 rejected
-  these constructors with `GTI-B0003`. If a later argument or the base
+  or a class with a destructor, moved in or created in place. Earlier versions
+  rejected these constructors with `GTI-B0003`. If a later argument or the base
   constructor fails, each owned value is still destroyed exactly once. Passing
   a reference to a class, a borrowing value or an array to a base constructor
   still reports `GTI-B0003`, and the C++ backend does not compile these
   constructors.
+
+## 0.484.1 - Native moves of polymorphic payloads and borrow carriers
+
+- The native backend now builds programs that previously failed with
+  `GTI-B0003`:
+  - payload enums holding polymorphic objects moved between variables, or
+    moved out by a consuming `std::move(made).value()` on `std::expected` or
+    `std::optional` or by a by-move `switch` binding;
+  - `std::thread_result` of a polymorphic value, joined back through
+    `std::expected`;
+  - classes holding a polymorphic object beside a reference field,
+    constructed in place, moved, passed by reference or by value, and
+    destroyed, including scoped thread tasks such as
+    `std::parallel_invoke(Job(3, first), Job(4, second))`.
+- Moving a class that holds a reference relocates it with the addresses it
+  holds, as its generated move does. `std::relocatable` and relocating swaps
+  still exclude such classes; the language is unchanged.
 
 ## 0.484.0 - Native LLVM correctness and broader language coverage
 

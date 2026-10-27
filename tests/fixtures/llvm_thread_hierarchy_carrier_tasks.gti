@@ -1,0 +1,31 @@
+#include <std/thread>
+
+// Scoped tasks that hold a polymorphic object beside a mutable reference move
+// by value into the bounded scope (owner decision 2026-10-28): each relocated
+// task keeps its borrow, and the scope joins before the referents are read.
+[[transfer]] interface Gauge {
+  int32_t read();
+};
+
+class Small : public Gauge {
+  int32_t value;
+public:
+  Small(int32_t value) : value(value) {}
+  int32_t read() override { return this.value; }
+};
+
+class Job {
+  Small small;
+  mut int32_t& total;
+public:
+  Job(int32_t value, mut int32_t& total) : small(Small(value)), total(total) {}
+  void operator()() mut { this.total = this.total + this.small.read(); }
+};
+
+int main() {
+  mut int32_t first = 0;
+  mut int32_t second = 0;
+  if (!std::parallel_invoke(Job(3, first), Job(4, second))) return 1;
+  std::println(first * 10 + second);
+  return 0;
+}

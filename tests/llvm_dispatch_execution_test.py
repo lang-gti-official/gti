@@ -73,6 +73,9 @@ SUCCESS_FILES = {
     "generated-empty-former-reject": "tests/fixtures/llvm_dispatch_generated_empty.gti",
     "hierarchy-payloads": "tests/fixtures/llvm_dispatch_hierarchy_payloads.gti",
     "owned-base-arguments": "tests/fixtures/llvm_owned_base_arguments.gti",
+    "payload-moves": "tests/fixtures/llvm_dispatch_payload_moves.gti",
+    "borrowed-carriers": "tests/fixtures/llvm_dispatch_borrowed_carriers.gti",
+    "moved-carriers": "tests/fixtures/llvm_dispatch_moved_carriers.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -186,6 +189,18 @@ TRANSFER_SUCCESS_SOURCES = {
     "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain(); };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
     "fresh-value-argument-former-reject": (PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n", 0),
     "fresh-return-former-reject": (PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n", 1),
+    # Verbatim former rejection: a moved borrow carrier relocates as the
+    # addresses it holds (owner decision 2026-10-28).
+    "moved-borrow-carrier-former-reject": ("""interface Gauge { int read(); };
+class Scaled : public Gauge {
+  int value;
+  int& scale;
+public:
+  Scaled(int value, int& scale) : value(value), scale(scale) {}
+  int read() override { return this.value * this.scale; }
+};
+int main() { int scale = 3; Scaled first{2, scale}; Scaled moved = std::move(first); return moved.read(); }
+""", 6),
     "local-return-former-reject": (PLAIN + "Plain make() { Plain local{}; return local; }\nint main() { Plain value = make(); return value.read(); }\n", 1),
     # An abstract phase that nothing observes installs no pure state.
     "pure-active-phase-former-reject": ("""class Base {
@@ -715,11 +730,52 @@ int main() { Wrong value{}; return 0; }
 class Missing : public Reader { public: int read() override; };
 int main() { Missing value{}; return value.read(); }
 """,
+    # A relocated carrier never holds a live borrow of its own storage: a
+    # carrier cannot borrow storage of the object it is built into, and a
+    # carrier's referent cannot move while the carrier lives.
+    "reject-source-self-borrowing-carrier": """interface Gauge { int read(); };
+class Scaled : public Gauge {
+  int value;
+  int& scale;
+public:
+  Scaled(int value, int& scale) : value(value), scale(scale) {}
+  int read() override { return this.value * this.scale; }
+};
+class Bundle {
+  int scale;
+  Scaled scaled;
+public:
+  Bundle() : scale(3), scaled(Scaled(2, this.scale)) {}
+};
+int main() { Bundle first{}; Bundle moved = std::move(first); return 0; }
+""",
+    "reject-source-moved-carrier-referent": """interface Gauge { int read(); };
+class Small : public Gauge {
+  int value;
+public:
+  Small(int value) : value(value) {}
+  int read() override { return this.value; }
+};
+class Viewer {
+  Gauge& gauge;
+public:
+  Viewer(Gauge& gauge) : gauge(gauge) {}
+  int read() { return this.gauge.read(); }
+};
+int main() {
+  mut Small small{4};
+  Viewer viewer{small};
+  Small moved = std::move(small);
+  return viewer.read();
+}
+""",
 }
 
 SOURCE_REJECTION_CODES = {
     "reject-source-deleted-copy": "GTI-S2020",
     "reject-source-use-after-move": "GTI-S2018",
+    "reject-source-self-borrowing-carrier": "GTI-S2045",
+    "reject-source-moved-carrier-referent": "GTI-S2017",
 }
 
 
@@ -1521,7 +1577,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "owned-base-arguments"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers", "owned-base-arguments"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -1894,6 +1950,19 @@ int main() {
         payload_failure.replace("expected_cleanup = 45;", "expected_cleanup = 46;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=payload_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    moves = (root / SUCCESS_FILES["payload-moves"]).read_text(encoding="utf-8")
+    moves_marker = "// PAYLOAD_MOVES_MAIN\n"
+    if moves.count(moves_marker) != 1:
+        raise AssertionError("payload move main marker is not unique")
+    # A failure after a consuming value() moved its object out ends that
+    # object once on the failure path, after an earlier one was destroyed.
+    add("payload-move-failure", moves.split(moves_marker, 1)[0] + """int main() {
+  int32_t kept = present(3);
+  return unwrap(2, 0) + kept;
+}
+""", "defined-failure", expected_exit=70,
+        failure_needle="return sample(taken) / divisor;",
+        endpoints=TRANSFER_ENDPOINTS)
     lifecycle = (root / SUCCESS_FILES["lifecycle-phases"]).read_text(encoding="utf-8")
     lifecycle_marker = "// LIFECYCLE_MAIN\n"
     if lifecycle.count(lifecycle_marker) != 1:
@@ -2007,7 +2076,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "mut-borrow-scalar-bool": ("borrowed-dispatch", "borrowed-mut-reference-chain",
                                   "hierarchy-reference-results", "owner-reference-failure",
                                   "owner-reference-wrong-cleanup", "shared-owner-reference",
-                                  "owner-failure-before-reference", "replacements"),
+                                  "owner-failure-before-reference", "replacements",
+                                  "borrowed-carriers"),
         "virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
                                "static-dispatch", "dispatch-cost-correctness",
                                "virtual-signatures", "virtual-signature-failure",
@@ -2023,7 +2093,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "fresh-copy-former-cli-control", "generated-move-virtual-failure",
             "owned-transfers", "owned-transfer-failure", "owned-transfer-wrong-cleanup",
             "local-return-former-reject", "returned-owned-move",
-            "hierarchy-arrays", "hierarchy-payloads"),
+            "hierarchy-arrays", "hierarchy-payloads", "moved-carriers",
+            "moved-borrow-carrier-former-reject"),
         "fresh-publication": (
             "fresh-publication", "fresh-return-former-reject",
             "fresh-value-argument-former-reject",
@@ -2045,7 +2116,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "program-hierarchy-storage": (
             "program-storage", "program-storage-failure", "global-former-reject"),
         "hierarchy-payloads": (
-            "hierarchy-payloads", "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup"),
+            "hierarchy-payloads", "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup",
+            "payload-moves", "payload-move-failure"),
         "lifecycle-dispatch": (
             "lifecycle-phases", "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
             "generated-empty-former-reject", "base-destructor-observation-former-reject",
@@ -2120,6 +2192,7 @@ def main() -> None:
              *LIFECYCLE_FORMER_REJECTS, "rollback-virtual-observation-former-reject",
              "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
              "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup",
+             "payload-move-failure",
              *OWNED_BASE_SOURCES, *OWNED_BASE_FAILURES,
              *(owned_base_wrong_cleanup(name) for name in OWNED_BASE_FAILURES),
              *SOURCE_REJECTIONS)

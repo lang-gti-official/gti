@@ -5135,8 +5135,52 @@ its own storage. Borrows of the enum select it, and its checked borrowing
 extractions select payloads as complete objects. Cleanup runs the active
 alternative's field cleanup. Every payload enum place is a complete object, so
 assigning a new alternative ends the old one exactly once and relocates the
-fresh value. Enum copies and payload values returned by value stay
+fresh value.
+
+A payload enum also moves as a whole value. The move may come from a whole
+binding or from a field of the receiver of a consuming method, whose body owns
+that receiver. A one-field alternative's field moves out by value from a whole
+enum binding. Each such relocation publishes into one fresh whole local. This
+covers `std::move(made).value()` on an `expected` or `optional` and by-move
+switch bindings. The type's generated relocation rebuilds each hierarchy
+field's state in the destination. MIR's ownership event and its lifecycle
+transition prove the source is neither used nor dropped again. That transition
+moves, starts or ends the obligation exactly as the source owned it. A payload
+enum's dependency set may record which alternative is active; it still names
+no loan. Extracting a field without hierarchy storage transports only that
+field. A by-value result taken from a thread result box and a consuming member
+call are fresh producers that publish into their destination. This lets
+`std::thread_result` of a hierarchy type join its result back through
+`expected`. Enum copies, enums moved into arguments or returns, multi-field
+alternatives moved out, and payload values returned by value stay
 `PolymorphicTransfer`.
+
+Hierarchy metadata also covers classes that hold borrowed state, such as a
+reference field beside an inline polymorphic object. A reference or view is an
+address, and its loans are MIR facts with no runtime state beside the dispatch
+metadata. A construction that stores a borrow is still a fresh object, so it
+publishes in place. A carrier received by reference has a parameter loan with a
+stored dependency, and the dependency has no representation, as for a call
+result. The carrier's entry record of the borrow in its fields is borrow
+metadata. A destructor that writes through its borrow runs as any other
+cleanup.
+
+A moved carrier relocates through the generated relocation, following an
+owner decision of 2026-10-28 taken as the recommended option while the owner
+was away. Each hierarchy field's state is rebuilt, and references and views
+copy as addresses. MIR's `mirTypeMoveRelocationKind` decides the move, and the
+moved value's loans follow it, so the transfer planner no longer excludes a
+moving carrier's dependencies. A scoped thread task passed by value is moved
+this way. Source-visible relocation (`std::relocatable` and relocating swaps)
+still excludes carriers. Variant A, letting carriers satisfy
+`std::relocatable`, would be a language change and was deliberately not taken.
+An inert relocation stays borrow-free.
+
+A carrier borrowed through an upcast interface view stays refused. Its MIR
+operand names the carrier's `Stored` loan instead of a `Local` loan on the
+carrier itself, and semantics then lets the carrier move while the view
+lives. That is a soundness defect, reported to the MIR owner on 2026-10-28.
+Those `Loan` operands wait for its fix.
 
 `NativeProgramHierarchyStorage` admits a hierarchy object in namespace or
 static-field storage that its program initialization step constructs in

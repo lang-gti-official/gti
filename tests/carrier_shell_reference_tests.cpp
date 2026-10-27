@@ -1,4 +1,5 @@
 #include "compiler_test_fixture.h"
+#include "gti/mir_effects.h"
 #include "gti/optimization/alias.h"
 
 namespace {
@@ -1576,6 +1577,84 @@ void checkDependencyMutations() {
   expect(mutatedPaths, "abstract entry field paths were independently mutated");
 }
 
+// A moved borrow carrier relocates as the addresses it holds (owner decision
+// 2026-10-28): its generated value move is a relocation, while its
+// source-visible relocation stays unavailable, and a loan it carries through
+// a move never borrows its own storage.
+void checkMovedCarrierRelocation() {
+  const auto frontend = lang::Frontend().analyze(
+      "moved-carrier.gti", R"gti(
+interface Gauge { int read(); };
+class Scaled : public Gauge {
+  int value;
+  int& scale;
+public:
+  Scaled(int value, int& scale) : value(value), scale(scale) {}
+  int read() override { return this.value * this.scale; }
+};
+int main() {
+  int scale = 3;
+  Scaled first{2, scale};
+  Scaled moved = std::move(first);
+  return moved.read() - 6;
+}
+)gti",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "a moved borrow carrier verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  bool checkedKinds = false;
+  for (const auto &instance : frontend.mir.classInstances()) {
+    if (!instance.traits.containsBorrowedState || !instance.polymorphic)
+      continue;
+    expect(instance.traits.relocation == lang::RelocationKind::Unavailable &&
+               lang::mirTypeRelocationKind(frontend.mir, instance.type) ==
+                   lang::RelocationKind::Unavailable &&
+               lang::mirTypeMoveRelocationKind(frontend.mir, instance.type) ==
+                   lang::RelocationKind::Structural,
+           "a carrier's value move relocates while std::relocatable stays "
+           "false");
+    checkedKinds = true;
+  }
+  expect(checkedKinds, "the carrier class instance was inspected");
+  bool checkedSelfBorrow = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone || stage.kind != lang::MirInstructionKind::Move ||
+            stage.operands.size() != 1 ||
+            !stage.info.traits.containsBorrowedState)
+          continue;
+        const auto *moved = body.findPlace(stage.operands.front().place);
+        if (moved == nullptr || moved->binding == 0)
+          continue;
+        for (const auto &loan : body.loans) {
+          if (loan.kind != lang::MirLoanKind::Stored || loan.entry ||
+              std::find(loan.carriers.begin(), loan.carriers.end(),
+                        moved->binding) == loan.carriers.end())
+            continue;
+          auto selfBorrow = body;
+          selfBorrow.loans[loan.id - 1].source = moved->id;
+          const auto verification =
+              lang::verifyMirBody(selfBorrow, function.id);
+          expect(std::any_of(verification.errors.begin(),
+                             verification.errors.end(),
+                             [](const auto &error) {
+                               return error.message ==
+                                      "moved borrow carrier stores a loan of "
+                                      "its own storage";
+                             }),
+                 "a carrier holding a loan of its own storage cannot move");
+          checkedSelfBorrow = true;
+        }
+      }
+  }
+  expect(checkedSelfBorrow, "the moved carrier's stored loan was mutated");
+}
+
 void checkProtectedEscapeAnalysis() {
   const auto frontend =
       analyze("mut Counter owner{}; mut Exclusive view{owner}; "
@@ -2106,5 +2185,6 @@ int main() {
   checkShellEscapes();
   checkDependencyMutations();
   checkProtectedEscapeAnalysis();
+  checkMovedCarrierRelocation();
   return failures == 0 ? 0 : 1;
 }
