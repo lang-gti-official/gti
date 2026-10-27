@@ -368,6 +368,17 @@ private:
     return entry->second;
   }
 
+  // An array element initialized from a differently typed scalar applies the
+  // implicit initialization conversion MIR leaves to element formation, as an
+  // Initialize of the element's place would.
+  [[nodiscard]] llvm::Value *aggregateElement(const MirOperand &source,
+                                              const SemanticType &element) {
+    auto *value = operand(source);
+    if (source.type != element &&
+        isImplicitScalarInitializationConversion(element, source.type))
+      value = scalars.convert(value, source.type, element, false);
+    return value;
+  }
   [[nodiscard]] llvm::Value *load(llvm::Value *address,
                                   const SemanticType &type) {
     return memory.load(address, type);
@@ -1461,7 +1472,8 @@ private:
             auto *slot =
                 ir.CreateGEP(session.layouts().get(type).storage, result,
                              {ir.getInt64(0), ir.getInt64(index)});
-            store(operand(source), slot, type.arguments.at(0));
+            store(aggregateElement(source, type.arguments.at(0)), slot,
+                  type.arguments.at(0));
           }
           break;
         }
@@ -1469,7 +1481,8 @@ private:
             llvm::Constant::getNullValue(session.layouts().get(type).value);
         for (std::size_t index = 0; index < instruction.operands.size();
              ++index) {
-          auto *element = operand(instruction.operands[index]);
+          auto *element =
+              aggregateElement(instruction.operands[index], type.arguments.at(0));
           if (type.arguments.at(0) == SemanticType::Bool)
             element = ir.CreateZExt(element, ir.getInt8Ty());
           if (type.arguments.at(0).kind == SemanticType::Class)

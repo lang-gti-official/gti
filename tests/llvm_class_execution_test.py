@@ -341,6 +341,74 @@ int main() {
   return total == 13 && node.value == 8 ? 0 : 1;
 }
 ''',
+    # By-value borrow carriers produced inside conditional operands are built in their hidden temporaries.
+    "conditional-carrier-temporaries": r'''
+mut int destroyed = 0;
+class Counter {
+  mut int value;
+public:
+  Counter(int initial) : value(initial) {}
+  int read() { return this.value; }
+  void bump() mut { this.value += 1; }
+};
+class Note {
+  int tag;
+public:
+  Note(int value) : tag(value) {}
+  int read() { return this.tag; }
+  ~Note() { destroyed += 1; }
+};
+class View {
+  Counter& source;
+  Note label;
+public:
+  View(Counter& counter, int tag) : source(counter), label(Note(tag)) {}
+  int sum() { return this.source.read() + this.label.read(); }
+};
+class Writer {
+  mut Counter& target;
+public:
+  Writer(mut Counter& counter) : target(counter) {}
+  int bump() mut { this.target.bump(); return this.target.read(); }
+};
+class Hub {
+  mut Counter counter;
+public:
+  Hub() : counter(Counter(10)) {}
+  View view(int tag) { return View(this.counter, tag); }
+  Writer writer() mut { return Writer(this.counter); }
+};
+int main() {
+  mut Hub hub{};
+  bool early = false;
+  if (early || hub.view(5).sum() != 15) { return 1; }
+  if (!early && hub.view(2).sum() != 12) { return 2; }
+  int chosen = early ? 0 : hub.view(1).sum();
+  if (chosen != 11) { return 3; }
+  if (early || hub.writer().bump() != 11) { return 4; }
+  return destroyed == 3 ? 0 : 5;
+}
+''',
+    # Array elements take the implicit scalar initialization conversion from differently typed values.
+    "aggregate-element-conversions": r'''
+double third(double values[3]) { return values[2]; }
+class Mix {
+  double values[3];
+public:
+  Mix(double initial[3]) : values(initial) {}
+  double at(uint64_t index) { return this.values[index]; }
+};
+int main() {
+  double floats[3] = {1.0, -0.0, 3.0};
+  if (floats[0] != double(1.0) || floats[2] != double(3.0)) { return 1; }
+  int64_t widened[2] = {int32_t(-5), uint8_t(200)};
+  if (widened[0] != int64_t(-5) || widened[1] != int64_t(200)) { return 3; }
+  if (third(floats) != double(3.0)) { return 4; }
+  Mix mix = Mix(floats);
+  if (mix.at(uint64_t(0)) != double(1.0)) { return 5; }
+  return 0;
+}
+''',
     # A stored borrow carrier returned by value only states its provenance.
     "returned-view-provenance": r'''
 class IntView {

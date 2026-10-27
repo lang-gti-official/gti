@@ -960,8 +960,12 @@ bool Placement::fresh(MirValueId value) const {
       stage.operands.size() == 1 &&
       stage.operands[0].kind == MirOperandKind::Value)
     return fresh(stage.operands[0].value);
+  // A by-value call result is constructed fresh even when it carries borrowed
+  // state, and so a loan; only a call returning a reference selects existing
+  // storage.
   return stage.kind == MirInstructionKind::Construct ||
-         (stage.kind == MirInstructionKind::Call && !stage.loan &&
+         (stage.kind == MirInstructionKind::Call &&
+          (!stage.loan || stage.info.category == ValueCategory::Value) &&
           stage.intrinsic == IntrinsicKind::None) ||
          (stage.kind == MirInstructionKind::Compute &&
           (stage.operation == MirOperation::Aggregate ||
