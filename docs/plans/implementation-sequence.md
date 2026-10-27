@@ -11730,13 +11730,26 @@ Hierarchy storage beside borrowed state is admitted. It is constructed in
 place, borrowed by reference and destroyed. It also moves, including scoped
 thread tasks passed by value. A carrier's generated value move relocates it
 under `mirTypeMoveRelocationKind`, while `std::relocatable` is unchanged
-(owner decision 2026-10-28). A carrier borrowed through an upcast interface
-view waits on a MIR soundness fix: such a borrow takes no `Local` loan on the
-carrier.
+(owner decision 2026-10-28). A base or interface view of a carrier takes a
+`Local` loan on the carrier since the MIR fix of 2026-10-28; upcast arguments
+and interface relays run natively, while local upcast views, upcast returns and
+base-class relays stay O-LLVM-05 refusals like their same-class forms.
+
+Closures holding hierarchy storage are admitted (`NativeHierarchyCapture`). An
+init-capture relocates a moved derived, polymorphic or interface-implementing
+object into its environment slot, the closure publishes into a whole local or
+a prepared by-value argument, and a by-value closure parameter moves into a
+managed-thread spawn as a hierarchy task. The 21 cells the 2026-10-28 wrong-code
+matrices found C++ running and LLVM refusing, locally called and joined-thread
+init-captures, now run natively at O0-O3 with checked results and destruction
+order. The `hierarchy-captures` dispatch profile is native-only because the C++
+backend does not represent these closures; `threads.hierarchy-tasks` compares
+the thread form with the C++ oracle.
 
 Base-view replacement, enum copies, enums moved into arguments or returns,
-payload values returned by value, thread-local hierarchy objects and
-observable pure phases stay `PolymorphicTransfer` or `PureDispatchState`.
+payload values returned by value, by-copy captures of hierarchy objects,
+closure copies, thread-local hierarchy objects and observable pure phases stay
+`PolymorphicTransfer` or `PureDispatchState`.
 A derived constructor whose base initializer MIR leaves unstaged, such as
 one passing an owned value to its base constructor, is refused as
 `UnstagedBaseInitializer`. Until 2026-10-27 LLVM lowered it without its base.

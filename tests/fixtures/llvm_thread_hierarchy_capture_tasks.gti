@@ -1,0 +1,89 @@
+// Closures holding hierarchy storage as managed-thread tasks. An init-capture
+// moves an object of a derived class, a polymorphic class or an interface
+// implementation into the closure environment; the closure is a by-value
+// argument of std::thread_result<T>::start, whose spawn relocates it into the
+// runtime task box, rebuilding each capture's dispatch state. Every object is
+// destroyed exactly once.
+#include <std/string>
+#include <std/thread>
+#include <std/atomic>
+#include <std/format>
+#include <std/utility>
+
+std::atomic<int32_t> constructed{0};
+std::atomic<int32_t> destroyed{0};
+
+[[unsafe_transfer]] class Tracked {
+  int32_t id;
+public:
+  Tracked(int32_t id) : id(id) { [[discard]] constructed.fetch_add(1); }
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() { [[discard]] destroyed.fetch_add(1); }
+  int32_t value() { return this.id; }
+};
+
+[[transfer]] interface Probe {
+  int64_t sample();
+};
+
+[[unsafe_transfer]] class Sensor : public Probe {
+  std::string label;
+  Tracked mark;
+public:
+  Sensor(int32_t id)
+      : label(std::string("a sensor label long enough to live on the heap")),
+        mark(Tracked(id)) {}
+  int64_t sample() override {
+    return int64_t(this.label.size()) * 100 + int64_t(this.mark.value());
+  }
+};
+
+[[unsafe_transfer]] class Base {
+public:
+  Tracked mark;
+  int32_t seed;
+  Base(int32_t seed) : mark(Tracked(seed)), seed(seed) {}
+  int64_t base() { return int64_t(this.seed) * 1000 + int64_t(this.mark.value()); }
+};
+
+[[unsafe_transfer]] class Derived : public Base {
+public:
+  int32_t extra;
+  Derived(int32_t seed) : Base(seed), extra(seed + 1) {}
+  int64_t total() { return this.base() + int64_t(this.extra); }
+};
+
+int32_t run() {
+  mut Sensor sensor = Sensor(7);
+  mut Derived derived = Derived(3);
+  mut Derived second = Derived(5);
+  mut std::thread_result<int64_t> first{};
+  mut std::thread_result<int64_t> both{};
+  if (!first.start([held = std::move(sensor)]() -> int64_t {
+        return held.sample();
+      })) return 1;
+  if (!both.start([left = std::move(derived), right = std::move(second)]() -> int64_t {
+        return left.total() * 10000 + right.total();
+      })) return 2;
+  auto one = first.join();
+  if (!one) return 3;
+  auto two = both.join();
+  if (!two) return 4;
+  // 46 * 100 + 7
+  if (std::move(one).value() != 4607) return 5;
+  // (3003 + 4) * 10000 + (5005 + 6)
+  if (std::move(two).value() != 30075011) return 6;
+  return 0;
+}
+
+int main() {
+  int32_t status = run();
+  if (status != 0) return status;
+  if (constructed.load() != 3 || destroyed.load() != 3) {
+    std::println("constructed {} destroyed {}", constructed.load(), destroyed.load());
+    return 9;
+  }
+  std::println("ok");
+  return 0;
+}

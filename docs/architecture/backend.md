@@ -4628,15 +4628,18 @@ outcome. A scope borrows each consumed task in its verified caller slot, passes
 stack descriptors and scratch to `gti_rt_thread_scope_v1`, treats a worker
 envelope as terminal, then cleans every task in reverse order on the caller.
 A task holding hierarchy storage (a polymorphic object, an inline polymorphic
-slot or an erased transferable callable) uses the same paths
-(`NativeHierarchyThreadTask`). The moved owned binding waits in its own value
-storage until the spawn relocates it with the generated relocation, which
-rebuilds its dispatch state, and takes over its value obligation; task cleanup
-runs its exact hierarchy recipe. A scoped hierarchy task runs in place. A
+slot, an erased transferable callable or a closure whose init-captures moved
+hierarchy objects) uses the same paths (`NativeHierarchyThreadTask`). The
+moved owned binding, or the by-value closure parameter of
+`std::thread_result<T>::start`, waits in its own value storage until the spawn
+relocates it with the generated relocation, which rebuilds its dispatch state,
+and takes over its value obligation; task cleanup runs its exact hierarchy
+recipe. A scoped hierarchy task runs in place. A
 result holding hierarchy storage still crosses `std::expected` by value and
 stays a `PolymorphicTransfer` refusal. `threads.hierarchy-tasks` compares
-user-defined polymorphic and inline-slot tasks, `transfer_function_threads`
-and `scoped_parallel_threads` with the C++ oracle at O0-O3.
+user-defined polymorphic, inline-slot and capturing-closure tasks,
+`transfer_function_threads` and `scoped_parallel_threads` with the C++ oracle
+at O0-O3.
 The first failing worker supplies the primary record; otherwise the first task
 cleanup failure does, and later cleanup inherits it like any failure chain.
 
@@ -5149,6 +5152,23 @@ call are fresh producers that publish into their destination. This lets
 alternatives moved out, and payload values returned by value stay
 `PolymorphicTransfer`.
 
+`NativeHierarchyCapture` admits closures whose environments hold hierarchy
+storage. An init-capture such as `[held = std::move(local)]` moves an object
+of a derived class, a polymorphic class or an interface implementation into
+its slot of the environment. The move's one publication is that slot, as an
+element of a fresh array or payload alternative is. The transfer planner
+relocates the object there with its generated relocation, which rebuilds its
+dispatch state, and the closure construction stores only its other captures.
+The closure itself publishes into a whole local, or into a by-value argument's
+prepared storage. A call borrows the whole environment, and the closure's body
+selects each by-value capture in place as a complete object. Moving the
+closure relocates every capture through the closure's generated relocation;
+this covers a whole closure binding moved into a fresh local and a by-value
+closure parameter moved into a managed-thread spawn. The closure's cleanup
+ends its captures in reverse declaration order. A by-copy capture of a
+hierarchy object has no typed relocation and stays `PolymorphicTransfer`, as
+do closure copies.
+
 Hierarchy metadata also covers classes that hold borrowed state, such as a
 reference field beside an inline polymorphic object. A reference or view is an
 address, and its loans are MIR facts with no runtime state beside the dispatch
@@ -5170,11 +5190,13 @@ still excludes carriers. Variant A, letting carriers satisfy
 `std::relocatable`, would be a language change and was deliberately not taken.
 An inert relocation stays borrow-free.
 
-A carrier borrowed through an upcast interface view stays refused. Its MIR
-operand names the carrier's `Stored` loan instead of a `Local` loan on the
-carrier itself, and semantics then lets the carrier move while the view
-lives. That is a soundness defect, reported to the MIR owner on 2026-10-28.
-Those `Loan` operands wait for its fix.
+A base or interface view of a carrier now takes a `Local` loan on the
+carrier itself, with the carrier's `Stored` loan as its dependency, so the
+carrier cannot move while the view lives (fixed in MIR on 2026-10-28). Native
+lowering runs an upcast argument and an interface relay such as
+`Gauge& view = pick(carrier)`. A local view bound directly to the carrier, an
+upcast return and a relay through a base-class reference stay refused
+(O-LLVM-05), as their same-class forms are.
 
 `NativeProgramHierarchyStorage` admits a hierarchy object in namespace or
 static-field storage that its program initialization step constructs in

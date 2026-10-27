@@ -390,20 +390,9 @@ private:
         stage = outer;
         auto *storage = destination(target->aggregate);
         stage = element;
-        if (target->variant)
-          return payloadFieldAddress(ir, session.layouts().payload(type),
-                                     storage, *target->variant,
-                                     target->element);
-        return ir.CreateGEP(session.layouts().get(type).storage, storage,
-                            {ir.getInt64(0), ir.getInt64(target->element)});
+        return aggregateSlot(type, storage, *target);
       }
-      if (target->variant)
-        return payloadFieldAddress(ir, session.layouts().payload(type),
-                                   destination(target->aggregate),
-                                   *target->variant, target->element);
-      return ir.CreateGEP(session.layouts().get(type).storage,
-                          destination(target->aggregate),
-                          {ir.getInt64(0), ir.getInt64(target->element)});
+      return aggregateSlot(type, destination(target->aggregate), *target);
     }
     if (const auto found = temporaries.find(value); found != temporaries.end())
       return found->second;
@@ -604,6 +593,20 @@ private:
         session.layouts().get(owner->type).storage, thisAddress,
         session.layouts().fieldIndex(owner->type, initializer.field));
   }
+  // The address of one element slot of a fresh aggregate's storage: an array
+  // element, one field of a payload alternative or one closure capture.
+  [[nodiscard]] llvm::Value *aggregateSlot(const SemanticType &type,
+                                           llvm::Value *storage,
+                                           const Placement::Target &target) {
+    if (target.variant)
+      return payloadFieldAddress(ir, session.layouts().payload(type), storage,
+                                 *target.variant, target.element);
+    if (type.kind == SemanticType::Lambda)
+      return ir.CreateStructGEP(session.layouts().get(type).storage, storage,
+                                static_cast<unsigned>(target.element));
+    return ir.CreateGEP(session.layouts().get(type).storage, storage,
+                        {ir.getInt64(0), ir.getInt64(target.element)});
+  }
   [[nodiscard]] llvm::Value *freshTransfer(const MirInstruction &instruction) {
     const auto transfer = Lifetimes::preflightFreshTransfer(session, dispatch,
                                                             input, instruction);
@@ -645,13 +648,7 @@ private:
       stage = transfer.publication;
       auto *storage = destination(target->aggregate);
       stage = element;
-      auto *address =
-          target->variant
-              ? payloadFieldAddress(ir, session.layouts().payload(type),
-                                    storage, *target->variant,
-                                    target->element)
-              : ir.CreateGEP(session.layouts().get(type).storage, storage,
-                             {ir.getInt64(0), ir.getInt64(target->element)});
+      auto *address = aggregateSlot(type, storage, *target);
       lifetimes.freshTransfer(ir, address, memory.selected(transfer.source),
                               input, instruction);
       return address;
@@ -971,11 +968,20 @@ private:
                      ir.CreateStructGEP(storage, environment, 0));
       return environment;
     }
-    for (std::size_t index = 0; index < target.captureTypes.size(); ++index)
-      store(operand(instruction.operands[index]),
+    for (std::size_t index = 0; index < target.captureTypes.size(); ++index) {
+      // A moved hierarchy capture was relocated into its slot by its own
+      // planned transfer; storing its value would copy dispatch state.
+      const auto &source = instruction.operands[index];
+      if (source.kind == MirOperandKind::Value)
+        if (const auto *slot = placement.target(source.value);
+            slot && slot->aggregate == *instruction.result && !slot->variant &&
+            slot->element == index)
+          continue;
+      store(operand(source),
             ir.CreateStructGEP(storage, environment,
                                static_cast<unsigned>(index)),
             target.captureTypes[index]);
+    }
     return environment;
   }
   [[nodiscard]] llvm::Value *call(const MirInstruction &instruction,

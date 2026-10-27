@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.3 - Native closures over hierarchy objects
+
+- The native backend now builds lambdas whose init-capture moves an object of
+  a derived class, a polymorphic class or an interface implementation into the
+  closure, which previously failed with `GTI-B0003`. This covers a closure such
+  as `auto reader = [held = std::move(local)]() -> int64_t { return
+  held.check(); };` called in place, moved to another local, or passed to
+  `std::thread_result<T>::start` and joined. Each captured object keeps its own
+  dispatch state, and the closure's cleanup ends its captures in reverse
+  declaration order, once each. A by-copy capture of such an object and a copy
+  of such a closure still report `GTI-B0003`.
+
 ## 0.484.2 - Text and borrow soundness fixes
 
 - Fix a use-after-move through an interface or base-class reference. `Gauge&
