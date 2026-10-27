@@ -2586,7 +2586,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
   // verifyMirProgramBorrowContracts first proves every text publication and
   // safe write. A by-value field therefore needs its physical shell loan but
   // cannot have an unrepresented external text-owner dependency.
-  if (mir_detail::isOwnerlessTextFieldProjection(program, body, source))
+  if (mir_detail::isOwnerlessTextStorageProjection(program, body, source))
     return true;
   const bool referenceAlias =
       source.projections.size() == 1 &&

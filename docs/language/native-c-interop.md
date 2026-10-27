@@ -586,7 +586,9 @@ lets user-defined byte consumers operate without constructing a string.
 derefencing or indexing operations. A value returned by C may be null; GTI can
 compare it with `nullptr`, copy it as the same exact type, initialize it from
 `nullptr`, and pass its address as `c_string*` inside the ordinary raw-pointer
-`unsafe` boundary.
+`unsafe` boundary. A `c_string` read back through such a pointer is the inert
+native address stored there, with no GTI owner, so a function may return it as
+ownerless text; its validity remains the unsafe code's obligation.
 
 The only implicit production conversion in the current bounded slice is from
 `std::string_view` to a `c_string` **call parameter**. Only a complete,
