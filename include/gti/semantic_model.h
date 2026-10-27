@@ -1005,6 +1005,10 @@ struct LambdaInfo {
   // Exact concrete instance proven by ordinary body analysis to perform no
   // raw memory/address-arithmetic access. Unknown remains conservative.
   SemanticType rawAccessFreeType = SemanticType::Unknown;
+  // A by-value text result that may hold text a copy or move capture
+  // provided. Its owner has no name the compiler can track, so a call's
+  // result may be used locally but never returned or stored (L-OWN-02).
+  bool capturedTextResult = false;
 };
 
 struct LambdaCaptureLink {

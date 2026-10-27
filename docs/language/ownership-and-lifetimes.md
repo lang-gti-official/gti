@@ -1416,10 +1416,12 @@ These are checked references, not raw pointer captures. Each environment field
 retains its origin place, access mode and parent loan. Multiple captures and
 disjoint fields use the same place-overlap rules as ordinary references. Copy
 and move captures retain any checked dependencies already present in the
-captured value. Shared environments can be copied when all their other fields
-can; an exclusive borrowed capture makes the environment noncopyable. Moving
-the environment transfers its dependencies without moving their referents.
-Borrowed environments cannot be assigned or relocated as independent objects.
+captured value; a lambda's text over a captured view is for local use (see
+[Text a lambda captured](#text-a-lambda-captured)). Shared environments can
+be copied when all their other fields can; an exclusive borrowed capture makes
+the environment noncopyable. Moving the environment transfers its dependencies
+without moving their referents. Borrowed environments cannot be assigned or
+relocated as independent objects.
 
 The restrictions last through the last proven use, or through cleanup when
 the stored type's destructor needs the dependency. An ordinary nested block
@@ -2490,6 +2492,46 @@ dynamic initializer such as `text(owner.view())` is rejected at its initializer;
 an ordinary view parameter forwarded to a storing constructor is potentially
 dynamic, even if some callers happen to pass literals. Conditional expressions
 cannot erase a dynamic operand's dependency.
+
+### Text a lambda captured
+
+A copy or move capture of a `std::string_view` or `c_string` holds the view its
+closure copied, and a capture is never a lifetime origin. A lambda that returns
+such text, directly, through a local view, through a call that relays it or
+through another lambda over it, therefore produces text whose owner the
+compiler cannot name, whether the captured view was dynamic or literal-backed.
+Callers use that result locally: in an expression, a local binding, an
+assignment to a local view or by-value text parameter, and a call that only
+reads it or relays it back for the same local use.
+
+```gti
+std::string owner{"dynamic"};
+std::string_view view = owner.view();
+auto name = [view]() -> std::string_view { return view; };
+std::println(name());                  // valid: used in an expression
+std::string_view local = name();       // valid: a local binding
+mut std::string_view other = "";
+other = name();                        // valid: assigned to a local view
+
+std::string_view leak(std::string_view input) {
+  auto copy = [input]() -> std::string_view { return input; };
+  return copy();                       // GTI-S2045: no owner to relay
+}
+```
+
+Returning it from a function, storing it in a field, an array element
+(`{name()}` included), a payload alternative, an optional, a global or
+thread-local, or through a reference, and passing it to a parameter that
+requires ownerless text each report `GTI-S2045` at that site; so does a lambda
+body that stores its captured view. A generic function that returns what a
+callable argument returns rejects that return in the instance that receives
+such a lambda, and forming a GTI invocation pointer from it, as
+`std::function_ref` does, is rejected because the erased call has no
+result-origin contract to carry the text. A local view that is ever given such
+text holds it for its whole scope, so an escape of that view is rejected even
+where it precedes the assignment. A lambda that returns a literal or other
+ownerless text, such as a captured record's text field, stays storable and
+returnable.
 
 ### Owner-tracked view fields
 

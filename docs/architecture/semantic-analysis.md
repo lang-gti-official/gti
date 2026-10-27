@@ -3260,6 +3260,27 @@ and skips the contract pass, because looking up the functions a contract names
 would record them as functions the instance consulted, and demand their
 bodies.
 
+Text a lambda's copy or move capture provided has an owner semantics cannot
+name, because a capture is never a lifetime origin (`L-OWN-02`). Its
+expression traits stay those of a local value, which is what MIR sees too.
+`textValueSources` instead follows a text expression through grouping, the
+comma operator, conditional arms, `std::move` and argument or receiver relays
+to capture symbols, to calls of a lambda whose `LambdaInfo::capturedTextResult`
+is set, and to the local views it reads: by-value text locals and parameters,
+never thread-local storage. Each body's `LoanFlowState` records flows between
+local views and every escape of checked text: a return, a store into a field,
+array element, payload, optional, global or referenced place, a constructor
+field initializer, and an argument its callee publishes in a field or requires
+ownerless. The tracking is flow-insensitive, as MIR, which sees every write of
+a local, is: a local view that is ever given such text holds it for its whole
+scope. `finalizeCapturedText` decides the escapes when the body completes. A
+store or function return reports `GTI-S2045` with a captured-text hint, an
+argument becomes non-ownerless for `finalizeOwnerlessTextContracts`, and a
+lambda return sets the lambda's `capturedTextResult`, which makes each call of
+it captured text again. Forming a GTI invocation pointer from such a lambda is
+`GTI-S2045` too: the erased invocation has no result-origin contract that
+could carry the text to its callers.
+
 For a bounded exclusive reborrow, semantics records a distinct child loan and
 its mutable parent. The accepted source place has one stable symbol or receiver
 root and named-field, fixed-array index, or checked-dereference projections.

@@ -1220,8 +1220,27 @@ private:
     LoanFlowArmEndpoint endpoint;
   };
 
+  // Text a lambda capture provided has an owner the compiler cannot name: it
+  // may be used locally, but no return or store may let it escape. A local
+  // view that is ever given such text holds it for its whole scope, as MIR,
+  // which sees every write of a local, does: an escape it took while it
+  // still held ownerless text is rejected once the body is complete.
+  enum class LocalTextEscapeKind { Storage, Return, LambdaReturn, Argument };
+  struct LocalTextEscape {
+    // The local view that escapes, or 0 for a capture's text itself.
+    SymbolId local = 0;
+    const Expr *value = nullptr;
+    LocalTextEscapeKind kind = LocalTextEscapeKind::Storage;
+    std::string destination;
+  };
   struct LoanFlowState {
     bool finalized = false;
+    // Local views given text a lambda capture provided, local views each
+    // copies into, and escapes of such text or of local views that held
+    // ownerless text when checked (`finalizeCapturedText`).
+    std::unordered_set<SymbolId> capturedTextLocals;
+    std::vector<std::pair<SymbolId, SymbolId>> localTextFlows;
+    std::vector<LocalTextEscape> localTextEscapes;
     // A symbolic constexpr branch has unknown control/ownership effects.
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
@@ -2184,6 +2203,22 @@ private:
 
   [[nodiscard]] bool
   isOwnerDependentTextExpression(const ExprPtr &expression) const;
+  // Where text an expression yields may come from: a lambda capture, and
+  // the local views it reads that held no such text when it was checked.
+  struct TextValueSources {
+    bool captured = false;
+    std::vector<SymbolId> locals;
+  };
+  [[nodiscard]] TextValueSources textValueSources(const Expr *expression) const;
+  // A local view (a by-value text local or parameter of a body) and whether
+  // it holds text a lambda capture provided.
+  [[nodiscard]] std::optional<SymbolId>
+  localTextView(const Symbol &symbol) const;
+  [[nodiscard]] bool capturedTextSymbol(const Symbol &symbol) const;
+  void noteLocalTextEscape(const ExprPtr &value, LocalTextEscapeKind kind,
+                           std::string destination = {});
+  void noteLocalTextFlow(const ExprPtr &value, SymbolId target);
+  [[nodiscard]] bool finalizeCapturedText();
 
   // A value of a class or payload enum whose type has no borrowed state but
   // whose direct text field holds owner-dependent text (L-OWN-02). The
@@ -2465,7 +2500,16 @@ private:
                                    SymbolId payload = 0);
 
   void reportOwnerDependentTextStorage(const ExprPtr &expression,
-                                       std::string_view destination);
+                                       std::string_view destination,
+                                       bool capturedText = false);
+  void reportOwnerDependentTextStorage(const Expr &expression,
+                                       std::string_view destination,
+                                       bool capturedText = false);
+  // Whether rejected text is a lambda's text over its captures, whose owner
+  // has no name, and the hint and return diagnostic that say so.
+  [[nodiscard]] bool capturedTextValue(const Expr &expression) const;
+  [[nodiscard]] static std::string capturedTextHint(bool cString);
+  void reportCapturedTextReturn(const Expr &value);
 
   [[nodiscard]] std::optional<std::size_t>
   ownerlessTextForwardingParameter(const ExprPtr &expression) const;
@@ -3171,6 +3215,8 @@ private:
     AccessMode access = AccessMode::ReadOnly;
     std::vector<SemanticType> parameterTypes;
     bool deferred = false;
+    // Some return yields text a capture provided (`capturedTextResult`).
+    bool capturedText = false;
   };
   // Set while a lambda body is analyzed, even when the lambda returns an
   // owned value, so returns inside it never read the enclosing function.
@@ -6610,6 +6656,8 @@ private:
       SemanticType callerFormal = SemanticType::Unknown;
       const ExprPtr *argument = nullptr;
       bool ownerless = false;
+      // The argument is text a lambda capture provided (L-OWN-02).
+      bool capturedText = false;
       bool diagnosed = false;
     };
     struct OwnerlessTextCallableUse {

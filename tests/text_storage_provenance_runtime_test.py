@@ -4,7 +4,8 @@
 A view copied out of an array of views holds the ownerless text the array
 holds, a C string loaded through a raw pointer is the inert native address the
 caller stored there, and a callable's text result is what its target returns.
-MIR proves each result ownerless; each program must build and behave
+MIR proves each result ownerless. A lambda's view over its captured text has
+no owner to name and is used only locally. Each program must build and behave
 identically on C++ and LLVM at -O0 and -O2.
 
     python3 tests/text_storage_provenance_runtime_test.py <gti> <repo-root>
@@ -171,6 +172,52 @@ int main() {
 }
 '''
 
+CAPTURED_TEXT_LOCAL_USE = r'''
+#include <std/string>
+// A lambda's view over its captured text has an owner the compiler cannot
+// name, so callers use it locally: in an expression, a local binding, an
+// assignment to a local view or a by-value parameter, a call that only reads
+// or relays it, and another lambda over it.
+class Printer {
+public:
+  mut int printed;
+  Printer() : printed(0) {}
+  void show<F>(F view) mut {
+    std::string_view shown = view();
+    std::println(shown);
+    this.printed += 1;
+  }
+};
+uint64_t measure(std::string_view text) { return text.size(); }
+std::string_view same(std::string_view text) { return text; }
+std::string_view rebind(mut std::string_view text) {
+  auto keep = [text]() -> std::string_view { return text; };
+  text = keep();
+  std::println(text);
+  return "rebound";
+}
+mut std::string_view kept = "";
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view view = owner.view();
+  auto captured = [view]() -> std::string_view { return view; };
+  std::println(captured());
+  std::string_view bound = captured();
+  mut std::string_view assigned = "";
+  for (mut int i = 0; i < 2; i += 1) { assigned = captured(); }
+  std::string_view copied = assigned;
+  std::println(same(captured()));
+  auto nested = [captured]() -> std::string_view { return captured(); };
+  mut Printer printer{};
+  printer.show(nested);
+  std::println(rebind(owner.view()));
+  auto literal = []() -> std::string_view { return "literal"; };
+  kept = literal();
+  std::println(kept);
+  return measure(copied) == uint64_t(7) && printer.printed == 1 ? 0 : 1;
+}
+'''
+
 CASES = {
     'array-elements': (ARRAY_ELEMENTS, (0, 'cde\nab\ntwo\nright\nplaced\n', '')),
     'array-fields-and-lambdas': (ARRAY_FIELDS_AND_LAMBDAS, (0, 'yz\nlabel\n', '')),
@@ -178,6 +225,8 @@ CASES = {
     'callable-results': (CALLABLE_RESULTS, (0, 'hello\nlit\nlarge\nother\n', '')),
     'raw-c-strings': (RAW_C_STRINGS, (0, '', '')),
     'raw-text-views': (RAW_TEXT_VIEWS, (0, 'beta\nalpha\nentry\nc\n', '')),
+    'captured-text-local-use': (CAPTURED_TEXT_LOCAL_USE, (
+        0, 'dynamic\ndynamic\ndynamic\ndynamic\nrebound\nliteral\n', '')),
 }
 
 ENDPOINTS = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
@@ -199,7 +248,7 @@ def main() -> None:
                 if result.error or result.observable != expected:
                     raise AssertionError(f'{name} {endpoint}: {result}')
             print(f'{name}: C++ and LLVM at O0/O2 agree', flush=True)
-    print('array-element, raw-memory and callable text returns passed')
+    print('array-element, raw-memory, callable and captured text passed')
 
 
 if __name__ == '__main__':

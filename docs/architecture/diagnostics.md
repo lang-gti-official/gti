@@ -440,7 +440,11 @@ call should transfer ownership.` when the type is movable; the constructor path
 reports that hint once. A call that passes dynamic text to a function requiring
 ownerless text (`GTI-S2045`) relates the callee parameter with the note
 `This parameter requires ownerless text because the function stores or
-forwards it.`
+forwards it.` Text a lambda capture provided reports `GTI-S2045` at the
+return, store, argument or invocation-pointer formation that would let it
+escape, with a hint that the lambda's text has an owner the compiler cannot
+name. A local view's escape decided when its body completes is reported at
+that escape, not at the later assignment that gave the view captured text.
 
 `GTI-I0012` owns invalid source-module headers and imports: placement, syntax,
 missing registration, name mismatch, duplicate interfaces, package escapes,

@@ -2047,7 +2047,9 @@ completes them all; a summary that read an unfinished one stays provisional
 until then. A recursive text result is therefore ownerless exactly when its
 other returns are. A lambda invocation's result holds what the lambda's
 returns hold in its own body; a lambda has no relay contract, so a returned
-formal or capture there is unknown text. An invocation through a GTI function
+formal or capture there is unknown text. Semantics rejects every escape of a
+capture's text (`L-OWN-02`), so such a result reaches only local uses, which
+need no proof. An invocation through a GTI function
 pointer holds what one of its targets returns. A pointer value only comes
 from a forming site naming one stateless function or lambda, so the
 program's forming sites of the pointer's type are every target it can reach;
