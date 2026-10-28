@@ -821,7 +821,13 @@ records a carrier with one stored reference path as a compact sole-origin loan;
 MIR lowering names that path in the loan's designated fields when the
 reference's referent type is the loan source's type, so canonicalization
 resolves a borrow through the field to its referent rather than the carrier
-shell. A result behind one field of a mapped carrier depends only on that
+shell. The path is named only while every carrier is a value of that one
+class. When a carrier of another type joins, such as a view of the referent
+copied out of the holder, the loan returns to the compact form. A named path
+is still a single origin. An input that is the inner object holding the
+reference reaches the same referent: lowering selects through the input's own
+path, and program verification accepts the input's path as the tail of the
+carrier's. A result behind one field of a mapped carrier depends only on that
 field's dependency: lowering does not copy the carrier's other owners onto it,
 and program verification expects only that dependency. A derived loan is
 contained when it lies in any place its parent protects, as a direct reborrow

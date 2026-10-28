@@ -1,0 +1,51 @@
+// Local holders whose one stored reference is a direct field or sits inside
+// a field, borrowed through the holder, through a view copied out of it, and
+// through an accessor returning the inner holder.
+class Box {
+public:
+  mut int64_t value;
+  Box(int64_t value) : value(value) {}
+  mut int64_t& slot() mut { return this.value; }
+  int64_t read() { return this.value; }
+};
+
+class Grip {
+public:
+  mut Box& box;
+  Grip(mut Box& box) : box(box) {}
+  mut int64_t& value() mut { return this.box.value; }
+};
+
+class Outer {
+public:
+  mut Grip grip;
+  Outer(mut Box& box) : grip(Grip(box)) {}
+  mut Grip& operator->() mut { return this.grip; }
+};
+
+int64_t peek(Box& box) { return box.read(); }
+
+int main() {
+  mut Box box = Box(int64_t(1));
+  {
+    // A direct field, then a view of the referent copied out of the holder.
+    mut Grip grip = Grip(box);
+    grip.box.slot() = int64_t(5);
+    mut int64_t& field = grip.box.value;
+    field = field + int64_t(1);
+    Box& view = grip.box;
+    std::println(peek(view));
+  }
+  {
+    // The reference inside a field, reached by place and through the inner
+    // holder an accessor returns.
+    mut Outer outer = Outer(box);
+    outer.grip.box.slot() = int64_t(7);
+    int64_t current = outer->value();
+    outer->value() = current + int64_t(2);
+    Box& view = outer.grip.box;
+    std::println(peek(view));
+  }
+  std::println(box.value);
+  return 0;
+}

@@ -4454,10 +4454,21 @@ private:
       return;
     }
     lowered.lifecycleBound = loan.lifecycleBound;
+    // A sole stored reference path is named only while every carrier is a
+    // value of that one class. A carrier of another type, such as a view
+    // copied out of the holder, leaves the compact single-origin loan.
     const auto solePath = solePathDesignation(lowered, loan, binding);
+    const auto namedSolePath = [&] {
+      if (lowered.carriers.empty())
+        return false;
+      const auto *carrier = findBinding(lowered.carriers.front());
+      const auto path = carrier ? soleStoredReferencePath(carrier->info.type)
+                                : std::nullopt;
+      return path && path->first == lowered.designatedFields;
+    };
     if (!lowered.designatedFields.empty() &&
         lowered.designatedFields != loan.designatedFields &&
-        (!loan.designatedFields.empty() || lowered.designatedFields != solePath)) {
+        (!loan.designatedFields.empty() || !namedSolePath())) {
       valid = false;
       return;
     }
@@ -6704,6 +6715,26 @@ private:
     return intern();
   }
 
+  // A stored loan whose designated fields are exactly its carriers' one
+  // stored reference path, which its source's type is the referent of.
+  [[nodiscard]] bool solePathLoan(const MirLoan &loan) const {
+    if (loan.kind != MirLoanKind::Stored || loan.designatedFields.empty() ||
+        loan.carriers.empty() || !loan.additionalDependencies.empty())
+      return false;
+    const auto *source = output.findPlace(loan.source);
+    if (source == nullptr)
+      return false;
+    for (const auto carrier : loan.carriers) {
+      const auto *binding = findBinding(carrier);
+      const auto path =
+          binding ? soleStoredReferencePath(binding->info.type) : std::nullopt;
+      if (!path || path->first != loan.designatedFields ||
+          path->second != source->type)
+        return false;
+    }
+    return true;
+  }
+
   // The one stored reference field path of a class without bases, through
   // its owned class fields, with that reference's referent type.
   [[nodiscard]] std::optional<std::pair<std::vector<SymbolId>, SemanticType>>
@@ -7090,8 +7121,11 @@ private:
         // A sole-path carrier may still use the compact single-origin loan
         // representation. Its selected field already denotes that source;
         // projecting the field onto the external owner would change meaning.
+        // A loan that names its carrier's one stored reference path is the
+        // same single origin: the input, the carrier or the subobject of it
+        // that holds that reference, reaches only that referent.
         if (loan->kind == MirLoanKind::Stored &&
-            loan->designatedFields.empty() &&
+            (loan->designatedFields.empty() || solePathLoan(*loan)) &&
             loan->additionalDependencies.empty()) {
           const auto prefix = input
                                   ? storedReferencePrefix(input->info.type,
