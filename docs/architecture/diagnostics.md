@@ -194,6 +194,16 @@ LSP.
 - a user-facing message;
 - optional related spans, fix-its, hints, and presentation tags.
 
+`FixIt` carries `RepairApplicability` independently of its UI `preferred` flag.
+The default is `RequiresReview`; only an explicitly proven producer may mark a
+repair `MachineApplicable`. `Incomplete` suggestions are not executable edits.
+Within one diagnostic, equal nonempty `repairId` values form an atomic edit
+group; different IDs are alternatives. Empty IDs preserve legacy singleton
+alternatives. A group with mixed applicability or an invalid member is rejected
+as a whole. No existing producer becomes machine-applicable merely because its
+edit was previously preferred. These are repair contracts, not new language
+conversions or permission to alter ownership intent.
+
 Warnings remain in the shared diagnostic stream but do not make semantic
 analysis fail or prevent HIR/MIR/backend work. Consumers must test severity
 rather than treating a non-empty diagnostic list as failure.
@@ -318,7 +328,15 @@ related spans, and what intentional alternatives remain through hints:
 
 - Use-after-move `GTI-S2018` relates the transfer token, including projected
   field transfers and unrestored receiver fields. Control-flow joins retain up
-  to four distinct transfer sites in deterministic source order. Restoration
+  to four distinct transfer sites in deterministic source order. The private,
+  producer-owned `SemanticMoveOrigins` record owns its source spans and is
+  shared by whole-value and projected-place reporting. When sites are omitted,
+  a hint reports a proven lower bound on their count. Joins take the maximum
+  of known distinct counts, not their sum: repeated joins may contain the same
+  omitted sites and must not invent additional causes. Storage and intermediate
+  joins remain bounded independently of diagnostic rendering. Multiple sites
+  are explicitly described as path alternatives, not one execution trace.
+  Restoration
   clears old causes with the existing moved state; shadowed declarations do not
   share causes. This private provenance does not decide availability or lifetime.
 - Retained-borrow `GTI-S2017` relates the borrowing origin and, when the flow
@@ -532,9 +550,26 @@ Malformed `#if`/`#elif` conditions retain their conditional owner during
 recovery: the parser publishes the original `GTI-P0003`, consumes the matching
 branch boundaries, and preserves later declarations instead of falsely
 reporting an unmatched `#endif`. Genuinely stray directives remain errors.
-Unknown initializer or binary-operand types are poison from their owning
-lookup/type error, not evidence for an additional assignment or operator
-mismatch. Unrelated, fully known type errors remain reportable.
+Unknown initializer or binary-operand types alone are not evidence for an
+additional assignment or operator mismatch. Unknown also represents incomplete
+editor input and deferred generic requirements; it is not universally an error.
+
+The first explicit causal-recovery slice retains a `SemanticRecoveryIdentity`
+for failed variable lookup. Its shared immutable record owns the original code
+and span, rather than indexing a diagnostics vector that may later be merged.
+The request-local table associates that identity with an invalid expression;
+grouping, inferred local bindings and their reads preserve it. Each reanalysis
+clears the old expression entry, and a new frontend request owns a new table.
+No recovery identity is exported to executable HIR/MIR or cached across source
+snapshots. Only failures allocate records; successful expressions do not build
+an evidence graph.
+
+Pointer addition/subtraction suppresses its dependent operand-type message only
+when the other operand is a valid non-void pointer and the unknown operand has
+such a root. An invalid known pointee, an independent invalid offset, and errors
+in either operand remain reportable. The original lookup error continues to
+prevent code generation. This is not a migration of every Unknown-producing
+operation: generalized call, constraint and parser recovery remain planned.
 
 For invalid payload-pattern bindings, known variant names still inform
 recovery-only return-flow coverage. These facts never become a valid exhaustive

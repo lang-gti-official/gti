@@ -27,6 +27,18 @@ set_tests_properties(native_variable_bindgen PROPERTIES TIMEOUT 600)
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+if(TARGET gti_lsp)
+  add_executable(gti_lsp_repair_contract_tests lsp_repair_contract_tests.cpp)
+  target_include_directories(gti_lsp_repair_contract_tests SYSTEM PRIVATE
+    ${GTI_LLVM_INCLUDE_DIRS})
+  target_link_libraries(gti_lsp_repair_contract_tests PRIVATE
+    gti_driver gti_lsp_state Threads::Threads)
+  target_compile_definitions(gti_lsp_repair_contract_tests PRIVATE
+    GTI_VERSION="${PROJECT_VERSION}"
+    GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}")
+  add_test(NAME lsp_repair_groups COMMAND gti_lsp_repair_contract_tests)
+endif()
+
 add_executable(gti_code_snippet_tests code_snippet_tests.cpp)
 target_link_libraries(gti_code_snippet_tests PRIVATE gti_compiler)
 add_test(NAME code_snippets COMMAND gti_code_snippet_tests)
@@ -5609,6 +5621,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(diagnostic_explanations PROPERTIES TIMEOUT 120)
+    add_test(
+      NAME lsp_repair_contract
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_repair_contract_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(lsp_repair_contract PROPERTIES TIMEOUT 120)
     add_test(
       NAME lsp_include_suggestions
       COMMAND "${Python3_EXECUTABLE}"

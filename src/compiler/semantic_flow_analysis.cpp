@@ -4367,6 +4367,8 @@ auto SemanticVisitor::Impl::checkAssignmentResultUse(const Expr &expr,
 auto SemanticVisitor::Impl::analyze(const Expr &expr,
                                     OccurrenceRole requestedRoles)
     -> SemanticType {
+  if (!requestSession.recoveryCauses.empty())
+    requestSession.recoveryCauses.erase(&expr);
   struct RestoreDeferredArgumentFlow {
     Impl &owner;
     ValueFlowState values;
@@ -9752,9 +9754,7 @@ auto SemanticVisitor::Impl::requireInitializedReceiver(const Token &location)
              : "Method cannot return because part of 'this' may remain "
                "moved on another control-flow path.",
          "GTI-S2018");
-  for (const auto &origin : state.moveOrigins)
-    diagnostics.back().related.push_back(
-        {origin, "Ownership transferred here."});
+  state.moveOrigins.appendTo(diagnostics.back());
   diagnostics.back().hints.emplace_back(
       "Reinitialize every moved field on each reachable path before the "
       "method returns.");
@@ -9788,31 +9788,9 @@ auto SemanticVisitor::Impl::reportUnavailableValue(const Token &use,
   appendMoveContext(diagnostics.back(), symbol.moveOrigins);
 }
 
-auto SemanticVisitor::Impl::mergedMoveOrigins(
-    const std::vector<SourceSpan> &left, const std::vector<SourceSpan> &right)
-    -> std::vector<SourceSpan> {
-  auto result = left;
-  result.insert(result.end(), right.begin(), right.end());
-  std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
-    return std::tie(a.source, a.start, a.end) <
-           std::tie(b.source, b.start, b.end);
-  });
-  result.erase(std::unique(result.begin(), result.end(),
-                           [](const auto &a, const auto &b) {
-                             return a.source == b.source &&
-                                    a.start == b.start && a.end == b.end;
-                           }),
-               result.end());
-  // Keep diagnostics bounded even when control-flow joins many transfers.
-  if (result.size() > 4)
-    result.resize(4);
-  return result;
-}
-
 auto SemanticVisitor::Impl::appendMoveContext(
-    Diagnostic &diagnostic, const std::vector<SourceSpan> &origins) -> void {
-  for (const auto &origin : origins)
-    diagnostic.related.push_back({origin, "Ownership transferred here."});
+    Diagnostic &diagnostic, const SemanticMoveOrigins &origins) -> void {
+  origins.appendTo(diagnostic);
   diagnostic.hints.emplace_back(
       "Use the value before transferring it, or borrow it instead if the "
       "receiving API supports references. If independent ownership is needed, "
@@ -9839,12 +9817,13 @@ auto SemanticVisitor::Impl::mergedProjectedValueStates(const Symbol &left,
         mergedValueState(projectedValueState(left, projections),
                          projectedValueState(right, projections));
     if (state != ValueState::Available) {
-      std::vector<SourceSpan> origins;
+      SemanticMoveOrigins origins;
       for (const auto *symbol : {&left, &right}) {
         for (const auto &candidate : symbol->projectedValueStates) {
           if (candidate.projections == projections &&
               candidate.state != ValueState::Available)
-            origins = mergedMoveOrigins(origins, candidate.moveOrigins);
+            origins =
+                SemanticMoveOrigins::merge(origins, candidate.moveOrigins);
         }
       }
       result.push_back({.projections = projections,
@@ -9877,12 +9856,12 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
         if (tracksValueState(baseSymbol)) {
           target->second.valueState = mergedValueState(
               leftSymbol->second.valueState, rightSymbol->second.valueState);
-          target->second.moveOrigins = mergedMoveOrigins(
+          target->second.moveOrigins = SemanticMoveOrigins::merge(
               leftSymbol->second.valueState == ValueState::Available
-                  ? std::vector<SourceSpan>{}
+                  ? SemanticMoveOrigins{}
                   : leftSymbol->second.moveOrigins,
               rightSymbol->second.valueState == ValueState::Available
-                  ? std::vector<SourceSpan>{}
+                  ? SemanticMoveOrigins{}
                   : rightSymbol->second.moveOrigins);
         }
         target->second.projectedValueStates =
