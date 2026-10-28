@@ -60,6 +60,7 @@ public:
 
 private:
   [[nodiscard]] llvm::Function *cleanupTerminator();
+  [[nodiscard]] llvm::Function *originator();
   [[nodiscard]] llvm::Function *emergency();
   [[nodiscard]] llvm::GlobalVariable *threadState(const char *name,
                                                   llvm::Type *type);
@@ -70,6 +71,7 @@ private:
   llvm::Constant *artifact_ = nullptr;
   llvm::Function *cleanupTerminator_ = nullptr;
   llvm::Function *emergency_ = nullptr;
+  llvm::Function *originator_ = nullptr;
   bool containment_ = false;
   llvm::GlobalVariable *incomingRecord_ = nullptr;
   llvm::GlobalVariable *incomingArtifact_ = nullptr;

@@ -5421,7 +5421,10 @@ ordinary value argument/result channels. A function enters one thread-confined
 scope when its first defined failure begins a verified cleanup chain and leaves
 it when propagating or containing that failure. Failed-operation edges check the
 incoming primary before any callee-local cleanup; generated aggregate cleanup
-sequences retain the same scope after their first failure. Nested scopes cannot
+sequences retain the same scope after their first failure. A body whose every
+failure chain executes no instruction and only propagates, contains, continues
+or jumps enters no scope: nothing inside such a chain can observe the context,
+and its failed-operation edges still check the incoming primary. Nested scopes cannot
 replace the earliest record/artifact, and a secondary failure takes the existing
 emergency protocol immediately. The runtime borrows the record only for that
 synchronous scope; no allocation, public type recognition or successful-call
@@ -5527,7 +5530,12 @@ ties-even/gradual-underflow environment, with no reassociation or contraction;
 NaN comparisons and truncation-before-range-check conversion are explicit.
 
 Failure descriptors retain canonical bytes, artifact identity and source/outcome
-tables. Channels carry a copied v2 record and its pinned descriptor through
+tables. Every local origination calls one cold, noinline module helper,
+`__gti_failure_originate_v1`, with the exact outcome, site and descriptor; it
+writes the v2 record (including the descriptor's identity and the zeroed message
+buffer) and pins the descriptor in the channel. Keeping that fixed-size fill out
+of the checked body leaves a small checked function within ordinary inlining
+cost. Panic capture follows the helper on the same edge. Channels carry a copied v2 record and its pinned descriptor through
 propagation and shared continuations. Containment uses the runtime C reporting
 boundary; class cleanup uses the same channels and emergency envelope as
 described below. Plain `std::panic(string_view)` is
