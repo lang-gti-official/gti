@@ -10,6 +10,8 @@ struct LoweredProgramTestAccess {
 } // namespace lang
 
 int main() {
+  // Forged lowered programs below also exercise the construction seal.
+  lang::setLoweredProgramSealValidation(true);
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/enum_selector_composition.gti";
   std::ifstream input(path);
