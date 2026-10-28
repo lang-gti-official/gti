@@ -2021,14 +2021,18 @@ upcast call argument borrows the carrier's place, a call relaying it borrows
 the carrier's shell, and an upcast reference return publishes the parameter's
 exact referent.
 
-MIR does not yet check that a call returning text by value under a loan
-carries borrowed state in its result. Lowering keeps a conservative loan on
-the argument of a call that relays ownerless text, as `relay(text)` does over
-a literal-backed `text`, and semantics correctly gives that result no borrowed
-state, so requiring borrowed state of every such result rejects valid
-programs. The precise rule is open: it needs `TextContracts`' ownerless
-provenance, so that a text call result must carry borrowed state only when its
-loan's source holds owner-dependent text.
+A call returning text by value under a loan must carry borrowed state in its
+result when the loan's source may hold owner-dependent text
+(`text call result keeps a loan on owner-dependent text but carries no
+borrowed state`). `TextContracts` decides that from the source's ownerless
+provenance: the source is ownerless only when its text is known to hold no
+formal's text and no formal's text field, such as a literal-backed local,
+static text storage or an ownerless text field. An owner such as a
+`std::string`, a text formal and any text of unknown origin are dependent.
+Lowering keeps a conservative loan on the argument of a call that relays
+ownerless text, as `relay(text)` does over a literal-backed `text`, and
+semantics correctly gives that result no borrowed state; the provenance test
+keeps that relay valid while a dependent relay without borrowed state fails.
 
 A dynamic-text return summary is an upper bound on dependent alternatives,
 not a requirement to invent an owner for static storage. A read-only summarized
