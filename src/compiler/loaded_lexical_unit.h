@@ -29,10 +29,14 @@ struct LexicalUnitRequest {
 struct LoadedLexicalUnit {
   std::string source;
   std::uint64_t sourceDigest = 0;
-  std::vector<Token> tokens;
+  // Null only when `processed` supersedes the raw tokens.
+  std::shared_ptr<const std::vector<Token>> tokens;
+  std::shared_ptr<const ProcessedSourceUnit> processed;
   std::vector<Diagnostic> diagnostics;
   bool hadError = false;
   bool cacheHit = false;
+  // The lexical cache row holding this unit, for attaching its processed form.
+  FrontendUnitCacheKey cacheKey;
 };
 
 // Owns one unit's byte acquisition, stable content digest, lexical cache

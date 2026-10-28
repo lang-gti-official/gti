@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -65,6 +66,9 @@ private:
     // Includes run once in each isolated module configuration domain. The
     // source graph and selected syntax still have one canonical identity.
     std::unordered_set<SourceUnitId> configurationDomains;
+    // Set when the unit loaded through its flag-independent processed form,
+    // which then also serves its replays in later configuration domains.
+    std::shared_ptr<const ProcessedSourceUnit> processed;
   };
 
   struct ResolvedInclude {
@@ -103,12 +107,13 @@ private:
            std::optional<std::string> standardLibraryName = std::nullopt,
            SourceUnitRole role = SourceUnitRole::Application);
 
-  ResolvedInclude resolveInclude(std::vector<Token> &tokens, std::size_t index,
+  ResolvedInclude resolveInclude(const std::vector<Token> &tokens,
+                                 std::size_t index,
                                  const std::filesystem::path &includingFile,
                                  int braceDepth, int conditionalDepth);
 
   ResolvedInclude
-  resolveAngleInclude(std::vector<Token> &tokens, std::size_t index,
+  resolveAngleInclude(const std::vector<Token> &tokens, std::size_t index,
                       const Token &includeToken,
                       const std::filesystem::path &includingFile);
 
@@ -130,6 +135,8 @@ private:
   SourceGraph graph;
   SourceManager sourceManager;
   std::unordered_map<std::string, FileState> states;
+  // Units published from a processed form; they carry no flag references.
+  std::unordered_set<SourceUnitId> flagIndependentUnits;
   std::optional<std::string> entrySource;
   const std::unordered_map<std::string, std::string> *sourceOverrides = nullptr;
   std::vector<std::filesystem::path> standardLibraryRoots;

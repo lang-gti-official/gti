@@ -247,8 +247,11 @@ SourceGraph SourceLoader::load(
       entryUnit->entry = true;
     }
   }
-  for (SourceUnit &unit : graph.units) {
-    for (Token &token : unit.tokens) {
+  for (const SourceUnit &unit : graph.units) {
+    if (!unit.tokens || flagIndependentUnits.contains(unit.id)) {
+      continue;
+    }
+    for (const Token &token : *unit.tokens) {
       if (!token.configurationFlagReference) {
         continue;
       }
@@ -262,6 +265,12 @@ SourceGraph SourceLoader::load(
           token.lexeme + "', or in manifest build/profile/target 'defines'.");
       diagnostics.emplace_back(std::move(diagnostic));
     }
+  }
+  // Replays within this load are complete; leave the processed forms to the
+  // graph and cache so an unshared token vector can move into the parser.
+  for (auto &[path, state] : states) {
+    (void)path;
+    state.processed.reset();
   }
   return std::move(graph);
 }
@@ -492,76 +501,91 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
                              .unit = unitId,
                              .configurationDomains = {configurationDomain}});
   }
-  std::optional<std::string_view> exactSource;
-  std::optional<std::size_t> unitCompletionOffset;
+  std::shared_ptr<const ProcessedSourceUnit> processed;
   if (replayConfiguration) {
-    // Replay the exact snapshot already loaded, including unsaved overlays.
-    // Reuse the directive processor rather than approximating nested include
-    // effects with a saved output flag set: a child may already be included in
-    // this domain and must not reapply an earlier #define after an #undef.
-    if (const std::string *source = sourceManager.find(key)) {
-      exactSource = *source;
+    // A flag-independent unit selects the same syntax in every domain; only
+    // its nested directives need this domain.
+    processed = states[key].processed;
+  }
+  std::shared_ptr<const std::vector<Token>> lexedTokens;
+  std::optional<LoadedLexicalUnit> lexical;
+  if (!processed) {
+    std::optional<std::string_view> exactSource;
+    std::optional<std::size_t> unitCompletionOffset;
+    if (replayConfiguration) {
+      // Replay the exact snapshot already loaded, including unsaved overlays.
+      // Reuse the directive processor rather than approximating nested
+      // include effects with a saved output flag set: a child may already be
+      // included in this domain and must not reapply an earlier #define after
+      // an #undef.
+      if (const std::string *source = sourceManager.find(key)) {
+        exactSource = *source;
+      }
+    } else if (isEntry && entrySource && !entrySourceConsumed) {
+      entrySourceConsumed = true;
+      exactSource = *entrySource;
+      unitCompletionOffset = completionOffset;
+    } else if (const auto override = sourceOverrides->find(key);
+               override != sourceOverrides->end()) {
+      exactSource = override->second;
     }
-  } else if (isEntry && entrySource && !entrySourceConsumed) {
-    entrySourceConsumed = true;
-    exactSource = *entrySource;
-    unitCompletionOffset = completionOffset;
-  } else if (const auto override = sourceOverrides->find(key);
-             override != sourceOverrides->end()) {
-    exactSource = override->second;
-  }
-  std::uint64_t generation = 0;
-  if (sourceGenerations != nullptr) {
-    if (const auto found = sourceGenerations->find(key);
-        found != sourceGenerations->end()) {
-      generation = found->second;
+    std::uint64_t generation = 0;
+    if (sourceGenerations != nullptr) {
+      if (const auto found = sourceGenerations->find(key);
+          found != sourceGenerations->end()) {
+        generation = found->second;
+      }
     }
-  }
-  std::uint64_t knownSourceDigest = 0;
-  if (!exactSource && sourceDigests != nullptr) {
-    if (const auto found = sourceDigests->find(key);
-        found != sourceDigests->end()) {
-      knownSourceDigest = found->second;
+    std::uint64_t knownSourceDigest = 0;
+    if (!exactSource && sourceDigests != nullptr) {
+      if (const auto found = sourceDigests->find(key);
+          found != sourceDigests->end()) {
+        knownSourceDigest = found->second;
+      }
     }
-  }
-  LoadedLexicalUnit lexical =
-      LoadedLexicalUnitLoader(workMetrics, cache)
-          .load({.path = path,
-                 .canonicalPath = key,
-                 .exactSource = exactSource,
-                 .completionOffset = unitCompletionOffset,
-                 .sourceGeneration = generation,
-                 .knownSourceDigest = knownSourceDigest,
-                 .cacheContext = cacheContext});
-  const std::uint64_t loadedSourceDigest = lexical.sourceDigest;
-  sourceManager.set(key, lexical.source);
-  if (SourceUnit *unit = graph.findUnit(unitId)) {
-    unit->sourceDigest = loadedSourceDigest;
-  }
+    lexical = LoadedLexicalUnitLoader(workMetrics, cache)
+                  .load({.path = path,
+                         .canonicalPath = key,
+                         .exactSource = exactSource,
+                         .completionOffset = unitCompletionOffset,
+                         .sourceGeneration = generation,
+                         .knownSourceDigest = knownSourceDigest,
+                         .cacheContext = cacheContext});
+    sourceManager.set(key, lexical->source);
+    if (SourceUnit *unit = graph.findUnit(unitId)) {
+      unit->sourceDigest = lexical->sourceDigest;
+    }
 
-  for (const Diagnostic &diagnostic : lexical.diagnostics) {
-    Diagnostic forwarded = diagnostic;
-    if (includeToken != nullptr) {
-      forwarded.related.push_back(
-          {tokenSpan(*includeToken), "Included from here."});
+    for (const Diagnostic &diagnostic : lexical->diagnostics) {
+      Diagnostic forwarded = diagnostic;
+      if (includeToken != nullptr) {
+        forwarded.related.push_back(
+            {tokenSpan(*includeToken), "Included from here."});
+      }
+      diagnostics.emplace_back(std::move(forwarded));
     }
-    diagnostics.emplace_back(std::move(forwarded));
+    if (lexical->hadError) {
+      states[key].state = LoadState::Loaded;
+      return unitId;
+    }
+    processed = lexical->processed;
+    lexedTokens = lexical->tokens;
   }
-  if (lexical.hadError) {
-    states[key].state = LoadState::Loaded;
-    return unitId;
-  }
-  std::vector<Token> fileTokens = std::move(lexical.tokens);
+  static const std::vector<Token> noTokens;
+  const std::vector<Token> &lexed = lexedTokens ? *lexedTokens : noTokens;
 
-  const bool moduleInterface = fileTokens.size() >= 4 &&
-                               fileTokens[0].kind == TokenKind::EXPORT &&
-                               fileTokens[1].kind == TokenKind::MODULE &&
-                               fileTokens[2].kind == TokenKind::IDENTIFIER &&
-                               fileTokens[3].kind == TokenKind::SEMICOLON;
+  const bool moduleInterface =
+      processed ? processed->moduleDeclaration.has_value()
+                : lexed.size() >= 4 && lexed[0].kind == TokenKind::EXPORT &&
+                      lexed[1].kind == TokenKind::MODULE &&
+                      lexed[2].kind == TokenKind::IDENTIFIER &&
+                      lexed[3].kind == TokenKind::SEMICOLON;
   std::unordered_set<std::string> importerFlags;
   const SourceUnitId importerDomain = configurationDomain;
   if (moduleInterface) {
-    graph.findUnit(unitId)->moduleDeclaration = fileTokens[2];
+    graph.findUnit(unitId)->moduleDeclaration =
+        processed ? *processed->moduleDeclaration : lexed[2];
+    const Token &moduleName = *graph.findUnit(unitId)->moduleDeclaration;
     importerFlags = activeFlags;
     activeFlags = initialFlags;
     configurationDomain = unitId;
@@ -576,10 +600,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       if (other.id != unitId && other.moduleDeclaration &&
           other.packageIdentity == interfaceUnit.packageIdentity &&
           standardOwned(other) == standardOwned(interfaceUnit) &&
-          other.moduleDeclaration->lexeme == fileTokens[2].lexeme) {
+          other.moduleDeclaration->lexeme == moduleName.lexeme) {
         Diagnostic diagnostic = makeDiagnostic(
-            "GTI-I0012", DiagnosticPhase::SourceLoading, fileTokens[2],
-            "Module '" + fileTokens[2].lexeme +
+            "GTI-I0012", DiagnosticPhase::SourceLoading, moduleName,
+            "Module '" + moduleName.lexeme +
                 "' has more than one interface in this package.");
         diagnostic.related.push_back(
             {tokenSpan(*other.moduleDeclaration), "First interface is here."});
@@ -587,9 +611,114 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       }
     }
   }
+  const auto finishLoad = [&] {
+    states[key].state = LoadState::Loaded;
+    if (moduleInterface) {
+      activeFlags = std::move(importerFlags);
+      configurationDomain = importerDomain;
+    }
+    return unitId;
+  };
+
+  std::size_t includeOccurrence = 0;
+  // Resolves the import or include directive starting at `index` and records
+  // its dependency edge, returning the directive's last token. First loading
+  // and replay of a processed unit share it; replay presents only the
+  // directive's own tokens.
+  const auto resolveDirective = [&](const std::vector<Token> &tokens,
+                                    std::size_t index, int braceDepth,
+                                    int conditionalDepth) {
+    const Token &token = tokens[index];
+    const bool exportImport = token.kind == TokenKind::EXPORT &&
+                              index + 1 < tokens.size() &&
+                              tokens[index + 1].kind == TokenKind::IMPORT;
+    if (token.kind == TokenKind::IMPORT || exportImport) {
+      if (exportImport && !moduleInterface) {
+        report(token,
+               "Re-exporting an import requires an 'export module name;' "
+               "interface.",
+               "GTI-I0012");
+      }
+      const ResolvedInclude imported =
+          resolveImport(tokens, index + (exportImport ? 1 : 0), path,
+                        braceDepth, conditionalDepth, exportImport);
+      if (imported.dependency != 0 && !replayConfiguration) {
+        graph.addDependency({.source = unitId,
+                             .target = imported.dependency,
+                             .kind = imported.kind,
+                             .directive = tokenSpan(token),
+                             .includeSpelling = imported.includeSpelling,
+                             .includeOccurrence = includeOccurrence++});
+      }
+      return imported.directiveEnd;
+    }
+    // `export #include` keeps include resolution and direct visibility for
+    // this interface, then deliberately republishes that one legacy unit to
+    // importers. The unit's own nested includes are not republished.
+    const bool exportInclude = token.kind == TokenKind::EXPORT;
+    if (exportInclude && !moduleInterface) {
+      report(token,
+             "Republishing an include requires an 'export module name;' "
+             "interface.",
+             "GTI-I0012");
+    }
+    const Token &includeToken = tokens[index + (exportInclude ? 1 : 0)];
+    const std::size_t occurrence = includeOccurrence++;
+    const ResolvedInclude include =
+        resolveInclude(tokens, index + (exportInclude ? 1 : 0), path,
+                       braceDepth, conditionalDepth);
+    if (include.dependency != 0) {
+      if (graph.findUnit(include.dependency)->moduleDeclaration) {
+        report(includeToken,
+               exportInclude
+                   ? "A module interface is republished with 'export "
+                     "import', not 'export #include'."
+                   : "A module interface must be imported, not included; "
+                     "use 'import' to respect its exports.",
+               "GTI-I0012");
+      }
+      if (!replayConfiguration) {
+        graph.addDependency({.source = unitId,
+                             .target = include.dependency,
+                             .kind = exportInclude && moduleInterface
+                                         ? SourceDependencyKind::ExportInclude
+                                         : include.kind,
+                             .directive = tokenSpan(includeToken),
+                             .includeSpelling = include.includeSpelling,
+                             .includeOccurrence = occurrence});
+      }
+    }
+    return include.directiveEnd;
+  };
+
+  const auto publish = [&](std::shared_ptr<const ProcessedSourceUnit> unit) {
+    if (replayConfiguration) {
+      return;
+    }
+    SourceUnit *loadedUnit = graph.findUnit(unitId);
+    loadedUnit->syntaxDigest = unit->syntaxDigest;
+    loadedUnit->tokens = unit->tokens;
+    loadedUnit->inactiveSpans = unit->inactiveSpans;
+    loadedUnit->configurationTokens = unit->configurationTokens;
+    flagIndependentUnits.insert(unitId);
+    states[key].processed = std::move(unit);
+  };
+
+  if (processed) {
+    if (workMetrics != nullptr) {
+      ++workMetrics->processedSourceUnitReplays;
+    }
+    for (const ProcessedSourceUnit::Directive &directive :
+         processed->directives) {
+      (void)resolveDirective(directive.tokens, 0, directive.braceDepth,
+                             directive.conditionalDepth);
+    }
+    publish(processed);
+    return finishLoad();
+  }
 
   const bool requiresDirectiveProcessing =
-      std::any_of(fileTokens.begin(), fileTokens.end(), [](const Token &token) {
+      std::any_of(lexed.begin(), lexed.end(), [](const Token &token) {
         return isDirectiveToken(token.kind) ||
                token.kind == TokenKind::IMPORT ||
                token.kind == TokenKind::MODULE ||
@@ -597,19 +726,50 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
                (token.kind == TokenKind::IDENTIFIER &&
                 token.lexeme == "include");
       });
+  // Defining, undefining, or testing a flag makes the selected syntax depend
+  // on the flags reaching this unit; only a unit without them, whose
+  // conditionals test at most the target, has a processed form.
+  const bool configurationFree =
+      lexical->diagnostics.empty() &&
+      std::none_of(lexed.begin(), lexed.end(), [](const Token &token) {
+        return token.kind == TokenKind::HASH_DEFINE ||
+               token.kind == TokenKind::HASH_UNDEF ||
+               token.kind == TokenKind::HASH_IFDEF ||
+               token.kind == TokenKind::HASH_IFNDEF ||
+               token.kind == TokenKind::HASH_ERROR;
+      });
+  const auto store = [&](ProcessedSourceUnit unit) {
+    auto shared = std::make_shared<const ProcessedSourceUnit>(std::move(unit));
+    if (cache != nullptr) {
+      cache->storeProcessed(lexical->cacheKey, lexical->source, shared);
+    }
+    publish(std::move(shared));
+  };
   if (!requiresDirectiveProcessing) {
-    if (!replayConfiguration) {
+    if (replayConfiguration) {
+      states[key].state = LoadState::Loaded;
+      return unitId;
+    }
+    if (configurationFree) {
+      store({.tokens = lexedTokens, .syntaxDigest = lexical->sourceDigest});
+    } else {
       SourceUnit *loadedUnit = graph.findUnit(unitId);
-      loadedUnit->syntaxDigest = loadedSourceDigest;
-      loadedUnit->tokens = std::move(fileTokens);
+      loadedUnit->syntaxDigest = lexical->sourceDigest;
+      loadedUnit->tokens = lexedTokens;
     }
     states[key].state = LoadState::Loaded;
     return unitId;
   }
 
+  // The directive processor resolves configuration flag references in place.
+  std::vector<Token> fileTokens = lexed;
   std::vector<Token> output;
+  output.reserve(fileTokens.size());
+  std::vector<ProcessedSourceUnit::Directive> directives;
+  // Set by any diagnostic of this unit's own loading, which replay would not
+  // reproduce; directive resolution re-reports its own on replay.
+  bool tokenDiagnostic = false;
   int braceDepth = 0;
-  std::size_t includeOccurrence = 0;
   ConfigurationDirectiveProcessor directiveProcessor(
       fileTokens, targetInfo, activeFlags, declaredFlags, diagnostics);
   for (std::size_t index = moduleInterface ? 4 : 0; index < fileTokens.size();
@@ -620,8 +780,11 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       continue;
     }
 
+    const std::size_t diagnosticsBefore = diagnostics.size();
     const ConfigurationDirectiveStep directive =
         directiveProcessor.process(index);
+    tokenDiagnostic =
+        tokenDiagnostic || diagnostics.size() != diagnosticsBefore;
     if (directive.consumed) {
       index = directive.lastConsumedIndex;
       continue;
@@ -635,46 +798,49 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
         (fileTokens[index + 1].kind == TokenKind::STRING_LITERAL ||
          fileTokens[index + 1].kind == TokenKind::LESS);
     if (legacyInclude) {
+      tokenDiagnostic = true;
       report(token,
              "GTI include directives use '#include'; plain 'include' is "
              "not a directive.",
              "GTI-I0009");
     }
 
-    const bool exportImport = token.kind == TokenKind::EXPORT &&
-                              index + 1 < fileTokens.size() &&
-                              fileTokens[index + 1].kind == TokenKind::IMPORT;
-    if (token.kind == TokenKind::IMPORT || exportImport) {
-      if (exportImport && !moduleInterface) {
-        report(token,
-               "Re-exporting an import requires an 'export module name;' "
-               "interface.",
-               "GTI-I0012");
+    const bool exported =
+        token.kind == TokenKind::EXPORT && index + 1 < fileTokens.size();
+    const bool import =
+        token.kind == TokenKind::IMPORT ||
+        (exported && fileTokens[index + 1].kind == TokenKind::IMPORT);
+    const bool include =
+        token.kind == TokenKind::HASH_INCLUDE ||
+        (exported && fileTokens[index + 1].kind == TokenKind::HASH_INCLUDE);
+    if (import || include) {
+      const std::size_t directiveEnd = resolveDirective(
+          fileTokens, index, braceDepth, directiveProcessor.conditionalDepth());
+      const std::size_t snapshotEnd =
+          std::min(directiveEnd + 2, fileTokens.size());
+      directives.push_back(
+          {.tokens = std::vector<Token>(
+               fileTokens.begin() + static_cast<std::ptrdiff_t>(index),
+               fileTokens.begin() + static_cast<std::ptrdiff_t>(snapshotEnd)),
+           .braceDepth = braceDepth,
+           .conditionalDepth = directiveProcessor.conditionalDepth()});
+      if (import) {
+        // The loader resolves dependency identity, but the parser owns
+        // whether this directive is between complete source-unit
+        // declarations. Erasing it here could turn malformed parameters or
+        // initializers into valid source. Keep its original tokens and spans
+        // in the unit syntax cache.
+        for (std::size_t part = index; part <= directiveEnd; ++part) {
+          output.push_back(fileTokens[part]);
+        }
       }
-      const ResolvedInclude imported = resolveImport(
-          fileTokens, index + (exportImport ? 1 : 0), path, braceDepth,
-          directiveProcessor.conditionalDepth(), exportImport);
-      // The loader resolves dependency identity, but the parser owns whether
-      // this directive is between complete source-unit declarations. Erasing
-      // it here could turn malformed parameters or initializers into valid
-      // source. Keep its original tokens and spans in the unit syntax cache.
-      for (std::size_t part = index; part <= imported.directiveEnd; ++part) {
-        output.push_back(fileTokens[part]);
-      }
-      index = imported.directiveEnd;
-      if (imported.dependency != 0 && !replayConfiguration) {
-        graph.addDependency({.source = unitId,
-                             .target = imported.dependency,
-                             .kind = imported.kind,
-                             .directive = tokenSpan(token),
-                             .includeSpelling = imported.includeSpelling,
-                             .includeOccurrence = includeOccurrence++});
-      }
+      index = directiveEnd;
       continue;
     }
     if (token.kind == TokenKind::MODULE ||
         (token.kind == TokenKind::EXPORT && index + 1 < fileTokens.size() &&
          fileTokens[index + 1].kind == TokenKind::MODULE)) {
+      tokenDiagnostic = true;
       report(token,
              "A module interface must begin with exactly one 'export module "
              "name;' declaration.",
@@ -683,49 +849,6 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
              fileTokens[index].kind != TokenKind::SEMICOLON &&
              fileTokens[index + 1].kind != TokenKind::END_OF_FILE) {
         ++index;
-      }
-      continue;
-    }
-
-    // `export #include` keeps include resolution and direct visibility for
-    // this interface, then deliberately republishes that one legacy unit to
-    // importers. The unit's own nested includes are not republished.
-    const bool exportInclude =
-        token.kind == TokenKind::EXPORT && index + 1 < fileTokens.size() &&
-        fileTokens[index + 1].kind == TokenKind::HASH_INCLUDE;
-    if (exportInclude && !moduleInterface) {
-      report(token,
-             "Republishing an include requires an 'export module name;' "
-             "interface.",
-             "GTI-I0012");
-    }
-    if (token.kind == TokenKind::HASH_INCLUDE || exportInclude) {
-      const Token &includeToken = fileTokens[index + (exportInclude ? 1 : 0)];
-      const std::size_t occurrence = includeOccurrence++;
-      const ResolvedInclude include =
-          resolveInclude(fileTokens, index + (exportInclude ? 1 : 0), path,
-                         braceDepth, directiveProcessor.conditionalDepth());
-      index = include.directiveEnd;
-      if (include.dependency != 0) {
-        if (graph.findUnit(include.dependency)->moduleDeclaration) {
-          report(includeToken,
-                 exportInclude
-                     ? "A module interface is republished with 'export "
-                       "import', not 'export #include'."
-                     : "A module interface must be imported, not included; "
-                       "use 'import' to respect its exports.",
-                 "GTI-I0012");
-        }
-        if (!replayConfiguration) {
-          graph.addDependency({.source = unitId,
-                               .target = include.dependency,
-                               .kind = exportInclude && moduleInterface
-                                           ? SourceDependencyKind::ExportInclude
-                                           : include.kind,
-                               .directive = tokenSpan(includeToken),
-                               .includeSpelling = include.includeSpelling,
-                               .includeOccurrence = occurrence});
-        }
       }
       continue;
     }
@@ -743,7 +866,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     output.push_back(std::move(token));
   }
 
+  const std::size_t diagnosticsBeforeFinish = diagnostics.size();
   directiveProcessor.finish();
+  tokenDiagnostic =
+      tokenDiagnostic || diagnostics.size() != diagnosticsBeforeFinish;
 
   if (output.empty() || output.back().kind != TokenKind::END_OF_FILE) {
     output.emplace_back(TokenKind::END_OF_FILE, "", std::monostate{}, 0, 1,
@@ -759,23 +885,35 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
              "flags or separate interfaces.",
              "GTI-I0012");
     }
+  } else if (configurationFree && !tokenDiagnostic &&
+             std::none_of(output.begin(), output.end(), [](const Token &token) {
+               return token.configurationFlagReference;
+             })) {
+    std::optional<Token> moduleDeclaration;
+    if (moduleInterface) {
+      moduleDeclaration = lexed[2];
+    }
+    store(
+        {.tokens = std::make_shared<std::vector<Token>>(std::move(output)),
+         .syntaxDigest = selectedSyntax,
+         .moduleDeclaration = std::move(moduleDeclaration),
+         .directives = std::move(directives),
+         .inactiveSpans = directiveProcessor.takeInactiveSpans(),
+         .configurationTokens = directiveProcessor.takeConfigurationTokens()});
   } else {
     loadedUnit->syntaxDigest = selectedSyntax;
-    loadedUnit->tokens = std::move(output);
+    loadedUnit->tokens =
+        std::make_shared<std::vector<Token>>(std::move(output));
     loadedUnit->inactiveSpans = directiveProcessor.takeInactiveSpans();
     loadedUnit->configurationTokens =
         directiveProcessor.takeConfigurationTokens();
   }
-  states[key].state = LoadState::Loaded;
-  if (moduleInterface) {
-    activeFlags = std::move(importerFlags);
-    configurationDomain = importerDomain;
-  }
-  return unitId;
+  return finishLoad();
 }
 
 SourceLoader::ResolvedInclude
-SourceLoader::resolveInclude(std::vector<Token> &tokens, std::size_t index,
+SourceLoader::resolveInclude(const std::vector<Token> &tokens,
+                             std::size_t index,
                              const std::filesystem::path &includingFile,
                              int braceDepth, int conditionalDepth) {
   const Token includeToken = tokens[index];
@@ -878,8 +1016,8 @@ SourceLoader::resolveInclude(std::vector<Token> &tokens, std::size_t index,
 }
 
 SourceLoader::ResolvedInclude
-SourceLoader::resolveAngleInclude(std::vector<Token> &tokens, std::size_t index,
-                                  const Token &includeToken,
+SourceLoader::resolveAngleInclude(const std::vector<Token> &tokens,
+                                  std::size_t index, const Token &includeToken,
                                   const std::filesystem::path &includingFile) {
   std::size_t current = index + 2;
   std::vector<std::string> segments;
