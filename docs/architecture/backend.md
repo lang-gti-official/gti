@@ -5219,11 +5219,19 @@ still excludes carriers. Variant A, letting carriers satisfy
 `std::relocatable`, would be a language change and was deliberately not taken.
 An inert relocation stays borrow-free.
 
-A carrier borrowed through an upcast interface view stays refused. Its MIR
-operand names the carrier's `Stored` loan instead of a `Local` loan on the
-carrier itself, and semantics then lets the carrier move while the view
-lives. That is a soundness defect, reported to the MIR owner on 2026-10-28.
-Those `Loan` operands wait for its fix.
+A base or interface view of a carrier borrows the carrier object: MIR gives
+it a `Local` loan on the carrier whose stored dependency is the carrier's own
+`Stored` record of the external owner it borrows (fixed in MIR on 2026-10-28).
+That dependency is provenance only, like a parameter's entry dependency, so
+admission accepts a non-escaping `Local` loan of a whole carrier binding whose
+stored dependency is a `Stored` loan that binding carries, and an escaping
+`Return` loan whose one `Borrow` relays a supported loan with the same source
+and stored dependency. Any other stored dependency stays refused. A free call
+that relays such a view to a non-hierarchy base, as `pickBase(plain)` does,
+returns the callee's checked address, not a dispatch view. Returning a
+non-hierarchy base reference to a carrier parameter (`Base& up(Plain&)`)
+stays refused. `dispatch.upcast-carriers` and `carrier_reference_runtime`
+run these forms at O0-O3.
 
 `NativeProgramHierarchyStorage` admits a hierarchy object in namespace or
 static-field storage that its program initialization step constructs in
@@ -5619,8 +5627,9 @@ address, counted extent where present, ordered readonly owner witness and
 checked loan identity. Native owner representation admits passive witnesses or
 the same class boundary as raw references: a unique concrete class or struct
 instance without compiler capability or foreign ABI layout, including a
-complete polymorphic one through its exact dispatch metadata. An interface view
-of the owner is not a witness. The owner address is an independent lifetime
+complete polymorphic one through its exact dispatch metadata, or an interface or
+abstract view of an owner with dispatch metadata. Mutex storage is not a
+witness. The owner address is an independent lifetime
 witness; no owner bytes are read or copied. An unrelated owning user class
 checks both text forms, selected-owner identity and exact resource
 destruction; source escape, movement and mutation and unsupported witness

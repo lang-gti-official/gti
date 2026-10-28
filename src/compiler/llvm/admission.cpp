@@ -903,9 +903,15 @@ public:
     if (const auto *place = body.findPlace(operand.place))
       if (related(place->type))
         return true;
-    if (const auto *loan = body.findLoan(operand.loan))
+    if (const auto *loan = body.findLoan(operand.loan)) {
+      // A call that selected a non-hierarchy referent returns its checked
+      // address; the hierarchy storage it was borrowed from is not used here.
+      if (const auto *producer = callResult(body, *loan);
+          producer && !related(producer->info.type))
+        return false;
       if (const auto *place = body.findPlace(loan->source))
         return related(place->type);
+    }
     if (const auto *value = body.findValue(operand.value))
       return related(value->info.type);
     return false;
@@ -918,11 +924,14 @@ public:
       return {};
     auto type = unreference(source->type);
     if (const auto *producer = callResult(body, loan)) {
-      // A member call on a proved dispatch view selected this non-hierarchy
-      // referent; the address is the callee's checked result, not a view.
+      // A member call on a proved dispatch view, or a free call relaying a
+      // borrow of hierarchy storage, selected this non-hierarchy referent;
+      // the address is the callee's checked result, not a view. The free
+      // call's arguments are proved by their own staged inputs.
       if (!related(producer->info.type))
-        return producer->receiver && borrowedUse(body, *producer->receiver) &&
-                       borrowed(body, *producer->receiver)
+        return (producer->receiver ? borrowedUse(body, *producer->receiver) &&
+                                         borrowed(body, *producer->receiver)
+                                   : producer->dispatch == CallDispatch::Static)
                    ? std::optional(Shape::NativeBorrowedDispatchView)
                    : std::nullopt;
       type = producer->info.type;
@@ -1897,8 +1906,11 @@ private:
     if (loan.kind == MirLoanKind::Stored && loan.storedField &&
         loan.escapes && !loan.storedDependency)
       return true;
+    // A borrow of a carrier, such as an interface or base view of it,
+    // depends on the carrier's own stored loans: provenance for the external
+    // owners the carrier borrows, with no representation of their own.
     if (loan.storedDependency)
-      return false;
+      return carrierDependency(body, loan);
     // The verifier-owned read-only loan of one fresh value argument: its
     // address is the fresh temporary's own storage, ended after the call.
     if (loan.kind == MirLoanKind::CallArgument && !loan.escapes &&
@@ -1916,6 +1928,12 @@ private:
                          return block.terminator.returnLoan == loan.id &&
                                 referenceReturn(body, block.terminator);
                        });
+  }
+  bool carrierDependency(const MirBody &body, const MirLoan &loan) const {
+    return native_llvm::carrierLoanDependency(
+        body, loan,
+        [&](const MirLoan &relayed) { return supportedLoan(body, relayed); },
+        [&](const MirTerminator &term) { return referenceReturn(body, term); });
   }
   bool referenceReturn(const MirBody &body, const MirTerminator &term) const {
     if (term.kind != MirTerminatorKind::Return || !term.returnLoan ||
@@ -3707,8 +3725,13 @@ public:
     // The exact MIR query owns the address/count, ordered readonly witness
     // and loan. Native representation only proves the independent owner's
     // existing address contract; it does not read, copy or rebuild the owner.
-    return passiveReferenceType(formal) ||
-           ordinaryRawReferenceObject(formal.arguments.front());
+    // An interface or abstract view of an owner with dispatch metadata is
+    // also an address only: the selected view, never its bytes.
+    const auto &owner = formal.arguments.front();
+    return passiveReferenceType(formal) || ordinaryRawReferenceObject(owner) ||
+           (owner.kind == SemanticType::Class &&
+            dispatchProofs.contains(owner) &&
+            dispatchProofs.metadata(owner).has_value());
   }
 
   const MirInstruction *earlierLiveCallResult(

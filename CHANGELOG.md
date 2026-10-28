@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.5 - Native views of borrow carriers and interface text witnesses
+
+- The native backend now builds these programs, which previously failed with
+  `GTI-B0003`, and matches the C++ backend:
+  - an interface or base-class reference bound to a class that holds a
+    reference, such as `Gauge& view = direct;`, an interface view returned
+    from a function, and such a class passed through a function returning a
+    base-class reference, such as `pickBase(plain)`;
+  - text built with `std::assume_string_view` or `std::assume_c_string` whose
+    owner is passed as an interface view.
+
 ## 0.484.4 - Native virtual text relays, returned siblings and exchanges
 
 - The native backend now builds these programs, which previously failed with
