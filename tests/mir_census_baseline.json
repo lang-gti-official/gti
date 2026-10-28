@@ -90,7 +90,7 @@
     "091-json-documents.gti": 618,
     "092-json-codecs.gti": 589,
     "093-http-json-client.gti": 689,
-    "094-binary-text-encoding.gti": 168,
+    "094-binary-text-encoding.gti": 208,
     "095-explicit-cloning.gti": 217,
     "096-error-mapping.gti": 43,
     "097-constexpr-tables.gti": 58,
@@ -166,7 +166,7 @@
     "166-source-optional.gti": 176,
     "167-callable-result-types.gti": 16,
     "168-source-value-profiles.gti": 40,
-    "169-source-expected.gti": 192,
+    "169-source-expected.gti": 211,
     "170-view-fields.gti": 193,
     "171-recursive-text-relays.gti": 146,
     "172-deferred-assertions.gti": 202,
@@ -174,5 +174,5 @@
     "174-typed-macros.gti": 211,
     "175-thread-local-storage.gti": 274
   },
-  "total": 24122
+  "total": 24181
 }

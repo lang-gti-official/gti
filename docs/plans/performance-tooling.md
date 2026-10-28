@@ -1,12 +1,15 @@
 # GTI Performance Measurement And Optimization Tooling Plan
 
-## Current Status and Evidence Policy (2026-10-11)
+## Current Status and Evidence Policy (2026-10-28)
 
 The benchmark foundation, complete-state/provenance validation, compile-time
 comparison runner, frontend tracing, deterministic optimizer reports, pre/post
 MIR inspection, build progress, direct/project build reports and first
-source-line debugging slice are implemented. Broader workloads, pass/global
-phase timing, symbol mapping and native inspection remain work.
+source-line debugging slice are implemented. Native LLVM optimization
+levels, debug-info/object/IR inspection and dedicated correctness/cost fixtures
+also exist under O-LLVM-15. Broader workloads, complete pass/global timing and
+remaining native inspection/symbol profiles need their own acceptance; native
+backend performance/platform signoff is not implied by those foundations.
 
 The dated measurements below retain their exact compiler, source, host and
 method. An integrated feature does not turn its original targeted validation

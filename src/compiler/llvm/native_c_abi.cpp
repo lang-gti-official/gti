@@ -1,9 +1,9 @@
 #include "native_c_abi.h"
-#include "thread_lifecycle.h"
 #include "debug_info.h"
 #include "failure.h"
 #include "native_c_contract.h"
 #include "runtime_abi.h"
+#include "thread_lifecycle.h"
 
 #include <llvm/IR/Constants.h>
 #include <llvm/TargetParser/Triple.h>
@@ -388,8 +388,8 @@ bool nativeCFunctionBorrowInputContract(const MirProgram &program,
       input.kind != (mutableBorrow ? MirOperandKind::BorrowWrite
                                    : MirOperandKind::BorrowRead) ||
       !place || place->type != type.arguments.front() ||
-      (mutableBorrow && place->access != AccessMode::Mutable) ||
-      !value || value->definition != instruction.id || value->info.type != type)
+      (mutableBorrow && place->access != AccessMode::Mutable) || !value ||
+      value->definition != instruction.id || value->info.type != type)
     return false;
   bool canonical = false, consumed = false;
   for (const auto &block : body.blocks)
@@ -410,7 +410,8 @@ bool nativeCFunctionBorrowInputContract(const MirProgram &program,
         continue;
       const auto &argument = stage.operands[index];
       consumed |= argument.kind == MirOperandKind::Value &&
-                  argument.value == *instruction.result && argument.type == type;
+                  argument.value == *instruction.result &&
+                  argument.type == type;
     }
   return canonical && consumed;
 }
@@ -428,9 +429,8 @@ bool nativeCResultInputContract(const MirProgram &program,
       instruction.receiver || instruction.functionTarget ||
       instruction.lambdaTarget || instruction.constructorTarget ||
       instruction.nativeCalleeType || instruction.nativeCallbackAdapter ||
-      instruction.intrinsic != IntrinsicKind::None ||
-      !instruction.callSite || !instruction.hirValue ||
-      instruction.operands.size() != 1 ||
+      instruction.intrinsic != IntrinsicKind::None || !instruction.callSite ||
+      !instruction.hirValue || instruction.operands.size() != 1 ||
       !nativeCValueContract(program, target, instruction.info.type,
                             NativeCValueRole::Result))
     return false;
@@ -459,7 +459,8 @@ bool nativeCResultInputContract(const MirProgram &program,
           (stage.kind == MirInstructionKind::Call ||
            stage.kind == MirInstructionKind::Construct) &&
           stage.callSite == instruction.callSite &&
-          index < stage.parameterTypes.size() && index < stage.operands.size()) {
+          index < stage.parameterTypes.size() &&
+          index < stage.operands.size()) {
         const auto &argument = stage.operands[index];
         consumed |= stage.parameterTypes[index] == instruction.info.type &&
                     argument.kind == MirOperandKind::Value &&
@@ -1534,7 +1535,8 @@ void emitNativeCCallbacks(
     return;
   static_cast<void>(darwinTarget(session));
   for (const auto &adapter : session.program().mir().nativeCallbackAdapters()) {
-    if (std::find(required.begin(), required.end(), adapter.id) == required.end())
+    if (std::find(required.begin(), required.end(), adapter.id) ==
+        required.end())
       continue;
     const auto *target =
         session.program().mir().findFunctionInstance(adapter.target);

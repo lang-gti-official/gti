@@ -1,0 +1,11 @@
+#include <std/encoding>
+#include <std/string>
+
+int main() {
+  mut std::string owner = "hello";
+  auto view = owner.view();
+  mut std::encoding::utf8::decoder cursor{view};
+  owner.clear();
+  auto scalar = cursor.next();
+  return scalar ? 0 : 1;
+}

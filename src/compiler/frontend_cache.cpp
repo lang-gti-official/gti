@@ -67,6 +67,15 @@ std::size_t diagnosticBytes(const std::vector<Diagnostic> &diagnostics) {
   return result;
 }
 
+std::size_t processedBytes(const ProcessedSourceUnit &processed) {
+  std::size_t result =
+      sizeof(ProcessedSourceUnit) + tokenBytes(*processed.tokens);
+  for (const ProcessedSourceUnit::Directive &directive : processed.directives) {
+    result += sizeof(directive) + tokenBytes(directive.tokens);
+  }
+  return result;
+}
+
 std::size_t keyBytes(const FrontendUnitCacheKey &key) {
   return sizeof(FrontendUnitCacheKey) + key.canonicalPath.size() +
          key.context.size();
@@ -166,9 +175,11 @@ void FrontendCache::storeLexed(FrontendUnitCacheKey key,
       found != impl->lexIndex.end()) {
     impl->eraseLex(found->second);
   }
-  const std::size_t bytes = sizeof(Impl::LexEntry) + keyBytes(key) +
-                            source.source.size() + tokenBytes(source.tokens) +
-                            diagnosticBytes(source.diagnostics);
+  const std::size_t bytes =
+      sizeof(Impl::LexEntry) + keyBytes(key) + source.source.size() +
+      (source.tokens ? tokenBytes(*source.tokens) : 0) +
+      (source.processed ? processedBytes(*source.processed) : 0) +
+      diagnosticBytes(source.diagnostics);
   impl->lexEntries.push_back({.key = std::move(key),
                               .value = std::move(source),
                               .estimatedBytes = bytes,
@@ -176,6 +187,29 @@ void FrontendCache::storeLexed(FrontendUnitCacheKey key,
   auto inserted = std::prev(impl->lexEntries.end());
   impl->estimatedBytes += bytes;
   impl->lexIndex.emplace(inserted->key, inserted);
+  impl->evict();
+}
+
+void FrontendCache::storeProcessed(
+    const FrontendUnitCacheKey &key, std::string_view source,
+    std::shared_ptr<const ProcessedSourceUnit> processed) {
+  if (key.sourceDigest == 0 || processed == nullptr) {
+    return;
+  }
+  const std::lock_guard lock(impl->mutex);
+  const auto found = impl->lexIndex.find(key);
+  if (found == impl->lexIndex.end() || found->second->value.source != source) {
+    return;
+  }
+  Impl::LexEntry &entry = *found->second;
+  const std::size_t previous =
+      (entry.value.tokens ? tokenBytes(*entry.value.tokens) : 0) +
+      (entry.value.processed ? processedBytes(*entry.value.processed) : 0);
+  const std::size_t replacement = processedBytes(*processed);
+  entry.value.tokens.reset();
+  entry.value.processed = std::move(processed);
+  entry.estimatedBytes = entry.estimatedBytes - previous + replacement;
+  impl->estimatedBytes = impl->estimatedBytes - previous + replacement;
   impl->evict();
 }
 

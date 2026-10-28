@@ -263,7 +263,15 @@ void addIncludeSuggestions(
               return std::tie(a.path, a.angleName) <
                      std::tie(b.path, b.angleName);
             });
+  // The analysis entry is never proposed: including it from a unit it reaches
+  // forms a cycle, and the program root is not a library unit. It usually
+  // spells the missing name, so probing it would reload and parse its whole
+  // graph on every such edit.
+  const SourceUnit *entryUnit = std::as_const(result.sourceGraph)
+                                    .findUnit(result.sourceGraph.entryUnit());
   for (const auto &candidate : searchCandidates) {
+    if (entryUnit != nullptr && candidate.path == entryUnit->path)
+      continue;
     result.includeSuggestionInputs.push_back(candidate.path);
     std::string text;
     if (const auto found = overrides.find(candidate.path.string());

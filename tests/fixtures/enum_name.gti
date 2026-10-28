@@ -1,0 +1,36 @@
+#include <std/meta>
+#include <std/memory>
+
+namespace client {
+enum greeting { hello, world, cool };
+enum class error : int8_t { missing = -128, invalid = 12, alias = 12 };
+enum class wide : uint64_t { maximum = 18446744073709551615 };
+}
+
+extern "C" {
+  void enum_name_unknown(void* address);
+}
+
+std::string_view describe<E>(E value)
+  requires std::meta::is_integral_enum<E>() {
+  return std::enum_name(value);
+}
+
+int main() {
+  if (std::enum_name(client::greeting::hello) != "hello") return 1;
+  if (std::enum_name(client::greeting::world) != "world") return 2;
+  if (std::enum_name(client::greeting::cool) != "cool") return 3;
+  if (describe(client::error::missing) != "missing") return 4;
+  if (std::enum_name(client::error::alias) != "invalid") return 5;
+  if (std::enum_name(client::wide::maximum) != "maximum") return 6;
+  mut client::error unknown = client::error::missing;
+  // A native producer supplies an in-domain representation without a name.
+  unsafe { enum_name_unknown(std::erase_address(&unknown)); }
+  if (std::enum_name(unknown) != "<unknown>") return 7;
+  auto failed = expected<int, client::error>(unexpected(client::error::missing));
+  if (std::enum_name(failed.error()) != "missing") return 9;
+  std::println(std::enum_name(client::greeting::world));
+  std::println(std::enum_name(failed.error()));
+  std::println(std::enum_name(unknown));
+  return 0;
+}

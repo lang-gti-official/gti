@@ -75,17 +75,19 @@ void gti_test_active_begin(void) {
   assert(atexit(normal_exit) == 0);
 }
 
-_Noreturn void gti_test_real_failure_terminate_v2(
-    const gti_failure_record_v2 *, const gti_failure_artifact_descriptor_v1 *,
-    gti_failure_observer_v2, void *);
+_Noreturn void
+gti_test_real_failure_terminate_v2(const gti_failure_record_v2 *,
+                                   const gti_failure_artifact_descriptor_v1 *,
+                                   gti_failure_observer_v2, void *);
 _Noreturn void gti_test_real_failure_terminate_cleanup_v2(
-    const gti_failure_emergency_v2 *, const gti_failure_artifact_descriptor_v1 *,
+    const gti_failure_emergency_v2 *,
+    const gti_failure_artifact_descriptor_v1 *,
     const gti_failure_artifact_descriptor_v1 *);
 
-_Noreturn void gti_rt_failure_terminate_v2(
-    const gti_failure_record_v2 *record,
-    const gti_failure_artifact_descriptor_v1 *artifact,
-    gti_failure_observer_v2 observer, void *context) {
+_Noreturn void
+gti_rt_failure_terminate_v2(const gti_failure_record_v2 *record,
+                            const gti_failure_artifact_descriptor_v1 *artifact,
+                            gti_failure_observer_v2 observer, void *context) {
   assert(getenv("GTI_O13_PROCESS_FAILURE") &&
          record->code == GTI_FAILURE_CODE_DIVISION_BY_ZERO_V1 && artifact);
   check_trace(false);
@@ -97,7 +99,8 @@ _Noreturn void gti_rt_failure_terminate_cleanup_v2(
     const gti_failure_artifact_descriptor_v1 *primary,
     const gti_failure_artifact_descriptor_v1 *secondary) {
   assert(getenv("GTI_O13_PROCESS_FAILURE") &&
-         failure->abi_version == GTI_FAILURE_ABI_VERSION_V2 && primary && secondary &&
+         failure->abi_version == GTI_FAILURE_ABI_VERSION_V2 && primary &&
+         secondary &&
          failure->primary.code == GTI_FAILURE_CODE_DIVISION_BY_ZERO_V1 &&
          failure->secondary.code == GTI_FAILURE_CODE_DIVISION_BY_ZERO_V1);
   check_trace(true);

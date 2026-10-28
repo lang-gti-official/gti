@@ -207,9 +207,27 @@ conservatively estimated storage. Coordinators advance only changed source
 generations; older rows become unreachable and are reclaimed by normal
 eviction. This keeps invalidation explicit without allowing a protocol thread
 to synchronously destroy a large cached tree. Source loading still rebuilds
-the dependency graph and processes include/configuration directives for every
+the dependency graph and resolves every include and import directive for every
 snapshot, so the cache cannot bypass path, overlay, visibility, or active-branch
 authority.
+
+A lexical row whose unit has no configuration directive, lexical diagnostic, or
+token-level loading diagnostic also carries that unit's processed form, which
+replaces its raw tokens. No incoming flag set can change such a unit's selected
+syntax. The processed form holds:
+
+- the post-directive token stream, shared and immutable;
+- its syntax digest and module declaration;
+- each import and include directive's own tokens plus one token of lookahead,
+  which is all directive resolution reads, and its brace depth.
+
+Loading the unit again, in a later snapshot or in another configuration domain
+of the same load, re-resolves those directives in source order. Their
+dependency edges and diagnostics, such as including a module interface, are
+re-established. The unit's tokens are not copied or rescanned. Without this
+form, every edit copied and rescanned the token stream of every loaded unit,
+roughly 1.5 million tokens for `import std;`. Units with configuration
+directives keep the full processing path.
 
 `SourceGraph::compilationOrder()` supplies the current dependency-first parsing
 and combined-AST assembly order. It is not runtime program-initialization

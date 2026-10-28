@@ -15,13 +15,14 @@
  * final-image provider owns exactly one domain. Only its reviewed atomic-lane
  * profile may access these words concurrently. Native bytes are opaque and
  * lazily initialized; generated code must never access them. Bucket selection
- * is ((uintptr_t(lane) >> 3) ^ width_bytes) % 256. On x86-64, notify performs an
- * acq_rel fetch_and(~1) on wake_needed; an old set bit requires the registered
- * notification service below. On arm64, notify uses the existing seq_cst fence
- * followed by a relaxed waiters load. A nonzero count requires that service.
- * Neither path supplies synchronization on the source payload. */
+ * is ((uintptr_t(lane) >> 3) ^ width_bytes) % 256. On x86-64, notify performs
+ * an acq_rel fetch_and(~1) on wake_needed; an old set bit requires the
+ * registered notification service below. On arm64, notify uses the existing
+ * seq_cst fence followed by a relaxed waiters load. A nonzero count requires
+ * that service. Neither path supplies synchronization on the source payload. */
 typedef struct gti_atomic_wait_bucket_v1 {
-  GTI_ATOMIC_WAIT_ALIGNAS(GTI_ATOMIC_WAIT_BUCKET_ALIGNMENT_V1) uint32_t wake_needed;
+  GTI_ATOMIC_WAIT_ALIGNAS(GTI_ATOMIC_WAIT_BUCKET_ALIGNMENT_V1)
+  uint32_t wake_needed;
   uint32_t waiters;
   uint8_t native_storage[120];
 } gti_atomic_wait_bucket_v1;
@@ -51,14 +52,14 @@ extern gti_atomic_wait_bucket_v1
  * No GTI allocation, callback, TLS attachment or per-object state is required.
  */
 void gti_rt_atomic_wait_v1(const void *lane, uint64_t old_bits,
-                           uint32_t width_bytes, uint32_t load_order)
-    GTI_ATOMIC_WAIT_NOEXCEPT;
+                           uint32_t width_bytes,
+                           uint32_t load_order) GTI_ATOMIC_WAIT_NOEXCEPT;
 
 /* all is 0 (at least one eligible waiter) or 1 (all eligible waiters). Internal
  * extra wakes are permitted. Notifications carry neither credit nor a memory
  * order; the wait's atomic load supplies any acquire synchronization. */
-void gti_rt_atomic_notify_v1(const void *lane, uint32_t width_bytes, uint32_t all)
-    GTI_ATOMIC_WAIT_NOEXCEPT;
+void gti_rt_atomic_notify_v1(const void *lane, uint32_t width_bytes,
+                             uint32_t all) GTI_ATOMIC_WAIT_NOEXCEPT;
 
 /* Slow half of the typed metadata protocol above. It does not consume another
  * wake bit. It validates inputs and safely initializes the native domain even

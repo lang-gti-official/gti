@@ -356,18 +356,22 @@ void Lifetimes::prepareProgramStorage(
     const std::map<SymbolId, llvm::GlobalVariable *> &globals) {
   if (programRetirement || !programStorage.empty())
     throw std::logic_error("LLVM program retirement prepared twice");
-  for (const auto &step : session.program().mir().programInitializationPlan().steps) {
+  for (const auto &step :
+       session.program().mir().programInitializationPlan().steps) {
     if (!step.nativeRetirement)
       continue;
-    if (!mirDropIsNativeRetirement(session.program().mir(), *step.nativeRetirement))
-      throw std::logic_error("LLVM program retirement lost its exact native recipe");
+    if (!mirDropIsNativeRetirement(session.program().mir(),
+                                   *step.nativeRetirement))
+      throw std::logic_error(
+          "LLVM program retirement lost its exact native recipe");
     auto *live = new llvm::GlobalVariable(
         session.module(), llvm::Type::getInt1Ty(session.context()), false,
         llvm::GlobalValue::InternalLinkage,
         llvm::ConstantInt::getFalse(session.context()),
         "__gti_program_storage_live_" + std::to_string(step.id));
-    programStorage.push_back({step.storageInitialization, globals.at(step.symbol),
-                              live, *step.nativeRetirement});
+    programStorage.push_back({step.storageInitialization,
+                              globals.at(step.symbol), live,
+                              *step.nativeRetirement});
   }
   if (programStorage.empty())
     return;
@@ -377,20 +381,26 @@ void Lifetimes::prepareProgramStorage(
       session.module());
   llvm::IRBuilder<> ir(
       llvm::BasicBlock::Create(session.context(), "entry", programRetirement));
-  auto *run = llvm::BasicBlock::Create(session.context(), "ready", programRetirement);
-  auto *done = llvm::BasicBlock::Create(session.context(), "done", programRetirement);
+  auto *run =
+      llvm::BasicBlock::Create(session.context(), "ready", programRetirement);
+  auto *done =
+      llvm::BasicBlock::Create(session.context(), "done", programRetirement);
   auto *ready = ir.CreateCall(declareRuntimeService(
       session, RuntimeService::ProgramStorageRetirementReady));
   ir.CreateCondBr(ir.CreateICmpNE(ready, ir.getInt32(0)), run, done);
   ir.SetInsertPoint(run);
   auto *failure = ir.CreateAlloca(session.abi().failureChannel());
-  for (auto item = programStorage.rbegin(); item != programStorage.rend(); ++item) {
-    auto *run = llvm::BasicBlock::Create(session.context(), "retire", programRetirement);
-    auto *next = llvm::BasicBlock::Create(session.context(), "next", programRetirement);
+  for (auto item = programStorage.rbegin(); item != programStorage.rend();
+       ++item) {
+    auto *run = llvm::BasicBlock::Create(session.context(), "retire",
+                                         programRetirement);
+    auto *next =
+        llvm::BasicBlock::Create(session.context(), "next", programRetirement);
     ir.CreateCondBr(ir.CreateLoad(ir.getInt1Ty(), item->live), run, next);
     ir.SetInsertPoint(run);
     ir.CreateStore(ir.getFalse(), item->live);
-    ir.CreateCall(cleanup(item->recipe), {item->storage, failure, ir.getFalse()});
+    ir.CreateCall(cleanup(item->recipe),
+                  {item->storage, failure, ir.getFalse()});
     ir.CreateBr(next);
     ir.SetInsertPoint(next);
   }
@@ -402,17 +412,19 @@ void Lifetimes::prepareProgramStorage(
   auto *unload = llvm::Function::Create(
       programRetirement->getFunctionType(), llvm::GlobalValue::InternalLinkage,
       "__gti_program_unload_native", session.module());
-  ir.SetInsertPoint(llvm::BasicBlock::Create(session.context(), "entry", unload));
+  ir.SetInsertPoint(
+      llvm::BasicBlock::Create(session.context(), "entry", unload));
   ir.CreateCall(programRetirement);
   llvm::Value *live = ir.getFalse();
   for (const auto &storage : programStorage)
     live = ir.CreateOr(live, ir.CreateLoad(ir.getInt1Ty(), storage.live));
   auto *pinned = llvm::BasicBlock::Create(session.context(), "pinned", unload);
-  auto *retired = llvm::BasicBlock::Create(session.context(), "retired", unload);
+  auto *retired =
+      llvm::BasicBlock::Create(session.context(), "retired", unload);
   ir.CreateCondBr(live, pinned, retired);
   ir.SetInsertPoint(pinned);
   ir.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(&session.module(),
-                                                      llvm::Intrinsic::trap));
+                                                        llvm::Intrinsic::trap));
   ir.CreateUnreachable();
   ir.SetInsertPoint(retired);
   ir.CreateRetVoid();
@@ -420,7 +432,7 @@ void Lifetimes::prepareProgramStorage(
 }
 
 void Lifetimes::publishProgramStorage(llvm::IRBuilder<> &ir,
-                                     MirInstructionId instruction) {
+                                      MirInstructionId instruction) {
   for (const auto &storage : programStorage)
     if (storage.initialization == instruction)
       ir.CreateStore(ir.getTrue(), storage.live);
@@ -682,14 +694,12 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
                                       : instruction.info.type;
   // A construction may name the hidden temporary MIR materializes for its
   // result as its own destination; placement proves that exact publication.
-  const auto *materialized =
-      construct && instruction.destination
-          ? body.findPlace(*instruction.destination)
-          : nullptr;
-  const bool hidden = materialized &&
-                      materialized->root == MirPlaceRootKind::Temporary &&
-                      materialized->projections.empty() &&
-                      materialized->type == objectType;
+  const auto *materialized = construct && instruction.destination
+                                 ? body.findPlace(*instruction.destination)
+                                 : nullptr;
+  const bool hidden =
+      materialized && materialized->root == MirPlaceRootKind::Temporary &&
+      materialized->projections.empty() && materialized->type == objectType;
   if ((!construct && !base && !allocation) || instruction.tombstone ||
       instruction.constructorTarget ||
       instruction.constructorKind != ConstructorKind::Ordinary ||
@@ -700,9 +710,9 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
       instruction.rawMemoryAccess || instruction.objectLayoutType ||
       (!allocation && instruction.intrinsic != IntrinsicKind::None) ||
       objectType.kind != SemanticType::Class ||
-      (construct && (!instruction.result ||
-                     (instruction.destination && !hidden) ||
-                     instruction.constructorInitializer != 0 || constructor)) ||
+      (construct &&
+       (!instruction.result || (instruction.destination && !hidden) ||
+        instruction.constructorInitializer != 0 || constructor)) ||
       (base && instruction.result))
     throw std::invalid_argument("LLVM generated-empty initialization requires "
                                 "an exact fresh default operation");
@@ -1019,8 +1029,9 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
         path.pop_back();
         return;
       }
-      if (!inert && nativeMutexElement(program, selected,
-                                       CompilerCapabilityTypeKind::MutexStorage)) {
+      if (!inert &&
+          nativeMutexElement(program, selected,
+                             CompilerCapabilityTypeKind::MutexStorage)) {
         // A mutex relocates by rebuilding its native identity; only its
         // payload transfers, through the payload's own relocation.
         self(self, session.layouts().mutexStorage(selected).element, false);
@@ -1056,8 +1067,8 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
            (owner.requiresActiveCleanup || owner.requiresActiveDropState)) ||
           (inert && (owner.traits.containsBorrowedState ||
                      owner.lifecycleBoundBorrowCarrier)) ||
-          owner.unionLayout ||
-          owner.cOpaqueHandle || (!base && owner.abstract) ||
+          owner.unionLayout || owner.cOpaqueHandle ||
+          (!base && owner.abstract) ||
           (!base && owner.moveConstructor != SpecialMemberStatus::Generated))
         throw BackendUnsupportedError("LLVM relocation requires an implemented "
                                       "generated borrow-free record");
@@ -1202,7 +1213,8 @@ llvm::Function *Lifetimes::generatedRelocation(const SemanticType &type) {
         ir.CreateStore(llvm::Constant::getNullValue(layout.storage), source);
         return;
       }
-      if (owner.compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
+      if (owner.compilerCapability ==
+          CompilerCapabilityTypeKind::MutexStorage) {
         // Native mutex state never moves. The destination receives a fresh
         // native mutex and the relocated payload; the source's native
         // identity is retired and its storage left without live state.
@@ -1824,8 +1836,9 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       // A polymorphic pointee is released through this handle's own view,
       // from which its descriptor selects the complete object and cleanup.
       sharedPointee = ir.CreateAlloca(pointer);
-      ir.CreateStore(recipe.aggregate[0].polymorphicCleanup ? released.view
-                                                            : released.allocation,
+      ir.CreateStore(recipe.aggregate[0].polymorphicCleanup
+                         ? released.view
+                         : released.allocation,
                      sharedPointee);
     }
     llvm::Value *allocation = nullptr;
@@ -2024,22 +2037,31 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       auto *state = ir.CreateStructGEP(layout.object.storage, address,
                                        layout.payloadActiveIndex);
       auto *bits = ir.CreateLoad(ir.getInt8Ty(), state);
-      auto *live = llvm::BasicBlock::Create(session.context(), "mutex.live", function);
-      auto *done = llvm::BasicBlock::Create(session.context(), "mutex.done", function);
+      auto *live =
+          llvm::BasicBlock::Create(session.context(), "mutex.live", function);
+      auto *done =
+          llvm::BasicBlock::Create(session.context(), "mutex.done", function);
       ir.CreateCondBr(
-          ir.CreateICmpNE(ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::shellLive)),
-                           ir.getInt8(0)), live, done);
+          ir.CreateICmpNE(
+              ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::shellLive)),
+              ir.getInt8(0)),
+          live, done);
       ir.SetInsertPoint(live);
       ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive), state);
       if (!recipe.aggregate.empty()) {
-        auto *payload = llvm::BasicBlock::Create(session.context(), "mutex.payload", function);
-        auto *retire = llvm::BasicBlock::Create(session.context(), "mutex.retire", function);
+        auto *payload = llvm::BasicBlock::Create(session.context(),
+                                                 "mutex.payload", function);
+        auto *retire = llvm::BasicBlock::Create(session.context(),
+                                                "mutex.retire", function);
         ir.CreateCondBr(
-            ir.CreateICmpNE(ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::payloadLive)),
-                             ir.getInt8(0)), payload, retire);
+            ir.CreateICmpNE(
+                ir.CreateAnd(bits, ir.getInt8(MutexStorageLayout::payloadLive)),
+                ir.getInt8(0)),
+            payload, retire);
         ir.SetInsertPoint(payload);
         child(recipe.aggregate.front(),
-              ir.CreateStructGEP(layout.object.storage, address, layout.payloadIndex));
+              ir.CreateStructGEP(layout.object.storage, address,
+                                 layout.payloadIndex));
         ir.CreateBr(retire);
         ir.SetInsertPoint(retire);
       }

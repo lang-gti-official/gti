@@ -413,12 +413,23 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         if (options.workMetrics != nullptr) {
           options.workMetrics->parsedUnits.push_back(unit->path.string());
         }
-        std::size_t estimatedInputBytes = estimatedTokenBytes(unit->tokens);
+        static const std::vector<Token> noTokens;
+        const std::vector<Token> &unitTokens =
+            unit->tokens ? *unit->tokens : noTokens;
+        std::size_t estimatedInputBytes = estimatedTokenBytes(unitTokens);
         const std::string *source = result.sources.find(unit->path.string());
         if (source != nullptr) {
           estimatedInputBytes += source->size();
         }
-        Parser parser(std::move(unit->tokens), source == nullptr
+        // Token vectors are created as mutable objects and published as
+        // const; when no cache row or other unit shares this one, the parser
+        // takes it instead of copying the unit's whole token stream.
+        std::vector<Token> parserTokens =
+            unit->tokens.use_count() == 1
+                ? std::move(const_cast<std::vector<Token> &>(*unit->tokens))
+                : unitTokens;
+        unit->tokens.reset();
+        Parser parser(std::move(parserTokens), source == nullptr
                                                    ? std::string_view{}
                                                    : std::string_view{*source});
         Program parsed = parser.parse();

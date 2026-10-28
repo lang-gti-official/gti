@@ -44,8 +44,8 @@ template <class Work> double measure(Work work) {
 void report(const char *name, Samples values,
             const char *operation = "lock/increment/unlock") {
   std::sort(values.begin(), values.end());
-  std::printf("%s %s ns: median=%.3f min=%.3f max=%.3f\n",
-              name, operation, values[rounds / 2], values.front(), values.back());
+  std::printf("%s %s ns: median=%.3f min=%.3f max=%.3f\n", name, operation,
+              values[rounds / 2], values.front(), values.back());
 }
 } // namespace
 

@@ -5,11 +5,14 @@
 > [Ownership and lifetimes](../language/ownership-and-lifetimes.md).
 > Operational order belongs in [the implementation sequence](implementation-sequence.md).
 
-## Reconciled Status (2026-10-11)
+## Reconciled Status (2026-10-28)
 
 The range foundation and substantial algorithm breadth are implemented.
 Remaining work is not a repeat of range syntax, vector construction or the
-original one-owner borrowing slice.
+original one-owner borrowing slice. The 0.406.0 container campaign below
+is delivered, including its recorded validation exception; later bounded
+value-yield/readable-iterator and proxy endpoints are implemented. Broader
+single-pass adaptors and dependency replacement remain separate.
 
 ## Container completion campaign (delivered, 2026-10-12)
 
@@ -210,8 +213,8 @@ implementation sequence rather than creating a competing queue.
 | Lazy transform/filter/take views | Choose one adaptor and state retained owner/callable dependencies, repeatable invocation, value/reference yield and copy/move policy. Reuse delivered carrier nesting and owning-callable foundations; add only the missing projection/yield rule. | Zero-allocation traversal where the chosen policy permits it, exact once-only evaluations, safe chaining, no dangling owner/capture, mutable/read-only distinctions and cleanup/diagnostic evidence. |
 | Multi-origin projection precision | The `L-UP-16` dependency-shortening goal: prove exactly which dependency paths a projection retains without losing its carrier's physical lifetime. | An unrelated nested application carrier can release an unused owner while preserving every live child; negative overlapping moves/mutation and forged HIR/MIR dependency sets fail. |
 | Reseatable or position-editable views/cursors | Define dependency replacement and element/storage invalidation as language facts, including all failure paths. Stable addresses and `unsafe` do not erase proven conflicting loans. | Exact detach/rebind or edit publication, no gap with an untracked live reference, owner/destructor observations and conservative behavior for unknown effects. |
-| Single-pass/value-yield ranges | Define whether traversal mutates the range, whether yield is owned or borrowed, and how per-step objects and callable state end. | One useful generator/input client, move-only yields, no fabricated references/proxies, exact iteration order and failure cleanup. |
-| Associated result types / broader cursor families | Identify a public algorithm or adaptor needing an exact result relationship beyond current structural concepts, then implement a general relation rather than a nominal container exception. | An unrelated user-defined cursor exercises the relationship through generic reanalysis, HIR/MIR, runtime and editor queries. |
+| Stateful single-pass/generator adaptors beyond current value yields | Preserve the implemented bounded value-yield/readable-iterator contract; define the additional mutable traversal state, owned/borrowed yield and per-step callable/cleanup endpoint. | One useful generator/input client, move-only yields, no fabricated references/proxies, exact iteration order and failure cleanup. |
+| Further associated result relationships / cursor families | Protocol associated types and exact dereference-result selection are implemented. Identify a public algorithm or adaptor needing a relationship beyond those contracts, then implement a general relation rather than a nominal container exception. | An unrelated user-defined cursor exercises the relationship through generic reanalysis, HIR/MIR, runtime and editor queries. |
 
 An unmet prerequisite is implementation work, not a reason to abandon the
 outcome. Historical demonstrated-client restrictions do not bar general

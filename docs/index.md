@@ -49,6 +49,9 @@ while canonical language documents continue to describe actual support.
   describes the native session and object-emission infrastructure;
   [LLVM scalar execution](architecture/backend.md#llvm-scalar-execution)
   records the admitted native program profile and defined-failure transport.
+  Later sections cover classes, ownership, callables, dispatch, native/runtime
+  services and coverage receipts; macOS arm64 default promotion does not close
+  the remaining production/platform campaign.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,
   fix-its, recovery, and test expectations.
 - [Standard library and runtime](architecture/standard-library-and-runtime.md)
@@ -91,7 +94,7 @@ while canonical language documents continue to describe actual support.
 - [Concepts](language/concepts.md), [ranges](language/ranges.md),
   [expected values](language/expected.md), and
   [concurrency](language/concurrency.md) — focused feature contracts.
-- [I/O](language/io.md), [binary-to-text encoding](language/encoding.md),
+- [I/O](language/io.md), [text and binary encoding](language/encoding.md),
   [filesystem operations](language/filesystem.md),
   [clocks and durations](language/chrono.md),
   [child processes](language/process.md),
@@ -181,6 +184,11 @@ description of the implementation.
 
 ## Plans
 
+The [2026-10-28 implementation-status audit](plans/implementation-sequence.md#implementation-status-audit-2026-10-28)
+reconciles the active plans against source and registered tests. Start with the
+[remaining 1.0 view](plans/roadmap-to-1.0.md#reading-what-remains-before-10);
+delivered profiles and release-acceptance obligations are distinct.
+
 The active plans below describe incomplete work or maintain cross-cutting
 delivery state. Completed delivery records are retained in the archive rather
 than mixed into the active queue.
@@ -222,8 +230,8 @@ than mixed into the active queue.
 - [Compile-time semantic reflection](plans/reflection.md) — three-phase
   campaign: metaobjects, `constexpr for`, attributes and enum/base/generic
   queries, structural construction and callable/source metadata are delivered;
-  further invocation/runtime reflection and the experimental JSON client remain
-  separate goals
+  the reflected JSON client is promoted to `<std/json>`; further
+  invocation/runtime reflection and residual metadata profiles remain goals
 - [Performance tooling](plans/performance-tooling.md)
 - [Archived plan records](plans/archive/README.md) — completed delivery plans,
   migrations, and historical checkpoints retained without presenting them as

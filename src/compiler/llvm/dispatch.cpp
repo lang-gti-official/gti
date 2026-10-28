@@ -118,9 +118,8 @@ Dispatch::views(HirClassInstanceId activeClass) {
       auto location = session.layouts().dispatchLocation(view->type);
       if (viewLayout.type != view->type || !location)
         throw std::logic_error("LLVM dispatch view lost its exact storage");
-      location->owner =
-          session.layouts().baseSubobject(active->type, location->owner.type,
-                                          "dispatch.activeView");
+      location->owner = session.layouts().baseSubobject(
+          active->type, location->owner.type, "dispatch.activeView");
       DispatchViewPlan plan{.activeClass = activeClass,
                             .viewClass = id,
                             .path = path,
@@ -324,9 +323,8 @@ void Dispatch::preflightState(HirClassInstanceId activeClass) {
     const auto *owner =
         session.program().mir().findClassInstance(view.viewClass);
     const auto path = session.layouts().basePath(active.type, view.path);
-    const auto physical =
-        session.layouts().baseSubobject(active.type, view.location.owner.type,
-                                        "dispatch.viewDisplacement");
+    const auto physical = session.layouts().baseSubobject(
+        active.type, view.location.owner.type, "dispatch.viewDisplacement");
     const auto indexBits = session.dataLayout().getIndexSizeInBits(0);
     if (!llvm::isUIntN(indexBits - 1, physical.offset))
       throw BackendUnsupportedError(
@@ -676,9 +674,8 @@ VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
   if (!location)
     throw std::logic_error(
         "LLVM virtual root has no physical dispatch pointer");
-  location->owner =
-      session.layouts().baseSubobject(source.type, location->owner.type,
-                                      "dispatch.virtualRoot");
+  location->owner = session.layouts().baseSubobject(
+      source.type, location->owner.type, "dispatch.virtualRoot");
   const auto &profile = slotProfile(owner.id);
   const auto slot = std::find(profile.begin(), profile.end(), root);
   if (slot == profile.end())

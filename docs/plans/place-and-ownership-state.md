@@ -1,11 +1,13 @@
 # Place Identity And Ownership-State Authority
 
-Status reconciled against integrated source on 2026-10-11: M-OWN-01/02,
+Status reconciled against integrated source on 2026-10-28: M-OWN-01/02,
 M-LIFE-01, M-OWN-03's initial exclusive carrier, M-OWN-04's named
 Expected-payload range, and the executable-body MIR cutover are delivered.
 Subsequent work admits multiple shared/exclusive nominal field dependencies,
 nested constructor composition, physical carrier references, cleanup-bound
-borrowed classes, and normal/failure cleanup for the admitted families. The
+borrowed classes, conditional reference-payload dependencies, borrowing
+closure environments, scoped cross-thread loans, owner-dependent text fields
+and nested text values, and normal/failure cleanup for the admitted families. The
 original one-field and normal-exit-only limits below are historical slice
 boundaries, not current language-wide restrictions. General projection
 precision and additional provenance/escape profiles remain goals; they must

@@ -4523,6 +4523,8 @@ private:
         {"sourceBytes", static_cast<std::int64_t>(metrics.sourceBytes)},
         {"sourceLoadMicroseconds",
          static_cast<std::int64_t>(metrics.sourceLoadMicroseconds)},
+        {"processedSourceUnitReplays",
+         static_cast<std::int64_t>(metrics.processedSourceUnitReplays)},
         {"lexMicroseconds", static_cast<std::int64_t>(metrics.lexMicroseconds)},
         {"parseMicroseconds",
          static_cast<std::int64_t>(metrics.parseMicroseconds)},

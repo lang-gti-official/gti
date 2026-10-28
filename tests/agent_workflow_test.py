@@ -659,6 +659,25 @@ class Lifecycle(unittest.TestCase):
         with self.assertRaisesRegex(Error, "only for local automation-only"):
             self.flow.verify("task", [[sys.executable, "-c", "raise SystemExit(99)"]], focused=True)
 
+    def test_focused_source_library_checks_do_not_take_a_suite_slot(self):
+        self.start()
+        (self.worktree / "stdlib/std").mkdir(parents=True)
+        (self.worktree / "tests").mkdir()
+        self.checkpoint("namespace library {}", "stdlib/std/library.gti")
+        self.checkpoint(self.probe("len(holders) == 0")[2], "tests/library_runtime_test.py")
+        state = self.flow.verify("task", [[sys.executable, "tests/library_runtime_test.py"]], focused=True)
+        self.assertEqual(state["phase"], "ready")
+        self.assertEqual(state["verified"]["scope"], "source-stdlib")
+        self.assertEqual(self.flow.window.holders("suite"), [])
+
+    def test_focused_source_library_refuses_broad_checks_before_execution(self):
+        self.start()
+        (self.worktree / "stdlib/std").mkdir(parents=True)
+        self.checkpoint("namespace library {}", "stdlib/std/library.gti")
+        with self.assertRaisesRegex(Error, "one exact test name"):
+            self.flow.verify("task", [["ctest", "--test-dir", "build"]], focused=True)
+        self.assertNotEqual(self.flow.load("task")["phase"], "verifying")
+
     def test_verify_waits_for_a_live_suite_holder_and_reclaims_an_exited_one(self):
         self.start()
         self.checkpoint()
@@ -797,6 +816,42 @@ def batch_plan(**changes):
 
 
 class ValidationChecks(unittest.TestCase):
+    def test_source_library_focused_scope_is_narrow_and_does_not_change_ci(self):
+        source = ["stdlib/std/encoding.gti"]
+        allowed = ["stdlib/modules/encoding.gti", "tests/fixtures/encoding.gti",
+                   "tests/encoding_runtime_test.py", "examples/094-encoding.gti",
+                   "examples/README.md", "stdlib/README.md", "docs/language/encoding.md",
+                   "VERSION", "CHANGELOG.md", "tests/stdlib_surface_manifest.json",
+                   "tests/mir_census_baseline.json", "tests/lowered_program_census_baseline.json"]
+        self.assertEqual(validation.focused_scope(source + allowed), "source-stdlib")
+        self.assertEqual(validation.ci_mode({}, source + allowed), "full")
+        self.assertEqual(validation.focused_scope(["docs/index.md"]), "automation")
+        self.assertIsNone(validation.focused_scope(["tests/encoding_runtime_test.py"]))
+        for path in ("src/compiler/foo.cpp", "include/gti/type.h", "runtime/host.cpp",
+                     "stdlib/std/foo.cpp", "stdlib/native/foo.gti", "tests/CMakeLists.txt",
+                     "CMakeLists.txt", "tests/compiler_tests.cpp", "scripts/install.py",
+                     ".gitea/workflows/ci.yml"):
+            with self.subTest(path=path):
+                self.assertIsNone(validation.focused_scope(source + [path]))
+
+    def test_source_library_focused_checks_reject_obvious_broad_work(self):
+        owning = [sys.executable, "tests/encoding_runtime_test.py", "/tmp/gti"]
+        validation.source_focused_checks([owning, ["git", "diff", "--check"]])
+        validation.source_focused_checks([["ctest", "-R", "^encoding_runtime$"]])
+        validation.source_focused_checks([["ctest", "--tests-regex=^encoding_runtime$"]])
+        for command in (["ctest"], ["ctest", "-R", ".*"], ["ctest", "-R"],
+                        ["ctest", "-R", "^encoding_runtime$", "--rerun-failed"],
+                        ["ctest", "-R", "^encoding_runtime$", "-R", ".*"],
+                        ["cmake", "--build", "build"], ["ninja"], ["bash", "-c", "ctest"],
+                        [sys.executable, "scripts/build_window.py"],
+                        [sys.executable, "tests/mir_census_test.py"],
+                        [sys.executable, "tests/stdlib_surface_test.py"]):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    validation.source_focused_checks([owning, command])
+        with self.assertRaisesRegex(ValueError, "named owning"):
+            validation.source_focused_checks([["git", "diff", "--check"]])
+
     def test_risk_requires_actual_scope_and_evidence(self):
         validation.validate_plan(batch_plan())
         for plan in (batch_plan(tier="ICE"), batch_plan(rationale=""),

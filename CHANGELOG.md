@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.486.1 - Native global copies, function-pointer fields, base returns and nested holders
+## 0.487.1 - Native global copies, function-pointer fields, base returns and nested holders
 
 ### Native function-pointer fields, base returns and mutex text witnesses
 
@@ -34,6 +34,30 @@ for what minor and patch releases mean.
   in `outer.inner().box.slot() = 4;` or `outer->box.slot()`, no longer fails
   with an internal compiler error (`GTI-B0001`). It runs on the native
   backend. The C++ backend still fails on it.
+
+## 0.487.0 - Source-defined UTF-8 codecs
+
+- `<std/encoding>` adds `std::encoding::utf8` validation, scalar decoding,
+  encoding/append and a borrowed incremental decoder, implemented in GTI source
+  without new compiler or runtime capabilities.
+- Errors report byte offsets and reject malformed, overlong, surrogate and
+  out-of-range sequences. Invalid append input leaves the destination unchanged;
+  a failed decoder step does not advance. Validation and traversal do not allocate.
+- Strings and indexing remain byte-oriented. UTF-16 conversion, normalization,
+  grapheme segmentation and JSON migration are not included in this first phase.
+
+## 0.486.1 - Faster editor updates with large imports
+
+- `gti_lsp` updates diagnostics sooner after an edit in a file whose imports
+  load much of the standard library, such as `import std;`. Each edit
+  re-copied and rescanned every loaded source unit's tokens. Units whose
+  syntax cannot depend on configuration flags now replay a cached processed
+  form and only re-resolve their imports and includes. On Apple silicon, an
+  edit in a small project with `import std;` shows or clears its error in
+  about 0.35 s instead of 0.55–0.85 s.
+- Include suggestions for an unknown name no longer reload the whole program
+  to probe the edited file itself, so an edit that introduces such an error
+  is no slower than one that clears it.
 
 ## 0.486.0 - Read-only arrow steps, closure copies, projected references and capture ranges
 

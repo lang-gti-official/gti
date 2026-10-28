@@ -10,7 +10,10 @@
 > scalar `std::atomic<T>` surface, including the accepted explicit order
 > matrix and fixed-width integer fetch operations, is also complete. The
 > owner-tied mutex/guard slice is complete as well.
-> Remaining concurrency families stay staged below.
+> Scoped borrowed `std::parallel_invoke`, safe scalar atomic wait/notify and
+> source `thread_local` storage are also implemented. Reconciled 2026-10-28;
+> remaining families are the omissions in the canonical concurrency contract,
+> not these already delivered foundations.
 > ADR 012 supersedes this proposal's former pre/post-1.0 scheduling split. Its
 > technical prerequisites remain evidence, while the bounded public
 > concurrency profile is now systems-readiness work.
@@ -19,8 +22,9 @@ Original design baseline: GTI 0.93.0. Current implemented policy is documented
 in the canonical language and architecture documents linked above.
 
 This document records the boundary used by delivered managed threads, scalar
-atomics and mutex guards, and the remaining prerequisites for scoped threads
-and general callbacks entered from foreign threads. The separate bounded
+atomics and mutex guards, and the remaining prerequisites for broader
+synchronization/lifecycle profiles and general callbacks entered from foreign
+threads. The separate bounded
 unsafe `<std/cthread>` surface is implemented, not a future managed-thread
 replacement. It is design and implementation-matrix evidence,
 not current source authority. Current behavior remains defined by
@@ -868,8 +872,10 @@ column is part of every stage rather than a final test-only pass.
 | M-OWN-03 / C-SYNC-01 | **Done:** scoped `std::mutex<T>`/`std::mutex_guard<T>` over the bounded owner-dependent carrier | Exactly-once unlock on normal/failure edges, no protected-reference escape, move-only guard transfer, two-thread contention, defined lock failure, no-poisoning policy, and TSAN. |
 | C-ORDER-01 | **Done:** static `std` tag types expose only the accepted explicit orders | Complete operation/order compile-fail matrix, exact HIR/MIR pairs, deterministic release/acquire publication, relaxed no-edge metadata, O0/O3 and C++20/C++23 native coverage, optimizer barriers, installed workflows, and TSAN where supported. |
 | C-ATOM-02 | **Done:** fixed-width integer fetch add/subtract/bitwise operations are source-defined verified strong-CAS loops | Every operation/order overload, prior-value semantics, exact CAS order pairs, checked overflow before publication, bool rejection, optimizer preservation, LSP discovery, O0/O3 C++20/C++23 execution, contention stress, installed surface, and TSAN where supported. |
-| scoped invocation | **Candidate implemented; final acceptance pending:** existing loan graph through synchronous structured spawn/join | Shared/exclusive borrowed carriers and generic packs, conflict/identity mutations, parent reactivation, join-all failure and exactly-once cleanup; finish broader, installed and performance validation before integration. |
+| scoped invocation | **Implemented:** existing loan graph through synchronous structured spawn/join; source `parallel_invoke` and the 0.405.0 acceptance record supersede the candidate checkpoint | The 0.405.0 acceptance record covers shared/exclusive carriers/packs, conflict/identity mutations, parent reactivation, join-all failure, cleanup and its recorded installed/performance matrix. Later extensions retain their own acceptance. |
 | general foreign-thread callbacks | Reuse delivered exact ABI thunks/firewalls and bounded registered worker/once entry; add general registration ownership, attach/detach and in-flight completion | Foreign-thread entry stress, post-unregister rejection, TLS cleanup, failure-boundary tests, and no unwind across C. |
+| C-WAIT-01 | **Implemented:** safe scalar atomic wait/notify with load-legal order tags and versioned native parking | `atomic_wait_runtime_test.py`, `runtime_atomic_wait_tests.cpp`, MIR effect/verifier and installed/native cost gates; timed waits and guard-aware condition variables remain separate. |
+| per-thread storage | **Implemented in 0.473.0:** admitted non-generic namespace/class and block `static thread_local` declarations, thread entry/exit and cleanup | `thread_local_semantic_tests.cpp`, `mir_thread_local_tests.cpp`, runtime/LSP/native tests; C thread-specific-storage keys and arbitrary foreign-thread entry remain absent. |
 | diagnostics and LSP across public stages | Publish shared frontend capability, boundary, order, and target diagnostics without spelling inference | Deterministic primary/related spans, generic-instance cases, incomplete-source recovery, and protocol snapshots. |
 | C-CONFORM-01 | **Done for `std::thread`, ordered scalar atomics including integer fetch operations, and scoped mutex guards; repeat for each later family** | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, sanitizers where supported, and no timing-only oracle. |
 

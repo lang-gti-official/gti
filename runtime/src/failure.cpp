@@ -949,10 +949,10 @@ extern "C" void gti_rt_failure_cleanup_check_v1(
     return;
   if (secondary == nullptr)
     std::abort();
-  const gti_failure_emergency_v2 emergency{
-      GTI_FAILURE_ABI_VERSION_V2, 0, *incomingCleanup.record, *secondary};
+  const gti_failure_emergency_v2 emergency{GTI_FAILURE_ABI_VERSION_V2, 0,
+                                           *incomingCleanup.record, *secondary};
   gti_rt_failure_terminate_cleanup_v2(&emergency, incomingCleanup.artifact,
-                                    artifact);
+                                      artifact);
 }
 
 extern "C" gti_failure_report_result_v1

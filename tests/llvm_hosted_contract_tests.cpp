@@ -1283,26 +1283,26 @@ void hostedArgumentsContract(const std::filesystem::path &repository) {
   const auto &startup = *frontend.mir.hostedStartupPlan();
   const auto nextIndex = std::find_if(
       startup.operations.begin(), startup.operations.end(), [](const auto &op) {
-        return op.kind == MirHostedStartupOperationKind::ComputeNextArgumentIndex;
+        return op.kind ==
+               MirHostedStartupOperationKind::ComputeNextArgumentIndex;
       });
   const auto advance = std::find_if(
       startup.operations.begin(), startup.operations.end(), [](const auto &op) {
         return op.kind == MirHostedStartupOperationKind::AdvanceArgumentIndex;
       });
-  require(nextIndex != startup.operations.end() && advance != startup.operations.end(),
+  require(nextIndex != startup.operations.end() &&
+              advance != startup.operations.end(),
           "hosted index arithmetic and commit have separate sealed identities");
   for (unsigned mutation = 0; mutation != 4; ++mutation) {
     auto invalid = frontend.mir;
     auto &invalidBody = *const_cast<MirBody *>(invalid.hostedStartup());
     auto &block = invalidBody.blocks[nextIndex->block - 1];
     auto &compute = *std::find_if(
-        block.instructions.begin(), block.instructions.end(), [&](const auto &op) {
-          return op.id == nextIndex->instruction;
-        });
+        block.instructions.begin(), block.instructions.end(),
+        [&](const auto &op) { return op.id == nextIndex->instruction; });
     auto &commit = *std::find_if(
-        block.instructions.begin(), block.instructions.end(), [&](const auto &op) {
-          return op.id == advance->instruction;
-        });
+        block.instructions.begin(), block.instructions.end(),
+        [&](const auto &op) { return op.id == advance->instruction; });
     if (mutation == 0)
       compute.operands[1].literal = Literal{std::uint64_t{2}};
     else if (mutation == 1)
@@ -1315,7 +1315,8 @@ void hostedArgumentsContract(const std::filesystem::path &repository) {
       commit.operation = MirOperation::PreIncrement;
     }
     require(!verifyMirProgram(invalid).valid(),
-            "hosted index cannot change step, direction, commit or use legacy mutation");
+            "hosted index cannot change step, direction, commit or use legacy "
+            "mutation");
   }
   std::array<bool, 3> seen{};
   for (const auto &block : body.blocks)
@@ -1422,7 +1423,8 @@ void hostedArgumentsBoundary(const std::filesystem::path &repository,
   // Rename only the external entry so a C caller can exercise zero/negative
   // argc. All source bodies, guards, cleanup and runtime calls are unchanged.
   entry->setName("gti_hosted_entry");
-  const auto directory = scratch / "arguments-boundary" /
+  const auto directory =
+      scratch / "arguments-boundary" /
       (optimization == LlvmCodegenOptimization::None ? "O0" : "O3");
   std::filesystem::create_directories(directory);
   const auto object = directory / "program.o";
@@ -1430,14 +1432,14 @@ void hostedArgumentsBoundary(const std::filesystem::path &repository,
               driver::ArtifactWriteStatus::Success,
           "owned-argument object publishes through normal emission");
   const auto shim = directory / "caller.c";
-  require(driver::writeArtifact(shim,
-      "#include <stddef.h>\n"
-      "extern int gti_hosted_entry(int, char **);\n"
-      "int main(int argc, char **argv) {\n"
-      "  (void)argv;\n"
-      "  return gti_hosted_entry(argc == 1 ? 0 : -1, NULL);\n"
-      "}\n") == driver::ArtifactWriteStatus::Success,
-      "write hosted C boundary caller");
+  require(driver::writeArtifact(
+              shim, "#include <stddef.h>\n"
+                    "extern int gti_hosted_entry(int, char **);\n"
+                    "int main(int argc, char **argv) {\n"
+                    "  (void)argv;\n"
+                    "  return gti_hosted_entry(argc == 1 ? 0 : -1, NULL);\n"
+                    "}\n") == driver::ArtifactWriteStatus::Success,
+          "write hosted C boundary caller");
   const auto layout = driver::discoverToolchainLayout(nullptr);
   driver::NativeToolchain toolchain;
   const auto callerObject = directory / "caller.o";
@@ -1455,15 +1457,21 @@ void hostedArgumentsBoundary(const std::filesystem::path &repository,
   require(linked.succeeded(), "real owned startup links to its runtime");
   const auto zero = driver::invokeProcess({executable.string()});
   require(zero.succeeded() && zero.output.empty(),
-          "zero count constructs and drops an empty owner without reading null argv");
-  const auto negative = driver::invokeProcess({executable.string(), "negative"});
+          "zero count constructs and drops an empty owner without reading null "
+          "argv");
+  const auto negative =
+      driver::invokeProcess({executable.string(), "negative"});
   if (negative.exitCode != 70)
     std::cerr << negative.output;
   require(negative.exitCode == 70 && !negative.signal && !negative.timedOut &&
-              negative.output.find("hosted_runtime_contract_failure") != std::string::npos &&
-              negative.output.find("negative_argument_count") != std::string::npos &&
-              negative.output.find("llvm_hosted_arguments.gti:4:") != std::string::npos,
-          "negative argc terminates with the original hosted failure and main anchor");
+              negative.output.find("hosted_runtime_contract_failure") !=
+                  std::string::npos &&
+              negative.output.find("negative_argument_count") !=
+                  std::string::npos &&
+              negative.output.find("llvm_hosted_arguments.gti:4:") !=
+                  std::string::npos,
+          "negative argc terminates with the original hosted failure and main "
+          "anchor");
 }
 
 void sourceMetadataContract(const std::filesystem::path &repository) {

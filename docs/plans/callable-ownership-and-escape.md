@@ -1,7 +1,8 @@
 # GTI Callable Ownership And Escape Contract
 
-> **Plan status:** D-CALL-01 decision complete. L-CALL-01 is partially
-> implemented through explicit confined-boundary records and exact
+> **Plan status (reconciled 2026-10-28):** D-CALL-01 and the admitted
+> L-CALL-01/02 profiles are delivered through explicit confined-boundary
+> records and exact
 > context-supplied confined-safe value results. Repeated read-callable and
 > mut-callable selection plus consuming once-callable cardinality are
 > implemented for confined generic parameters. Ordered copy/move closure
@@ -23,6 +24,17 @@
 > captured, returned through generics and erased by the owning wrappers.
 > Existing confined and managed-task contracts also select contextual items.
 > These are nominal values, not native function pointers.
+
+L-CALL-03's checked shared/exclusive reference captures and source-defined
+`function_ref` views are delivered in 0.433.0; L-CALL-04's signature-level
+result-origin contracts are delivered in 0.437.0. Checked erased references and
+typed GTI invocation pointers support these ordinary source wrappers. Current
+fixtures include `borrowing_capture_tests.cpp` and
+`checked_callable_{erasure,pointer,transport,result_origin}.gti`. Borrowed
+environments remain tied to their owners; this does not deliver arbitrary
+borrowed escape, owning class results through invocation pointers or inline
+consuming projection. The original owned-escape restrictions below must be
+read in that scope, not as absence of borrowing callbacks.
 
 Original design baseline: GTI 0.94.0. The status above and the operational
 sequence track later implementation.
@@ -334,11 +346,13 @@ Both are explicit per capture. Capture defaults remain excluded. The existing
 is `[target = std::move(source)]`; other C++ init-capture expressions remain
 invalid.
 
-Reference capture, implicit `this`, stored borrowed-state capture, raw-pointer
-capture in a safe escaping callable, and capture of a global alias remain
-outside the bounded owned-callable contract. A later confined-reference proposal
-would need a callable lifetime parameter or scope proof and its own plan row;
-native C++ reference capture is not evidence.
+L-CALL-03 adds `[&value]` and `[mut &value]` to the capture modes for
+checked borrowing environments. Copy/move captures also retain existing
+dependencies. Their ordinary loan/scope proof permits local storage and
+generic/field transport, with L-CALL-04 result-origin contracts where admitted.
+No source lifetime parameter was required for that slice. Implicit `this`,
+capture defaults, arbitrary reference init-captures and unrestricted borrowed
+escape remain excluded; raw capture does not grant safe owned escape.
 
 Capture expressions initialize strictly left to right under the completed
 D-EXEC-01 contract. This callable contract requires that order and every source
@@ -418,13 +432,14 @@ problem does not justify type erasure.
 | namespace global or static field | later breadth | requires separate global init/shutdown policy |
 | direct checked-reference callable parameter | implemented confined borrowing | ordinary entry/reborrow loans, exact referent and access, repeatable invocation, caller-owned cleanup, and proven confined forwarding |
 | erased owning callable wrapper | implemented L-CALL-02 | source interfaces/owners, exact invocation and capture cleanup; bounded inline/boxed repeatable and unique-owned consuming storage |
-| borrowed/reference/raw capture | outside bounded owned escape | needs lifetime/provenance and client-specific proof |
+| checked reference/borrowed-state capture | implemented L-CALL-03 with owner-bounded storage/transport | exact dependency/access paths, last-use/cleanup endpoint and conflicting-use/escape rejection |
+| raw or unrestricted borrowed escape | outside bounded owned escape | additional lifetime/provenance contract and proof |
 
 The earlier reference-parameter deferral is revised: ordinary checked
 references already express the call-scoped lifetime required for direct
 confined invocation and forwarding. This needs no new lifetime syntax or
-owned escape permission. Borrowed capture and borrowed results remain separate
-origin-summary work.
+owned escape permission. L-CALL-03/04 deliver the bounded capture/result
+origin-summary work; broader escape remains separate.
 
 Passing or returning a callable is a normal value-state transition. A moved or
 consumed callable cannot be invoked. An immutable binding can be consumed but
@@ -727,17 +742,20 @@ follow-ons.
 The original bounded-first decision and the implemented L-CALL-02 wrappers do
 not add or promise:
 
-- implicit/default/reference capture;
+- implicit/default capture and arbitrary reference init-captures; explicit
+  shared/exclusive named-binding reference capture is implemented;
 - general inferred lambda or generic callable result types;
 - lambda reference/borrowed-state results without an explicit origin summary;
-- signature-erased callable references or scoped borrowed closure types
-  (ordinary confined `F&`/`mut F&` parameters are now implemented);
-- function pointers or closure-to-pointer casts (L-CALL-02 now supersedes the
-  original confined-only function-item storage exclusion);
+- unrestricted escaping borrowed closure graphs; scoped checked environments
+  and signature-erased `function_ref` views are implemented;
+- arbitrary closure-to-pointer casts and broader invocation-pointer result
+  shapes; exact stateless GTI invocation pointers and native C function values
+  are already implemented under their distinct failure/ABI contracts;
 - global/static closure storage;
 - recursive/self-referential closures;
 - coroutine/generator frames;
-- detached tasks or cross-thread borrows; or
+- detached tasks or unrestricted asynchronous borrowed escape; synchronous
+  scoped cross-thread borrowing is implemented by `std::parallel_invoke`; or
 - native callbacks outside the separately accepted C ABI/runtime boundary.
 
 The original owning type-erasure exclusion is superseded by L-CALL-02; it is
