@@ -1,7 +1,8 @@
 # Diagnostic Quality And Explanations
 
-Status: proposed campaign; existing foundations are identified below, not
-claimed as newly implemented. Reviewed against canonical main
+Status: campaign begun with bounded ownership-witness and lookup-recovery
+slices; the cross-family baseline and remaining milestones are not complete.
+The initial inventory was reviewed against canonical main
 `71b1c679e31b8609538f1746c6c85574995cb297` on 2026-10-28.
 The [implementation sequence](implementation-sequence.md#q-quality-diagnostics-conformance-and-release)
 owns scheduling and milestone status. This document owns the design and
@@ -171,8 +172,33 @@ tested with valid and invalid examples, not maintained as competing semantics.
 
 ## Delivery Sequence
 
-Every new row below is **planned**. The first deliverable is a baseline and one
-complete ownership-explanation improvement, not an infrastructure rewrite.
+The rows below are campaign gates, not claims that the first bounded slices
+complete a whole gate. The first deliverable is a baseline and one complete
+ownership-explanation improvement, not an infrastructure rewrite.
+
+### Initial Evidence And Recovery Slice
+
+Facilities 1 and 2 now share producer-owned `SemanticMoveOrigins` between
+whole-binding and projected-place consumers. Four deterministic spans are kept;
+omission is explicit and conservatively counted through repeated joins. This
+does not change the ownership lattice or add a proof graph. Facility 3 begins
+with failed lookup identities retained through grouping/inferred bindings and
+pointer arithmetic, where a concrete duplicate diagnostic was reproduced.
+Unknown without a root remains distinct from a diagnosed failure.
+
+| Selected case | Previous gap | Owning acceptance |
+| --- | --- | --- |
+| Six alternative moves of a user-defined owner | Four causes shown with silent truncation | Four ordered spans, explicit omission, repeatable output |
+| Repeated join of bounded witnesses | No observable truncation contract | Bounded producer storage; joining the same evidence cannot increase the omitted count |
+| Restored/projected/shadowed owners | Preserve existing correct behavior | Existing ownership corpus; restoration clears visible and omitted evidence |
+| Undefined offset, grouped/inferred and used in pointer arithmetic | Root plus secondary pointer-type errors | One root; dependent chain suppressed; invalid known offsets and pointees still diagnosed |
+| Repair in an editor overlay | Recovery identities must not survive repair | CLI/LSP code and cause agreement; next version clears root; independent errors remain |
+
+These cases are an initial Q-DIAG-02 baseline, not the full family inventory or
+an overall quality score. The registered diagnostic explanation tests and
+compiler diagnostic tests own the executable assertions. Constraint traces,
+constexpr frames, capture/lifetime witnesses and parser-wide root identities
+remain future slices. Do not mark Q-DIAG-03 or Q-DIAG-05 complete from this work.
 
 | Milestone | Dependencies and bounded work | Exit evidence |
 | --- | --- | --- |

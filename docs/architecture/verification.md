@@ -6855,6 +6855,12 @@ compiler on macOS arm64; it does not claim Linux or Windows execution.
 `testOwnershipAndMissingIncludeDiagnostics` covers exact move origins, branch
 joins, reinitialization, user-defined projected owners, restored receiver
 fields, shadowing, and the deterministic four-origin bound. It also checks
+explicit omission reporting and repeated-join bounds at the producer. The
+lookup-recovery cases retain independent invalid pointer offsets/pointees and
+both undefined operands, reject executable generation, and clear the cause
+after a repaired snapshot. `diagnostic_explanations` checks the same root and
+independent-error distinction through CLI and successive LSP overlays.
+The suite also checks
 straight-line last-use ending against later-use conflicts, resource-bound
 mutex guards and lexical release, ordinary/read-only-reference/array/capture
 mutation causes, concurrent-global policy, constexpr advice, and unavailable

@@ -2,9 +2,50 @@
 
 #include "semantic_spelling.h"
 
+#include <algorithm>
 #include <functional>
+#include <tuple>
 
 namespace lang {
+
+SemanticMoveOrigins
+SemanticMoveOrigins::merge(const SemanticMoveOrigins &left,
+                           const SemanticMoveOrigins &right) {
+  SemanticMoveOrigins result;
+  result.sites = left.sites;
+  result.sites.insert(result.sites.end(), right.sites.begin(),
+                      right.sites.end());
+  std::sort(result.sites.begin(), result.sites.end(),
+            [](const auto &a, const auto &b) {
+              return std::tie(a.source, a.start, a.end) <
+                     std::tie(b.source, b.start, b.end);
+            });
+  result.sites.erase(std::unique(result.sites.begin(), result.sites.end(),
+                                 [](const auto &a, const auto &b) {
+                                   return a.source == b.source &&
+                                          a.start == b.start && a.end == b.end;
+                                 }),
+                     result.sites.end());
+  // Omitted sites can overlap across repeated joins. Summing their counts
+  // would invent causes; retain only a provable lower bound on distinct sites.
+  const auto known =
+      std::max({result.sites.size(), left.sites.size() + left.omittedLowerBound,
+                right.sites.size() + right.omittedLowerBound});
+  constexpr std::size_t limit = 4;
+  if (result.sites.size() > limit)
+    result.sites.resize(limit);
+  result.omittedLowerBound = known - result.sites.size();
+  return result;
+}
+
+void SemanticMoveOrigins::appendTo(Diagnostic &diagnostic) const {
+  for (const auto &origin : sites)
+    diagnostic.related.push_back({origin, "Ownership transferred here."});
+  if (omittedLowerBound != 0)
+    diagnostic.hints.push_back("At least " + std::to_string(omittedLowerBound) +
+                               " additional ownership-transfer location(s) "
+                               "omitted from this explanation.");
+}
 
 std::string
 SemanticDiagnosticReporter::typeSpelling(const SemanticType &type) const {

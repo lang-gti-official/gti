@@ -1,4 +1,5 @@
 #include "compiler_test_fixture.h"
+#include "../src/compiler/semantic_diagnostics.h"
 
 namespace {
 
@@ -138,6 +139,21 @@ int main() {
 }
 
 void testOwnershipAndMissingIncludeDiagnostics() {
+  lang::SemanticMoveOrigins witnesses;
+  for (std::size_t index = 0; index < 32; ++index) {
+    witnesses = lang::SemanticMoveOrigins::merge(
+        witnesses, {{"bounded.gti", index, index + 1, 1}});
+    expect(witnesses.sites.size() <= 4,
+           "producer storage is bounded before diagnostic rendering");
+  }
+  const auto omitted = witnesses.omittedLowerBound;
+  for (int iteration = 0; iteration < 100; ++iteration)
+    witnesses = lang::SemanticMoveOrigins::merge(witnesses, witnesses);
+  expect(omitted > 0 && witnesses.omittedLowerBound == omitted,
+         "repeated loop joins cannot invent additional omitted transfer sites");
+  witnesses.clear();
+  expect(witnesses.sites.empty() && witnesses.omittedLowerBound == 0,
+         "restoration clears both visible and omitted move evidence");
   const auto analyze = [](const std::string &source) {
     return lang::Frontend().analyze("ownership-explanations.gti", source,
                                     {standardLibraryPrelude()}, {},
@@ -311,6 +327,11 @@ public:
                               return left.span.start < right.span.start;
                             }),
          "move causes are bounded and deterministic across many branch joins");
+  expect(hasDiagnosticHint(manyResult.diagnostics,
+                            "additional ownership-transfer location(s) omitted"),
+         "bounded move explanations must explicitly disclose omitted causes");
+  expect(manyResult.diagnostics == analyze(manyPaths).diagnostics,
+         "bounded witness rendering is deterministic across fresh requests");
   lang::FrontendOptions concurrentOptions;
   concurrentOptions.target.executionProfile =
       lang::ExecutionProfile::Concurrent;
@@ -3052,6 +3073,56 @@ int main() {
   expect(!numeric.canGenerateCode() &&
              hasDiagnostic(numeric.diagnostics, "requires numeric operands"),
          "known operand mismatches retain their diagnostic");
+  const auto failedOffset = lang::Frontend().analyze("failed-offset.gti", R"(
+int main() {
+  unsafe {
+    int* pointer = nullptr;
+    auto offset = missing_offset;
+    auto first = pointer + (offset);
+    auto second = pointer - first;
+    auto direct = pointer + absent;
+    auto independent = pointer + true;
+    auto both = missing_left + missing_right;
+  }
+  int unrelated = "text";
+  return 0;
+}
+)");
+  expect(!failedOffset.canGenerateCode(),
+         "recovered expressions must never admit invalid source to lowering");
+  expect(std::count_if(failedOffset.diagnostics.begin(),
+                       failedOffset.diagnostics.end(), [](const auto &item) {
+                         return item.code == "GTI-S2001";
+                       }) == 4,
+         "each independent undefined operand retains its own root diagnostic");
+  expect(std::count_if(failedOffset.diagnostics.begin(),
+                       failedOffset.diagnostics.end(), [](const auto &item) {
+                         return item.code == "GTI-S2056";
+                       }) == 1,
+         "only the independently invalid pointer operand is diagnosed again");
+  expect(hasDiagnostic(failedOffset.diagnostics, "Cannot initialize 'unrelated'"),
+         "causal recovery does not suppress unrelated declaration errors");
+  const auto repaired = lang::Frontend().analyze("failed-offset.gti", R"(
+int main() {
+  unsafe {
+    int* pointer = nullptr;
+    auto offset = 0;
+    auto result = pointer + (offset);
+  }
+  return 0;
+}
+)");
+  expect(repaired.canGenerateCode(),
+         "a fresh valid snapshot must not retain recovery identities");
+  const auto invalidPointee = lang::Frontend().analyze("invalid-pointee.gti", R"(
+int main() {
+  unsafe { void* pointer = nullptr; auto result = pointer + missing; }
+  return 0;
+}
+)");
+  expect(hasDiagnosticCode(invalidPointee.diagnostics, "GTI-S2001") &&
+             hasDiagnosticCode(invalidPointee.diagnostics, "GTI-S2056"),
+         "an invalid known pointee is independent of the missing offset");
 }
 
 // An exact repeat reports once: a library instance that fails at several

@@ -118,6 +118,37 @@ int main() { Command cmd{}; cmd.name = 1; return 0; }
         assert diagnostic["relatedInformation"][0]["location"]["range"]["start"] == lsp_position(
             readonly, readonly.index("cmd{}"))
         assert not diagnostic.get("data", {}).get("fixes")
+
+        recovery = '''int main() {
+  unsafe {
+    int* pointer = nullptr;
+    auto offset = missing_offset;
+    auto first = pointer + (offset);
+    auto second = pointer - first;
+    auto independent = pointer + true;
+  }
+  return 0;
+}
+'''
+        output = terminal(recovery)
+        assert output.count("error[GTI-S2001]") == 1, output
+        assert output.count("error[GTI-S2056]") == 1, output
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri, "version": 4}, "contentChanges": [{"text": recovery}]}})
+        errors = publication(4)
+        assert sum(d.get("code") == "GTI-S2001" for d in errors) == 1, errors
+        assert sum(d.get("code") == "GTI-S2056" for d in errors) == 1, errors
+        independent = next(d for d in errors if d.get("code") == "GTI-S2056")
+        assert independent["range"]["start"] == lsp_position(
+            recovery, recovery.index("+ true")), independent
+        repaired = recovery.replace("missing_offset", "0")
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri, "version": 5}, "contentChanges": [{"text": repaired}]}})
+        remaining = publication(5)
+        # After repairing the root, pointer subtraction is valid. Only the
+        # independently invalid bool offset remains.
+        assert not any(d.get("code") == "GTI-S2001" for d in remaining), remaining
+        assert sum(d.get("code") == "GTI-S2056" for d in remaining) == 1, remaining
     finally:
         session.close()
 
