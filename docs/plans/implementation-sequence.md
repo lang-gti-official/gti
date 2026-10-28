@@ -11731,6 +11731,11 @@ Hierarchy storage beside borrowed state is admitted. It is constructed in
 place, borrowed by reference and destroyed. It also moves, including scoped
 thread tasks passed by value. A carrier's generated value move relocates it
 under `mirTypeMoveRelocationKind`, while `std::relocatable` is unchanged
+(owner decision 2026-10-28). Base and interface views of a carrier, an upcast
+return and a relay through a base reference run natively once MIR records the
+view's `Local` loan on the carrier; returning a non-hierarchy base reference
+to a carrier parameter stays refused.
+
 (owner decision 2026-10-28). A base or interface view of a carrier takes a
 `Local` loan on the carrier since the MIR fix of 2026-10-28; upcast arguments
 and interface relays run natively, while local upcast views, upcast returns and

@@ -1,0 +1,87 @@
+#include <std/memory>
+#include <std/string>
+#include <std/string_view>
+#include <std/utility>
+
+// Base and interface views of borrow carriers: classes that hold a reference
+// beside their own state. A view borrows the carrier object; its loan's only
+// stored dependency is the carrier's own record of the external owner it
+// borrows, which has no representation. Each view ends before the carrier
+// moves. An interface view of an owner is also a text witness: an address,
+// never its bytes.
+interface Gauge { int32_t read(); };
+
+class Scaled : public Gauge {
+  int32_t value;
+  int32_t& scale;
+  std::string label;
+public:
+  Scaled(int32_t v, int32_t& s)
+      : value(v), scale(s), label(std::string("scaled carrier label")) {}
+  int32_t read() override { return this.value * this.scale + int32_t(this.label.size()); }
+};
+
+class Base {
+public:
+  int32_t value;
+  Base(int32_t v) : value(v) {}
+  int32_t get() { return this.value; }
+};
+
+class Plain : public Base {
+  int32_t& scale;
+public:
+  Plain(int32_t v, int32_t& s) : Base(v), scale(s) {}
+  int32_t read() { return this.value * this.scale; }
+};
+
+interface Observed { int32_t observe(); };
+
+class Witness : public Observed {
+  int32_t tag;
+public:
+  Witness(int32_t tag) : tag(tag) {}
+  int32_t observe() override { return this.tag; }
+};
+
+Gauge& up(Scaled& scaled) { return scaled; }
+Gauge& pick(Gauge& gauge) { return gauge; }
+Base& pickBase(Base& base) { return base; }
+
+int32_t views(mut int32_t& scale) {
+  Scaled direct{2, scale};
+  Gauge& local = direct;
+  Gauge& returned = up(direct);
+  Gauge& relayed = pick(up(direct));
+  int32_t seen = local.read() * 100 + returned.read() * 10 + relayed.read();
+  Scaled moved = std::move(direct);
+  return seen * 1000 + moved.read();
+}
+
+int32_t bases(mut int32_t& scale) {
+  Plain plain{5, scale};
+  Base& local = plain;
+  Base& relayed = pickBase(plain);
+  int32_t seen = local.get() * 10 + relayed.get();
+  Plain kept = std::move(plain);
+  return seen * 100 + kept.read();
+}
+
+int32_t witness() {
+  Witness concrete{7};
+  Observed& owner = concrete;
+  char bytes[4] = {'a', 'b', '\0', 'c'};
+  std::string_view text =
+      unsafe { std::assume_string_view(&bytes[std::size_t(0)], std::size_t(4), owner) };
+  c_string terminated = unsafe { std::assume_c_string(&bytes[std::size_t(0)], owner) };
+  return int32_t(text.size()) * 10 + owner.observe() + (terminated == nullptr ? 100 : 0);
+}
+
+// UPCAST_CARRIERS_MAIN
+int main() {
+  mut int32_t scale = 3;
+  int32_t first = views(scale);
+  int32_t second = bases(scale);
+  int32_t third = witness();
+  return first == 2886026 && second == 5515 && third == 47 ? 0 : 1;
+}

@@ -11,6 +11,17 @@ for what minor and patch releases mean.
 
 ## 0.486.0 - Read-only arrow steps, closure copies, projected references and capture ranges
 
+### Native views of borrow carriers and interface text witnesses
+
+- The native backend now builds these programs, which previously failed with
+  `GTI-B0003`, and matches the C++ backend:
+  - an interface or base-class reference bound to a class that holds a
+    reference, such as `Gauge& view = direct;`, an interface view returned
+    from a function, and such a class passed through a function returning a
+    base-class reference, such as `pickBase(plain)`;
+  - text built with `std::assume_string_view` or `std::assume_c_string` whose
+    owner is passed as an interface view.
+
 ### Native copies and moved closures of hierarchy objects
 
 - The native backend now builds by-copy lambda captures of derived,

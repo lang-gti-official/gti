@@ -2,6 +2,7 @@
 
 #include "gti/mir.h"
 
+#include <functional>
 #include <map>
 #include <set>
 
@@ -168,5 +169,17 @@ enum class FreshObjectStorage { Local, Returned, Temporary, Argument, Element };
 freshObjectStorage(const MirProgram &program, MirBodyAddress address,
                    const MirBody &body, const Placement &placement,
                    const MirInstruction &producer);
+
+// A borrow of a carrier, such as an interface or base view of it, depends on
+// the carrier's own stored loans: provenance for the external owners the
+// carrier borrows, with no representation of its own. Either a non-escaping
+// Local loan of a whole carrier binding whose stored dependency is a Stored
+// loan that binding carries, or an escaping Return loan whose one Borrow
+// relays a supported loan of the same source and stored dependency, returned
+// as a reference.
+[[nodiscard]] bool carrierLoanDependency(
+    const MirBody &body, const MirLoan &loan,
+    const std::function<bool(const MirLoan &)> &supported,
+    const std::function<bool(const MirTerminator &)> &referenceReturn);
 
 } // namespace lang::native_llvm

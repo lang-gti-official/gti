@@ -2468,4 +2468,45 @@ const Placement::Target *Placement::target(MirValueId value) const {
   return found == targets.end() ? nullptr : &found->second;
 }
 
+bool carrierLoanDependency(
+    const MirBody &body, const MirLoan &loan,
+    const std::function<bool(const MirLoan &)> &supported,
+    const std::function<bool(const MirTerminator &)> &referenceReturn) {
+  const auto *stored = body.findLoan(loan.storedDependency);
+  if (!stored || stored->id == loan.id || loan.referenceSelection ||
+      loan.twoPhase || loan.lifecycleBound || loan.entry ||
+      !loan.additionalDependencies.empty() || !loan.conditions.empty())
+    return false;
+  if (loan.kind == MirLoanKind::Local) {
+    const auto *source = body.findPlace(loan.source);
+    return !loan.escapes && source && source->binding &&
+           source->root == MirPlaceRootKind::Binding &&
+           source->projections.empty() && stored->kind == MirLoanKind::Stored &&
+           std::find(stored->carriers.begin(), stored->carriers.end(),
+                     source->binding) != stored->carriers.end();
+  }
+  if (loan.kind != MirLoanKind::Return || !loan.escapes)
+    return false;
+  const MirLoan *relayed = nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &stage : block.instructions)
+      if (!stage.tombstone && stage.kind == MirInstructionKind::Borrow &&
+          stage.loan == loan.id) {
+        if (relayed || stage.operands.size() != 1 ||
+            stage.operands.front().kind != MirOperandKind::Loan)
+          return false;
+        relayed = body.findLoan(stage.operands.front().loan);
+        if (!relayed)
+          return false;
+      }
+  return relayed && relayed->id != loan.id &&
+         relayed->storedDependency == loan.storedDependency &&
+         relayed->source == loan.source && supported(*relayed) &&
+         std::any_of(body.blocks.begin(), body.blocks.end(),
+                     [&](const auto &block) {
+                       return block.terminator.returnLoan == loan.id &&
+                              referenceReturn(block.terminator);
+                     });
+}
+
 } // namespace lang::native_llvm
