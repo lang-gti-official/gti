@@ -98,7 +98,8 @@ template <typename Tables> struct SourceDebugRecord {
 
   SourceDebugRecord(const SourceDebugRecord &other)
       : collection(other.collection),
-        tables(other.tables ? std::make_unique<Tables>(*other.tables) : nullptr) {}
+        tables(other.tables ? std::make_unique<Tables>(*other.tables)
+                            : nullptr) {}
 
   SourceDebugRecord &operator=(const SourceDebugRecord &other) {
     if (this != &other) {
@@ -115,8 +116,8 @@ template <typename Tables> struct SourceDebugRecord {
 
   SourceDebugRecord &operator=(SourceDebugRecord &&other) noexcept {
     if (this != &other) {
-      collection = std::exchange(other.collection,
-                                 SourceDebugCollection::Uncollected);
+      collection =
+          std::exchange(other.collection, SourceDebugCollection::Uncollected);
       tables = std::move(other.tables);
     }
     return *this;

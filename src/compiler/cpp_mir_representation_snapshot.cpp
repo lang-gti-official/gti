@@ -2461,10 +2461,12 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
       });
   bool runtimeModuleBody = false;
   if (executableProgramInitialization) {
-    runtimeModuleBody = cppMirModuleMayRaiseDefinedFailure(mir) ||
-        std::any_of(mir.programInitializationPlan().steps.begin(),
-                    mir.programInitializationPlan().steps.end(),
-                    [](const auto &step) { return step.nativeRetirement.has_value(); });
+    runtimeModuleBody =
+        cppMirModuleMayRaiseDefinedFailure(mir) ||
+        std::any_of(
+            mir.programInitializationPlan().steps.begin(),
+            mir.programInitializationPlan().steps.end(),
+            [](const auto &step) { return step.nativeRetirement.has_value(); });
     if (!runtimeModuleBody) {
       const CppMirBodyEmissionMap provisional(builder.rows);
       runtimeModuleBody =
@@ -2489,7 +2491,8 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
         return level != &storage->type && level->kind == SemanticType::Class;
       }();
       if (step.role != ProgramInitializationStepRole::Initializer ||
-          (step.requiresActiveCleanup && !step.nativeRetirement) || storage == nullptr ||
+          (step.requiresActiveCleanup && !step.nativeRetirement) ||
+          storage == nullptr ||
           (storage->type.kind != SemanticType::Class && !fixedClassArray)) {
         continue;
       }

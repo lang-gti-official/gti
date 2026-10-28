@@ -331,19 +331,18 @@ void Failures::checkIncomingCleanup(llvm::IRBuilder<> &ir,
     return;
   }
   auto *function = ir.GetInsertBlock()->getParent();
-  auto *inherited =
-      llvm::BasicBlock::Create(session.context(), "cleanup.inherited", function);
+  auto *inherited = llvm::BasicBlock::Create(session.context(),
+                                             "cleanup.inherited", function);
   auto *done =
       llvm::BasicBlock::Create(session.context(), "cleanup.checked", function);
   auto *primary =
       ir.CreateLoad(session.layouts().pointer(), slot(ir, incomingRecord_));
   ir.CreateCondBr(ir.CreateIsNotNull(primary), inherited, done);
   ir.SetInsertPoint(inherited);
-  ir.CreateCall(emergency(),
-                {primary,
-                 ir.CreateLoad(session.layouts().pointer(),
-                               slot(ir, incomingArtifact_)),
-                 record(ir, secondary), origin(ir, secondary)});
+  ir.CreateCall(emergency(), {primary,
+                              ir.CreateLoad(session.layouts().pointer(),
+                                            slot(ir, incomingArtifact_)),
+                              record(ir, secondary), origin(ir, secondary)});
   ir.CreateBr(done);
   ir.SetInsertPoint(done);
 }
@@ -376,8 +375,8 @@ llvm::Function *Failures::emergency() {
       session.dataLayout().getTypeAllocSize(recordType).getFixedValue();
   ir.CreateMemMove(ir.CreateStructGEP(type, envelope, 2), alignment, primary,
                    alignment, bytes);
-  ir.CreateMemMove(ir.CreateStructGEP(type, envelope, 3), alignment,
-                   secondary, alignment, bytes);
+  ir.CreateMemMove(ir.CreateStructGEP(type, envelope, 3), alignment, secondary,
+                   alignment, bytes);
   auto *publish =
       llvm::BasicBlock::Create(session.context(), "worker.publish", function);
   auto *terminal =

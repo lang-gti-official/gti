@@ -60,10 +60,9 @@ nativeCReceiverInputContract(const MirProgram &program,
                              const MirInstruction &instruction);
 // A GTI reference to an exact native function value is an address of its
 // storage, never a C reference parameter or permission to invoke the value.
-[[nodiscard]] bool
-nativeCFunctionBorrowInputContract(const MirProgram &program,
-                                   const TargetInfo &target, const MirBody &body,
-                                   const MirInstruction &instruction);
+[[nodiscard]] bool nativeCFunctionBorrowInputContract(
+    const MirProgram &program, const TargetInfo &target, const MirBody &body,
+    const MirInstruction &instruction);
 [[nodiscard]] bool
 nativeCResultInputContract(const MirProgram &program, const TargetInfo &target,
                            const MirBody &body,

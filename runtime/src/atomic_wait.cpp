@@ -23,7 +23,8 @@ struct Parking {
 };
 static_assert(sizeof(Bucket) == GTI_ATOMIC_WAIT_BUCKET_BYTES_V1);
 static_assert(alignof(Bucket) == GTI_ATOMIC_WAIT_BUCKET_ALIGNMENT_V1);
-static_assert(offsetof(Bucket, wake_needed) == 0 && offsetof(Bucket, waiters) == 4);
+static_assert(offsetof(Bucket, wake_needed) == 0 &&
+              offsetof(Bucket, waiters) == 4);
 static_assert(offsetof(Bucket, native_storage) == 8);
 static_assert(sizeof(Parking) <= sizeof(Bucket::native_storage));
 static_assert(offsetof(Bucket, native_storage) % alignof(Parking) == 0);
@@ -181,8 +182,9 @@ extern "C" void gti_rt_atomic_notify_v1(const void *lane,
   notifyRegistered(bucket);
 }
 
-extern "C" void gti_rt_atomic_notify_registered_v1(
-    const void *lane, std::uint32_t width_bytes, std::uint32_t all) noexcept {
+extern "C" void gti_rt_atomic_notify_registered_v1(const void *lane,
+                                                   std::uint32_t width_bytes,
+                                                   std::uint32_t all) noexcept {
   gti::runtime::atomic_lane::validate(lane, width_bytes);
   require(all <= 1);
   notifyRegistered(bucketFor(lane, width_bytes));

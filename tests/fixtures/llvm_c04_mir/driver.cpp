@@ -173,9 +173,15 @@ int main(int argc, char **argv) {
 #else
         1;
 #endif
-    const auto expectedFirst = startedWorkers > 0 ? leafDrops : GTI_C04_TASK_CLEANUP ? 3 : 0;
-    const auto expectedSecond = startedWorkers > 1 ? (GTI_C04_TASK_CLEANUP ? 2 : 1) : GTI_C04_TASK_CLEANUP ? 3 : 0;
-    if (slots[0] != expectedFirst || slots[1] != expectedSecond || slots[2] != ownerDrops)
+    const auto expectedFirst = startedWorkers > 0     ? leafDrops
+                               : GTI_C04_TASK_CLEANUP ? 3
+                                                      : 0;
+    const auto expectedSecond = startedWorkers > 1
+                                    ? (GTI_C04_TASK_CLEANUP ? 2 : 1)
+                                : GTI_C04_TASK_CLEANUP ? 3
+                                                       : 0;
+    if (slots[0] != expectedFirst || slots[1] != expectedSecond ||
+        slots[2] != ownerDrops)
       return 6;
 #endif
     if (succeeded == failing || (!failing && value != input + 1))
@@ -197,22 +203,23 @@ int main(int argc, char **argv) {
   FILE *file = report ? std::fopen(report, "w") : nullptr;
   if (!file)
     return 10;
-  std::fprintf(file,
-               "{\"controls\":true,\"new_calls\":%llu,\"new_bytes\":%llu,"
-               "\"delete_calls\":%llu,\"exception_calls\":%llu,"
-               "\"exception_bytes\":%llu,\"runtime_new_calls\":%llu,"
-               "\"runtime_new_bytes\":%llu,\"runtime_delete_calls\":%llu,"
-               "\"runtime_exception_calls\":%llu,\"runtime_exception_bytes\":%llu}\n",
-               static_cast<unsigned long long>(counted.newCalls),
-               static_cast<unsigned long long>(counted.newBytes),
-               static_cast<unsigned long long>(counted.deleteCalls),
-               static_cast<unsigned long long>(counted.exceptionCalls),
-               static_cast<unsigned long long>(counted.exceptionBytes),
-               static_cast<unsigned long long>(runtimeBaseline.newCalls),
-               static_cast<unsigned long long>(runtimeBaseline.newBytes),
-               static_cast<unsigned long long>(runtimeBaseline.deleteCalls),
-               static_cast<unsigned long long>(runtimeBaseline.exceptionCalls),
-               static_cast<unsigned long long>(runtimeBaseline.exceptionBytes));
+  std::fprintf(
+      file,
+      "{\"controls\":true,\"new_calls\":%llu,\"new_bytes\":%llu,"
+      "\"delete_calls\":%llu,\"exception_calls\":%llu,"
+      "\"exception_bytes\":%llu,\"runtime_new_calls\":%llu,"
+      "\"runtime_new_bytes\":%llu,\"runtime_delete_calls\":%llu,"
+      "\"runtime_exception_calls\":%llu,\"runtime_exception_bytes\":%llu}\n",
+      static_cast<unsigned long long>(counted.newCalls),
+      static_cast<unsigned long long>(counted.newBytes),
+      static_cast<unsigned long long>(counted.deleteCalls),
+      static_cast<unsigned long long>(counted.exceptionCalls),
+      static_cast<unsigned long long>(counted.exceptionBytes),
+      static_cast<unsigned long long>(runtimeBaseline.newCalls),
+      static_cast<unsigned long long>(runtimeBaseline.newBytes),
+      static_cast<unsigned long long>(runtimeBaseline.deleteCalls),
+      static_cast<unsigned long long>(runtimeBaseline.exceptionCalls),
+      static_cast<unsigned long long>(runtimeBaseline.exceptionBytes));
   std::fclose(file);
 #endif
   const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
