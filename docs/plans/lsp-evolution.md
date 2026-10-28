@@ -1,6 +1,7 @@
 # LSP Evolution Plan
 
-Status: Non-canonical future work. Current behavior is documented in
+Status (reconciled 2026-10-28): delivered snapshot/query/project foundations
+plus the remaining tooling goals below; this is a non-canonical completion plan. Current behavior is documented in
 [`docs/architecture/lsp.md`](../architecture/lsp.md).
 
 Operational prerequisites and the current tooling queue are maintained in
@@ -245,6 +246,19 @@ are implemented. The eight-include file meets the exit measure (see
 compiler-side half of editor responsiveness. The protocol-side half (edit-time
 publication, adaptive debounce, refresh policy) is implemented and described
 in the architecture document.
+
+### Later Delivered Latency Work (0.480.2–0.480.5)
+
+Edit-time cancellation and shorter adaptive debounce, include-graph reuse of
+library-only concept proofs and initializer/storage effects, and request-local
+staged constant-call memoization are implemented. The semantic instance-reuse,
+frontend preamble and constexpr request caches preserve their existing
+identity, invalidation, diagnostic and budget contracts. These later changes
+supersede the old benchmark's ranking of remaining work; they do not supply a
+durable workspace index or generally fault-safe shared-cache recovery.
+See the architecture's current snapshot/reuse contract and the 0.480.2–0.480.5
+changelog entries. Measurements below retain their own exact versions; measure
+current source before scheduling another latency slice.
 
 ### Measured Baseline Before Scope Reduction
 

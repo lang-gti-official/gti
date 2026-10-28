@@ -4,7 +4,8 @@
 > behavior is summarized in
 > [`docs/architecture/build-and-driver.md`](../architecture/build-and-driver.md).
 
-Status: implementation in progress; Milestones 0 through 7 are complete for
+Status (reconciled 2026-10-28): implementation in progress; Milestones 0
+through 7 are complete for
 their bounded local/path/native and pinned-Git dependency scopes. The source
 registry bootstrap is also implemented; Stage 4 below records its accepted
 scope and remaining service/governance work.
@@ -21,8 +22,12 @@ preserves GTI's existing compiler-driver workflow while adding a modern,
 declarative project workflow. The initial slice established orchestration over the existing whole-program
 compiler. Registry packages and explicitly approved GTI-authored build scripts
 have since extended that foundation. A stable binary GTI module/ABI system is
-still not implemented; native shared artifacts follow the separate embedding
-campaign rather than adopting the backend's ABI.
+still not implemented. Public `kind = "library"` is implemented for infallible
+LLVM closures on macOS arm64/Linux x86_64, including generated headers,
+immutable generations and cache/report/clean integration. Fallible exports and
+complete E-EMBED/B-LIB/T-EMBED/Q-EMBED acceptance remain; this is not the
+backend's ordinary object ABI. Aggregate `import std` and read-only LSP `ProjectFacts`
+consumption are delivered, not remaining project foundations.
 
 ## Current Implementation
 
@@ -1684,7 +1689,7 @@ language is superseded by ADR 012; prerequisites and acceptance still apply.
 
 | User-facing outcome | Prerequisite / next coherent slice | Acceptance |
 | --- | --- | --- |
-| Load a GTI gameplay module from an engine host | `E-EMBED-01B/C` establish context-owned failure containment and generated wrappers; `B-LIB-02` then activates the dormant shared-target model. | Atomic shared artifact/header publication, exact exported ABI and runtime resources, cache/report/clean support, and installed load/call/fail/unload/reload evidence through `Q-EMBED-01`. |
+| Complete the engine-host module workflow | Infallible LLVM project libraries, context lifecycle, generated wrappers/header and cache/report/clean publication are implemented. Complete E-EMBED-01B/C fallible containment, T-EMBED editor integration and Q-EMBED installed/platform acceptance. | Atomic shared artifact/header publication, exact exported ABI and runtime resources, cache/report/clean support, and installed load/call/fail/unload/reload evidence through `Q-EMBED-01`. |
 | Cross-build without accidental host resources | Reproducible target-built runtime/header closure, then immutable driver resource selection and target provenance. | Native objects, runtime, layout and reports agree on the target; missing target resources fail closed; host builds remain unchanged. |
 | Reuse builds without stale native inputs | Extend the existing exact native discovery with generated-unit SDK/header identity and concurrent-input publication checks. | Changing a discovered input invalidates reuse; unsupported opaque inputs still bypass; races cannot publish under an earlier identity. |
 | Install and authenticate across more package/host workflows | Reuse delivered registry/provider/credential seams and local install receipts; add one source-install or host-support profile at a time. | Explicit trust/acquisition, immutable identity, credential non-disclosure, receipt-safe replacement/removal and appropriate platform evidence. Registry governance remains distinct from compiler releases. |

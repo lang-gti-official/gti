@@ -3,6 +3,9 @@
 Status: phases 1–3 are implemented (`constexpr for`, `<std/meta>` types,
 fields and access, declared attributes, enum/base/generic metadata and the
 fixture clients, structural construction and callable/source metadata).
+Status reconciled 2026-10-28: the reflected JSON client is also delivered and
+has been promoted to `<std/json>` since 0.409.0. The experimental gate below
+records completed acceptance, not a future library campaign.
 The phase-2 implementation was
 integrated on 2026-10-11 through GitHub PR #2. Current language
 behavior is documented in [`docs/language/`](../language/index.md); the
@@ -195,8 +198,9 @@ and the evidence is `tests/reflection_tests.cpp`,
 `tests/fixtures/reflection_attributes.gti` (the three clients) and
 `examples/137-declared-attributes.gti`. Item 6 was revised by the owner: the
 `std::json` library is left untouched; the three clients are fixture programs,
-and reflection reaches a JSON library as `std::experimental::json`, a
-verification gate built after phase 3, after which `std::json` is deprecated.
+and reflection first reached a JSON library as `std::experimental::json`,
+the completed post-phase-3 verification gate. Its promoted implementation
+replaced the old `std::json` document model in 0.409.0.
 The two pre-existing client defects are now repaired on main: designated
 construction with a borrowed text-view field was integrated through the former
 Gitea PR #245, and record-published literal defaults are retained under
@@ -253,9 +257,8 @@ semantics §3.12.5), method/operator/constructor/parameter metaobjects and
 source locations (§3.12.6), budget coverage over nested callable expansions,
 and the roadmap/ledger closure. Decoding clients are the byte and text readers
 of `tests/fixtures/reflection_construct.gti` and
-`examples/138-structural-construction.gti`; the JSON decoder waits for
-`std::experimental::json`, the verification gate the owner scheduled after
-this phase. The two reflection defects found by the audit (GitHub #4, dropped
+`examples/138-structural-construction.gti`; the reflected JSON decoder was subsequently implemented and promoted as
+described in the completed acceptance gate below. The two reflection defects found by the audit (GitHub #4, dropped
 receiver evaluation; GitHub #5, unchecked owner type) are fixed here.
 Invocation through a metaobject (`invoke`) is not provided (Q16: metadata
 first); static fields and a declaration-position type spelling (R7) remain
@@ -388,10 +391,14 @@ decisions; the residual sub-questions are listed afterwards.
 
 ## Residual Questions
 
-- **R1 (phase 1, on the go).** The exact expansion budget numbers.
-- **R2 (phase 1, on the go).** Whether `field.name()` is usable inside
-  `if constexpr` and `static_assert` in phase 1, which depends on the staged
-  constant evaluator accepting a method whose body is a folded constant.
+- **R1 (implemented).** Per-statement element and per-declaration expanded-body
+  limits are enforced by `analyzeConstexprForStmt` and report `GTI-S2108`; the
+  nested expansion/budget fixtures are part of phase-3 acceptance. These are
+  separate from the constant evaluator's shared step/depth budgets.
+- **R2 (implemented constant metadata).** Field name/type/index queries fold
+  through the compiler-owned metaobject kernels. Constant-context operations
+  on their results follow the current constexpr contract; a later unsupported
+  text operation is an evaluator profile boundary, not missing field metadata.
 - **R3 (answered 2026-10-11).** `[[attribute]] struct` declares an attribute
   type; `[[ns::name(args)]]` applies it with positional or designated constant
   arguments initializing the struct's fields; omitted fields take literal
