@@ -292,8 +292,12 @@ int main() {
                  lang::BackendKind::Cpp &&
              lang::defaultBackend(
                  {.os = "linux", .vendor = "unknown", .arch = "x86_64"}) ==
+                 lang::BackendKind::Llvm &&
+             lang::defaultBackend(
+                 {.os = "linux", .vendor = "unknown", .arch = "arm64"}) ==
                  lang::BackendKind::Cpp,
-         "LLVM is the default backend only on the promoted arm64 macOS target");
+         "LLVM is the default backend on the promoted macOS arm64 and Linux "
+         "x86_64 targets only");
   const lang::TargetInfo target{
       .os = "linux", .vendor = "unknown", .arch = "x86_64"};
   const lang::driver::CompilationRequest request(
