@@ -5816,6 +5816,14 @@ endif()
 
 include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")
 
+# Every build-tree test runs the compiler's self-checks, such as the
+# lowered-program construction seal, that ordinary compiles skip. Tests that
+# exercise a self-check also enable it explicitly, so they do not depend on
+# this inventory.
+get_property(gti_validation_tests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${gti_validation_tests} APPEND PROPERTY ENVIRONMENT
+  "GTI_COMPILER_VALIDATION=1")
+
 # Release binaries intentionally contain no source-tree resource fallback.
 # Every build-tree test runs before staging, including newly registered CLI/LSP
 # tests. Derive the inventory instead of maintaining an incomplete name list.

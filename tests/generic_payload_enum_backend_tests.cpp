@@ -36,6 +36,8 @@ struct LoweredProgramTestAccess {
 } // namespace lang
 
 int main() {
+  // Forged lowered programs below also exercise the construction seal.
+  lang::setLoweredProgramSealValidation(true);
   int failures = 0;
   const auto expect = [&](bool condition, const char *message) {
     if (!condition) {
