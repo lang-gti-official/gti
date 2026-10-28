@@ -1172,11 +1172,11 @@ int main() { return 0; }
       "parser recovery should resume at access labels and later declarations");
 
   const std::string formatted = lang::Formatter().format(
-      "class Box{public:int value=1;private:int hidden=2; public: Box() = default; };"
-      "struct Point{int x=0; public: Point() = default; };");
+      "class Box{public:int value=1;private:int hidden=2;};"
+      "struct Point{int x=0;};");
   expect(formatted == "class Box {\npublic:\n  int value = 1;\nprivate:\n"
-                      "  int hidden = 2;\n public: Box() = default; };\nstruct Point {\n"
-                      "  int x = 0;\n public: Point() = default; };\n",
+                      "  int hidden = 2;\n};\nstruct Point {\n"
+                      "  int x = 0;\n};\n",
          "formatter should outdent C++-style access labels");
   expect(lang::Formatter().format(formatted) == formatted,
          "formatted class access labels should be idempotent");
@@ -5090,10 +5090,10 @@ int main() {
          "diagnostic per invalid attribute without parser cascades");
 
   const std::string formatted = lang::Formatter().format(
-      "[[no_transfer,no_share]]class NativeHandle{int descriptor=0; public: NativeHandle() = default; };");
+      "[[no_transfer,no_share]]class NativeHandle{int descriptor=0;};");
   expect(formatted == "[[no_transfer, no_share]] class NativeHandle {\n"
                       "  int descriptor = 0;\n"
-                      " public: NativeHandle() = default; };\n" &&
+                      "};\n" &&
              lang::Formatter().format(formatted) == formatted,
          "concurrency capability attributes should format idempotently with "
          "C++-familiar declaration placement");

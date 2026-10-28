@@ -106,7 +106,7 @@ int main() {
       "requires a struct");
   rejected(
       "struct S { int x = 0; S() {} }; int main(){ S s = {.x = 1}; return 0; }",
-      "no declared constructors");
+      "no constructors other than a structural default");
   rejected("struct S { private: int x = 0;  public: S() = default; }; int main(){ S s = {.x = 1}; "
            "return 0; }",
            "public value fields");
@@ -136,7 +136,7 @@ int main() {
             error->primary.start == brace && error->primary.end == brace + 1 &&
             error->message.find("destination struct type") !=
                 std::string::npos &&
-            error->message.find("no declared constructors") ==
+            error->message.find("Designated construction requires") ==
                 std::string::npos &&
             error->hints.size() == 1 &&
             error->hints.front().find("explicit struct type") !=

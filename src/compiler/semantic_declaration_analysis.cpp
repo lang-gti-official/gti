@@ -5686,9 +5686,12 @@ auto SemanticVisitor::Impl::classCanGenerateDefaultConstructor(
     const SemanticType &type) const -> bool {
   const ClassInfo *owner = classInfo(type);
   // Ordinary classes and structs opt in through a declared constructor,
-  // including `Type() = default`. Unions retain their separate zero-storage
-  // initialization contract; they do not admit source constructors.
-  return owner != nullptr && owner->kind == ClassKind::Union &&
+  // including `Type() = default`. Interfaces retain their stateless base
+  // initialization and unions their zero-storage operation. Neither admits
+  // source constructors; interfaces remain abstract in object position.
+  return owner != nullptr &&
+         (owner->kind == ClassKind::Union ||
+          owner->kind == ClassKind::Interface) &&
          classCanUseStructuralDefaultConstruction(type);
 }
 

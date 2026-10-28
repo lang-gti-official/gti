@@ -1549,7 +1549,8 @@ Abstract owners remain constructible only in base-subobject position, never as
 implicitly defaulted value fields.
 Ordinary classes and structs require a declared zero-argument construction
 operation. Field initializers and an empty field list do not synthesize one.
-`classCanGenerateDefaultConstructor` retains only union zero-storage construction;
+`classCanGenerateDefaultConstructor` retains only union zero-storage construction and stateless interface-base
+initialization;
 explicit structural defaults use the declared constructor's identity and access
 with `classCanUseStructuralDefaultConstruction`. Default-availability queries,
 factory calls, and omitted subobjects consume the same selection facts. An

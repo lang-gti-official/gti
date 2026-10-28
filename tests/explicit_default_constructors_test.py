@@ -19,6 +19,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-explicit-default-") as temporary:
         root = Path(temporary)
         missing = {
+            "interface": "interface Value {}; int main() { Value value{}; return 0; }",
             "empty": "struct Value {}; int main() { Value value{}; return 0; }",
             "initialized": "struct Value { int value = 7; }; int main() { Value value{}; return 0; }",
             "required": "struct Value { int value = 7; Value(int input) : value(input) {} }; "
@@ -75,6 +76,11 @@ struct Record {
 struct Wrapper { Record record; Wrapper() = default; };
 struct Derived : public Record { Derived() = default; };
 struct FieldSupplied { int value; };
+interface Readable { int read(); };
+struct Implementation : public Readable {
+  Implementation() = default;
+  int read() override { return 23; }
+};
 struct BodyDefault { int value; BodyDefault() : value(19) {} };
 class ProtectedBase { protected: ProtectedBase() = default; };
 struct ProtectedDerived : public ProtectedBase { ProtectedDerived() = default; };
@@ -89,6 +95,8 @@ T make<std::default_initializable T>() { return T(); }
 int main() {
   { auto value = std::make_unique<Ready>(); if (value->read() != 7) { return 1; } }
   if (drops != 1) { return 2; }
+  Implementation implementation{};
+  if (implementation.read() != 23) { return 5; }
   BodyDefault body{};
   ProtectedDerived protected_base{};
   tags::Label label = {.value = 6};

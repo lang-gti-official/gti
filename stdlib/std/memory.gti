@@ -11,7 +11,10 @@ extern "C" {
 }
 }
 class unique_owner<T> {};
-class shared_owner<T> {};
+class shared_owner<T> {
+public:
+  shared_owner() = default;
+};
 // Layout-only capability: no engagement bit and no automatic payload drop.
 class uninitialized_storage<T> {
 public:

@@ -2068,7 +2068,7 @@
     },
     "a61-designated-argument-diagnostic": {
       "code": "GTI-S2091",
-      "forbid": ["no declared constructors"],
+      "forbid": ["Designated construction requires"],
       "issue": 69,
       "outcome": "rejected"
     },

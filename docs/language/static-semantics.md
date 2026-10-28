@@ -1321,8 +1321,9 @@ operation is diagnosed at the construction site (`GTI-S2012`).
 
 Copy and move construction, copy and move assignment, and destruction remain
 generated from structural field traits. Declaring an ordinary constructor does
-not suppress those operations. Union zero-storage initialization is a separate
-operation and retains its existing rules.
+not suppress those operations. Union zero-storage initialization and stateless interface-base initialization
+are separate operations and retain their existing rules. Interfaces remain
+abstract and cannot be constructed as values.
 
 The exact declaration `Type() = default;` explicitly selects the generated
 zero-argument construction operation. It is valid only when every field has a
