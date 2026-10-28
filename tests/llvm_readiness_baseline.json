@@ -23,8 +23,8 @@
       "id": "stdlib-surface",
       "kind": "source-backed-surface-manifest",
       "manifest": "tests/stdlib_surface_manifest.json",
-      "member_count": 188,
-      "inventory_sha256": "9c697c4f2ecb924b65bb23fc48d0f02f95d18a8242a942bd4ba07b505a9f760e"
+      "member_count": 191,
+      "inventory_sha256": "5f2fb7d7988e7cf8838928542f76f88b8a71e8a6fc349bbb9b0030a2ae724756"
     }
   ],
   "family_obligations": [
