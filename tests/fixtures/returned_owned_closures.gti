@@ -1,0 +1,21 @@
+#include <std/utility>
+// An owned closure that its callee returns by value carries its borrowed
+// captures out under the call's result, however the return is spelled.
+F identity<F>(F f) { return f; }
+F moved<F>(F f) { return std::move(f); }
+F mutable_moved<F>(mut F f) { return std::move(f); }
+int main() {
+  int32_t base = 7;
+  mut int32_t calls = 0;
+  auto read = identity([&base]() -> int32_t { return base; });
+  auto again = moved([&base]() -> int32_t { return base * 2; });
+  {
+    mut auto count = mutable_moved([mut &calls]() -> void { calls += 1; });
+    count();
+    count();
+  }
+  auto copied = mutable_moved([base]() -> int32_t { return base + 1; });
+  std::println(read() + again() + copied());
+  std::println(calls);
+  return 0;
+}

@@ -1,0 +1,48 @@
+#include <std/vector>
+#include <std/string>
+#include <std/utility>
+// Ranges over by-reference captures: library and user ranges, read-only and
+// mutable traversal, and owning elements.
+class Count {
+  mut int32_t current;
+public:
+  Count(int32_t start) : current(start) {}
+  int32_t operator*() { return this.current; }
+  void operator++() mut { this.current += 1; }
+  bool operator!=(int32_t end) { return this.current != end; }
+};
+class Span {
+  int32_t first;
+  int32_t last;
+public:
+  Span(int32_t first, int32_t last) : first(first), last(last) {}
+  Count begin() { return Count(this.first); }
+  int32_t end() { return this.last; }
+};
+int main() {
+  mut std::vector<int32_t> values{};
+  values.push_back(4);
+  values.push_back(9);
+  mut auto scale = [mut &values](int32_t factor) -> void {
+    for (mut auto& value : values) value *= factor;
+  };
+  scale(3);
+  Span span = Span(1, 5);
+  auto weigh = [&values, &span]() -> int32_t {
+    mut int32_t sum = 0;
+    for (auto& value : values) sum += value;
+    for (int32_t index : span) sum += index * 100;
+    return sum;
+  };
+  std::println(weigh());
+  mut std::vector<std::string> names{};
+  names.push_back(std::string("a first name long enough to live on the heap"));
+  names.push_back(std::string("a second name long enough to live on the heap"));
+  auto letters = [&names]() -> uint64_t {
+    mut uint64_t total = uint64_t(0);
+    for (auto& name : names) total += name.size();
+    return total;
+  };
+  std::println(letters());
+  return 0;
+}

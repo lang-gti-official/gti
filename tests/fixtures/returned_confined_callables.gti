@@ -1,0 +1,44 @@
+#include <std/algorithm>
+#include <std/utility>
+#include <std/vector>
+// A confined callable that its callee returns as the call's exact result
+// carries the same capture group out under that call's result loan.
+F apply<F>(mut F f) {
+  f();
+  return std::move(f);
+}
+int main() {
+  mut std::vector<int32_t> items{};
+  items.push_back(1);
+  items.push_back(2);
+  items.push_back(3);
+  mut int64_t got = 0;
+  [[discard]] std::for_each(items, [mut &got](int32_t& value) -> void {
+    got = got * int64_t(10) + int64_t(value);
+  });
+  std::println(got);
+  {
+    mut auto visitor = std::for_each(items.begin(), items.end(),
+                                     [mut &got](int32_t& value) -> void {
+                                       got = got * int64_t(10) + int64_t(value);
+                                     });
+    mut int32_t four = 4;
+    visitor(four);
+  }
+  std::println(got);
+  int64_t base = 1000;
+  mut int64_t sum = 0;
+  [[discard]] std::for_each(items, [&base, mut &sum](int32_t& value) -> void {
+    sum += base + int64_t(value);
+  });
+  std::println(sum);
+  mut int32_t calls = 0;
+  {
+    mut auto counter = apply([mut &calls]() -> void { calls += 1; });
+    counter();
+    counter();
+  }
+  [[discard]] apply([mut &calls]() -> void { calls += 10; });
+  std::println(calls);
+  return 0;
+}

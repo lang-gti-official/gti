@@ -24,11 +24,28 @@ Matrices (axes):
   dispatch   hierarchy x helper x owner, checking virtual calls during
              construction and destruction (no C++ oracle exists)
   library    standard-library containers holding owned values
+  poly_containers  vectors and maps of unique and shared polymorphic owners
+             x insert, erase, sort, move, pass and replace
+  callbacks  erased callbacks capturing objects x fields, interfaces,
+             vectors, maps, factories and polymorphic owners
+  sum_types  optional, expected and payload enums of class and hierarchy
+             types x return, move, match, store and consume
+  text_relays  string views and spans relayed through methods, virtuals,
+             interfaces, generics and operators x owner
+  generics   constrained generic functions, pools, factories, visitors and a
+             generic derived class x interface and class hierarchies
+  algorithms sort, search, count, predicates, visit, reverse, transform and
+             max over vectors of passive, owning and polymorphic elements
+  threads    thread results, relays, worker vectors, shared mutexes and
+             parallel_invoke x class, text, owner and payload-enum payloads
+  raii       cleanup order under early returns, loops, switch cases, branch
+             locals, condition temporaries and returned locals
 """
 import argparse
 import concurrent.futures
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -36,14 +53,25 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from llvm_wrongcode import (bases, callables, containers,  # noqa: E402
+from llvm_wrongcode import (algorithms, arrays, bases, callables,  # noqa: E402
+                            containers, error_chains, formatting,
                             dispatch, enums, flow, hierarchy, library,
-                            order, transfer)
+                            callbacks, generics, nested_generics, operators,
+                            order, poly_containers, ranges, static_state,
+                            raii, sum_types, text_relays, threads,
+                            transfer, trees)
 
 MATRICES = {"transfer": transfer, "containers": containers, "flow": flow,
             "hierarchy": hierarchy, "bases": bases, "enums": enums,
             "callables": callables, "order": order, "dispatch": dispatch,
-            "library": library}
+            "library": library, "poly_containers": poly_containers,
+            "callbacks": callbacks, "sum_types": sum_types,
+            "text_relays": text_relays, "generics": generics,
+            "algorithms": algorithms, "threads": threads, "raii": raii,
+            "operators": operators, "ranges": ranges,
+            "nested_generics": nested_generics, "formatting": formatting,
+            "arrays": arrays, "trees": trees, "error_chains": error_chains,
+            "static_state": static_state}
 ENDPOINTS = (("cpp", "O0"), ("llvm", "O0"), ("llvm", "O2"))
 
 
@@ -63,17 +91,30 @@ def run(command, env, timeout):
         return "timeout", out, err
 
 
+REFUSAL = re.compile(r"for ((?:Shape|Mir|Hir)\w*\.\w+) \((O-LLVM-\d+)\)")
+
+
 def endpoint(gti, env, source, backend, level):
     executable = source.with_name(f"{source.stem}-{backend}-{level}")
-    rc, out, err = run([str(gti), str(source), "--backend", backend,
-                        f"-{level}", "--execution-profile", "concurrent",
-                        "-o", str(executable)], env, 600)
-    if rc != 0 or not executable.exists():
-        codes = sorted(set(re.findall(r"error\[(GTI-[A-Z][0-9]+)\]", out + err)))
-        semantic = any(code[4] in "SP" for code in codes)
-        return ("rejected:" if semantic else "build:") + ",".join(codes)
-    rc, out, _ = run([str(executable)], env, 60)
-    return "ok" if rc == 0 and out == "ok\n" else f"FAIL(rc={rc},{out.strip()[:40]!r})"
+    try:
+        rc, out, err = run([str(gti), str(source), "--backend", backend,
+                            f"-{level}", "--execution-profile", "concurrent",
+                            "-o", str(executable)], env, 600)
+        if rc != 0 or not executable.exists():
+            codes = sorted(set(re.findall(r"error\[(GTI-[A-Z][0-9]+)\]", out + err)))
+            semantic = any(code[4] in "SP" for code in codes)
+            refusal = REFUSAL.search(out + err)
+            shape = f"[{refusal[1]} {refusal[2]}]" if refusal else ""
+            return ("rejected:" if semantic else "build:") + ",".join(codes) + shape
+        rc, out, _ = run([str(executable)], env, 60)
+        return "ok" if rc == 0 and out == "ok\n" else f"FAIL(rc={rc},{out.strip()[:40]!r})"
+    finally:
+        # Cell executables are large; keep only the sources.
+        for artifact in source.parent.glob(f"{executable.name}*"):
+            if artifact.is_dir():
+                shutil.rmtree(artifact, ignore_errors=True)
+            else:
+                artifact.unlink(missing_ok=True)
 
 
 def main():
@@ -85,10 +126,18 @@ def main():
                         default=sorted(MATRICES))
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--parity", action="store_true",
+                        help="also report every cell C++ runs ok but LLVM "
+                             "refuses or runs differently")
     args = parser.parse_args()
     env = dict(os.environ, GTI_STDLIB_PATH=str(args.stdlib.resolve()),
                NO_COLOR="1")
     work = args.out or Path(tempfile.mkdtemp(prefix="gti-llvm-wrongcode-"))
+    # Failed builds save their backend representation under TMPDIR; keep
+    # those beside the cells so a run cleans up after itself.
+    scratch = work / ".tmp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    env["TMPDIR"] = str(scratch)
     sources = []
     for name in args.matrix:
         directory = work / name
@@ -103,14 +152,25 @@ def main():
                         for backend, level in ENDPOINTS]
 
     wrong = 0
+    gaps = []
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         for source, (cpp, o0, o2) in pool.map(classify, sources):
             if o0.startswith("FAIL") or o2.startswith("FAIL"):
                 wrong += 1
+            # C++ is the oracle for parity: a program it runs correctly must
+            # run the same way on LLVM, the macOS arm64 default.
+            if args.parity and cpp == "ok" and (o0 != "ok" or o2 != "ok"):
+                gaps.append((f"{source.parent.name}/{source.stem}", o0, o2))
             print(f"{source.parent.name}/{source.stem:40} cpp={cpp:24} "
                   f"llvm-O0={o0:24} llvm-O2={o2}", flush=True)
-    print(f"{len(sources)} cells, {wrong} with LLVM wrong code; sources in {work}")
-    return 1 if wrong else 0
+    summary = f"{len(sources)} cells, {wrong} with LLVM wrong code"
+    if args.parity:
+        summary += f", {len(gaps)} parity gaps"
+        for cell, o0, o2 in gaps:
+            print(f"parity gap: {cell} llvm-O0={o0} llvm-O2={o2}")
+    shutil.rmtree(scratch, ignore_errors=True)
+    print(f"{summary}; sources in {work}")
+    return 1 if wrong or gaps else 0
 
 
 if __name__ == "__main__":

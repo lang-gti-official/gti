@@ -926,5 +926,75 @@ int main() {
 }
 )",
            "GTI-S2003");
+  // A range over a by-reference capture takes its own child reborrow of the
+  // capture's loan, as a range over a reference formal does, for read-only
+  // and mutable traversal and for library and user ranges alike.
+  positive("captured-reference-ranges", R"(
+#include <std/vector>
+class Count {
+  mut int current;
+public:
+  Count(int start) : current(start) {}
+  int operator*() { return this.current; }
+  void operator++() mut { this.current += 1; }
+  bool operator!=(int end) { return this.current != end; }
+};
+class Span {
+  int first;
+  int last;
+public:
+  Span(int first, int last) : first(first), last(last) {}
+  Count begin() { return Count(this.first); }
+  int end() { return this.last; }
+};
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(4);
+  values.push_back(9);
+  mut auto scale = [mut &values](int factor) -> void {
+    for (mut auto& value : values) value *= factor;
+  };
+  scale(2);
+  Span span = Span(1, 4);
+  auto weigh = [&values, &span]() -> int {
+    mut int sum = 0;
+    for (auto& value : values) sum += value;
+    for (int index : span) sum += index;
+    return sum + int(values.size());
+  };
+  return weigh() - 34;
+}
+)");
+  // The capture's loan stays the parent of that reborrow: using the captured
+  // container while the traversal is live remains a borrow conflict.
+  negative("captured-range-growth", R"(
+#include <std/vector>
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(4);
+  mut auto grow = [mut &values]() -> void {
+    for (auto& value : values) values.push_back(value);
+  };
+  grow();
+  return 0;
+}
+)",
+           "GTI-S2017");
+  negative("captured-mutable-range-clear", R"(
+#include <std/vector>
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(4);
+  mut auto clear = [mut &values]() -> void {
+    for (mut auto& value : values) {
+      value += 1;
+      values.clear();
+    }
+  };
+  clear();
+  return 0;
+}
+)",
+           "GTI-S2017");
   return failures == 0 ? 0 : 1;
 }

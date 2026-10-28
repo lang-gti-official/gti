@@ -1702,6 +1702,39 @@ private:
                : nullptr;
   }
 
+  // A text result that a call returns by value under a loan keeps that
+  // loan's source borrowed, so it carries borrowed state whenever the source
+  // may hold owner-dependent text. Lowering also keeps a conservative loan on
+  // the argument of a call relaying ownerless text, as `relay(text)` does
+  // over a literal-backed `text`, and that result carries none. The source's
+  // ownerless provenance tells them apart: text known to hold no formal's
+  // text or text field needs no borrowed state; any other source does.
+  void verifyTextCallBorrowedState(const TextBody &context, std::size_t owner) {
+    for (const auto &block : context.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone ||
+            instruction.kind != MirInstructionKind::Call ||
+            !instruction.result || !instruction.loan ||
+            !textType(instruction.info.type) ||
+            instruction.info.category != ValueCategory::Value ||
+            instruction.info.traits.containsBorrowedState)
+          continue;
+        const auto *loan = context.body.findLoan(*instruction.loan);
+        const auto *source =
+            loan ? context.body.findPlace(loan->source) : nullptr;
+        if (!source)
+          continue;
+        const auto held = sources(context, {.kind = MirOperandKind::Loan,
+                                            .loan = loan->id,
+                                            .type = source->type});
+        if (held.known && held.parameters.empty() && held.fields.empty())
+          continue;
+        fail(context, owner, &instruction,
+             "text call result keeps a loan on owner-dependent text but "
+             "carries no borrowed state");
+      }
+  }
+
   // Which local bindings hold a published owner's dynamic text (L-OWN-02),
   // derived from each publication through copies, moves, field reads,
   // payload extraction, calls returning a formal's text or text field,
@@ -3043,6 +3076,7 @@ MirVerificationResult TextContracts::verify() {
     const TextBody context = functionContext(function);
     (void)scan(context, function.id, true);
     verifyDependentTextCarriers(context, function.id);
+    verifyTextCallBorrowedState(context, function.id);
     // A function's relays are what its returns derive (L-OWN-02); a caller
     // publishes nothing a callee does not derive, and a derived relay must be
     // declared or the caller would treat that text as ownerless.
@@ -3131,12 +3165,17 @@ MirVerificationResult TextContracts::verify() {
   }
   (void)scan({program.module(), {}, {}}, 0, true);
   verifyDependentTextCarriers({program.module(), {}, {}}, 0);
+  verifyTextCallBorrowedState({program.module(), {}, {}}, 0);
   for (const auto &instance : program.classInstances()) {
     (void)scan({instance.fieldInitializers, {}, {}}, instance.id, true);
     (void)scan({instance.staticFieldInitializers, {}, {}}, instance.id, true);
     verifyDependentTextCarriers({instance.fieldInitializers, {}, {}},
                                 instance.id);
     verifyDependentTextCarriers({instance.staticFieldInitializers, {}, {}},
+                                instance.id);
+    verifyTextCallBorrowedState({instance.fieldInitializers, {}, {}},
+                                instance.id);
+    verifyTextCallBorrowedState({instance.staticFieldInitializers, {}, {}},
                                 instance.id);
   }
   std::vector<std::set<std::size_t>> constructorBodyNeeds;
@@ -3152,6 +3191,7 @@ MirVerificationResult TextContracts::verify() {
     const auto needed = scan(context, constructor.id, true, &fieldNeeds);
     constructorBodyFieldNeeds.push_back(std::move(fieldNeeds));
     verifyDependentTextCarriers(context, constructor.id);
+    verifyTextCallBorrowedState(context, constructor.id);
     if (!std::includes(constructorRequirements[constructor.id - 1].begin(),
                        constructorRequirements[constructor.id - 1].end(),
                        needed.begin(), needed.end()))
@@ -3163,9 +3203,13 @@ MirVerificationResult TextContracts::verify() {
   for (const auto &destructor : program.destructorInstances()) {
     (void)scan({destructor.body, {}, {}}, destructor.owner, true);
     verifyDependentTextCarriers({destructor.body, {}, {}}, destructor.owner);
+    verifyTextCallBorrowedState({destructor.body, {}, {}}, destructor.owner);
   }
   for (const auto &lambda : program.lambdaInstances()) {
     verifyDependentTextCarriers(
+        {lambda.body, lambda.parameterTypes, lambda.parameterBindings},
+        lambda.id);
+    verifyTextCallBorrowedState(
         {lambda.body, lambda.parameterTypes, lambda.parameterBindings},
         lambda.id);
     if (!scan({lambda.body, lambda.parameterTypes, lambda.parameterBindings},
