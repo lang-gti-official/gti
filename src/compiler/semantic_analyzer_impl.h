@@ -1695,8 +1695,8 @@ private:
         ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferPolicySource;
     std::optional<Token> sharePolicySource;
-    std::optional<SemanticType> transferCondition;
-    std::optional<SemanticType> shareCondition;
+    std::optional<CapabilityCondition> transferCondition;
+    std::optional<CapabilityCondition> shareCondition;
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
@@ -1717,8 +1717,8 @@ private:
     ConcurrencyCapabilityPolicy share = ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferSource;
     std::optional<Token> shareSource;
-    std::optional<SemanticType> transferCondition;
-    std::optional<SemanticType> shareCondition;
+    std::optional<CapabilityCondition> transferCondition;
+    std::optional<CapabilityCondition> shareCondition;
     bool cAbiRecord = false;
     std::optional<Token> cAbiSource;
     bool cOpaqueHandle = false;
@@ -4647,7 +4647,11 @@ private:
 
   [[nodiscard]] CapabilityPolicyRegistration registerClassAttributes(
       const ClassDecl &declaration,
-      const std::vector<GenericParameterInfo> &parameters = {});
+      const std::vector<GenericParameterInfo> &parameters = {},
+      const std::vector<std::string> &scope = {});
+
+  [[nodiscard]] std::optional<CapabilityCondition> resolveCapabilityCondition(
+      const RequiresClause &clause, const std::vector<std::string> &scope);
 
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope,

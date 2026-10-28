@@ -318,8 +318,8 @@ struct LoweredClassDeclaration {
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =
       ConcurrencyCapabilityPolicy::Structural;
-  std::optional<SemanticType> transferCondition;
-  std::optional<SemanticType> shareCondition;
+  std::optional<CapabilityCondition> transferCondition;
+  std::optional<CapabilityCondition> shareCondition;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
   bool generatedDefaultRequiresSchedule = false;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;

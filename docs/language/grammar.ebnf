@@ -475,9 +475,11 @@ qualified-specialization-name
 class-attributes       = "[[" class-attribute
                          { "," class-attribute } "]]" ;
 
-class-attribute        = IDENTIFIER [ "(" IDENTIFIER ")" ] ;
-(* An argument is valid only for unsafe_transfer/unsafe_share and names one
-   non-pack type parameter of the annotated class/struct. `attribute` marks a
+class-attribute        = IDENTIFIER [ "(" ( IDENTIFIER | constraint-expression ) ")" ] ;
+(* An argument is valid only for unsafe_transfer/unsafe_share. A single
+   identifier names one non-pack type parameter; a predicate composes transfer
+   and sharing concepts or transparent type-fact queries using &&, || and
+   parentheses. `attribute` marks a
    struct as an attribute type; `reflect_private` opens a class or struct's
    private fields to reflected access. *)
 

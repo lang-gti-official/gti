@@ -483,13 +483,15 @@ struct NativeCArrayAttribute {
 struct FunctionAttribute {
   Token name;
   std::optional<Token> argument;
+  std::optional<ConstraintExpression> capabilityPredicate;
 };
 
 struct ClassAttribute {
   Token name;
-  // A conditional unsafe assertion names one non-pack type parameter of
-  // this declaration. Semantics resolves the binder; this is not an expression.
+  // The one-parameter shorthand and the general capability constraint syntax
+  // share one semantic condition representation after declaration binding.
   std::optional<Token> capabilityParameter;
+  std::optional<ConstraintExpression> capabilityPredicate;
 };
 
 struct NativeLinkNameAttribute {

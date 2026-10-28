@@ -1241,9 +1241,12 @@ conditionalCapabilities(const MirProgram &program, const SemanticType &type,
   if (found->transferPolicy == ConcurrencyCapabilityPolicy::UnsafeConditional) {
     const auto condition =
         found->transferCondition
-            ? conditionalCapabilities(program, *found->transferCondition)
+            ? evaluateCapabilityCondition(*found->transferCondition,
+                [&](const SemanticType &subject) {
+                  return conditionalCapabilities(program, subject);
+                })
             : std::nullopt;
-    permitted = condition && condition->transferCapable;
+    permitted = condition && *condition;
   }
   // Unsafe ownership assertions never erase the checked referent contract.
   const auto paths = findStoredCarrierReferences(program, type);
@@ -18883,13 +18886,16 @@ verifyMirProgramContracts(const MirProgram &program) {
         break;
       }
       if (condition) {
-        const auto required = conditionalCapabilities(program, *condition);
+        const auto required = evaluateCapabilityCondition(*condition,
+            [&](const SemanticType &subject) {
+              return conditionalCapabilities(program, subject);
+            });
         exact =
             exact && required && instance.kind != ClassKind::Interface &&
             instance.compilerCapability == CompilerCapabilityTypeKind::None &&
             (transfer
-                 ? instance.traits.transferCapable == required->transferCapable
-                 : instance.traits.shareCapable == required->shareCapable);
+                 ? instance.traits.transferCapable == *required
+                 : instance.traits.shareCapable == *required);
       }
       if (!exact) {
         result.errors.push_back(

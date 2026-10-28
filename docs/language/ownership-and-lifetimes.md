@@ -246,10 +246,39 @@ assuming the conditional promise holds. The two capabilities are independent.
 
 The author still audits the entire wrapper, including state not named in the
 condition, native pointers, movement and cleanup. This is not a compiler proof
-of the unsafe implementation. The bounded condition names a type parameter,
-not a value parameter, parameter pack, arbitrary type expression, or boolean
-expression. Existing unconditional assertions and explicit opt-outs retain
-their meaning; duplicate policies remain errors.
+of the unsafe implementation. Existing unconditional assertions and explicit
+opt-outs retain their meaning; duplicate policies remain errors.
+
+A condition can also be a capability predicate, using the existing constraint
+syntax and declaration-bound concepts:
+
+```gti
+concept CrossThread<T> = std::transferable<T> && std::shareable<T>;
+[[unsafe_transfer(CrossThread<T>), unsafe_share(CrossThread<T>)]]
+class ReviewedSharedOwner<T> {
+  T* pointer = nullptr;
+public:
+  ReviewedSharedOwner() {}
+  ~ReviewedSharedOwner() {}
+};
+```
+
+Predicates compose transfer and sharing facts with `&&`, `||`, and parentheses.
+Named source concepts and transparent source queries of those facts use the
+same declaration lookup as ordinary constraints; their public spelling grants
+no capability. Different type parameters can contribute, including a resource
+or cleanup policy. A false predicate denies only that capability, so the type
+remains usable locally. The single-parameter form remains shorthand for the
+matching capability of that parameter.
+
+This profile is monotone: negation, arbitrary constexpr computations, unrelated
+traits, and member-expression requirements are not capability predicates.
+Keeping the inputs to transfer/share facts preserves the existing cycle-aware
+capability calculation and lets MIR independently replay concrete conditions.
+Resolution is bounded to 64 nested expansion steps and 256 condition nodes;
+unsupported or exhausted predicates report `GTI-S2059`. Conditions do not
+establish that an unsafe implementation satisfies its promise.
+
 
 The prelude exposes `std::transferable<T>` and `std::shareable<T>` as ordinary
 public concepts backed by these compiler-owned facts. They constrain generic

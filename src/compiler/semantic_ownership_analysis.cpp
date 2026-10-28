@@ -575,9 +575,10 @@ auto SemanticVisitor::Impl::typeCapabilities(
              ConcurrencyCapabilityPolicy::UnsafeConditional) {
     result.transferCapable =
         owner.transferCondition &&
-        typeCapabilities(substituteType(*owner.transferCondition, substitution),
-                         visiting)
-            .transferCapable;
+        evaluateCapabilityCondition(*owner.transferCondition,
+            [&](const SemanticType &subject) -> std::optional<ConcurrencyCapabilities> {
+              return typeCapabilities(substituteType(subject, substitution), visiting);
+            }).value_or(false);
   }
   if (owner.sharePolicy == ConcurrencyCapabilityPolicy::Denied) {
     result.shareCapable = false;
@@ -587,9 +588,10 @@ auto SemanticVisitor::Impl::typeCapabilities(
              ConcurrencyCapabilityPolicy::UnsafeConditional) {
     result.shareCapable =
         owner.shareCondition &&
-        typeCapabilities(substituteType(*owner.shareCondition, substitution),
-                         visiting)
-            .shareCapable;
+        evaluateCapabilityCondition(*owner.shareCondition,
+            [&](const SemanticType &subject) -> std::optional<ConcurrencyCapabilities> {
+              return typeCapabilities(substituteType(subject, substitution), visiting);
+            }).value_or(false);
   }
   visiting.pop_back();
   return result;
@@ -966,11 +968,7 @@ auto SemanticVisitor::Impl::shareCapabilityDenial(
       owner.shareCondition && owner.sharePolicySource) {
     return ShareCapabilityDenial{
         .source = &*owner.sharePolicySource,
-        .message =
-            "This unsafe sharing assertion requires share-capable payload '" +
-            typeSpelling(substituteType(*owner.shareCondition,
-                                        classSubstitution(type))) +
-            "'."};
+        .message = "This unsafe sharing assertion requires its capability condition to hold."};
   }
   if (hasSourceDestructorBody(owner)) {
     return ShareCapabilityDenial{
@@ -1047,11 +1045,7 @@ auto SemanticVisitor::Impl::transferCapabilityDenial(
       owner.transferCondition && owner.transferPolicySource) {
     return TransferCapabilityDenial{
         .source = &*owner.transferPolicySource,
-        .message = "This unsafe transfer assertion requires transfer-capable "
-                   "payload '" +
-                   typeSpelling(substituteType(*owner.transferCondition,
-                                               classSubstitution(type))) +
-                   "'."};
+        .message = "This unsafe transfer assertion requires its capability condition to hold."};
   }
   if (hasSourceDestructorBody(owner)) {
     return TransferCapabilityDenial{

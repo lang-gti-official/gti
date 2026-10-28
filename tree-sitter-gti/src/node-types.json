@@ -964,6 +964,16 @@
             "named": true
           }
         ]
+      },
+      "capability_predicate": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "constraint_expression",
+            "named": true
+          }
+        ]
       }
     }
   },

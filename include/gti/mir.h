@@ -1373,8 +1373,8 @@ struct MirClassInstance {
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =
       ConcurrencyCapabilityPolicy::Structural;
-  std::optional<SemanticType> transferCondition;
-  std::optional<SemanticType> shareCondition;
+  std::optional<CapabilityCondition> transferCondition;
+  std::optional<CapabilityCondition> shareCondition;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
   bool lifecycleBoundBorrowCarrier = false;

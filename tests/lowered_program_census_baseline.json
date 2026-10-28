@@ -2783,11 +2783,27 @@
         "concrete_instance_adapter": 5,
         "thread_local_storage": 0
       }
+    },
+    "177-capability-predicates.gti": {
+      "declarations": 401,
+      "bodies": 17,
+      "generated_items": 5,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 2,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 2,
+        "thread_local_storage": 0
+      }
     }
   },
   "totals": {
-    "declarations": 187756,
-    "bodies": 24158,
-    "generated_items": 15149
+    "declarations": 188157,
+    "bodies": 24175,
+    "generated_items": 15154
   }
 }

@@ -1,0 +1,25 @@
+#include <std/meta>
+
+// A null-only example of an audited handle policy. A real owner must also
+// prove its raw access, retention, cleanup and resource contracts.
+concept CrossThread<T> = std::transferable<T> && std::shareable<T>;
+[[unsafe_transfer(CrossThread<T>), unsafe_share(CrossThread<T>)]]
+class ReviewedHandle<T> {
+  T* pointer = nullptr;
+public:
+  ReviewedHandle() {}
+  ~ReviewedHandle() {}
+};
+[[no_transfer]] struct Affine { int value = 0; };
+[[no_share]] struct Exclusive { int value = 0; };
+
+int main() {
+  static_assert(std::meta::is_transferable<ReviewedHandle<int>>());
+  static_assert(std::meta::is_shareable<ReviewedHandle<int>>());
+  static_assert(!std::meta::is_transferable<ReviewedHandle<Affine>>());
+  static_assert(!std::meta::is_shareable<ReviewedHandle<Exclusive>>());
+  // A false predicate removes thread permission, not local usability.
+  ReviewedHandle<Affine> local{};
+  ReviewedHandle<Exclusive> other{};
+  return 0;
+}

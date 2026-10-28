@@ -466,11 +466,15 @@ private:
     const GenericSubstitution capabilitySubstitution = classSubstitution(
         *declaration, resolvedType.arguments, resolvedType.valueArguments);
     const auto concreteCondition =
-        [&](const std::optional<SemanticType> &condition)
-        -> std::optional<SemanticType> {
-      return condition
-                 ? std::optional(substitute(*condition, capabilitySubstitution))
-                 : std::nullopt;
+        [&](const std::optional<CapabilityCondition> &condition)
+        -> std::optional<CapabilityCondition> {
+      if (!condition) return std::nullopt;
+      auto concrete = *condition;
+      for (auto &node : concrete.nodes)
+        if (node.kind == CapabilityConditionNode::Kind::Transfer ||
+            node.kind == CapabilityConditionNode::Kind::Share)
+          node.type = substitute(node.type, capabilitySubstitution);
+      return concrete;
     };
     SemanticTypeTraits instanceTraits =
         instanceProvider->traitsFor(resolvedType);
