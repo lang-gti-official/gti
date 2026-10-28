@@ -1,0 +1,79 @@
+// Thread-local hierarchy objects. Each thread's dynamic initializer
+// constructs its own object directly in that thread's slot from a fresh
+// construction or a by-value result, which installs the object's dispatch
+// state there; code borrows it through its symbol as a complete object. At
+// thread exit, an object's destructors each observe their own class.
+#include <std/atomic>
+#include <std/thread>
+
+std::atomic<int> worker_result{-1};
+std::atomic<int> dropped{0};
+
+interface Shape { int area(); };
+
+interface Named { int code(); };
+
+// Named precedes Shape, so the Shape view has a nonzero offset.
+class Square : public Named, public Shape {
+  mut int side;
+public:
+  Square(int side) : side(side) {}
+  int code() override { return this.side + 10; }
+  int area() override { return this.side * this.side; }
+  void grow() mut { this.side = this.side + 1; }
+};
+
+Square scaled(int divisor) { return Square(12 / divisor); }
+
+interface Tagged { int tag(); };
+
+class Plate : public Tagged {
+public:
+  Plate() {}
+  int tag() override { return 1; }
+  ~Plate() {
+    int tag = this.tag();
+    [[discard]] dropped.fetch_add(tag * 100);
+  }
+};
+
+class Badge : public Plate {
+public:
+  int id = 7;
+  Badge() : Plate() {}
+  int tag() override { return 2; }
+  ~Badge() {
+    int tag = this.tag();
+    [[discard]] dropped.fetch_add(tag);
+  }
+};
+
+thread_local mut Square square = Square(3);
+thread_local Badge badge = Badge();
+thread_local Square made = scaled(3);
+
+// THREAD_LOCAL_MAIN
+int main() {
+  if (square.area() != 9 || made.code() != 14 || made.area() != 16) {
+    return 1;
+  }
+  square.grow();
+  if (square.area() != 16 || square.code() != 14) { return 2; }
+  auto started = std::thread::start([]() -> void {
+    // This thread's own objects, constructed in its own slots.
+    if (square.area() != 9 || made.area() != 16) {
+      worker_result.store(1);
+      return;
+    }
+    square.grow();
+    square.grow();
+    worker_result.store(square.code() == 15 && badge.id == 7 ? 0 : 2);
+  });
+  if (!started.has_value()) { return 3; }
+  mut auto worker = std::move(started).value();
+  if (!worker.join().has_value() || worker_result.load() != 0) { return 4; }
+  // The worker's badge ended at its thread exit: Badge's destructor saw a
+  // Badge, then Plate's saw a Plate. This thread's badge is still live.
+  if (dropped.load() != 102 || badge.id != 7) { return 6; }
+  return square.area() == 16 ? 0 : 5;
+}

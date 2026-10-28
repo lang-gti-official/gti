@@ -1,8 +1,6 @@
-// The upcast carrier forms the native backend runs as well: an upcast
-// argument and a call relaying an interface view, each ending before the
-// carrier moves. A local base or interface view bound to the carrier, an
-// upcast return and a relay through a base-class reference are
-// native-unsupported (GTI-B0003), as their same-class forms are.
+// Upcast arguments to interface and base-class parameters and a call
+// relaying an interface view of a carrier, each ending before the carrier
+// moves; the remaining upcast forms are in carrier_upcast_references.gti.
 #include <std/utility>
 
 interface Gauge { int32_t read(); };

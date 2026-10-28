@@ -50,12 +50,12 @@ def main():
     # A reference of a base or interface type to a carrier borrows the carrier
     # object; each view here ends before the carrier moves.
     upcasts = pathlib.Path(__file__).parent / "fixtures/carrier_upcast_references.gti"
-    cases.append(("upcast-views", upcasts.read_text(),
-                  (0, "6\n6\n6\n6\n6\n5\n15\n", "")))
-    # The upcast forms the native backend runs as well: an upcast argument and
-    # an interface relay, each ending before the carrier moves.
+    # The native backend runs every upcast form as well: local base and
+    # interface views, an upcast return, an upcast argument and an interface
+    # relay, each ending before the carrier moves.
     native_upcasts = pathlib.Path(__file__).parent / "fixtures/carrier_upcast_native.gti"
-    native_cases = [("upcast-native", native_upcasts.read_text(),
+    native_cases = [("upcast-views", upcasts.read_text(), (0, "6\n6\n6\n6\n6\n5\n15\n", "")),
+                    ("upcast-native", native_upcasts.read_text(),
                      (0, "6\n6\n6\n5\n15\n", ""))]
     cases += native_cases
     modes = [(f"{standard}-{level}", ["--std", standard, f"-{level}"], [], cases)

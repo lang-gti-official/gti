@@ -115,8 +115,8 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
     throw std::invalid_argument(
         "LLVM cleanup preflight uses a foreign dispatch session");
   std::vector<HirClassInstanceId> path;
-  const auto visit = [&](const auto &self,
-                         const MirDropType &selected) -> void {
+  const auto visit = [&](const auto &self, const MirDropType &selected,
+                         bool capture) -> void {
     if (selected.polymorphicCleanup) {
       // An owner handle holds no inline hierarchy storage. Its pointee's
       // complete cleanup is proved where that object was allocated.
@@ -129,10 +129,15 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
     if (&selected != &recipe &&
         !containsHierarchyStorage(session.program().mir(), selected.type))
       return;
-    // A payload field step names one exact field of one alternative; its
-    // own recipe is that field's complete cleanup.
+    // A payload field step names one exact field of one alternative, and a
+    // capture step one owned capture of its closure; its own recipe is that
+    // subobject's complete cleanup. A closure environment names its exact
+    // lambda instance.
+    const bool closure = selected.type.kind == SemanticType::Lambda;
     if (selected.recursiveCleanup || selected.uniquePointeeClass ||
-        selected.lambdaInstance || selected.captureIndex ||
+        selected.lambdaInstance.has_value() != closure ||
+        (capture && !selected.captureIndex) ||
+        (selected.captureIndex && !capture && &selected != &recipe) ||
         selected.payloadVariant.has_value() !=
             selected.payloadField.has_value())
       throw BackendUnsupportedError(
@@ -141,6 +146,13 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
         selected.type.kind == SemanticType::Enum
             ? session.program().mir().findPayloadEnum(selected.type)
             : nullptr;
+    const auto *lambda =
+        closure ? closureCleanupInstance(session.program().mir(), selected)
+                : nullptr;
+    if (closure &&
+        (!lambda || lambda->captureTypes.size() != lambda->captureModes.size()))
+      throw std::logic_error(
+          "LLVM closure cleanup lost its sealed lambda identity");
     if (selected.type.kind == SemanticType::Class) {
       const auto &owner = session.layouts().instance(selected.type);
       if (selected.classInstance != owner.id ||
@@ -157,7 +169,8 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
             destructionPhase(session.program().mir(), selected));
       path.push_back(owner.id);
     } else if (selected.requiresActiveCleanup &&
-               selected.type.kind != SemanticType::Array && !payload) {
+               selected.type.kind != SemanticType::Array && !payload &&
+               !closure) {
       throw BackendUnsupportedError(
           "LLVM static cleanup requires addressable class/array recipes");
     }
@@ -182,7 +195,8 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
         throw std::logic_error(
             "LLVM array cleanup lost its sealed element recipe");
     } else if (!selected.aggregate.empty() &&
-               selected.type.kind != SemanticType::Class && !payload) {
+               selected.type.kind != SemanticType::Class && !payload &&
+               !closure) {
       throw BackendUnsupportedError(
           "LLVM static cleanup requires its exact aggregate representation");
     }
@@ -194,6 +208,20 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
                                  CompilerCapabilityTypeKind::MutexStorage)
             : std::nullopt;
     for (const auto &child : selected.aggregate) {
+      if (closure) {
+        // Each closure child is one owned, non-borrowing capture in its slot.
+        if (!child.captureIndex ||
+            *child.captureIndex >= lambda->captureTypes.size() ||
+            lambda->captureTypes[*child.captureIndex] != child.type ||
+            isBorrowingCapture(lambda->captureModes[*child.captureIndex]) ||
+            child.uniqueOwnerField || child.uniqueOwnerBase ||
+            child.payloadVariant || child.payloadField)
+          throw std::logic_error(
+              "LLVM closure cleanup lost an exact owned capture projection");
+        static_cast<void>(session.layouts().get(selected.type));
+        self(self, child, true);
+        continue;
+      }
       if (payload) {
         // Each payload child names one exact field of one alternative.
         if (!child.payloadVariant || !child.payloadField ||
@@ -219,12 +247,12 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
           throw BackendUnsupportedError(
               "LLVM cleanup subobject requires its later capability milestone");
       }
-      self(self, child);
+      self(self, child, false);
     }
     if (selected.type.kind == SemanticType::Class)
       path.pop_back();
   };
-  visit(visit, recipe);
+  visit(visit, recipe, false);
 }
 
 llvm::Function *Lifetimes::cleanupObservation(const MirDropType &recipe) {
@@ -828,12 +856,17 @@ Lifetimes::preflightFreshTransfer(Session &session, Dispatch &dispatch,
   auto transfer =
       planFreshHierarchyTransfer(session.program().mir(), body, instruction);
   if (!transfer.owner) {
-    // A payload enum relocates through its generated relocation, which
-    // rebuilds each hierarchy field's state in the destination.
+    // A payload enum or closure relocates through its generated relocation,
+    // which rebuilds each hierarchy field's or capture's state in the
+    // destination.
     if (transfer.kind != ConstructorKind::Move ||
-        transfer.type.kind != SemanticType::Enum)
+        (transfer.type.kind != SemanticType::Enum &&
+         transfer.type.kind != SemanticType::Lambda))
       throw std::logic_error("LLVM payload transfer lost its relocation");
-    static_cast<void>(session.layouts().payload(transfer.type));
+    if (transfer.type.kind == SemanticType::Enum)
+      static_cast<void>(session.layouts().payload(transfer.type));
+    else
+      static_cast<void>(session.layouts().get(transfer.type));
     preflightGeneratedRelocation(session, dispatch, transfer.type);
     for (const auto identity : {transfer.sourceDrop, transfer.valueDrop})
       if (identity) {

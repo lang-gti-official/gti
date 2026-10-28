@@ -1,0 +1,134 @@
+// A result borrowed from a receiver behind a stored reference field of a
+// formal or local reference carrier borrows that field's referent, as a
+// receiver behind a `this` field does.
+class Box {
+public:
+  mut int64_t value;
+  Box(int64_t value) : value(value) {}
+  mut int64_t& slot() mut { return this.value; }
+  int64_t& peek() { return this.value; }
+};
+class Crate {
+public:
+  mut Box box;
+  Crate(int64_t value) : box(Box(value)) {}
+};
+class Holder {
+public:
+  mut Box& box;
+  Box& shared;
+  Holder(mut Box& box, Box& shared) : box(box), shared(shared) {}
+};
+class Grip {
+public:
+  mut Box& box;
+  Grip(mut Box& box) : box(box) {}
+};
+class Rack {
+public:
+  mut Holder& holder;
+  Rack(mut Holder& holder) : holder(holder) {}
+};
+class Shelf {
+public:
+  mut Crate& crate;
+  mut int64_t visits;
+  Shelf(mut Crate& crate) : crate(crate), visits(int64_t(0)) {}
+};
+class Counter {
+public:
+  mut int64_t value;
+  mut int64_t closes;
+  Counter(int64_t value) : value(value), closes(int64_t(0)) {}
+};
+class Lease {
+  mut Counter& counter;
+public:
+  Lease(mut Counter& counter) : counter(counter) {}
+  ~Lease() { this.counter.closes += int64_t(1); }
+  void set(int64_t value) mut { this.counter.value = value; }
+};
+class Account {
+public:
+  mut Counter counter;
+  Account(int64_t value) : counter(Counter(value)) {}
+  Lease open() mut { return Lease(this.counter); }
+};
+class Teller {
+public:
+  mut Account& account;
+  Teller(mut Account& account) : account(account) {}
+};
+
+void store(mut Holder& holder, int64_t value) { holder.box.slot() = value; }
+int64_t total(Holder& holder) { return holder.box.peek() + holder.shared.peek(); }
+void store_bound(mut Holder& holder, int64_t value) {
+  mut int64_t& slot = holder.box.slot();
+  slot = value;
+}
+void store_value(mut Holder holder, int64_t value) { holder.box.slot() = value; }
+void store_racked(mut Rack& rack, int64_t value) { rack.holder.box.slot() = value; }
+void store_crate(mut Shelf& shelf, int64_t value) {
+  mut int64_t& slot = shelf.crate.box.slot();
+  shelf.visits += int64_t(1);
+  slot = value;
+}
+void open(mut Teller& teller, int64_t value) {
+  mut auto lease = teller.account.open();
+  lease.set(value);
+}
+
+int main() {
+  mut Box first = Box(int64_t(1));
+  Box second = Box(int64_t(2));
+  {
+    mut Holder holder = Holder(first, second);
+    store(holder, int64_t(10));
+    std::println(total(holder));
+    store_bound(holder, int64_t(20));
+    mut Holder& alias = holder;
+    alias.box.slot() = int64_t(21);
+    std::println(total(alias));
+    mut Rack rack = Rack(holder);
+    store_racked(rack, int64_t(22));
+    std::println(first.value);
+  }
+  store_value(Holder(first, second), int64_t(30));
+  std::println(first.value);
+  {
+    // A local holder with one reference field.
+    mut Grip grip = Grip(first);
+    grip.box.slot() = int64_t(60);
+    mut int64_t& field = grip.box.value;
+    field += int64_t(1);
+    mut Box& held = grip.box;
+    held.slot() += int64_t(1);
+  }
+  std::println(first.value);
+  {
+    // A local holder with two reference fields.
+    mut Holder pair = Holder(first, second);
+    pair.box.slot() = int64_t(70);
+    int64_t& shared = pair.shared.value;
+    std::println(shared);
+  }
+  std::println(first.value);
+  mut Crate crate = Crate(int64_t(4));
+  {
+    mut Shelf shelf = Shelf(crate);
+    store_crate(shelf, int64_t(40));
+    store_crate(shelf, int64_t(41));
+    std::println(shelf.visits);
+  }
+  std::println(crate.box.value);
+  mut Account account = Account(int64_t(0));
+  {
+    mut Teller teller = Teller(account);
+    open(teller, int64_t(50));
+    open(teller, int64_t(51));
+    mut auto lease = teller.account.open();
+    lease.set(int64_t(52));
+  }
+  std::println(account.counter.value * int64_t(10) + account.counter.closes);
+  return 0;
+}

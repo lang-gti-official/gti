@@ -31,7 +31,8 @@ def main():
         ("2\n1\n", read_sites[0], "dereference"),
         ("1\n", mut_sites[0], "dereference"),
         ("2\n1\n", read_sites[1], "member_access"),
-        ("1\n", mut_sites[1], "member_access"),
+        # A field read through a mutable owner selects the read-only operator->.
+        ("1\n", read_sites[1], "member_access"),
         ("3\n1\n", mut_sites[1], "member_access"),
         # A read-only reference to `*owner` selects the read-only operator*.
         ("3\n1\n", read_sites[0], "dereference"),

@@ -1,0 +1,32 @@
+// A type alias of a class constructs exactly as the class's own name does,
+// including a constructor whose value parameter infers a function item from
+// a bare function name. Both a user-defined class and std::function_ptr are
+// built through aliases in return and initializer positions.
+#include <std/functional>
+
+class Tag {
+  int64_t value;
+public:
+  Tag<F>(F item) : value(int64_t(7)) {}
+  Tag<F>(int64_t base, F item) : value(base) {}
+  int64_t read() { return this.value; }
+};
+
+using T = Tag;
+using C = std::function_ptr<int64_t(int64_t)>;
+
+int64_t triple(int64_t x) { return x * 3; }
+
+T make_tag() { return T(triple); }
+T make_based(int64_t base) { return T(base, triple); }
+C make_pointer() { return C(triple); }
+
+int main() {
+  T returned = make_tag();
+  T initialized = T(triple);
+  std::println(returned.read() + initialized.read() + make_based(int64_t(5)).read());
+  C pointer = make_pointer();
+  C local = C(triple);
+  std::println(pointer(int64_t(2)) + local(int64_t(3)));
+  return 0;
+}

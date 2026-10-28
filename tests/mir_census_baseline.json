@@ -40,7 +40,7 @@
     "039-raw-pointers.gti": 9,
     "040-loan-flow-edges.gti": 144,
     "041-owner-dependencies.gti": 28,
-    "042-exclusive-reborrows.gti": 55,
+    "042-exclusive-reborrows.gti": 56,
     "043-program-arguments.gti": 180,
     "044-bounded-requires.gti": 131,
     "045-layout-queries.gti": 8,
@@ -145,7 +145,7 @@
     "146-counted-text-view-iteration.gti": 153,
     "147-standard-library-import.gti": 452,
     "148-nested-configuration.gti": 604,
-    "149-interface-static-factories.gti": 92,
+    "149-interface-static-factories.gti": 93,
     "150-out-of-class-methods.gti": 142,
     "150-protected-events.gti": 32,
     "151-c-string-import.gti": 167,
@@ -174,5 +174,5 @@
     "174-typed-macros.gti": 211,
     "175-thread-local-storage.gti": 274
   },
-  "total": 24120
+  "total": 24122
 }
