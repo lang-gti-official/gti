@@ -9,18 +9,20 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.486.1 - Native copies of global objects and nested holder borrows
+
+- The native backend now copies objects of derived, polymorphic and
+  interface-implementing classes out of global storage and out of fields.
+  This covers `Square c = global;`, a static field, a `thread_local`
+  initialized from a global, and `Twice t = holder.held;`. These previously
+  failed with `GTI-B0003` although the C++ backend ran them. Copying an
+  element out of a fixed array is still refused.
+- A borrow through a reference field of a holder returned by an accessor, as
+  in `outer.inner().box.slot() = 4;` or `outer->box.slot()`, no longer fails
+  with an internal compiler error (`GTI-B0001`). It runs on the native
+  backend. The C++ backend still fails on it.
+
 ## 0.486.0 - Read-only arrow steps, closure copies, projected references and capture ranges
-
-### Text relays of a by-value formal's text field
-
-- A function that returns a text field of a by-value class parameter through a
-  call that relays text, such as
-  `std::string_view f(Label label) { return relay(label.text); }`, now
-  compiles instead of failing with the internal error `GTI-B0001`. The result
-  is the caller's text, as for `return label.text;`: a caller passing a
-  `Label` that holds an owner's view keeps that owner borrowed while the
-  result lives (`GTI-S2017`) and cannot return the result past the owner
-  (`GTI-S2045`).
 
 ### Native views of borrow carriers and interface text witnesses
 

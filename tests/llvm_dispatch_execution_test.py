@@ -299,6 +299,8 @@ int main() {
     "array-former-reject": (PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n", 1),
     "global-former-reject": (PLAIN + "Plain value{};\nint main() { return value.read(); }\n", 1),
     "thread-local-former-reject": (PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n", 1),
+    "thread-local-copy-former-reject": (PLAIN + "Plain global{};\nthread_local Plain copy = global;\nint main() { return copy.read(); }\n", 1),
+    "global-copy-former-reject": (PLAIN + "Plain global{};\nint main() { Plain copy = global; return copy.read(); }\n", 1),
     # A moved owned local with active cleanup leaves through the return edge.
     "returned-owned-move": ("""mut int dropped = 0;
 class Owned {
@@ -665,9 +667,9 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     # returning a payload value by value still transports its objects.
     "reject-payload-copy": PLAIN + "enum Mark { none, held(Plain value) };\nint main() { Mark first = Mark::held(Plain()); Mark second = first; switch (second) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-payload-return": PLAIN + "enum Mark { none, held(Plain value) };\nMark make() { return Mark::held(Plain()); }\nint main() { Mark mark = make(); switch (mark) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
-    # A thread-local object copied from program storage is not a fresh
-    # construction in its slot, and a copy from a symbol has no planned source.
-    "reject-thread-local-copy": PLAIN + "Plain global{};\nthread_local Plain copy = global;\nint main() { return copy.read(); }\n",
+    # An element of a fixed array is selected through a checked index; a copy
+    # of it is not yet planned, on either backend.
+    "reject-element-copy": PLAIN + "Plain values[2] = {Plain(), Plain()};\nint main() { Plain copy = values[1]; return copy.read(); }\n",
     # MIR stages owned base arguments and forwarded class or enum references,
     # but still leaves these base initializers unstaged: an owned argument
     # beside a reference formal, a borrow carrier passed by value and an array
@@ -2423,7 +2425,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "array-former-reject"),
         "program-hierarchy-storage": (
             "program-storage", "program-storage-failure", "global-former-reject",
-            "thread-local-former-reject"),
+            "thread-local-former-reject", "thread-local-copy-former-reject",
+            "global-copy-former-reject"),
         "thread-local-hierarchy-storage": ("thread-local-hierarchy-storage",),
         "closure-transfers": (
             "closure-transfers", "closure-transfer-failure", "closure-transfer-wrong-cleanup"),
