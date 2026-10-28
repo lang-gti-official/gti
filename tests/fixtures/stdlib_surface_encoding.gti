@@ -59,7 +59,7 @@ int check_utf8() {
 
   auto eof = std::encoding::utf8::decode("a", std::size_t(1));
   auto beyond = std::encoding::utf8::decode("a", std::size_t(2));
-  auto extreme = std::encoding::utf8::decode("a", std::size_t(0xffffffffffffffff));
+  auto extreme = std::encoding::utf8::decode("a", ~std::size_t(0));
   if (eof || eof.error().code != errc::unexpected_end || eof.error().offset != 1 ||
       beyond || beyond.error().code != errc::invalid_offset || beyond.error().offset != 2 ||
       extreme || extreme.error().code != errc::invalid_offset) { return 12; }
