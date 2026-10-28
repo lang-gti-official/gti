@@ -11,6 +11,28 @@ for what minor and patch releases mean.
 
 ## 0.486.0 - Read-only arrow steps, projected references and capture ranges
 
+### Native copies of hierarchy objects in closures
+
+### Native copies and moved closures of hierarchy objects
+
+- The native backend now builds by-copy lambda captures of derived,
+  polymorphic and interface-implementing objects, such as `[dial, twice]`,
+  and copies of such closures (`auto again = reader;`). Each copy gets its own
+  dispatch state, so later changes to the source are not seen. Copies passed
+  by value, captured by another closure or placed in a fixed array now build
+  too. These previously failed with `GTI-B0003`, and the C++ backend fails on
+  them as well.
+- A closure holding a moved object can now be passed on by value, returned,
+  or captured again by another closure. Its captures are destroyed exactly
+  once.
+- `thread_local` objects of such classes now build natively, and each thread
+  constructs its own. Their destructors run at thread exit, and each
+  destructor sees its own class. A `thread_local` initialized by copying a
+  global object is still refused with `GTI-B0003`.
+- A constructor that stores a by-value parameter of such a class in a field,
+  as in `Box(Plain held) : held(std::move(held))`, no longer fails with an
+  internal compiler error (`GTI-B0001`) on the native backend.
+
 ### References to fields of returned references
 
 - A reference bound to a field of a call's returned reference now compiles

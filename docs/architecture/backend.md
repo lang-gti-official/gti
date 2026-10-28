@@ -5228,9 +5228,32 @@ selects each by-value capture in place as a complete object. Moving the
 closure relocates every capture through the closure's generated relocation;
 this covers a whole closure binding moved into a fresh local and a by-value
 closure parameter moved into a managed-thread spawn. The closure's cleanup
-ends its captures in reverse declaration order. A by-copy capture of a
-hierarchy object has no typed relocation and stays `PolymorphicTransfer`, as
-do closure copies.
+ends its captures in reverse declaration order.
+
+A moved closure binding also relocates into a by-value argument's prepared
+storage, through a return into its caller's destination, and into its slot of
+another closure, whose body calls it in place as an owned capture. Each
+publication must take the moved value's drop obligation: the prepared
+parameter's, the return's transfer-out, or the outer aggregate's.
+
+Copies of hierarchy storage use the generated copy and never transport bytes.
+A by-copy capture `[leaf]` of a complete object reads a checked source. If the
+class has a generated inert copy, the generated logical-field copy writes the
+capture slot and installs the copy's own dispatch state. A closure copies
+capture by capture: hierarchy captures with that copy, borrowing captures as
+addresses, and other captures as passive bits. A closure with a capture that
+needs active cleanup is move-only, so it never copies. The same copy publishes
+in the following places:
+- a whole closure binding or owned closure capture copied into a fresh local;
+- a class or closure copied from a checked object into a by-value argument's
+  prepared storage;
+- a closure captured by copy into another closure;
+- an element of a fresh array copied from a checked object.
+
+A constructor field initialized from an inert by-value parameter has no
+rollback obligation. MIR records no drop and no lifecycle transition for it,
+so the planner publishes it without one. Before this change, admission passed
+it and the planner raised an internal error.
 
 Hierarchy metadata also covers classes that hold borrowed state, such as a
 reference field beside an inline polymorphic object. A reference or view is an
@@ -5264,8 +5287,17 @@ upcast return and a relay through a base-class reference stay refused
 `NativeProgramHierarchyStorage` admits a hierarchy object in namespace or
 static-field storage that its program initialization step constructs in
 place. Code borrows that complete object through its symbol. Program storage
-carries no source or owning cleanup. Thread-local hierarchy storage stays
-`PolymorphicTransfer`.
+carries no source or owning cleanup.
+
+`NativeThreadLocalHierarchyStorage` admits a hierarchy object in thread-local
+storage. Each thread's dynamic initializer constructs it directly in that
+thread's slot as a fresh construction or by-value result, so every thread's
+object installs its own dispatch state. Code borrows it through its symbol as
+a complete object. At thread exit, its cleanup runs each destructor under the
+lifecycle phase of that destructor's own class, as any other complete cleanup
+does. A thread-local initialized by copying program storage stays
+`PolymorphicTransfer`, because the transfer planner has no source view of a
+symbol.
 
 A shared owner of a polymorphic object keeps one control block across clones
 and verified upcasts. An upcast moves only the handle's view to the static
@@ -5282,7 +5314,8 @@ closure's relocation moves exactly its captures.
 - replacement of base views;
 - captures and non-generated wrappers;
 - whole-array transport;
-- thread-local and other nonlocal destinations;
+- copies of program storage, including into thread-local storage, and other
+  nonlocal destinations;
 - callback, native and thread combinations, including a moved erased callable
   consumed by a thread spawn.
 

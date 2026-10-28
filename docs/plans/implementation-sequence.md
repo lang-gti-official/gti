@@ -11764,10 +11764,30 @@ them, with mutation through a relayed mutable reference and overrides that
 select different storage. `llvm_admission` checks that static and virtual
 calls get the same witnesses and that forged selections never gain admission.
 
+Copies and moved closures of hierarchy storage beyond C++ parity closed on
+2026-10-28. By-copy captures, closure copies and class copies into by-value
+arguments or array elements now use the generated logical-field copy, which
+installs each copy's own dispatch state. A moved closure relocates into a
+by-value argument, through a return or into another closure. Thread-local
+hierarchy objects are built in each thread's slot, and their destructors run
+at thread exit, each observing its own class. The C++
+backend fails on all of these, so the `closure-transfers` and
+`thread-local-hierarchy-storage` cases of `llvm_dispatch_execution` check
+their own results natively. Before this change, a constructor field taking an
+inert hierarchy parameter raised an LLVM internal error; it now runs.
+Copies of program storage stay refused, including a thread-local initialized
+from a global, and `reject-thread-local-copy` pins that refusal.
+The 18 wrong-code matrices at `--jobs 2`, before and after this change, have
+809 cells each. Neither run has a `PolymorphicTransfer` refusal, wrong code or
+a new refusal; three unrelated refusals are parity gaps in both. None of the
+matrices' axes exercises these shapes. The 19 user-defined probes behind
+these cases went from 14 `PolymorphicTransfer` refusals and 5 internal errors
+to all running natively.
+
 Base-view replacement, exchange and swap, enum copies, enums moved into
-arguments or returns, payload values returned by value, by-copy captures of
-hierarchy objects, closure copies, thread-local hierarchy objects and
-observable pure phases stay `PolymorphicTransfer` or `PureDispatchState`.
+arguments or returns, payload values returned by value, copies of program
+storage and observable pure phases stay `PolymorphicTransfer` or
+`PureDispatchState`.
 Exchange and swap of a polymorphic class with derived classes are a semantic
 error for now (`GTI-S2018`, owner decision 2026-10-28), even for complete
 objects, because the generic bodies cannot tell them from base views;

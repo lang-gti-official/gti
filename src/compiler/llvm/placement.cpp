@@ -15,8 +15,12 @@
 namespace lang::native_llvm {
 bool isFreshObjectProducer(const MirProgram &program,
                            const MirInstruction &producer) {
+  // A closure returned by value is published by its callee in the result
+  // destination like a class result.
   if (producer.tombstone || !producer.result || producer.destination ||
-      producer.info.type.kind != SemanticType::Class ||
+      (producer.info.type.kind != SemanticType::Class &&
+       !(producer.info.type.kind == SemanticType::Lambda &&
+         producer.kind == MirInstructionKind::Call)) ||
       producer.info.category != ValueCategory::Value)
     return false;
   // A construction's loan is the borrow its new object stores; the object
@@ -412,9 +416,12 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
   if ((returned && replacing) || (aggregate && returned))
     return {};
   if (returned) {
+    // A thread-local initializer constructs its object directly in the
+    // thread's storage slot, which its caller passes as the result.
     if (!target || !target->returned || body.returnType != producer.info.type ||
         (address.kind != MirBodyKind::Function &&
-         address.kind != MirBodyKind::Lambda))
+         address.kind != MirBodyKind::Lambda &&
+         address.kind != MirBodyKind::ThreadLocalInitializer))
       return {};
     return FreshObjectStorage::Returned;
   }
@@ -1280,7 +1287,16 @@ public:
         unsupported(
             "LLVM copy must preserve its source ownership and lifetime");
     }
-    if (local || argument) {
+    // An inert field a constructor initializes has no rollback obligation
+    // to publish into: MIR records no drop for its slot and no transition.
+    const bool unobligatedField =
+        field && result.publication->lifecycle.empty() && !result.valueDrop &&
+        !owner.requiresActiveCleanup &&
+        std::none_of(body.dropObligations.begin(), body.dropObligations.end(),
+                     [&](const auto &obligation) {
+                       return obligation.place == destination->id;
+                     });
+    if ((local || argument) && !unobligatedField) {
       const auto &events = result.publication->lifecycle;
       if (events.size() != 1 || events.front().conditional ||
           events.front().failureCleanup || !events.front().target ||
@@ -1580,6 +1596,9 @@ private:
     // closure is the task a managed-thread spawn relocates into its box.
     const MirInstruction *publication = nullptr;
     bool task = false;
+    bool argument = false;
+    bool element = false;
+    std::size_t elementIndex = 0;
     for (const auto &block : body.blocks)
       for (const auto &stage : block.instructions) {
         if (stage.tombstone)
@@ -1602,7 +1621,25 @@ private:
               stage.operands.size() == 2 && !stage.destination &&
               !stage.receiver && stage.scopedThreadTasks.empty())
             task = true;
-          else if (stage.kind != MirInstructionKind::Initialize ||
+          // A moved closure passed on by value relocates into the exact
+          // prepared slot of its by-value parameter.
+          else if (type.kind == SemanticType::Lambda &&
+                   stage.kind == MirInstructionKind::CallInput &&
+                   stage.callInputKind == HirCallInputKind::MoveValue &&
+                   stage.callInputRole == MirCallInputRole::Argument &&
+                   stage.destination && stage.preparedParameterDrop &&
+                   stage.result && stage.operands.size() == 1 &&
+                   stage.info.type == type)
+            argument = true;
+          // A moved closure captured again by value relocates into its slot
+          // of the fresh outer closure environment.
+          else if (type.kind == SemanticType::Lambda &&
+                   isFreshHierarchyAggregate(program, stage) &&
+                   stage.operation == MirOperation::Closure &&
+                   elementSlot(stage, index) == type) {
+            element = true;
+            elementIndex = index;
+          } else if (stage.kind != MirInstructionKind::Initialize ||
                    !stage.destination || stage.operands.size() != 1 ||
                    stage.info.type != type)
             unsupported("LLVM payload relocation requires one fresh local "
@@ -1612,7 +1649,29 @@ private:
         if (stage.receiver && stage.receiver->value == *producer.result)
           unsupported("LLVM payload relocation result supplies a receiver");
       }
-    if (!publication)
+    // A moved closure returned by value relocates into the caller's
+    // destination through the return edge.
+    bool returned = false;
+    if (type.kind == SemanticType::Lambda)
+      for (const auto &block : body.blocks)
+        if (block.terminator.kind == MirTerminatorKind::Return &&
+            block.terminator.value &&
+            block.terminator.value->value == *producer.result) {
+          if (publication || returned ||
+              block.terminator.value->kind != MirOperandKind::Value ||
+              block.terminator.value->type != type ||
+              body.returnType != type ||
+              identity.kind != MirBodyKind::Function)
+            unsupported("LLVM transfer requires one direct consumer");
+          returned = true;
+        }
+    if (returned) {
+      if (result.valueDrop && !returnedObligation(result.valueDrop))
+        unsupported("LLVM returned transfer must release its value "
+                    "obligation at the return");
+      result.publishes = FreshHierarchyPublication::Returned;
+    }
+    if (!publication && !returned)
       unsupported("LLVM payload relocation has no fresh local publication");
     if (task) {
       // The moved closure waits in its own value storage until the spawn
@@ -1625,10 +1684,58 @@ private:
       result.publication = publication;
       result.publishes = FreshHierarchyPublication::Task;
     }
-    const auto *destination =
-        task ? nullptr : body.findPlace(*publication->destination);
+    if (element) {
+      // The outer closure takes the moved value's obligation as its own.
+      if (result.valueDrop &&
+          std::none_of(publication->lifecycle.begin(),
+                       publication->lifecycle.end(), [&](const auto &event) {
+                         return event.kind ==
+                                    MirLifecycleEventKind::TransferOut &&
+                                event.source == result.valueDrop &&
+                                !event.target && !event.conditional &&
+                                !event.failureCleanup;
+                       }))
+        unsupported("LLVM element transfer must hand its value obligation "
+                    "to its aggregate");
+      result.publication = publication;
+      result.publishes = FreshHierarchyPublication::Element;
+      result.element = elementIndex;
+    }
+    if (argument) {
+      const auto *slot = body.findPlace(*publication->destination);
+      const auto *prepared =
+          body.findDropObligation(*publication->preparedParameterDrop);
+      const auto &events = publication->lifecycle;
+      if (!slot || slot->root != MirPlaceRootKind::Temporary ||
+          !slot->projections.empty() || slot->capture ||
+          slot->foreignStorage || slot->type != type ||
+          slot->initiallyAvailable || !prepared ||
+          prepared->kind != MirDropObligationKind::PreparedParameter ||
+          prepared->place != slot->id)
+        unsupported("LLVM transfer argument is not its exact prepared slot");
+      if (events.size() != 1 || events.front().conditional ||
+          events.front().failureCleanup ||
+          events.front().target != prepared->id ||
+          events.front().source != result.valueDrop ||
+          events.front().kind != (result.valueDrop
+                                      ? MirLifecycleEventKind::Reparent
+                                      : MirLifecycleEventKind::Initialize) ||
+          publication->receiver || publication->loan ||
+          publication->constructorTarget || publication->functionTarget ||
+          publication->intrinsic != IntrinsicKind::None ||
+          publication->operation != MirOperation::None ||
+          !publication->definedFailure.empty())
+        malformed("LLVM transfer lost its exact destination publication "
+                  "lifecycle");
+      result.publication = publication;
+      result.destination = slot->id;
+      result.publishes = FreshHierarchyPublication::Argument;
+    }
+    const auto *destination = task || argument || element || returned
+                                  ? nullptr
+                                  : body.findPlace(*publication->destination);
     const auto *formal = parameters;
-    if (!task &&
+    if (!task && !argument && !element && !returned &&
         (!destination || destination->root != MirPlaceRootKind::Binding ||
          !destination->binding || destination->capture ||
          destination->foreignStorage || !destination->projections.empty() ||
@@ -1639,7 +1746,7 @@ private:
                               destination->binding) != formal->end())))
       unsupported("LLVM payload relocation destination is not a fresh whole "
                   "local");
-    if (!task &&
+    if (!task && !argument && !element && !returned &&
         (publication->result || publication->receiver || publication->loan ||
          publication->constructorInitializer ||
          publication->constructorTarget || publication->functionTarget ||
@@ -1652,7 +1759,7 @@ private:
          publication->replacementCleanup || publication->replacementPair ||
          !publication->definedFailure.empty()))
       unsupported("LLVM transfer publication has additional effects");
-    if (!task) {
+    if (!task && !argument && !element && !returned) {
       const auto *published = bindingObligation(*destination);
       const auto &events = publication->lifecycle;
       if (events.empty() ? published || result.valueDrop
@@ -1703,7 +1810,8 @@ private:
         return operand.value == *producer.result;
       };
       const auto &term = block.terminator;
-      if ((term.value && used(*term.value)) ||
+      if ((term.value && used(*term.value) &&
+           !(returned && term.kind == MirTerminatorKind::Return)) ||
           std::any_of(term.targetArguments.begin(), term.targetArguments.end(),
                       used) ||
           std::any_of(term.elseArguments.begin(), term.elseArguments.end(),
@@ -2231,10 +2339,14 @@ void Placement::collect(const MirProgram *program, const MirBody &body) {
   // A payload construction always produces a payload enum, and a closure its
   // environment, which live in memory even where no program classifies the
   // type.
+  // A call returning a closure by value produces an environment in memory too.
   const auto payloadAggregate = [](const MirInstruction &stage) {
-    return stage.kind == MirInstructionKind::Compute &&
-           (stage.operation == MirOperation::PayloadConstruct ||
-            stage.operation == MirOperation::Closure);
+    return (stage.kind == MirInstructionKind::Compute &&
+            (stage.operation == MirOperation::PayloadConstruct ||
+             stage.operation == MirOperation::Closure)) ||
+           (stage.kind == MirInstructionKind::Call &&
+            stage.info.type.kind == SemanticType::Lambda &&
+            stage.info.category == ValueCategory::Value);
   };
   for (const auto &block : body.blocks)
     for (const auto &stage : block.instructions)
