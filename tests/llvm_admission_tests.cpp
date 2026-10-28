@@ -2865,6 +2865,91 @@ int main() { Base value{}; return invoke(value); }
       "a possible override's unsupported transitive helper remains required");
 }
 
+// A view returned through a virtual call keeps the loan source the static
+// call's view has: its Return loan is borrow metadata either way, and MIR
+// verification rejects any forged relay before admission sees it.
+void testVirtualTextRelayReturns() {
+  using namespace lang;
+  const auto relay = [](bool dispatched) {
+    return std::string(R"(
+#include <std/string>
+class Base {
+public:
+  std::string text;
+  Base() : text(std::string("ann")) {}
+  )") + (dispatched ? "virtual " : "") + R"(std::string_view name() { return this.text.view(); }
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+};
+std::string_view call(Base& n) { return n.name(); }
+int main() {
+  Derived p{};
+  std::string_view v = call(p);
+  return int(v.size()) - 3;
+}
+)";
+  };
+  std::vector<std::string> witnesses[2];
+  for (const bool dispatched : {false, true}) {
+    const auto plan = planLlvmAdmission(lower(relay(dispatched), true));
+    expect(plan.admitted(), dispatched
+                                ? "a virtual call's returned view is admitted"
+                                : "a static call's returned view is admitted");
+    for (const auto &use : plan.requirements())
+      if (use.required && use.entry->key() == "MirLoanKind.Return")
+        witnesses[dispatched].push_back(
+            use.implementedShape ? std::string(use.implementedShape->name)
+                                 : std::string("<none>"));
+    if (!dispatched)
+      continue;
+    // Forged relays never reach admission: the Return loan must escape, the
+    // return must name it, and its Borrow must relay the returned value.
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto changed = plan.program().mir();
+      bool forged = false;
+      for (const auto address : plan.requiredBodies()) {
+        auto &body = *findMirBody(changed, address);
+        for (auto &loan : body.loans) {
+          if (loan.kind != MirLoanKind::Return || forged)
+            continue;
+          if (mutation == 0) {
+            loan.escapes = false;
+            forged = true;
+          } else if (mutation == 1) {
+            for (auto &block : body.blocks)
+              if (block.terminator.returnLoan == loan.id) {
+                block.terminator.returnLoan = 999999;
+                forged = true;
+              }
+          } else {
+            for (auto &block : body.blocks)
+              for (auto &stage : block.instructions)
+                if (stage.loan == loan.id &&
+                    stage.kind == MirInstructionKind::Borrow &&
+                    stage.operands.size() == 1) {
+                  stage.operands.front().loan = loan.id;
+                  forged = true;
+                }
+          }
+        }
+        if (forged)
+          break;
+      }
+      expect(forged && !verifyMirProgram(changed).valid(),
+             "forged view relay " + std::to_string(mutation) +
+                 " fails program verification");
+    }
+  }
+  expect(!witnesses[1].empty() && witnesses[0] == witnesses[1] &&
+             std::all_of(witnesses[1].begin(), witnesses[1].end(),
+                         [](const auto &name) {
+                           return name == "NativeBorrowMetadata";
+                         }),
+         "a virtual call's returned view has the static call's witness");
+}
+
 void testHierarchyReferenceReturns() {
   using namespace lang;
   const auto plan = planLlvmAdmission(lower(R"(
@@ -3464,6 +3549,7 @@ int main() {
     testDispatchStateDependencies();
     testVirtualCallDependencies();
     testHierarchyReferenceReturns();
+    testVirtualTextRelayReturns();
     testConservativeClassWitnesses();
     testDispatchPerUseWitnesses();
   } catch (const std::exception &error) {

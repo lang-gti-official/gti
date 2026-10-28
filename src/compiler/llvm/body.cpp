@@ -618,10 +618,12 @@ private:
     }
     if (transfer.publishes == FreshHierarchyPublication::Receiver ||
         transfer.publishes == FreshHierarchyPublication::Replacement ||
-        transfer.publishes == FreshHierarchyPublication::Task) {
+        transfer.publishes == FreshHierarchyPublication::Task ||
+        transfer.publishes == FreshHierarchyPublication::Exchange) {
       // The moved object lives in this value's own storage, which the
-      // consuming call receives, the replacing assignment relocates or the
-      // spawn relocates into its task box, and the value obligation
+      // consuming call receives, the replacing assignment relocates, the
+      // spawn relocates into its task box or the restoring exchange
+      // relocates into the place it vacates, and the value obligation
       // otherwise drops.
       if (target || transfer.source != instruction.operands.front())
         throw BackendUnsupportedError("LLVM consumed receiver lost its exact "

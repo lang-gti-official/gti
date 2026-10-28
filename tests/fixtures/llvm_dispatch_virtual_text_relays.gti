@@ -1,0 +1,68 @@
+#include <std/string>
+
+// A view a virtual call returns keeps the loan source a static call's view
+// has: the receiver's referent or the relayed argument. Each caller uses the
+// returned view after the call while its owner still lives.
+class Base {
+public:
+  std::string text;
+  Base(std::string_view text) : text(text) {}
+  virtual std::string_view name() { return this.text.view(); }
+};
+
+class Derived : public Base {
+public:
+  Derived(std::string_view text) : Base(text) {}
+  std::string_view name() override { return this.text.view(); }
+};
+
+interface Labeled {
+  std::string_view label();
+};
+
+class Fixed : public Labeled {
+public:
+  Fixed() {}
+  std::string_view label() override { return "fixed"; }
+};
+
+class Picker<T> {
+public:
+  int32_t n;
+  Picker() : n(0) {}
+  virtual T pick(T a) { return a; }
+};
+
+class Same : public Picker<std::string_view> {
+public:
+  Same() : Picker<std::string_view>() {}
+  std::string_view pick(std::string_view a) override { return a; }
+};
+
+// A virtual root relays its receiver.
+std::string_view call(Base& n) { return n.name(); }
+
+// A borrowed caller relays that relay again.
+std::string_view outer(Base& n) { return call(n); }
+
+// An interface root without a body relays nothing: its views are ownerless.
+std::string_view label(Labeled& item) { return item.label(); }
+
+
+int main() {
+  Derived owned{"ann"};
+  std::string_view first = call(owned);
+  Base plain{"bo"};
+  std::string_view second = outer(plain);
+  Fixed fixed{};
+  std::string_view third = label(fixed);
+  // A generic root relays its argument.
+  Same same{};
+  Picker<std::string_view>& picker = same;
+  std::string owner{"cy"};
+  std::string_view fourth = picker.pick(owner.view());
+  return first == "ann" && second == "bo" && third == "fixed" &&
+                 fourth == "cy"
+             ? 0
+             : 1;
+}

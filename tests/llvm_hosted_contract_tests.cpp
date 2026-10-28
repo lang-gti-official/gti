@@ -876,8 +876,11 @@ struct Owner {
                       }),
               "text cannot escape, mutate or move its ordinary class witness");
     }
-    const auto unsupported =
-        analyze("unsupported-text-owner-layout.gti", std::string(R"(
+    // A complete polymorphic witness with cleanup is addressed through its
+    // exact dispatch metadata, and the text's returned loan is borrow
+    // metadata: no owner bytes are read or copied.
+    const auto polymorphic = analyze("polymorphic-text-owner.gti", std::string(
+                                                                       R"(
 #include <std/memory>
 #include <std/string_view>
 struct Owner {
@@ -888,6 +891,31 @@ struct Owner {
 int main() {
   Owner owner{};
   char bytes[3] = {'a', '\0', 'b'};
+)") + type + " result = unsafe { " + construct + " }; return " + use + "; }");
+    require(polymorphic.canGenerateCode(),
+            "polymorphic text witness is valid source");
+    const auto admitted = verifiedLoweredProgram(
+        gti_test::lowerProgram(polymorphic, polymorphic.mir, polymorphic.mir),
+        issues);
+    require(admitted && planLlvmAdmission(*admitted).admitted(),
+            "text construction admits a complete polymorphic class witness");
+    // An interface view of the owner is outside the witness boundary.
+    const auto unsupported =
+        analyze("unsupported-text-owner-layout.gti", std::string(R"(
+#include <std/memory>
+#include <std/string_view>
+interface Observed {
+  int observe();
+};
+struct Owner : public Observed {
+  int tag = 22;
+  int observe() override { return this.tag; }
+  ~Owner() {}
+};
+int main() {
+  Owner concrete{};
+  Observed& owner = concrete;
+  char bytes[3] = {'a', '\0', 'b'};
 )") + type + " result = unsafe { " + construct + " }; return " +
                                                          use + "; }");
     require(unsupported.canGenerateCode(),
@@ -897,7 +925,7 @@ int main() {
         issues);
     require(
         pending && !planLlvmAdmission(*pending).admitted(),
-        "text construction does not admit unsupported class witness layouts");
+        "text construction does not admit an interface view as its witness");
   }
 }
 
