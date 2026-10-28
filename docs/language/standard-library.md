@@ -1573,19 +1573,21 @@ The following component families remain planned or incomplete:
   explicit text decoding, and further structured I/O; public formatter
   customization, mutable buffers and buffered reader/writer adapters exist;
 - recursive filesystem copy/iteration and permission editing, calendar/time-zone breadth, random distributions and engine
-  breadth, connected networking, traffic buffers, atomic wait/notify, pointer
+  breadth, connected networking, traffic buffers, pointer
   atomics and fences, safe scoped condition variables, safe recursive mutexes,
   read/write mutexes, stop tokens, detached tasks, persistent worker pools,
-  typed thread-entry argument packs,
-  and broader threading;
+  further typed thread-entry argument profiles
+  and broader threading; scalar atomic wait/notify, synchronous scoped borrowed
+  tasks and admitted per-thread storage are implemented;
 - allocator-aware variants of containers other than `resource_vector`,
   runtime-polymorphic or concurrent resources, returning resource owners from
   factory functions, generation-bearing pool handles, and heterogeneous arenas;
 - broader native interoperability beyond the current bounded records, opaque
   handles, pointers, C strings, returned fixed arrays, and same-thread
   callbacks and indirect native invocation, including ownership transfer, array
-  parameters, varargs, alternate calling conventions, native variables, and
-  direct C++ linkage.
+  parameters, varargs, alternate calling conventions, TLS/volatile/top-level-array
+  foreign objects, and direct C++ linkage. Ordinary native variables are
+  implemented under the native-interop unsafe access contract.
 
 Implicit allocating container copies, optional copy/assignment and custom
 copy/move bodies are not automatic completion requirements: current GTI uses

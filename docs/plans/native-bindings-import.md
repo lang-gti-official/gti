@@ -1,22 +1,25 @@
 # Native Bindings Import (`gti bindgen`)
 
-Status: C-01 through C-07, BUILD-01 and C-08A implemented (bounded C17 declaration import,
+Status (reconciled 2026-10-28): C-01 through C-07, BUILD-01, C-08A and
+C-08B ordinary foreign objects implemented (bounded C17 declaration import,
 target-selected LP64/LLP64 mapping, Clang-driver preprocessing with ordered
 translation-unit inputs, exact opaque-handle out parameters sufficient for an
 end-to-end SQLite open/prepare/step/finalize/close client, and the libclang
 declaration reader of ADR 021 replacing the bootstrap parser, source provenance
 and include policy, manifest-driven generation/reuse, native indirect invocation
 and recursive pointer/native-scalar families). Remaining work includes bindgen
-facts in `gti metadata`, C-08B foreign storage and the CPP-01/02 policy/import
+facts in `gti metadata`, TLS/volatile/top-level-array foreign-storage profiles
+and the CPP-01/02 policy/import
 milestones below. The standalone generator and manifest integration are already
 clients of the same reader/planner; neither needs a second bootstrap phase.
 
 ## Problem
 
-GTI can already *export* its bounded C ABI surface as a native bridge header
-(`--emit-native-header`), but a package that wants to call an existing C
-library must hand-write the `extern "C"` declarations, `[[c_abi]]` records,
-and `[[c_opaque]]` handles that mirror the library's header. Every language
+Original motivation: GTI could export its bounded C ABI surface as a native
+bridge header (`--emit-native-header`), while importing a C header required
+handwritten declarations. The implemented `gti bindgen` reader/planner now
+generates the admitted `extern "C"` declarations, `[[c_abi]]` records,
+`[[c_opaque]]` handles and ordinary foreign-object declarations. Every language
 with serious native interoperation automates this direction (Rust `bindgen`,
 Zig `translate-c`, D `importC`). The import tool reads a C header and
 generates the GTI declarations for its bounded-ABI-compatible surface,
