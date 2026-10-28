@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.7 - Borrows through a local object's reference fields
+
+- A borrow through a reference field of a local object now compiles instead
+  of failing with an internal compiler error (`GTI-B0001`). This covers
+  `holder.box.slot() = value;`, `mut int64_t& v = holder.box.value;` and
+  `mut Box& b = holder.box;` where `holder` is a local `Holder` with a
+  `mut Box&` field, including a holder with several reference fields.
+- A generic function that returns a closure it received by value now compiles
+  when the closure borrows a local, as in `F identity<F>(F f) { return f; }`
+  called with `[&s]`, and also when written `return std::move(f);`, including
+  with a `mut F` parameter. The language is unchanged.
+
 ## 0.484.6 - Borrows through reference fields and returned closures
 
 - Calling a method through a reference field of a parameter now compiles
