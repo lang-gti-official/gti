@@ -9,9 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.486.0 - Read-only arrow steps, projected references and capture ranges
-
-### Native copies of hierarchy objects in closures
+## 0.486.0 - Read-only arrow steps, closure copies, projected references and capture ranges
 
 ### Native copies and moved closures of hierarchy objects
 
