@@ -1,0 +1,153 @@
+#include <std/functional>
+#include <std/memory>
+#include <std/polymorphic>
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+// Restoring exchanges of whole objects containing hierarchy storage. The
+// by-value replacement waits in its own storage until the exchange relocates
+// it into the place it vacates, and the previous object is relocated directly
+// into the caller's destination. Each relocation rebuilds dispatch state in
+// its destination. Exchanged places are complete objects: vector elements,
+// fields and referents of classes nothing derives from. Destructors record
+// explicit IDs, so each object ends exactly once.
+mut int events = 0;
+mut int live = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Shape { int area(); };
+interface Named { int code(); };
+
+// Named precedes Shape, so the Shape view has a nonzero offset.
+class Square : public Named, public Shape {
+  int side;
+  std::unique_ptr<int> label;
+public:
+  Square(int side) : side(side), label(std::make_unique<int>(side + 1)) { live += 1; }
+  ~Square() { record(this.side); live -= 1; }
+  int code() override { return *this.label; }
+  int area() override { return this.side * this.side; }
+};
+
+Square make(int side) { return Square(12 / side); }
+
+// A record without dispatch state that holds a polymorphic field.
+class Frame {
+public:
+  mut Square square;
+  int tag;
+  Frame(int side, int tag) : square(Square(side)), tag(tag) {}
+};
+
+// A model small enough for the inline slot.
+class Disc : public Shape {
+  int radius;
+  std::unique_ptr<int> weight;
+public:
+  Disc(int radius) : radius(radius), weight(std::make_unique<int>(radius * 3)) { live += 1; }
+  ~Disc() { record(this.radius); live -= 1; }
+  int area() override { return 3 * this.radius * this.radius + *this.weight; }
+};
+
+class Tray {
+public:
+  mut std::inline_polymorphic<Shape, 32, 8> held;
+  Tray(int radius) : held(std::inline_polymorphic<Shape, 32, 8>(Disc(radius))) {}
+  int area() { return this.held.get().area(); }
+};
+
+// A callable owning heap state behind an erased transferable function.
+class Meter {
+  std::string label;
+  std::unique_ptr<int> scale;
+public:
+  Meter(int scale) : label(std::string("meter owning a heap text payload")), scale(std::make_unique<int>(scale)) {}
+  int64_t operator()() { return int64_t(*this.scale) * 100 + int64_t(this.label.size()); }
+};
+
+using Reading = std::transfer_function<int64_t()>;
+
+Reading reading(int scale) { return Reading(Meter(scale)); }
+
+class Panel {
+public:
+  mut Reading reading;
+  int id;
+  Panel(Reading reading, int id) : reading(std::move(reading)), id(id) {}
+};
+
+// A generic user layer over the exchange.
+T rotate<T>(mut T& place, T next) requires std::relocatable<T> {
+  return std::exchange(place, std::move(next));
+}
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+int squares() {
+  mut std::vector<Square> row{};
+  row.push_back(Square(1));
+  row.push_back(Square(2));
+  Square old = std::exchange(row[std::size_t(1)], Square(5));
+  Shape& view = row[std::size_t(1)];
+  if (view.area() != 25 || old.area() != 4 || old.code() != 3) { return 1; }
+  Square spare = Square(6);
+  Square first = std::exchange(row[std::size_t(0)], std::move(spare));
+  Named& named = row[std::size_t(0)];
+  if (named.code() != 7 || first.area() != 1) { return 2; }
+  mut Frame frame = Frame(3, 9);
+  Square framed = rotate(frame.square, Square(4));
+  if (frame.square.area() != 16 || framed.code() != 4 || frame.tag != 9) { return 3; }
+  return 0;
+}
+
+int trays() {
+  Tray tray = Tray(2);
+  mut std::vector<Tray> trays{};
+  trays.push_back(Tray(3));
+  mut Tray previous = std::exchange(trays[std::size_t(0)], std::move(tray));
+  if (trays[std::size_t(0)].area() != 18 || previous.area() != 36) { return 4; }
+  std::inline_polymorphic<Shape, 32, 8> held =
+      std::exchange(previous.held, std::inline_polymorphic<Shape, 32, 8>(Disc(1)));
+  if (held.get().area() != 36 || previous.area() != 6) { return 5; }
+  return 0;
+}
+
+int readings() {
+  mut std::vector<Reading> row{};
+  for (mut int index = 1; index < 4; index += 1) { row.push_back(reading(index)); }
+  Reading taken = std::exchange(row[std::size_t(1)], reading(7));
+  mut int64_t total = 0;
+  for (mut std::size_t index = std::size_t(0); index < row.size(); index += std::size_t(1)) {
+    Reading current = std::exchange(row[index], reading(9));
+    total = total * 3 + current();
+  }
+  total = total * 3 + taken();
+  Panel panel = Panel(reading(2), 5);
+  mut Panel moved = std::move(panel);
+  Reading previous = rotate(moved.reading, reading(8));
+  total = total * 3 + previous() + moved.reading() + int64_t(moved.id);
+  return total == 35209 ? 0 : 6;
+}
+
+// EXCHANGED_TRANSFERS_MAIN
+int main() {
+  mut int status = squares();
+  if (status != 0) { return status; }
+  status = trays();
+  if (status != 0) { return status; }
+  status = readings();
+  if (status != 0) { return status; }
+  if (live != 0) { return 7; }
+  return events == 341256312 ? 0 : 8;
+}

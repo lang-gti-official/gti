@@ -1,0 +1,81 @@
+// A local returned by value beside a sibling destroyed at the return. The
+// returned object is relocated into the caller's storage before the sibling's
+// cleanup runs and is destroyed exactly once, by the caller. When the
+// sibling's cleanup fails, the callee destroys the returned object on its
+// failure path instead. Destructors record explicit codes.
+mut int32_t trace = 0;
+
+void note(int32_t code) { trace = trace * 10 + code; }
+
+class Mark {
+  int32_t code;
+public:
+  Mark(int32_t code) : code(code) {}
+  Mark(Mark& other) = delete;
+  Mark(Mark&& other) = default;
+  ~Mark() { note(this.code); }
+};
+
+class Base {
+  Mark low;
+  int32_t divisor;
+public:
+  Base(int32_t t, int32_t divisor) : low(Mark(t)), divisor(divisor) {}
+  ~Base() { note(9 / this.divisor); }
+};
+
+class Obj : public Base {
+  Mark high;
+public:
+  Obj(int32_t t, int32_t divisor) : Base(t, divisor), high(Mark(t + 1)) {}
+  ~Obj() { note(0); }
+};
+
+interface Shape {
+  int32_t area();
+};
+
+class Mid : public Shape {
+  Mark core;
+public:
+  Mid(int32_t t) : core(Mark(t)) {}
+  ~Mid() { note(8); }
+  int32_t area() override { return 1; }
+};
+
+class Leaf : public Mid {
+  Mark edge;
+public:
+  Leaf(int32_t t) : Mid(t), edge(Mark(t + 1)) {}
+  ~Leaf() { note(7); }
+  int32_t area() override { return 2; }
+};
+
+Obj build(int32_t t, int32_t divisor) {
+  Obj kept = Obj(t, 1);
+  Obj dropped = Obj(t + 2, divisor);
+  return kept;
+}
+
+Leaf grow(int32_t t) {
+  Leaf kept = Leaf(t);
+  Leaf dropped = Leaf(t + 2);
+  return kept;
+}
+
+int32_t area(Shape& shape) { return shape.area(); }
+
+// RETURNED_SIBLINGS_MAIN
+int main() {
+  {
+    Obj result = build(1, 1);
+    note(5);
+  }
+  int32_t plain = trace;
+  trace = 0;
+  {
+    Leaf result = grow(1);
+    note(area(result));
+  }
+  return plain == 49350291 && trace == 748327281 ? 0 : 1;
+}
