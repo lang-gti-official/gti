@@ -9011,7 +9011,9 @@ prerequisite checkpoints as full acceptance.
   acceptance remains required before delivery. The owner expanded this run to production weak ownership. Source weak handles
   and independent payload/control lifetimes are implemented in the working
   branch; race, overflow, rollback, sanitizer and performance acceptance are
-  being validated before integration.
+  being validated before integration. On 2026-10-28 the owner also accepted
+  documented unavoidable overhead versus the private implementation; correctness
+  and platform validation remain mandatory.
 
 - **State/role:** the requested strong-ownership and borrowing-composition
   slice is implemented in 0.354.0 (2026-09-30), with explicit cloning and

@@ -346,11 +346,14 @@ int main() {
         sawAtomic |= instruction.synchronization.kind ==
                      lang::SynchronizationOperationKind::AtomicCompareExchange;
         sawReleaseDecrement |=
-            instruction.intrinsic == lang::IntrinsicKind::AtomicFetchSubWrapping &&
-            instruction.synchronization.order == lang::AtomicMemoryOrder::Release;
+            instruction.intrinsic ==
+                lang::IntrinsicKind::AtomicFetchSubWrapping &&
+            instruction.synchronization.order ==
+                lang::AtomicMemoryOrder::Release;
         sawAcquireObservation |=
             instruction.intrinsic == lang::IntrinsicKind::AtomicLoad &&
-            instruction.synchronization.order == lang::AtomicMemoryOrder::Acquire &&
+            instruction.synchronization.order ==
+                lang::AtomicMemoryOrder::Acquire &&
             lang::effects(frontend.mir, instruction).maySynchronize;
         const bool borrow =
             instruction.intrinsic == lang::IntrinsicKind::RawBorrow;
@@ -396,8 +399,9 @@ int main() {
       }
     }
   }
-  require(sawReleaseDecrement && sawAcquireObservation,
-          "credit retirement retains release and acquire synchronization effects");
+  require(
+      sawReleaseDecrement && sawAcquireObservation,
+      "credit retirement retains release and acquire synchronization effects");
   require(sawConstruction && sawAtomic && sawBorrow && sawEmptyFailure &&
               sawAllocationFailure,
           "source ownership exercises lifetime, atomic, checked borrow and "
