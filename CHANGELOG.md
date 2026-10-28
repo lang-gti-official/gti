@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.488.2 - Apple M1 tuning on the native backend
+
+- On macOS arm64 the native backend now tunes optimization and scheduling for
+  Apple M1, as clang does by default, instead of a generic Arm core. Programs
+  still use only the generic Armv8 instruction set, so they run on every
+  Apple silicon Mac and atomics keep their existing instruction sequences.
+  Compared with 0.488.1 at `-O2`, `vector-checked-loop` runs in 0.90 of the
+  time, now level with the C++ backend, and `game-update-stage` in 0.97.
+  Short loops carrying one serial calculation can be a few percent slower:
+  LLVM's Apple M1 tuning unrolls them, as it does for clang-compiled C++
+  (`checked-scalar-chain` runs in 1.04 of the time).
+
 ## 0.488.1 - Native global copies, function-pointer fields, base returns and nested holders
 
 ### Native function-pointer fields, base returns and mutex text witnesses

@@ -3,11 +3,14 @@
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
 
+#include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Operator.h>
+#include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 
 using namespace lang;
@@ -117,6 +120,69 @@ int main() {
     floating();
     session.verify();
     const auto artifact = session.emitObject();
+    // Every emitted body is tuned for the target's selected processor while
+    // its instruction features stay at the machine baseline. LLVM records
+    // tuning knobs (fusion pairs, interleave factor, zero-cycle moves) in the
+    // same feature set, so the only bits tuning may add are the tuning
+    // processor's TuneImplies closure; no instruction extension, such as
+    // LSE atomics, may appear.
+    const auto machine = makeMachine(TargetInfo::host(), options);
+    const auto &baseline = machine->getMCSubtargetInfo();
+    const auto host = TargetInfo::host();
+    const llvm::StringRef requestedTune(tuneCpu(host));
+    const auto closure = [&](llvm::FeatureBitset bits) {
+      for (bool grew = true; grew;) {
+        grew = false;
+        for (const auto &feature : baseline.getAllProcessorFeatures())
+          if (bits[feature.Value]) {
+            const auto implied = bits | feature.Implies.getAsBitset();
+            grew |= implied != bits;
+            bits = implied;
+          }
+      }
+      return bits;
+    };
+    // LLVM may resolve the requested name through a processor alias (Apple
+    // M1 tunes as the A14 core), so judge the closure of what it selected.
+    const auto tuningOf = [&](llvm::StringRef processorName) {
+      for (const auto &processor : baseline.getAllProcessorDescriptions())
+        if (llvm::StringRef(processor.key()) == processorName)
+          return closure(processor.TuneImplies.getAsBitset());
+      throw std::runtime_error("unknown tuning processor " +
+                               processorName.str());
+    };
+    std::optional<unsigned> atomics;
+    for (const auto &feature : baseline.getAllProcessorFeatures())
+      if (llvm::StringRef(feature.key()) == "lse")
+        atomics = feature.Value;
+    unsigned tuned = 0;
+    for (const auto &function : session.module()) {
+      if (function.isDeclaration())
+        continue;
+      const auto *effective = machine->getSubtargetImpl(function);
+      const auto added =
+          effective->getFeatureBits() & ~baseline.getFeatureBits();
+      const auto attribute = function.getFnAttribute("tune-cpu");
+      if ((requestedTune.empty()
+               ? attribute.isValid() ||
+                     effective->getTuneCPU() != baseline.getCPU()
+               : !attribute.isStringAttribute() ||
+                     attribute.getValueAsString() != requestedTune ||
+                     effective->getTuneCPU() == baseline.getCPU()) ||
+          effective->getCPU() != baseline.getCPU() ||
+          (added & ~tuningOf(effective->getTuneCPU())).any() ||
+          (atomics && effective->getFeatureBits()[*atomics] !=
+                          baseline.getFeatureBits()[*atomics]))
+        throw std::runtime_error("emitted body " + function.getName().str() +
+                                 " lost its tuning or gained an instruction "
+                                 "feature");
+      ++tuned;
+    }
+    if (tuned == 0 || (host.os == "macos" && host.arch == "arm64" &&
+                       (requestedTune != "apple-m1" || !atomics ||
+                        baseline.getFeatureBits()[*atomics])))
+      throw std::runtime_error(
+          "macOS arm64 is not tuned for Apple M1 on the LSE-free baseline");
     const auto *privateFunction = session.module().getFunction(privateName);
     const auto *entryFunction = session.module().getFunction(entryName);
     if (privateName.empty() || entryName.empty() ||
@@ -202,5 +268,6 @@ int main() {
   std::cout << levels
             << " real pipelines: private/hosted visibility, storage promotion, "
                "strict FP, checked "
-               "overflow, cold failure origination and rejection passed\n";
+               "overflow, cold failure origination, processor tuning and "
+               "rejection passed\n";
 }

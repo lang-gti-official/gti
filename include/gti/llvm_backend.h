@@ -48,6 +48,7 @@ struct LlvmBackendIdentity {
   std::string triple;
   std::string dataLayout;
   std::string cpu;
+  std::string tuneCpu;
   std::string features;
   std::uint64_t privateAbi = 0;
   std::uint64_t relocation = 0;
