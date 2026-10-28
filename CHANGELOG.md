@@ -9,6 +9,27 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.6 - Borrows through reference fields and returned closures
+
+- Calling a method through a reference field of a parameter now compiles
+  instead of failing with an internal compiler error (`GTI-B0001`). This covers
+  a method that returns a reference or a borrowing object, as in
+  `holder.box.slot() = value;` where `holder` is a `mut Holder&` or `Holder&`
+  parameter, a by-value `Holder` parameter or a local `mut Holder&` alias, and
+  `box` is a `mut Box&` field. It also covers locking a `std::mutex` through a
+  reference field, `mut` or read-only, as in `teller.account.balance.lock()` or
+  `fill.slot.lock()`, and `this.slot.lock()` on a `mut std::mutex<T>&` field in
+  a read-only method. Both backends run these programs.
+- `std::for_each` with a closure that captures by mutable reference, such as
+  `[mut &got]`, now compiles and runs on the LLVM backend. So does a generic
+  function that calls a closure and returns it, as in
+  `F apply<F>(mut F f) { f(); return std::move(f); }`. The C++ backend still
+  reports `GTI-B0001` for most of these.
+- A borrow through a reference field of a local holder that is not itself a
+  reference, such as `holder.box.slot()` or `mut int64_t& v = holder.box.value;`
+  with a local `Holder holder`, still reports an internal compiler error. The
+  language is unchanged.
+
 ## 0.484.3 - Owned and forwarded base-constructor arguments on LLVM
 
 - A derived constructor can now pass an owned value to its base constructor
