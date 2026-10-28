@@ -9,6 +9,10 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+The proposed [diagnostic-quality campaign](../plans/diagnostic-quality.md)
+builds on this infrastructure. Its causal-evidence, recovery and repair-group
+extensions are planned work, not additional implemented contracts.
+
 Fixed-array initialization checks ownership for every element separately.
 `GTI-S2003` identifies an unavailable copy or move at the written element,
 rather than reporting equal types as incompatible. Fresh exact construction
@@ -391,6 +395,12 @@ or defaults, or a currently unsupported generic owner/method. The related
 span identifies the original method or owner when one is known. The message
 states the violated rule; no speculative signature, ownership, access or
 default-argument edit is offered. Missing selected bodies retain `GTI-S2106`.
+Before reporting a signature mismatch, binding validates the definition's
+written return and parameter types in its owner's namespace and its own source
+unit. Unknown or invisible types receive their ordinary type diagnostic instead
+of `GTI-S2120`, including the declaration note and direct-include hint for
+`GTI-S2024`. The existing include-suggestion trial supplies a fix-it only when
+the proposed include makes the program valid.
 The LSP publishes the same diagnostics, including unsaved implementation files.
 
 Registry authentication keeps driver-owned structured codes: `GTI-B1713` for
@@ -761,6 +771,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   field token and explains that field cleanup belongs to the enclosing object.
   Explicit and implicit `this` paths share this rule; separately owned locals
   remain movable. No fix-it changes cleanup ownership.
+  A restoring swap or exchange of a polymorphic class that another class
+  derives from also reports `GTI-S2018`, at the user's call, with the library
+  instance and the instantiating call as related notes. The message names the
+  type and says a reference to it may name the base part of a derived object;
+  the hint suggests exchanging objects of the most-derived class or replacing
+  the whole object by assignment. No fix-it: which object to exchange is the
+  programmer's choice.
 - `GTI-S2003` retains an ordinary assignment mismatch when a move-only type
   cannot be copied through a dereference. Dereference writes use the same
   copy/move-assignment policy as binding, field, and subscript writes; point at

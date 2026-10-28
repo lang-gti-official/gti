@@ -7323,7 +7323,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         analyzeContextualCallArguments(expr.arguments());
     std::vector<SemanticType> &argumentTypes = argumentAnalysis.types;
     if (alias->type.kind == SemanticType::Class) {
-      if (expr.arguments().size() == 1 &&
+      // An alias constructs exactly as its class's own name does.
+      const bool contextualArrayTail =
+          resumeDeferredConstructorArguments(expr, argumentAnalysis);
+      if (expr.arguments().size() == 1 && !contextualArrayTail &&
           analyzeExplicitConversion(expr, expr.arguments().front(),
                                     argumentTypes.front(), alias->type,
                                     expr.paren())) {
@@ -7371,6 +7374,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                                 .name = member->name().lexeme},
                                callUse),
           callUse ? callUse->top : ResultUseAccess::Unknown);
+    // Through `p->member`, the member's needs select the `operator->` step,
+    // which the callee itself resolves.
+    else if (member != nullptr && member->access().kind == TokenKind::ARROW)
+      receiverUse.emplace(
+          *this, member,
+          prependResultUseStep({.kind = ResultUseStep::Kind::Member,
+                                .name = member->name().lexeme},
+                               callUse),
+          callUse ? callUse->top : ResultUseAccess::Unknown, true);
     calleeType = analyze(expr.callee());
   }
   analyzingCallCallee = enclosingCallCallee;
@@ -7593,18 +7605,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       currentType = analyze(alias);
       return;
     }
-    // Constructor value parameters infer unambiguous function items as direct
-    // braces do. Resume the deferred value tail exactly once, in source order.
-    // Array braces still need the selected constructor's contextual type.
-    bool contextualArrayTail = false;
-    for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
-      contextualArrayTail =
-          contextualArrayTail ||
-          isContextualArrayArgument(expr.arguments()[index]) ||
-          isContextualCallableResultArgument(expr.arguments()[index]);
-      if (!contextualArrayTail && argumentAnalysis.deferred[index])
-        argumentTypes[index] = analyze(expr.arguments()[index]);
-    }
+    const bool contextualArrayTail =
+        resumeDeferredConstructorArguments(expr, argumentAnalysis);
     // `Target(source)` converts through a conversion operator of the source
     // when it declares one to exactly the target.
     if (expr.arguments().size() == 1 && !contextualArrayTail &&
@@ -9280,8 +9282,20 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
   // A field read uses its object through that field. A member callee has no
   // use of its own: its call keyed the receiver's use to the object.
   SemanticType objectType = SemanticType::Unknown;
+  // The `operator->` step's referent is used through this field or, for a
+  // callee, through the member its call names.
+  std::optional<ResultUse> arrowUse;
   {
     const std::optional<ResultUse> use = resultUseFor(expr);
+    if (use && expr.access().kind == TokenKind::ARROW)
+      arrowUse = ResultUse{
+          .expression = &expr,
+          .steps = use->arrowCallee ? use->steps
+                                    : prependResultUseStep(
+                                          {.kind = ResultUseStep::Kind::Field,
+                                           .name = expr.name().lexeme},
+                                          use),
+          .top = use->top};
     std::optional<ResultUseScope> objectUse;
     if (use && expr.access().kind != TokenKind::ARROW &&
         consultsResultUse(expr.object().get()))
@@ -9298,7 +9312,9 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
   }
   if (expr.access().kind == TokenKind::ARROW) {
     objectType =
-        arrowTargetType(expr, expr.object(), objectType, expr.access());
+        arrowTargetType(expr, expr.object(), objectType, expr.access(), false,
+                        readOnlyAccessorOperator(arrowUse, objectType,
+                                                 OverloadedOperator::Arrow));
     if (objectType == SemanticType::Unknown) {
       currentType = SemanticType::Unknown;
       return;

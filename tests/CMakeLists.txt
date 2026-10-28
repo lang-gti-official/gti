@@ -285,6 +285,14 @@ add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_fresh_callable_borrow_tests fresh_callable_borrow_tests.cpp)
 target_link_libraries(gti_fresh_callable_borrow_tests PRIVATE gti_compiler)
 add_test(NAME fresh_callable_borrow COMMAND gti_fresh_callable_borrow_tests)
+add_executable(gti_borrow_carrier_receiver_tests borrow_carrier_receiver_tests.cpp)
+target_link_libraries(gti_borrow_carrier_receiver_tests PRIVATE gti_compiler)
+add_test(NAME borrow_carrier_receivers COMMAND gti_borrow_carrier_receiver_tests)
+add_test(NAME borrow_carrier_receivers_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/borrow_carrier_receiver_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(borrow_carrier_receivers_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_borrowing_callbacks_mir_tests borrowing_callbacks_mir_tests.cpp)
 target_link_libraries(gti_borrowing_callbacks_mir_tests PRIVATE gti_compiler)
 add_test(NAME borrowing_callbacks_mir COMMAND gti_borrowing_callbacks_mir_tests)
@@ -1321,6 +1329,22 @@ add_test(NAME text_storage_provenance_runtime
                  "${PROJECT_SOURCE_DIR}/tests/text_storage_provenance_runtime_test.py"
                  $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
 set_tests_properties(text_storage_provenance_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME formal_text_field_relays_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/formal_text_field_relays_test.py"
+                 $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
+set_tests_properties(formal_text_field_relays_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME projected_reference_bindings_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/projected_reference_bindings_test.py"
+                 $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
+set_tests_properties(projected_reference_bindings_runtime PROPERTIES TIMEOUT 300)
+
+add_test(NAME alias_construction_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/alias_construction_runtime_test.py"
+                 "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
+set_tests_properties(alias_construction_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME view_field_payloads_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/view_field_payloads_runtime_test.py"
@@ -1828,6 +1852,10 @@ if(Python3_Interpreter_FOUND)
     llvm_simd_source "${PROJECT_SOURCE_DIR}/tests/llvm_simd_source_test.py")
 endif()
 
+add_executable(gti_llvm_optimization_pipeline_tests llvm_optimization_pipeline_tests.cpp)
+target_include_directories(gti_llvm_optimization_pipeline_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_optimization_pipeline_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
+add_test(NAME llvm_optimization_pipeline COMMAND gti_llvm_optimization_pipeline_tests)
 add_executable(gti_llvm_session_tests llvm_session_tests.cpp)
 target_include_directories(gti_llvm_session_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 target_link_libraries(gti_llvm_session_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)

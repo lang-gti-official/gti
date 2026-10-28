@@ -2137,6 +2137,80 @@ int Cell::take() && { return this.number; }
            "invalid separate definitions must receive a source diagnostic: " +
                message);
   }
+
+  const auto root =
+      std::filesystem::temp_directory_path() / "gti-split-signature-types";
+  const auto canonical = [](const std::filesystem::path &path) {
+    return std::filesystem::weakly_canonical(path).string();
+  };
+  const std::string types =
+      "namespace demo { struct Parcel<T> { T value; }; }\n";
+  for (const auto &[signature, definition] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"Parcel<int> make();",
+            "Parcel<int> Factory::make() { "
+            "Parcel<int> result = {.value = 7}; return result; }"},
+           {"int make(Parcel<int> input);",
+            "int Factory::make(Parcel<int> input) { return input.value; }"},
+           {"int make(Parcel<int>* input);",
+            "int Factory::make(Parcel<int>* input) { return 7; }"}}) {
+    const std::unordered_map<std::string, std::string> units{
+        {canonical(root / "types.gti"), types},
+        {canonical(root / "api.gti"), "#include \"types.gti\"\nnamespace demo "
+                                      "{ interface Factory { static " +
+                                          signature + " }; }\n"}};
+    const std::string source = "#include \"api.gti\"\nnamespace demo { " +
+                               definition + " }\nint main() { return 0; }\n";
+    const auto hidden = lang::Frontend().analyze(
+        root / "main.gti", source, {standardLibraryPrelude()}, units,
+        {standardLibraryRoot()});
+    const auto *diagnostic =
+        findDiagnosticByCode(hidden.diagnostics, "GTI-S2024");
+    expect(!hidden.canGenerateCode() && diagnostic != nullptr &&
+               !hasDiagnosticCode(hidden.diagnostics, "GTI-S2120"),
+           "invisible split signature types must diagnose visibility, not "
+           "signature mismatch");
+    if (diagnostic != nullptr) {
+      expect(
+          diagnostic->phase == lang::DiagnosticPhase::Semantics &&
+              diagnostic->severity == lang::DiagnosticSeverity::Error &&
+              diagnostic->message.find("Parcel") != std::string::npos &&
+              diagnostic->primary.source == canonical(root / "main.gti") &&
+              diagnostic->primary.start == source.find("Parcel") &&
+              diagnostic->primary.end == source.find("Parcel") + 6 &&
+              diagnostic->related.size() == 1 &&
+              diagnostic->related.front().span.source ==
+                  canonical(root / "types.gti") &&
+              diagnostic->related.front().span.start == types.find("Parcel") &&
+              hasDiagnosticHint(hidden.diagnostics, "#include \"types.gti\""),
+          "split signature visibility errors retain the type span, "
+          "declaration note and direct-include hint");
+    }
+    const auto visible = lang::Frontend().analyze(
+        root / "main.gti", "#include \"types.gti\"\n" + source,
+        {standardLibraryPrelude()}, units, {standardLibraryRoot()});
+    expect(visible.canGenerateCode(),
+           "directly included split signature types bind normally");
+  }
+
+  for (const auto &definition :
+       {"Missing Factory::make() { return 0; }",
+        "int Factory::make(Missing input) { return 0; }",
+        "Parcel<Missing> Factory::make() { return 0; }"}) {
+    const auto invalid = lang::Frontend().analyze(
+        "split-unknown-type.gti",
+        "namespace demo { struct Parcel<T> { T value; }; "
+        "interface Factory { static int make(); }; " +
+            std::string(definition) +
+            " } int neighboring() { return absent; } int main(){ return 0; }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!invalid.canGenerateCode() &&
+               hasDiagnostic(invalid.diagnostics, "Unknown type 'Missing'") &&
+               hasDiagnostic(invalid.diagnostics, "absent") &&
+               !hasDiagnosticCode(invalid.diagnostics, "GTI-S2120"),
+           "unknown split signature types retain their own error and allow "
+           "neighboring analysis to recover");
+  }
 }
 
 void testInterfaceStaticMethods() {

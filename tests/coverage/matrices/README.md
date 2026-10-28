@@ -31,7 +31,7 @@ the server consumes memory without bound on that input.
 | `lsp_survival.py` | files × `gti_lsp` staying alive and answering | that S13's memory exhaustion is reachable through the editor |
 | `payload_enum_matrix.py` | payload kind × operation | S15 — a class payload with no destructor |
 | `concurrency_matrix.py` | threading construct × execution profile | nothing — 10/10 under `concurrent`, correctly rejected under the default |
-| `llvm_wrongcode_matrix.py` | owned value kind × transfer × class shape, plus container, control-flow, hierarchy, concrete-base, payload-enum, erased-callable, destruction-order, lifecycle-dispatch and standard-library-container sweeps on LLVM | at `b69828811`: an owned base-initializer argument left the base unconstructed on LLVM — silent wrong code when moved in, `Derived(T v) : Base(std::move(v))` (35 cells, every owned kind, plain and generic bases, one defect), and an internal error when created in place, `Base(make())`. At `bcf538640` both are refused as `UnstagedBaseInitializer` (GTI-B0003) and all 534 cells are clean: 384 run correctly on LLVM, 96 are refused with GTI-B0003, 54 are rejected by semantics |
+| `llvm_wrongcode_matrix.py` | owned value kind × transfer × class shape, plus container, control-flow, hierarchy, concrete-base, payload-enum, erased-callable, destruction-order, lifecycle-dispatch and standard-library-container sweeps on LLVM | at `b69828811`: an owned base-initializer argument left the base unconstructed on LLVM — silent wrong code when moved in, `Derived(T v) : Base(std::move(v))` (35 cells, every owned kind, plain and generic bases, one defect), and an internal error when created in place, `Base(make())`. At `bcf538640` both are refused as `UnstagedBaseInitializer` (GTI-B0003) and all 534 cells are clean: 384 run correctly on LLVM, 96 are refused with GTI-B0003, 54 are rejected by semantics. Parity mode at `c0547e544` adds idiomatic sweeps (polymorphic-owner containers, erased callbacks, optional, expected and payload enums, relayed views and references, generics, algorithms, threads and cleanup order under control flow): 809 cells, 0 LLVM wrong code, 48 cells that C++ runs and LLVM refuses. 28 are the known `PolymorphicTransfer` (O-LLVM-10) closure and thread captures; 20 return a view, span or reference produced by a virtual or interface call out of another function (O-LLVM-05). A second round adds user operators, user iterators and ranges, nested generics, formatting with user types, fixed arrays and struct-of-arrays, owned recursive trees, expected and optional chains, and static and constexpr state: 55 cells, 0 LLVM wrong code, 0 parity gaps. Three cells reach an internal error on both backends (a range-for over a field reached through `unique_ptr`'s `->`, twice, and a range-for over a by-reference capture inside a lambda); two run on LLVM but not C++ (returning `std::array` of a class, moving fixed-array elements by constant index) |
 
 `llvm_wrongcode_matrix.py` differs from the others: its programs check their
 own results against values derived from the literal inputs and count tracked
@@ -45,6 +45,16 @@ order that `docs/language/execution.md` specifies. At `bcf538640`, 55 cells run
 correctly on LLVM where C++ does not. In 45 of them C++ builds and dispatches
 to the most-derived override during base destruction, the known C++ backend
 defect; the other 10 are refused by the C++ backend with GTI-B0001.
+
+`--parity` additionally reports every cell that C++ builds and runs
+correctly but LLVM refuses or runs differently. LLVM is the macOS arm64
+default, so each such cell is a regression from choosing it; C++ is the
+oracle there and is not extended. A refused cell prints its LLVM refusal
+shape, such as `[Shape.PolymorphicTransfer O-LLVM-10]`. The driver deletes
+each cell executable after running it and keeps failed-build temporaries
+under the run directory. While another session's verification holds the
+suite slot, run it at `--jobs 2` or less, one matrix at a time; run larger
+passes through `python3 scripts/build_window.py --kind suite -- ...`.
 
 ## Reading the output
 

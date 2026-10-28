@@ -285,7 +285,8 @@ def rejections() -> dict[str, str]:
         # Fresh elements publish in their array slots; copying the whole
         # array still transports its objects.
         'polymorphic-array': 'class Owner { public: virtual int read() { return 0; } }; int main() { Owner data[2] = {Owner(), Owner()}; Owner copied[2] = data; return copied[0].read(); }',
-        'polymorphic-tls': 'class Owner { public: virtual int read() { return 0; } }; thread_local Owner value{}; int main() { return value.read(); }',
+        # Thread-local hierarchy storage now executes natively; its evidence
+        # and remaining copy refusal live in the dispatch harness.
     }
 
 

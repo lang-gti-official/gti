@@ -163,6 +163,12 @@ storing, capturing, or returning it beyond the iteration is ill-formed.
 This range-local materialization does not permit ordinary reference binding to
 temporaries elsewhere, or mutable element access to a value-yielding range.
 
+A by-reference lambda capture is ranged over exactly like a reference
+parameter: the traversal takes its own reborrow of the captured referent,
+beneath the capture's loan, whether the traversal is read-only or mutable.
+Using the captured container while that traversal is live is therefore the
+same borrow conflict as using a reference parameter's referent.
+
 Read-only loans are shared: nested or otherwise simultaneous read-only
 traversals may retain the same local, field, or owned range. Each traversal
 still owns a distinct range plan and loop-bounded element loan. A mutable

@@ -100,5 +100,64 @@ def main():
             session.close()
 
 
+def test_signature_type_visibility(executable):
+    with tempfile.TemporaryDirectory(prefix="gti-split-type-lsp-") as temporary:
+        root = pathlib.Path(temporary)
+        api, body = root / "api.gti", root / "body.gti"
+        write(api, "#include <std/memory>\nnamespace demo { interface Factory {\n"
+              "  static std::unique_ptr<Factory> make();\n}; }\n")
+        source = ('#include "api.gti"\nnamespace demo {\n'
+                  '/* UTF-16: 🦉 */ std::unique_ptr<Factory> Factory::make() {\n'
+                  '  return std::unique_ptr<Factory>(nullptr);\n}\n}\n'
+                  'int main() { auto owner = demo::Factory::make(); return 0; }\n')
+        write(body, source)
+        session = LspSession(executable)
+        try:
+            initialize_session(session, capabilities={
+                "workspace": {"workspaceEdit": {"documentChanges": True}},
+                "textDocument": {
+                    "publishDiagnostics": {"relatedInformation": True, "dataSupport": True},
+                    "codeAction": {"codeActionLiteralSupport": {
+                        "codeActionKind": {"valueSet": ["quickfix"]}}}}})
+            uri = open_document(session, body, source)
+            errors = diagnostics_for(session, uri, 1)
+            diagnostic = next((item for item in errors if item.get("code") == "GTI-S2024"), None)
+            assert diagnostic is not None, errors
+            assert not any(item.get("code") == "GTI-S2120" for item in errors), errors
+            offset = source.index("unique_ptr")
+            assert diagnostic["range"] == {
+                "start": lsp_position(source, offset),
+                "end": lsp_position(source, offset + len("unique_ptr"))}, diagnostic
+            assert diagnostic["relatedInformation"], diagnostic
+            assert any("#include <std/memory>" in hint
+                       for hint in diagnostic["data"]["hints"]), diagnostic
+
+            def actions(request_id):
+                session.send({"jsonrpc": "2.0", "id": request_id,
+                              "method": "textDocument/codeAction", "params": {
+                                  "textDocument": {"uri": uri}, "range": diagnostic["range"],
+                                  "context": {"diagnostics": [diagnostic], "only": ["quickfix"]}}})
+                return session.receive_until(lambda value: value.get("id") == request_id)["result"]
+
+            fixes = actions(20)
+            assert len(fixes) == 1, fixes
+            assert fixes[0]["title"] == "Add #include <std/memory>", fixes
+            document = fixes[0]["edit"]["documentChanges"][0]
+            assert document["textDocument"] == {"uri": uri, "version": 1}, document
+            assert document["edits"] == [{
+                "range": {"start": {"line": 0, "character": 0},
+                          "end": {"line": 0, "character": 0}},
+                "newText": "#include <std/memory>\n"}], document
+            corrected = "#include <std/memory>\n" + source
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+                "textDocument": {"uri": uri, "version": 2},
+                "contentChanges": [{"text": corrected}]}})
+            assert diagnostics_for(session, uri, 2) == []
+            assert actions(21) == [], "stale signature diagnostics must not offer edits"
+        finally:
+            session.close()
+
+
 if __name__ == "__main__":
     main()
+    test_signature_type_visibility(sys.argv[1])
