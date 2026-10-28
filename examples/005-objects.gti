@@ -1,10 +1,18 @@
-// Struct members are public by default. Declaration initializers let the
-// compiler generate Point() alongside declared constructor overloads.
+// Struct members are public by default. Default construction is an explicit
+// API choice: field initializers alone do not declare Point().
 struct Point {
   int x = 0;
   int y = 0;
 
+  Point() = default;
   Point(int initial_x, int initial_y) : x(initial_x), y(initial_y) {}
+};
+
+// Supplying a field initializer does not bypass the required input. Calling
+// RequiredInput() or make_unique<RequiredInput>() would be a compile error.
+struct RequiredInput {
+  int value = -1;
+  RequiredInput(int input) : value(input) {}
 };
 
 // Class members are private by default. A trailing `mut` allows a method to
@@ -42,8 +50,9 @@ int main() {
   mut Counter counter{origin.x};
   int next = counter.tick();
   MeasuredCounter measured{1, 5};
+  RequiredInput supplied{7};
 
-  if (next == counter.current() and offset.x == 2 and measured.current() == 2 and measured.limit == 5) {
+  if (next == counter.current() and offset.x == 2 and measured.current() == 2 and measured.limit == 5 and supplied.value == 7) {
     std::println("objects use explicit construction");
     return 0;
   }
