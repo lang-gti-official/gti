@@ -29,6 +29,8 @@ public:
     this.recorded = value.read() + later;
   }
   int read() { return this.recorded; }
+public:
+  Recorder() = default;
 };
 
 int check(bool left) {

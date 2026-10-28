@@ -63,6 +63,8 @@ int main() { return 0; }
             nested = """struct Resource {
   mut int value = 7;
   void reset() mut { this.value = 8; }
+public:
+  Resource() = default;
 };
 class Guard {
   Resource& resource;

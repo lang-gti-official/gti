@@ -13,6 +13,8 @@ enum class severity { info, warning, failure };
 struct location {
   std::string file = std::string("");
   uint32_t line = 0;
+public:
+  location() = default;
 };
 
 struct report {
@@ -24,6 +26,8 @@ struct report {
   std::optional<std::string> fix = std::optional<std::string>();
   [[std::json::ignore]]
   uint64_t cache_key = 0;
+public:
+  report() = default;
 };
 
 int main() {

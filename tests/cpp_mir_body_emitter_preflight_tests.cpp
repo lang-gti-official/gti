@@ -1117,7 +1117,7 @@ private:
   int32_t value;
 };
 enum class holder { one(resource value), none };
-struct wrapper<T> { holder value = holder::one(resource(7)); };
+struct wrapper<T> { holder value = holder::one(resource(7));  public: wrapper() = default; };
 int main() { wrapper<int32_t> value = wrapper<int32_t>(); return 0; }
 )");
   expect(frontend.canGenerateCode(),
@@ -1271,6 +1271,8 @@ private:
 };
 struct default_package {
   holder content = holder::occupied(resource(4));
+public:
+  default_package() = default;
 };
 int main() {
   {
@@ -1984,6 +1986,8 @@ enum class holder { one(resource value), none };
 class relay<T> {
 public:
   relay(holder value) {}
+public:
+  relay() = default;
 };
 
 T transfer<T>(T value, int32_t divisor) {
@@ -3741,7 +3745,7 @@ class Derived : public Base {
 public:
   Derived() : Base() {}
 };
-struct Other { int32_t value = 7; };
+struct Other { int32_t value = 7;  public: Other() = default; };
 int32_t identity(int32_t value) { return value; }
 int main() {
   Derived derived{};
@@ -4138,6 +4142,8 @@ int32_t initial_value() { return 5; }
 class Registry {
 public:
   static mut int32_t value = initial_value();
+public:
+  Registry() = default;
 };
 )");
   expect(dynamic.canGenerateCode(),
@@ -4242,8 +4248,8 @@ struct Pair {
   return 0;
 }
 int global = initial_value(4);
-class Registry { public: static int value = initial_value(6); };
-struct Record { int field = initial_value(8); };
+class Registry { public: static int value = initial_value(6);  public: Registry() = default; };
+struct Record { int field = initial_value(8);  public: Record() = default; };
 int main() {
   Record record{};
   return global + Registry::value + record.field + cleaned - 30;
@@ -4492,6 +4498,8 @@ void testPassiveResultRegionContextualConversions() {
 struct Flag {
   operator bool() { return true; }
   implicit operator int() { return 19; }
+public:
+  Flag() = default;
 };
 #macro Flag select_flag(int mode) {
   if (mode < 0) { return Flag(); }
@@ -4850,7 +4858,7 @@ int32_t read_state() { return state; }
 
 void testByteFieldRepresentationFailsClosed() {
   const auto frontend = analyze("cpp-mir-byte-field-mutation.gti", R"(
-struct Packet { int value = 7; };
+struct Packet { int value = 7;  public: Packet() = default; };
 int main() { Packet packet{}; return packet.value; }
 )");
   expect(frontend.canGenerateCode(), "byte-field mutation fixture is valid");
@@ -5293,6 +5301,8 @@ class thing {
 public:
   thing(int32_t divisor) : value(int32_t(0) / divisor) {}
   mut int32_t value = 0;
+public:
+  thing() = default;
 };
 
 mut thing g = thing(int32_t(1));
@@ -5410,6 +5420,8 @@ class Counter {
 public:
   static mut int32_t value = 3;
   static int32_t read() { return value; }
+public:
+  Counter() = default;
 };
 
 int32_t read_counter() { return Counter::value; }
@@ -5996,6 +6008,8 @@ public:
 };
 struct Sink {
   void accept(Parcel parcel) mut { std::println("accepted"); }
+public:
+  Sink() = default;
 };
 int exercise(bool choose) {
   mut Sink sink{};
@@ -6238,6 +6252,8 @@ class EmptyHolder {
   std::optional<Quiet> second{};
 public:
   EmptyHolder(int value) {}
+public:
+  EmptyHolder() = default;
 };
 int main() {
   EmptyHolder empty{0};
@@ -7030,6 +7046,8 @@ public:
     this.observed = true;
     return value > 0;
   }
+public:
+  Positive() = default;
 };
 
 int main() {
@@ -7521,6 +7539,8 @@ class Indexed {
 public:
   int& operator[](uint64_t index) { return this.elements[index]; }
   mut int& operator[](uint64_t index) mut { return this.elements[index]; }
+public:
+  Indexed() = default;
 };
 
 int mutate(mut Indexed& indexed) {

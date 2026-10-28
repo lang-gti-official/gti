@@ -97,7 +97,7 @@ int main() {
             assert not diagnostics(8)
             ordered = """class Box {
   mut int value = 1;
-public:
+public: Box() = default;
   int& read() { return this.value; }
   int bump() mut { this.value += 1; return this.value; }
 };
@@ -267,7 +267,7 @@ int main() {
             change(20, concrete_errors.replace("Broken<0>", "Broken<3>").replace(
                 "Broken<1>", "Broken<4>"))
             assert not diagnostics(20)
-            carrier_access = """struct Counter { mut int value = 7; };
+            carrier_access = """struct Counter { mut int value = 7;  public: Counter() = default; };
 class Shared {
   Counter& counter;
 public:

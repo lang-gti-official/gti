@@ -497,13 +497,15 @@ struct Meter {
   unsafe int change(int value) mut { this.value = value; return this.value; }
   bool change(bool value) mut { return value; }
   unsafe static T relay<T>(T value) { return value; }
+public:
+  Meter() = default;
 };
-struct SafeMeter { int read() { return 7; } };
-struct Box<T> { unsafe T relay(T value) { return value; } };
+struct SafeMeter { int read() { return 7; }  public: SafeMeter() = default; };
+struct Box<T> { unsafe T relay(T value) { return value; }  public: Box() = default; };
 struct Ticket { Ticket() {} unsafe int consume() && { return 7; } };
 enum class Failure { unavailable };
-struct Layout { int count = 1; };
-struct Region { void* address = nullptr; };
+struct Layout { int count = 1;  public: Layout() = default; };
+struct Region { void* address = nullptr;  public: Region() = default; };
 concept provider<R, E> =
   requires(mut R& resource, Layout layout) {
     { resource.allocate(layout) } -> expected<Region, E>;
@@ -517,6 +519,8 @@ struct Depot {
     return region;
   }
   unsafe void release(Region region) mut {}
+public:
+  Depot() = default;
 };
 expected<Region, E> reserve<R, E>(mut R& resource, Layout layout)
   requires provider<R, E> { return resource.allocate(layout); }
@@ -584,6 +588,8 @@ int main() {
 struct Counter {
   mut int value = 1;
   int advance(int amount) mut { this.value += amount; return this.value; }
+public:
+  Counter() = default;
 };
 int advance<T>(mut T& value)
   requires requires(mut T& receiver, int amount) {
@@ -604,15 +610,16 @@ int main() { mut Counter value{}; return advance(value) - 3; }
 
   const std::string declaration =
       "struct Item { unsafe int read() { return 1; } "
-      "unsafe static int number() { return 2; } };\n";
+      "unsafe static int number() { return 2; }  public: Item() = default; "
+      "};\n";
   expectRejected(declaration +
                      "int main() { Item item{}; return item.read(); }",
                  "GTI-S2055", "instance calls require lexical unsafe");
   expectRejected(declaration + "int main() { return Item::number(); }",
                  "GTI-S2055", "static calls require lexical unsafe");
-  expectRejected(
-      "struct Item { unsafe int read(const int* p) { return *p; } };",
-      "GTI-S2055", "unsafe methods do not authorize their bodies");
+  expectRejected("struct Item { unsafe int read(const int* p) { return *p; }  "
+                 "public: Item() = default; };",
+                 "GTI-S2055", "unsafe methods do not authorize their bodies");
   expectRejected(declaration +
                      "int main() { unsafe { auto f = []() "
                      "-> int { return Item::number(); }; return f(); } }",
@@ -657,6 +664,8 @@ struct ReadByte {
   unsafe ReadByte(const int* address) {
     unsafe { value = *address; }
   }
+public:
+  ReadByte() = default;
 };
 struct Generic<T> {
   T value;
@@ -664,6 +673,8 @@ struct Generic<T> {
 };
 struct LocalGeneric {
   unsafe LocalGeneric<T>(T source) {}
+public:
+  LocalGeneric() = default;
 };
 struct ConstantContract {
   int value;
@@ -671,6 +682,8 @@ struct ConstantContract {
 };
 struct NativeFactory {
   unsafe static ReadByte create(const int* address);
+public:
+  NativeFactory() = default;
 };
 unsafe ReadByte NativeFactory::create(const int* pointer) {
   unsafe { return ReadByte(pointer); }
@@ -732,9 +745,10 @@ int main() {
   expectRejected("struct R { int n; unsafe R(const int* p) { n = *p; } };",
                  "GTI-S2055",
                  "unsafe constructors do not authorize their bodies");
-  expectRejected(
-      "struct B { unsafe B(int n) {} }; struct D : public B { D() : B(1) {} };",
-      "GTI-S2055", "base initializer lists do not erase unsafe obligations");
+  expectRejected("struct B { unsafe B(int n) {}  public: B() = default; }; "
+                 "struct D : public B { D() : B(1) {} };",
+                 "GTI-S2055",
+                 "base initializer lists do not erase unsafe obligations");
   const auto zero = analyze(
       "struct Z { unsafe Z() {} }; int main() { unsafe { Z z{}; } return 0; }");
   expect(zero.canGenerateCode(), "explicit zero-argument unsafe construction");

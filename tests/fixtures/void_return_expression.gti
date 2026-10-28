@@ -22,7 +22,7 @@ void forward(int divisor, int temporary_divisor, int local_divisor) {
   return sink(Trace(3, temporary_divisor), divisor);
 }
 
-class Result<R> {};
+class Result<R> { public: Result() = default; };
 
 R invoke<R, T, Args...>(T callback, Result<R>& result, Args... args) {
   return callback(args...);

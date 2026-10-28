@@ -4,6 +4,8 @@
 class Cleanup {
 public:
   ~Cleanup() { std::println(42); }
+public:
+  Cleanup() = default;
 };
 
 [[noreturn]] void stop_inner() { std::panic("terminal context"); }

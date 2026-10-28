@@ -4,10 +4,14 @@
 
 struct Record {
   mut int count = 1;
+public:
+  Record() = default;
 };
 
 struct Configuration {
   std::vector<std::string> scopes = std::vector<std::string>();
+public:
+  Configuration() = default;
 };
 
 int main() {

@@ -1,5 +1,5 @@
 // A42: the int64-field variant fails MIR construction.
-struct Pair { int64_t quot = 0; int64_t rem = 0; };
+struct Pair { int64_t quot = 0; int64_t rem = 0;  public: Pair() = default; };
 int main() {
   Pair a{.quot = 9, .rem = 2};
   Pair b{.quot = -9, .rem = -2};

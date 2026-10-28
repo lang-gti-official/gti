@@ -28,6 +28,8 @@ public:
     return this.value;
   }
   mut int32_t& write() mut { return this.value; }
+public:
+  Box() = default;
 };
 T& identity<T>(T& value) { return value; }
 int32_t mutate(mut Box& box, int32_t divisor) { return box.bump(divisor); }

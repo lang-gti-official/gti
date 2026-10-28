@@ -19,14 +19,20 @@ public:
 class Order {
 public:
   bool operator()(Tracked& left, Tracked& right) { return left.get() < right.get(); }
+public:
+  Order() = default;
 };
 class Hash {
 public:
   std::size_t operator()(Tracked& key) { return std::size_t(key.get()); }
+public:
+  Hash() = default;
 };
 class Equal {
 public:
   bool operator()(Tracked& left, Tracked& right) { return left.get() == right.get(); }
+public:
+  Equal() = default;
 };
 int main(int argc, std::vector<std::string> argv) {
   mut std::list<Tracked> linked{};

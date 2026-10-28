@@ -1,7 +1,7 @@
 using Operation = (int32_t) -> int32_t;
 extern "C" { int32_t debug_input(); void debug_cleanup();
   int32_t debug_invoke(Operation operation, int32_t value); }
-class Guard { public: ~Guard() { debug_cleanup(); } };
+class Guard { public: ~Guard() { debug_cleanup(); }  public: Guard() = default; };
 int32_t inspect(int32_t input) {
   Guard guard{};
   int32_t local = 9;

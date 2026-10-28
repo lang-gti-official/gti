@@ -1,5 +1,5 @@
 // Recursion, nested loops, break/continue, early return and while/do shapes.
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 int32_t fib(int32_t n) {
   if (n < 2) { return n; }

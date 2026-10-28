@@ -28,6 +28,8 @@ class UserScalarRange {
 public:
   UserScalarCursor begin() { return UserScalarCursor(std::size_t(0)); }
   UserValueSentinel end() { return UserValueSentinel(std::size_t(3)); }
+public:
+  UserScalarRange() = default;
 };
 class VirtualValueCursor {
   mut std::size_t index;
@@ -42,6 +44,8 @@ class VirtualValueRange {
 public:
   VirtualValueCursor begin() { return VirtualValueCursor(std::size_t(0)); }
   UserValueSentinel end() { return UserValueSentinel(std::size_t(3)); }
+public:
+  VirtualValueRange() = default;
 };
 class UserRecordCursor {
   mut std::size_t index;
@@ -56,16 +60,22 @@ class UserRecordRange {
 public:
   UserRecordCursor begin() { return UserRecordCursor(std::size_t(0)); }
   UserValueSentinel end() { return UserValueSentinel(std::size_t(3)); }
+public:
+  UserRecordRange() = default;
 };
 class TextCounter {
 public:
   mut int count = 0;
   void operator()(char& value) mut { if (value != 'x') { this.count++; } }
+public:
+  TextCounter() = default;
 };
 class TextValueCounter {
 public:
   mut int count = 0;
   void operator()(char value) mut { if (value != 'x') { this.count++; } }
+public:
+  TextValueCounter() = default;
 };
 bool positive_value(int& value) { return value > 0; }
 bool positive_copy(int value) { return value > 0; }

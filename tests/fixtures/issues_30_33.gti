@@ -27,7 +27,7 @@ struct Counter {
   uint8_t read() { return value; }
 };
 
-struct Grid { mut uint16_t pixels[2][3] = {{1, 2, 3}, {4, 5, 6}}; };
+struct Grid { mut uint16_t pixels[2][3] = {{1, 2, 3}, {4, 5, 6}};  public: Grid() = default; };
 struct CalledIndex {
   mut int cells[1] = {1};
   mut int calls = 0;
@@ -35,6 +35,8 @@ struct CalledIndex {
     calls++;
     return cells[index];
   }
+public:
+  CalledIndex() = default;
 };
 struct SignedCounter {
   mut int8_t value;
@@ -47,8 +49,10 @@ struct WideCounter {
   mut uint16_t value = 65535;
   ~WideCounter() { issue_trace(int(value)); }
   void multiply() mut { value *= uint16_t(65535); } // arithmetic-overflow
+public:
+  WideCounter() = default;
 };
-struct Frame { mut Grid grid{}; };
+struct Frame { mut Grid grid{};  public: Frame() = default; };
 uint16_t read(Frame& frame, uint64_t row, uint64_t column) {
   return frame.grid.pixels[row][column]; // read
 }

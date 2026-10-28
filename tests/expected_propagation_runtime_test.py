@@ -32,6 +32,8 @@ public:
     if (!marker_alive) { marker_double_destroy = true; }
     marker_alive = false;
   }
+public:
+  ScopeMarker() = default;
 };
 
 expected<int, int> scalar(bool fail, int error, int value) {
@@ -95,6 +97,8 @@ public:
     destructions += 1;
     destruction_value_total += value;
   }
+public:
+  Payload() = default;
 };
 
 expected<Payload, int> make_payload(bool fail) {
@@ -124,6 +128,8 @@ public:
   CopyPayload(CopyPayload&& other) = default;
 
   int read() { return this.value; }
+public:
+  CopyPayload() = default;
 };
 
 expected<CopyPayload, int> make_copy_payload(bool fail) {
@@ -145,6 +151,8 @@ public:
   CopyError(CopyError&& other) = default;
 
   int read() { return this.code; }
+public:
+  CopyError() = default;
 };
 
 expected<int, CopyError> make_copy_error(bool fail) {
@@ -166,6 +174,8 @@ public:
   MoveError(MoveError&& other) = default;
 
   int read() { return this.code; }
+public:
+  MoveError() = default;
 };
 
 expected<int, MoveError> make_move_error(bool fail, int code, int value) {

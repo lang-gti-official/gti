@@ -1,5 +1,5 @@
 // Variadic generic packs: forwarding, expansion and mixed explicit arguments.
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 void consume<Args...>(Args... values) {}
 

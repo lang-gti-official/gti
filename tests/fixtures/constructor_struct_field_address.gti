@@ -1,5 +1,5 @@
-struct Ledger { mut int32_t n = 0; };
-struct Nested { mut Ledger ledger{}; };
+struct Ledger { mut int32_t n = 0;  public: Ledger() = default; };
+struct Nested { mut Ledger ledger{};  public: Nested() = default; };
 
 class Book {
   mut Ledger ledger{};

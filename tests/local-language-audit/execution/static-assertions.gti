@@ -2,6 +2,8 @@ class InlineBuffer<T, uint64_t N> {
   static_assert(N > uint64_t(0), "InlineBuffer capacity must be positive");
 
   T values[N] = {};
+public:
+  InlineBuffer() = default;
 };
 
 static_assert(sizeof(uint32_t) == uint64_t(4),

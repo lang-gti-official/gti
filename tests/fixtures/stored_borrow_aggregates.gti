@@ -46,6 +46,8 @@ struct State {
   mut int output = 0;
   int offset = 2;
   mut int total = 0;
+public:
+  State() = default;
 };
 
 struct Exclusive {

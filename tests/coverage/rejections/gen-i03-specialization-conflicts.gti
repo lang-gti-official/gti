@@ -8,6 +8,8 @@ namespace codec {
 class traits<T> {
 public:
   int32_t width() { return 0; }
+public:
+  traits() = default;
 };
 }
 
@@ -16,6 +18,8 @@ using Word = int32_t;
 class codec::traits<int32_t> {
 public:
   int32_t width() { return 32; }
+public:
+  traits() = default;
 };
 
 class codec::traits<Word> {

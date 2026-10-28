@@ -30,6 +30,8 @@ public:
 class Tagged {
 public:
   int amount = 40;
+public:
+  Tagged() = default;
 };
 
 interface Shape {

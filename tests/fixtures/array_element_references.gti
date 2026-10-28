@@ -1,6 +1,8 @@
 // Named references bound to checked fixed-array elements (issue #112).
 struct Point {
   mut int32_t x = 0;
+public:
+  Point() = default;
 };
 
 class Counter {
@@ -13,6 +15,8 @@ public:
 
 struct Frame {
   mut int32_t slots[3] = {1, 2, 3};
+public:
+  Frame() = default;
 };
 
 int32_t pick(int32_t index) { return index; }

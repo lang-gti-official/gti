@@ -2,7 +2,7 @@
 #include <std/format>
 #include <std/string>
 
-class unsupported_format_value {};
+class unsupported_format_value { public: unsupported_format_value() = default; };
 // A supported formatter may still reject a dynamic value. Unsupported static
 // types are checked separately by the constraint-diagnostic tests.
 class std::formatter<unsupported_format_value> {
@@ -11,6 +11,8 @@ public:
       mut std::string& output, std::format_spec& spec) {
     return unexpected(std::format_errc::unsupported_argument);
   }
+public:
+  formatter() = default;
 };
 
 int main() {

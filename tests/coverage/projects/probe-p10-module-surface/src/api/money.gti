@@ -8,7 +8,7 @@ namespace fin {
     Cents operator+(Cents& other) { return Cents(amount + other.amount); }
     bool operator==(Cents& other) { return amount == other.amount; }
     int64_t total_amount() { return amount; }
-  };
+   public: Cents() = default; };
 
   export using AccountId = uint64_t;
   export constexpr int max_accounts = 4;

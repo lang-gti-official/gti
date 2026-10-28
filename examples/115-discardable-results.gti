@@ -12,6 +12,8 @@ struct Counter {
     this.value += amount;
     return this.value;
   }
+public:
+  Counter() = default;
 };
 
 // Unannotated APIs still require using or explicitly discarding the result.

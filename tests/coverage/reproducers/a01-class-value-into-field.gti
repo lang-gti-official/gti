@@ -2,10 +2,14 @@
 // (GTI-B0001); the same assignment into a local binding builds and runs.
 struct Inner {
   mut int value = 0;
+public:
+  Inner() = default;
 };
 
 struct Outer {
   mut Inner inner = Inner();
+public:
+  Outer() = default;
 };
 
 int main() {

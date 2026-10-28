@@ -51,6 +51,8 @@ public:
     }
     return total;
   }
+public:
+  Directory() = default;
 };
 
 int64_t recombine(QuotRem value, int64_t divisor) {

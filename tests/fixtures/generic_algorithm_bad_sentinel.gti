@@ -1,6 +1,6 @@
 #include <std/algorithm>
 
-class sentinel {};
+class sentinel { public: sentinel() = default; };
 
 class iterator {
   mut int32_t current;

@@ -1,5 +1,5 @@
 // INVALID: designated fields out of declaration order.
-struct Point { int32_t x = 0; int32_t y = 0; int32_t z = 0; };
+struct Point { int32_t x = 0; int32_t y = 0; int32_t z = 0;  public: Point() = default; };
 int main() {
   Point p = {.y = 2, .x = 1};
   return p.x + p.y - 3;

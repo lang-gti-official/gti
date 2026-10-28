@@ -46,6 +46,8 @@ public:
     unsafe { replace_wide(&this.wide); }
     return this.wide + uint64_t(1);
   }
+public:
+  Metadata() = default;
 };
 
 int main() {

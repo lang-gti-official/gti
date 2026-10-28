@@ -35,7 +35,10 @@ namespace std {
       }
     };
 
-    class forward_list_sentinel<T> {};
+    class forward_list_sentinel<T> {
+    public:
+      forward_list_sentinel() = default;
+    };
 
     class forward_list_iterator<T> {
       std::unique_ptr<forward_list_node<T>>& root;

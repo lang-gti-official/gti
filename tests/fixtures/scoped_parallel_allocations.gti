@@ -5,7 +5,7 @@ extern "C" {
   uint64_t gti_scoped_allocations();
 }
 
-struct Work { void operator()() {} };
+struct Work { void operator()() {}  public: Work() = default; };
 
 int main() {
   // Startup and one initial group are outside both observation windows.

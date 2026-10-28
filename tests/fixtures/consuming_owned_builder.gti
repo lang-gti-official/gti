@@ -26,6 +26,8 @@ public:
     return std::move(this);
   }
   void print() { std::println(this.text.view()); }
+public:
+  Path() = default;
 };
 
 class Box<T> {

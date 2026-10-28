@@ -42,6 +42,8 @@ public:
 class ResultOuterCleanup {
 public:
   ~ResultOuterCleanup() { std::println(99); }
+public:
+  ResultOuterCleanup() = default;
 };
 expected<NonDefaultMemberCode, int> forward_method(ResultFactory& factory,
                                                  int divisor) {

@@ -11,6 +11,8 @@ public:
     this.multiplier++;
     return result;
   }
+public:
+  increasing_add() = default;
 };
 
 class alternating_predicate {
@@ -21,6 +23,8 @@ public:
     this.accept = !this.accept;
     return this.accept;
   }
+public:
+  alternating_predicate() = default;
 };
 
 int main() {

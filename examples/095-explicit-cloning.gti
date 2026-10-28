@@ -12,6 +12,8 @@ struct Settings {
     Settings result{.jobs = this.jobs};
     return result;
   }
+public:
+  Settings() = default;
 };
 
 int main() {

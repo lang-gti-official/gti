@@ -19,6 +19,8 @@ mut int32_t cleanup_trace = 0;
 class Cleanup {
 public:
   ~Cleanup() { cleanup_trace = 1; }
+public:
+  Cleanup() = default;
 };
 int32_t cleanup_leaf() {
   Cleanup value{};

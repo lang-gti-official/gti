@@ -29,30 +29,38 @@ concept symbolically_readable_cell<T> = declares_reference<T>() && requires(T& c
 int accepts_cell<symbolically_readable_cell T>(T& cell) { return 1; }
 int forwards_cell<T>(GenericCell<T>& cell) { return accepts_cell(cell); }
 
-struct Finish { int position = 8; };
+struct Finish { int position = 8;  public: Finish() = default; };
 struct Position {
   int position = 3;
   bool operator!=(Finish& end) { return this.position != end.position; }
   std::ptrdiff_t operator-(Finish& end) {
     return std::ptrdiff_t(this.position - end.position);
   }
+public:
+  Position() = default;
 };
 struct IsPositive {
   bool operator()(int& value) { return value > 0; }
+public:
+  IsPositive() = default;
 };
 // A user-defined range uses the same loop query as an array or a library range.
-struct CountEnd {};
+struct CountEnd { public: CountEnd() = default; };
 struct CountCursor {
   mut int value = 1;
   // Value-producing iterators are materialized by the ordinary range loop.
   int operator*() { return this.value; }
   void operator++() mut { this.value++; }
   bool operator!=(CountEnd& end) { return this.value <= 3; }
+public:
+  CountCursor() = default;
 };
 struct Counts {
   CountCursor begin() { return CountCursor(); }
   CountEnd end() { return CountEnd(); }
   std::size_t size() { return std::size_t(3); }
+public:
+  Counts() = default;
 };
 std::size_t measured_size<R>(R& range) requires std::sized_range<R> {
   return range.size();
@@ -114,6 +122,8 @@ struct Cell {
   mut int& operator*() mut { return this.value; }
   mut int& operator[](std::ptrdiff_t offset) mut { return this.value; }
   mut int& edit() mut { return this.value; }
+public:
+  Cell() = default;
 };
 [[borrowed_from(owner)]] T& peek_cell<C, T>(C& owner)
     requires readable_cell<C, T> { return *owner; }
@@ -158,6 +168,8 @@ struct Distance {
     Distance result{.value = this.value + other.value};
     return result;
   }
+public:
+  Distance() = default;
 };
 
 class Counter {
@@ -169,6 +181,8 @@ public:
 
 struct Doubler {
   int operator()(int& value) { return value * 2; }
+public:
+  Doubler() = default;
 };
 
 // A consuming operation can be queried in ordinary source. No invocation or
@@ -191,6 +205,8 @@ void finish<final_task F>(F task) { std::move(task)(); }
 class RuntimeObject {
 public:
   virtual int value() { return 1; }
+public:
+  RuntimeObject() = default;
 };
 // Naming a runtime-only type does not create an object of that type. This
 // works for ordinary user tags as well as the library's reflection carriers.
@@ -217,8 +233,10 @@ struct Tally {
   void operator--() mut { this.value -= 1; }
   void operator+=(int amount) mut { this.value += amount; }
   void operator-=(int amount) mut { this.value -= amount; }
+public:
+  Tally() = default;
 };
-struct InheritedTally : public Tally {};
+struct InheritedTally : public Tally { public: InheritedTally() = default; };
 class OwnedNumber {
   int value;
 public:
@@ -229,13 +247,19 @@ public:
 };
 struct ConsumeNumber {
   int operator()(OwnedNumber number) { return number.read(); }
+public:
+  ConsumeNumber() = default;
 };
 struct AddOwnedLeft {
   int operator()(OwnedNumber number, int& extra) { return number.read() + extra; }
+public:
+  AddOwnedLeft() = default;
 };
 struct ArgumentForms {
   int operator()(int number) { return number; }
   int operator()(int& number) { return number + 100; }
+public:
+  ArgumentForms() = default;
 };
 int consume_integer<F>(F& callable, int number)
     requires std::read_callable<F, int, int> {

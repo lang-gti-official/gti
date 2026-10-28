@@ -83,6 +83,8 @@ int bad_raw_write() {
 
 struct PointerHolder {
   mut int* address = nullptr;
+public:
+  PointerHolder() = default;
 };
 
 int bad_pointer_alias() {

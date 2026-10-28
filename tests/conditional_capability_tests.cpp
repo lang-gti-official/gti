@@ -32,8 +32,8 @@ public:
   Reviewed() {}
   ~Reviewed() {}
 };
-[[no_transfer]] struct Affine { int id = 0; };
-[[no_share]] struct Exclusive { int id = 0; };
+[[no_transfer]] struct Affine { int id = 0;  public: Affine() = default; };
+[[no_share]] struct Exclusive { int id = 0;  public: Exclusive() = default; };
 enum Packet<T> { item(T value) };
 enum Metadata<T> { item(int value) };
 void consume<std::transferable T>(T value) {}
@@ -174,11 +174,14 @@ int main() {
            "owner's checked external borrow");
   }
   for (const char *declaration :
-       {"[[unsafe_transfer(U)]] class Wrong<T> {};",
-        "[[unsafe_transfer(N)]] class Wrong<uint64_t N> {};",
-        "[[unsafe_share(T)]] class Wrong<T...> {};",
-        "[[unsafe_transfer(T), no_transfer]] class Wrong<T> {};",
-        "[[unsafe_share, unsafe_share(T)]] class Wrong<T> {};",
+       {"[[unsafe_transfer(U)]] class Wrong<T> { public: Wrong() = default; };",
+        "[[unsafe_transfer(N)]] class Wrong<uint64_t N> { public: Wrong() = "
+        "default; };",
+        "[[unsafe_share(T)]] class Wrong<T...> { public: Wrong() = default; };",
+        "[[unsafe_transfer(T), no_transfer]] class Wrong<T> { public: Wrong() "
+        "= default; };",
+        "[[unsafe_share, unsafe_share(T)]] class Wrong<T> { public: Wrong() = "
+        "default; };",
         "[[unsafe_share(T)]] interface Wrong<T> {};",
         "[[unsafe_transfer(int)]] class Wrong {};"}) {
     const auto bad =

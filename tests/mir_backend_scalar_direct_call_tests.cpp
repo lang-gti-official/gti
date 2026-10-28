@@ -430,10 +430,14 @@ public:
       return get_pointer(this.handle);
     }
   }
+public:
+  Holder() = default;
 };
 
 struct PointerCarrier {
   const H* handle = nullptr;
+public:
+  PointerCarrier() = default;
 };
 
 P reference_field(PointerCarrier& carrier) {

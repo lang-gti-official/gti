@@ -9,6 +9,8 @@
 struct point {
   int32_t x = 0;
   int32_t y = 0;
+public:
+  point() = default;
 };
 
 struct settings {
@@ -19,6 +21,8 @@ struct settings {
   point origin = {.x = 3, .y = -4};
   std::vector<int32_t> sizes = {8, 16};
   std::string_view label = "settings";
+public:
+  settings() = default;
 };
 
 struct bare {

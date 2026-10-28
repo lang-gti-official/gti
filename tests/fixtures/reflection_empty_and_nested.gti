@@ -1,5 +1,5 @@
 #include <std/meta>
-struct Nothing {};
+struct Nothing { public: Nothing() = default; };
 int main() {
   mut uint64_t count = 0;
   constexpr for (auto field : std::meta::fields_of<Nothing>()) {

@@ -3,6 +3,8 @@
 struct members {
   mut std::vector<int32_t> names{};
   mut std::vector<int32_t> values{};
+public:
+  members() = default;
 };
 enum class data { object(members fields) };
 

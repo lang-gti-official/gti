@@ -8,6 +8,8 @@ struct Marker {
 class Guard {
 public:
   ~Guard() { std::println("caller cleaned"); }
+public:
+  Guard() = default;
 };
 expected<Marker, Marker> alternative(bool success) {
   if (success) { return Marker(1); }

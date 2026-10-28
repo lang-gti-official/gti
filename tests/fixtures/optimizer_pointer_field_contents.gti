@@ -51,6 +51,8 @@ public:
       return *this.address + 1;
     }
   }
+public:
+  Cell() = default;
 };
 
 int main() {

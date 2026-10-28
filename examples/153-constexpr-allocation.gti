@@ -24,6 +24,8 @@ struct scratch_curve {
     for (mut int i = 0; i < 4; i++) { total += this.samples[i]; }
     return curve_summary(total, this.samples[3]);
   }
+public:
+  scratch_curve() = default;
 };
 
 constexpr curve_summary prepare_curve(int step) {

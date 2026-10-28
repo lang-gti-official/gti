@@ -765,6 +765,8 @@ public:
 
 private:
   mut float value = 0.0;
+public:
+  FoldedCleanup() = default;
 };
 )");
   expect(frontend.canGenerateCode(),
@@ -840,7 +842,7 @@ void testPassiveCallAssignment(const std::filesystem::path &fixtures) {
   }
   const auto immutable =
       lang::Frontend().analyze("passive-immutable.gti", R"(
-struct Block { mut float lanes[4] = {}; };
+struct Block { mut float lanes[4] = {};  public: Block() = default; };
 Block make() { Block result{}; return result; }
 int main() { Block value{}; value = make(); return 0; }
 )",

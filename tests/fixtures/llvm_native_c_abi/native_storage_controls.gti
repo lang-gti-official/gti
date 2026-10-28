@@ -22,7 +22,7 @@ extern "C" {
   int32_t native_storage_verify();
   void native_storage_cleanup();
 }
-struct Guard { ~Guard() { native_storage_cleanup(); } };
+struct Guard { ~Guard() { native_storage_cleanup(); }  public: Guard() = default; };
 // Supported C++ controls accompany the independent LLVM-only source shapes.
 int main() {
   Guard guard{};

@@ -13,6 +13,8 @@ struct Command {
   std::string name{};
   std::function<int()> handler{};
   std::vector<Command> subcommands{};
+public:
+  Command() = default;
 };
 
 int walk(Command& command) {

@@ -7,10 +7,14 @@ class traits<T> {
 public:
   int32_t width() { return 0; }
   bool fixed() { return false; }
+public:
+  traits() = default;
 };
 
 struct slots<uint64_t N> {
   uint64_t capacity() { return N; }
+public:
+  slots() = default;
 };
 }
 
@@ -25,16 +29,22 @@ class codec::traits<Pixel> {
 public:
   int32_t width() { return 32; }
   bool fixed() { return true; }
+public:
+  traits() = default;
 };
 
 class codec::traits<Sample> {
 public:
   int32_t width() { return 16; }
   bool fixed() { return true; }
+public:
+  traits() = default;
 };
 
 struct codec::slots<0> {
   uint64_t capacity() { return 999; }
+public:
+  slots() = default;
 };
 
 int32_t width_of<T>() {

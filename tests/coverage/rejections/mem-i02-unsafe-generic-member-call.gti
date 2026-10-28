@@ -5,6 +5,8 @@ class Slot<T> {
 public:
   Slot(T* at) : at(at) {}
   unsafe T load() { unsafe { return *this.at; } }
+public:
+  Slot() = default;
 };
 
 concept loads<S, T> = requires(S& slot) { { slot.load() } -> T; };

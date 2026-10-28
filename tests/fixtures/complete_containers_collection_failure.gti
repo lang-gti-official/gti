@@ -22,14 +22,20 @@ public:
 class Order {
 public:
   bool operator()(Token& left, Token& right) { return left.value < right.value; }
+public:
+  Order() = default;
 };
 class Hash {
 public:
   std::size_t operator()(Token& value) { return std::size_t(value.value); }
+public:
+  Hash() = default;
 };
 class Equal {
 public:
   bool operator()(Token& left, Token& right) { return left.value == right.value; }
+public:
+  Equal() = default;
 };
 class FailingOrder {
 public:
@@ -37,10 +43,14 @@ public:
     int checked = 1 / (left.value == 2 || right.value == 2 ? 0 : 1);
     return left.value < right.value;
   }
+public:
+  FailingOrder() = default;
 };
 class FailingHash {
 public:
   std::size_t operator()(Token& value) { return std::size_t(1 / (value.value == 2 ? 0 : 1)); }
+public:
+  FailingHash() = default;
 };
 int main(int argc, std::vector<std::string> argv) {
   Guard guard{};

@@ -236,7 +236,7 @@ struct Ticket {
   Ticket(Ticket& other) = delete;
   Ticket(Ticket&& other) = default;
 };
-struct Holder { mut Ticket field = Ticket(); };
+struct Holder { mut Ticket field = Ticket();  public: Holder() = default; };
 )";
   const std::string projected = records + R"(
 void examine(bool condition) {
@@ -283,6 +283,8 @@ class Owner {
   mut Ticket field = Ticket();
 public:
   void remove() mut { Ticket previous = std::move(this.field); }
+public:
+  Owner() = default;
 };
 )");
   expect(hasDiagnosticCode(receiverResult.diagnostics, "GTI-S2018") &&
@@ -415,7 +417,7 @@ int main() {
   const auto globalWrite =
       lang::Frontend(concurrentOptions)
           .analyze("concurrent-global-explanations.gti", R"(
-struct Command { mut int name = 0; };
+struct Command { mut int name = 0;  public: Command() = default; };
 Command cmd{};
 int count = 0;
 void examine() { cmd.name = 1; count = 1; }
@@ -428,7 +430,7 @@ void examine() { cmd.name = 1; count = 1; }
          "concurrent global mutation advice must preserve the "
          "immutable-storage policy");
   const std::string readonly = R"(
-struct Command { mut int name = 0; };
+struct Command { mut int name = 0;  public: Command() = default; };
 int main() {
   Command cmd{};
   cmd.name = 1;
@@ -446,7 +448,7 @@ int main() {
   expect(analyze(mutableSource).canGenerateCode(),
          "an explicitly mutable owner still accepts field writes");
   const auto referenceResult = analyze(R"(
-struct Command { mut int name = 0; };
+struct Command { mut int name = 0;  public: Command() = default; };
 void update(Command& cmd) { cmd.name = 1; }
 )");
   expect(hasRelatedDiagnostic(referenceResult.diagnostics,
@@ -462,7 +464,7 @@ void update(Command& cmd) { cmd.name = 1; }
                                "Declare 'values' with 'mut'"),
          "a built-in fixed-array write identifies its immutable binding");
   const auto capturedWrite = analyze(R"(
-struct Command { mut int name = 0; };
+struct Command { mut int name = 0;  public: Command() = default; };
 void examine() {
   mut Command cmd{};
   auto modify = [cmd]() -> void { cmd.name = 1; };
@@ -474,7 +476,7 @@ void examine() {
          "capture mutation advice must not suggest changing the mutable source "
          "binding");
   const auto immutableMethod = analyze(R"(
-struct Command { void update() mut {} };
+struct Command { void update() mut {}  public: Command() = default; };
 void examine() { Command cmd{}; cmd.update(); }
 )");
   expect(hasRelatedDiagnostic(immutableMethod.diagnostics,
@@ -536,6 +538,7 @@ void examine() {
 class Slot {
   mut std::string value = std::string("old");
 public:
+  Slot() = default;
   mut std::string& operator*() mut { return value; }
 };
 int main() {
@@ -1036,6 +1039,8 @@ void testCppReservedIdentifiers() {
 class Value {
 public:
   Value(Value& other) = delete;
+public:
+  Value() = default;
 };
 )"));
   validDeleteParser.parse();
@@ -1153,6 +1158,8 @@ int main() {
 class Box {
   int value = 1;
   int change() { this.value = 2; return this.value; }
+public:
+  Box() = default;
 };
 int changeParameter(int value) { value = 2; return value; }
 int main() {
@@ -1224,7 +1231,8 @@ int main() {
          "program-wide scalar data initialization remain valid");
 
   for (const std::string_view source : {
-           "struct Record { int read() { mut int value; return 0; } };",
+           "struct Record { int read() { mut int value; return 0; }  public: "
+           "Record() = default; };",
            "int main() { auto action = []() -> int { mut int value; return 0; "
            "}; return action(); }",
            "constexpr int compute() { mut int value; value = 1; return value; "
@@ -1374,6 +1382,8 @@ void replace(mut int& value) { value = 3; }
 struct Box {
   mut int value = 0;
   void change() mut { this.value = 4; }
+public:
+  Box() = default;
 };
 int main() {
   mut int referenced = 1;
@@ -1444,6 +1454,8 @@ int main() {
 class Inspect {
 public:
   Inspect(int& source) {}
+public:
+  Inspect() = default;
 };
 int main() {
   mut int owner = 4;
@@ -1492,14 +1504,20 @@ int main() {
   const std::string projectedTypes = R"(
 struct Record {
   mut int value = 4;
+public:
+  Record() = default;
 };
 struct Holder {
   mut Record record = Record();
   mut Record slots[2] = {Record(), Record()};
+public:
+  Holder() = default;
 };
 struct Token {
   mut int value = 2;
   int take() && { return this.value; }
+public:
+  Token() = default;
 };
 )";
   struct RequiredWritableBinding {
@@ -1546,6 +1564,8 @@ int main() { return first(Record(), Record()).value; }
 struct Point {
   mut int x = 1;
   mut int y = 2;
+public:
+  Point() = default;
 };
 int main() {
   mut Point point = Point();
@@ -1888,7 +1908,7 @@ int main() {
 
   const std::string staticFormatted = lang::Formatter().format(
       "static mut int count=0;class Registry{public:static int value=1;"
-      "static int current(){return value;}};");
+      "static int current(){return value;} public: Registry() = default; };");
   expect(staticFormatted == R"(static mut int count = 0;
 class Registry {
 public:
@@ -1896,6 +1916,8 @@ public:
   static int current() {
     return value;
   }
+public:
+  Registry() = default;
 };
 )" && lang::Formatter().format(staticFormatted) == staticFormatted,
          "formatter should preserve static declaration ownership and remain "
@@ -1903,12 +1925,15 @@ public:
 
   const std::string constexprFormatted = lang::Formatter().format(
       "constexpr uint64_t extent=uint64_t(2+2);class Limits{public:static "
-      "constexpr uint64_t count=extent;};int choice(){if constexpr(true){"
+      "constexpr uint64_t count=extent; public: Limits() = default; };int "
+      "choice(){if constexpr(true){"
       "return 1;}else{return 0;}}");
   expect(constexprFormatted == R"(constexpr uint64_t extent = uint64_t(2 + 2);
 class Limits {
 public:
   static constexpr uint64_t count = extent;
+public:
+  Limits() = default;
 };
 int choice() {
   if constexpr (true) {
@@ -1929,7 +1954,7 @@ int choice() {
          "formatter should honor tab indentation requested by an editor");
 
   const std::string referenceSource =
-      "class Box<T>{};"
+      "class Box<T>{ public: Box() = default; };"
       "void use(int& value,Box<int>& box){int A=value;int bits=A&value;}";
   const std::string leftReferences =
       lang::Formatter({.referenceAlignment = lang::ReferenceAlignment::Left})
@@ -1965,7 +1990,7 @@ int choice() {
       "class Application{public:mut LayerStack & GetLayerStack()mut{"
       "return this.m_LayerStack;}LayerStack & PeekLayerStack(){return "
       "this.m_LayerStack;}static mut Application & GetApplication(){unsafe{"
-      "return *Application::app;}}};");
+      "return *Application::app;}} public: Application() = default; };");
   expect(importedReturnReferences.find(
              "mut LayerStack& GetLayerStack() mut {") != std::string::npos &&
              importedReturnReferences.find("LayerStack& PeekLayerStack() {") !=
@@ -2009,14 +2034,16 @@ int expressions(int left, int right) {
          "operator spacing");
 
   const std::string pointerFormatted = lang::Formatter().format(
-      "class Byte{};void use(mut uint8_t * data,const uint8_t*read_only){"
+      "class Byte{};void use(mut uint8_t * "
+      "data,const uint8_t*read_only){"
       "mut uint8_t*alias=& data[0];* data=read_only [0];"
       "uint8_t product=data[0]*read_only[0];"
       "uint8_t bits=data[0]&read_only[0];return * alias;}"
       "class Link{public:uint8_t value=0;};"
       "uint8_t member(Link*link){return link -> value;}"
       "class RawBox<T>{T * value;const T * read(){return value;}};");
-  const std::string expectedPointerFormatting = R"(class Byte {};
+  const std::string expectedPointerFormatting =
+      R"(class Byte {};
 void use(mut uint8_t* data, const uint8_t* read_only) {
   mut uint8_t* alias = &data[0];
   *data = read_only[0];
@@ -2044,10 +2071,12 @@ class RawBox<T> {
          "pointer operators from multiplication and bitwise-and");
 
   const std::string commentedGenericReturn = lang::Formatter().format(
-      "namespace detail{class Iterator<T>{};}class Range<T>{public:"
+      "namespace detail{class Iterator<T>{ public: Iterator() = default; "
+      "};}class Range<T>{public:"
       "// Iterator access remains read-only.\n"
       "detail::Iterator<T> begin();detail::Iterator<Range<T>> nested();"
-      "bool ordered(int left,int right){return left < right;}};");
+      "bool ordered(int left,int right){return left < right;} public: Range() "
+      "= default; };");
   expect(commentedGenericReturn.find("// Iterator access remains read-only.\n"
                                      "  detail::Iterator<T> begin();") !=
                  std::string::npos &&
@@ -2279,6 +2308,8 @@ namespace gfx = engine::graphics;
 
 class Fixed<T, uint64_t N> {
   T values[N] = {};
+public:
+  Fixed() = default;
 };
 
 /// Owns one integer value.
@@ -2287,6 +2318,8 @@ class Box {
 public:
   /// Constructs a box from `value`.
   Box(int value) : value(value) {}
+public:
+  Box() = default;
 };
 
 class Lifecycle {
@@ -2294,6 +2327,8 @@ class Lifecycle {
 public:
   Lifecycle(Lifecycle& other) = default;
   Lifecycle(Lifecycle&& other) = default;
+public:
+  Lifecycle() = default;
 };
 
 class Accessor {
@@ -2305,6 +2340,8 @@ public:
     this.value += 1;
     return this.value;
   }
+public:
+  Accessor() = default;
 };
 
 /// A type that can render itself.
@@ -2318,11 +2355,15 @@ void relay<Args...>(Args... values) {}
 
 class Undocumented {
   int value = 0;
+public:
+  Undocumented() = default;
 };
 
 // Ordinary comments are not API documentation.
 class OrdinaryCommented {
   int value = 0;
+public:
+  OrdinaryCommented() = default;
 };
 
 int main() {
@@ -2652,7 +2693,8 @@ int main() {
 
   const std::string memberSource =
       "class Box { int hidden = 0; public: int read() { return this.hidden; } "
-      "}; int main() { Box box{}; int result = box.rea; return 0; }";
+      " public: Box() = default; }; int main() { Box box{}; int result = "
+      "box.rea; return 0; }";
   const lang::CompletionResult memberCompletion = complete(memberSource, "rea");
   expect(findCandidate(memberCompletion, "read") !=
                  memberCompletion.candidates.end() &&
@@ -2716,6 +2758,8 @@ void testReadOnlyReceiverDiagnostics() {
   const std::string invalidSource = R"(
 struct Component {
   mut int offset = 0;
+public:
+  Component() = default;
 };
 
 class Path {
@@ -2735,6 +2779,8 @@ public:
 private:
   mut int direct_value = 0;
   mut Component component = Component();
+public:
+  Path() = default;
 };
 )";
   const lang::FrontendResult invalid = lang::Frontend().analyze(
@@ -2820,12 +2866,14 @@ private:
 
   const lang::FrontendResult immutableField =
       lang::Frontend().analyze("immutable-receiver-field.gti", R"(
-struct Component { int offset = 0; };
+struct Component { int offset = 0;  public: Component() = default; };
 class Path {
 public:
   void update() { component.offset = 1; }
 private:
   mut Component component = Component();
+public:
+  Path() = default;
 };
 )");
   expect(!immutableField.canGenerateCode() &&
@@ -2837,7 +2885,7 @@ private:
 
   const lang::FrontendResult unrelatedObject =
       lang::Frontend().analyze("unrelated-read-only-object.gti", R"(
-struct Component { mut int offset = 0; };
+struct Component { mut int offset = 0;  public: Component() = default; };
 void update(Component value) { value.offset = 1; }
 )");
   expect(!unrelatedObject.canGenerateCode() &&
@@ -2850,7 +2898,7 @@ void update(Component value) { value.offset = 1; }
 
   const lang::FrontendResult mutableReceiver =
       lang::Frontend().analyze("mutable-receiver-fields.gti", R"(
-struct Component { mut int offset = 0; };
+struct Component { mut int offset = 0;  public: Component() = default; };
 class Path {
 public:
   void update() mut {
@@ -2862,6 +2910,8 @@ public:
 private:
   mut int direct_value = 0;
   mut Component component = Component();
+public:
+  Path() = default;
 };
 )");
   expect(mutableReceiver.canGenerateCode(),
@@ -2971,7 +3021,8 @@ void testUnknownFunctionAttributeClassification() {
   expect(known.canGenerateCode(),
          "recognized function attributes remain valid");
   const auto classAttribute = lang::Frontend().analyze(
-      "class-attribute.gti", "[[not_an_attribute]] struct Record {}; ");
+      "class-attribute.gti",
+      "[[not_an_attribute]] struct Record { public: Record() = default; }; ");
   expect(!classAttribute.canGenerateCode() &&
              !hasDiagnostic(classAttribute.diagnostics,
                             "Unknown GTI function attribute"),
@@ -3054,8 +3105,9 @@ int main() {
          "one library request reports one diagnostic with each internal site "
          "ahead of its request notes");
   const auto pack = lang::Frontend().analyze(
-      "duplicate-semantic.gti", "class Pack<Args...> {}; int main() { "
-                                "Pack<int[2]&> value{}; return 0; }");
+      "duplicate-semantic.gti",
+      "class Pack<Args...> { public: Pack() = default; }; int main() { "
+      "Pack<int[2]&> value{}; return 0; }");
   expect(!pack.canGenerateCode() && count(pack, "GTI-S2017") == 1,
          "a type checked twice reports its error once");
 }
@@ -3239,6 +3291,8 @@ public:
   static int read() { return Globals::later; }
   static mut int first = Globals::read();
   static mut int later = 1;
+public:
+  Globals() = default;
 };
 int main() { return Globals::first; }
 )");
@@ -3395,7 +3449,7 @@ int main() {
   expect(valid.canGenerateCode(),
          "the recommended explicit view accessor compiles");
   const auto ordinary = lang::Frontend().analyze("user-view-guidance.gti", R"(
-class Number { public: int view() { return 1; } };
+class Number { public: int view() { return 1; }  public: Number() = default; };
 int consume(int value) { return value; }
 int main() { Number value{}; return consume(value); }
 )");
@@ -3405,7 +3459,7 @@ int main() { Number value{}; return consume(value); }
          "view guidance is discovered from an ordinary user type, not a std "
          "type name");
   const auto hidden = lang::Frontend().analyze("private-view-guidance.gti", R"(
-class Number { private: int view() { return 1; } };
+class Number { private: int view() { return 1; }  public: Number() = default; };
 int consume(int value) { return value; }
 int main() { Number value{}; return consume(value); }
 )");

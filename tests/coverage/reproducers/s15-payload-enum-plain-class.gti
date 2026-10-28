@@ -1,5 +1,5 @@
 mut int32_t drops = 0;
-class P { mut int32_t n = 0; public: P(int32_t n) : n(n) {}  int32_t get() { return this.n; } };
+class P { mut int32_t n = 0; public: P(int32_t n) : n(n) {}  int32_t get() { return this.n; }  public: P() = default; };
 enum class E { a(P p), b, };
 int32_t kind(E& e) { switch (e) { case E::a: return 1; case E::b: return 2; } }
 int main() {

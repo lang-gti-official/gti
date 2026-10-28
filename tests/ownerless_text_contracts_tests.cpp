@@ -1302,6 +1302,8 @@ struct Entry {
 struct Slots {
   c_string* items = nullptr;
   int32_t count = 0;
+public:
+  Slots() = default;
 };
 mut c_string keptText = nullptr;
 mut std::string_view keptView = "";
@@ -2655,7 +2657,8 @@ int main() {
              "  return owner.view();\n"
              "}\n",
              "std::string_view(std::string&)", "owner", "std::string_view"},
-        Case{"struct Label { std::string_view text = \"label\"; };\n"
+        Case{"struct Label { std::string_view text = \"label\";  public: "
+             "Label() = default; };\n"
              "std::string_view target(Label& label) { return label.text; "
              "}\n",
              "std::string_view(Label&)", "label", "std::string_view"},

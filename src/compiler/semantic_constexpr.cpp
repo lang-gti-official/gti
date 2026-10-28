@@ -667,8 +667,13 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                   candidate.owner <= hir.program.classInstances().size()
               ? &hir.program.classInstances()[candidate.owner - 1]
               : nullptr;
-      if (candidate.declaration == construction->constructor && owner &&
-          owner->type == construction->constructedType &&
+      // Structural defaults retain a source declaration in semantic selection,
+      // but HIR gives the generated field schedule its canonical zero identity.
+      const bool selected =
+          construction->generatedDefault
+              ? candidate.generatedDefault
+              : candidate.declaration == construction->constructor;
+      if (selected && owner && owner->type == construction->constructedType &&
           candidate.typeArguments == construction->typeArguments &&
           candidate.valueArguments == construction->valueArguments) {
         root = {MirBodyKind::Constructor, candidate.id};

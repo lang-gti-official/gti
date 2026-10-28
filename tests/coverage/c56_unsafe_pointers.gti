@@ -1,5 +1,5 @@
 // Raw pointers, address-of, dereference and pointer parameters under unsafe.
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 int32_t read_through(int32_t* p) {
   unsafe { return *p; }

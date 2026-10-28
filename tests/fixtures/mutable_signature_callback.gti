@@ -2,7 +2,7 @@
 
 mut int cleanup_count = 0;
 
-class Signature<S> {};
+class Signature<S> { public: Signature() = default; };
 
 interface MutableTarget<R, Args...> {
   R invoke(Args... args) mut;
@@ -32,6 +32,8 @@ public:
     this.target = erase_mutable(std::move(callable), signature);
   }
   R operator()(Args... args) mut { return this.target->invoke(args...); }
+public:
+  MutableCallback() = default;
 };
 
 class Counter {
@@ -42,6 +44,8 @@ public:
     this.total += amount;
     return this.total;
   }
+public:
+  Counter() = default;
 };
 
 int exercise() {

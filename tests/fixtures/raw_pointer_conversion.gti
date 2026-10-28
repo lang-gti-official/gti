@@ -1,6 +1,6 @@
 #include <std/memory>
 
-struct Reading { mut int value = 42; };
+struct Reading { mut int value = 42;  public: Reading() = default; };
 using Erased = void*;
 using Typed = Reading*;
 using Shared = const Reading*;
@@ -11,6 +11,8 @@ class PointerCall {
 public:
   int operator()(const int* pointer) mut { return pointer == nullptr ? 3 : 7; }
   int operator()(bool input) && { return input ? 90 : 91; }
+public:
+  PointerCall() = default;
 };
 int call_qualified<Operation>(Operation operation, int* pointer) {
   const int* qualified = pointer;

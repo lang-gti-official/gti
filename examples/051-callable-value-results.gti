@@ -17,6 +17,8 @@ int compose<Outer, Inner>(int value, Outer outer, Inner inner) {
 class Increment {
 public:
   int operator()(int value) { return value + 1; }
+public:
+  Increment() = default;
 };
 
 class Counter {
@@ -33,6 +35,8 @@ public:
 class Advance {
 public:
   Counter operator()(Counter value) { return Counter(value.read() + 1); }
+public:
+  Advance() = default;
 };
 
 int main() {

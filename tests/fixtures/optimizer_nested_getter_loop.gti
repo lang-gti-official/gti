@@ -28,6 +28,8 @@ public:
   }
   uint64_t read() { return this.counter.read(); }
   void set(uint64_t value) mut { this.counter.set(value); }
+public:
+  NestedCounter() = default;
 };
 
 uint64_t observe_nested_counter(NestedCounter& counter) {

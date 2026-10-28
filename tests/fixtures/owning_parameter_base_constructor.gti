@@ -21,6 +21,8 @@ struct Spec {
     std::println(6);
     int32_t checked = 1 / parameter_cleanup_divisor;
   }
+public:
+  Spec() = default;
 };
 
 class Base {

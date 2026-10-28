@@ -8,12 +8,16 @@ struct Reading {
   mut int32_t sentinel = 71;
   mut int32_t value = 29;
   int32_t& operator[](std::size_t index) { return this.value; }
+public:
+  Reading() = default;
 };
 
 struct Station {
   mut int32_t sentinel = 83;
   mut Reading reading{};
   mut Reading& operator[](std::size_t index) mut { return this.reading; }
+public:
+  Station() = default;
 };
 
 expected<int32_t&, lookup_errc> selected_reading(Station& station, bool present) {

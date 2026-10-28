@@ -13,7 +13,7 @@ extern "C" {
   int32_t native_sample_check(Samples values);
   void native_sample_cleanup();
 }
-struct Guard { ~Guard() { native_sample_cleanup(); } };
+struct Guard { ~Guard() { native_sample_cleanup(); }  public: Guard() = default; };
 Samples collect(Sample first, Sample second) {
   return native_sample_pair(first, second);
 }

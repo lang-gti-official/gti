@@ -73,7 +73,7 @@ def main():
 
             # Moving an element requires its binding's mut; moving the whole
             # binding does not, so only that mut keeps the removal advice.
-            source = ('struct Record { mut int value = 4; };\n'
+            source = ('struct Record { Record() = default; mut int value = 4; };\n'
                       'T first<T>(T left, T right) { mut T values[2] = {left, right};'
                       ' return std::move(values[0]); }\n'
                       'int main() { /* 😀 */ mut Record whole = Record();'

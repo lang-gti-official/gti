@@ -132,7 +132,7 @@ int main() {
         "GTI-S2102", "read_address(copied)");
   check("ordinary user aggregate parameter retains raw access requirements",
         R"(
-struct Address { mut const int* pointer = nullptr; };
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
 unsafe int read_record(Address address) {
   unsafe { return *address.pointer; }
 }
@@ -146,6 +146,8 @@ int main() {
 struct Observed {
   mut int value = 0;
   Observed(const int* pointer) { unsafe { this.value = *pointer; } }
+public:
+  Observed() = default;
 };
 int main() {
   mut const int* pointer = nullptr;
@@ -158,6 +160,8 @@ int main() {
 struct Address {
   mut const int* pointer = nullptr;
   int read() { unsafe { return *this.pointer; } }
+public:
+  Address() = default;
 };
 int main() {
   mut Address address{};
@@ -169,6 +173,8 @@ int main() {
 struct Address {
   mut const int* pointer = nullptr;
   int operator+(int other) { unsafe { return *this.pointer + other; } }
+public:
+  Address() = default;
 };
 int main() {
   mut Address address{};
@@ -183,6 +189,8 @@ struct Address {
     if (this.pointer != nullptr) { return other; }
     return 0;
   }
+public:
+  Address() = default;
 };
 int main() {
   mut Address address{};
@@ -193,6 +201,8 @@ int main() {
 struct Address {
   mut const int* pointer = nullptr;
   int operator()() { unsafe { return *this.pointer; } }
+public:
+  Address() = default;
 };
 int main() {
   mut Address address{};
@@ -204,6 +214,8 @@ int main() {
 struct Address {
   mut const int* pointer = nullptr;
   operator bool() { unsafe { return *this.pointer != 0; } }
+public:
+  Address() = default;
 };
 int main() {
   mut Address address{};
@@ -239,6 +251,8 @@ struct Maker {
     int dead = 7;
     return &dead;
   }
+public:
+  Maker() = default;
 };
 int main() {
   Maker maker{};
@@ -253,6 +267,8 @@ struct Address {
     int dead = 7;
     this.pointer = &dead;
   }
+public:
+  Address() = default;
 };
 int main() {
   mut Address address{};
@@ -264,6 +280,8 @@ int main() {
 struct Address {
   mut const int* pointer = nullptr;
   int operator[](int index) { unsafe { return this.pointer[index]; } }
+public:
+  Address() = default;
 };
 int main() {
   mut Address address{};
@@ -275,6 +293,8 @@ int main() {
 struct Address {
   mut const int* pointer = nullptr;
   void operator+=(const int* next) mut { this.pointer = next; }
+public:
+  Address() = default;
 };
 int main() {
   mut Address address{};
@@ -287,6 +307,8 @@ interface Observer { bool inspect(const int* pointer); };
 class Inert : public Observer {
 public:
   bool inspect(const int* pointer) override { return pointer != nullptr; }
+public:
+  Inert() = default;
 };
 bool dispatch(Observer& observer, const int* pointer) {
   return observer.inspect(pointer);
@@ -308,6 +330,8 @@ public:
   bool inspect(const int* pointer) override {
     unsafe { return *pointer != 0; }
   }
+public:
+  Reading() = default;
 };
 )" + dispatchMain,
         "GTI-S2101", "dispatch(observer, pointer)");
@@ -316,6 +340,8 @@ interface Channel<T> { T inspect(T value); };
 class Model<T> : public Channel<T> {
 public:
   T inspect(T value) override { return value; }
+public:
+  Model() = default;
 };
 )";
   check("exact local generic receiver permits inert expired transport",

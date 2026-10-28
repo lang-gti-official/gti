@@ -4,6 +4,8 @@ struct Widget {
   mut int v = 0;
   Widget(int v) : v(v) {}
   ~Widget() {}
+public:
+  Widget() = default;
 };
 
 int consume(std::unique_ptr<Widget> w) { return w->v; }

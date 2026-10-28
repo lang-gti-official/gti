@@ -1,6 +1,6 @@
 #include <std/memory>
 
-class Witness { public: int unrelated = 2147483647; };
+class Witness { public: int unrelated = 2147483647;  public: Witness() = default; };
 
 unsafe void initialize_index(int* pointer, uint64_t index) {
   unsafe { std::construct_at(pointer + index, 7); }

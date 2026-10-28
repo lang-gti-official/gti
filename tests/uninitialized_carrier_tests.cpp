@@ -53,12 +53,14 @@ int main() {
   const std::string prefix = R"(
 #include <std/memory>
 #include <std/string>
-struct Plain { int value = 8; };
+struct Plain { int value = 8;  public: Plain() = default; };
 class Stationary {
 public:
   Stationary(int value) {}
   Stationary(Stationary& other) = delete;
   Stationary(Stationary&& other) = delete;
+public:
+  Stationary() = default;
 };
 class Holder<std::layout_queryable T> {
   mut std::uninitialized<T> bytes{};
@@ -122,9 +124,9 @@ int main() {
     }
   }
   const std::string policies = R"(
-struct RawRecord { int* address = nullptr; };
-[[no_transfer, no_share]] struct AffineRecord { int value = 0; };
-[[no_share]] struct ExclusiveRecord { int value = 0; };
+struct RawRecord { int* address = nullptr;  public: RawRecord() = default; };
+[[no_transfer, no_share]] struct AffineRecord { int value = 0;  public: AffineRecord() = default; };
+[[no_share]] struct ExclusiveRecord { int value = 0;  public: ExclusiveRecord() = default; };
 )";
   const auto aggregates = analyze(prefix + policies + R"(
 int main() {

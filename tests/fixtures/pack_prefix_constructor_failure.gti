@@ -14,6 +14,8 @@ public:
     std::println(10);
     int checked = 12 / divisor;
   }
+public:
+  Passive() = default;
 };
 
 void accept<Args...>(Passive value, Args... args) { std::println(7); }

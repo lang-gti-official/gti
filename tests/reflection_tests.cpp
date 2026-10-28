@@ -70,6 +70,8 @@ const std::string kPlayer = R"(#include <std/meta>
 struct Player {
   uint32_t health = 100;
   float speed = 1.5;
+public:
+  Player() = default;
 };
 )";
 
@@ -134,7 +136,7 @@ int main() {
   // Reflected access keeps the field's own mutability and access rules.
   const auto mutation = analyzeSource(root, directory, "mutation.gti",
                                       R"(#include <std/meta>
-struct Counter { mut { uint32_t hits = 0; } };
+struct Counter { mut { uint32_t hits = 0; }  public: Counter() = default; };
 int main() {
   mut Counter counter = {.hits = uint32_t(1)};
   Counter frozen = {.hits = uint32_t(1)};
@@ -162,6 +164,8 @@ public:
     }
     return sum;
   }
+public:
+  Secret() = default;
 };
 int main() {
   Secret secret{};
@@ -256,10 +260,10 @@ int main() {
 
 const std::string kAttributes = R"(#include <std/meta>
 namespace tags {
-[[attribute]] struct key { std::string_view name = ""; };
-[[attribute]] struct skip {};
+[[attribute]] struct key { std::string_view name = "";  public: key() = default; };
+[[attribute]] struct skip { public: skip() = default; };
 [[attribute]] struct width { uint64_t bytes; };
-struct plain { int x = 0; };
+struct plain { int x = 0;  public: plain() = default; };
 }
 )";
 
@@ -275,6 +279,8 @@ struct Player {
   std::string_view name = "";
   [[tags::width(.bytes = 2)]]
   uint32_t health = 100;
+public:
+  Player() = default;
 };
 int main() {
   static_assert(std::meta::type_of<Player>().has_attribute<tags::key>());
@@ -304,6 +310,8 @@ struct A {
   [[tags::width]] int d = 4;
   [[tags::key(.nope = "k")]] int e = 5;
   [[tags::key(1)]] int f = 6;
+public:
+  A() = default;
 };
 int main() {
   constexpr for (auto field : std::meta::fields_of<A>()) {
@@ -343,12 +351,14 @@ int main() {
   // Attribute types are structs with public value fields and no constructors.
   const auto shape =
       analyzeSource(root, directory, "attributes_shape.gti", kAttributes + R"(
-[[attribute]] class owner { public: int x = 0; };
+[[attribute]] class owner { public: int x = 0;  public: owner() = default; };
 namespace tags {
 [[attribute]] struct withctor { int x; withctor(int v) : x(v) {} };
 }
 struct B {
   [[tags::withctor(1)]] int b = 2;
+public:
+  B() = default;
 };
 int main() { return 0; }
 )");
@@ -363,12 +373,16 @@ public:
   int shown = 1;
 private:
   int hidden = 2;
+public:
+  Closed() = default;
 };
 [[reflect_private]] class Open {
 public:
   int shown = 1;
 private:
   int hidden = 2;
+public:
+  Open() = default;
 };
 int total<std::meta::reflectable T>(T& value) {
   mut int sum = 0;
@@ -436,10 +450,14 @@ void checkAttributeFormatter() {
 struct Player {
   [[tags::key("display"), tags::skip]]
   std::string_view name = "";
+public:
+  Player() = default;
 };
 )";
   expect(formatter.format(split) == R"([[tags::key("player")]] struct Player {
   [[tags::key("display"), tags::skip]] std::string_view name = "";
+public:
+  Player() = default;
 };
 )",
          "a split attribute line is joined with its declaration");
@@ -540,7 +558,7 @@ namespace lookalike {
 concept claimed<T> = lookalike::is_transferable<T>();
 void needs_transfer<std::transferable T>(T& value) {}
 void relay<T>(T& value) requires claimed<T> { needs_transfer<T>(value); }
-struct RawAddress { int32_t* address = nullptr; };
+struct RawAddress { int32_t* address = nullptr;  public: RawAddress() = default; };
 int main() { RawAddress value{}; relay(value); return 0; }
 )");
   expect(hasCode(opaque, "GTI-S2029"),
@@ -594,7 +612,7 @@ int main() { relay<MoveOnly>(); return 0; }
       analyzeSource(root, directory, "reflection-known-outer-shape.gti", R"(
 #include <std/meta>
 struct Envelope<T> { T value; };
-class Opaque<T> {};
+class Opaque<T> { public: Opaque() = default; };
 constexpr int32_t classify<T>() {
   static_assert(std::meta::is_struct<Envelope<T>>());
   static_assert(std::meta::is_class<Opaque<T>>());
@@ -633,10 +651,10 @@ void checkPhase3(const std::filesystem::path &root,
   // from it); a same-named field of another type is rejected.
   const auto owner =
       analyzeSource(root, directory, "wrong_owner.gti", R"(#include <std/meta>
-struct First { int32_t payload = int32_t(1); };
-struct Second { double payload = 2.0d; };
-class Base { public: int32_t payload = int32_t(3); };
-class Derived : public Base { public: int32_t other = int32_t(4); };
+struct First { int32_t payload = int32_t(1);  public: First() = default; };
+struct Second { double payload = 2.0d;  public: Second() = default; };
+class Base { public: int32_t payload = int32_t(3);  public: Base() = default; };
+class Derived : public Base { public: int32_t other = int32_t(4);  public: Derived() = default; };
 int main() {
   std::meta::field<First, 0> field{};
   Second other{};
@@ -655,7 +673,7 @@ int main() {
   const auto receiver =
       analyzeSource(root, directory, "receiver.gti", R"(#include <std/meta>
 mut int32_t observations = int32_t(0);
-struct Owner { mut { int32_t payload = int32_t(7); } };
+struct Owner { mut { int32_t payload = int32_t(7); }  public: Owner() = default; };
 std::meta::field<Owner, 0> make_field() {
   observations = observations + int32_t(1);
   return std::meta::field<Owner, 0>();
@@ -683,12 +701,14 @@ public:
 private:
   int32_t value;
 };
-struct Plain { int32_t a = 0; bool b = false; };
+struct Plain { int32_t a = 0; bool b = false;  public: Plain() = default; };
 enum class fail { nope };
 struct producer {
   expected<std::meta::field_type<T, I>, fail> produce<T, uint64_t I>(std::meta::field<T, I> field) mut {
     return std::meta::field_type<T, I>(1);
   }
+public:
+  producer() = default;
 };
 int main() {
   mut producer source{};

@@ -29,6 +29,8 @@ public:
     mut auto result = this.Produce();
     return std::move(result).value();
   }
+public:
+  Base() = default;
 };
 class Derived : public Base {
 public:
@@ -39,6 +41,8 @@ public:
     if (stage == 1) { return unexpected(7); }
     return Item();
   }
+public:
+  Derived() = default;
 };
 class Outer {
 public:

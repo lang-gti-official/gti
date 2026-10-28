@@ -3,6 +3,8 @@
 struct CallbackField {
   std::function<int(int, int)> calculate{
       [](int left, int right) -> int { return left + right; }};
+public:
+  CallbackField() = default;
 };
 
 // An unrelated generic constructor also needs the closure-dependent body plan.
@@ -15,6 +17,8 @@ public:
 
 struct UserField {
   Computed computed{[]() -> int { return 17; }, 2};
+public:
+  UserField() = default;
 };
 
 int main() {

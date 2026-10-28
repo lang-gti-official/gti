@@ -19,6 +19,8 @@ struct Guard {
 
 struct CleanupPanic {
   ~CleanupPanic() { std::assert(false, "cleanup assertion"); } // secondary
+public:
+  CleanupPanic() = default;
 };
 
 struct MacroOwner {

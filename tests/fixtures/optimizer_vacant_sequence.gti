@@ -28,6 +28,8 @@ public:
       std::construct_at(pointer, 2147483647);
     }
   }
+public:
+  Publication() = default;
 };
 
 unsafe int consecutive_vacant(int* pointer, int* next) {

@@ -11,6 +11,8 @@ class Owner {
   mut std::unique_ptr<Reading> reading = std::make_unique<Reading>(7);
 public:
   Reading& get() { return *this.reading; }
+public:
+  Owner() = default;
 };
 class Task {
   Reading& reading;
@@ -32,7 +34,7 @@ public:
       : output(output), reading(reading) {}
   void operator()() mut { this.output = this.reading.value(); }
 };
-struct Outputs { mut int first = 0; mut int second = 0; };
+struct Outputs { mut int first = 0; mut int second = 0;  public: Outputs() = default; };
 
 int main() {
   Owner owner{};

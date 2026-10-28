@@ -4,6 +4,8 @@ class CallbackField {
   int value = invoke([]() -> int { return 17; });
 public:
   int read() { return this.value; }
+public:
+  CallbackField() = default;
 };
 
 int main() {

@@ -15,6 +15,8 @@ class App {
 public:
   ~App() { std::println(9); }
   [[discardable]] Option add_flag(int divisor) mut { return make_option(divisor); }
+public:
+  App() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

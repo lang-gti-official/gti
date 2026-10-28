@@ -21,6 +21,8 @@ public:
     if (left.count != right.count) { return left.count > right.count; }
     return left.word < right.word;
   }
+public:
+  ByFrequency() = default;
 };
 
 bool is_letter(char c) {

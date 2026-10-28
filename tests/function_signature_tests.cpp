@@ -139,9 +139,12 @@ void classSignaturePatternSyntax() {
   }
 
   for (const std::string ordinary :
-       {"class Box<T> {};", "class Types<Args...> {};",
-        "class Tag<S = void()> {};", "class Constrained<SomeConcept T> {};",
-        "class Sized<uint64_t N = (2 + 3)> {};"}) {
+       {"class Box<T> { public: Box() = default; };",
+        "class Types<Args...> { public: Types() = default; };",
+        "class Tag<S = void()> { public: Tag() = default; };",
+        "class Constrained<SomeConcept T> { public: Constrained() = default; "
+        "};",
+        "class Sized<uint64_t N = (2 + 3)> { public: Sized() = default; };"}) {
     lang::Parser ordinaryParser(lexer.scan(ordinary));
     const auto parsed = ordinaryParser.parse();
     expect(!ordinaryParser.hadError() && parsed.declarations().size() == 1,
@@ -164,8 +167,8 @@ void classSignaturePatternSyntax() {
            "malformed signature pattern should report a parser error");
   }
 
-  const std::string pending =
-      "class Callback<R(Args...)> {}; Callback<int> bad{};";
+  const std::string pending = "class Callback<R(Args...)> { public: Callback() "
+                              "= default; }; Callback<int> bad{};";
   const auto frontend =
       lang::Frontend().analyze("pending-class-pattern.gti", pending);
   expect(!frontend.canGenerateCode() &&
@@ -198,6 +201,8 @@ public:
   using signature = R(Args...);
   int value() { return 7; }
   T extra<T>(T value) { return value; }
+public:
+  Signature() = default;
 };
 class Stored<R()> {
   R item;
@@ -208,19 +213,27 @@ public:
 class Identity<R(R)> {
 public:
   R call(R value) { return value; }
+public:
+  Identity() = default;
 };
 class Action<void(Args...)> {
 public:
   void call(Args... args) {}
+public:
+  Action() = default;
 };
 class Prefix<R(int, Args...)> {
 public:
   int value() { return 7; }
+public:
+  Prefix() = default;
 };
 class Forward<S> {
 public:
   Signature<S> child{};
   int value() { return child.value(); }
+public:
+  Forward() = default;
 };
 int inspect<S>(Signature<S>& tag) { return tag.value(); }
 int main() {
@@ -295,19 +308,22 @@ int main() {
            "lowered verification rejects a forged binder projection");
   }
   const std::vector<std::string> invalid = {
-      "class C<R(R)> {}; C<int(bool)> bad{};",
-      "class C<R(int, Args...)> {}; C<void(bool)> bad{};",
-      "class C<R(Args...)> {}; C<int> bad{};",
-      "class C<R(Args...)> {}; C<int, int> bad{};",
-      "class C<R()> {}; C<int(int)> bad{};",
-      "class C<R(R...)> {};",
-      "class C<R(Args..., int)> {};",
-      "class C<R(Args..., Other...)> {};",
-      "class C<void()> {};",
-      "class C<R(Args...)> {}; class C<S> {};",
-      "class C<R(Args...)> {}; using Bad = C<int>;",
-      "class C<R(Args...)> {}; class F<S> { C<S> field{}; }; F<int> bad{};",
-      "class C<R(R)> {}; class F<S> { C<S> field{}; }; F<int(bool)> bad{};",
+      "class C<R(R)> { public: C() = default; }; C<int(bool)> bad{};",
+      "class C<R(int, Args...)> { public: C() = default; }; C<void(bool)> "
+      "bad{};",
+      "class C<R(Args...)> { public: C() = default; }; C<int> bad{};",
+      "class C<R(Args...)> { public: C() = default; }; C<int, int> bad{};",
+      "class C<R()> { public: C() = default; }; C<int(int)> bad{};",
+      "class C<R(R...)> { public: C() = default; };",
+      "class C<R(Args..., int)> { public: C() = default; };",
+      "class C<R(Args..., Other...)> { public: C() = default; };",
+      "class C<void()> { public: C() = default; };",
+      "class C<R(Args...)> { public: C() = default; }; class C<S> {};",
+      "class C<R(Args...)> { public: C() = default; }; using Bad = C<int>;",
+      "class C<R(Args...)> { public: C() = default; }; class F<S> { C<S> "
+      "field{};  public: F() = default; }; F<int> bad{};",
+      "class C<R(R)> { public: C() = default; }; class F<S> { C<S> field{};  "
+      "public: F() = default; }; F<int(bool)> bad{};",
   };
   for (const auto &input : invalid) {
     const auto result =
@@ -327,10 +343,14 @@ class SignatureTag<S> {
 public:
   using signature = S;
   int value() { return 7; }
+public:
+  SignatureTag() = default;
 };
 class Description<T> {
 public:
   using signature = T(T&);
+public:
+  Description() = default;
 };
 int identify<S>(SignatureTag<S>& value) { return value.value(); }
 int main() {
@@ -404,11 +424,11 @@ void receiverQualifiedSignatures() {
 using Read = int(int);
 using Mutable = int(int) mut;
 using Once = int(int) &&;
-class Tag<S> {};
+class Tag<S> { public: Tag() = default; };
 int choose<R, Args...>(Tag<R(Args...)>& tag) { return 1; }
 int choose<R, Args...>(Tag<R(Args...) mut>& tag) { return 2; }
 int choose<R, Args...>(Tag<R(Args...) &&>& tag) { return 3; }
-class MutablePattern<R(Args...) mut> { public: using signature = R(Args...) mut; };
+class MutablePattern<R(Args...) mut> { public: using signature = R(Args...) mut;  public: MutablePattern() = default; };
 int main() {
   Tag<Read> read{};
   Tag<Mutable> write{};
@@ -473,9 +493,9 @@ int main() {
   expect(changedQualifier && !lang::verifyLoweredProgram(lowered).empty(),
          "the lowered seal rejects erasing a signature receiver qualifier");
 
-  const auto mismatch =
-      lang::Frontend().analyze("qualified-pattern-mismatch.gti",
-                               "class C<R(Args...) mut> {}; C<int()> bad{};");
+  const auto mismatch = lang::Frontend().analyze(
+      "qualified-pattern-mismatch.gti",
+      "class C<R(Args...) mut> { public: C() = default; }; C<int()> bad{};");
   expect(!mismatch.canGenerateCode() &&
              hasDiagnosticCode(mismatch.diagnostics, "GTI-S2023") &&
              !hasDiagnosticCode(mismatch.diagnostics, "GTI-B0001"),
@@ -638,7 +658,8 @@ void invalidSignatures() {
   // Instantiating an ordinary generic value constructor with a signature
   // must fail too; the existing construction diagnostic owns T{}.
   const auto genericStorage = lang::Frontend().analyze(
-      "signature-field.gti", "class Box<T> { T value{}; }; using A = void(); "
+      "signature-field.gti", "class Box<T> { T value{};  public: Box() = "
+                             "default; }; using A = void(); "
                              "int main() { Box<A> bad{}; return 0; }");
   expect(!genericStorage.canGenerateCode() &&
              hasDiagnosticCode(genericStorage.diagnostics, "GTI-S2038") &&
@@ -664,6 +685,8 @@ class Tag<S = void> {
 public:
   using type = S;
   int value() { return 7; }
+public:
+  Tag() = default;
 };
 int describe<R, A>(Tag<R(A)>& tag) { return tag.value(); }
 int describe_refs<R, A>(Tag<R&(A&)>& tag) { return tag.value(); }
@@ -745,27 +768,34 @@ int main() {
   }
 
   const std::vector<std::string> invalid = {
-      "class Box<T> { T field{}; }; int main() { Box<void> box{}; return 0; }",
+      "class Box<T> { T field{};  public: Box() = default; }; int main() { "
+      "Box<void> box{}; return 0; }",
       "void local<T>() { mut T value; } int main() { local<void>(); return 0; "
       "}",
       "void parameter<T>(T value) {} int main() { parameter<void>(1); return "
       "0; }",
       "void empty() {} void parameter<T>(T value) {} int main() { "
       "parameter<void>(empty()); return 0; }",
-      "class Box<T> { T[2] field = {}; }; int main() { Box<void> box{}; return "
+      "class Box<T> { T[2] field = {};  public: Box() = default; }; int main() "
+      "{ Box<void> box{}; return "
       "0; }",
       "class Box<T> { T& field; }; int main() { Box<void> box{}; return 0; }",
-      "class Box<T> { using Bad = int(T); }; int main() { Box<void> box{}; "
+      "class Box<T> { using Bad = int(T);  public: Box() = default; }; int "
+      "main() { Box<void> box{}; "
       "return 0; }",
-      "class Box<T> { using Bad = T[2]; }; int main() { Box<void> box{}; "
+      "class Box<T> { using Bad = T[2];  public: Box() = default; }; int "
+      "main() { Box<void> box{}; "
       "return 0; }",
-      "class Box<T> { using Bad = T&(T&); }; int main() { Box<void> box{}; "
+      "class Box<T> { using Bad = T&(T&);  public: Box() = default; }; int "
+      "main() { Box<void> box{}; "
       "return 0; }",
       "int main() { void* pointer = nullptr; unsafe { pointer + 1; } return 0; "
       "}",
-      "class Tag<S> {}; int consistent<T>(Tag<T(T)>& tag) { return 0; } "
+      "class Tag<S> { public: Tag() = default; }; int consistent<T>(Tag<T(T)>& "
+      "tag) { return 0; } "
       "int main() { Tag<int(bool)> tag{}; return consistent(tag); }",
-      "class Tag<S> {}; int fixed<R, A>(Tag<R(A)>& tag) { return 0; } "
+      "class Tag<S> { public: Tag() = default; }; int fixed<R, A>(Tag<R(A)>& "
+      "tag) { return 0; } "
       "int main() { Tag<int(int, int)> tag{}; return fixed(tag); }",
   };
   for (const auto &input : invalid) {
@@ -775,8 +805,9 @@ int main() {
            "void remains invalid in object positions after substitution: " +
                input);
   }
-  const std::string invalidAlias = "class Box<T> { using Bad = int(T); }; "
-                                   "int main() { Box<void> box{}; return 0; }";
+  const std::string invalidAlias =
+      "class Box<T> { using Bad = int(T);  public: Box() = default; }; "
+      "int main() { Box<void> box{}; return 0; }";
   const auto alias =
       lang::Frontend().analyze("void-alias-span.gti", invalidAlias);
   const auto error = std::find_if(
@@ -797,16 +828,22 @@ class Signature<R, Args...> {
 public:
   using type = R(Args...);
   int value() { return 7; }
+public:
+  Signature() = default;
 };
 class Forward<R, Args...> {
   using nested = Signature<R, Args...>;
   nested stored{};
 public:
   int value() { return stored.value(); }
+public:
+  Forward() = default;
 };
 class Types<Args...> {
 public:
   int value() { return 7; }
+public:
+  Types() = default;
 };
 int main() {
   Signature<void> empty{};
@@ -873,43 +910,62 @@ int main() {
 
 void invalidClassTypePacks() {
   const std::vector<std::pair<std::string, std::string>> cases = {
-      {"class Bad<Args..., T> {};", "GTI-S2023"},
-      {"class Bad<Args..., More...> {};", "GTI-S2023"},
-      {"class Bad<uint64_t N, Args...> {};", "GTI-S2023"},
-      {"class Bad<T = int, Args...> {};", "GTI-S2023"},
-      {"class Bad<Args...> { Args field; };", "GTI-S2023"},
-      {"class Bad<T> { using type = void(T...); };", "GTI-S2023"},
-      {"class Bad<Args...> { using type = void(Args&...); };", "GTI-S2023"},
-      {"class Bad<Args...> { using type = void(Args..., int); };", "GTI-S2023"},
-      {"class Fixed<T> {}; class Bad<Args...> { using type = Fixed<Args...>; "
-       "};",
+      {"class Bad<Args..., T> { public: Bad() = default; };", "GTI-S2023"},
+      {"class Bad<Args..., More...> { public: Bad() = default; };",
        "GTI-S2023"},
-      {"class Fixed<T> {}; void bad<Args...>(Fixed<Args...> value, Args... "
+      {"class Bad<uint64_t N, Args...> { public: Bad() = default; };",
+       "GTI-S2023"},
+      {"class Bad<T = int, Args...> { public: Bad() = default; };",
+       "GTI-S2023"},
+      {"class Bad<Args...> { Args field; };", "GTI-S2023"},
+      {"class Bad<T> { using type = void(T...);  public: Bad() = default; };",
+       "GTI-S2023"},
+      {"class Bad<Args...> { using type = void(Args&...);  public: Bad() = "
+       "default; };",
+       "GTI-S2023"},
+      {"class Bad<Args...> { using type = void(Args..., int);  public: Bad() = "
+       "default; };",
+       "GTI-S2023"},
+      {"class Fixed<T> { public: Fixed() = default; }; class Bad<Args...> { "
+       "using type = Fixed<Args...>; "
+       " public: Bad() = default; };",
+       "GTI-S2023"},
+      {"class Fixed<T> { public: Fixed() = default; }; void "
+       "bad<Args...>(Fixed<Args...> value, Args... "
        "args) {}",
        "GTI-S2023"},
-      {"class Pack<T, Args...> {}; class Bad<Args...> { using type = "
-       "Pack<Args...>; };",
+      {"class Pack<T, Args...> { public: Pack() = default; }; class "
+       "Bad<Args...> { using type = "
+       "Pack<Args...>;  public: Bad() = default; };",
        "GTI-S2023"},
-      {"class Pack<Args...> {}; class Bad<Args...> { using type = "
-       "Pack<Args..., int>; };",
+      {"class Pack<Args...> { public: Pack() = default; }; class Bad<Args...> "
+       "{ using type = "
+       "Pack<Args..., int>;  public: Bad() = default; };",
        "GTI-S2023"},
-      {"class Pack<T, Args...> {}; int main() { Pack<> value{}; return 0; }",
+      {"class Pack<T, Args...> { public: Pack() = default; }; int main() { "
+       "Pack<> value{}; return 0; }",
        "GTI-S2023"},
-      {"class Pack<Args...> { using type = void(Args...); }; int main() { "
+      {"class Pack<Args...> { using type = void(Args...);  public: Pack() = "
+       "default; }; int main() { "
        "Pack<void> value{}; return 0; }",
        "GTI-S2093"},
-      {"class Pack<Args...> { using type = void(Args...); }; int main() { "
+      {"class Pack<Args...> { using type = void(Args...);  public: Pack() = "
+       "default; }; int main() { "
        "Pack<void()> value{}; return 0; }",
        "GTI-S2093"},
-      {"class Pack<Args...> {}; int main() { Pack<void&> value{}; return 0; }",
+      {"class Pack<Args...> { public: Pack() = default; }; int main() { "
+       "Pack<void&> value{}; return 0; }",
        "GTI-S2017"},
-      {"class Pack<Args...> {}; int main() { Pack<int[2]&> value{}; return "
+      {"class Pack<Args...> { public: Pack() = default; }; int main() { "
+       "Pack<int[2]&> value{}; return "
        "0; }",
        "GTI-S2017"},
-      {"class Box<T> { T field{}; }; int main() { Box<int&> value{}; return 0; "
+      {"class Box<T> { T field{};  public: Box() = default; }; int main() { "
+       "Box<int&> value{}; return 0; "
        "}",
        "GTI-S2045"},
-      {"class Box<T> { using Bad = T&(T&); }; int main() { Box<int&> value{}; "
+      {"class Box<T> { using Bad = T&(T&);  public: Box() = default; }; int "
+       "main() { Box<int&> value{}; "
        "return 0; }",
        "GTI-S2017"},
       {"void bad<T>() { mut T local; } int main() { bad<int&>(); return 0; }",
@@ -937,8 +993,8 @@ void invalidClassTypePacks() {
 
 void signaturePackDeduction() {
   const std::string source = R"(
-class Tag<S> {};
-class Types<Args...> { public: int value() { return 7; } };
+class Tag<S> { public: Tag() = default; };
+class Types<Args...> { public: int value() { return 7; }  public: Types() = default; };
 int unpack<R, Args...>(Tag<R(Args...)>& tag) {
   Types<Args...> types{};
   return types.value();
@@ -999,7 +1055,8 @@ int main() {
            "concrete HIR identity");
   }
   const std::string declaration =
-      "class Tag<S> {}; class Types<Args...> {}; "
+      "class Tag<S> { public: Tag() = default; }; class Types<Args...> { "
+      "public: Types() = default; }; "
       "int unpack<R, Args...>(Tag<R(Args...)>& tag) { return 0; } "
       "int repeated<R, Args...>(Tag<R(Args...)>& first, Tag<void(Args...)>& "
       "second) { return 0; } "
@@ -1044,7 +1101,7 @@ int main() {
          "failed pack deduction must identify the call and declared pack "
          "without a guessed fix");
   const std::string constrained =
-      "class Types<Args...> {}; "
+      "class Types<Args...> { public: Types() = default; }; "
       "int integral<std::integral Args...>(Types<Args...>& types) { return 0; "
       "} ";
   const auto validConstraint = lang::Frontend().analyze(
@@ -1064,7 +1121,7 @@ int main() {
          "an empty pack");
   const auto ambiguous =
       lang::Frontend().analyze("ambiguous-signature-pack.gti", R"(
-class Tag<S> {};
+class Tag<S> { public: Tag() = default; };
 int pick<S>(Tag<S>& tag) { return 1; }
 int pick<R, Args...>(Tag<R(Args...)>& tag) { return 2; }
 int main() { Tag<void(int)> tag{}; return pick(tag); }
@@ -1075,7 +1132,8 @@ int main() { Tag<void(int)> tag{}; return pick(tag); }
          "between exact overloads");
   const auto unbound = lang::Frontend().analyze(
       "unbound-metadata-pack.gti",
-      "class Types<Args...> {}; Types<Args...> unbound<Args...>() { return "
+      "class Types<Args...> { public: Types() = default; }; Types<Args...> "
+      "unbound<Args...>() { return "
       "Types<Args...>(); }");
   expect(
       !unbound.canGenerateCode() &&
@@ -1092,11 +1150,15 @@ public:
   int inspect<T>(T first, Args... args) { consume(first, args...); return 7; }
   void twice(Args... args) { send(args...); send(args...); }
   int operator()(Args... args) { consume(args...); return 7; }
+public:
+  Relay() = default;
 };
 interface Invocable<Args...> { int invoke(Args... args); };
 class Target<Args...> : public Invocable<Args...> {
 public:
   int invoke(Args... args) override { consume(args...); return 7; }
+public:
+  Target() = default;
 };
 int dispatch(Invocable<int, bool>& target) { return target.invoke(1, true); }
 int main() {
@@ -1167,10 +1229,10 @@ int main() {
            "owner-pack verification must exercise source and interface pack "
            "places");
   }
-  const std::string declaration =
-      "class Relay<Args...> { public: "
-      "void send(Args... args) {} "
-      "int operator()(Args... args) { return 0; } }; ";
+  const std::string declaration = "class Relay<Args...> { public: "
+                                  "void send(Args... args) {} "
+                                  "int operator()(Args... args) { return 0; }  "
+                                  "public: Relay() = default; }; ";
   expect(
       lang::Frontend()
           .analyze("borrowed-owner-pack.gti",
@@ -1219,13 +1281,16 @@ int main() {
        "GTI-S2023"},
       {declaration + "int main() { Relay<void()> value{}; return 0; }",
        "GTI-S2023"},
-      {"class Relay<Args...> { void send(mut Args... args) {} };", "GTI-S2023"},
-      {"class Relay<Args...> { void send(Args... args, int last) {} };",
+      {"class Relay<Args...> { void send(mut Args... args) {}  public: Relay() "
+       "= default; };",
        "GTI-S2023"},
-      {"class Token { public: ~Token() {} }; "
+      {"class Relay<Args...> { void send(Args... args, int last) {}  public: "
+       "Relay() = default; };",
+       "GTI-S2023"},
+      {"class Token { public: ~Token() {}  public: Token() = default; }; "
        "void consume<T...>(T... values) {} "
        "class Relay<Args...> { public: void twice(Args... args) { "
-       "consume(args...); consume(args...); } }; "
+       "consume(args...); consume(args...); }  public: Relay() = default; }; "
        "int main() { Relay<Token> relay{}; relay.twice(Token()); return 0; }",
        "GTI-S2018"},
   };
@@ -1276,10 +1341,12 @@ void signatureReceiverFamily() {
            "exact patterned specializations cannot lose their public argument");
   }
   for (const auto &invalid :
-       {"class C<R(Args...)> {}; class C<T(Ts...)> {};",
-        "class C<R(Args...) mut> {}; class C<T()> {}; class C<T() mut> {};",
-        "class C<T> {}; class C<R(Args...) mut> {};",
-        "class C<R(Args...)> {}; struct C<R(Args...) mut> {};"}) {
+       {"class C<R(Args...)> { public: C() = default; }; class C<T(Ts...)> {};",
+        "class C<R(Args...) mut> { public: C() = default; }; class C<T()> { "
+        "public: C() = default; }; class C<T() mut> {};",
+        "class C<T> { public: C() = default; }; class C<R(Args...) mut> {};",
+        "class C<R(Args...)> { public: C() = default; }; struct C<R(Args...) "
+        "mut> {};"}) {
     const auto rejected =
         lang::Frontend().analyze("duplicate-pattern.gti", invalid);
     expect(!rejected.canGenerateCode() &&
@@ -1288,10 +1355,13 @@ void signatureReceiverFamily() {
            "signature definitions must be disjoint, same-kind patterns");
   }
   for (const auto &invalid :
-       {"class C<R(Args...)> {}; class C<R(Args...) mut> {}; C<int() &&> "
+       {"class C<R(Args...)> { public: C() = default; }; class C<R(Args...) "
+        "mut> { public: C() = default; }; C<int() &&> "
         "bad{};",
-        "class C<R(R)> {}; class C<R(R) mut> {}; C<int(bool) mut> bad{};",
-        "class C<R(Args...)> {}; class D<T> { C<T() mut> bad{}; };"}) {
+        "class C<R(R)> { public: C() = default; }; class C<R(R) mut> { public: "
+        "C() = default; }; C<int(bool) mut> bad{};",
+        "class C<R(Args...)> { public: C() = default; }; class D<T> { C<T() "
+        "mut> bad{};  public: D() = default; };"}) {
     const auto rejected =
         lang::Frontend().analyze("unmatched-pattern.gti", invalid);
     expect(!rejected.canGenerateCode() &&
@@ -1303,7 +1373,8 @@ void signatureReceiverFamily() {
                         std::filesystem::temp_directory_path()) /
                     "gti-receiver-family";
   const std::string mismatch =
-      "class C<R(Args...)> {}; class C<R(R) mut> {}; C<int(bool) mut> bad{};";
+      "class C<R(Args...)> { public: C() = default; }; class C<R(R) mut> { "
+      "public: C() = default; }; C<int(bool) mut> bad{};";
   const auto mismatchResult =
       lang::Frontend().analyze("family-mismatch.gti", mismatch);
   const auto mismatchDiagnostic = std::find_if(
@@ -1321,8 +1392,10 @@ void signatureReceiverFamily() {
          "a component mismatch relates the selected receiver definition "
          "without guessing a fix");
   std::unordered_map<std::string, std::string> overlays{
-      {(root / "read.gti").string(), "class C<R(Args...)> {};"},
-      {(root / "mut.gti").string(), "class C<R(Args...) mut> {};"}};
+      {(root / "read.gti").string(),
+       "class C<R(Args...)> { public: C() = default; };"},
+      {(root / "mut.gti").string(),
+       "class C<R(Args...) mut> { public: C() = default; };"}};
   const std::string entry = "#include \"read.gti\"\n#include \"mut.gti\"\n"
                             "int main() { C<int() mut> value{}; return 0; }";
   const auto included =

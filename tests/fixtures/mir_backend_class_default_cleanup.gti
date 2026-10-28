@@ -5,6 +5,8 @@ public:
   ~Early() {
     cleanup_trace = 1;
   }
+public:
+  Early() = default;
 };
 
 class Late {
@@ -12,6 +14,8 @@ public:
   ~Late() {
     cleanup_trace = 2;
   }
+public:
+  Late() = default;
 };
 
 int32_t selected_default_cleanup() {
@@ -36,6 +40,8 @@ class FieldOwner {
 
 public:
   ~FieldOwner() {}
+public:
+  FieldOwner() = default;
 };
 
 uint32_t compatibility_field_owner() {
@@ -61,6 +67,8 @@ public:
   ~CheckedCleanup() {
     cleanup_trace += 1;
   }
+public:
+  CheckedCleanup() = default;
 };
 
 void compatibility_checked_cleanup() {

@@ -24,6 +24,8 @@ public:
 class Maker {
 public:
   virtual Result make() { return Result(1); }
+public:
+  Maker() = default;
 };
 
 class Source {

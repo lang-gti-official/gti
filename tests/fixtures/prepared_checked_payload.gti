@@ -18,6 +18,8 @@ struct Box {
 
 struct Guard {
   ~Guard() { std::println("cleanup"); }
+public:
+  Guard() = default;
 };
 
 expected<Item, int32_t> parse(bool valid) {

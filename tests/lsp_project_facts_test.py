@@ -138,7 +138,7 @@ def test_path_dependency_tooling(executable, root):
         "#if defined(PROJECT_FEATURE)\n"
         "namespace math {\n"
         "class Counter {\n"
-        "public:\n"
+        "public: Counter() = default;\n"
         "  int value() { return 7; }\n"
         "  int doubled() { return 14; }\n"
         "};\n"
@@ -484,7 +484,7 @@ def test_scoped_configuration_flags(executable, root):
     write(manifest_path, manifest)
     game = (
         '#if defined(PACKAGE_FLAG) && defined(DEBUG) && defined(GAME)\n'
-        'class Counter { public: int value() { return 0; } };\n'
+        'class Counter { public: Counter() = default; int value() { return 0; } };\n'
         '#else\n#error "game configuration missing"\n#endif\n'
         'int main() { Counter counter{}; return counter.value(); }\n'
     )

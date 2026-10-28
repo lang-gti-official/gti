@@ -10,6 +10,8 @@ public:
   Pinned(Pinned& other) = delete;
   Pinned(Pinned&& other) = delete;
   ~Pinned() { cleanups += 1; }
+public:
+  Pinned() = default;
 };
 
 class Owner {

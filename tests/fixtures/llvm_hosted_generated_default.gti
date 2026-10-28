@@ -1,19 +1,23 @@
 mut int trace = 0;
-struct Policy { int apply() { return 42; } };
+struct Policy { int apply() { return 42; }  public: Policy() = default; };
 struct Defaulted {
   Defaulted() = default;
   int apply() { return 23; }
 };
-struct Generic<T> { T apply(T value) { return value; } };
+struct Generic<T> { T apply(T value) { return value; }  public: Generic() = default; };
 struct Cleanup {
   int read() { return 7; }
   ~Cleanup() { trace = trace * 10 + 3; }
+public:
+  Cleanup() = default;
 };
 thread_local Cleanup tls{};
 struct Scheduled {
   Cleanup child;
   int value = 9;
   int read() { return this.child.read() + this.value; }
+public:
+  Scheduled() = default;
 };
 struct Explicit {
   int value;

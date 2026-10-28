@@ -4,11 +4,15 @@ namespace shapes {
 struct Layer<uint64_t N> {
   Layer<N - 1> inner;
   int32_t value = 1;
+public:
+  Layer() = default;
 };
 }
 
 struct shapes::Layer<0> {
   int32_t value = 100;
+public:
+  Layer() = default;
 };
 
 int main() {

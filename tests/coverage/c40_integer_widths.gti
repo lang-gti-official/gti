@@ -1,5 +1,5 @@
 // Integer widths, explicit conversions, wrapping helpers and boundary values.
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 int main() {
   int8_t a = int8_t(-128);

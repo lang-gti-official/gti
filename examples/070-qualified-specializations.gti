@@ -5,6 +5,8 @@ class Widget {
 
 public:
   int id() { return this.identifier; }
+public:
+  Widget() = default;
 };
 
 // Applications may exactly specialize a foreign primary when at least one
@@ -12,6 +14,8 @@ public:
 class std::hash<Widget> {
 public:
   size_t operator()(Widget& value) { return size_t(value.id()); }
+public:
+  hash() = default;
 };
 
 int main() {

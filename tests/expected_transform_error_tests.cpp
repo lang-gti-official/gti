@@ -210,7 +210,7 @@ void testDiagnostics() {
                    "int main() { auto map = [](int error) -> void {};\n"
                    "  [[discard]] read().transform_error(map); return 0; }\n");
   const auto movedCapture = analyze(producer + R"(
-struct Owner { ~Owner() {} };
+struct Owner { ~Owner() {}  public: Owner() = default; };
 int main() {
   Owner owner{};
   auto result = read().transform_error(
@@ -553,7 +553,7 @@ int main() {
 
 void testMovedLambdaEnvironment() {
   const std::string source = R"(
-struct Resource { ~Resource() {} };
+struct Resource { ~Resource() {}  public: Resource() = default; };
 expected<int, int> read() { return unexpected(7); }
 int main() {
   Resource resource{};
@@ -624,9 +624,9 @@ int main() {
 
 void testOwningPublication() {
   const auto result = analyze(R"(
-struct Payload { ~Payload() { std::println(30); } };
-struct Error { ~Error() { std::println(10); } };
-struct Mapped { int code = 4; ~Mapped() { std::println(20); } };
+struct Payload { ~Payload() { std::println(30); }  public: Payload() = default; };
+struct Error { ~Error() { std::println(10); }  public: Error() = default; };
+struct Mapped { int code = 4; ~Mapped() { std::println(20); }  public: Mapped() = default; };
 Mapped map(Error error) { return Mapped(); }
 int again(Mapped error) { return 1; }
 expected<Payload, Error> read(bool fail) {

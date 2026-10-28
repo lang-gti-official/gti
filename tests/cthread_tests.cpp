@@ -410,7 +410,7 @@ struct Gate {
   std::atomic<int32_t> second;
   Gate() : first(std::atomic<int32_t>(3)), second(std::atomic<int32_t>(7)) {}
 };
-struct Tag {};
+struct Tag { public: Tag() = default; };
 struct Tagged {
   std::atomic<int32_t> value;
   Tagged(Tag tag) : value(std::atomic<int32_t>(11)) {}

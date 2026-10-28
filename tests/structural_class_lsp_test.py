@@ -11,7 +11,7 @@ from lsp_smoke_test import LspSession, lsp_position
 def main():
     valid = """// μ: a non-ASCII prefix must not disturb diagnostic locations.
 concept readable<T> = requires(T& source) { { source.read() } -> int; };
-struct Meter { int read() { return 7; } };
+struct Meter { Meter() = default; int read() { return 7; } };
 class Snapshot<readable T> {
   T& source;
 public:

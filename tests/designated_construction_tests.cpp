@@ -38,9 +38,9 @@ void rejected(const std::string &source, const std::string &fragment) {
 
 int main() {
   const std::string source = R"(
-struct Point { int x = 3; int y = 4; };
+struct Point { int x = 3; int y = 4;  public: Point() = default; };
 struct Required { int value; };
-struct Nested { Point point{}; int z = 5; };
+struct Nested { Point point{}; int z = 5;  public: Nested() = default; };
 int main() {
   Point point = {.x = 7, .y = 8};
   Point defaults{.y = 9};
@@ -84,33 +84,39 @@ int main() {
     expect(mutated && !lang::verifyMirProgram(forged).valid(),
            "forged construction parameter type must fail MIR verification");
   }
-  rejected("struct S { int x = 0; }; int main(){ S s = {.bad = 1}; return 0; }",
+  rejected("struct S { int x = 0;  public: S() = default; }; int main(){ S s = "
+           "{.bad = 1}; return 0; }",
            "Unknown instance field");
-  rejected("struct S { uint64_t x = 0; }; int main(){ uint32_t n = 9; "
+  rejected("struct S { uint64_t x = 0;  public: S() = default; }; int main(){ "
+           "uint32_t n = 9; "
            "S s = {.x = n}; return 0; }",
            "Cannot initialize");
-  rejected("struct S { int x = 0; }; int main(){ S s = {.x = 1, .x = 2}; "
+  rejected("struct S { int x = 0;  public: S() = default; }; int main(){ S s = "
+           "{.x = 1, .x = 2}; "
            "return 0; }",
            "Duplicate");
-  rejected("struct S { int x = 0; int y = 0; }; int main(){ S s = {.y = 1, .x "
+  rejected("struct S { int x = 0; int y = 0;  public: S() = default; }; int "
+           "main(){ S s = {.y = 1, .x "
            "= 2}; return 0; }",
            "declaration order");
   rejected(
       "struct S { int x; int y; }; int main(){ S s = {.x = 1}; return 0; }",
       "Missing initializer");
-  rejected(
-      "struct S { int x = 0; }; int main(){ S s = {.x = true}; return 0; }",
-      "Cannot initialize");
-  rejected(
-      "class S { public: int x = 0; }; int main(){ S s = {.x = 1}; return 0; }",
-      "requires a struct");
+  rejected("struct S { int x = 0;  public: S() = default; }; int main(){ S s = "
+           "{.x = true}; return 0; }",
+           "Cannot initialize");
+  rejected("class S { public: int x = 0;  public: S() = default; }; int "
+           "main(){ S s = {.x = 1}; return 0; }",
+           "requires a struct");
   rejected(
       "struct S { int x = 0; S() {} }; int main(){ S s = {.x = 1}; return 0; }",
-      "no declared constructors");
-  rejected("struct S { private: int x = 0; }; int main(){ S s = {.x = 1}; "
+      "no constructors other than a structural default");
+  rejected("struct S { private: int x = 0;  public: S() = default; }; int "
+           "main(){ S s = {.x = 1}; "
            "return 0; }",
            "public value fields");
-  rejected("struct B { int x = 0; }; struct S : B { int y = 0; }; int main(){ "
+  rejected("struct B { int x = 0;  public: B() = default; }; struct S : B { "
+           "int y = 0;  public: S() = default; }; int main(){ "
            "S s = {.y = 1}; return 0; }",
            "no inheritance");
   rejected("class Owner { public: int x; Owner(int n):x(n){} ~Owner(){} }; "
@@ -136,7 +142,7 @@ int main() {
             error->primary.start == brace && error->primary.end == brace + 1 &&
             error->message.find("destination struct type") !=
                 std::string::npos &&
-            error->message.find("no declared constructors") ==
+            error->message.find("Designated construction requires") ==
                 std::string::npos &&
             error->hints.size() == 1 &&
             error->hints.front().find("explicit struct type") !=

@@ -53,6 +53,8 @@ public:
 class Equal {
 public:
   bool operator()(Key& left, Key& right) { return left.get() == right.get(); }
+public:
+  Equal() = default;
 };
 
 int main() {

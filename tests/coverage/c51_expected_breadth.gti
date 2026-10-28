@@ -1,5 +1,5 @@
 // expected observers, error paths and layered returns without the ? operator.
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 enum class calc_errc {
   divide_by_zero,

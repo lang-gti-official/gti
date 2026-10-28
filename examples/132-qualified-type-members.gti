@@ -3,6 +3,8 @@
 
 struct ValueBox<T> {
   using value_type = T;
+public:
+  ValueBox() = default;
 };
 
 ValueBox<T>::value_type identity<T>(ValueBox<T>::value_type value) {

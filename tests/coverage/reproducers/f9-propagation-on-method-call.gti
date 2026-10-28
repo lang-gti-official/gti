@@ -1,4 +1,4 @@
-class A { public: int32_t i() { return 0; } };
+class A { public: int32_t i() { return 0; }  public: A() = default; };
 enum class e { bad };
 class Src {
   mut int32_t n = 1;

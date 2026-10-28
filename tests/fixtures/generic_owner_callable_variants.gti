@@ -21,6 +21,8 @@ public:
       return T(observed ^ operand);
     }, value);
   }
+public:
+  calculator() = default;
 };
 
 int main() {

@@ -10,6 +10,8 @@ enum class role { player, npc, boss };
 struct position {
   int32_t x = 0;
   int32_t y = 0;
+public:
+  position() = default;
 };
 
 struct entity {
@@ -25,6 +27,8 @@ struct entity {
   std::vector<position> path = std::vector<position>();
   [[std::json::ignore]]
   uint64_t session = 0;
+public:
+  entity() = default;
 };
 
 bool failed_with(std::string_view text, std::json::errc code) {

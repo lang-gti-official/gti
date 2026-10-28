@@ -7,15 +7,21 @@
 struct Celsius {
   int32_t value = 0;
   int32_t kelvin() { return this.value + 273; }
+public:
+  Celsius() = default;
 };
 
 struct Label {
   int32_t code = 0;
   int32_t length() { return 5; }
+public:
+  Label() = default;
 };
 
 struct Plain {
   int32_t x = 0;
+public:
+  Plain() = default;
 };
 
 int32_t describe<T>(T& value) {

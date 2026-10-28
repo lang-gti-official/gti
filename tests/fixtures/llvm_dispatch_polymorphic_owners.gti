@@ -63,6 +63,8 @@ class Silent : public Writer, public Reader {
 public:
   int read() override { return 11; }
   void write(int value) mut override {}
+public:
+  Silent() = default;
 };
 
 class Guard {

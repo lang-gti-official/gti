@@ -545,7 +545,7 @@ int main() {
   }
   const auto rawPointee =
       lang::Frontend().analyze("raw-pointee-carrier-boundary.gti", R"(
-struct Counts { mut int value = 0; };
+struct Counts { mut int value = 0;  public: Counts() = default; };
 class Counter {
   int& source;
   Counts* state = nullptr;
@@ -644,6 +644,8 @@ class P {
 public:
   P(int number) : number(number) {}
   int get() { return this.number; }
+public:
+  P() = default;
 };
 )") + declaration + R"(
 int main() {

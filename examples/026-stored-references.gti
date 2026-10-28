@@ -1,6 +1,6 @@
 #include <std/string>
 
-struct SingleSentinel {};
+struct SingleSentinel { public: SingleSentinel() = default; };
 
 class BorrowingIterator<T> {
   T& value;

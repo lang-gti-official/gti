@@ -20,6 +20,8 @@ public:
     return std::pair<WriteView, bool>(WriteView(this.value), true);
   }
   int read() { return this.value; }
+public:
+  Counter() = default;
 };
 
 int main() {

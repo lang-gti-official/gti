@@ -3,6 +3,8 @@
 class Base {
 public:
   int32_t x = 1;
+public:
+  Base() = default;
 };
 class Derived : public Base {
 public:

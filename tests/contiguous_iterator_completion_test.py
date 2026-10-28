@@ -125,6 +125,8 @@ def negative_sources():
         "readonly-span-arrow": headers + """struct Cell {
   mut int number = 0;
   void set(int value) mut { this.number = value; }
+public:
+  Cell() = default;
 };
 int main() {
   std::vector<Cell> values = {Cell()}; auto view = values.as_span();
@@ -133,6 +135,8 @@ int main() {
         "readonly-resource-arrow": headers + """struct Cell {
   mut int number = 0;
   void set(int value) mut { this.number = value; }
+public:
+  Cell() = default;
 };
 int main() {
   std::process_resource process{}; unsafe {

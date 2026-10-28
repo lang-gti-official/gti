@@ -16,6 +16,8 @@ public:
     std::formatter<uint64_t> numeric{};
     return numeric.format(value.value, output, spec);
   }
+public:
+  formatter() = default;
 };
 
 class std::formatter<app::Point> {
@@ -29,6 +31,8 @@ public:
     }
     return std::try_format_to(output, "({}, {})", value.x, value.y);
   }
+public:
+  formatter() = default;
 };
 
 int main() {

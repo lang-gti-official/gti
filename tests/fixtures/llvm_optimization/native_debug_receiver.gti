@@ -7,5 +7,7 @@ public:
     debug_checkpoint(local);
     return local;
   }
+public:
+  Receiver() = default;
 };
 int main() { Receiver owner{}; return owner.inspect(debug_input()) == 4 ? 0 : 1; }

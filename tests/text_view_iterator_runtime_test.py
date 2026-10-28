@@ -89,19 +89,19 @@ def main():
             "ordinary-value-temporary-reference": ('#include <std/string_view>\nint main() { std::string_view view = "abc"; '
                 'auto cursor = view.begin(); char& character = *cursor; return int(character); }', "GTI-S2017"),
             "value-iterator-reference-callback": ('#include <std/string>\n#include <std/algorithm>\n'
-                'class RefCounter { public: void operator()(char& value) mut {} }; '
+                'class RefCounter { public: void operator()(char& value) mut {}  public: RefCounter() = default; }; '
                 'int main() { std::string_view view = "abc"; '
                 'auto visits = std::for_each(view.begin(), view.end(), RefCounter()); return 0; }', "GTI-S2029"),
             "value-range-mutable-reference": ('#include <std/string_view>\nint main() { std::string_view view = "abc"; '
                 'for (mut char& character : view) {} return 0; }', "GTI-S2083"),
-            "mutable-value-dereference": ('class ValueCursor { public: int operator*() mut { return 1; } }; '
+            "mutable-value-dereference": ('class ValueCursor { public: int operator*() mut { return 1; }  public: ValueCursor() = default; }; '
                 'int main() { return 0; }', "GTI-S2022"),
-            "value-arrow": ('class ValueCursor { public: int operator->() { return 1; } }; '
+            "value-arrow": ('class ValueCursor { public: int operator->() { return 1; }  public: ValueCursor() = default; }; '
                 'int main() { return 0; }', "GTI-S2022"),
             "borrowed-value-dereference": ('struct Borrowed { int& value; }; '
-                'class ValueCursor { public: Borrowed operator*(); }; int main() { return 0; }', "GTI-S2022"),
+                'class ValueCursor { public: Borrowed operator*();  public: ValueCursor() = default; }; int main() { return 0; }', "GTI-S2022"),
             "move-only-value-dereference": ('#include <std/string>\nclass ValueCursor { public: '
-                'std::string operator*() { return std::string("owned"); } }; int main() { return 0; }', "GTI-S2022"),
+                'std::string operator*() { return std::string("owned"); }  public: ValueCursor() = default; }; int main() { return 0; }', "GTI-S2022"),
         }
         for name, (source, code) in invalid.items():
             path = output / f"{name}.gti"

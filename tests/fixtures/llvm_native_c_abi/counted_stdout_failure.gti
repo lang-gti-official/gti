@@ -2,7 +2,7 @@ extern "C" {
   int32_t close_counted_stdout();
   void counted_cleanup();
 }
-struct Guard { ~Guard() { counted_cleanup(); } };
+struct Guard { ~Guard() { counted_cleanup(); }  public: Guard() = default; };
 int main() {
   Guard guard{};
   if (close_counted_stdout() != 0) return 1;

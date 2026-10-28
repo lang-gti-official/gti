@@ -116,6 +116,8 @@ void testOwnershipSemanticFoundation() {
 struct Counter {
   mut int value = 0;
   void bump() mut { this.value += 1; }
+public:
+  Counter() = default;
 };
 
 int identity(int value) { return value; }
@@ -239,6 +241,8 @@ void testExplicitValueMoves() {
       "explicit-value-moves.gti", R"(
 struct Record {
   int value = 4;
+public:
+  Record() = default;
 };
 
 int forward_int(int value) { return std::move(value); }
@@ -354,6 +358,8 @@ int global_value = 1;
 struct Box {
   int field = 1;
   int take() mut { return std::move(this.field); }
+public:
+  Box() = default;
 };
 
 int main() {
@@ -416,6 +422,8 @@ public:
 
 struct Copyable {
   int value = 7;
+public:
+  Copyable() = default;
 };
 
 Owner return_parameter(Owner value) {
@@ -701,7 +709,7 @@ int main() { return 0; }
 void testEdgeSensitiveMoveFlow() {
   const lang::FrontendResult loopBackedges = lang::Frontend().analyze(
       "loop-backedge-moves.gti", R"(
-struct Record { int32_t value = 7; };
+struct Record { int32_t value = 7;  public: Record() = default; };
 
 int main() {
   mut Record while_value = Record();
@@ -734,7 +742,7 @@ int main() {
 
   const lang::FrontendResult conditionBackedges = lang::Frontend().analyze(
       "condition-backedge-moves.gti", R"(
-struct Record { int32_t value = 7; };
+struct Record { int32_t value = 7;  public: Record() = default; };
 bool consume(Record value) { return value.value == 7; }
 
 int main() {
@@ -755,8 +763,8 @@ int main() {
 
   const lang::FrontendResult projectedBackedge = lang::Frontend().analyze(
       "projected-loop-backedge.gti", R"(
-struct Record { int32_t value = 7; };
-struct Holder { mut Record field = Record(); };
+struct Record { int32_t value = 7;  public: Record() = default; };
+struct Holder { mut Record field = Record();  public: Holder() = default; };
 
 int main() {
   mut Holder holder = Holder();
@@ -778,7 +786,7 @@ int main() {
 
   const lang::FrontendResult reinitialized = lang::Frontend().analyze(
       "reinitialized-loop-backedges.gti", R"(
-struct Record { int32_t value = 7; };
+struct Record { int32_t value = 7;  public: Record() = default; };
 
 int main() {
   mut Record while_value = Record();
@@ -812,7 +820,7 @@ int main() {
 
   const lang::FrontendResult shortCircuit = lang::Frontend().analyze(
       "short-circuit-moves.gti", R"(
-struct Record { int32_t value = 7; };
+struct Record { int32_t value = 7;  public: Record() = default; };
 bool consume(Record value) { return value.value == 7; }
 
 int test_and(bool gate) {
@@ -839,7 +847,7 @@ int main() { return test_and(false) + test_or(true); }
 
   const lang::FrontendResult skippedLogical = lang::Frontend().analyze(
       "skipped-logical-moves.gti", R"(
-struct Record { int32_t value = 7; };
+struct Record { int32_t value = 7;  public: Record() = default; };
 bool consume(Record value) { return value.value == 7; }
 
 int main() {
@@ -857,7 +865,7 @@ int main() {
 
   const lang::FrontendResult terminatingArm = lang::Frontend().analyze(
       "terminating-if-move.gti", R"(
-struct Record { int32_t value = 7; };
+struct Record { int32_t value = 7;  public: Record() = default; };
 int read_after(bool stop) {
   mut Record value = Record();
   if (stop) {
@@ -875,7 +883,7 @@ int main() { return read_after(false) - 7; }
 
   const lang::FrontendResult unreachableRepair = lang::Frontend().analyze(
       "unreachable-move-repair.gti", R"(
-struct Record { int32_t value = 7; };
+struct Record { int32_t value = 7;  public: Record() = default; };
 int read_after_switch(int32_t selector) {
   mut Record value = Record();
   switch (selector) {
@@ -953,6 +961,8 @@ public:
   }
 
   T front() { return this.head->value; }
+public:
+  LinkedList() = default;
 };
 
 int main() {
@@ -1020,6 +1030,8 @@ int main() {
       analyzeWithMemory("restored-owned-field.gti", R"(
 struct Link {
   mut std::unique_ptr<int32_t> next = std::unique_ptr<int32_t>();
+public:
+  Link() = default;
 };
 std::unique_ptr<Link> detach() {
   mut auto owner = std::make_unique<Link>();
@@ -1152,6 +1164,8 @@ struct Pair {
   void leave_uninitialized() mut {
     auto removed = std::move(this.left);
   }
+public:
+  Pair() = default;
 };
 
 struct ImmutableField {
@@ -1160,6 +1174,8 @@ struct ImmutableField {
   void take() mut {
     auto removed = std::move(this.value);
   }
+public:
+  ImmutableField() = default;
 };
 
 int main() {
@@ -1192,10 +1208,14 @@ int main() {
       analyzeWithMemory("nested-projected-read.gti", R"(
 struct Item {
   int read() { return 1; }
+public:
+  Item() = default;
 };
 
 struct Holder {
   mut std::unique_ptr<Item> value = std::make_unique<Item>();
+public:
+  Holder() = default;
 };
 
 int observe(int value) { return value; }
@@ -1299,6 +1319,8 @@ struct Holder {
     this.slots[1] = std::move(first);
     return this.slots[0].value + this.slots[1].value;
   }
+public:
+  Holder() = default;
 };
 
 int branch_restore(bool select) {
@@ -1649,6 +1671,8 @@ struct Pair {
 public:
   mut int left = 1;
   mut int right = 2;
+public:
+  Pair() = default;
 };
 
 void change(mut int& value) { value += 1; }
@@ -2076,6 +2100,8 @@ class Boxes {
 public:
   mut Box left = Box(1);
   mut Box right = Box(2);
+public:
+  Boxes() = default;
 };
 
 int sum(int& left, int& right) { return left + right; }
@@ -2101,11 +2127,15 @@ class Cell {
 public:
   mut int value = 1;
   mut int& write() mut { return this.value; }
+public:
+  Cell() = default;
 };
 class Pair {
 public:
   mut Cell left = Cell();
   mut int right = 2;
+public:
+  Pair() = default;
 };
 int& relay(int& source) { return source; }
 int receiver_projection(mut Pair& parent) {
@@ -2174,6 +2204,8 @@ class Box {
 public:
   mut int value = 2;
   int& read() { return this.value; }
+public:
+  Box() = default;
 };
 class View {
   int& value;
@@ -2236,6 +2268,8 @@ public:
   mut int value = 2;
   int& read() { return this.value; }
   void bump() mut { this.value += 1; }
+public:
+  Box() = default;
 };
 class View {
   int& value;
@@ -2265,6 +2299,8 @@ class Box {
 
 public:
   mut int& write() mut { return this.value; }
+public:
+  Box() = default;
 };
 int sum(int& left, int& right) { return left + right; }
 int main() {
@@ -2289,6 +2325,8 @@ class Box {
 
 public:
   int& write() mut { return this.value; }
+public:
+  Box() = default;
 };
 int sum(int& left, int& right) { return left + right; }
 int main() {
@@ -2316,6 +2354,8 @@ public:
     this.value += 1;
     return this.value;
   }
+public:
+  Box() = default;
 };
 int combine(int& borrowed, int changed) { return borrowed + changed; }
 int main() {
@@ -2360,6 +2400,8 @@ class Box {
 public:
   int& read() { return this.value; }
   void bump() mut { this.value += 1; }
+public:
+  Box() = default;
 };
 int mutate(mut Box& box) {
   box.bump();
@@ -2392,6 +2434,8 @@ public:
     this.value += 1;
     return this.value;
   }
+public:
+  Box() = default;
 };
 int combine(int changed, int& borrowed) { return changed + borrowed; }
 int main() {
@@ -2505,6 +2549,8 @@ class Box {
 public:
   int bump() mut { this.value += 1; return this.value; }
   int& read() { return this.value; }
+public:
+  Box() = default;
 };
 class View {
   int& value;
@@ -2573,6 +2619,8 @@ class Box {
 public:
   int& read() { return this.value; }
   int& expose() mut { return this.value; }
+public:
+  Box() = default;
 };
 int& observe(int& value) { return value; }
 int sum(int& left, int& right) { return left + right; }
@@ -2598,10 +2646,14 @@ class Box {
 
 public:
   int& expose() mut { return this.value; }
+public:
+  Box() = default;
 };
 class Inspector {
 public:
   Inspector(int& first, int& second) {}
+public:
+  Inspector() = default;
 };
 int main() {
   mut Box parent = Box();
@@ -2627,12 +2679,16 @@ class Box {
 public:
   int& read() { return this.value; }
   mut int& write() mut { return this.value; }
+public:
+  Box() = default;
 };
 class Boxes {
 public:
   mut Box left = Box();
   mut Box right = Box();
   int& read_left() { return this.left.read(); }
+public:
+  Boxes() = default;
 };
 int sum(int& left, int& right) { return left + right; }
 int main() {
@@ -2661,6 +2717,8 @@ public:
     this.value += 1;
     return this.value;
   }
+public:
+  Box() = default;
 };
 int combine(int& observed, int changed) { return observed + changed; }
 int binary_case(mut Box& parent) {
@@ -2691,6 +2749,8 @@ class Box {
 public:
   mut int value = 2;
   int& read() { return this.value; }
+public:
+  Box() = default;
 };
 int consume(int& observed, Box moved) { return observed + moved.value; }
 int run(mut Box parent) {
@@ -2718,6 +2778,8 @@ public:
     this.value += 1;
     return this.value;
   }
+public:
+  Box() = default;
 };
 class View {
   int& value;
@@ -2753,11 +2815,15 @@ public:
     this.value += 1;
     return this.value;
   }
+public:
+  Box() = default;
 };
 class Pair {
 public:
   mut Box left = Box();
   mut Box right = Box();
+public:
+  Pair() = default;
 };
 class View {
   int& value;
@@ -2781,6 +2847,8 @@ class Inner {
 public:
   mut int value = 1;
   int inspect(int changed) { return this.value + changed; }
+public:
+  Inner() = default;
 };
 class Outer {
 public:
@@ -2791,6 +2859,8 @@ public:
     this.count += 1;
     return this.count;
   }
+public:
+  Outer() = default;
 };
 int run(mut Outer& parent) {
   return parent.get().inspect(parent.bump());
@@ -2813,6 +2883,8 @@ class Inner {
 public:
   mut int value = 1;
   int inspect(int changed) { return this.value + changed; }
+public:
+  Inner() = default;
 };
 class Side {
 public:
@@ -2823,11 +2895,15 @@ public:
     this.count += 1;
     return this.count;
   }
+public:
+  Side() = default;
 };
 class Pair {
 public:
   mut Side left = Side();
   mut Side right = Side();
+public:
+  Pair() = default;
 };
 int run(mut Pair& parent) {
   return parent.left.get().inspect(parent.right.bump());
@@ -2848,6 +2924,8 @@ public:
   mut int value = 2;
   int& read() { return this.value; }
   int& expose() mut { return this.value; }
+public:
+  Box() = default;
 };
 int inspect(int& value) { return value; }
 int run(mut Box& parent) {
@@ -2904,6 +2982,8 @@ class Box {
 
 public:
   mut int& get() mut { return this.value; }
+public:
+  Box() = default;
 };
 void both(int& observed, mut int& changed) { changed += observed; }
 int main() {
@@ -2923,6 +3003,8 @@ class Cell {
 
 public:
   void invalid() mut { combine(this.value); }
+public:
+  Cell() = default;
 };
 int main() { return 0; }
 )",
@@ -2984,6 +3066,8 @@ public:
     mut int& child = parent;
     return child;
   }
+public:
+  Cell() = default;
 };
 int main() { return 0; }
 )",
@@ -3000,6 +3084,8 @@ public:
     mut int& child = parent;
     return (child);
   }
+public:
+  GroupedCell() = default;
 };
 
 class CommaCell {
@@ -3011,6 +3097,8 @@ public:
     mut int& child = parent;
     return (0, child);
   }
+public:
+  CommaCell() = default;
 };
 int main() { return 0; }
 )",
@@ -3027,6 +3115,8 @@ public:
     int& child = parent;
     return child;
   }
+public:
+  Cell() = default;
 };
 int main() { return 0; }
 )",
@@ -3051,6 +3141,8 @@ public:
     int& child = parent;
     return View(child);
   }
+public:
+  Cell() = default;
 };
 int main() { return 0; }
 )",
@@ -3109,18 +3201,24 @@ class Boxes {
 public:
   mut Box left = Box(1);
   mut Box right = Box(2);
+public:
+  Boxes() = default;
 };
 
 class Inner {
 public:
   mut Box first = Box(3);
   mut Box second = Box(4);
+public:
+  Inner() = default;
 };
 
 class Outer {
 public:
   mut Inner left = Inner();
   mut Inner right = Inner();
+public:
+  Outer() = default;
 };
 
 int sum(int& left, int& right) { return left + right; }
@@ -3330,6 +3428,8 @@ constexpr int qualified_value = 9;
 class Constants {
 public:
   static constexpr int member_value = 10;
+public:
+  Constants() = default;
 };
 
 mut int slots[2] = {1, 2};
@@ -3470,6 +3570,8 @@ void testGlobalBorrowReturns() {
 class LayerStack {
 public:
   void Update() mut {}
+public:
+  LayerStack() = default;
 };
 
 class Application {
@@ -3485,6 +3587,8 @@ public:
 private:
   mut LayerStack layers = LayerStack();
   static mut Application* app = nullptr;
+public:
+  Application() = default;
 };
 
 mut int global_value = 1;
@@ -3691,6 +3795,8 @@ public:
   }
 private:
   static mut Application* app = nullptr;
+public:
+  Application() = default;
 };
 int main() {
   mut Application& first = Application::Get();
@@ -3715,6 +3821,8 @@ public:
   static mut Application& Get() { return *Application::app; }
 private:
   static mut Application* app = nullptr;
+public:
+  Application() = default;
 };
 int main() { return 0; }
 )");
@@ -3735,6 +3843,8 @@ public:
     if (choose) { return Values::left; }
     return Values::right;
   }
+public:
+  Values() = default;
 };
 int main() { return 0; }
 )");
@@ -3774,6 +3884,8 @@ public:
   }
 private:
   static mut Application* app = nullptr;
+public:
+  Application() = default;
 };
 int main() { return 0; }
 )");
@@ -4200,6 +4312,8 @@ public:
   int& literal() {
     return 3;
   }
+public:
+  InvalidReferences() = default;
 };
 
 int main() {
@@ -4432,7 +4546,7 @@ int main() {
 
 void testStoredReferenceGroundwork() {
   const std::string source = R"(
-struct SingleSentinel {};
+struct SingleSentinel { public: SingleSentinel() = default; };
 
 class BorrowingIterator<T> {
   T& value;
@@ -6654,7 +6768,7 @@ int main() {
 
 void testComposedCarrierFunctionTransfer() {
   const std::string declarations = R"(
-struct Cell { mut int value = 0; };
+struct Cell { mut int value = 0;  public: Cell() = default; };
 struct Context {
   int& step;
   mut Cell& left;
@@ -7035,7 +7149,7 @@ Context forward_with_owner(Context context, mut Cell& other) {
 void testNestedBorrowedFields() {
   const auto arrowUpdate = lang::Frontend().analyze(
       "nested-carrier-arrow-update.gti", R"(
-struct Record { mut int value = 7; };
+struct Record { mut int value = 7;  public: Record() = default; };
 class Cursor {
   mut Record& record;
 public:
@@ -7198,7 +7312,7 @@ int main() {
 
 void testStoredCarrierReturnProvenance() {
   const std::string projectedSource = R"(
-struct Counter { mut int value = 4; };
+struct Counter { mut int value = 4;  public: Counter() = default; };
 class ProjectedCarrier {
   Counter& owner;
 public:
@@ -7890,6 +8004,8 @@ int& escape_shell(ReadCarrier carrier) { return carrier.shell; }
 class Shell {
 public:
   int value = 0;
+public:
+  Shell() = default;
 };
 class ReadCarrier {
 public:
@@ -8149,6 +8265,8 @@ class Inner {
 
 public:
   mut int& operator[](uint64_t index) mut { return this.elements[index]; }
+public:
+  Inner() = default;
 };
 
 class Outer {
@@ -8156,6 +8274,8 @@ class Outer {
 
 public:
   mut int& operator[](uint64_t index) mut { return this.data[index]; }
+public:
+  Outer() = default;
 };
 
 int main() {
@@ -8778,7 +8898,7 @@ int use() {
   const std::string distinctSentinelSource = R"(
 #include <std/iterator>
 
-class DistinctSentinel {};
+class DistinctSentinel { public: DistinctSentinel() = default; };
 
 class DistinctOnlyIterator {
   int& value;
@@ -9072,7 +9192,7 @@ int use() {
       "sized-sentinel-missing.gti", R"(
 #include <std/iterator>
 
-class PlainSentinel {};
+class PlainSentinel { public: PlainSentinel() = default; };
 
 class PlainIterator {
   mut int32_t value = 0;
@@ -9197,6 +9317,8 @@ public:
 class positive {
 public:
   bool operator()(int32_t& value) { return value > 0; }
+public:
+  positive() = default;
 };
 
 std::size_t measured_size<Range>(Range& values)
@@ -9323,7 +9445,7 @@ int main() {
   const lang::FrontendResult missingRange = lang::Frontend().analyze(
       "complete-range-missing-endpoints.gti", R"(
 #include <std/iterator>
-class not_a_range {};
+class not_a_range { public: not_a_range() = default; };
 bool accepts<Range>(Range& values) requires std::input_range<Range> {
   for (auto& value : values) {}
   return true;
@@ -9370,6 +9492,8 @@ public:
     return this.values.begin();
   }
   std::detail::vector_sentinel end() { return this.values.end(); }
+public:
+  read_range() = default;
 };
 bool accepts<Range>(mut Range& values)
   requires std::mutable_range_of<Range, int32_t> {
@@ -9399,6 +9523,8 @@ public:
   }
   std::detail::vector_sentinel end() { return this.values.end(); }
   int32_t size() { return 1; }
+public:
+  wrong_size_range() = default;
 };
 bool accepts<Range>(Range& values) requires std::sized_range<Range> {
   return values.size() == std::size_t(1);
@@ -9422,6 +9548,8 @@ int main() {
 class wrong_predicate {
 public:
   bool operator()(int16_t& value) { return value > 0; }
+public:
+  wrong_predicate() = default;
 };
 bool accepts<Range, Predicate>(Range& values, Predicate predicate)
   requires std::range_predicate<Predicate, Range> {
@@ -9486,6 +9614,8 @@ public:
   static ReadingView<int> make(int& source) {
     return ReadingView<int>(source);
   }
+public:
+  IntViewFactory() = default;
 };
 
 class DirectPayload {
@@ -9861,6 +9991,8 @@ View local_view(int& source) {
 class WrongFactory {
 public:
   View make(int& source) { return View(source); }
+public:
+  WrongFactory() = default;
 };
 
 class Owner {
@@ -10656,10 +10788,14 @@ public:
   Widget(int initial) : value(initial) {}
   int read() { return this.value; }
   void increment() mut { this.value += 1; }
+public:
+  Widget() = default;
 };
 
 struct Holder {
   std::unique_ptr<Widget> widget = std::unique_ptr<Widget>();
+public:
+  Holder() = default;
 };
 
 int inspect(Widget& widget) { return widget.read(); }
@@ -10821,6 +10957,8 @@ public:
   Nullable(nullptr_t value) : empty(true) {}
   void operator=(nullptr_t value) mut { this.empty = true; }
   bool is_empty() { return this.empty; }
+public:
+  Nullable() = default;
 };
 
 void consume(std::unique_ptr<Widget> value) {}
@@ -10966,7 +11104,7 @@ int main() {
 
   const lang::FrontendResult rejectedNullArgument =
       analyzeWithMemory("unique-owner-null-argument.gti", R"(
-struct Widget {};
+struct Widget { public: Widget() = default; };
 void consume(std::unique_ptr<Widget> value) {}
 int main() {
   consume(nullptr);
@@ -10987,6 +11125,8 @@ int main() {
 class PointerOnly {
 public:
   PointerOnly(int* value) {}
+public:
+  PointerOnly() = default;
 };
 int main() {
   PointerOnly value = nullptr;
@@ -11096,6 +11236,8 @@ int main() {
 struct Widget {
 public:
   Widget(int value) {}
+public:
+  Widget() = default;
 };
 
 int main() {
@@ -11118,6 +11260,8 @@ int main() {
 struct Widget {
 public:
   int read() { return 0; }
+public:
+  Widget() = default;
 };
 
 int misuse_internal_owner() {
@@ -11142,7 +11286,7 @@ int misuse_internal_owner() {
 
   const lang::FrontendResult hiddenOwnerPolicy =
       analyzeTrustedMemoryFixture("hidden-owner-policy.gti", R"(
-struct Widget {};
+struct Widget { public: Widget() = default; };
 
 int main() {
   gti_internal::unique_owner<Widget> owner =
@@ -11161,7 +11305,8 @@ int main() {
   const std::string formatted = lang::Formatter().format(
       "std::unique_ptr<Widget> make(){return std::make_unique<Widget>();}"
       "int read(mut std::unique_ptr<Widget> value){return value->read();}"
-      "class Nullable{public:void operator=(nullptr_t empty)mut{}};");
+      "class Nullable{public:void operator=(nullptr_t empty)mut{} public: "
+      "Nullable() = default; };");
   expect(formatted.find("value->read()") != std::string::npos &&
              formatted.find("void operator=(nullptr_t empty) mut {") !=
                  std::string::npos &&
@@ -11269,8 +11414,8 @@ int main() {
 
   const lang::FrontendResult invalid =
       analyzeWithMemory("invalid-unique-owner-swap.gti", R"(
-struct Left {};
-struct Right {};
+struct Left { public: Left() = default; };
+struct Right { public: Right() = default; };
 int main() {
   mut std::unique_ptr<Left> left = std::make_unique<Left>();
   mut std::unique_ptr<Right> right = std::make_unique<Right>();
@@ -11489,20 +11634,26 @@ int main() {
 
   const lang::FrontendResult invalid =
       analyzeWithMemory("invalid-polymorphic-unique-owner-upcast.gti", R"(
-class PlainBase {};
-class PlainDerived : public PlainBase {};
-class Unrelated {};
-class CapableBase { public: virtual int read() { return 1; } };
+class PlainBase { public: PlainBase() = default; };
+class PlainDerived : public PlainBase { public: PlainDerived() = default; };
+class Unrelated { public: Unrelated() = default; };
+class CapableBase { public: virtual int read() { return 1; }  public: CapableBase() = default; };
 [[no_transfer]] class NonTransferable : public CapableBase {
 public: int read() override { return 2; }
+public:
+  NonTransferable() = default;
 };
 [[no_share]] class NonShareable : public CapableBase {
 public: int read() override { return 3; }
+public:
+  NonShareable() = default;
 };
 class CleanupBound : public CapableBase {
 public:
   ~CleanupBound() {}
   int read() override { return 4; }
+public:
+  CleanupBound() = default;
 };
 
 int main() {
@@ -11538,6 +11689,8 @@ interface Layer { void update() mut; };
 class DemoLayer : public Layer {
 public:
   void update() mut override {}
+public:
+  DemoLayer() = default;
 };
 void consume(std::unique_ptr<Layer> layer) {}
 int main() {
@@ -12193,6 +12346,8 @@ public:
   int32_t value() {
     return this.stored;
   }
+public:
+  DefaultValue() = default;
 };
 
 class Pair {
@@ -12509,6 +12664,8 @@ class PointerBox {
 
 public:
   PointerBox(const int32_t* value) : pointer(value) {}
+public:
+  PointerBox() = default;
 };
 
 int main() {
@@ -12578,10 +12735,14 @@ int main() {
 class Pair {
 public:
   Pair(int32_t first, bool second) {}
+public:
+  Pair() = default;
 };
 
 class Secret {
   Secret(int32_t value) {}
+public:
+  Secret() = default;
 };
 
 class Slot<std::storage_element T> {
@@ -12664,6 +12825,8 @@ class Stationary {
 
 public:
   Stationary(Stationary&& other) = delete;
+public:
+  Stationary() = default;
 };
 
 int main() {
@@ -12710,6 +12873,8 @@ public:
 
 struct CopyableValue {
   int value = 1;
+public:
+  CopyableValue() = default;
 };
 
 Buffer<int> transfer(Buffer<int> value) {
@@ -12925,6 +13090,8 @@ void testDefaultedDefaultLifecycle() {
   const std::string source = R"(
 class ImplicitStructural {
   int value = 7;
+public:
+  ImplicitStructural() = default;
 };
 
 class ExplicitStructural {
@@ -13067,6 +13234,8 @@ class ParameterizedDefault {
   int value = 0;
 public:
   ParameterizedDefault(int initial) = default;
+public:
+  ParameterizedDefault() = default;
 };
 
 class DeletedDefault {
@@ -13077,6 +13246,8 @@ public:
 class DeletedCleanup {
 public:
   ~DeletedCleanup() = delete;
+public:
+  DeletedCleanup() = default;
 };
 )";
   const lang::FrontendResult invalid = lang::Frontend().analyze(
@@ -13258,21 +13429,29 @@ int main() {
 class WrongName {
 public:
   ~Other() {}
+public:
+  WrongName() = default;
 };
 
 class DuplicateCleanup {
 public:
   ~DuplicateCleanup() {}
   ~DuplicateCleanup() {}
+public:
+  DuplicateCleanup() = default;
 };
 
 class PrivateCleanup {
   ~PrivateCleanup() {}
+public:
+  PrivateCleanup() = default;
 };
 
 class ReturningCleanup {
 public:
   ~ReturningCleanup() { return; }
+public:
+  ReturningCleanup() = default;
 };
 
 int main() { return 0; }
@@ -13310,7 +13489,7 @@ int main() { return 0; }
 
   const std::string formatted = lang::Formatter().format(
       "class Trace{mut int state=1;public:~Trace(){while(this.state>0){"
-      "this.state--;}}};");
+      "this.state--;}} public: Trace() = default; };");
   expect(formatted.find("~Trace() {") != std::string::npos &&
              formatted.find("while (this.state > 0) {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
@@ -13330,6 +13509,8 @@ struct Payload {
   mut int value = 0;
 
   void increment() mut { this.value += 1; }
+public:
+  Payload() = default;
 };
 
 class Handle {
@@ -13346,6 +13527,8 @@ public:
   bool operator==(nullptr_t other) { return false; }
   bool operator!=(nullptr_t other) { return true; }
   operator bool() { return true; }
+public:
+  Handle() = default;
 };
 
 class Number {
@@ -13381,10 +13564,14 @@ public:
   void operator--() mut { this.value--; }
 
   int get() { return this.value; }
+public:
+  Number() = default;
 };
 
 struct NumberHolder {
   mut Number value = Number(1);
+public:
+  NumberHolder() = default;
 };
 
 class NumberIndex {
@@ -13392,6 +13579,8 @@ class NumberIndex {
 
 public:
   mut Number& operator[](int index) mut { return this.value; }
+public:
+  NumberIndex() = default;
 };
 
 class NumberOwner {
@@ -13399,6 +13588,8 @@ class NumberOwner {
 
 public:
   mut Number& operator*() mut { return this.value; }
+public:
+  NumberOwner() = default;
 };
 
 class NumberArrow {
@@ -13406,6 +13597,8 @@ class NumberArrow {
 
 public:
   mut NumberHolder& operator->() mut { return this.holder; }
+public:
+  NumberArrow() = default;
 };
 
 int main() {
@@ -13579,7 +13772,7 @@ int main() {
       "bool operator<(Handle& other){return false;}"
       "Handle operator+(int other){return Handle();}"
       "void operator+=(int other)mut{}void operator--()mut{}"
-      "operator bool(){return true;}};");
+      "operator bool(){return true;} public: Handle() = default; };");
   expect(formatted.find("mut int& operator*() mut {") != std::string::npos &&
              formatted.find("bool operator<(Handle& other) {") !=
                  std::string::npos &&
@@ -13598,6 +13791,8 @@ class ValueHandle {
   int value = 7;
 public:
   int operator*() { return this.value; }
+public:
+  ValueHandle() = default;
 };
 int main() { ValueHandle handle{}; return *handle - 7; }
 )");
@@ -13648,6 +13843,8 @@ class ReadOnlyHandle {
 public:
   int& operator*() { return this.value; }
   bool operator==(int other) { return true; }
+public:
+  ReadOnlyHandle() = default;
 };
 int main() {
   mut ReadOnlyHandle handle = ReadOnlyHandle();
@@ -13672,6 +13869,8 @@ int main() {
 class ExactArithmetic {
 public:
   ExactArithmetic operator+(int64_t other) { return ExactArithmetic(); }
+public:
+  ExactArithmetic() = default;
 };
 int main() {
   ExactArithmetic value = ExactArithmetic();
@@ -13695,6 +13894,8 @@ int main() {
 class RightHandOnly {
 public:
   RightHandOnly operator+(int other) { return RightHandOnly(); }
+public:
+  RightHandOnly() = default;
 };
 int main() {
   RightHandOnly value = RightHandOnly();
@@ -13713,6 +13914,8 @@ int main() {
 class PlusOnly {
 public:
   PlusOnly operator+(int other) { return PlusOnly(); }
+public:
+  PlusOnly() = default;
 };
 int main() {
   mut PlusOnly value = PlusOnly();
@@ -13760,11 +13963,15 @@ int main() { return 0; }
       lang::Frontend().analyze("invalid-operator-access.gti", R"(
 class PrivateTruth {
   operator bool() { return true; }
+public:
+  PrivateTruth() = default;
 };
 class MutableOnly {
   mut int value = 0;
 public:
   mut int& operator*() mut { return this.value; }
+public:
+  MutableOnly() = default;
 };
 int main() {
   PrivateTruth hidden = PrivateTruth();
@@ -13825,8 +14032,9 @@ int main() {
           hasMirIntrinsicKind(accepted, lang::IntrinsicKind::StringViewEmpty),
       "arrow text members lower to their builtin observers");
 
-  const std::string cell = "class Cell { int value = 3; public: int& "
-                           "operator->() { return this.value; } }; ";
+  const std::string cell =
+      "class Cell { int value = 3; public: int& "
+      "operator->() { return this.value; }  public: Cell() = default; }; ";
   const std::string text = "class Text { public: c_string text; Text(c_string "
                            "text) : text(text) {} c_string& operator->() { "
                            "return this.text; } }; ";
@@ -13885,6 +14093,8 @@ public:
 class Identity<T> {
 public:
   T operator()(T value) { return value; }
+public:
+  Identity() = default;
 };
 
 class Slot {
@@ -13893,6 +14103,8 @@ class Slot {
 public:
   int& operator()() { return this.value; }
   mut int& operator()() mut { return this.value; }
+public:
+  Slot() = default;
 };
 
 int main() {
@@ -13946,7 +14158,8 @@ int main() {
          "call operators should lower to the semantically selected member");
 
   const std::string formatted = lang::Formatter().format(
-      "class Fn{public:int operator()(int value){return value;}};");
+      "class Fn{public:int operator()(int value){return value;} public: Fn() = "
+      "default; };");
   expect(formatted.find("int operator()(int value) {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "operator() declarations should format idempotently");
@@ -13955,14 +14168,20 @@ int main() {
       lang::Frontend().analyze("invalid-call-operator.gti", R"(
 class PrivateCallable {
   int operator()(int value) { return value; }
+public:
+  PrivateCallable() = default;
 };
 class MutableCallable {
 public:
   int operator()(int value) mut { return value; }
+public:
+  MutableCallable() = default;
 };
 class ExactCallable {
 public:
   int operator()(int value) { return value; }
+public:
+  ExactCallable() = default;
 };
 int main() {
   PrivateCallable hidden = PrivateCallable();
@@ -13993,6 +14212,8 @@ class Slot {
   int value = 1;
 public:
   int& operator()() { return this.value; }
+public:
+  Slot() = default;
 };
 int main() {
   int& dangling = Slot()();
@@ -14342,8 +14563,9 @@ int main() {
          "the C++ backend should preserve consuming member qualification and "
          "the exact frontend-selected callable capability");
 
-  const std::string formatted = lang::Formatter().format(
-      "class Once{public:int operator()()&&{return 1;}};");
+  const std::string formatted =
+      lang::Formatter().format("class Once{public:int operator()()&&{return "
+                               "1;} public: Once() = default; };");
   expect(formatted.find("int operator()() && {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "operator() && should format with stable C++-style spacing");
@@ -14353,6 +14575,8 @@ int main() {
 class Once {
 public:
   int operator()() && { return 1; }
+public:
+  Once() = default;
 };
 
 int invoke_twice<Operation>(Operation operation) {
@@ -14383,6 +14607,8 @@ int main() {
 class Once {
 public:
   int operator()() && { return 1; }
+public:
+  Once() = default;
 };
 
 int invoke_once<Operation>(Operation operation) {
@@ -14417,6 +14643,8 @@ int main() { return outer(Once()); }
 class Once {
 public:
   int operator()() && { return 1; }
+public:
+  Once() = default;
 };
 
 int invoke_once<Operation>(Operation operation) {
@@ -14465,6 +14693,8 @@ class CleanupMutableFallback {
   Cleanup cleanup = Cleanup();
 public:
   int operator()(int amount) mut { return amount; }
+public:
+  CleanupMutableFallback() = default;
 };
 
 int invoke_once<Operation>(Operation operation) {
@@ -14505,6 +14735,8 @@ class CleanupCallable {
   Cleanup cleanup = Cleanup();
 public:
   int operator()() && { return 1; }
+public:
+  CleanupCallable() = default;
 };
 
 int invoke_once<Operation>(Operation operation) {
@@ -14551,6 +14783,8 @@ public:
   Builder append(int n) && { this.value += n; return std::move(this); }
   Builder operator/(int n) { return Builder(this.value + n); }
   Builder operator/(int n) && { this.value += n; return std::move(this); }
+public:
+  Builder() = default;
 };
 Builder make() { return Builder(1); }
 int main() {
@@ -14643,64 +14877,81 @@ int main() {
   }
 
   const std::vector<std::pair<std::string, std::string>> invalid = {
-      {"class C { public: void take() && {} }; int main() { C c{}; c.take(); "
+      {"class C { public: void take() && {}  public: C() = default; }; int "
+       "main() { C c{}; c.take(); "
        "return 0; }",
        "requires an owned temporary"},
-      {"class C { public: int x = 1; void take() && {} }; int main() { C c{}; "
+      {"class C { public: int x = 1; void take() && {}  public: C() = default; "
+       "}; int main() { C c{}; "
        "std::move(c).take(); return c.x; }",
        "already been moved"},
-      {"class C { public: C take() { return std::move(this); } }; int main() { "
+      {"class C { public: C take() { return std::move(this); }  public: C() = "
+       "default; }; int main() { "
        "return 0; }",
        "std::move(this) requires a consuming receiver"},
-      {"class C { public: ~C() {} C take() && { return this; } }; int main() { "
+      {"class C { public: ~C() {} C take() && { return this; }  public: C() = "
+       "default; }; int main() { "
        "return 0; }",
        "Returning this value would copy move-only type"},
       {"class C { public: int x = 1; int take() && { auto owned = "
-       "std::move(this); return this.x; } }; int main() { return 0; }",
+       "std::move(this); return this.x; }  public: C() = default; }; int "
+       "main() { return 0; }",
        "already been moved"},
       {"class C { public: C take() && { auto owned = std::move(this); return "
-       "std::move(this); } }; int main() { return 0; }",
+       "std::move(this); }  public: C() = default; }; int main() { return 0; }",
        "already been moved"},
       {"class C { public: mut int x = 1; C take() && { int old = "
-       "std::move(this.x); return std::move(this); } }; int main() { return 0; "
+       "std::move(this.x); return std::move(this); }  public: C() = default; "
+       "}; int main() { return 0; "
        "}",
        "already been moved"},
-      {"class C { public: int x = 1; int& take() && { return this.x; } }; int "
+      {"class C { public: int x = 1; int& take() && { return this.x; }  "
+       "public: C() = default; }; int "
        "main() { return 0; }",
        "consuming method cannot return"},
-      {"class C { public: bool operator==(C& other) && { return true; } }; int "
+      {"class C { public: bool operator==(C& other) && { return true; }  "
+       "public: C() = default; }; int "
        "main() { return 0; }",
        "value-producing operators"},
-      {"class C { public: void operator+=(int n) && {} }; int main() { return "
+      {"class C { public: void operator+=(int n) && {}  public: C() = default; "
+       "}; int main() { return "
        "0; }",
        "value-producing operators"},
-      {"class C { public: int x = 1; void take() && {} }; int main() { C c{}; "
+      {"class C { public: int x = 1; void take() && {}  public: C() = default; "
+       "}; int main() { C c{}; "
        "int& alias = c.x; std::move(c).take(); return alias; }",
        "borrow"},
       {"class C { public: int x = 1; C take() && { int& alias = this.x; auto c "
-       "= std::move(this); int observed = alias; return std::move(c); } }; int "
+       "= std::move(this); int observed = alias; return std::move(c); }  "
+       "public: C() = default; }; int "
        "main() { return 0; }",
        "borrow"},
       {"class C { public: int x = 1; int read() { return this.x; } int take() "
-       "&& { auto c = std::move(this); return read(); } }; int main() { return "
+       "&& { auto c = std::move(this); return read(); }  public: C() = "
+       "default; }; int main() { return "
        "0; }",
        "already been moved"},
       {"class C { public: int x = 1; int take(bool condition) && { if "
-       "(condition) { auto c = std::move(this); } return this.x; } }; int "
+       "(condition) { auto c = std::move(this); } return this.x; }  public: "
+       "C() = default; }; int "
        "main() { return 0; }",
        "may have been moved"},
       {"class C { public: mut int x = 1; void take() && { auto c = "
-       "std::move(this); this.x = 2; } }; int main() { return 0; }",
+       "std::move(this); this.x = 2; }  public: C() = default; }; int main() { "
+       "return 0; }",
        "already been moved"},
       {"class C { public: int x = 1; void take() && { while (true) { auto c = "
-       "std::move(this); } } }; int main() { return 0; }",
+       "std::move(this); } }  public: C() = default; }; int main() { return 0; "
+       "}",
        "not available at a reachable loop backedge"},
-      {"class C { public: void take() && {} }; void run(C& borrowed) { "
+      {"class C { public: void take() && {}  public: C() = default; }; void "
+       "run(C& borrowed) { "
        "borrowed.take(); } int main() { return 0; }",
        "requires an owned temporary"},
       {"interface I { int& take() &&; }; int main() { return 0; }",
        "consuming method cannot return"},
-      {"class C<T> { public: T take(T value) && { return value; } }; int "
+      {"class C<T> { public: T take(T value) && { return value; }  public: C() "
+       "= default; }; int "
        "main() { C<std::string_view> c{}; auto value = "
        "std::move(c).take(\"\"); return 0; }",
        "consuming method cannot return"},
@@ -14891,7 +15142,8 @@ int main() {
          "GTI iterator methods without native C++ range lookup");
 
   const std::string formatted = lang::Formatter().format(
-      "class Iterator{public:void operator++()mut{}};"
+      "class Iterator{public:void operator++()mut{} public: Iterator() = "
+      "default; };"
       "int sum(Range& values){mut int total=0;"
       "for(auto& value:values){total+=value;}return total;}");
   expect(formatted.find("void operator++() mut {") != std::string::npos &&
@@ -14908,11 +15160,15 @@ class BadIncrement {
 public:
   int& operator*() { return this.value; }
   int operator++() mut { return this.value; }
+public:
+  BadIncrement() = default;
 };
 
 class ReadOnlyIncrement {
 public:
   void operator++() {}
+public:
+  ReadOnlyIncrement() = default;
 };
 
 class ValueSentinelIterator {
@@ -14923,15 +15179,19 @@ public:
   bool operator!=(ValueSentinelIterator other) {
     return this.value != other.value;
   }
+public:
+  ValueSentinelIterator() = default;
 };
 
 class ValueSentinelRange {
 public:
   ValueSentinelIterator begin() { return ValueSentinelIterator(); }
   ValueSentinelIterator end() { return ValueSentinelIterator(); }
+public:
+  ValueSentinelRange() = default;
 };
 
-class MissingBegin {};
+class MissingBegin { public: MissingBegin() = default; };
 
 int main() {
   mut int value = 1;
@@ -16271,12 +16531,16 @@ public:
   int32_t& operator*() { return this.current; }
   void operator++() mut { this.current++; }
   bool operator!=(Iterator& other) { return this.current != other.current; }
+public:
+  Iterator() = default;
 };
 
 class ReadOnlyRange {
 public:
   Iterator begin() { return Iterator(); }
   Iterator end() { return Iterator(); }
+public:
+  ReadOnlyRange() = default;
 };
 
 int main() {
@@ -16621,6 +16885,8 @@ public:
     auto invalid = []() -> int { return this.value; };
     return invalid();
   }
+public:
+  ThisCapture() = default;
 };
 
 class BorrowView {
@@ -17151,6 +17417,8 @@ public:
     this.next++;
     return value + this.next;
   }
+public:
+  Increasing() = default;
 };
 
 int main() {
@@ -17396,6 +17664,8 @@ void invoke<Operation>(Operation operation) { operation(1); }
 class MutableOnly {
 public:
   void operator()(int value) mut {}
+public:
+  MutableOnly() = default;
 };
 
 int main() {
@@ -17445,6 +17715,8 @@ int main() {
 class Action {
 public:
   void operator()() {}
+public:
+  Action() = default;
 };
 
 Operation invoke_and_return<Operation>(Operation operation) {
@@ -17476,6 +17748,8 @@ int main() { return 0; }
 class Action {
 public:
   void operator()() {}
+public:
+  Action() = default;
 };
 
 class Holder<T> {
@@ -17534,6 +17808,8 @@ void invoke<Operation>(Operation operation) {
 class Action {
 public:
   void operator()() {}
+public:
+  Action() = default;
 };
 
 int main() {
@@ -17558,6 +17834,8 @@ void invoke_and_forward<Operation>(Operation operation) {
 class Action {
 public:
   void operator()() {}
+public:
+  Action() = default;
 };
 
 int main() {
@@ -17583,6 +17861,8 @@ Operation relay<Operation>(Operation operation) { return operation; }
 class Action {
 public:
   void operator()() {}
+public:
+  Action() = default;
 };
 
 int main() {
@@ -17719,6 +17999,8 @@ public:
     auto operation = []() -> uint64_t { return N; };
     return invoke_value(operation);
   }
+public:
+  ValueThroughLambda() = default;
 };
 
 int main() {
@@ -18122,6 +18404,8 @@ T map_twice<T, Operation>(T value, Operation operation) {
 class Increment {
 public:
   int operator()(int value) { return value + 1; }
+public:
+  Increment() = default;
 };
 
 class Counter {
@@ -18138,6 +18422,8 @@ public:
 class Advance {
 public:
   Counter operator()(Counter value) { return Counter(value.read() + 1); }
+public:
+  Advance() = default;
 };
 
 int main() {
@@ -18238,6 +18524,8 @@ double widen(int value) { return double(value) + 0.5; }
 class Narrow {
 public:
   int operator()(double value) { return int(value); }
+public:
+  Narrow() = default;
 };
 int main() {
   auto inner = [](int value) -> double { return double(value) + 0.5; };
@@ -18341,6 +18629,8 @@ class ReferenceSource {
   int value = 7;
 public:
   int& operator()(int unused) { return this.value; }
+public:
+  ReferenceSource() = default;
 };
 int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
   return outer(inner(value));
@@ -18370,6 +18660,8 @@ class ViewSource {
   int value = 7;
 public:
   View operator()(int unused) { return View(this.value); }
+public:
+  ViewSource() = default;
 };
 int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
   return outer(inner(value));
@@ -18377,6 +18669,8 @@ int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
 class ReadView {
 public:
   int operator()(View value) { return value.value; }
+public:
+  ReadView() = default;
 };
 int main() {
   ViewSource inner{};
@@ -18407,6 +18701,8 @@ int map<Operation>(int value, Operation operation) {
 class Fraction {
 public:
   double operator()(int value) { return 0.5; }
+public:
+  Fraction() = default;
 };
 
 int main() {
@@ -18590,7 +18886,7 @@ int main() {
 })",
          "same exact type");
   reject("borrowed-mutable-call.gti", R"(
-class Counter { public: int operator()(int n) mut { return n; } };
+class Counter { public: int operator()(int n) mut { return n; }  public: Counter() = default; };
 int apply<F>(F& f) { return f(1); }
 int main() { Counter counter{}; return apply(counter); }
 )",
@@ -18614,7 +18910,7 @@ int main() { return 0; }
 )",
          "cannot be captured");
   reject("borrowed-result-conditional.gti", R"(
-class Source { int value = 1; public: int& operator()(int n) { return this.value; } };
+class Source { int value = 1; public: int& operator()(int n) { return this.value; }  public: Source() = default; };
 int apply<F>(F& f) { auto result = true ? f(1) : 2; return result; }
 int main() { Source source{}; return apply(source); }
 )",
@@ -18626,7 +18922,7 @@ int main() { auto f = [](int n) -> int { return n; }; return relay(f); }
 )",
          "mutable");
   reject("borrowed-callable-overlap.gti", R"(
-class Counter { public: int operator()(int n) mut { return n; } };
+class Counter { public: int operator()(int n) mut { return n; }  public: Counter() = default; };
 int apply<F>(mut F& first, mut F& second) {
   int a = first(1); int b = second(2); return a + b;
 }
@@ -18922,6 +19218,8 @@ class MutableValue {
 public:
   void set(int value) mut { this.stored = value; }
   int get() { return this.stored; }
+public:
+  MutableValue() = default;
 };
 
 expected<int, std::string_view> calculate(bool fail) {
@@ -19975,6 +20273,8 @@ public:
   Resource held = Resource(5);
   int32_t checked = 0;
   Bundle(int32_t seed) : checked(seed + seed) {}
+public:
+  Bundle() = default;
 };
 
 int main() {
@@ -20148,6 +20448,8 @@ class Bundle {
 public:
   Resource held = Resource(5);
   Bundle(int32_t seed) : held(Resource(seed)) {}
+public:
+  Bundle() = default;
 };
 int main() { Bundle bundle = Bundle(7); return bundle.held.value - 7; }
 )");
@@ -20276,6 +20578,8 @@ int main() {
 class Entity {
 public:
   int32_t id = 7;
+public:
+  Entity() = default;
 };
 
 class Slot {
@@ -20471,6 +20775,8 @@ class Resource {
 public:
   int add(int amount) mut { this.value += amount; return this.value; }
   int read() { return this.value; }
+public:
+  Resource() = default;
 };
 class AuthService {
   mut Resource& resource;
@@ -20503,6 +20809,8 @@ public:
   AuthService auth() mut { return AuthService(this.resource); }
   RepositoryService repositories() mut { return RepositoryService(this.resource); }
   int read() { return this.resource.read(); }
+public:
+  Client() = default;
 };
 AuthService make_service(mut Resource& resource) { return AuthService(resource); }
 int inspect_service(AuthService& service) { return service.read(); }
@@ -20555,6 +20863,8 @@ class VirtualClient {
   mut Resource resource{};
 public:
   virtual AuthService auth() mut { return AuthService(this.resource); }
+public:
+  VirtualClient() = default;
 };
 int combine(int first, int second) { return first + second; }
 Resource global_resource{};
@@ -21167,11 +21477,15 @@ public:
   virtual Tracked make() { return Tracked(1); }
   Tracked plain() { return Tracked(2); }
   virtual Tracked operator()(int value) { return Tracked(value); }
+public:
+  Maker() = default;
 };
 
 class Doubling : public Maker {
 public:
   Tracked make() override { return Tracked(2); }
+public:
+  Doubling() = default;
 };
 
 class Inheriting : public Maker {
@@ -21421,9 +21735,9 @@ int main() {
 void testGeneratedDefaultTemporaryArgumentBorrows() {
   const auto frontend = lang::Frontend().analyze(
       "generated-default-temporary-arguments.gti", R"gti(
-struct Implicit {};
+struct Implicit { public: Implicit() = default; };
 struct Defaulted { Defaulted() = default; };
-struct Cleanup { ~Cleanup() {} };
+struct Cleanup { ~Cleanup() {}  public: Cleanup() = default; };
 bool inspect(Implicit& value) { return true; }
 bool inspect(Defaulted& value) { return true; }
 bool inspect(Cleanup& value) { return true; }
@@ -21705,13 +22019,15 @@ void testGeneratedDefaultConstructionContexts() {
   const auto frontend =
       lang::Frontend().analyze("generated-default-contexts.gti", R"gti(
 namespace construction {
-struct Token<T> { int number() { return 1; } };
+struct Token<T> { int number() { return 1; }  public: Token() = default; };
 }
-struct construction::Token<int> { int number() { return 2; } };
-struct construction::Token<char> { int number() { return 3; } };
+struct construction::Token<int> { int number() { return 2; }  public: Token() = default; };
+struct construction::Token<char> { int number() { return 3; }  public: Token() = default; };
 construction::Token<T> make_token<T>() { return construction::Token<T>(); }
 struct Factory<T> {
   construction::Token<T> make() { return construction::Token<T>(); }
+public:
+  Factory() = default;
 };
 struct ConstructorContext<T> {
   construction::Token<T> token;
@@ -22560,11 +22876,15 @@ class Boxes {
 public:
   mut Box left = Box(1);
   mut Box right = Box(2);
+public:
+  Boxes() = default;
 };
 
 class Outer {
 public:
   mut Boxes inner = Boxes();
+public:
+  Outer() = default;
 };
 
 int32_t retain_through_alias() {
@@ -22816,11 +23136,15 @@ class Pair {
 public:
   mut Middle left = Middle();
   mut Middle right = Middle();
+public:
+  Pair() = default;
 };
 
 class Top {
 public:
   mut Pair pair = Pair();
+public:
+  Top() = default;
 };
 
 int32_t& pick(Leaf& candidate) { return candidate.observe(); }
@@ -23238,6 +23562,8 @@ public:
 struct Counter {
   mut int value = 0;
   mut bool seen = false;
+public:
+  Counter() = default;
 };
 int main() {
   mut Gate gate{};
@@ -23271,6 +23597,8 @@ int main() {
 struct Counter {
   mut int value = 0;
   mut bool seen = false;
+public:
+  Counter() = default;
 };
 int main() {
   mut Counter counter{};
@@ -23427,6 +23755,8 @@ struct Slot {
   int32_t& operator[](std::size_t index) { return this.value; }
   mut int32_t& operator[](std::size_t index) mut { return this.value; }
   bool empty() { return this.value == 0; }
+public:
+  Slot() = default;
 };
 int32_t read(int32_t& value) { return value; }
 void write(mut int32_t& value) { value += 1; }

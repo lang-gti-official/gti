@@ -23,6 +23,8 @@ public:
   int read() { return this.value; }
   int update() mut { this.value++; return this.value; }
   Fallback operator+(int n) { return Fallback(); }
+public:
+  Fallback() = default;
 };
 
 int main() {

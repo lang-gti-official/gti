@@ -39,10 +39,14 @@ public:
   int& at(std::size_t index) { return this.elements[index]; }
   CostCursor begin() { return CostCursor(this, std::size_t(0)); }
   CostEnd end() { return CostEnd(this.elements.size()); }
+public:
+  CostSeries() = default;
 };
 class CostOrder {
 public:
   bool operator()(int& left, int& right) { calls++; return left < right; }
+public:
+  CostOrder() = default;
 };
 class CostPredicate {
   int threshold;

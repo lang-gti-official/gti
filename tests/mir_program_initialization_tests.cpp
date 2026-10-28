@@ -61,11 +61,15 @@ public:
   static mut int32_t value = dynamic;
   static mut int32_t deferred = Registry::later;
   static constexpr int32_t later = 3;
+public:
+  Registry() = default;
 };
 
 class Plain {
 public:
   int32_t member = 1;
+public:
+  Plain() = default;
 };
 
 mut int32_t checked = dynamic + 1;

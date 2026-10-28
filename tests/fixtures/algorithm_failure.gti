@@ -4,10 +4,12 @@
 #include <std/list>
 #include <std/array>
 
-class witness { public: ~witness() { std::println(99); } };
+class witness { public: ~witness() { std::println(99); }  public: witness() = default; };
 class failing_predicate {
 public:
   bool operator()(int& n) { int zero = 0; return n / zero == 1; }
+public:
+  failing_predicate() = default;
 };
 int main(int argc, std::vector<std::string> argv) {
   witness cleanup{};

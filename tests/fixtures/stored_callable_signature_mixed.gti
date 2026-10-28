@@ -1,7 +1,7 @@
 #include <std/memory>
 
 interface MixedInvoker<R, Args...> { R invoke(Args... args); };
-class MixedSignature<S> {};
+class MixedSignature<S> { public: MixedSignature() = default; };
 class MixedModel<T, R, Args...> : public MixedInvoker<R, Args...> {
   T callback;
 public:

@@ -4,7 +4,7 @@
 
 mut int argument_divisor = 1;
 mut int constructor_divisor = 1;
-struct Guard { ~Guard() { std::println(9); } };
+struct Guard { ~Guard() { std::println(9); }  public: Guard() = default; };
 class Spec {
 public:
   int count;

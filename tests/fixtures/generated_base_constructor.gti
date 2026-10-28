@@ -26,6 +26,8 @@ class Sensor : public Reading {
 public:
   static int32_t label = 11;
   bool ready() { return this.read() == 7; }
+public:
+  Sensor() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

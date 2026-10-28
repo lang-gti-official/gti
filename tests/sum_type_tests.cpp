@@ -490,6 +490,8 @@ public:
 class payload_traits {
 public:
   using resource_type = resource;
+public:
+  payload_traits() = default;
 };
 enum class holder { one(payload_traits::resource_type value), none };
 int main() {
@@ -684,6 +686,8 @@ enum class holder { one(resource value), none };
 class consumer {
 public:
   consumer(holder value) {}
+public:
+  consumer() = default;
 };
 int main() {
   consumer value = consumer(holder::one(resource()));
@@ -778,6 +782,8 @@ class relay<T> {
 public:
   relay(holder value) {}
   holder pass(holder value) { return std::move(value); }
+public:
+  relay() = default;
 };
 int main() {
   relay<int32_t> receiver = relay<int32_t>(holder::one(resource()));
@@ -804,9 +810,13 @@ enum class holder { one(resource value), none };
 class wrapper {
 public:
   holder value = holder::one(resource());
+public:
+  wrapper() = default;
 };
 struct default_wrapper {
   holder value = holder::one(resource());
+public:
+  default_wrapper() = default;
 };
 class generic_wrapper<T> {
   T value;
@@ -1088,7 +1098,7 @@ int main() { return 0; }
   const lang::FrontendResult recursiveLayout =
       analyze("recursive-class-payload-layout.gti", R"(
 enum class tree { one(node value), none };
-class node { tree data = tree::none; };
+class node { tree data = tree::none;  public: node() = default; };
 int main() { return 0; }
 )");
   expect(hasCode(recursiveLayout, "GTI-S2082") &&

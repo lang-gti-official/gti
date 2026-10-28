@@ -11,6 +11,8 @@ struct Marker {
       else { *slot = 2; }
     }
   }
+public:
+  Marker() = default;
 };
 
 int sample(int input, mut int& first, mut int& second, mut int& outer) {

@@ -9,7 +9,7 @@ from lsp_smoke_test import LspSession
 def main():
     source = (
         'concept snapshots<T> = requires(T& item) { { item.snapshot() } -> T; };\n'
-        'struct Item { Item snapshot() { Item result{}; return result; } };\n'
+        'struct Item { Item snapshot() { Item result{}; return result; }  public: Item() = default; };\n'
         'T copy<T>(T& item) requires snapshots<T> { return item.snapshot(); }\n'
         'int main() { Item item{}; auto result = copy(item); return 0; }\n')
     with tempfile.TemporaryDirectory(prefix="gti-member-lsp-") as root:

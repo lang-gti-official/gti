@@ -43,11 +43,11 @@ def main():
                  "--", "-fsanitize=address,undefined", "-fno-elide-constructors"])
             run([str(sanitized)])
         for name, source in (
-            ("immutable", "struct V{int n=1;};struct H{V v=V();};int main(){H h{};V v{};h.v=v;return 0;}"),
-            ("moved", "#include <std/utility>\nstruct V{int n=1;};struct H{mut V v=V();};int main(){mut H h{};V v{};h.v=std::move(v);h.v=v;return 0;}"),
+            ("immutable", "struct V{int n=1; public: V() = default; };struct H{V v=V(); public: H() = default; };int main(){H h{};V v{};h.v=v;return 0;}"),
+            ("moved", "#include <std/utility>\nstruct V{int n=1; public: V() = default; };struct H{mut V v=V(); public: H() = default; };int main(){mut H h{};V v{};h.v=std::move(v);h.v=v;return 0;}"),
             ("owning-copy", sources[1].read_text().replace(
                 "owner.value = std::move(replacement);", "owner.value = replacement;")),
-            ("unknown-designator", "struct V{int n=1;};struct H{V v{};};int main(){H h={.missing=1};return 0;}"),
+            ("unknown-designator", "struct V{int n=1; public: V() = default; };struct H{V v{}; public: H() = default; };int main(){H h={.missing=1};return 0;}"),
         ):
             path = scratch / f"{name}.gti"
             path.write_text(source)

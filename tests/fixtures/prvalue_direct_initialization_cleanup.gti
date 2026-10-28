@@ -25,7 +25,7 @@ public:
   ~Anchor() { std::println(this.value); }
 };
 
-class Tail { public: ~Tail() { std::println(99); } };
+class Tail { public: ~Tail() { std::println(99); }  public: Tail() = default; };
 
 Anchor make_anchor(int divisor) { return Anchor(1, divisor); }
 Anchor relay(int divisor) { return Anchor(Anchor((make_anchor(divisor)))); }

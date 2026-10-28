@@ -7,7 +7,7 @@ from lsp_smoke_test import LspSession
 
 
 def main():
-    source = "struct Point { int x = 0; int y = 0; };\nint main() { Point p = {.x = 3}; return p.x; }\n"
+    source = "struct Point { int x = 0; int y = 0;  public: Point() = default; };\nint main() { Point p = {.x = 3}; return p.x; }\n"
     with tempfile.TemporaryDirectory(prefix="gti-designated-lsp-") as root:
         path = pathlib.Path(root) / "main.gti"
         path.write_text(source)

@@ -2315,7 +2315,8 @@ auto SemanticVisitor::Impl::registerClassAttributes(
         report(attribute,
                "[[attribute]] applies only to struct declarations: an "
                "attribute type is a struct with public value fields, "
-               "declaration defaults, and no declared constructors or bases.",
+               "declaration defaults, no bases, and only structural default "
+               "constructors.",
                "GTI-S2113");
         continue;
       }
@@ -3921,7 +3922,7 @@ auto SemanticVisitor::Impl::analyzeDeclarationAttributeList(
           "GTI-S2113", DiagnosticPhase::Semantics, anchor,
           "Attribute type '" + spelling +
               "' must be a non-generic struct with public value fields and "
-              "no declared constructors or bases.");
+              "no bases or constructors other than a structural default.");
       diagnostic.related.push_back(
           {tokenSpan(attribute->name), "Attribute type declared here."});
       diagnostics.emplace_back(std::move(diagnostic));
@@ -5649,15 +5650,7 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
              (!requestsStructuralDefaultConstruction(*constructor) ||
               classCanUseStructuralDefaultConstruction(fieldType, visiting));
     }
-    const bool declaredDefaults = std::all_of(
-        fieldOwner->fields.begin(), fieldOwner->fields.end(),
-        [](const FieldInfo &field) {
-          return field.declaration && field.declaration->initializer();
-        });
-    return defaultConstructorCandidateCount(*fieldOwner) == 0 &&
-           (fieldOwner->constructors.empty() || declaredDefaults) &&
-           (openValueArguments ||
-            classCanUseStructuralDefaultConstruction(fieldType, visiting));
+    return classCanGenerateDefaultConstructor(fieldType);
   };
   bool valid = true;
   for (const FieldInfo &field : owner->fields) {
@@ -5692,22 +5685,13 @@ auto SemanticVisitor::Impl::classCanUseStructuralDefaultConstruction(
 auto SemanticVisitor::Impl::classCanGenerateDefaultConstructor(
     const SemanticType &type) const -> bool {
   const ClassInfo *owner = classInfo(type);
-  const bool declaredDefaults =
-      owner != nullptr &&
-      std::all_of(owner->fields.begin(), owner->fields.end(),
-                  [](const FieldInfo &field) {
-                    return field.declaration &&
-                           field.declaration->initializer();
-                  });
-  // Preserve the established generated overload for explicitly initialized
-  // state. Newly supplied omitted-nominal defaults cannot manufacture another
-  // construction entry point beside an owner's declared argument-taking API.
-  return owner != nullptr && defaultConstructorCandidateCount(*owner) == 0 &&
-         owner->compilerCapability !=
-             CompilerCapabilityTypeKind::ErasedObject &&
-         owner->compilerCapability !=
-             CompilerCapabilityTypeKind::FunctionPointer &&
-         (owner->constructors.empty() || declaredDefaults) &&
+  // Ordinary classes and structs opt in through a declared constructor,
+  // including `Type() = default`. Interfaces retain their stateless base
+  // initialization and unions their zero-storage operation. Neither admits
+  // source constructors; interfaces remain abstract in object position.
+  return owner != nullptr &&
+         (owner->kind == ClassKind::Union ||
+          owner->kind == ClassKind::Interface) &&
          classCanUseStructuralDefaultConstruction(type);
 }
 
@@ -9297,8 +9281,10 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
   for (ClassInfo &owner : registering(classes, registrationFloor.classes)) {
     if (owner.kind != ClassKind::Struct || owner.compilerPrivate ||
         owner.cAbiRecord || owner.cOpaqueHandle || !owner.bases.empty() ||
-        !owner.constructors.empty() || owner.copyConstructor ||
-        owner.moveConstructor || owner.fields.empty()) {
+        !std::all_of(owner.constructors.begin(), owner.constructors.end(),
+                     requestsStructuralDefaultConstruction) ||
+        owner.copyConstructor || owner.moveConstructor ||
+        owner.fields.empty()) {
       continue;
     }
     bool eligible = true;

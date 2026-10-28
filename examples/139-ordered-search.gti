@@ -12,6 +12,8 @@ struct PriorityOrder {
   bool operator()(Task& left, Task& right) {
     return left.priority > right.priority;
   }
+public:
+  PriorityOrder() = default;
 };
 
 int main() {

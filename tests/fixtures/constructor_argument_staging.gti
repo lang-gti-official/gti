@@ -28,6 +28,8 @@ public:
 class Caller {
 public:
   ~Caller() { std::println(9); }
+public:
+  Caller() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

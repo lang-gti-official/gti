@@ -65,7 +65,7 @@ extern "C" { int raise(int signal); }
 namespace sample {
   struct Guard {
     ~Guard() { std::println("guard-cleaned"); }
-  };
+   public: Guard() = default; };
   [[test]] void a_success() { std::testing::check(true); }
   [[test]] void b_panic() { Guard guard{}; std::testing::check(false, "isolated panic"); }
   [[test]] void c_signal() { unsafe { [[discard]] raise(9); } }
@@ -127,7 +127,7 @@ namespace sample {
             "[[test]] void invalid<T>() {}",
             "[[test]] void invalid();",
             "[[test, test]] void invalid() {}",
-            "struct Object { [[test]] void invalid() {} };",
+            "struct Object { [[test]] void invalid() {}  public: Object() = default; };",
             "[[test(value)]] void invalid() {}",
             "[[test]] static void invalid() {}",
         ]

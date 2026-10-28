@@ -1,13 +1,15 @@
 #include <std/memory>
 
-struct First { int number = 3; };
-struct Second { int number = 5; };
+struct First { int number = 3;  public: First() = default; };
+struct Second { int number = 5;  public: Second() = default; };
 
 // The nested alias retains the native primary representation. Each selected
 // generated constructor still has its own exact GTI instance and definition.
 struct Box<T> {
   using value_type = T;
   int marker = 7;
+public:
+  Box() = default;
 };
 
 class Explicit<T> {

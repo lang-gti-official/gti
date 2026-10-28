@@ -1,6 +1,6 @@
 // A source-defined carrier borrows two unrelated integer owners. Its cursor
 // references the carrier shell and must retain both external dependencies.
-struct finish {};
+struct finish { public: finish() = default; };
 
 class two_values {
   int& left;

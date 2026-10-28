@@ -43,6 +43,8 @@ public:
       return constructed.narrow;
     }
   }
+public:
+  RecordSequence() = default;
 };
 
 unsafe int record_prefix(RecordSequence& sequence) {

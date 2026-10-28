@@ -25,6 +25,8 @@ public:
 class Reverse {
 public:
   bool operator()(Key& left, Key& right) { return left.read() > right.read(); }
+public:
+  Reverse() = default;
 };
 
 int main() {

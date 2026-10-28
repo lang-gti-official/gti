@@ -28,6 +28,8 @@ public:
 
 struct Copyable {
   int value = 3;
+public:
+  Copyable() = default;
 };
 
 Copyable copy_result(Copyable value) { return value; }

@@ -5,6 +5,8 @@ struct Counter {
     uint32_t hits = 0;
     uint32_t misses = 0;
   }
+public:
+  Counter() = default;
 };
 
 int main() {

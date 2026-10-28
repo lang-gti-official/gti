@@ -19,6 +19,8 @@ void consume(Item value) { consumed++; }
 class Sink {
 public:
   void accept(Item value) mut { consumed++; }
+public:
+  Sink() = default;
 };
 
 expected<void, item_error> free_arguments() {

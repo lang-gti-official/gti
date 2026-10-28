@@ -29,6 +29,8 @@ struct Guard {
   ~Guard() {
     if (trace != expected_trace) { std::panic("incorrect payload cleanup"); }
   }
+public:
+  Guard() = default;
 };
 '''
 
@@ -502,6 +504,8 @@ int sum(Plain& value) {
 }
 struct Window {
   mut Plain values[3] = {Plain::pair(1, 2), Plain::none, Plain::pair(3, 5)};
+public:
+  Window() = default;
 };
 int main() {
   {

@@ -1643,7 +1643,8 @@ auto SemanticVisitor::Impl::analyzeMetaConstructCall(const Call &expr) -> void {
         "GTI-S2118", DiagnosticPhase::Semantics, expr.paren(),
         "std::meta::construct<" + typeSpelling(subject) +
             "> requires a struct eligible for designated construction: public "
-            "value fields, no declared constructors or bases.");
+            "value fields, no bases, and no constructors other than a "
+            "structural default.");
     diagnostic.hints.emplace_back(
         "Construct other types through their own constructors; structural "
         "construction never bypasses them.");
@@ -8806,7 +8807,8 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
     report(
         expr.brace(),
         "Designated construction requires a struct with public value fields, "
-        "no declared constructors, and no inheritance; reference, fixed-array, "
+        "no constructors other than a structural default, and no inheritance; "
+        "reference, fixed-array, "
         "borrowed-state, and native-layout fields are not supported here.",
         "GTI-S2091");
     currentType = SemanticType::Unknown;

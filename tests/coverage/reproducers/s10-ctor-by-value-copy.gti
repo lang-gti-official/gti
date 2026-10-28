@@ -4,6 +4,8 @@ public:
   Val(int32_t n) : n(n) {}
   int32_t get() { return this.n; }
   Val twin() { return Val(this.n); }
+public:
+  Val() = default;
 };
 int32_t take(Val v) { return v.get(); }
 class Holder {

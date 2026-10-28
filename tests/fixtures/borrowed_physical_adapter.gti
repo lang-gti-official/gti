@@ -1,6 +1,6 @@
 #include <std/memory>
 
-struct Resource { int value = 40; };
+struct Resource { int value = 40;  public: Resource() = default; };
 class Block {
   Resource& resource;
   mut int offset = 2;

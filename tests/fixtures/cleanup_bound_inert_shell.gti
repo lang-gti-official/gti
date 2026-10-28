@@ -6,6 +6,8 @@ class Resource {
 public:
   int value = 40;
   ~Resource() { std::println(observed); }
+public:
+  Resource() = default;
 };
 class Guard {
   Resource& resource;

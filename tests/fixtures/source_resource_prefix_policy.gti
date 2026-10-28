@@ -35,6 +35,8 @@ struct Counts {
   mut uint64_t alignments[8] = {};
   mut uint64_t native_ids[8] = {};
   mut uint64_t live_regions = 0;
+public:
+  Counts() = default;
 };
 
 // A source-defined resource makes the exact region policy observable. Its

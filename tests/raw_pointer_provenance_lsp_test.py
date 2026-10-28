@@ -86,7 +86,7 @@ def main():
             assert not published(8)
             contract_source = """/*😀*/ [[borrowed_from(right)]] int& choose(int& left, int& right) { return right; }
 struct Holder {
-  int value = 7;
+  int value = 7; Holder() = default;
   [[borrowed_from(this)]] int& get() { return this.value; }
 };
 int borrowed_from(int value) { return value; }

@@ -10,6 +10,8 @@ struct ArenaState {
   mut uint64_t next_id = 1;
   mut uint64_t allocations = 0;
   mut uint64_t releases = 0;
+public:
+  ArenaState() = default;
 };
 
 // One backing region, monotonic suballocation, exclusive whole-arena reset.

@@ -20,19 +20,23 @@ struct Guard {
   }
 };
 
-struct Unknown {};
+struct Unknown { public: Unknown() = default; };
 class std::formatter<Unknown> {
 public:
   expected<void, std::format_errc> format(Unknown& value,
       mut std::string& output, std::format_spec& spec) {
     return unexpected(std::format_errc::unsupported_argument);
   }
+public:
+  formatter() = default;
 };
 
 struct OutputCleanup {
   ~OutputCleanup() {
     std::print("cleanup"); // cleanup-output
   }
+public:
+  OutputCleanup() = default;
 };
 
 [[track_caller]]

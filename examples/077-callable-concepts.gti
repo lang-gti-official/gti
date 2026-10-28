@@ -9,11 +9,15 @@ public:
   bool operator()(int32_t& left, int32_t& right) {
     return left > right;
   }
+public:
+  descending() = default;
 };
 
 class once_action {
 public:
   void operator()() && { actions++; }
+public:
+  once_action() = default;
 };
 
 bool accepts<Predicate>(int32_t value, mut Predicate predicate)

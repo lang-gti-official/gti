@@ -4,6 +4,8 @@ class Datum {
 public:
   mut int value = 0;
   expected<void, int> publish() mut { this.value = 7; return; }
+public:
+  Datum() = default;
 };
 
 class Ledger {
@@ -45,6 +47,8 @@ public:
     this.stamp = 1;
     return this.datum.value + 1;
   }
+public:
+  Ledger() = default;
 };
 
 int main() {

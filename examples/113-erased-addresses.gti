@@ -2,6 +2,8 @@
 
 struct Reading {
   mut int value = 42;
+public:
+  Reading() = default;
 };
 
 // This is ordinary source policy: aliases select the general type-call rule.
