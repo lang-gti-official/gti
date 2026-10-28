@@ -2672,17 +2672,22 @@ int main() {
   expect(plan.admitted() && witnessed,
          "ordinary mutable raw field access is admitted");
   for (const auto &valid :
-       {"class Readonly { public: int value = 7;  public: Readonly() = default; }; int main() { Readonly "
+       {"class Readonly { public: int value = 7;  public: Readonly() = "
+        "default; }; int main() { Readonly "
         "object{}; unsafe { const Readonly* pointer = &object; return "
         "pointer->value - 7; } }",
         "class Padded { public: int8_t tag = int8_t(1); double tail = "
-        "double(42.5);  public: Padded() = default; }; int main() { Padded object{}; unsafe { const Padded* "
+        "double(42.5);  public: Padded() = default; }; int main() { Padded "
+        "object{}; unsafe { const Padded* "
         "pointer = &object; return pointer->tail == double(42.5) ? 0 : 1; } }",
-        "class Nested { public: mut int values[3] = {1, 2, 3};  public: Nested() = default; }; int main() { "
+        "class Nested { public: mut int values[3] = {1, 2, 3};  public: "
+        "Nested() = default; }; int main() { "
         "mut Nested object{}; unsafe { Nested* pointer = &object; "
         "pointer->values[1] = 9; return pointer->values[1] - 9; } }",
-        "class Parent { public: int value = 7;  public: Parent() = default; }; class Child : public Parent "
-        "{ public: int extra = 2;  public: Child() = default; }; int main() { Child object{}; unsafe { "
+        "class Parent { public: int value = 7;  public: Parent() = default; }; "
+        "class Child : public Parent "
+        "{ public: int extra = 2;  public: Child() = default; }; int main() { "
+        "Child object{}; unsafe { "
         "const Child* pointer = &object; return pointer->value - 7; } }"}) {
     const auto frontend =
         lang::Frontend().analyze("valid-raw-field.gti", valid);
@@ -2740,10 +2745,12 @@ int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return
          "layout: " +
              unsupported.limitation());
   for (const auto &invalid :
-       {"class Slot { public: mut int value = 0;  public: Slot() = default; }; int main() { Slot "
+       {"class Slot { public: mut int value = 0;  public: Slot() = default; }; "
+        "int main() { Slot "
         "object{}; unsafe { const Slot* pointer = &object; pointer->value = 1; "
         "} return 0; }",
-        "class Slot { public: int value = 0;  public: Slot() = default; }; int main() { Slot object{}; "
+        "class Slot { public: int value = 0;  public: Slot() = default; }; int "
+        "main() { Slot object{}; "
         "unsafe { const Slot* pointer = &object; return pointer->missing; } }"})
     expect(
         !lang::Frontend()

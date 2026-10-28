@@ -1452,9 +1452,11 @@ void testPassiveStatusDefaultField() {
     const std::string source =
         "class Base { public: int stamp = 5; Base() {} " +
         std::string(abstract ? "virtual int read() = 0;" : "") +
-        "}; class Derived : public Base { public: Derived() = default; int read() " +
+        "}; class Derived : public Base { public: Derived() = default; int "
+        "read() " +
         std::string(abstract ? "override " : "") +
-        "{ return this.stamp; } }; struct Holder { Derived value; Holder() = default; }; "
+        "{ return this.stamp; } }; struct Holder { Derived value; Holder() = "
+        "default; }; "
         "int main() { Holder owner{}; return owner.value.read() - 5; }";
     const auto frontend = analyze("passive-status-default.gti", source);
     expect(frontend.canGenerateCode(), "selected base defaults verify");
@@ -2440,7 +2442,8 @@ class Holder {
   int32_t samples[2] = {2, 3};
   Empty empty{};
 public:
-)") + (explicitConstructor ? "  Holder() {}\n" : "  Holder() = default;\n") + R"(
+)") + (explicitConstructor ? "  Holder() {}\n" : "  Holder() = default;\n") +
+                                                                     R"(
 };
 int main() { Holder holder{}; return 0; }
 )");

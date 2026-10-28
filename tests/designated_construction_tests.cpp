@@ -84,33 +84,39 @@ int main() {
     expect(mutated && !lang::verifyMirProgram(forged).valid(),
            "forged construction parameter type must fail MIR verification");
   }
-  rejected("struct S { int x = 0;  public: S() = default; }; int main(){ S s = {.bad = 1}; return 0; }",
+  rejected("struct S { int x = 0;  public: S() = default; }; int main(){ S s = "
+           "{.bad = 1}; return 0; }",
            "Unknown instance field");
-  rejected("struct S { uint64_t x = 0;  public: S() = default; }; int main(){ uint32_t n = 9; "
+  rejected("struct S { uint64_t x = 0;  public: S() = default; }; int main(){ "
+           "uint32_t n = 9; "
            "S s = {.x = n}; return 0; }",
            "Cannot initialize");
-  rejected("struct S { int x = 0;  public: S() = default; }; int main(){ S s = {.x = 1, .x = 2}; "
+  rejected("struct S { int x = 0;  public: S() = default; }; int main(){ S s = "
+           "{.x = 1, .x = 2}; "
            "return 0; }",
            "Duplicate");
-  rejected("struct S { int x = 0; int y = 0;  public: S() = default; }; int main(){ S s = {.y = 1, .x "
+  rejected("struct S { int x = 0; int y = 0;  public: S() = default; }; int "
+           "main(){ S s = {.y = 1, .x "
            "= 2}; return 0; }",
            "declaration order");
   rejected(
       "struct S { int x; int y; }; int main(){ S s = {.x = 1}; return 0; }",
       "Missing initializer");
-  rejected(
-      "struct S { int x = 0;  public: S() = default; }; int main(){ S s = {.x = true}; return 0; }",
-      "Cannot initialize");
-  rejected(
-      "class S { public: int x = 0;  public: S() = default; }; int main(){ S s = {.x = 1}; return 0; }",
-      "requires a struct");
+  rejected("struct S { int x = 0;  public: S() = default; }; int main(){ S s = "
+           "{.x = true}; return 0; }",
+           "Cannot initialize");
+  rejected("class S { public: int x = 0;  public: S() = default; }; int "
+           "main(){ S s = {.x = 1}; return 0; }",
+           "requires a struct");
   rejected(
       "struct S { int x = 0; S() {} }; int main(){ S s = {.x = 1}; return 0; }",
       "no constructors other than a structural default");
-  rejected("struct S { private: int x = 0;  public: S() = default; }; int main(){ S s = {.x = 1}; "
+  rejected("struct S { private: int x = 0;  public: S() = default; }; int "
+           "main(){ S s = {.x = 1}; "
            "return 0; }",
            "public value fields");
-  rejected("struct B { int x = 0;  public: B() = default; }; struct S : B { int y = 0;  public: S() = default; }; int main(){ "
+  rejected("struct B { int x = 0;  public: B() = default; }; struct S : B { "
+           "int y = 0;  public: S() = default; }; int main(){ "
            "S s = {.y = 1}; return 0; }",
            "no inheritance");
   rejected("class Owner { public: int x; Owner(int n):x(n){} ~Owner(){} }; "

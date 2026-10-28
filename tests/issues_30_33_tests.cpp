@@ -218,8 +218,9 @@ int main() { mut uint8_t value = 1; uint8_t old = value++; --value;
 }
 
 void borrows() {
-  const std::string declarations = "struct Grid { mut int cells[2] = {};  public: Grid() = default; }; "
-                                   "struct Frame { mut Grid grid{};  public: Frame() = default; };\n";
+  const std::string declarations =
+      "struct Grid { mut int cells[2] = {};  public: Grid() = default; }; "
+      "struct Frame { mut Grid grid{};  public: Frame() = default; };\n";
   const auto valid = analyze(declarations + R"(
 int read(Frame& frame, uint64_t index) { return frame.grid.cells[index]; }
 void write(mut Frame& frame, uint64_t index) { frame.grid.cells[index] = 3; }

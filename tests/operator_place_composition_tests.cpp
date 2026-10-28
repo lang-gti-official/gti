@@ -332,11 +332,12 @@ public:
                 "return int32_t(std::distance(Cursor(), End()));", "GTI-S2029",
                 "std::sentinel_for");
   auto moveOnlySentinel = sentinelDeclarations;
-  moveOnlySentinel.replace(moveOnlySentinel.find("class End { public: End() = default; };"),
-                           std::string_view("class End { public: End() = default; };").size(),
-                           "class End{ public: End(){} "
-                           "End(End& other)=delete; "
-                           "End(End&& other)=default; };");
+  moveOnlySentinel.replace(
+      moveOnlySentinel.find("class End { public: End() = default; };"),
+      std::string_view("class End { public: End() = default; };").size(),
+      "class End{ public: End(){} "
+      "End(End& other)=delete; "
+      "End(End&& other)=default; };");
   moveOnlySentinel.replace(moveOnlySentinel.find("End& end"),
                            std::string_view("End& end").size(), "End end");
   checkNegative(moveOnlySentinel,
@@ -345,7 +346,8 @@ public:
   checkNegative("float identity(float value){return value;}",
                 "float result = identity(16777217); return int32_t(result);",
                 "GTI-S2003", "parameter requires 'float'");
-  checkNegative("class Scalar{ public: Scalar(float value){}  public: Scalar() = default; };",
+  checkNegative("class Scalar{ public: Scalar(float value){}  public: Scalar() "
+                "= default; };",
                 "Scalar result = Scalar(16777217); return 0;", "GTI-S2012",
                 "exactly matches");
   checkNegative("",

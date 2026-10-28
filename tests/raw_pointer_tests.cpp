@@ -1931,7 +1931,8 @@ int main() {
   const std::vector<std::string> invalid = {
       "int* projection(int* pointer) { return &*pointer; }",
       "int* projection(int* pointer) { return &pointer[0]; }",
-      "struct Value { mut int field = 1;  public: Value() = default; }; int* projection(Value* pointer) { "
+      "struct Value { mut int field = 1;  public: Value() = default; }; int* "
+      "projection(Value* pointer) { "
       "return &pointer->field; }"};
   for (const auto &program : invalid) {
     const auto result =

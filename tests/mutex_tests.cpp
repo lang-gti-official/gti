@@ -415,7 +415,8 @@ int main() {
   expect(normal == 1 && failure != 0,
          "normal and ordinary failure exits both contain native retirement");
   for (const std::string declaration :
-       {"class Owned { public: ~Owned() {} Owned() = default; }; Owned global{};",
+       {"class Owned { public: ~Owned() {} Owned() = default; }; Owned "
+        "global{};",
         "class Owned { public: ~Owned() {} Owned() = default; }; "
         "std::mutex<Owned> global{Owned()};"}) {
     const std::string source =

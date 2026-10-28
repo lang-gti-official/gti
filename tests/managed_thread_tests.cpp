@@ -917,13 +917,15 @@ int main() {
            "repeatable transfer wrappers should exercise inline storage");
   }
   for (const std::string suffix : {"", " mut", " &&"}) {
-    const auto rejected = analyze("affine-erased-task.gti",
-                                  "#include <std/functional>\n[[no_transfer]] "
-                                  "struct Task { Task() = default; int operator()()" +
-                                      suffix + R"( { return 42; } };
+    const auto rejected =
+        analyze("affine-erased-task.gti",
+                "#include <std/functional>\n[[no_transfer]] "
+                "struct Task { Task() = default; int operator()()" +
+                    suffix + R"( { return 42; } };
 int main() {
-  std::transfer_function<int())" + suffix +
-                                      R"(> callback{Task()};
+  std::transfer_function<int())" +
+                    suffix +
+                    R"(> callback{Task()};
   return 0;
 }
 )");
@@ -932,7 +934,8 @@ int main() {
            "erasure must reject a non-transferable target at construction");
     const auto replacement =
         analyze("affine-erased-replacement.gti",
-                "#include <std/functional>\n[[no_transfer]] struct Task { Task() = default; int "
+                "#include <std/functional>\n[[no_transfer]] struct Task { "
+                "Task() = default; int "
                 "operator()()" +
                     suffix + R"( { return 42; } };
 int main() {
@@ -950,20 +953,20 @@ int main() {
         suffix == " &&" ? "std::move(first)()" : "first()";
     const std::string secondCall =
         suffix == " &&" ? "std::move(second)()" : "second()";
-    const auto local =
-        analyze("local-erased-affine-target.gti",
-                "#include <std/functional>\n[[no_transfer]] struct Task { Task() = default; int "
-                "operator()()" +
-                    suffix + R"( { return 42; } };
+    const auto local = analyze("local-erased-affine-target.gti",
+                               "#include <std/functional>\n[[no_transfer]] "
+                               "struct Task { Task() = default; int "
+                               "operator()()" +
+                                   suffix + R"( { return 42; } };
 int main() {
-  mut std::function<int())" +
-                    suffix + R"(> first{Task()};
+  mut std::function<int())" + suffix +
+                                   R"(> first{Task()};
   mut std::move_only_function<int())" +
-                    suffix + R"(> second{Task()};
+                                   suffix + R"(> second{Task()};
   first.replace(Task());
   second.replace(Task());
-  return )" + firstCall +
-                    " + " + secondCall + " - 84;\n}\n");
+  return )" + firstCall + " + " + secondCall +
+                                   " - 84;\n}\n");
     if (!local.canGenerateCode())
       printDiagnostics(local);
     expect(local.canGenerateCode(),

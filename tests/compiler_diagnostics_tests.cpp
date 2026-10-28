@@ -1230,7 +1230,8 @@ int main() {
          "program-wide scalar data initialization remain valid");
 
   for (const std::string_view source : {
-           "struct Record { int read() { mut int value; return 0; }  public: Record() = default; };",
+           "struct Record { int read() { mut int value; return 0; }  public: "
+           "Record() = default; };",
            "int main() { auto action = []() -> int { mut int value; return 0; "
            "}; return action(); }",
            "constexpr int compute() { mut int value; value = 1; return value; "
@@ -1923,7 +1924,8 @@ public:
 
   const std::string constexprFormatted = lang::Formatter().format(
       "constexpr uint64_t extent=uint64_t(2+2);class Limits{public:static "
-      "constexpr uint64_t count=extent; public: Limits() = default; };int choice(){if constexpr(true){"
+      "constexpr uint64_t count=extent; public: Limits() = default; };int "
+      "choice(){if constexpr(true){"
       "return 1;}else{return 0;}}");
   expect(constexprFormatted == R"(constexpr uint64_t extent = uint64_t(2 + 2);
 class Limits {
@@ -2031,14 +2033,16 @@ int expressions(int left, int right) {
          "operator spacing");
 
   const std::string pointerFormatted = lang::Formatter().format(
-      "class Byte{ public: Byte() = default; };void use(mut uint8_t * data,const uint8_t*read_only){"
+      "class Byte{ public: Byte() = default; };void use(mut uint8_t * "
+      "data,const uint8_t*read_only){"
       "mut uint8_t*alias=& data[0];* data=read_only [0];"
       "uint8_t product=data[0]*read_only[0];"
       "uint8_t bits=data[0]&read_only[0];return * alias;}"
       "class Link{public:uint8_t value=0; public: Link() = default; };"
       "uint8_t member(Link*link){return link -> value;}"
       "class RawBox<T>{T * value;const T * read(){return value;}};");
-  const std::string expectedPointerFormatting = R"(class Byte { public: Byte() = default; };
+  const std::string expectedPointerFormatting =
+      R"(class Byte { public: Byte() = default; };
 void use(mut uint8_t* data, const uint8_t* read_only) {
   mut uint8_t* alias = &data[0];
   *data = read_only[0];
@@ -2068,10 +2072,12 @@ class RawBox<T> {
          "pointer operators from multiplication and bitwise-and");
 
   const std::string commentedGenericReturn = lang::Formatter().format(
-      "namespace detail{class Iterator<T>{ public: Iterator() = default; };}class Range<T>{public:"
+      "namespace detail{class Iterator<T>{ public: Iterator() = default; "
+      "};}class Range<T>{public:"
       "// Iterator access remains read-only.\n"
       "detail::Iterator<T> begin();detail::Iterator<Range<T>> nested();"
-      "bool ordered(int left,int right){return left < right;} public: Range() = default; };");
+      "bool ordered(int left,int right){return left < right;} public: Range() "
+      "= default; };");
   expect(commentedGenericReturn.find("// Iterator access remains read-only.\n"
                                      "  detail::Iterator<T> begin();") !=
                  std::string::npos &&
@@ -2690,7 +2696,8 @@ int main() {
 
   const std::string memberSource =
       "class Box { int hidden = 0; public: int read() { return this.hidden; } "
-      " public: Box() = default; }; int main() { Box box{}; int result = box.rea; return 0; }";
+      " public: Box() = default; }; int main() { Box box{}; int result = "
+      "box.rea; return 0; }";
   const lang::CompletionResult memberCompletion = complete(memberSource, "rea");
   expect(findCandidate(memberCompletion, "read") !=
                  memberCompletion.candidates.end() &&
@@ -3017,7 +3024,8 @@ void testUnknownFunctionAttributeClassification() {
   expect(known.canGenerateCode(),
          "recognized function attributes remain valid");
   const auto classAttribute = lang::Frontend().analyze(
-      "class-attribute.gti", "[[not_an_attribute]] struct Record { public: Record() = default; }; ");
+      "class-attribute.gti",
+      "[[not_an_attribute]] struct Record { public: Record() = default; }; ");
   expect(!classAttribute.canGenerateCode() &&
              !hasDiagnostic(classAttribute.diagnostics,
                             "Unknown GTI function attribute"),
@@ -3100,8 +3108,9 @@ int main() {
          "one library request reports one diagnostic with each internal site "
          "ahead of its request notes");
   const auto pack = lang::Frontend().analyze(
-      "duplicate-semantic.gti", "class Pack<Args...> { public: Pack() = default; }; int main() { "
-                                "Pack<int[2]&> value{}; return 0; }");
+      "duplicate-semantic.gti",
+      "class Pack<Args...> { public: Pack() = default; }; int main() { "
+      "Pack<int[2]&> value{}; return 0; }");
   expect(!pack.canGenerateCode() && count(pack, "GTI-S2017") == 1,
          "a type checked twice reports its error once");
 }

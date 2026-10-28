@@ -284,10 +284,12 @@ int main() { auto result = boxed<bool>(1); return 0; }
   rejected("struct Plain { Plain(int value) {}  public: Plain() = default; };\n"
            "Plain make() { return 1; }\nint main() { return 0; }\n",
            "GTI-S2003");
-  rejected("struct Plain { Plain(nullptr_t value) {}  public: Plain() = default; };\n"
+  rejected("struct Plain { Plain(nullptr_t value) {}  public: Plain() = "
+           "default; };\n"
            "Plain make() { return nullptr; }\nint main() { return 0; }\n",
            "GTI-S2003");
-  rejected("class Hidden { implicit Hidden(int value) {}  public: Hidden() = default; };\n"
+  rejected("class Hidden { implicit Hidden(int value) {}  public: Hidden() = "
+           "default; };\n"
            "Hidden make() { return 1; }\nint main() { return 0; }\n",
            "GTI-S2007");
   rejected(R"gti(
@@ -411,7 +413,8 @@ int main() { Buffer buffer = 64; return buffer.capacity; }
   }
   // `implicit` marks only an ordinary constructor callable with zero or one
   // explicit argument, with a source body and no unsafe obligation.
-  rejected("struct Pair { implicit Pair(int a, int b) {}  public: Pair() = default; };\n"
+  rejected("struct Pair { implicit Pair(int a, int b) {}  public: Pair() = "
+           "default; };\n"
            "int main() { return 0; }\n",
            "GTI-S2121");
   expect(analyze("struct Empty { implicit Empty() {} };\n"

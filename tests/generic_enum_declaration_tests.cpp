@@ -495,7 +495,8 @@ int main() { return keep(unexpected(1)); }
 void testCrossNominalDefaultsAndFiniteLayouts() {
   const std::string event =
       "enum Event<T, U = Later> { item(T value, U detail) }; ";
-  const std::string early = "struct Early<W = Event<int>> { public: Early() = default; }; ";
+  const std::string early =
+      "struct Early<W = Event<int>> { public: Early() = default; }; ";
   const std::string later = "struct Later { public: Later() = default; }; ";
   for (const std::string &declarations :
        {event + early + later, later + event + early, early + event + later,
@@ -513,7 +514,8 @@ void testCrossNominalDefaultsAndFiniteLayouts() {
 
   for (const auto source :
        {"struct Earlier<T = Later<>> { public: Earlier() = default; }; "
-        "struct Later<T = int> { public: Later() = default; }; using Selected = Earlier<>; "
+        "struct Later<T = int> { public: Later() = default; }; using Selected "
+        "= Earlier<>; "
         "int main() { return 0; }",
         "enum Self<T = Self<int>> { item(int value) }; "
         "int main() { auto value = Self<>::item(7); return 0; }",
@@ -564,12 +566,15 @@ void testCrossNominalDefaultsAndFiniteLayouts() {
            "reject in semantics before executable lowering");
   }
   for (const auto source :
-       {"struct Count<uint64_t N = Later> { public: Count() = default; }; constexpr uint64_t Later = 3; "
+       {"struct Count<uint64_t N = Later> { public: Count() = default; }; "
+        "constexpr uint64_t Later = 3; "
         "int main() { return 0; }",
-        "struct First<T = Later<>> { public: First() = default; }; struct Later<T = First<>> { public: Later() = default; }; "
+        "struct First<T = Later<>> { public: First() = default; }; struct "
+        "Later<T = First<>> { public: Later() = default; }; "
         "int main() { return 0; }",
         "enum Event<T = Box<>> { item(int value) }; "
-        "struct Box<T = Event<>> { public: Box() = default; }; int main() { return 0; }"}) {
+        "struct Box<T = Event<>> { public: Box() = default; }; int main() { "
+        "return 0; }"}) {
     const auto result =
         lang::Frontend().analyze("invalid-nominal-default-cycle.gti", source);
     expect(!result.semanticValid && std::none_of(result.diagnostics.begin(),

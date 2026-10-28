@@ -325,10 +325,11 @@ int main() {
            {"enum", "choice", "choice::one"},
            {"class", "payload", "payload()"},
            {"borrowed", "std::string_view", "\"text\""}}) {
-    const std::string declarations = type == "choice"
-                                         ? "enum class choice { one };\n"
-                                     : type == "payload" ? "class payload { public: payload() = default; };\n"
-                                                         : "";
+    const std::string declarations =
+        type == "choice" ? "enum class choice { one };\n"
+        : type == "payload"
+            ? "class payload { public: payload() = default; };\n"
+            : "";
     const lang::FrontendResult invalid =
         analyze("atomic-invalid-" + name + ".gti",
                 "#include <std/atomic>\n" + declarations +

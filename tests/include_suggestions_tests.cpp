@@ -71,7 +71,8 @@ void internalTrialsDoNotReportProgress() {
   } counter;
   Fixture f;
   f.options.progress = &counter;
-  f.write("api.gti", "struct ProgressValue { int value = 7;  public: ProgressValue() = default; };\n");
+  f.write("api.gti", "struct ProgressValue { int value = 7;  public: "
+                     "ProgressValue() = default; };\n");
   const auto result =
       f.analyze("int main() { ProgressValue item{}; return item.value; }\n");
   const auto suggestions = fixes(result);
@@ -129,8 +130,8 @@ namespace example {
   }
   expect(fixes(f.analyze("int main() { return wrong::test(); }")).empty(),
          "equal leaf names in the wrong namespace must not guess an include");
-  f.write("private.gti",
-          "class Hidden { static int inaccessible() { return 1; }  public: Hidden() = default; };");
+  f.write("private.gti", "class Hidden { static int inaccessible() { return 1; "
+                         "}  public: Hidden() = default; };");
   expect(
       fixes(f.analyze("int main() { return Hidden::inaccessible(); }")).empty(),
       "no include fix bypasses private member access");

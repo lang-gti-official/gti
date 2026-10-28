@@ -735,7 +735,8 @@ void testStandardLibraryImports() {
 
   const std::string privateSource =
       "#include <std/memory>\n"
-      "namespace gti_internal { class forged { public: forged() = default; }; }\n"
+      "namespace gti_internal { class forged { public: forged() = default; }; "
+      "}\n"
       "namespace private_alias = gti_internal;\n"
       "using forged_storage = gti_internal::unique_owner<int>;\n"
       "int main() { gti_internal::runtime::write_stdout(\"x\"); return 0; }\n";
@@ -760,7 +761,8 @@ void testStandardLibraryImports() {
 
   const lang::FrontendResult forgedSpelling = lang::Frontend().analyze(
       root / "forged-private-spelling.gti",
-      "namespace ordinary { class storage<T> { public: storage() = default; }; }\n"
+      "namespace ordinary { class storage<T> { public: storage() = default; }; "
+      "}\n"
       "ordinary::storage<int> value = ordinary::storage<int>();\n"
       "int main() { return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -827,7 +829,8 @@ void testStandardLibraryImports() {
       root / "inherited-mixed-private-overload.gti",
       "#include <std/array>\n"
       "class Derived : public std::PrivateBase { public: "
-      "int select(int value) { return value; }  public: Derived() = default; };\n"
+      "int select(int value) { return value; }  public: Derived() = default; "
+      "};\n"
       "int main() { Derived value = Derived(); return value.select(7); }\n",
       {standardLibraryPrelude()},
       {{leakyKey,
@@ -3263,7 +3266,8 @@ void testAnnotatedFunctionContracts() {
         "[[test]] void invalid(int value) {}", "[[test]] void invalid<T>() {}",
         "[[test]] void invalid();", "[[test, test]] void invalid() {}",
         "[[test]] static void invalid() {}",
-        "struct Owner { [[test]] void invalid() {}  public: Owner() = default; };"}) {
+        "struct Owner { [[test]] void invalid() {}  public: Owner() = default; "
+        "};"}) {
     const auto invalid =
         lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics})
             .analyze("invalid-test.gti", source);

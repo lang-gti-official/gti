@@ -790,11 +790,11 @@ int main() {
       "opaque-generic.gti",
       "[[c_opaque]] struct Bad<T>; int main() { return 0; }",
       "cannot declare generic");
-  expectOpaqueHandleFailure(
-      "opaque-base.gti",
-      "struct Base { public: Base() = default; }; [[c_opaque]] struct Bad : public Base; "
-      "int main() { return 0; }",
-      "cannot declare base");
+  expectOpaqueHandleFailure("opaque-base.gti",
+                            "struct Base { public: Base() = default; }; "
+                            "[[c_opaque]] struct Bad : public Base; "
+                            "int main() { return 0; }",
+                            "cannot declare base");
   expectOpaqueHandleFailure(
       "opaque-by-value.gti",
       "[[c_opaque]] struct Bad; Bad value; int main() { return 0; }",

@@ -610,15 +610,16 @@ int main() { mut Counter value{}; return advance(value) - 3; }
 
   const std::string declaration =
       "struct Item { unsafe int read() { return 1; } "
-      "unsafe static int number() { return 2; }  public: Item() = default; };\n";
+      "unsafe static int number() { return 2; }  public: Item() = default; "
+      "};\n";
   expectRejected(declaration +
                      "int main() { Item item{}; return item.read(); }",
                  "GTI-S2055", "instance calls require lexical unsafe");
   expectRejected(declaration + "int main() { return Item::number(); }",
                  "GTI-S2055", "static calls require lexical unsafe");
-  expectRejected(
-      "struct Item { unsafe int read(const int* p) { return *p; }  public: Item() = default; };",
-      "GTI-S2055", "unsafe methods do not authorize their bodies");
+  expectRejected("struct Item { unsafe int read(const int* p) { return *p; }  "
+                 "public: Item() = default; };",
+                 "GTI-S2055", "unsafe methods do not authorize their bodies");
   expectRejected(declaration +
                      "int main() { unsafe { auto f = []() "
                      "-> int { return Item::number(); }; return f(); } }",
@@ -744,9 +745,10 @@ int main() {
   expectRejected("struct R { int n; unsafe R(const int* p) { n = *p; } };",
                  "GTI-S2055",
                  "unsafe constructors do not authorize their bodies");
-  expectRejected(
-      "struct B { unsafe B(int n) {}  public: B() = default; }; struct D : public B { D() : B(1) {} };",
-      "GTI-S2055", "base initializer lists do not erase unsafe obligations");
+  expectRejected("struct B { unsafe B(int n) {}  public: B() = default; }; "
+                 "struct D : public B { D() : B(1) {} };",
+                 "GTI-S2055",
+                 "base initializer lists do not erase unsafe obligations");
   const auto zero = analyze(
       "struct Z { unsafe Z() {} }; int main() { unsafe { Z z{}; } return 0; }");
   expect(zero.canGenerateCode(), "explicit zero-argument unsafe construction");

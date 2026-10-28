@@ -173,9 +173,11 @@ int main() {
         "std::string(\"hello\"); }\nint main() { auto view = produce().view(); "
         "return int(view.size()); }",
         "class Owner { int value = 3; public: int& get() { return this.value; "
-        "}  public: Owner() = default; }; int& escape() { return Owner().get(); } int main() { return 0; }",
+        "}  public: Owner() = default; }; int& escape() { return "
+        "Owner().get(); } int main() { return 0; }",
         "class Owner { mut int value = 3; public: mut int& get() mut { return "
-        "this.value; }  public: Owner() = default; }; int main() { [[discard]] Owner().get(); return 0; "
+        "this.value; }  public: Owner() = default; }; int main() { [[discard]] "
+        "Owner().get(); return 0; "
         "}"}) {
     const auto invalid =
         analyzeTrustedPreludeFixture("escaping-temporary-borrow.gti", source);

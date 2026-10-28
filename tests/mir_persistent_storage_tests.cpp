@@ -531,11 +531,14 @@ int main() {
 }
 
 void generatedDefaultSchedulesRetainEffects(std::string_view storage) {
-  for (const auto shape : {"struct Outer { int32_t field = initialize();  public: Outer() = default; };",
-                           "struct Member { Member() { mutate(); } }; "
-                           "struct Outer { Member member;  public: Outer() = default; };",
-                           "struct Base { int32_t field = initialize();  public: Base() = default; }; "
-                           "struct Outer : public Base { public: Outer() = default; };"}) {
+  for (const auto shape :
+       {"struct Outer { int32_t field = initialize();  public: Outer() = "
+        "default; };",
+        "struct Member { Member() { mutate(); } }; "
+        "struct Outer { Member member;  public: Outer() = default; };",
+        "struct Base { int32_t field = initialize();  public: Base() = "
+        "default; }; "
+        "struct Outer : public Base { public: Outer() = default; };"}) {
     const auto source = [&](std::string_view target) {
       return std::string(storage) + " mut int32_t first = 1;\n" +
              std::string(storage) + " mut int32_t second = 2;\n" +

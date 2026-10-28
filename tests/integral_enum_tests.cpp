@@ -79,9 +79,11 @@ int main() { return decode(Wire::high) == uint64_t(18446744073709551615) ? 0 : 1
         "#include <std/format>\nenum class E { x(int value) }; int main() { "
         "[[discard]] std::format(\"{}\", E::x(1)); return 0; }",
         "#include <std/format>\nenum class E { x }; class std::formatter<E> "
-        "{ public: formatter() = default; }; int main() { [[discard]] std::format(\"{}\", E::x); return 0; }",
+        "{ public: formatter() = default; }; int main() { [[discard]] "
+        "std::format(\"{}\", E::x); return 0; }",
         "#include <std/format>\nenum class E { x }; class std::formatter<E> { "
-        "public: int format(E& value) { return 0; }  public: formatter() = default; }; int main() { "
+        "public: int format(E& value) { return 0; }  public: formatter() = "
+        "default; }; int main() { "
         "[[discard]] std::format(\"{}\", E::x); return 0; }",
         "enum class E { x }; int main() { return "
         "gti_internal::enum_underlying_value<int32_t,E>(E::x); }"}) {

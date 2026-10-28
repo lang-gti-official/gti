@@ -175,10 +175,13 @@ int main() {
   }
   for (const char *declaration :
        {"[[unsafe_transfer(U)]] class Wrong<T> { public: Wrong() = default; };",
-        "[[unsafe_transfer(N)]] class Wrong<uint64_t N> { public: Wrong() = default; };",
+        "[[unsafe_transfer(N)]] class Wrong<uint64_t N> { public: Wrong() = "
+        "default; };",
         "[[unsafe_share(T)]] class Wrong<T...> { public: Wrong() = default; };",
-        "[[unsafe_transfer(T), no_transfer]] class Wrong<T> { public: Wrong() = default; };",
-        "[[unsafe_share, unsafe_share(T)]] class Wrong<T> { public: Wrong() = default; };",
+        "[[unsafe_transfer(T), no_transfer]] class Wrong<T> { public: Wrong() "
+        "= default; };",
+        "[[unsafe_share, unsafe_share(T)]] class Wrong<T> { public: Wrong() = "
+        "default; };",
         "[[unsafe_share(T)]] interface Wrong<T> {};",
         "[[unsafe_transfer(int)]] class Wrong {};"}) {
     const auto bad =

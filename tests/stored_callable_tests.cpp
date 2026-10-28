@@ -36,7 +36,8 @@ int main() {
   }
   for (const std::string state :
        {"[[no_transfer]] struct Payload { public: Payload() = default; }; "
-        "[[unsafe_transfer(T)]] struct State<T> { T* pointer = nullptr;  public: State() = default; }; "
+        "[[unsafe_transfer(T)]] struct State<T> { T* pointer = nullptr;  "
+        "public: State() = default; }; "
         "using Capture = State<Payload>;",
         "[[unsafe_transfer]] struct Capture { std::string_view view = \"\"; "
         " public: Capture() = default; };"}) {
@@ -1397,7 +1398,8 @@ Owner<T> own<T>(T value) { return Owner<T>(std::move(value)); }
         "owner = own(std::move(op)); return owner.call(1); }",
         "int main() { Owner<int> owner{1}; return owner.call(2); }",
         "class Mut { public: int operator()(int value) mut { return value; } "
-        " public: Mut() = default; }; int main() { Owner<Mut> owner = Owner<Mut>(Mut()); return "
+        " public: Mut() = default; }; int main() { Owner<Mut> owner = "
+        "Owner<Mut>(Mut()); return "
         "owner.call(1); }"}) {
     const auto invalid =
         analyzeTrustedPreludeFixture("bad-stored-callable.gti", owner + input);

@@ -275,8 +275,9 @@ int main() {
 
   rejected(owned + owned, "GTI-S2006", "Duplicate declaration");
   rejected(owned + empty + empty, "GTI-S2006", "Duplicate declaration");
-  rejected("class Packet<T&, E> { public: Packet() = default; }; class Packet<T, E&> {};", "GTI-S2006",
-           "Duplicate declaration");
+  rejected("class Packet<T&, E> { public: Packet() = default; }; class "
+           "Packet<T, E&> {};",
+           "GTI-S2006", "Duplicate declaration");
   rejected(owned + borrowed + R"(
 Packet<int&, int> bad() {
   int local = 42;

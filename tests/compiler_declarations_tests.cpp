@@ -1362,7 +1362,8 @@ int main() {
          "the C++ backend should consume flattened field declarations only");
 
   const std::string formatted = lang::Formatter().format(
-      "struct Sample{private:mut{int first=0;int second=1;}int id=2; public: Sample() = default; };");
+      "struct Sample{private:mut{int first=0;int second=1;}int id=2; public: "
+      "Sample() = default; };");
   const std::string expectedFormatting = R"(struct Sample {
 private:
   mut {
@@ -1988,8 +1989,8 @@ int main() {
 }
 
 void testOutOfClassMethods() {
-  const std::string splitText =
-      "struct Test{int value(); public: Test() = default; };int Test::value(){return 1;}";
+  const std::string splitText = "struct Test{int value(); public: Test() = "
+                                "default; };int Test::value(){return 1;}";
   const auto formatted = lang::Formatter().format(splitText);
   const auto originalTokens = lang::Lexer().scan(splitText);
   const auto formattedTokens = lang::Lexer().scan(formatted);
@@ -2155,28 +2156,37 @@ int Cell::take() && { return this.number; }
   for (const auto &[source, message] :
        std::vector<std::pair<std::string, std::string>>{
            {"int Missing::read() { return 1; }", "visible"},
-           {"struct A { public: A() = default; }; int A::read() { return 1; }", "No declared method"},
-           {"struct A { int read();  public: A() = default; }; bool A::read() { return true; }",
+           {"struct A { public: A() = default; }; int A::read() { return 1; }",
+            "No declared method"},
+           {"struct A { int read();  public: A() = default; }; bool A::read() "
+            "{ return true; }",
             "return type"},
-           {"struct A { int read() { return 1; }  public: A() = default; }; int A::read() { return 2; "
+           {"struct A { int read() { return 1; }  public: A() = default; }; "
+            "int A::read() { return 2; "
             "}",
             "already has"},
-           {"struct A { int read();  public: A() = default; }; int A::read() { return 1; } int "
+           {"struct A { int read();  public: A() = default; }; int A::read() { "
+            "return 1; } int "
             "A::read() { return 2; }",
             "already has"},
            {"interface A { int read(); }; int A::read() { return 1; }", "pure"},
-           {"struct A { static int read();  public: A() = default; }; static int A::read() { return 1; "
+           {"struct A { static int read();  public: A() = default; }; static "
+            "int A::read() { return 1; "
             "}",
             "specifiers"},
-           {"struct A { int read(int x = 1);  public: A() = default; }; int A::read(int x = 2) { "
+           {"struct A { int read(int x = 1);  public: A() = default; }; int "
+            "A::read(int x = 2) { "
             "return x; }",
             "Default arguments"},
-           {"struct A { int read() mut;  public: A() = default; }; int A::read() { return 1; }",
+           {"struct A { int read() mut;  public: A() = default; }; int "
+            "A::read() { return 1; }",
             "receiver qualifier"},
-           {"struct A { static T read<T>(T x);  public: A() = default; }; T A::read<T>(T x) { return "
+           {"struct A { static T read<T>(T x);  public: A() = default; }; T "
+            "A::read<T>(T x) { return "
             "x; }",
             "non-generic"},
-           {"struct A { int read();  public: A() = default; }; namespace wrong { int A::read() { "
+           {"struct A { int read();  public: A() = default; }; namespace wrong "
+            "{ int A::read() { "
             "return 1; } }",
             "enclosing namespace"}}) {
     const auto invalid = lang::Frontend().analyze(
@@ -3382,7 +3392,8 @@ int main() {
          "unambiguous brace form");
 
   const std::string formatted = lang::Formatter().format(
-      "class Box<T>{public:Box(T value){} public: Box() = default; };int main(){mut Box<int> "
+      "class Box<T>{public:Box(T value){} public: Box() = default; };int "
+      "main(){mut Box<int> "
       "value { 1, };Box<int> empty { };int values[1]={1};return 0;}");
   if (formatted.find("mut Box<int> value{1,};") == std::string::npos ||
       formatted.find("Box<int> empty{};") == std::string::npos ||
@@ -3881,7 +3892,8 @@ int main() {
   }
 
   const std::string formatted = lang::Formatter().format(
-      "namespace demo{class Value<T>{ public: Value() = default; };}class demo::Value<int>{ public: Value() = default; };");
+      "namespace demo{class Value<T>{ public: Value() = default; };}class "
+      "demo::Value<int>{ public: Value() = default; };");
   expect(formatted.find("class demo::Value<int> {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "the formatter should preserve qualified exact-specialization "
@@ -5110,12 +5122,16 @@ int read<A, B>(A& unrelated, B& value) requires readable<B> {
 }
 )";
   const std::vector<std::pair<std::string, std::string>> rejected{
-      {"struct Item { public: Item() = default; };", "has no member 'snapshot()'"},
-      {"struct Item { bool snapshot() { return true; }  public: Item() = default; };",
+      {"struct Item { public: Item() = default; };",
+       "has no member 'snapshot()'"},
+      {"struct Item { bool snapshot() { return true; }  public: Item() = "
+       "default; };",
        "returns 'bool', but the required exact result is 'int32_t'"},
-      {"class Item { int snapshot() { return 1; }  public: Item() = default; };",
+      {"class Item { int snapshot() { return 1; }  public: Item() = default; "
+       "};",
        "not publicly accessible"},
-      {"struct Item { int snapshot() mut { return 1; }  public: Item() = default; };",
+      {"struct Item { int snapshot() mut { return 1; }  public: Item() = "
+       "default; };",
        "not a read-only, nongeneric instance method"},
   };
   for (const auto &[definition, reason] : rejected) {
@@ -5324,12 +5340,16 @@ int main() {
 
   const std::vector<std::string> rejected{
       "struct Item { public: Item() = default; };",
-      "struct Item { int snapshot() { return 1; }  public: Item() = default; };",
-      "struct Item { Item snapshot() mut { Item result{}; return result; }  public: Item() = default; };",
-      "struct Item { Item snapshot() && { Item result{}; return result; }  public: Item() = default; };",
+      "struct Item { int snapshot() { return 1; }  public: Item() = default; "
+      "};",
+      "struct Item { Item snapshot() mut { Item result{}; return result; }  "
+      "public: Item() = default; };",
+      "struct Item { Item snapshot() && { Item result{}; return result; }  "
+      "public: Item() = default; };",
       "struct Item { static Item snapshot() { Item result{}; return result; } "
       " public: Item() = default; };",
-      "class Item { Item snapshot() { Item result{}; return result; }  public: Item() = default; };",
+      "class Item { Item snapshot() { Item result{}; return result; }  public: "
+      "Item() = default; };",
       "struct Item { Item snapshot(int value) { Item result{}; return result; "
       "}  public: Item() = default; };",
   };
@@ -5404,7 +5424,8 @@ int main() { return relay(7) - 7; }
       "member-requirement-unsafe.gti",
       "struct Item { unsafe Item snapshot() { "
       "Item result{}; return result; "
-      "}  public: Item() = default; }; int main() { static_assert(!(requires(Item& x) "
+      "}  public: Item() = default; }; int main() { "
+      "static_assert(!(requires(Item& x) "
       "{ { x.snapshot() } -> Item; })); return 0; }",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(unsafeMember.canGenerateCode(),
@@ -5742,7 +5763,8 @@ int main() { Overloaded r{}; int value = 7; bool condition = true;
          "only a member name or result");
 
   const std::string formatPrefix =
-      "#include <std/format>\n#include <std/string>\nstruct Item { public: Item() = default; };\n";
+      "#include <std/format>\n#include <std/string>\nstruct Item { public: "
+      "Item() = default; };\n";
   for (const auto &call :
        {"std::format(\"{}\", Item())", "std::try_format(\"{}\", Item())",
         "std::try_format(\"{} {}\", 1, Item())",
@@ -8478,7 +8500,8 @@ int main() {
         "int main() { Nested<NotOrdered> value{}; return 0; }",
         "int main() { Constrained<double> value{}; return 0; }",
         "void consume(Holder<NotOrdered>& value) {}",
-        "class Bad<T, Compare = Ordered<double*>> { public: Bad() = default; };"}) {
+        "class Bad<T, Compare = Ordered<double*>> { public: Bad() = default; "
+        "};"}) {
     const auto invalid = analyze(suffix);
     expect(!invalid.canGenerateCode() &&
                hasDiagnosticCode(invalid.diagnostics, "GTI-S2029"),
@@ -8759,7 +8782,8 @@ public:
          "substitution failures");
 
   const lang::FrontendResult lateDefault = lang::Frontend().analyze(
-      "late-generic-default.gti", "class LateDefault<uint64_t N = later> { public: LateDefault() = default; };\n"
+      "late-generic-default.gti", "class LateDefault<uint64_t N = later> { "
+                                  "public: LateDefault() = default; };\n"
                                   "constexpr uint64_t later = 3;\n");
   expect(!lateDefault.canGenerateCode() &&
              hasDiagnostic(lateDefault.diagnostics,
@@ -8769,7 +8793,8 @@ public:
          "declared later in source order");
 
   const std::string formatted = lang::Formatter().format(
-      "class StaticArray<T,uint64_t N>{T values[N]={}; public: StaticArray() = default; };StaticArray<int,4> "
+      "class StaticArray<T,uint64_t N>{T values[N]={}; public: StaticArray() = "
+      "default; };StaticArray<int,4> "
       "values=StaticArray<int,4>();T choose<T=int,uint64_t N=2+1>(){return "
       "T();}");
   expect(formatted.find("class StaticArray<T, uint64_t N> {") !=
@@ -10996,7 +11021,8 @@ int main() {
          "default access and remain usable as direct type members");
 
   const std::string completionSource =
-      "class Traits { public: using value_type = int;  public: Traits() = default; }; "
+      "class Traits { public: using value_type = int;  public: Traits() = "
+      "default; }; "
       "using Value = Traits::val; int main() { return 0; }";
   const lang::CompletionResult completion = lang::LanguageQueries().complete(
       {.entryPath = "class-alias-completion.gti",
@@ -11184,7 +11210,8 @@ int main() { return 0; }
       "local type aliases should be rejected by the parser");
 
   const std::string formatted = lang::Formatter().format(
-      "class Traits{using hidden=int;public:using value_type=hidden; public: Traits() = default; };");
+      "class Traits{using hidden=int;public:using value_type=hidden; public: "
+      "Traits() = default; };");
   expect(formatted == R"(class Traits {
   using hidden = int;
 public:
@@ -12604,8 +12631,8 @@ int identity(int value) { return value; }
                           "case 1: stop(); default: stop(); } }"},
       {"generic", "[[noreturn]] void run<T>(T value) { stop(); } void "
                   "instantiate() { run(1); }"},
-      {"tracked-method",
-       "struct Guard { [[track_caller]] void check() { stop(); }  public: Guard() = default; };"},
+      {"tracked-method", "struct Guard { [[track_caller]] void check() { "
+                         "stop(); }  public: Guard() = default; };"},
       {"tracked-direct-item",
        "[[track_caller]] int compute(int value) { return value; } int run() { "
        "auto target = compute; return target(1); }"},
@@ -12641,13 +12668,14 @@ int identity(int value) { return value; }
        "stop(); } }"},
       {"duplicate", "[[noreturn, noreturn]] void run() { stop(); }"},
       {"tracked-operator", "struct Index { [[track_caller]] int "
-                           "operator[](std::size_t index) { return 0; }  public: Index() = default; };"},
-      {"terminal-operator",
-       "struct Action { [[noreturn]] void operator()() { stop(); }  public: Action() = default; };"},
+                           "operator[](std::size_t index) { return 0; }  "
+                           "public: Index() = default; };"},
+      {"terminal-operator", "struct Action { [[noreturn]] void operator()() { "
+                            "stop(); }  public: Action() = default; };"},
       {"unknown", "[[noreturn, surprise]] void run() { stop(); }"},
       {"bodyless", "[[track_caller]] void run();"},
-      {"virtual",
-       "class Guard { public: [[track_caller]] virtual void check() {}  public: Guard() = default; };"},
+      {"virtual", "class Guard { public: [[track_caller]] virtual void check() "
+                  "{}  public: Guard() = default; };"},
       {"native", "extern \"C\" { [[track_caller]] void run(); }"},
   };
   for (const auto &[name, body] : rejected) {
@@ -12877,14 +12905,20 @@ int main() {
          "existing generic annotation syntax formats without losing facts");
 
   for (const auto &suffix :
-       {"struct Missing { public: Missing() = default; }; int main() { Unused<Missing> value{}; return 0; }",
-        "struct Wrong { int read(){return 1;} int close(){return 0;}  public: Wrong() = default; }; "
+       {"struct Missing { public: Missing() = default; }; int main() { "
+        "Unused<Missing> value{}; return 0; }",
+        "struct Wrong { int read(){return 1;} int close(){return 0;}  public: "
+        "Wrong() = default; }; "
         "int main() { Unused<Wrong> value{}; return 0; }",
-        "class Hidden { int read(){return 1;} void close(){}  public: Hidden() = default; }; "
+        "class Hidden { int read(){return 1;} void close(){}  public: Hidden() "
+        "= default; }; "
         "int main() { Unused<Hidden> value{}; return 0; }",
-        "struct Missing { public: Missing() = default; }; int main() { Packed<Counter, Missing> value{}; "
+        "struct Missing { public: Missing() = default; }; int main() { "
+        "Packed<Counter, Missing> value{}; "
         "return 0; }",
-        "struct Missing { public: Missing() = default; }; class InvalidDefault<closable T=Missing> { public: InvalidDefault() = default; }; "
+        "struct Missing { public: Missing() = default; }; class "
+        "InvalidDefault<closable T=Missing> { public: InvalidDefault() = "
+        "default; }; "
         "int main() { InvalidDefault<> value{}; return 0; }"}) {
     const auto rejected = analyze(declarations + suffix);
     expect(!rejected.canGenerateCode() &&
@@ -12909,7 +12943,8 @@ int main() {
                        "~Bad(){ this.source.close(); } }; "
                        "int main(){return 0;}",
         std::string("concept pair<T,U> = std::copyable<T> && "
-                    "std::copyable<U>; class Bad<pair T> { int value=0;  public: Bad() = default; }; "
+                    "std::copyable<U>; class Bad<pair T> { int value=0;  "
+                    "public: Bad() = default; }; "
                     "int main(){return 0;}")}) {
     const auto rejected = analyze(source);
     expect(!rejected.canGenerateCode() &&

@@ -3270,12 +3270,14 @@ void testConstexprResults() {
         "constexpr E bad = succeed().error();",
         "constexpr int eager() { return succeed().value_or(divide(0)); } "
         "constexpr int bad = eager();",
-        "int runtime() { return 3; } struct P { int x = runtime();  public: P() = default; }; "
+        "int runtime() { return 3; } struct P { int x = runtime();  public: "
+        "P() = default; }; "
         "constexpr P bad = P();",
         "struct P { int x; constexpr P(mut int& value) : x(value) { value += "
         "1; } }; constexpr P bad = P(3);",
         "struct P { int& x; constexpr P(int& value) : x(value) {} };",
-        "struct P { int x = 1; ~P() {}  public: P() = default; }; constexpr P bad = P();"}) {
+        "struct P { int x = 1; ~P() {}  public: P() = default; }; constexpr P "
+        "bad = P();"}) {
     const auto invalid = lang::Frontend().analyze(
         "constexpr-results-invalid.gti",
         prefix + body + " int main() { return 0; }", {standardLibraryPrelude()},

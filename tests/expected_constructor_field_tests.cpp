@@ -221,7 +221,8 @@ int main() {
   }
   std::size_t plainProducerControls = 0, plainProducerMutations = 0;
   for (const std::string_view payload :
-       {"class Payload<T> { public: int marker = 1; ~Payload() {}  public: Payload() = default; };",
+       {"class Payload<T> { public: int marker = 1; ~Payload() {}  public: "
+        "Payload() = default; };",
         "class Payload<T> { public: int marker; "
         "Payload() : marker(7) {} ~Payload() {} };"}) {
     const auto control = analyzeWithStandardLibrary(

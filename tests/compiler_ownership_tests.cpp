@@ -11305,7 +11305,8 @@ int main() {
   const std::string formatted = lang::Formatter().format(
       "std::unique_ptr<Widget> make(){return std::make_unique<Widget>();}"
       "int read(mut std::unique_ptr<Widget> value){return value->read();}"
-      "class Nullable{public:void operator=(nullptr_t empty)mut{} public: Nullable() = default; };");
+      "class Nullable{public:void operator=(nullptr_t empty)mut{} public: "
+      "Nullable() = default; };");
   expect(formatted.find("value->read()") != std::string::npos &&
              formatted.find("void operator=(nullptr_t empty) mut {") !=
                  std::string::npos &&
@@ -14031,8 +14032,9 @@ int main() {
           hasMirIntrinsicKind(accepted, lang::IntrinsicKind::StringViewEmpty),
       "arrow text members lower to their builtin observers");
 
-  const std::string cell = "class Cell { int value = 3; public: int& "
-                           "operator->() { return this.value; }  public: Cell() = default; }; ";
+  const std::string cell =
+      "class Cell { int value = 3; public: int& "
+      "operator->() { return this.value; }  public: Cell() = default; }; ";
   const std::string text = "class Text { public: c_string text; Text(c_string "
                            "text) : text(text) {} c_string& operator->() { "
                            "return this.text; } }; ";
@@ -14156,7 +14158,8 @@ int main() {
          "call operators should lower to the semantically selected member");
 
   const std::string formatted = lang::Formatter().format(
-      "class Fn{public:int operator()(int value){return value;} public: Fn() = default; };");
+      "class Fn{public:int operator()(int value){return value;} public: Fn() = "
+      "default; };");
   expect(formatted.find("int operator()(int value) {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "operator() declarations should format idempotently");
@@ -14560,8 +14563,9 @@ int main() {
          "the C++ backend should preserve consuming member qualification and "
          "the exact frontend-selected callable capability");
 
-  const std::string formatted = lang::Formatter().format(
-      "class Once{public:int operator()()&&{return 1;} public: Once() = default; };");
+  const std::string formatted =
+      lang::Formatter().format("class Once{public:int operator()()&&{return "
+                               "1;} public: Once() = default; };");
   expect(formatted.find("int operator()() && {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "operator() && should format with stable C++-style spacing");
@@ -14873,64 +14877,81 @@ int main() {
   }
 
   const std::vector<std::pair<std::string, std::string>> invalid = {
-      {"class C { public: void take() && {}  public: C() = default; }; int main() { C c{}; c.take(); "
+      {"class C { public: void take() && {}  public: C() = default; }; int "
+       "main() { C c{}; c.take(); "
        "return 0; }",
        "requires an owned temporary"},
-      {"class C { public: int x = 1; void take() && {}  public: C() = default; }; int main() { C c{}; "
+      {"class C { public: int x = 1; void take() && {}  public: C() = default; "
+       "}; int main() { C c{}; "
        "std::move(c).take(); return c.x; }",
        "already been moved"},
-      {"class C { public: C take() { return std::move(this); }  public: C() = default; }; int main() { "
+      {"class C { public: C take() { return std::move(this); }  public: C() = "
+       "default; }; int main() { "
        "return 0; }",
        "std::move(this) requires a consuming receiver"},
-      {"class C { public: ~C() {} C take() && { return this; }  public: C() = default; }; int main() { "
+      {"class C { public: ~C() {} C take() && { return this; }  public: C() = "
+       "default; }; int main() { "
        "return 0; }",
        "Returning this value would copy move-only type"},
       {"class C { public: int x = 1; int take() && { auto owned = "
-       "std::move(this); return this.x; }  public: C() = default; }; int main() { return 0; }",
+       "std::move(this); return this.x; }  public: C() = default; }; int "
+       "main() { return 0; }",
        "already been moved"},
       {"class C { public: C take() && { auto owned = std::move(this); return "
        "std::move(this); }  public: C() = default; }; int main() { return 0; }",
        "already been moved"},
       {"class C { public: mut int x = 1; C take() && { int old = "
-       "std::move(this.x); return std::move(this); }  public: C() = default; }; int main() { return 0; "
+       "std::move(this.x); return std::move(this); }  public: C() = default; "
+       "}; int main() { return 0; "
        "}",
        "already been moved"},
-      {"class C { public: int x = 1; int& take() && { return this.x; }  public: C() = default; }; int "
+      {"class C { public: int x = 1; int& take() && { return this.x; }  "
+       "public: C() = default; }; int "
        "main() { return 0; }",
        "consuming method cannot return"},
-      {"class C { public: bool operator==(C& other) && { return true; }  public: C() = default; }; int "
+      {"class C { public: bool operator==(C& other) && { return true; }  "
+       "public: C() = default; }; int "
        "main() { return 0; }",
        "value-producing operators"},
-      {"class C { public: void operator+=(int n) && {}  public: C() = default; }; int main() { return "
+      {"class C { public: void operator+=(int n) && {}  public: C() = default; "
+       "}; int main() { return "
        "0; }",
        "value-producing operators"},
-      {"class C { public: int x = 1; void take() && {}  public: C() = default; }; int main() { C c{}; "
+      {"class C { public: int x = 1; void take() && {}  public: C() = default; "
+       "}; int main() { C c{}; "
        "int& alias = c.x; std::move(c).take(); return alias; }",
        "borrow"},
       {"class C { public: int x = 1; C take() && { int& alias = this.x; auto c "
-       "= std::move(this); int observed = alias; return std::move(c); }  public: C() = default; }; int "
+       "= std::move(this); int observed = alias; return std::move(c); }  "
+       "public: C() = default; }; int "
        "main() { return 0; }",
        "borrow"},
       {"class C { public: int x = 1; int read() { return this.x; } int take() "
-       "&& { auto c = std::move(this); return read(); }  public: C() = default; }; int main() { return "
+       "&& { auto c = std::move(this); return read(); }  public: C() = "
+       "default; }; int main() { return "
        "0; }",
        "already been moved"},
       {"class C { public: int x = 1; int take(bool condition) && { if "
-       "(condition) { auto c = std::move(this); } return this.x; }  public: C() = default; }; int "
+       "(condition) { auto c = std::move(this); } return this.x; }  public: "
+       "C() = default; }; int "
        "main() { return 0; }",
        "may have been moved"},
       {"class C { public: mut int x = 1; void take() && { auto c = "
-       "std::move(this); this.x = 2; }  public: C() = default; }; int main() { return 0; }",
+       "std::move(this); this.x = 2; }  public: C() = default; }; int main() { "
+       "return 0; }",
        "already been moved"},
       {"class C { public: int x = 1; void take() && { while (true) { auto c = "
-       "std::move(this); } }  public: C() = default; }; int main() { return 0; }",
+       "std::move(this); } }  public: C() = default; }; int main() { return 0; "
+       "}",
        "not available at a reachable loop backedge"},
-      {"class C { public: void take() && {}  public: C() = default; }; void run(C& borrowed) { "
+      {"class C { public: void take() && {}  public: C() = default; }; void "
+       "run(C& borrowed) { "
        "borrowed.take(); } int main() { return 0; }",
        "requires an owned temporary"},
       {"interface I { int& take() &&; }; int main() { return 0; }",
        "consuming method cannot return"},
-      {"class C<T> { public: T take(T value) && { return value; }  public: C() = default; }; int "
+      {"class C<T> { public: T take(T value) && { return value; }  public: C() "
+       "= default; }; int "
        "main() { C<std::string_view> c{}; auto value = "
        "std::move(c).take(\"\"); return 0; }",
        "consuming method cannot return"},
@@ -15121,7 +15142,8 @@ int main() {
          "GTI iterator methods without native C++ range lookup");
 
   const std::string formatted = lang::Formatter().format(
-      "class Iterator{public:void operator++()mut{} public: Iterator() = default; };"
+      "class Iterator{public:void operator++()mut{} public: Iterator() = "
+      "default; };"
       "int sum(Range& values){mut int total=0;"
       "for(auto& value:values){total+=value;}return total;}");
   expect(formatted.find("void operator++() mut {") != std::string::npos &&
