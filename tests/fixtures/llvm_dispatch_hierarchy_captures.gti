@@ -1,0 +1,128 @@
+// Closures holding hierarchy storage. An init-capture moves an object of a
+// derived class, a polymorphic class or an interface implementation into its
+// slot of the closure environment, where the generated relocation rebuilds
+// its dispatch state, and the closure publishes into a whole local or a
+// by-value argument's storage. Calls borrow the environment, moving the
+// closure relocates every capture, and the closure's cleanup ends its
+// captures in reverse declaration order, once each. Destructors record
+// explicit IDs.
+#include <std/string>
+#include <std/memory>
+#include <std/utility>
+
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Gauge { int read(int divisor); };
+
+class Meter : public Gauge {
+  int scale;
+public:
+  Meter(int scale) : scale(scale) {}
+  Meter(Meter& other) = delete;
+  Meter(Meter&& other) = default;
+  ~Meter() { record(1); }
+  int read(int divisor) override { return this.scale * 12 / divisor; }
+};
+
+class Root {
+public:
+  int seed;
+  Root(int seed) : seed(seed) {}
+  Root(Root& other) = delete;
+  Root(Root&& other) = default;
+  virtual int value() { return this.seed; }
+  ~Root() { record(2); }
+};
+
+// A polymorphic object owning heap storage.
+class Leaf : public Root {
+public:
+  std::string label;
+  std::unique_ptr<int> boxed;
+  Leaf(int seed)
+      : Root(seed), label(std::string("a label long enough to live on the heap")),
+        boxed(std::make_unique<int>(seed * 5)) {}
+  int value() override { return this.seed + int(this.label.size()) + *this.boxed; }
+};
+
+class Plain {
+public:
+  int first;
+  int second;
+  Plain(int first, int second) : first(first), second(second) {}
+  Plain(Plain& other) = delete;
+  Plain(Plain&& other) = default;
+  ~Plain() { record(3); }
+};
+
+// A derived class without virtual members.
+class Pair : public Plain {
+public:
+  Pair(int first) : Plain(first, first + 1) {}
+  int sum() { return this.first + this.second; }
+};
+
+int sample(Gauge& gauge, int divisor) { return gauge.read(divisor); }
+
+// A closure constructed directly in a by-value argument's storage.
+int invoke<F>(F callable) { return callable(); }
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+// A meter and a leaf captured together, read through their views.
+int both(int divisor) {
+  mut Meter meter = Meter(4);
+  mut Leaf leaf = Leaf(2);
+  auto reader = [first = std::move(meter), second = std::move(leaf)](int d) -> int {
+    Root& root = second;
+    return sample(first, d) + root.value();
+  };
+  return reader(divisor);
+}
+
+// CAPTURES_MAIN
+int main() {
+  {
+    mut Pair pair = Pair(20);
+    auto reader = [held = std::move(pair)]() -> int { return held.sum(); };
+    if (reader() != 41 || reader() != 41 || events != 0) { return 1; }
+  }
+  if (events != 3) { return 2; }
+  events = 0;
+  {
+    mut Pair pair = Pair(7);
+    if (invoke([held = std::move(pair)]() -> int { return held.sum(); }) != 15 ||
+        events != 3) {
+      return 7;
+    }
+  }
+  if (events != 3) { return 8; }
+  events = 0;
+  // 4 * 12 + (2 + 39 + 10); the leaf ends before the meter.
+  if (both(1) != 99 || events != 21) { return 3; }
+  events = 0;
+  {
+    mut Meter meter = Meter(5);
+    mut Leaf leaf = Leaf(3);
+    auto reader = [first = std::move(meter), second = std::move(leaf)]() -> int {
+      Root& root = second;
+      return sample(first, 2) + root.value();
+    };
+    // 5 * 12 / 2 + (3 + 39 + 15)
+    if (reader() != 87) { return 4; }
+    auto moved = std::move(reader);
+    if (moved() != 87 || events != 0) { return 5; }
+  }
+  return events == 21 ? 0 : 6;
+}

@@ -2097,6 +2097,31 @@ int main() {
         "defined-failure", expected_exit=70,
         failure_needle="Derived(int divisor) : Base(), quotient(12 / divisor) {}",
         endpoints=TRANSFER_ENDPOINTS)
+    captures_origin = "tests/fixtures/llvm_dispatch_hierarchy_captures.gti"
+    captures = (root / captures_origin).read_text(encoding="utf-8")
+    captures_marker = "// CAPTURES_MAIN\n"
+    if captures.count(captures_marker) != 1:
+        raise AssertionError("capture main marker is not unique")
+    # The C++ backend does not represent these closure environments; each
+    # program checks its own results and destructor IDs, so native O0-O3 need
+    # no C++ comparator.
+    add("hierarchy-captures", captures, origin=captures_origin,
+        endpoints=TRANSFER_ENDPOINTS[2:])
+    # A failure inside the closure ends both captures once, in reverse
+    # declaration order, while unwinding.
+    capture_failure = captures.split(captures_marker, 1)[0] + """int main() {
+  expected_cleanup = 21;
+  Guard guard{};
+  return both(0);
+}
+"""
+    capture_needle = "int read(int divisor) override { return this.scale * 12 / divisor; }"
+    add("hierarchy-capture-failure", capture_failure, "defined-failure",
+        expected_exit=70, failure_needle=capture_needle, endpoints=TRANSFER_ENDPOINTS[2:])
+    add("hierarchy-capture-wrong-cleanup",
+        capture_failure.replace("expected_cleanup = 21;", "expected_cleanup = 12;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=capture_needle,
+        endpoints=TRANSFER_ENDPOINTS[2:])
     payloads = (root / SUCCESS_FILES["hierarchy-payloads"]).read_text(encoding="utf-8")
     payloads_marker = "// PAYLOADS_MAIN\n"
     if payloads.count(payloads_marker) != 1:
@@ -2343,6 +2368,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "hierarchy-payloads": (
             "hierarchy-payloads", "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup",
             "payload-moves", "payload-move-failure"),
+        "hierarchy-captures": (
+            "hierarchy-captures", "hierarchy-capture-failure", "hierarchy-capture-wrong-cleanup"),
         "lifecycle-dispatch": (
             "lifecycle-phases", "lifecycle-phase-rollback", "lifecycle-phase-wrong-cleanup",
             "generated-empty-former-reject", "base-destructor-observation-former-reject",
@@ -2423,6 +2450,7 @@ def main() -> None:
              "payload-move-failure",
              *OWNED_BASE_SOURCES, *OWNED_BASE_FAILURES,
              *(owned_base_wrong_cleanup(name) for name in OWNED_BASE_FAILURES),
+             "hierarchy-captures", "hierarchy-capture-failure", "hierarchy-capture-wrong-cleanup",
              *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)

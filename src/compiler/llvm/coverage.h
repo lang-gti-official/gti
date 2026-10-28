@@ -113,6 +113,7 @@ enum class Shape {
   NativeHierarchyReplacement,
   NativeHierarchyArray,
   NativeHierarchyPayload,
+  NativeHierarchyCapture,
   NativeProgramHierarchyStorage,
   NativeLifecycleDispatch,
   PolymorphicTransfer,

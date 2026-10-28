@@ -702,6 +702,135 @@ int main() { Field value{}; return value.read() - 17; }
          "closure cleanup rejects an identity/type mismatch");
 }
 
+// An init-capture relocates a moved hierarchy object into its slot of the
+// closure environment: the move's only publication is that slot, and the
+// generated relocation rebuilds its dispatch state. A capture that does not
+// move the object, mutated or written in source, has no typed relocation and
+// stays PolymorphicTransfer.
+void testHierarchyCapturePlan() {
+  using namespace lang;
+  const auto verified = lower(R"(
+class Root {
+public:
+  int seed;
+  Root(int seed) : seed(seed) {}
+  Root(Root& other) = delete;
+  Root(Root&& other) = default;
+  virtual int value() { return this.seed; }
+};
+class Leaf : public Root {
+public:
+  Leaf(int seed) : Root(seed) {}
+  int value() override { return this.seed + 1; }
+};
+int main() {
+  mut Leaf leaf = Leaf(4);
+  auto reader = [held = std::move(leaf)]() -> int { return held.value(); };
+  return reader() - 5;
+}
+)",
+                              true);
+  const auto plan = planLlvmAdmission(verified);
+  const auto implemented = [&](std::string_view name) {
+    return std::any_of(plan.requirements().begin(), plan.requirements().end(),
+                       [&](const auto &use) {
+                         return use.required && use.implementedShape &&
+                                use.implementedShape->name == name;
+                       });
+  };
+  expect(plan.admitted() && implemented("NativeHierarchyCapture") &&
+             implemented("NativeFreshHierarchyTransfer"),
+         "a moved hierarchy capture relocates into its closure slot: " +
+             plan.limitation());
+
+  const auto &mir = verified.program().mir();
+  const MirFunctionInstance *entry = nullptr;
+  const MirInstruction *moved = nullptr;
+  const MirInstruction *closure = nullptr;
+  for (const auto &function : mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions)
+        if (stage.operation == MirOperation::Closure &&
+            stage.operands.size() == 1) {
+          entry = &function;
+          closure = &stage;
+        }
+  if (entry)
+    for (const auto &block : entry->body.blocks)
+      for (const auto &stage : block.instructions)
+        if (closure && stage.result &&
+            stage.result == closure->operands.front().value)
+          moved = &stage;
+  expect(entry && moved && closure && moved->kind == MirInstructionKind::Move,
+         "the capture is the closure's moved operand");
+  if (!entry || !moved || !closure)
+    return;
+  const auto transfer =
+      native_llvm::planFreshHierarchyTransfer(mir, entry->body, *moved);
+  const native_llvm::Placement placement(mir, entry->body);
+  const auto *slot = placement.target(*moved->result);
+  expect(transfer.publishes ==
+                 native_llvm::FreshHierarchyPublication::Element &&
+             transfer.publication == closure && transfer.element == 0 && slot &&
+             slot->aggregate == *closure->result && slot->element == 0,
+         "the moved object's only publication is its closure slot");
+
+  // A capture recorded as a copy is not relocated into its slot: the move
+  // gains no placement authority and its plan fails closed.
+  MirProgram copied = mir;
+  auto &function = const_cast<MirFunctionInstance &>(
+      *copied.findFunctionInstance(entry->id));
+  for (auto &block : function.body.blocks)
+    for (auto &stage : block.instructions)
+      if (stage.operation == MirOperation::Closure &&
+          stage.result == closure->result)
+        stage.closureCaptureModes.front() = LambdaCaptureMode::Copy;
+  const MirInstruction *copiedMove = nullptr;
+  for (const auto &block : function.body.blocks)
+    for (const auto &stage : block.instructions)
+      if (stage.id == moved->id)
+        copiedMove = &stage;
+  bool refused = false;
+  try {
+    static_cast<void>(native_llvm::planFreshHierarchyTransfer(
+        copied, function.body, *copiedMove));
+  } catch (const BackendUnsupportedError &) {
+    refused = true;
+  }
+  const native_llvm::Placement copiedPlacement(copied, function.body);
+  expect(refused && !copiedPlacement.target(*moved->result),
+         "a capture that is not a move has no typed relocation authority");
+
+  // In source: a by-copy capture of the same hierarchy object.
+  const auto byCopy = planLlvmAdmission(lower(R"(
+class Root {
+public:
+  int seed;
+  Root(int seed) : seed(seed) {}
+  virtual int value() { return this.seed; }
+};
+class Leaf : public Root {
+public:
+  Leaf(int seed) : Root(seed) {}
+  int value() override { return this.seed + 1; }
+};
+int main() {
+  Leaf leaf = Leaf(4);
+  auto reader = [leaf]() -> int { return leaf.value(); };
+  return reader() - 5;
+}
+)"));
+  expect(!byCopy.admitted() &&
+             std::any_of(
+                 byCopy.requirements().begin(), byCopy.requirements().end(),
+                 [](const auto &use) {
+                   return use.required &&
+                          use.entry->key() == "Shape.PolymorphicTransfer" &&
+                          !use.implementedShape;
+                 }),
+         "a by-copy hierarchy capture stays PolymorphicTransfer");
+}
+
 void testUnstagedConstructorFieldPublicationPlan() {
   using namespace lang;
   using native_llvm::UnstagedConstructorFieldPublicationTransport;
@@ -3534,6 +3663,7 @@ int main() {
     testConcreteParameterAliases();
     testVerifiedConcretePackOwners();
     testClosureEnvironmentPlan();
+    testHierarchyCapturePlan();
     testVerifiedRestorationRelay();
     testUnstagedConstructorFieldPublicationPlan();
     testStoredFieldPublicationPlan();

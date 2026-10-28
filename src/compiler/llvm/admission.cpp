@@ -412,8 +412,8 @@ public:
                 place.root == MirPlaceRootKind::Binding &&
                 place.projections.empty()) &&
               !hierarchyContainer(place.type)) ||
-             (place.root == MirPlaceRootKind::Symbol &&
-              !programObject(place)) ||
+             (place.root == MirPlaceRootKind::Symbol && !programObject(place) &&
+              !ownedCapture(body, place)) ||
              place.foreignStorage ||
              (place.type.kind != SemanticType::Class && place.capture)))
           bodyProof.transfer = true;
@@ -680,6 +680,39 @@ public:
       }
       return Shape::NativeHierarchyPayload;
     }
+    // A closure environment holds one complete object per by-value capture
+    // and only addresses for its borrowing captures.
+    if (type.kind == SemanticType::Lambda) {
+      if (!contains(type))
+        return {};
+      const auto environment =
+          native_llvm::closureEnvironmentLayout(program, type);
+      if (!environment ||
+          environment->captureModes.size() != environment->captureTypes.size())
+        return {};
+      for (std::size_t index = 0; index < environment->captureTypes.size();
+           ++index) {
+        const auto &capture = environment->captureTypes[index];
+        if (isBorrowingCapture(environment->captureModes[index]) ||
+            !contains(capture)) {
+          if (!natives(capture))
+            return {};
+          continue;
+        }
+        const auto shape = metadata(capture);
+        if (shape != Shape::NativeStaticDispatchStorage &&
+            shape != Shape::NativeHierarchyArray &&
+            shape != Shape::NativeHierarchyPayload &&
+            shape != Shape::NativeHierarchyCapture)
+          return {};
+      }
+      try {
+        static_cast<void>(session->layouts().get(type));
+      } catch (const BackendUnsupportedError &) {
+        return {};
+      }
+      return Shape::NativeHierarchyCapture;
+    }
     // A fixed array of hierarchy storage holds complete element objects.
     if (type.kind == SemanticType::Array) {
       if (type.arguments.size() != 1 || type.arrayLengthParameterId ||
@@ -772,6 +805,8 @@ public:
                  ? Shape::NativeHierarchyArray
              : recipe.type.kind == SemanticType::Enum
                  ? Shape::NativeHierarchyPayload
+             : recipe.type.kind == SemanticType::Lambda
+                 ? Shape::NativeHierarchyCapture
                  : Shape::NativeStaticDispatchStorage;
     } catch (const BackendUnsupportedError &) {
       return {};
@@ -796,6 +831,33 @@ public:
   }
   std::optional<Shape> borrowed(const MirBody &body,
                                 const MirOperand &operand) {
+    // A borrow of a closure holding hierarchy storage names its whole
+    // environment: a local or a hidden temporary, never another closure's
+    // capture or foreign storage. Its body selects each capture itself.
+    if ((operand.kind == MirOperandKind::BorrowRead ||
+         operand.kind == MirOperandKind::BorrowWrite ||
+         operand.kind == MirOperandKind::Address) &&
+        unreference(operand.type).kind == SemanticType::Lambda) {
+      const auto &target = unreference(operand.type);
+      const auto *place = body.findPlace(operand.place);
+      if (!place || place->type != target || place->foreignStorage ||
+          place->capture || !place->projections.empty() ||
+          (place->root != MirPlaceRootKind::Binding &&
+           place->root != MirPlaceRootKind::Temporary &&
+           place->root != MirPlaceRootKind::Value))
+        return {};
+      const bool mut = operand.kind == MirOperandKind::BorrowWrite ||
+                       (operand.type.kind == SemanticType::Reference &&
+                        operand.type.referenceAccess == AccessMode::Mutable);
+      if (mut && place->access != AccessMode::Mutable)
+        return {};
+      return metadata(target);
+    }
+    if (operand.kind == MirOperandKind::Value &&
+        unreference(operand.type).kind == SemanticType::Lambda) {
+      const auto *staged = stagedBorrow(body, operand);
+      return staged ? borrowed(body, staged->operands.front()) : std::nullopt;
+    }
     // A borrow of a payload enum holding hierarchy storage names that enum;
     // a payload is selected only by its own checked extraction.
     if ((operand.kind == MirOperandKind::BorrowRead ||
@@ -858,6 +920,21 @@ public:
     } catch (const BackendUnsupportedError &) {
       return {};
     }
+  }
+  // A by-value capture selected in its closure's own body: the complete
+  // object in its environment slot, which the closure's cleanup ends. A
+  // borrowing capture is an address of an object the closure does not own.
+  bool ownedCapture(const MirBody &body, const MirPlace &place) const {
+    if (body.kind != MirBodyKind::Lambda || !place.capture ||
+        place.root != MirPlaceRootKind::Symbol || place.foreignStorage)
+      return false;
+    for (const auto &lambda : program.lambdaInstances())
+      if (&lambda.body == &body)
+        return place.capture <= lambda.captureModes.size() &&
+               place.capture <= lambda.captureSymbols.size() &&
+               lambda.captureSymbols[place.capture - 1] == place.symbol &&
+               !isBorrowingCapture(lambda.captureModes[place.capture - 1]);
+    return false;
   }
   // A selected place of a payload enum: a local, field, element, parameter
   // view or extracted payload, never captured or foreign storage.
@@ -1709,6 +1786,9 @@ private:
   bool hierarchyContainer(const SemanticType &type) const {
     if (type.kind == SemanticType::Enum)
       return program.findPayloadEnum(type) != nullptr;
+    // A closure environment holds its by-value captures as complete objects.
+    if (type.kind == SemanticType::Lambda)
+      return true;
     const auto *leaf = &type;
     while (leaf->kind == SemanticType::Array && leaf->arguments.size() == 1 &&
            !leaf->arrayLengthParameterId)
@@ -2028,6 +2108,7 @@ private:
            place->root != MirPlaceRootKind::This &&
            place->root != MirPlaceRootKind::Loan && !freshTemporary(*place) &&
            !raw && !hidden && !programObject(*place) &&
+           !ownedCapture(body, *place) &&
            !(place->root == MirPlaceRootKind::Value &&
              payloadView(body, place->value))) ||
           std::any_of(place->projections.begin() + (raw ? 1 : 0),
@@ -2116,13 +2197,20 @@ private:
       return {};
     }
   }
-  // An element published in its slot of a fresh array or payload alternative.
-  static Shape elementShape(const native_llvm::Placement &placement,
+  // An element published in its slot of a fresh array, payload alternative
+  // or closure environment.
+  static Shape elementShape(const MirBody &body,
+                            const native_llvm::Placement &placement,
                             const MirInstruction &stage) {
     const auto *target =
         stage.result ? placement.target(*stage.result) : nullptr;
+    const auto *aggregate = target && target->aggregate
+                                ? body.findValue(target->aggregate)
+                                : nullptr;
     return target && target->variant ? Shape::NativeHierarchyPayload
-                                     : Shape::NativeHierarchyArray;
+           : aggregate && aggregate->info.type.kind == SemanticType::Lambda
+               ? Shape::NativeHierarchyCapture
+               : Shape::NativeHierarchyArray;
   }
   std::optional<Shape> proveOperation(MirBodyAddress address,
                                       const MirBody &body,
@@ -2182,10 +2270,13 @@ private:
       const auto storage = freshStorage(address, body, placement, stage);
       // A fresh hierarchy aggregate publishes its elements' slots in place:
       // in its final storage or, for a replacing value, in its own storage.
+      // A closure may also publish into a by-value argument's prepared storage.
       if (native_llvm::isFreshHierarchyAggregate(program, stage) &&
           (storage == native_llvm::FreshObjectStorage::Local ||
            storage == native_llvm::FreshObjectStorage::Element ||
-           storage == native_llvm::FreshObjectStorage::Temporary))
+           storage == native_llvm::FreshObjectStorage::Temporary ||
+           (storage == native_llvm::FreshObjectStorage::Argument &&
+            stage.operation == MirOperation::Closure)))
         return metadata(stage.info.type);
       if (stage.kind == MirInstructionKind::Construct && storage) {
         if (!metadata(stage.info.type))
@@ -2205,7 +2296,7 @@ private:
         return *storage == native_llvm::FreshObjectStorage::Local
                    ? Shape::NativeStaticDispatchStorage
                : *storage == native_llvm::FreshObjectStorage::Element
-                   ? elementShape(placement, stage)
+                   ? elementShape(body, placement, stage)
                    : Shape::NativeFreshHierarchyPublication;
       }
       if (stage.kind == MirInstructionKind::Initialize &&
@@ -2215,6 +2306,8 @@ private:
                    ? Shape::NativeHierarchyArray
                : stage.operands.front().type.kind == SemanticType::Enum
                    ? Shape::NativeHierarchyPayload
+               : stage.operands.front().type.kind == SemanticType::Lambda
+                   ? Shape::NativeHierarchyCapture
                    : Shape::NativeStaticDispatchStorage;
       if (stage.kind == MirInstructionKind::InitializeBase &&
           address.kind == MirBodyKind::Constructor) {
@@ -2394,6 +2487,17 @@ private:
         }
         return borrowed(body, stage.operands.front());
       }
+      // Invoking a closure holding hierarchy storage borrows its whole
+      // environment; the closure body proves its own capture accesses.
+      if (stage.kind == MirInstructionKind::Call && stage.receiver &&
+          stage.lambdaTarget && !stage.functionTarget &&
+          stage.callableInvocation &&
+          *stage.callableInvocation != CallableInvocationCapability::Once &&
+          unreference(stage.receiver->type).kind == SemanticType::Lambda &&
+          contains(unreference(stage.receiver->type)))
+        return borrowed(body, *stage.receiver)
+                   ? std::optional(Shape::NativeHierarchyCapture)
+                   : std::nullopt;
       if (stage.kind == MirInstructionKind::Call && stage.receiver &&
           (borrowedUse(body, *stage.receiver) ||
            (stage.functionTarget &&
@@ -2466,7 +2570,7 @@ private:
       if (stage.kind == MirInstructionKind::Call && storage &&
           metadata(stage.info.type))
         return storage == native_llvm::FreshObjectStorage::Element
-                   ? elementShape(placement, stage)
+                   ? elementShape(body, placement, stage)
                    : Shape::NativeFreshHierarchyPublication;
     } catch (const BackendUnsupportedError &) {
     }
@@ -3452,9 +3556,13 @@ public:
       if (const auto *storage = program.findThreadLocalStorage(body->owner))
         if (nativeValue(storage->type))
           return Shape::NativeThreadStorage;
+    // A closure holding hierarchy storage receives its environment as one
+    // complete object whose by-value captures it selects in place.
     if (body && body->kind == MirBodyKind::Lambda)
       if (const auto *lambda = program.findLambda(body->owner))
-        return classShape(lambda->type);
+        return dispatchProofs.contains(lambda->type)
+                   ? dispatchProofs.metadata(lambda->type)
+                   : classShape(lambda->type);
     const auto *owner = bodyClass();
     if (owner && dispatchProofs.contains(owner->type)) {
       const auto *proof = body ? dispatchProofs.body(*body) : nullptr;
@@ -4916,7 +5024,7 @@ public:
               stage.info.type == SemanticType::Char;
           add(stage.operation,
               native_llvm::nativeCCallbackStageContract(program, nativeTarget,
-                                                       mir, stage)
+                                                        mir, stage)
                   ? std::optional(Shape::NativeCCallback)
               : stage.operation == MirOperation::PayloadConstruct ||
                       stage.operation == MirOperation::PayloadExtract
@@ -4944,6 +5052,10 @@ public:
               : textIndex        ? std::optional(Shape::CountedText)
               : referenceAddress ? std::optional(Shape::PassiveReference)
               : arrayAddress     ? std::optional(Shape::CheckedArrayProjection)
+              : stage.operation == MirOperation::Closure &&
+                      dispatchProofs.related(stage.info.type)
+                  ? (dispatchOperation ? dispatchOperation->shape
+                                       : std::nullopt)
               : stage.operation == MirOperation::Closure ||
                       stage.operation == MirOperation::FunctionItem
                   ? classShape(stage.info.type)
