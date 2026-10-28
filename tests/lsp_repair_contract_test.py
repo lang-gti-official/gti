@@ -73,7 +73,8 @@ def run(executable, root):
         diagnostic = next(d for d in diagnostics if d["code"] == code)
         assert diagnostic["data"]["repairSnapshot"]
         assert all(f["applicability"] == "requiresReview" for f in diagnostic["data"]["fixes"])
-        assert actions(diagnostic, automatic=True) == [], "review alternative auto-offered"
+        discovered = actions(diagnostic, automatic=True)
+        assert len(discovered) == 1 and discovered[0]["isPreferred"] is False, discovered
         offered = actions(diagnostic)
         assert len(offered) == 1 and offered[0]["isPreferred"] is False, offered
         changed = apply_action(offered[0], uri, version, source)
@@ -124,7 +125,8 @@ def run(executable, root):
         assert len({f["repairId"] for f in diagnostic["data"]["fixes"]}) == 2
         for action in offered:
             assert len(action["edit"]["documentChanges"][0]["edits"]) == 1
-        assert actions(diagnostic, automatic=True) == []
+        discovered = actions(diagnostic, automatic=True)
+        assert len(discovered) == 2 and all(not item["isPreferred"] for item in discovered), discovered
         for index in range(2):
             diagnostic = next(d for d in change(source) if d.get("data", {}).get("fixes"))
             changed = apply_action(actions(diagnostic)[index], uri, version, source)

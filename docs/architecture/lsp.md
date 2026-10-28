@@ -1030,8 +1030,11 @@ Compiler diagnostic tags are published only when the client's negotiated
 unnecessary-`mut` and unused-unsafe warnings use `Unnecessary`. Quick-fix
 applicability is compiler-owned and distinct from preference. Unannotated fixes,
 including unused-`mut` removal and `[[discard]]` insertion, require review:
-they remain manually invocable but are not preferred or returned for automatic
-triggers. Only a producer-proven `MachineApplicable` group may retain preference.
+they remain discoverable and manually invocable but are not preferred.
+An LSP `Automatic` trigger requests action discovery (for example, a lightbulb
+after a selection change), not automatic application, so it does not hide
+review-required alternatives. Only a producer-proven `MachineApplicable` group
+may retain preference. See the [LSP code-action contract](https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/lsp/3.18/language/codeAction.md).
 Selected mutable-reference constructor arguments count as mutable uses in the
 compiler. Changing a constructor from read-only to mutable-reference removes
 the obsolete warning and its quick fix; an old diagnostic cannot remove a

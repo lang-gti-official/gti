@@ -3212,9 +3212,9 @@ private:
               const bool machineApplicable =
                   fix.fix.applicability ==
                   lang::RepairApplicability::MachineApplicable;
-              if (!machineApplicable &&
-                  integerMember(context, "triggerKind") == 2)
-                continue;
+              // Automatic triggers discover actions for lightbulbs; they do
+              // not apply edits. Review alternatives remain discoverable but
+              // cannot become preferred automatic-fix candidates below.
               const auto target = documents.find(fix.uri);
               if (target == documents.end() || target->second != fix.source) {
                 continue;

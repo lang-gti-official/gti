@@ -86,7 +86,8 @@ def main():
             obsolete = valid.replace("unsafe int32_t", "[[unsafe]] int32_t")
             migration = next(d for d in change(obsolete, 3) if d["code"] == "GTI-P0001")
             assert [fix["applicability"] for fix in migration["data"]["fixes"]] == ["requiresReview"]
-            assert not action_for(migration, 30, automatic=True), "unsafe migration requires explicit review"
+            discovered = action_for(migration, 30, automatic=True)
+            assert len(discovered) == 1 and discovered[0]["isPreferred"] is False, discovered
             actions = action_for(migration, 4)
             assert len(actions) == 1 and actions[0]["isPreferred"] is False, actions
             edit = actions[0]["edit"]["documentChanges"][0]
@@ -106,7 +107,8 @@ def main():
             assert warning["range"] == {"start": lsp_position(unused, offset),
                                         "end": lsp_position(unused, offset + 6)}, warning
             assert [fix["applicability"] for fix in warning["data"]["fixes"]] == ["requiresReview"]
-            assert not action_for(warning, 31, automatic=True), "unsafe removal requires explicit review"
+            discovered = action_for(warning, 31, automatic=True)
+            assert len(discovered) == 1 and discovered[0]["isPreferred"] is False, discovered
             actions = action_for(warning, 6)
             assert len(actions) == 1 and actions[0]["isPreferred"] is False, actions
             edit = actions[0]["edit"]["documentChanges"][0]
@@ -118,7 +120,8 @@ def main():
             adjacent = valid.replace("unsafe int32_t", "[[unsafe]]int32_t")
             migration = next(d for d in change(adjacent, 7) if d["code"] == "GTI-P0001")
             assert [fix["applicability"] for fix in migration["data"]["fixes"]] == ["requiresReview"]
-            assert not action_for(migration, 32, automatic=True), "unspaced migration requires explicit review"
+            discovered = action_for(migration, 32, automatic=True)
+            assert len(discovered) == 1 and discovered[0]["isPreferred"] is False, discovered
             actions = action_for(migration, 9)
             assert len(actions) == 1 and actions[0]["isPreferred"] is False, actions
             edit = actions[0]["edit"]["documentChanges"][0]

@@ -67,7 +67,8 @@ def main():
                                       "end": lsp_position(misplaced, keyword + 6)}, error
 
             assert [fix["applicability"] for fix in error["data"]["fixes"]] == ["requiresReview"]
-            assert not action_for(error, 6, automatic=True), "export repair requires explicit review"
+            discovered = action_for(error, 6, automatic=True)
+            assert len(discovered) == 1 and discovered[0]["isPreferred"] is False, discovered
             actions = action_for(error, 2)
             assert len(actions) == 1 and actions[0]["isPreferred"] is False, actions
             edit = actions[0]["edit"]["documentChanges"][0]
