@@ -25,6 +25,12 @@ inline constexpr unsigned executionAbiVersion = 2;
 [[nodiscard]] std::unique_ptr<llvm::TargetMachine>
 makeMachine(const TargetInfo &target, LlvmBackendOptions options);
 
+// The processor whose costs guide optimization and scheduling, without
+// enabling any instruction beyond the machine's generic feature baseline.
+// Empty means the machine's own CPU. macOS arm64 tunes for Apple M1, the
+// platform C++ compiler's default and the oldest Apple silicon macOS runs on.
+[[nodiscard]] std::string_view tuneCpu(const TargetInfo &target);
+
 class Session final {
 public:
   explicit Session(VerifiedLoweredProgram program, LlvmBackendOptions options);

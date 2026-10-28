@@ -6855,6 +6855,12 @@ compiler on macOS arm64; it does not claim Linux or Windows execution.
 `testOwnershipAndMissingIncludeDiagnostics` covers exact move origins, branch
 joins, reinitialization, user-defined projected owners, restored receiver
 fields, shadowing, and the deterministic four-origin bound. It also checks
+explicit omission reporting and repeated-join bounds at the producer. The
+lookup-recovery cases retain independent invalid pointer offsets/pointees and
+both undefined operands, reject executable generation, and clear the cause
+after a repaired snapshot. `diagnostic_explanations` checks the same root and
+independent-error distinction through CLI and successive LSP overlays.
+The suite also checks
 straight-line last-use ending against later-use conflicts, resource-bound
 mutex guards and lexical release, ordinary/read-only-reference/array/capture
 mutation causes, concurrent-global policy, constexpr advice, and unavailable
@@ -6871,6 +6877,15 @@ a stale action. `lsp_protocol` additionally checks the later required statement
 for an owner-dependent span. The architecture and LLVM-adoption documents
 record the private terminal-width boundary; public diagnostic types do not
 gain terminal- or LLVM-specific fields.
+
+`lsp_repair_groups` exercises the production adapter's atomic groups, alternative
+separation, all-or-nothing rejection, source/range/Unicode boundaries,
+applicability and snapshot identity. `lsp_repair_contract` applies discard and
+include alternatives, reanalyzes them, and checks idempotence, stale same-text
+versions, CRLF/Unicode, macro call sites, and ownership/mutability negatives.
+Existing discard/include/export/unsafe protocol checks retain manual repairs
+without assuming that preference proves machine applicability. These focused
+checks cover the first Q-DIAG-06 slice, not all planned repair producers.
 
 The 0.368.1 all-target Release build passes on macOS arm64 with AppleClang 21
 and LLVM 22.1.8. The full 404-test run initially passes 399 checks. The two

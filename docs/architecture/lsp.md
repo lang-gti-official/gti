@@ -1027,18 +1027,40 @@ an action on the replacement source. Terminal display-cell expansion never
 enters LSP messages or UTF-16 ranges.
 Compiler diagnostic tags are published only when the client's negotiated
 `tagSupport.valueSet` admits that exact LSP tag; the current unreachable-code,
-unnecessary-`mut` and unused-unsafe warnings use `Unnecessary`. Quick-fix preference is
-compiler-owned per fix. Removing an unnecessary local `mut` is preferred,
-whereas inserting `[[discard]]` for an ignored result is deliberately
-non-preferred because using the value may be the intended repair.
+unnecessary-`mut` and unused-unsafe warnings use `Unnecessary`. Quick-fix
+applicability is compiler-owned and distinct from preference. Unannotated fixes,
+including unused-`mut` removal and `[[discard]]` insertion, require review:
+they remain discoverable and manually invocable but are not preferred.
+An LSP `Automatic` trigger requests action discovery (for example, a lightbulb
+after a selection change), not automatic application, so it does not hide
+review-required alternatives. Only a producer-proven `MachineApplicable` group
+may retain preference. See the [LSP code-action contract](https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/lsp/3.18/language/codeAction.md).
 Selected mutable-reference constructor arguments count as mutable uses in the
 compiler. Changing a constructor from read-only to mutable-reference removes
 the obsolete warning and its quick fix; an old diagnostic cannot remove a
 now-required `mut` in the new document generation.
 When the client supports literal quick-fix actions, a diagnostic carrying at
-least one current structured fix appends `(fix available)` to its LSP-facing
+least one structurally valid repair group appends `(fix available)` to its LSP-facing
 message. The compiler diagnostic text remains unchanged, and clients without
 that action capability are not promised an unavailable editor operation.
+
+Equal nonempty repair IDs group edits atomically; different IDs and legacy
+singletons remain alternatives. This first profile supports one open target
+document per group. It rejects unknown or inconsistent source text, cross-file
+groups, invalid/reversed ranges, UTF-8/CRLF splits, overlaps, ambiguous touching
+insertions, no-op members, incomplete suggestions and mixed applicability.
+No fix-all operation is offered. Full captured text must match the target's
+current overlay; versioned `documentChanges` carry the live document version.
+The originating root and requested document must both have current snapshots.
+
+For clients negotiating diagnostic `dataSupport`, repair-bearing diagnostics
+carry `repairSnapshot` (root URI plus analysis generation), `repairId` and
+applicability. Echoed stale generations cannot authorize an edit, even if the
+text changed back to identical bytes. Clients without diagnostic data retain
+the current-source manual path; clients without `documentChanges` cannot enforce
+a version at application time. Neither fallback promises closed-file or
+cross-document transactions. Structural group validity is not a proof that an
+intent-changing suggestion should be applied automatically.
 When several open roots diagnose the same dependency span, publication merges
 their related information instead of selecting one root arbitrarily; distinct
 include and instantiation locations therefore remain visible on the one

@@ -141,6 +141,10 @@ std::unique_ptr<llvm::TargetMachine> makeMachine(const TargetInfo &target,
   return machine;
 }
 
+std::string_view tuneCpu(const TargetInfo &target) {
+  return target.os == "macos" && target.arch == "arm64" ? "apple-m1" : "";
+}
+
 void verifyTargetLayout(const TargetInfo &target,
                         const llvm::DataLayout &layout,
                         llvm::LLVMContext &context) {
@@ -334,6 +338,14 @@ BackendArtifact Session::emitObject() {
     instrumentUndefinedMemory(module_);
     verify();
   }
+  // Tuning changes only cost-model and scheduling choices. Features, and so
+  // the instructions a program may execute, stay at the machine baseline:
+  // Apple M1's LSE atomics measured slower than the baseline sequences for
+  // GTI's uncontended scalar atomics.
+  if (const auto tune = tuneCpu(program().target()); !tune.empty())
+    for (auto &function : module_)
+      if (!function.isDeclaration() && !function.hasFnAttribute("tune-cpu"))
+        function.addFnAttr("tune-cpu", tune);
   llvm::LoopAnalysisManager loops;
   llvm::FunctionAnalysisManager functions;
   llvm::CGSCCAnalysisManager cgscc;

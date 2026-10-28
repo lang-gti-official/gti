@@ -2155,7 +2155,9 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     return lowered_detail::verifyLoweredProgramContents(lowered);
   }();
   if (build.issues.empty()) {
-    lowered.constructionSeal_ = constructionSeal(lowered);
+    if (loweredProgramSealValidation()) {
+      lowered.constructionSeal_ = constructionSeal(lowered);
+    }
     build.program.emplace(std::move(lowered));
   }
   return build;

@@ -7086,6 +7086,21 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
              type.arguments.size() == 1 &&
              type.arguments.front() != SemanticType::Void;
     };
+    // Only the unknown operand's diagnosed failure is dependent. An invalid
+    // known pointee (void or opaque) still needs its independent diagnostic.
+    // Incomplete/deferred Unknown types have no root identity.
+    if (validPointer(leftType) || validPointer(rightType)) {
+      for (const auto *operand : {expr.left().get(), expr.right().get()}) {
+        const auto cause = requestSession.recoveryCauses.find(operand);
+        const auto *info = semanticModel.findExpression(*operand);
+        if (cause != requestSession.recoveryCauses.end() && info != nullptr &&
+            info->type == SemanticType::Unknown) {
+          requestSession.recoveryCauses.insert_or_assign(&expr, cause->second);
+          currentType = SemanticType::Unknown;
+          return;
+        }
+      }
+    }
     if (expr.oper().kind == TokenKind::PLUS) {
       if (validPointer(leftType) && isInteger(rightType)) {
         requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic, expr.oper(),
@@ -9443,6 +9458,12 @@ auto SemanticVisitor::Impl::visitGroupingExpr(const Grouping &expr) -> void {
     const ResultUseScope use(*this, expr.expression().get(),
                              resultUseFor(expr));
     currentType = analyze(expr.expression());
+    if (currentType == SemanticType::Unknown) {
+      const auto cause =
+          requestSession.recoveryCauses.find(expr.expression().get());
+      if (cause != requestSession.recoveryCauses.end())
+        requestSession.recoveryCauses.insert_or_assign(&expr, cause->second);
+    }
   }
   if (expr.unsafeKeyword())
     leaveUnsafeRegion();
@@ -11905,9 +11926,16 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
              "GTI-S2001");
       diagnostics.back().missingIncludeName = expr.name().lexeme;
     }
+    requestSession.recoveryCauses.insert_or_assign(
+        &expr,
+        std::make_shared<const SemanticRecoveryCause>(SemanticRecoveryCause{
+            diagnostics.back().primary, diagnostics.back().code}));
     currentType = SemanticType::Unknown;
     return;
   }
+  if (symbol->type == SemanticType::Unknown && symbol->recoveryCause)
+    requestSession.recoveryCauses.insert_or_assign(&expr,
+                                                   symbol->recoveryCause);
   if (currentProgramEffectOwner.kind == ProgramEffectOwnerKind::Initializer &&
       isThreadLocalStorage(currentProgramEffectOwner.id) &&
       (symbol->bindingKind == SemanticBindingKind::LocalVariable ||
@@ -15062,6 +15090,13 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
     }
   }
   if (auto *target = resolveMutable(declaration.name())) {
+    target->recoveryCause.reset();
+    if (inferredType == SemanticType::Unknown && declaration.initializer()) {
+      const auto cause =
+          requestSession.recoveryCauses.find(declaration.initializer().get());
+      if (cause != requestSession.recoveryCauses.end())
+        target->recoveryCause = cause->second;
+    }
     target->rawPointerOrigins = rawOrigins;
     target->rawPointerFields = rawFields;
     if (local && target->type.kind != SemanticType::Reference &&

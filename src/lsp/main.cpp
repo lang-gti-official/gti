@@ -220,6 +220,7 @@ struct LspFixIt {
   lang::FixIt fix;
   std::string uri;
   std::string source;
+  bool sourceKnown = false;
 };
 
 struct LspDiagnostic {
@@ -228,14 +229,91 @@ struct LspDiagnostic {
   std::string source;
   std::vector<LspRelatedDiagnostic> related;
   std::vector<LspFixIt> fixes;
+  std::string repairSnapshot;
 };
 
 struct CodeActionCandidate {
   LspDiagnostic diagnostic;
-  LspFixIt fix;
+  std::vector<LspFixIt> fixes;
   std::optional<std::int64_t> version;
   bool preferred = false;
 };
+
+std::string repairIdentity(const LspFixIt &fix, std::size_t index) {
+  return fix.fix.repairId.empty() ? "singleton:" + std::to_string(index)
+                                  : "group:" + fix.fix.repairId;
+}
+
+std::string_view applicabilityName(lang::RepairApplicability applicability) {
+  switch (applicability) {
+  case lang::RepairApplicability::MachineApplicable:
+    return "machineApplicable";
+  case lang::RepairApplicability::RequiresReview:
+    return "requiresReview";
+  case lang::RepairApplicability::Incomplete:
+    return "incomplete";
+  }
+  return "incomplete";
+}
+
+// This first profile is single-document and all-or-nothing. Source equality
+// and versions are checked again against live overlays before emitting edits.
+bool validRepairGroup(const std::vector<LspFixIt> &fixes) {
+  if (fixes.empty())
+    return false;
+  const auto boundary = [](std::string_view text, std::size_t offset) {
+    return offset <= text.size() &&
+           (offset == text.size() ||
+            (static_cast<unsigned char>(text[offset]) & 0xc0U) != 0x80U) &&
+           !(offset > 0 && offset < text.size() && text[offset - 1] == '\r' &&
+             text[offset] == '\n');
+  };
+  for (std::size_t i = 0; i < fixes.size(); ++i) {
+    const auto &edit = fixes[i];
+    const auto &span = edit.fix.span;
+    if (!edit.sourceKnown || edit.uri != fixes.front().uri ||
+        edit.source != fixes.front().source ||
+        edit.fix.applicability == lang::RepairApplicability::Incomplete ||
+        edit.fix.applicability != fixes.front().fix.applicability ||
+        span.start > span.end || !boundary(edit.source, span.start) ||
+        !boundary(edit.source, span.end) ||
+        edit.source.substr(span.start, span.end - span.start) ==
+            edit.fix.replacement)
+      return false;
+    for (std::size_t j = 0; j < i; ++j) {
+      const auto &other = fixes[j].fix.span;
+      // Also reject insertions touching another edit: their ordering would
+      // otherwise be client-dependent, including two insertions at one byte.
+      if ((span.start < other.end && other.start < span.end) ||
+          (span.start == span.end && span.start >= other.start &&
+           span.start <= other.end) ||
+          (other.start == other.end && other.start >= span.start &&
+           other.start <= span.end))
+        return false;
+    }
+  }
+  return true;
+}
+
+std::vector<std::vector<LspFixIt>>
+repairGroups(const LspDiagnostic &diagnostic) {
+  std::vector<std::vector<LspFixIt>> groups;
+  std::unordered_map<std::string, std::size_t> indexes;
+  for (std::size_t i = 0; i < diagnostic.fixes.size(); ++i) {
+    const auto &fix = diagnostic.fixes[i];
+    const auto [entry, inserted] =
+        indexes.emplace(repairIdentity(fix, i), groups.size());
+    if (inserted)
+      groups.emplace_back();
+    groups[entry->second].push_back(fix);
+  }
+  return groups;
+}
+
+bool hasAvailableRepair(const LspDiagnostic &diagnostic) {
+  const auto groups = repairGroups(diagnostic);
+  return std::any_of(groups.begin(), groups.end(), validRepairGroup);
+}
 
 constexpr std::string_view diagnosticSource = "gti";
 std::mutex outputMutex;
@@ -782,7 +860,10 @@ LspDiagnostic convertDiagnostic(const lang::Diagnostic &diagnostic,
     result.fixes.push_back(
         {.fix = fix,
          .uri = uriForSource(fix.span.source, rootPath, rootUri),
-         .source = sourceForSpan(fix.span, sources, rootPath, rootSource)});
+         .source = sourceForSpan(fix.span, sources, rootPath, rootSource),
+         .sourceKnown = sources.find(fix.span.source) != nullptr ||
+                        fix.span.source.empty() ||
+                        fix.span.source == rootPath});
   }
   return result;
 }
@@ -835,7 +916,7 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
   }
 
   const std::string message = diagnosticMessage(
-      diagnostic, includeFixAvailability && !published.fixes.empty());
+      diagnostic, includeFixAvailability && hasAvailableRepair(published));
   result["message"] = message;
 
   JsonArray tags;
@@ -867,6 +948,8 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
   }
   if (includeData) {
     JsonObject data;
+    if (!published.repairSnapshot.empty())
+      data["repairSnapshot"] = published.repairSnapshot;
     const std::string_view phase = lang::phaseName(diagnostic.phase);
     data["phase"] = std::string(phase);
     if (!diagnostic.group.empty()) {
@@ -881,8 +964,12 @@ JsonValue diagnosticJson(const LspDiagnostic &published,
     }
     if (!published.fixes.empty()) {
       JsonArray fixes;
-      for (const LspFixIt &fix : published.fixes) {
+      for (std::size_t index = 0; index < published.fixes.size(); ++index) {
+        const LspFixIt &fix = published.fixes[index];
         fixes.push_back(JsonObject{
+            {"repairId", repairIdentity(fix, index)},
+            {"applicability",
+             std::string(applicabilityName(fix.fix.applicability))},
             {"uri", fix.uri},
             {"range", rangeJson(fix.source, fix.fix.span.start,
                                 fix.fix.span.end >= fix.fix.span.start
@@ -909,7 +996,7 @@ bool diagnosticIntersects(const LspDiagnostic &diagnostic,
 
 bool diagnosticRequested(const LspDiagnostic &diagnostic,
                          const JsonValue *requestedDiagnostics,
-                         bool includeFixAvailability) {
+                         bool includeFixAvailability, bool requireSnapshot) {
   const JsonArray *requestedValues = requestedDiagnostics != nullptr
                                          ? requestedDiagnostics->getAsArray()
                                          : nullptr;
@@ -921,6 +1008,11 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
   const Position expectedEnd =
       positionAt(diagnostic.source, diagnostic.diagnostic.primary.end);
   for (const JsonValue &requested : *requestedValues) {
+    if (requireSnapshot &&
+        (diagnostic.repairSnapshot.empty() ||
+         stringMember(member(&requested, "data"), "repairSnapshot") !=
+             diagnostic.repairSnapshot))
+      continue;
     const std::optional<LspRange> range =
         rangeMember(member(&requested, "range"));
     if (!range || !samePosition(range->start, expectedStart) ||
@@ -936,7 +1028,7 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
     if (stringMember(&requested, "message") !=
         diagnosticMessage(diagnostic.diagnostic,
                           includeFixAvailability &&
-                              !diagnostic.fixes.empty())) {
+                              hasAvailableRepair(diagnostic))) {
       continue;
     }
     return true;
@@ -950,11 +1042,11 @@ JsonValue codeActionJson(const CodeActionCandidate &candidate,
                          bool includeUnnecessaryTag,
                          bool includeDeprecatedTag) {
   const std::string title =
-      candidate.fix.fix.message.empty()
+      candidate.fixes.front().fix.message.empty()
           ? (candidate.diagnostic.diagnostic.code.empty()
                  ? "Apply suggested fix"
                  : "Apply fix for " + candidate.diagnostic.diagnostic.code)
-          : candidate.fix.fix.message;
+          : candidate.fixes.front().fix.message;
   JsonArray diagnostics;
   diagnostics.push_back(diagnosticJson(
       candidate.diagnostic, includeRelatedInformation, includeDiagnosticData,
@@ -967,17 +1059,16 @@ JsonValue codeActionJson(const CodeActionCandidate &candidate,
   }
 
   JsonArray edits;
-  edits.push_back(JsonObject{
-      {"range",
-       rangeJson(candidate.fix.source, candidate.fix.fix.span.start,
-                 candidate.fix.fix.span.end >= candidate.fix.fix.span.start
-                     ? candidate.fix.fix.span.end - candidate.fix.fix.span.start
-                     : 0)},
-      {"newText", candidate.fix.fix.replacement}});
+  for (const auto &fix : candidate.fixes) {
+    edits.push_back(
+        JsonObject{{"range", rangeJson(fix.source, fix.fix.span.start,
+                                       fix.fix.span.end - fix.fix.span.start)},
+                   {"newText", fix.fix.replacement}});
+  }
 
   JsonObject workspaceEdit;
   if (documentChanges) {
-    JsonObject textDocument{{"uri", candidate.fix.uri},
+    JsonObject textDocument{{"uri", candidate.fixes.front().uri},
                             {"version", candidate.version
                                             ? JsonValue(*candidate.version)
                                             : JsonValue(nullptr)}};
@@ -987,7 +1078,7 @@ JsonValue codeActionJson(const CodeActionCandidate &candidate,
     workspaceEdit["documentChanges"] = std::move(changes);
   } else {
     JsonObject changes;
-    changes[candidate.fix.uri] = std::move(edits);
+    changes[candidate.fixes.front().uri] = std::move(edits);
     workspaceEdit["changes"] = std::move(changes);
   }
   action["edit"] = std::move(workspaceEdit);
@@ -3099,43 +3190,63 @@ private:
                            snapshot->second.frontend != nullptr;
       if (current) {
         std::unordered_set<std::string> seen;
-        for (const auto &[_, diagnostics] : diagnosticsByRoot) {
+        for (const auto &[root, diagnostics] : diagnosticsByRoot) {
+          const auto owner = analysisSnapshots.find(root);
+          const auto ownerGeneration = analysisGenerations.find(root);
+          if (owner == analysisSnapshots.end() || !owner->second.frontend ||
+              ownerGeneration == analysisGenerations.end() ||
+              owner->second.generation != ownerGeneration->second)
+            continue;
           for (const LspDiagnostic &diagnostic : diagnostics) {
             if (diagnostic.uri != uri ||
                 diagnostic.source != document->second ||
                 !diagnosticIntersects(diagnostic, *requestedRange) ||
                 !diagnosticRequested(diagnostic, requestedDiagnostics,
-                                     codeActionLiterals)) {
+                                     codeActionLiterals, diagnosticData)) {
               continue;
             }
-            for (std::size_t index = 0; index < diagnostic.fixes.size();
-                 ++index) {
-              const LspFixIt &fix = diagnostic.fixes[index];
+            for (auto group : repairGroups(diagnostic)) {
+              if (!validRepairGroup(group))
+                continue;
+              const LspFixIt &fix = group.front();
+              const bool machineApplicable =
+                  fix.fix.applicability ==
+                  lang::RepairApplicability::MachineApplicable;
+              // Automatic triggers discover actions for lightbulbs; they do
+              // not apply edits. Review alternatives remain discoverable but
+              // cannot become preferred automatic-fix candidates below.
               const auto target = documents.find(fix.uri);
               if (target == documents.end() || target->second != fix.source) {
                 continue;
               }
-              const std::string key =
-                  diagnostic.diagnostic.code + '\n' +
-                  diagnostic.diagnostic.message + '\n' + fix.uri + '\n' +
-                  std::to_string(fix.fix.span.start) + ':' +
-                  std::to_string(fix.fix.span.end) + '\n' + fix.fix.replacement;
+              std::string key = diagnostic.diagnostic.code + '\n' +
+                                diagnostic.diagnostic.message + '\n' + fix.uri;
+              for (const auto &edit : group)
+                key += '\n' + std::to_string(edit.fix.span.start) + ':' +
+                       std::to_string(edit.fix.span.end) + ':' +
+                       std::to_string(edit.fix.replacement.size()) + ':' +
+                       edit.fix.replacement;
               if (!seen.insert(key).second) {
                 continue;
               }
               const auto targetVersion = documentVersions.find(fix.uri);
               LspDiagnostic publishedDiagnostic = diagnostic;
               useClientUrisLocked(publishedDiagnostic);
-              LspFixIt publishedFix = fix;
-              publishedFix.uri = clientUriForKeyLocked(fix.uri);
+              const bool preferred =
+                  machineApplicable &&
+                  std::all_of(group.begin(), group.end(), [](const auto &edit) {
+                    return edit.fix.preferred;
+                  });
+              for (auto &edit : group)
+                edit.uri = clientUriForKeyLocked(edit.uri);
               candidates.push_back(
                   {.diagnostic = std::move(publishedDiagnostic),
-                   .fix = std::move(publishedFix),
+                   .fixes = std::move(group),
                    .version =
                        targetVersion == documentVersions.end()
                            ? std::nullopt
                            : std::optional<std::int64_t>(targetVersion->second),
-                   .preferred = fix.fix.preferred});
+                   .preferred = preferred});
             }
           }
         }
@@ -4014,8 +4125,11 @@ private:
             affected.insert(diagnostic.uri);
           }
         }
-        for (const LspDiagnostic &diagnostic : analysis.diagnostics) {
+        for (LspDiagnostic &diagnostic : analysis.diagnostics) {
           affected.insert(diagnostic.uri);
+          if (!diagnostic.fixes.empty())
+            diagnostic.repairSnapshot =
+                request.uri + ":" + std::to_string(request.generation);
         }
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         dependenciesByRoot[request.uri] = std::move(analysis.dependencies);
@@ -4438,7 +4552,9 @@ private:
             key += '\n' + fix.uri + ':' + std::to_string(fix.fix.span.start) +
                    ':' + std::to_string(fix.fix.span.end) + ':' +
                    fix.fix.replacement + ':' + fix.fix.message + ':' +
-                   (fix.fix.preferred ? "preferred" : "nonpreferred");
+                   (fix.fix.preferred ? "preferred" : "nonpreferred") + ':' +
+                   std::string(applicabilityName(fix.fix.applicability)) + ':' +
+                   fix.fix.repairId;
           }
           const auto [found, inserted] =
               diagnosticIndexes.emplace(key, publication.diagnostics.size());

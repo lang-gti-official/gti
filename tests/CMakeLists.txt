@@ -41,6 +41,18 @@ else()
   set(GTI_LLVM_TEST_OPT "${LLVM_TOOLS_BINARY_DIR}/opt")
 endif()
 
+if(TARGET gti_lsp)
+  add_executable(gti_lsp_repair_contract_tests lsp_repair_contract_tests.cpp)
+  target_include_directories(gti_lsp_repair_contract_tests SYSTEM PRIVATE
+    ${GTI_LLVM_INCLUDE_DIRS})
+  target_link_libraries(gti_lsp_repair_contract_tests PRIVATE
+    gti_driver gti_lsp_state Threads::Threads)
+  target_compile_definitions(gti_lsp_repair_contract_tests PRIVATE
+    GTI_VERSION="${PROJECT_VERSION}"
+    GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}")
+  add_test(NAME lsp_repair_groups COMMAND gti_lsp_repair_contract_tests)
+endif()
+
 add_executable(gti_code_snippet_tests code_snippet_tests.cpp)
 target_link_libraries(gti_code_snippet_tests PRIVATE gti_compiler)
 add_test(NAME code_snippets COMMAND gti_code_snippet_tests)
@@ -5623,6 +5635,13 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(diagnostic_explanations PROPERTIES TIMEOUT 120)
     add_test(
+      NAME lsp_repair_contract
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_repair_contract_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(lsp_repair_contract PROPERTIES TIMEOUT 120)
+    add_test(
       NAME lsp_include_suggestions
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/lsp_include_suggestions_test.py"
@@ -5809,6 +5828,14 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")
+
+# Every build-tree test runs the compiler's self-checks, such as the
+# lowered-program construction seal, that ordinary compiles skip. Tests that
+# exercise a self-check also enable it explicitly, so they do not depend on
+# this inventory.
+get_property(gti_validation_tests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${gti_validation_tests} APPEND PROPERTY ENVIRONMENT
+  "GTI_COMPILER_VALIDATION=1")
 
 # Release binaries intentionally contain no source-tree resource fallback.
 # Every build-tree test runs before staging, including newly registered CLI/LSP
