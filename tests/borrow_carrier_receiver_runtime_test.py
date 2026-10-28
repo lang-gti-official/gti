@@ -16,10 +16,11 @@ import tempfile
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 CASES = (
-    ("stored_reference_receivers.gti", [], "12\n23\n22\n30\n2\n41\n512\n", True),
+    ("stored_reference_receivers.gti", [], "12\n23\n22\n30\n62\n2\n70\n2\n41\n523\n", True),
     ("synchronized_reference_fields.gti", ["--execution-profile", "concurrent"],
      "3\n56\n2\n1\n1209\n222\n1\n122\n", True),
     ("returned_confined_callables.gti", [], "123\n1231234\n3006\n13\n", False),
+    ("returned_owned_closures.gti", [], "29\n2\n", True),
 )
 
 

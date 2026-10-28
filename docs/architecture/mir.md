@@ -816,10 +816,16 @@ reaches the receiver through every stored reference on the way; behind a
 read-only stored reference, that reference's abstract entry is the parent, as
 exclusive publication requires. The alias that selects the receiver through
 the stored reference its parent entry describes is that input's path, not a
-competing sibling; every other overlapping loan still conflicts. A local value
-carrier whose stored loan keeps the compact sole-origin form does not name the
-reference field, so a borrow through that carrier's reference field is still
-rejected by verification; that frontier remains pending.
+competing sibling; every other overlapping loan still conflicts. Semantics
+records a carrier with one stored reference path as a compact sole-origin loan;
+MIR lowering names that path in the loan's designated fields when the
+reference's referent type is the loan source's type, so canonicalization
+resolves a borrow through the field to its referent rather than the carrier
+shell. A result behind one field of a mapped carrier depends only on that
+field's dependency: lowering does not copy the carrier's other owners onto it,
+and program verification expects only that dependency. A derived loan is
+contained when it lies in any place its parent protects, as a direct reborrow
+already is.
 For a composed result's additional dependencies, a projection through the exact
 reference field of a borrowed carrier retains that carrier's abstract external
 entry, not its temporary physical reference. Canonicalization keeps the formal's
@@ -2882,7 +2888,11 @@ A `MirBody` owns:
   edges. A fresh borrowing closure passed to such a parameter (`std::for_each`
   returning its visitor) carries its capture group out under the call's own
   result loan: the result must be that closure type, borrowed by value from
-  exactly that argument, as the callee's return borrow summary states. The callee must either return that exact moved binding as a single-use
+  exactly that argument, as the callee's return borrow summary states. An owned
+  parameter returned by value leaves the same way, whether its transport is
+  exact-return or an owned value: owned-value transport may carry borrowed
+  state only when that return summary names the parameter, and a mutable owned
+  parameter may use exact-return transport. The callee must either return that exact moved binding as a single-use
   result transferred out of local cleanup, or return the exact owner
   construction whose declared field and constructor initializer prove the
   corresponding parameter-to-field move. Direct result/field materialization

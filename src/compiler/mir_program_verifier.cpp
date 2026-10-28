@@ -1318,9 +1318,15 @@ ownedTransportFailure(const MirProgram &program,
         return "owned pack transport lacks its concrete element traits";
       traits = *elementTraits;
     }
+    // Borrowed state may enter an owned value only when the function's
+    // checked return summary carries it back out through that very value.
+    const bool returnedBorrows =
+        instance.returnType == callableType &&
+        instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
+        instance.returnBorrowParameter == parameter.parameterIndex;
     if (place == nullptr || (!packElement && place->type != callableType) ||
         !place->initiallyAvailable || !traits.movable ||
-        traits.containsBorrowedState)
+        (traits.containsBorrowedState && !returnedBorrows))
       return "owned value transport lacks an available owning parameter place";
     if (traits.drop == DropKind::Lexical &&
         std::count_if(
@@ -2197,12 +2203,18 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           // type, borrowed from this very argument, so it carries the same
           // capture group out under the call's own result loan, exactly as a
           // borrow-carrying class passed by value and returned does.
+          // An owned parameter that its callee returns by value, explicitly
+          // moved or not, leaves the call the same way: the transported value
+          // is the result and its borrows are the result loan's borrows.
           const bool exactReturn =
               functionTarget &&
               contract != functionTarget->callableParameters.end() &&
               contract->ownedTransport &&
-              contract->ownedTransport->kind ==
-                  CallableOwnedTransportKind::ExactReturn &&
+              (contract->ownedTransport->kind ==
+                   CallableOwnedTransportKind::ExactReturn ||
+               (contract->ownedTransport->kind ==
+                    CallableOwnedTransportKind::Value &&
+                contract->boundary == CallableBoundary::Owned)) &&
               contract->ownedTransport->destinationType ==
                   argumentInput->info.type &&
               functionTarget->returnType == argumentInput->info.type &&
@@ -2220,7 +2232,8 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               functionTarget->parameterTypes[index] !=
                   argumentInput->info.type ||
               contract == functionTarget->callableParameters.end() ||
-              contract->boundary != CallableBoundary::Confined ||
+              (contract->boundary != CallableBoundary::Confined &&
+               !exactReturn) ||
               (!exactReturn &&
                (contract->ownedTransport ||
                 functionTarget->returnType.kind == SemanticType::Reference ||
@@ -3019,6 +3032,34 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                   selected->projections.size());
           return false;
         });
+      }
+      // A place behind one of the carrier's stored reference fields depends
+      // only on that field's referent, never on the carrier's other owners.
+      // Name the selected place itself; canonicalization resolves it through
+      // the exact field to that referent.
+      if (selected != nullptr && result.size() > 1 &&
+          selected->root == MirPlaceRootKind::Binding) {
+        std::size_t prefix = 0;
+        while (prefix < selected->projections.size() &&
+               selected->projections[prefix].kind == MirProjectionKind::Field)
+          ++prefix;
+        if (prefix != 0 && prefix < selected->projections.size() &&
+            selected->projections[prefix].kind ==
+                MirProjectionKind::Dereference) {
+          const auto field = std::find_if(
+              result.begin(), result.end(), [&](const auto &dependency) {
+                return dependency.designatedFields.size() == prefix &&
+                       std::equal(dependency.designatedFields.begin(),
+                                  dependency.designatedFields.end(),
+                                  selected->projections.begin(),
+                                  [](SymbolId designated,
+                                     const MirPlaceProjection &projection) {
+                                    return projection.field == designated;
+                                  });
+              });
+          if (field != result.end())
+            return {{.source = selected->id, .access = field->access}};
+        }
       }
       return result;
     }
@@ -19615,9 +19656,12 @@ verifyMirProgramContracts(const MirProgram &program) {
                      SemanticType::Unknown ||
                  !parameter.signatures.empty() ||
                  !parameter.forwardings.empty() ||
+                 // A mutable owned value leaves as a value or as the exact
+                 // result; either way the caller receives what it owned.
                  (parameter.access != AccessMode::ReadOnly &&
                   parameter.ownedTransport->kind !=
-                      CallableOwnedTransportKind::Value)) {
+                      CallableOwnedTransportKind::Value &&
+                  !exactReturn)) {
         rejectCallableContract("owned parameter contract is invalid");
       }
       if (parameter.ownedTransport) {
