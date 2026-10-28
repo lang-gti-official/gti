@@ -2192,6 +2192,27 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           // This is a synchronous transfer of a fresh environment, not an
           // escaping owned callback. Its capture group is independently checked
           // at construction and remains live through the exact confined call.
+          // A confined callable may also return as the call's exact result,
+          // as `for_each` returns its visitor: the result is the same closure
+          // type, borrowed from this very argument, so it carries the same
+          // capture group out under the call's own result loan, exactly as a
+          // borrow-carrying class passed by value and returned does.
+          const bool exactReturn =
+              functionTarget &&
+              contract != functionTarget->callableParameters.end() &&
+              contract->ownedTransport &&
+              contract->ownedTransport->kind ==
+                  CallableOwnedTransportKind::ExactReturn &&
+              contract->ownedTransport->destinationType ==
+                  argumentInput->info.type &&
+              functionTarget->returnType == argumentInput->info.type &&
+              functionTarget->returnBorrowOrigin == BorrowOriginKind::Argument &&
+              functionTarget->returnBorrowParameter == index &&
+              instruction.result && instruction.loan &&
+              instruction.info.type == argumentInput->info.type &&
+              instruction.info.category == ValueCategory::Value &&
+              instruction.borrowOrigin == BorrowOriginKind::Argument &&
+              instruction.borrowArgument == index;
           if (!functionTarget ||
               functionTarget->definitionKind != MirDefinitionKind::Source ||
               functionTarget->linkage != LanguageLinkage::Gti ||
@@ -2200,10 +2221,11 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                   argumentInput->info.type ||
               contract == functionTarget->callableParameters.end() ||
               contract->boundary != CallableBoundary::Confined ||
-              contract->ownedTransport ||
-              functionTarget->returnType.kind == SemanticType::Reference ||
-              functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
-              instruction.info.traits.containsBorrowedState) {
+              (!exactReturn &&
+               (contract->ownedTransport ||
+                functionTarget->returnType.kind == SemanticType::Reference ||
+                functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
+                instruction.info.traits.containsBorrowedState))) {
             return verificationFailure(
                 body, owner,
                 "fresh borrowing callable transfer requires its exact confined "

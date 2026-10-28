@@ -285,6 +285,14 @@ add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_fresh_callable_borrow_tests fresh_callable_borrow_tests.cpp)
 target_link_libraries(gti_fresh_callable_borrow_tests PRIVATE gti_compiler)
 add_test(NAME fresh_callable_borrow COMMAND gti_fresh_callable_borrow_tests)
+add_executable(gti_borrow_carrier_receiver_tests borrow_carrier_receiver_tests.cpp)
+target_link_libraries(gti_borrow_carrier_receiver_tests PRIVATE gti_compiler)
+add_test(NAME borrow_carrier_receivers COMMAND gti_borrow_carrier_receiver_tests)
+add_test(NAME borrow_carrier_receivers_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/borrow_carrier_receiver_runtime_test.py"
+                 "$<TARGET_FILE:gti>")
+set_tests_properties(borrow_carrier_receivers_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_borrowing_callbacks_mir_tests borrowing_callbacks_mir_tests.cpp)
 target_link_libraries(gti_borrowing_callbacks_mir_tests PRIVATE gti_compiler)
 add_test(NAME borrowing_callbacks_mir COMMAND gti_borrowing_callbacks_mir_tests)

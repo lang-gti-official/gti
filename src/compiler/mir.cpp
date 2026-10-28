@@ -5459,13 +5459,14 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
             // independently of its shared input address. The parent retains
             // that input's actual permission and lifetime; program contracts
             // separately bind the result to the exact callee/constructor.
+            // Either parent access permits the shared input: reaching it
+            // through `mut T&` rather than `T&` grants no less. The result's
+            // own designated field is provenance, not another dependency.
             const bool publishedDependency =
-                dependency.access == AccessMode::ReadOnly &&
                 result.kind == MirLoanKind::Stored && result.lifecycleBound &&
                 !result.entry && !result.escapes && !result.twoPhase &&
                 result.access == AccessMode::Mutable &&
                 result.additionalDependencies.empty() &&
-                result.designatedFields.empty() &&
                 instruction.borrowAccess == result.access &&
                 instruction.hirValue == result.producedBy &&
                 instruction.result &&
@@ -5500,6 +5501,17 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 loanPermitsPlace(body, dependency, operandPlace, inputAccess,
                                  bindingLoans, active)) {
               calleePublishedDependency = publishedDependency;
+              // A formal carrier's alias selects this referent through the
+              // stored reference that the parent entry describes. Like a
+              // mapped field alias, it authorizes the reborrow rather than
+              // competing with it as an overlapping sibling.
+              if (operandPlace.throughLoan != 0 &&
+                  body.loans[operandPlace.throughLoan - 1].entry &&
+                  body.loans[operandPlace.throughLoan - 1].storedDependency ==
+                      parent &&
+                  active[operandPlace.throughLoan - 1] ==
+                      MirLoanFlowState::Active)
+                selectedAlias = operandPlace.throughLoan;
               return true;
             }
             if (mappedAliasDependency(operandPlace.throughLoan))
