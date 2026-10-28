@@ -508,7 +508,7 @@ Its source graph produces one whole-program backend artifact: a native object
 from LLVM, or generated C++ and one native compiler invocation from C++.
 `--backend cpp|llvm` selects the immutable executable backend. Without it the
 target's default applies, `defaultBackend(TargetInfo)`: LLVM on macOS arm64 and
-C++ elsewhere. The LLVM choice emits native objects for the admitted shapes
+Linux x86_64, C++ elsewhere. The LLVM choice emits native objects for the admitted shapes
 documented in [backend architecture](backend.md#llvm-scalar-execution).
 Unsupported required shapes report `GTI-B0003` before publication, without a
 C++ fallback. `--std` and `--keep-cpp` are C++-only: without `--backend` they
@@ -689,7 +689,7 @@ Syntax, ownership, LSP analysis, and runtime behavior are unchanged.
 may set `backend = "cpp"|"llvm"`, and an explicit command-line choice overrides
 the selected profile. With neither, C++ retention (`keep-cpp` or `--keep-cpp`)
 or an explicit `--std` selects C++, and otherwise the target's default applies:
-LLVM on macOS arm64 and C++ elsewhere. The immutable build plan carries that
+LLVM on macOS arm64 and Linux x86_64, C++ elsewhere. The immutable build plan carries that
 choice into the same executable driver used by direct mode, including parallel
 `--all` children. LLVM intermediates use `.gti.o`, never `.gti.cpp`. C++
 retention and an explicit `--std` are rejected for an explicitly selected LLVM
@@ -895,7 +895,7 @@ plan's model identity canonicalizes export rows by public symbol. Its planned
 output uses the target platform's library spelling inside a fresh immutable
 generation directory. A library build uses the normal selected-backend
 pipeline and one loaded frontend snapshot; it needs the LLVM backend, which is
-the macOS arm64 default and `--backend llvm` elsewhere. Unsupported targets,
+the default on macOS arm64 and Linux x86_64 and `--backend llvm` elsewhere. Unsupported targets,
 fallible closures and the C++ backend reject. A host
 loads the printed library path and compiles against its adjacent generated
 header. Library targets cannot be run/tested as executables.

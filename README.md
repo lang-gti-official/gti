@@ -30,8 +30,9 @@ capacity is focused on LLVM rather than maintaining feature parity in two
 backends. See [the backend policy](docs/decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25).
 
 The released compiler checks a complete GTI source graph, builds typed HIR and
-MIR, and seals a backend-neutral `LoweredProgram`. On macOS arm64 the default
-LLVM backend emits a native object directly. Other targets keep the C++ backend,
+MIR, and seals a backend-neutral `LoweredProgram`. On macOS arm64 and Linux
+x86_64 the default LLVM backend emits a native object directly. Other targets
+keep the C++ backend,
 which invokes a native C++ compiler, as their default until LLVM passes its
 promotion gates there. `--backend llvm|cpp` selects either backend on any
 target. A shape LLVM does not support yet reports `GTI-B0003`; there is no
@@ -39,7 +40,7 @@ silent fallback to C++:
 
 ```text
 source graph -> frontend -> checked AST -> typed HIR/MIR
-             -> GTI optimization -> LoweredProgram -> LLVM backend -> native object (macOS arm64 default)
+             -> GTI optimization -> LoweredProgram -> LLVM backend -> native object (macOS arm64 and Linux x86_64 default)
                                                  \-> C++ backend -> native compiler (default elsewhere)
 ```
 

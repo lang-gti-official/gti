@@ -9,6 +9,15 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.489.0 - LLVM is the default backend on Linux x86_64
+
+- Linux x86_64 now builds with the LLVM backend by default, as macOS arm64
+  already does. `--backend cpp`, a profile's `backend = "cpp"`, `--std` and
+  C++ retention still select the C++ backend. Linux arm64 and other targets
+  keep C++ as their default.
+- Release builds that bundle LLVM 20.1 also build its `clang` and `opt` so the
+  native-backend tests run against the pinned release LLVM.
+
 ## 0.488.3 - Apple M1 tuning on the native backend
 
 - On macOS arm64 the native backend now tunes optimization and scheduling for
