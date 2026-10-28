@@ -158,9 +158,14 @@ pins while preserving strict PR freshness, admin enforcement and reviews.
    for the reconciled head/base with `verify-change`. Do not automatically
    restart a full suite on every status poll, or relabel earlier results as
    current. Required/affected broad and platform gates remain mandatory.
-   For developer-automation-only changes, `verify --focused --checks-file ...`
-   runs the owning checks directly and records scope `automation`; its source
-   diff guard rejects compiler changes. Select the full/broad window normally
+   For developer-automation-only or source-only GTI stdlib changes,
+   `verify --focused --checks-file ...` runs owning checks directly and records
+   scope `automation` or `source-stdlib`. Its diff guard rejects compiler,
+   native runtime and build-system changes. Source-library checks must include
+   a named owning Python test harness or an exact-name CTest, using an optimized
+   compiler; obvious full builds and unfiltered CTest are rejected. Review the
+   actual harness scope and required evidence rather than trusting its name.
+   Select the full/broad window normally
    if the actual check workload is broad. This is separate from compiler
    component admission through `batch enroll`.
 3. Write the final PR description to a temporary file, including behaviour,
