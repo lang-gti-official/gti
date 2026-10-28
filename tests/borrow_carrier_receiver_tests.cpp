@@ -147,7 +147,7 @@ void storedReferenceReceivers() {
       }
     }
   }
-  expect(selected == 8,
+  expect(selected == 9,
          "every receiver behind a stored reference field is checked (" +
              std::to_string(selected) + ")");
 }
