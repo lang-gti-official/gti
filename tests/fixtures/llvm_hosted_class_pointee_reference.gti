@@ -1,9 +1,11 @@
 #include <std/memory>
+#include <std/atomic>
 
 mut int retired = 0;
 
 struct Referent {
   mut int value;
+  std::atomic<int> observations{0};
   std::unique_ptr<int> token;
   Referent(int value) : value(value), token(std::make_unique<int>(value)) {}
   ~Referent() { retired = retired * 10 + 1; }
@@ -47,6 +49,8 @@ int main() {
   {
     mut Owner owner{};
     Referent& read = unsafe { std::assume_ref(&owner.item, owner) };
+    read.observations.fetch_add(1);
+    if (read.observations.load() != 1) { return 6; }
     if (read.value != 42) {
       return 1;
     }

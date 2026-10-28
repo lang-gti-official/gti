@@ -62,6 +62,22 @@ def census(gti: Path, root: Path) -> dict[str, int | None]:
         for case in examples.cases(root):
             source = root / case.source
             out.unlink(missing_ok=True)
+            if source.name in examples.LLVM_ONLY_EXAMPLES:
+                examples.require_cpp_limitation(gti, source, out, env)
+                # Inventory comes from the sealed LoweredProgram, independently
+                # of target emission. Native execution remains the corpus oracle.
+                inventory = subprocess.run(
+                    [str(gti.parent / "gti_lowered_program_census"), str(root), source.name],
+                    capture_output=True, text=True, env=env, timeout=examples.CENSUS_TIMEOUT)
+                if inventory.returncode != 0:
+                    counts[source.name] = None
+                    FAILURES[source.name] = inventory.stderr
+                else:
+                    rows = inventory.stdout.splitlines()
+                    fields = rows[1].split("\t")
+                    assert fields[0] == source.name and len(rows) == 2, rows
+                    counts[source.name] = int(fields[2])
+                continue
             completed = subprocess.run(
                 examples.census_command(case, root, gti, out),
                 cwd=root,

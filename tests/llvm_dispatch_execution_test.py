@@ -96,7 +96,8 @@ CPP_LIMITATIONS = {
     "hierarchy-reference-results": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "owner-reference-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_8743748746c3906f3cb32abc5c52a3d391e4507268de72665a366361f520203d_make_unique'",
     "owner-failure-before-reference": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_1542b921ce78875e430a1cd950d1c99cce26c90908184496243024d42a33bfd9_make_unique'",
-    "shared-owner-reference": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_6c747ef376f3f4cfb185d24c782b604dd9912f48182009d7ad4f7242536225ae_make_shared'",
+    "shared-owner-reference": "wrapping atomic read-modify-write",
+    "shared-polymorphic-owners": "wrapping atomic read-modify-write",
     "inline-hierarchy-fields": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "inline-field-virtual-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "inline-field-constructor-rollback": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
@@ -2246,11 +2247,12 @@ int main() {
 """
     shared_needle = "int area(int scale) override { return this.side * this.side / scale; }"
     add("shared-polymorphic-owner-failure", shared_failure, "defined-failure",
-        expected_exit=70, failure_needle=shared_needle, endpoints=TRANSFER_ENDPOINTS)
+        expected_exit=70, failure_needle=shared_needle, endpoints=TRANSFER_ENDPOINTS,
+        cpp_limitation="wrapping atomic read-modify-write")
     add("shared-polymorphic-owner-wrong-cleanup",
         shared_failure.replace("expected_cleanup = 76;", "expected_cleanup = 77;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=shared_needle,
-        endpoints=TRANSFER_ENDPOINTS)
+        endpoints=TRANSFER_ENDPOINTS, cpp_limitation="wrapping atomic read-modify-write")
     storage = (root / SUCCESS_FILES["program-storage"]).read_text(encoding="utf-8")
     storage_marker = "// PROGRAM_STORAGE_MAIN\n"
     if storage.count(storage_marker) != 1:

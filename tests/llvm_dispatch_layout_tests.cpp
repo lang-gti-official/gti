@@ -1623,6 +1623,8 @@ int main() { Field value{}; return value.read() + owned() - 34; }
          "a rejected lambda cleanup identity publishes no artifact");
   lambdaSession.verify();
 
+  // Retained private-token cleanup machinery; public source-owner execution
+  // is covered independently by the ownership and dispatch native matrices.
   const auto hierarchyOwnerFrontend =
       Frontend().analyze("llvm-cleanup-hierarchy-owner.gti", R"(
 #include <std/memory>
@@ -1647,9 +1649,9 @@ public:
   UniqueNest() : value(std::unique_ptr<HierarchyValue>()) {}
 };
 class SharedNest {
-  std::shared_ptr<HierarchyValue> value;
+  gti_internal::shared_owner<HierarchyValue> value;
 public:
-  SharedNest() : value(std::shared_ptr<HierarchyValue>()) {}
+  SharedNest() : value(gti_internal::shared_owner_empty<HierarchyValue>()) {}
 };
 class ActiveHierarchy : public Base {
 public:
@@ -1659,7 +1661,7 @@ public:
 struct ActiveHierarchyValue { mut ActiveHierarchy value{}; };
 struct ActiveOwners {
   mut std::unique_ptr<ActiveHierarchyValue> unique = nullptr;
-  mut std::shared_ptr<ActiveHierarchyValue> shared{};
+  mut gti_internal::shared_owner<ActiveHierarchyValue> shared = gti_internal::shared_owner_empty<ActiveHierarchyValue>();
 };
 int main() {
   UniqueNest unique{}; SharedNest shared{}; ActiveOwners active{}; return 0;
@@ -4178,12 +4180,12 @@ class Item : public Second, public Parent { public: mut int extra = 25; };
 struct Items { mut Item values[2] = {}; };
 struct StaticOwners {
   mut std::unique_ptr<Items> unique = nullptr;
-  mut std::shared_ptr<Items> shared{};
+  mut gti_internal::shared_owner<Items> shared = gti_internal::shared_owner_empty<Items>();
 };
 struct Active { mut int marker = 113; ~Active() {} };
 struct Owners {
   mut std::unique_ptr<int> unique = nullptr;
-  mut std::shared_ptr<int> shared{};
+  mut gti_internal::shared_owner<int> shared = gti_internal::shared_owner_empty<int>();
   mut Active state{};
 };
 struct NonRelocatable {

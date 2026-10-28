@@ -64,6 +64,23 @@ int main() {
 '''
 
 
+SHARED_OWNER = '''#include <std/memory>
+int main() {
+  int count = gti_cost_iterations(); mut uint64_t checksum = 7;
+  gti_cost_begin();
+  for (mut int i = 0; i < count; i += 1) {
+    auto owner = std::make_shared<int>(257);
+    for (mut int j = 0; j < 10; j += 1) {
+      auto alias = owner.clone();
+      if (alias.use_count() != 2 || *alias != 257) { return 1; }
+    }
+    checksum = (checksum * 33 + uint64_t(*owner)) % 1000003;
+  }
+  return gti_cost_end(c_ulonglong(checksum), c_ulonglong(0));
+}
+'''
+
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -175,12 +192,18 @@ def main():
             print("PASS: 2 native interposition controls only; no GTI acceptance cases run")
             return
         cases = {"arithmetic": CASES["arithmetic"][1], "simd": CASES["simd"][1],
-                 "process-provider": PROVIDER, "provider-rejections": REJECTIONS}
+                 "process-provider": PROVIDER, "provider-rejections": REJECTIONS,
+                 "shared-owner": SHARED_OWNER}
         for name, body in cases.items():
             path = output / f"{name}.gti"
             path.write_text(PROTOTYPES + body)
             wanted = 0 if name == "provider-rejections" else checksum(name, args.iterations)
-            for backend, level in [("cpp", 3), *(("llvm", level) for level in range(4))]:
+            endpoints = [("cpp", 3), *(("llvm", level) for level in range(4))]
+            if name == "shared-owner":
+                # Public owning matrices separately require the exact C++
+                # unsupported diagnostic; this audit measures LLVM allocations.
+                endpoints = [("llvm", level) for level in range(4)]
+            for backend, level in endpoints:
                 binary = output / f"{name}-{backend}-O{level}"
                 report_path = binary.with_suffix(".json")
                 run([args.gti, path, "--backend", backend, f"-O{level}", "--cxx", args.cxx,
@@ -190,17 +213,20 @@ def main():
                     manifest["compiler_build"] = facts["compiler_build"]
                 assert facts["compiler_build"] == manifest["compiler_build"]
                 row = observe(binary, wanted)
-                if name == "process-provider":
+                if name == "shared-owner":
+                    assert row["posix_memalign"] == row["free"] == 2 * args.iterations, "shared owner must allocate/release exactly two regions; clones allocate nothing"
+                    assert all(row[entry] == 0 for entry in ("malloc", "calloc", "realloc")), "unexpected shared-owner allocator entry"
+                elif name == "process-provider":
                     assert row["posix_memalign"] == row["free"] == args.iterations, "production provider requests/releases were not observed exactly"
                 else:
                     assert all(row[entry] == 0 for entry in ENTRIES), "profile observed unexpected public allocator entries"
                 manifest["cases"].append({"case": name, "backend": backend, "optimization": level,
                                           "report": report_path.name, "provenance": facts, "observation": row})
-        assert len(manifest["native_controls"]) == 2 and len(manifest["cases"]) == 20
+        assert len(manifest["native_controls"]) == 2 and len(manifest["cases"]) == 24
         assert digest(args.gti) == manifest["gti_sha256"] and digest(audit) == manifest["audit_material"]["sha256"]
-        manifest["gti_acceptance"] = "20 bounded observed-entry profiles passed; capture limits apply"
+        manifest["gti_acceptance"] = "24 bounded observed-entry profiles passed; capture limits apply"
         manifest["status"] = "passed-bounded-public-entry-audit"
-        print("PASS: 2 mandatory native controls and 20 GTI public allocator-entry observations; capture limits retained")
+        print("PASS: 2 mandatory native controls and 24 GTI public allocator-entry observations; capture limits retained")
     except BaseException as error:
         manifest["status"] = "failed"
         manifest["error"] = str(error)

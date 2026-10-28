@@ -87,10 +87,7 @@ int main() {
     case Payload::empty: return 11;
   }
 
-  mut auto shared = std::make_shared<int>(31);
-  auto alias = shared.clone();
-  auto old_shared = std::exchange(shared, std::make_shared<int>(32));
-  if (*old_shared != 31 || *shared != 32 || *alias != 31) { return 12; }
+  // Shared owner exchange is covered by shared_ownership.gti (LLVM-only).
 
   auto engaged = std::exchange(optional, std::optional<std::string>());
   if (!engaged || engaged.value() != "b" || optional) { return 13; }

@@ -355,11 +355,18 @@ def main():
                 "-o", relocation])
             run(f"cpp-relocation-execute-{standard}", [relocation])
             owned = output / f"cpp-owned-pointees-{standard}"
-            run(f"cpp-owned-pointees-build-{standard}", [args.public_gti.resolve(),
+            owned.write_bytes(b"preserved")
+            limitation_name = f"cpp-owned-pointees-build-{standard}"
+            run(limitation_name, [args.public_gti.resolve(),
                 "--backend", "cpp", "--execution-profile", "concurrent",
                 "--std", standard, "-O3", root / "tests/fixtures/mutex_owned_pointees.gti",
-                "-o", owned])
-            run(f"cpp-owned-pointees-execute-{standard}", [owned])
+                "-o", owned], expected=65)
+            rejection = (evidence / (limitation_name + ".log")).read_text()
+            if ("GTI-B0003" not in rejection or
+                    "wrapping atomic read-modify-write" not in rejection or
+                    owned.read_bytes() != b"preserved"):
+                raise AssertionError("source owner C++ support boundary changed")
+            print("RECORDED C++ LIMITATION: source owners require wrapping atomics", flush=True)
 
     if args.gti:
         run("cpp-source-observer", [args.cc, "-std=c17", *flags, "-DGTI_CPP_ORACLE", "-c",

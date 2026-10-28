@@ -14,7 +14,27 @@ int32_t deposit(Account& account, int32_t amount) {
   value += amount;
   return value;
 }
+// Independent raw-lifetime client: no shared-owner policy or intrinsic.
+int raw_lifetime() {
+  mut std::detail::process_lease lease{};
+  unsafe {
+    auto result = lease.allocate(std::layout_of<Account>());
+    if (!result) { return 5; }
+    auto region = result.value();
+    lease.attach(region);
+    Account* object = std::typed_address<Account>(region.address);
+    std::construct_at(object, int32_t(3), int32_t(30));
+    mut int32_t observed = 0;
+    {
+      Account& account = std::assume_ref(object, lease);
+      observed = deposit(account, 2);
+    }
+    std::destroy_at(object);
+    return observed == 32 ? 0 : 6;
+  }
+}
 int main() {
+  if (raw_lifetime() != 0) { return 5; }
   auto shared = std::make_shared<Account>(1, 10);
   auto other = shared.clone();
   if (deposit(*other, 5) != 15) { return 1; }

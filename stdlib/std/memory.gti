@@ -1882,7 +1882,7 @@ public:
 
 /// Constructs one owned object and its strong-reference control block.
 ///
-/// Construction uses the same scalar/class family as make_unique. Infallible
+/// Construction requires a storage element and a valid construct_at call. Infallible
 /// object or control-block exhaustion reports allocation failure and aborts
 /// without cleanup. Ordinary constructor failure retains verified rollback.
 /// This factory is not recoverable.

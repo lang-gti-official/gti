@@ -53,17 +53,16 @@ def main() -> int:
                     "-o",
                     str(binary),
                 ]
-                built = run(command)
-                assert built.returncode == 0, (
-                    label,
-                    built.stdout,
-                    built.stderr,
-                )
-                generated = binary.with_suffix(".gti.cpp").read_text(
-                    encoding="utf-8"
-                )
-                assert "destroy_value_with_failure" in generated
-                assert "if (!success && unwinding)" in generated
+                binary.write_bytes(b"preserved")
+                rejected = run(command)
+                assert (rejected.returncode == 65 and "GTI-B0003" in rejected.stderr
+                        and "wrapping atomic read-modify-write" in rejected.stderr
+                        and binary.read_bytes() == b"preserved"), rejected
+                print(f"RECORDED C++ LIMITATION {label}: wrapping atomics", flush=True)
+                built = run([str(compiler), str(source), "--backend", "llvm",
+                             "--execution-profile", "concurrent", f"-{optimization}",
+                             "-o", str(binary)])
+                assert built.returncode == 0, (label, built.stdout, built.stderr)
                 for arguments, expected in cases:
                     executed = run([str(binary), *arguments])
                     actual = (
@@ -72,7 +71,7 @@ def main() -> int:
                         executed.stderr,
                     )
                     assert actual == expected, (label, arguments, actual, expected)
-                print(f"mutex cleanup: {label} passed", flush=True)
+                print(f"mutex cleanup: LLVM {optimization} (C++ {standard} rejected) passed", flush=True)
     return 0
 
 

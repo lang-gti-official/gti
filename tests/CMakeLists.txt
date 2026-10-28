@@ -560,6 +560,8 @@ add_test(NAME driver_library_boundary COMMAND gti_driver_library_smoke)
 add_executable("gti_driver_tests" "${PROJECT_SOURCE_DIR}/tests/driver_tests.cpp")
 target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
 add_test(NAME driver_pipeline COMMAND gti_driver_tests)
+add_executable(gti_llvm_instrumented_source llvm_instrumented_source.cpp)
+target_link_libraries(gti_llvm_instrumented_source PRIVATE gti_driver)
 add_executable(gti_llvm_cache_tests llvm_cache_tests.cpp)
 target_link_libraries(gti_llvm_cache_tests PRIVATE gti_driver)
 target_compile_definitions(gti_llvm_cache_tests PRIVATE
@@ -581,6 +583,11 @@ endif()
 set(GTI_LLVM_RUNTIME_TEST_COMPILER "" CACHE FILEPATH
     "Matching Clang++ for the native runtime identity fixture")
 if(GTI_LLVM_RUNTIME_TEST_COMPILER)
+  add_test(NAME shared_ownership_instrumented
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/shared_ownership_instrumented_test.py"
+            "$<TARGET_FILE:gti_llvm_instrumented_source>" "${PROJECT_SOURCE_DIR}"
+            "${GTI_LLVM_RUNTIME_TEST_COMPILER}")
+  set_tests_properties(shared_ownership_instrumented PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_native_runtime_identity
     COMMAND gti_llvm_cache_tests --runtime-probe "${GTI_LLVM_RUNTIME_TEST_COMPILER}")
   set_tests_properties(llvm_native_runtime_identity PROPERTIES TIMEOUT 180)

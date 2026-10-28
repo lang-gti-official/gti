@@ -277,6 +277,17 @@ def main():
             for endpoint in endpoints:
                 if name in NATIVE_ONLY and endpoint.backend == "cpp":
                     continue
+                if name in {"shared", "empty-shared"} and endpoint.backend == "cpp":
+                    destination = work / f"unsupported-{name}-{endpoint.standard}"
+                    destination.write_bytes(b"preserved")
+                    rejected = subprocess.run([str(gti), str(source), "--backend", "cpp",
+                        "--std", endpoint.standard, "-O3", "-o", str(destination)],
+                        capture_output=True, text=True, env=env, timeout=120)
+                    assert (rejected.returncode == 65 and "GTI-B0003" in rejected.stderr
+                            and "wrapping atomic read-modify-write" in rejected.stderr
+                            and destination.read_bytes() == b"preserved"), rejected
+                    print(f"RECORDED C++ LIMITATION {name}: wrapping atomics", flush=True)
+                    continue
                 result = execute(gti, root, work / f"{name}-{endpoint}", source, endpoint, env)
                 if result.error or result.observable != (0, EXPECTED_STDOUT.get(name, ""), ""):
                     raise AssertionError(f"{name} {endpoint}: {result}")
@@ -288,7 +299,7 @@ def main():
             if any(value != observed[0] for value in observed):
                 raise AssertionError(f"memory observable drift: {name}: {observed}")
             coverage = ("native LLVM O0-O3 source-contract oracle (known C++ representation gap)"
-                        if name in NATIVE_ONLY else "C++20/23O3 and native LLVM O0-O3")
+                        if name in NATIVE_ONLY or name in {"shared", "empty-shared"} else "C++20/23O3 and native LLVM O0-O3")
             print(f"{name}: {coverage} passed", flush=True)
         for name, (filename, code, marker) in FAILURES.items():
             if selected and selected != name:

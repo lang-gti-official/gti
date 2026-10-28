@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from backend_execution import Endpoint, execute
+from backend_execution import Endpoint, execute, require_cpp_wrapping_rejection
 from llvm_evidence_manifest import build_manifest
 
 
@@ -93,6 +93,9 @@ def run_case(
     source = root / "tests" / "fixtures" / f"{name}.gti"
     results = []
     for endpoint in endpoints:
+        if name == "llvm_callable_owned_composition" and endpoint.backend == "cpp":
+            require_cpp_wrapping_rejection(gti, source, work / "unsupported-composition", env, endpoint)
+            continue
         result = execute(
             gti,
             root,

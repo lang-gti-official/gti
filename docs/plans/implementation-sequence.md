@@ -8933,6 +8933,19 @@ prerequisite checkpoints as full acceptance.
 
 ### L-OWN-01: Shared And Weak Ownership
 
+- **Source replacement revision (2026-10-28, validation in progress):** strong
+  ownership now uses an ordinary two-pointer source handle and source control
+  block, enabled by general conditional capability predicates, scalar atomics
+  in both profiles without host threading, and explicit wrapping atomic RMW.
+  The owner approved LLVM-only wrapping operations and the resulting C++ shared
+  ownership support regression. General raw layout/lifetime, allocation leases,
+  checked borrowing, function pointers and defined failure remain compiler
+  mechanisms. Private strong-owner operations are retained but no longer used
+  by public shared ownership. Full platform, failure, corpus and performance
+  acceptance remains required before delivery. A separate weak-owner prototype
+  passed clone/lock/expiry and borrow-rejection probes; production weak ownership
+  remains unimplemented and needs race, overflow, rollback and performance gates.
+
 - **State/role:** the requested strong-ownership and borrowing-composition
   slice is implemented in 0.354.0 (2026-09-30), with explicit cloning and
   read-only shared access. Custom copy and move constructor bodies remain
