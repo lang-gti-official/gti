@@ -5787,6 +5787,48 @@ private:
     return 0;
   }
 
+  // A binding-rooted place behind a stored reference field of its carrier
+  // (`holder.box`, `teller.account.balance`) lies in that field's external
+  // referent, as a `this` field place does. Returns the weakest access of the
+  // stored references it crosses, or nothing when it crosses none. A carrier
+  // alias's own access never reaches through a read-only stored reference.
+  [[nodiscard]] std::optional<AccessMode>
+  storedReferenceAccessFor(const MirPlace &place) const {
+    if (place.root != MirPlaceRootKind::Binding)
+      return std::nullopt;
+    const HirBinding *binding = findBinding(place.binding);
+    if (binding == nullptr)
+      return std::nullopt;
+    SemanticType type = binding->info.type;
+    bool storedReference = false;
+    std::optional<AccessMode> crossed;
+    for (const auto &projection : place.projections) {
+      if (projection.kind == MirProjectionKind::Dereference) {
+        if (type.kind != SemanticType::Reference ||
+            type.arguments.size() != 1)
+          return std::nullopt;
+        if (storedReference)
+          crossed = !crossed || *crossed == AccessMode::Mutable
+                        ? type.referenceAccess
+                        : AccessMode::ReadOnly;
+        // Copy the referent first: assigning a type from its own argument
+        // would read storage that the assignment is replacing.
+        SemanticType referent = type.arguments.front();
+        type = std::move(referent);
+        storedReference = false;
+        continue;
+      }
+      if (projection.kind != MirProjectionKind::Field)
+        return std::nullopt;
+      const auto field = borrowedFieldType(type, projection.field);
+      if (!field)
+        return std::nullopt;
+      type = *field;
+      storedReference = type.kind == SemanticType::Reference;
+    }
+    return crossed;
+  }
+
   [[nodiscard]] MirPlaceId borrowedSourcePlace(HirValueId id) const {
     const MirLoanId loan = loanForValue(id);
     const MirLoan *resolved = output.findLoan(loan);
@@ -7039,6 +7081,12 @@ private:
     }
     if (value.borrowOrigin == BorrowOriginKind::Receiver && call.receiver) {
       if (const std::optional<HirValueId> receiver = receiverValue(value)) {
+        // A receiver behind a stored reference field keeps its selected
+        // place: the carrier's loan source would name the object holding
+        // the reference rather than its referent.
+        if (const MirPlace *selected = output.findPlace(call.receiver->place);
+            selected != nullptr && storedReferenceAccessFor(*selected))
+          return call.receiver->place;
         if (const MirPlaceId source = borrowedSourcePlace(*receiver);
             source != 0) {
           // A by-reference capture's entry loan names the capture slot. A
@@ -8167,10 +8215,32 @@ private:
               ? MirLoanKind::Stored
               : MirLoanKind::CallResult;
       MirLoanId parent = 0;
+      // A carrier alias's access reaches a receiver behind one of its stored
+      // references only as far as that reference allows. Through a read-only
+      // reference the alias cannot parent an exclusive carrier; the
+      // reference's own stored entry is that carrier's authority instead.
+      const MirOperand *selectedReceiver =
+          value.borrowOrigin != BorrowOriginKind::Receiver ? nullptr
+          : sourceReceiver                                 ? &*sourceReceiver
+          : call.receiver                                  ? &*call.receiver
+                                                           : nullptr;
+      const MirPlace *selectedReceiverPlace =
+          selectedReceiver ? output.findPlace(selectedReceiver->place)
+                           : nullptr;
+      const auto crossedAccess =
+          selectedReceiverPlace
+              ? storedReferenceAccessFor(*selectedReceiverPlace)
+              : std::nullopt;
       if (originLoan != 0 && originLoan <= output.loans.size() &&
           std::find(movedArgumentLoans.begin(), movedArgumentLoans.end(),
                     originLoan) == movedArgumentLoans.end()) {
-        const AccessMode parentAccess = output.loans[originLoan - 1].access;
+        const AccessMode parentAccess =
+            output.loans[originLoan - 1].kind != MirLoanKind::Stored &&
+                    crossedAccess
+                ? (*crossedAccess == AccessMode::Mutable
+                       ? output.loans[originLoan - 1].access
+                       : AccessMode::ReadOnly)
+                : output.loans[originLoan - 1].access;
         const bool derivedCallResult =
             kind == MirLoanKind::CallResult &&
             (parentAccess == AccessMode::Mutable ||

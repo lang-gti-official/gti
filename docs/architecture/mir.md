@@ -743,7 +743,9 @@ binding to the carrier list grants no authority.
 A lifecycle-bound stored result may obtain exclusive owner dependency from
 its verified callee while accepting a shared address. Its incoming carrier
 parent supplies the selected address permission and lifetime; it does not
-supply mutable referent permission. For this sole-origin publication, body
+supply mutable referent permission. A mutable parent therefore qualifies as
+well as a read-only one, and the result's own designated field is provenance,
+not a second dependency. For this sole-origin publication, body
 verification retains the exact staged input, live parent, source containment,
 Mutable result exclusion and cleanup endpoint. Program verification reconstructs
 the parent from independently checked stored entry paths and binds publication
@@ -804,6 +806,20 @@ argument place identical to the child's recorded origin. A different field,
 carrier shell, read-only authority for a mutable child, or merely overlapping
 place cannot satisfy the proof. This rule applies equally to ordinary methods
 and nested scoped jobs; it does not grant the parent any cleanup ownership.
+A call result borrowed from a receiver behind a stored reference field of a
+formal, a local carrier or a local reference alias (`holder.box.slot()`,
+`teller.account.balance.lock()`) records that exact selected receiver place as
+its source, as a `this` field receiver does. The carrier's own loan source
+would name the object that holds the reference, or another of its referents,
+instead. A formal's alias loan parents such a result only while its access
+reaches the receiver through every stored reference on the way; behind a
+read-only stored reference, that reference's abstract entry is the parent, as
+exclusive publication requires. The alias that selects the receiver through
+the stored reference its parent entry describes is that input's path, not a
+competing sibling; every other overlapping loan still conflicts. A local value
+carrier whose stored loan keeps the compact sole-origin form does not name the
+reference field, so a borrow through that carrier's reference field is still
+rejected by verification; that frontier remains pending.
 For a composed result's additional dependencies, a projection through the exact
 reference field of a borrowed carrier retains that carrier's abstract external
 entry, not its temporary physical reference. Canonicalization keeps the formal's
@@ -2863,7 +2879,10 @@ A `MirBody` owns:
   binding. An argument carrying owned transport must be the exact moved
   parameter operand. An exact-return transport may coexist with a confined
   boundary only when the parameter has repeatable signatures and no forwarding
-  edges. The callee must either return that exact moved binding as a single-use
+  edges. A fresh borrowing closure passed to such a parameter (`std::for_each`
+  returning its visitor) carries its capture group out under the call's own
+  result loan: the result must be that closure type, borrowed by value from
+  exactly that argument, as the callee's return borrow summary states. The callee must either return that exact moved binding as a single-use
   result transferred out of local cleanup, or return the exact owner
   construction whose declared field and constructor initializer prove the
   corresponding parameter-to-field move. Direct result/field materialization
