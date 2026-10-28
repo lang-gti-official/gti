@@ -2,12 +2,13 @@
 
 
 Status: current architecture. LLVM is the primary development backend and the
-default on macOS arm64. C++ is deprecated as the primary backend and maintained
+default on macOS arm64 and Linux x86_64. C++ is deprecated as the primary backend and maintained
 with bug fixes only through v1.0 as a comparison oracle. It remains the default
 on other targets until LLVM passes O-LLVM-16 there; a future C++ catch-up
 requires a separate owner decision. See
 [ADR 031's backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25)
-and [its macOS arm64 promotion](../decisions/031-native-llvm-backend-foundation.md#default-backend-on-macos-arm64-2026-10-27).
+and its [macOS arm64](../decisions/031-native-llvm-backend-foundation.md#default-backend-on-macos-arm64-2026-10-27)
+and [Linux x86_64](../decisions/031-native-llvm-backend-foundation.md#default-backend-on-linux-x86_64-2026-10-29) promotions.
 
 GTI ships a native LLVM backend and a C++ source backend, and either can be
 selected on any target. Unsupported required LLVM shapes reject with

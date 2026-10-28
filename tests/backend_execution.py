@@ -13,8 +13,9 @@ import sys
 def host_default_backend() -> str:
     """The backend `gti` builds with on this host when none is selected."""
     machine = platform.machine().lower()
-    return ("llvm" if sys.platform == "darwin" and machine in {"arm64", "aarch64"}
-            else "cpp")
+    promoted = ((sys.platform == "darwin" and machine in {"arm64", "aarch64"}) or
+                (sys.platform.startswith("linux") and machine in {"x86_64", "amd64"}))
+    return "llvm" if promoted else "cpp"
 
 
 @dataclass(frozen=True)

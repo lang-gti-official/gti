@@ -26,8 +26,9 @@ verified optimized MIR -> LoweredProgram
                                       -> LlvmBackend -> native object
 ```
 
-`CppBackend` remains the default on every target except macOS arm64 during the
-transition ([macOS arm64 promotion](#default-backend-on-macos-arm64-2026-10-27)),
+`CppBackend` remains the default on every target except macOS arm64 and Linux
+x86_64 during the transition ([macOS arm64](#default-backend-on-macos-arm64-2026-10-27)
+and [Linux x86_64](#default-backend-on-linux-x86_64-2026-10-29) promotions),
 and it is not the primary development backend under the policy below. `LlvmBackend` is an installed,
 selectable backend which verifies the same `LoweredProgram` and checks native
 admission before initializing the host LLVM target. O-LLVM-04/05/06 admit the
@@ -224,6 +225,30 @@ remaining-target gates stay open. The evidence is recorded in the
   migration is needed.
 - C++ stays selectable on every target and bug-fix-only, as above.
 
+
+## Default Backend On Linux x86_64 (2026-10-29)
+
+The owner extended the LLVM default to Linux x86_64. `defaultBackend(TargetInfo)`
+now selects LLVM for macOS arm64 and Linux x86_64 and C++ for every other
+target, including Linux arm64, which has no promotion evidence yet. The
+selection rules above are otherwise unchanged. The evidence, recorded in the
+[O-LLVM-16 candidate status](../plans/implementation-sequence.md#o-llvm-16-complete-coverage-and-production-promotion):
+
+- The full suite on an Ubuntu x86_64 runner (system LLVM 21, GCC 14 build)
+  with LLVM as the default matches the C++-default run apart from a stub
+  cross-toolchain test that now pins `--backend cpp`; neither run shows LLVM
+  wrong code or an LLVM refusal.
+- A both-backend sweep of every single-file program found that every program
+  the C++ backend compiles behaves identically on LLVM, apart from the recorded
+  base-destructor dispatch divergence in which C++ is wrong.
+- The release configuration's bundled LLVM 20.1.0 builds and links the backend
+  without source changes; bundled builds now also build the `clang` and `opt`
+  test tools so the same LLVM evidence runs against the pinned release LLVM.
+
+Linux failures common to both defaults are recorded rather than attributed to
+LLVM: three C++-backend cases under GCC, three LSP harness timeouts and
+host-speed timeouts on the shared runners.
+
 ## Current Status
 
 The foundation and O-LLVM-02/03 establish build, package, driver, CLI,
@@ -258,7 +283,7 @@ complete conformance gate.
   closure for their host architecture. That cost is isolated to the backend
   target and release package rather than broadening `gti_compiler`.
 - Merely selecting LLVM never changes GTI semantics. LLVM is the default on
-  macOS arm64; C++ remains the transitional default elsewhere, with a
+  macOS arm64 and Linux x86_64; C++ remains the transitional default elsewhere, with a
   bug-fix-only support policy rather than a promise of complete future language
   coverage. LLVM rejects a shape it does not support rather than miscompiling
   it.

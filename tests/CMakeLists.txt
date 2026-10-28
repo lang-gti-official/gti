@@ -27,6 +27,20 @@ set_tests_properties(native_variable_bindgen PROPERTIES TIMEOUT 600)
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+# The native-backend tests compile emitted IR with the clang and opt of the
+# configured LLVM. An installed LLVM provides them beside its CMake package; a
+# bundled LLVM provides them as its own targets, built with the tests so the
+# same evidence runs against the pinned release LLVM.
+if(GTI_BUNDLE_LLVM AND TARGET clang AND TARGET opt)
+  add_custom_target(gti_llvm_test_tools ALL)
+  add_dependencies(gti_llvm_test_tools clang opt)
+  set(GTI_LLVM_TEST_CLANG "$<TARGET_FILE:clang>")
+  set(GTI_LLVM_TEST_OPT "$<TARGET_FILE:opt>")
+else()
+  find_program(GTI_LLVM_TEST_CLANG NAMES clang HINTS "${LLVM_TOOLS_BINARY_DIR}" NO_DEFAULT_PATH)
+  set(GTI_LLVM_TEST_OPT "${LLVM_TOOLS_BINARY_DIR}/opt")
+endif()
+
 if(TARGET gti_lsp)
   add_executable(gti_lsp_repair_contract_tests lsp_repair_contract_tests.cpp)
   target_include_directories(gti_lsp_repair_contract_tests SYSTEM PRIVATE
@@ -1858,7 +1872,7 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME llvm_simd_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_simd_execution_test.py"
                    --emitter "$<TARGET_FILE:gti_llvm_simd_lowering_tests>"
-                   --clang "${LLVM_TOOLS_BINARY_DIR}/clang++" --opt "${LLVM_TOOLS_BINARY_DIR}/opt"
+                   --clang "${GTI_LLVM_TEST_CLANG}" --opt "${GTI_LLVM_TEST_OPT}"
                    --output-root "${CMAKE_BINARY_DIR}/Testing/llvm-simd-execution")
   set_tests_properties(llvm_simd_execution PROPERTIES TIMEOUT 1200 PROCESSORS 1)
   add_test(NAME llvm_simd_source
@@ -2161,7 +2175,6 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/runtime-synchronization-evidence"
               --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(runtime_synchronization PROPERTIES TIMEOUT 180)
-    find_program(GTI_LLVM_TEST_CLANG NAMES clang HINTS "${LLVM_TOOLS_BINARY_DIR}" NO_DEFAULT_PATH)
     if(GTI_LLVM_TEST_CLANG)
       add_test(NAME llvm_atomic_wait_service
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_atomic_wait_service_test.py"

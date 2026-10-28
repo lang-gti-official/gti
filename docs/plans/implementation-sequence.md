@@ -12316,6 +12316,28 @@ status transport until a reviewed migration. Promotion does not require it.
 of them Linux x86_64. Linux evidence needs the managed runners; nothing in
 this candidate claims it.
 
+
+#### Linux x86_64 Default Promotion (2026-10-29)
+
+**Owner revision.** The owner extended the LLVM default to Linux x86_64. Linux
+arm64 and other targets keep C++ until their own evidence passes. ADR 031's
+"Default Backend On Linux x86_64" records the selection.
+
+**Evidence** (Ubuntu x86_64 runners, system LLVM 21, GTI built with GCC 14):
+
+| | result |
+| --- | --- |
+| full suite, C++ default (main 62faeed89) | 936 pass, 8 timeouts, 7 failures |
+| full suite, LLVM default (this promotion) | same set after a stub cross-toolchain test pins `--backend cpp`; no LLVM wrong code or refusal |
+| both-backend program sweep (4,040 programs) | every program C++ compiles matches on LLVM except the recorded base-destructor divergence |
+| bundled LLVM 20.1.0 release configuration | builds and links unchanged; `^llvm_` passes once bundled builds build `clang` and `opt` for the tests |
+
+**Recorded Linux failures common to both defaults:** the C++ backend under GCC
+fails `enumerator-references` (C++20 O3), `hierarchy-array-field-failure` (O3,
+R0014) and an `encoding_runtime` C++ -O1 compile timeout; three LSP tests time
+out waiting for messages; eight tests time out on the shared runners. None
+involves LLVM.
+
 #### LLVM Campaign Waves And Validation
 
 ##### Current Milestone Ownership
