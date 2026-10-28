@@ -21,6 +21,7 @@ CASES = (
      "3\n56\n2\n1\n1209\n222\n1\n122\n", True),
     ("returned_confined_callables.gti", [], "123\n1231234\n3006\n13\n", False),
     ("returned_owned_closures.gti", [], "29\n2\n", True),
+    ("captured_reference_ranges.gti", [], "1039\n89\n", True),
 )
 
 
