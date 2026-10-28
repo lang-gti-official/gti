@@ -411,7 +411,7 @@ class Workflow:
 
         The metadata lock is held only while task records change, so a peer's
         `start`, `status`, `checkpoint` or `cleanup` never waits on validation.
-        Local broad checks hold one `suite` slot; checked automation-only
+        Local broad checks hold one `suite` slot; checked automation/source-library
         owning checks may run directly. Remote plans acquire their build/suite
         slots on the configured host through remote_runner, not here.
         """
@@ -430,10 +430,16 @@ class Workflow:
             if state.get("published_head") != head:
                 raise WorkflowError("Checkpoint the current head before verification")
             if focused:
-                from validation_checks import ci_mode
+                from validation_checks import focused_scope, source_focused_checks
                 paths = git(root, "diff", "--name-only", base, head).splitlines()
-                if remote or ci_mode({}, paths) != "automation":
-                    raise WorkflowError("Focused helper verification is only for local automation-only changes; compiler components use batch enroll")
+                scope = focused_scope(paths)
+                if remote or scope is None:
+                    raise WorkflowError("Focused helper verification is only for local automation-only or source-stdlib changes; compiler components use batch enroll")
+                if scope == "source-stdlib":
+                    try:
+                        source_focused_checks(checks)
+                    except ValueError as error:
+                        raise WorkflowError(str(error)) from error
             runner = load_remote_runner() if remote else None
             if remote:
                 try:
@@ -500,7 +506,7 @@ class Workflow:
                 raise WorkflowError("Head or main changed during validation; reconcile and verify again")
             state["verified"] = {"head": head, "base": base, "checks": checks, "at": self.now()}
             if focused:
-                state["verified"]["scope"] = "automation"
+                state["verified"]["scope"] = scope
             if remote_evidence is not None:
                 state["verified"]["remote"] = remote_evidence
             self.save(state, "ready")
@@ -811,7 +817,7 @@ def main():
         sub.add_parser(name).add_argument("task")
     verify = sub.add_parser("verify")
     verify.add_argument("task")
-    verify.add_argument("--focused", action="store_true", help="run automation-only owning checks without a broad-suite reservation")
+    verify.add_argument("--focused", action="store_true", help="run checked automation/source-stdlib owning checks without a broad-suite reservation")
     verification = verify.add_mutually_exclusive_group(required=True)
     verification.add_argument("--checks-file")
     verification.add_argument("--remote-steps-file", help="remote_runner exact-argv plan; uses the remote build window")

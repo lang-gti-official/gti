@@ -142,7 +142,7 @@ machines. Nothing locks ordinary editing.
 | `checkpoint <task> [--message <text> --paths <files...>]` | Commit explicitly scoped paths or publish an existing clean commit; create a draft PR on the first meaningful checkpoint. |
 | `reconcile <task>` | Merge current main into the task branch, preserve conflicts for resolution, invalidate old validation and publish. |
 | `verify <task> --checks-file <json>` | Record the attempt, release the lock, execute nonempty argv arrays without a shell inside a build-window `suite` slot, then record passing checks against the published clean head and current remote main. |
-| `verify <task> --focused --checks-file <json>` | For a checked automation-only diff, run owning checks directly and record scope `automation`; refuse compiler changes and remote use. Actual broad workloads still use the window. |
+| `verify <task> --focused --checks-file <json>` | For a checked automation-only or source-only GTI stdlib diff, run owning checks directly and record scope `automation` or `source-stdlib`; refuse compiler/native/build changes and remote use. Actual broad workloads still use the window. |
 | `finish <task> --body-file <text> [--pr-only]` | Publish the final PR description, mark ready, verify identities/protection, merge the exact head without bypasses and synchronize local main. PR-only stops ready for review. |
 | `sync <task>` | Confirm merged-head/merge-commit reachability and fast-forward primary main, preserving unrelated local edits. Never push to a backup. |
 | `rehost <task> --pr <number>` | Explicitly bind an imported GitHub task to its verified Gitea repository/branch/head identity; preserve the original record and exact-source evidence. Refuse live verification. |
@@ -679,9 +679,23 @@ a real configure/build/CTest cycle without installing packages locally.
 The lightweight job also runs `repository_hosting`, whose script is explicitly
 classified as developer automation; unknown/compiler test paths still select
 full advisory CI coverage.
-Automation-only local owning checks may use `verify --focused`, which checks
-the actual diff and does not reserve a broad-suite slot. Compiler changes
-cannot use that path. An active `verify` is atomically refused on duplicate
+Automation-only and source-only GTI stdlib local owning checks may use
+`verify --focused`, which checks the actual diff and does not reserve a
+broad-suite slot. The source-library path requires a change under `stdlib/std/`
+or `stdlib/modules/` ending in `.gti`; accompanying GTI fixtures/examples,
+Python test harnesses, explicit surface/census metadata, release metadata and
+Markdown documentation are permitted. Compiler, native runtime, CMake and
+other implementation changes cannot use that path. Its checks require a named
+`tests/*_test.py` harness or CTest with one anchored exact test name, such as
+`-R '^encoding_runtime$'`. Obvious native builds, shell wrappers, orchestration,
+full corpus scripts and unfiltered CTest are refused. This is a conservative
+selection guard, not a proof of a Python harness's workload or adequate coverage:
+the agent must review actual scope, use an optimized compiler, and retain owning
+positive/negative, affected consumer and performance evidence. Broad workloads
+still use the shared window. Advisory CI classification and compiler component
+batch gates are unchanged. This exception avoids a full-compiler queue for
+ordinary source-library work; it does not waive required tests.
+An active `verify` is atomically refused on duplicate
 submission; resume the recorded operation instead.
 
 Owner policy revision (2026-10-23): Gitea runner availability is not a merge,
