@@ -3,6 +3,147 @@
 namespace std {
 namespace encoding {
 
+namespace utf8 {
+
+enum class errc {
+  invalid_offset,
+  unexpected_end,
+  invalid_lead,
+  invalid_continuation,
+  overlong,
+  surrogate,
+  out_of_range,
+};
+
+struct error {
+  errc code;
+  std::size_t offset;
+  error(errc reason, std::size_t position) : code(reason), offset(position) {}
+};
+
+/// One Unicode scalar value and its encoded byte width, not a grapheme.
+struct scalar {
+  uint32_t value;
+  std::size_t width;
+  scalar(uint32_t point, std::size_t bytes) : value(point), width(bytes) {}
+};
+
+/// Decodes one scalar at a byte offset. Never reads outside the counted view.
+/// Invalid continuations name that byte; truncated input names input.size().
+expected<scalar, error> decode(std::string_view input, std::size_t offset = 0) {
+  if (offset > input.size()) {
+    return unexpected(error(errc::invalid_offset, offset));
+  }
+  if (offset == input.size()) {
+    return unexpected(error(errc::unexpected_end, offset));
+  }
+  uint32_t first = uint32_t(uint8_t(input[offset]));
+  if (first < uint32_t(128)) { return scalar(first, std::size_t(1)); }
+
+  mut std::size_t width = 0;
+  mut uint32_t value = 0;
+  if (first >= uint32_t(194) && first <= uint32_t(223)) {
+    width = 2;
+    value = first - uint32_t(192);
+  } else if (first >= uint32_t(224) && first <= uint32_t(239)) {
+    width = 3;
+    value = first - uint32_t(224);
+  } else if (first >= uint32_t(240) && first <= uint32_t(244)) {
+    width = 4;
+    value = first - uint32_t(240);
+  } else {
+    return unexpected(error(errc::invalid_lead, offset));
+  }
+
+  for (mut std::size_t index = 1; index < width; index++) {
+    // Subtract before adding so even an extreme offset cannot overflow.
+    if (index >= input.size() - offset) {
+      return unexpected(error(errc::unexpected_end, input.size()));
+    }
+    uint32_t byte = uint32_t(uint8_t(input[offset + index]));
+    if (byte < uint32_t(128) || byte > uint32_t(191)) {
+      return unexpected(error(errc::invalid_continuation, offset + index));
+    }
+    if (index == std::size_t(1)) {
+      if ((first == uint32_t(224) && byte < uint32_t(160)) ||
+          (first == uint32_t(240) && byte < uint32_t(144))) {
+        return unexpected(error(errc::overlong, offset));
+      }
+      if (first == uint32_t(237) && byte >= uint32_t(160)) {
+        return unexpected(error(errc::surrogate, offset));
+      }
+      if (first == uint32_t(244) && byte >= uint32_t(144)) {
+        return unexpected(error(errc::out_of_range, offset));
+      }
+    }
+    value = value * uint32_t(64) + byte - uint32_t(128);
+  }
+  return scalar(value, width);
+}
+
+/// Empty input, embedded NULs, BOMs and Unicode noncharacters are valid.
+expected<void, error> validate(std::string_view input) {
+  mut std::size_t offset = 0;
+  while (offset < input.size()) {
+    auto decoded = decode(input, offset);
+    if (!decoded) { return unexpected(decoded.error()); }
+    offset += decoded.value().width;
+  }
+  return;
+}
+
+/// Invalid scalars leave output unchanged. Allocation follows string policy.
+expected<void, error> append(mut std::string& output, uint32_t point) {
+  if (point > uint32_t(0x10ffff)) {
+    return unexpected(error(errc::out_of_range, std::size_t(0)));
+  }
+  if (point >= uint32_t(0xd800) && point <= uint32_t(0xdfff)) {
+    return unexpected(error(errc::surrogate, std::size_t(0)));
+  }
+  if (point <= uint32_t(127)) {
+    output.push_back(char(uint8_t(point)));
+  } else if (point <= uint32_t(2047)) {
+    output.push_back(char(uint8_t(uint32_t(192) + point / uint32_t(64))));
+    output.push_back(char(uint8_t(uint32_t(128) + point % uint32_t(64))));
+  } else if (point <= uint32_t(65535)) {
+    output.push_back(char(uint8_t(uint32_t(224) + point / uint32_t(4096))));
+    output.push_back(char(uint8_t(uint32_t(128) + (point / uint32_t(64)) % uint32_t(64))));
+    output.push_back(char(uint8_t(uint32_t(128) + point % uint32_t(64))));
+  } else {
+    output.push_back(char(uint8_t(uint32_t(240) + point / uint32_t(262144))));
+    output.push_back(char(uint8_t(uint32_t(128) + (point / uint32_t(4096)) % uint32_t(64))));
+    output.push_back(char(uint8_t(uint32_t(128) + (point / uint32_t(64)) % uint32_t(64))));
+    output.push_back(char(uint8_t(uint32_t(128) + point % uint32_t(64))));
+  }
+  return;
+}
+
+expected<std::string, error> encode(uint32_t point) {
+  mut std::string output{};
+  auto result = append(output, point);
+  if (!result) { return unexpected(result.error()); }
+  return std::move(output);
+}
+
+/// Incremental traversal borrows a named view and its owner. Failure does not
+/// advance the cursor; done() distinguishes end-of-input from malformed input.
+class decoder {
+  std::string_view& input;
+  mut std::size_t offset = 0;
+public:
+  decoder(std::string_view& source) : input(source) {}
+  std::size_t position() { return this.offset; }
+  bool done() { return this.offset == this.input.size(); }
+  expected<scalar, error> next() mut {
+    auto result = decode(this.input, this.offset);
+    if (!result) { return unexpected(result.error()); }
+    this.offset += result.value().width;
+    return result.value();
+  }
+};
+
+}
+
 /// Recoverable failures shared by the binary-to-text decoders in this unit.
 enum class decode_errc {
   invalid_length,

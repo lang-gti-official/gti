@@ -168,7 +168,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Read and write JSON as plain structs | [91: JSON documents](091-json-documents.gti) |
 | Map JSON to a class with an invariant and report field errors | [92: JSON codecs](092-json-codecs.gti) |
 | Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
-| Encode counted bytes as Base64 or hex | [94: binary-to-text encoding](094-binary-text-encoding.gti) |
+| Encode counted bytes as Base64 or hex; decode UTF-8 scalars | [94: text encoding](094-binary-text-encoding.gti) |
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
 | Translate library errors into application errors | [96: error mapping](096-error-mapping.gti) |
 | Build and validate data at compile time | [97: constexpr tables](097-constexpr-tables.gti) |
@@ -303,7 +303,7 @@ is a teaching helper, not a production server.
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
 | `093-http-json-client.gti` | encoded URLs, bounded GET/POST requests, transport/status/schema errors, and JSON responses |
-| `094-binary-text-encoding.gti` | Base64/hex round trips, embedded zero bytes, and strict decoding |
+| `094-binary-text-encoding.gti` | Base64/hex round trips, embedded zero bytes, strict UTF-8 validation and scalar traversal |
 | `095-explicit-cloning.gti` | vector/string cloning, ownership transfer, and exact member requirements |
 | `096-error-mapping.gti` | consuming `transform_error`, named mapper functions, and `?` propagation |
 | `097-constexpr-tables.gti` | constexpr constructors, methods, arrays, loops, and static assertions |

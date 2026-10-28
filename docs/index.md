@@ -91,7 +91,7 @@ while canonical language documents continue to describe actual support.
 - [Concepts](language/concepts.md), [ranges](language/ranges.md),
   [expected values](language/expected.md), and
   [concurrency](language/concurrency.md) — focused feature contracts.
-- [I/O](language/io.md), [binary-to-text encoding](language/encoding.md),
+- [I/O](language/io.md), [text and binary encoding](language/encoding.md),
   [filesystem operations](language/filesystem.md),
   [clocks and durations](language/chrono.md),
   [child processes](language/process.md),
