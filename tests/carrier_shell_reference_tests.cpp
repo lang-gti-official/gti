@@ -1582,8 +1582,7 @@ void checkDependencyMutations() {
 // source-visible relocation stays unavailable, and a loan it carries through
 // a move never borrows its own storage.
 void checkMovedCarrierRelocation() {
-  const auto frontend = lang::Frontend().analyze(
-      "moved-carrier.gti", R"gti(
+  const auto frontend = lang::Frontend().analyze("moved-carrier.gti", R"gti(
 interface Gauge { int read(); };
 class Scaled : public Gauge {
   int value;
@@ -1599,7 +1598,8 @@ int main() {
   return moved.read() - 6;
 }
 )gti",
-      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+                                                 {standardLibraryPrelude()}, {},
+                                                 {standardLibraryRoot()});
   expect(frontend.canGenerateCode() &&
              lang::verifyMirProgram(frontend.mir).valid(),
          "a moved borrow carrier verifies");

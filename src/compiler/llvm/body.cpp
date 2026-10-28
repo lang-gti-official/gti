@@ -1,12 +1,12 @@
 #include "body.h"
-#include "atomics.h"
 #include "../mir_verification_queries.h"
+#include "atomics.h"
 #include "callables.h"
 #include "constructor_field_publication.h"
-#include "dispatch.h"
 #include "debug_info.h"
-#include "failure.h"
+#include "dispatch.h"
 #include "embedding.h"
+#include "failure.h"
 #include "hosted.h"
 #include "lifetimes.h"
 #include "memory.h"
@@ -22,13 +22,13 @@
 #include "scalar.h"
 #include "simd.h"
 #include "text.h"
-#include "thread_locals.h"
 #include "thread_lifecycle.h"
+#include "thread_locals.h"
 #include "threads.h"
 
 #include <algorithm>
-#include <llvm/IR/Intrinsics.h>
 #include <array>
+#include <llvm/IR/Intrinsics.h>
 #include <map>
 #include <set>
 #include <tuple>
@@ -101,7 +101,8 @@ public:
   }
   void lower(const LlvmAdmissionPlan &admission);
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
-  void lowerEvaluation(std::span<const MirBodyAddress> bodies, bool fixedCallBoundaries);
+  void lowerEvaluation(std::span<const MirBodyAddress> bodies,
+                       bool fixedCallBoundaries);
 #endif
 
 private:
@@ -271,8 +272,8 @@ private:
         llvm::FunctionType::get(
             ir.getVoidTy(),
             {session.layouts().pointer(), session.layouts().pointer()}, false));
-    auto *copy = ir.CreateCall(
-        transfer, {channels.at(term.failureRecord), ir.CreateExtractValue(landing, 0)});
+    auto *copy = ir.CreateCall(transfer, {channels.at(term.failureRecord),
+                                          ir.CreateExtractValue(landing, 0)});
     copy->setDoesNotThrow();
     failedOperation();
     ir.SetInsertPoint(normal);
@@ -335,14 +336,13 @@ private:
       if (target->place) {
         if (hierarchy) {
           bool exactProducer =
-              stage &&
-              (freshConstructionDestination(session.program().mir(), address,
-                                            input, placement,
-                                            *stage) == target->place ||
-               (stage->result == value &&
-                freshObjectStorage(session.program().mir(), address, input,
-                                   placement, *stage) ==
-                    FreshObjectStorage::Argument));
+              stage && (freshConstructionDestination(session.program().mir(),
+                                                     address, input, placement,
+                                                     *stage) == target->place ||
+                        (stage->result == value &&
+                         freshObjectStorage(session.program().mir(), address,
+                                            input, placement, *stage) ==
+                             FreshObjectStorage::Argument));
           if (stage && isFreshHierarchyTransferProducer(*stage)) {
             const auto transfer = planFreshHierarchyTransfer(
                 session.program().mir(), input, *stage);
@@ -375,8 +375,8 @@ private:
         // field of a payload alternative.
         if (!stage || stage->result != value ||
             freshObjectStorage(session.program().mir(), address, input,
-                               placement, *stage) !=
-                FreshObjectStorage::Element)
+                               placement,
+                               *stage) != FreshObjectStorage::Element)
           throw BackendUnsupportedError(
               "LLVM nested hierarchy destination is not admitted");
         const MirInstruction *outer = nullptr;
@@ -439,7 +439,8 @@ private:
   // A by-value call input formed from a place observation. The parameter is
   // the callee's own object, which it may move from or mutate, so the input
   // needs its own copy rather than the observed place's address.
-  [[nodiscard]] bool observedParameter(const MirInstruction &instruction) const {
+  [[nodiscard]] bool
+  observedParameter(const MirInstruction &instruction) const {
     if (instruction.kind != MirInstructionKind::CallInput ||
         instruction.destination || instruction.operands.size() != 1 ||
         instruction.info.category != ValueCategory::Value ||
@@ -650,8 +651,7 @@ private:
       auto *address =
           target->variant
               ? payloadFieldAddress(ir, session.layouts().payload(type),
-                                    storage, *target->variant,
-                                    target->element)
+                                    storage, *target->variant, target->element)
               : ir.CreateGEP(session.layouts().get(type).storage, storage,
                              {ir.getInt64(0), ir.getInt64(target->element)});
       lifetimes.freshTransfer(ir, address, memory.selected(transfer.source),
@@ -665,22 +665,21 @@ private:
         transfer.source != instruction.operands.front())
       throw BackendUnsupportedError("LLVM hierarchy transfer lost its exact "
                                     "source/publication placement");
-    auto *address = returned ? returnDestination
-                             : destination(*instruction.result);
+    auto *address =
+        returned ? returnDestination : destination(*instruction.result);
     if (!address)
       throw std::logic_error("LLVM returned transfer lost its ABI destination");
     // Selecting the sealed source view does not materialize an object snapshot
     // or suppress its cleanup. The typed transfer commits source state last.
     // A field moved out of a payload alternative starts at that field.
-    auto *source =
-        transfer.sourceVariant
-            ? payloadFieldAddress(
-                  ir,
-                  session.layouts().payload(
-                      input.findPlace(transfer.source.place)->type),
-                  memory.address(transfer.source.place),
-                  *transfer.sourceVariant, transfer.sourceField)
-            : memory.selected(transfer.source);
+    auto *source = transfer.sourceVariant
+                       ? payloadFieldAddress(
+                             ir,
+                             session.layouts().payload(
+                                 input.findPlace(transfer.source.place)->type),
+                             memory.address(transfer.source.place),
+                             *transfer.sourceVariant, transfer.sourceField)
+                       : memory.selected(transfer.source);
     lifetimes.freshTransfer(ir, address, source, input, instruction);
     return address;
   }
@@ -773,8 +772,8 @@ private:
   void abandonIfRequested() {
     if (!failures.workerContainment())
       return;
-    auto *abandon =
-        llvm::BasicBlock::Create(session.context(), "worker.abandon", &function);
+    auto *abandon = llvm::BasicBlock::Create(session.context(),
+                                             "worker.abandon", &function);
     auto *resume = llvm::BasicBlock::Create(session.context(),
                                             "worker.continue", &function);
     ir.CreateCondBr(failures.abandoning(ir), abandon, resume);
@@ -939,8 +938,9 @@ private:
 #if defined(GTI_LLVM_C04_NATIVE_UNWIND)
     auto *result = evaluationCall(signature.type, callee, arguments);
     signature.applyTo(*result);
-    return resultSlot ? load(resultSlot, callable.result)
-           : result->getType()->isVoidTy() ? nullptr : result;
+    return resultSlot                      ? load(resultSlot, callable.result)
+           : result->getType()->isVoidTy() ? nullptr
+                                           : result;
 #else
     auto *status = ir.CreateCall(signature.type, callee, arguments);
     signature.applyTo(*status);
@@ -1105,15 +1105,20 @@ private:
       if (instruction.intrinsic == IntrinsicKind::ThreadScope) {
         if (current->terminator.kind != MirTerminatorKind::Invoke ||
             current->terminator.invokeInstruction != instruction.id)
-          throw BackendUnsupportedError("C04 worker scope lost its MIR failure edge");
+          throw BackendUnsupportedError(
+              "C04 worker scope lost its MIR failure edge");
         std::vector<llvm::Value *> inputs;
         for (const auto &value : instruction.operands)
           inputs.push_back(operand(value));
-        auto *outcome = emitC04Scope(session, ir, address, instruction, inputs,
-                                    channels.at(current->terminator.failureRecord), lifetimes);
-        auto *normal = llvm::BasicBlock::Create(session.context(), "c04.joined", &function);
-        auto *failed = llvm::BasicBlock::Create(session.context(), "c04.worker.failed", &function);
-        ir.CreateCondBr(ir.CreateICmpSLT(outcome, ir.getInt32(0)), failed, normal);
+        auto *outcome = emitC04Scope(
+            session, ir, address, instruction, inputs,
+            channels.at(current->terminator.failureRecord), lifetimes);
+        auto *normal = llvm::BasicBlock::Create(session.context(), "c04.joined",
+                                                &function);
+        auto *failed = llvm::BasicBlock::Create(session.context(),
+                                                "c04.worker.failed", &function);
+        ir.CreateCondBr(ir.CreateICmpSLT(outcome, ir.getInt32(0)), failed,
+                        normal);
         ir.SetInsertPoint(failed);
         failedOperation();
         ir.SetInsertPoint(normal);
@@ -1145,10 +1150,9 @@ private:
             .instruction = instruction,
             .inputs = inputs,
             .failure = checked ? channels.at(term.failureRecord) : nullptr,
-            .failed = checked ? std::function<void()>([this] {
-              failedOperation();
-            })
-                              : std::function<void()>{},
+            .failed = checked
+                          ? std::function<void()>([this] { failedOperation(); })
+                          : std::function<void()>{},
             .destination =
                 [&] {
                   if (!instruction.result)
@@ -1156,13 +1160,15 @@ private:
                         "LLVM managed-thread result lost its value");
                   return destination(*instruction.result);
                 },
-            .store = [this](llvm::Value *target, llvm::Value *value,
-                            const SemanticType &type) {
-              store(value, target, type);
-            },
-            .load = [this](llvm::Value *source, const SemanticType &type) {
-              return load(source, type);
-            }};
+            .store =
+                [this](llvm::Value *target, llvm::Value *value,
+                       const SemanticType &type) {
+                  store(value, target, type);
+                },
+            .load =
+                [this](llvm::Value *source, const SemanticType &type) {
+                  return load(source, type);
+                }};
         return threads.emit(ir, threadStage);
       }
       if (instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem)
@@ -1204,8 +1210,8 @@ private:
       }
       switch (instruction.intrinsic) {
       case IntrinsicKind::StringViewSize:
-        return ir.CreateExtractValue(
-            countedTextValue(*instruction.receiver), 1);
+        return ir.CreateExtractValue(countedTextValue(*instruction.receiver),
+                                     1);
       case IntrinsicKind::StringViewEmpty:
         return ir.CreateICmpEQ(
             ir.CreateExtractValue(countedTextValue(*instruction.receiver), 1),
@@ -1291,8 +1297,8 @@ private:
     const auto constructor = instruction.constructorTarget;
     if (instruction.nativeCalleeType) {
       if (!nativeCIndirectCallContract(session.program().mir(),
-                                             session.program().target(), input,
-                                             instruction))
+                                       session.program().target(), input,
+                                       instruction))
         throw BackendUnsupportedError(
             "LLVM indirect C call requires its exact staged native signature");
       auto *callee = operand(*instruction.receiver);
@@ -1312,7 +1318,8 @@ private:
           "LLVM scalar call requires an exact direct target");
     if (target && (target->cThreadOperation == CThreadRuntimeOperation::Begin ||
                    target->cThreadOperation == CThreadRuntimeOperation::End)) {
-      if (!nativeCThreadLifecycleCall(session.program().mir(), input, instruction))
+      if (!nativeCThreadLifecycleCall(session.program().mir(), input,
+                                      instruction))
         throw BackendUnsupportedError(
             "LLVM C-thread lifecycle lost its sealed startup operation");
       ir.CreateCall(declareRuntimeService(
@@ -1568,9 +1575,10 @@ private:
     case MirInstructionKind::Compute: {
       if (instruction.operation == MirOperation::NativeCallback) {
         if (!nativeCCallbackStageContract(session.program().mir(),
-                                         session.program().target(), input,
-                                         instruction))
-          throw std::logic_error("LLVM callback lost its exact conversion stage");
+                                          session.program().target(), input,
+                                          instruction))
+          throw std::logic_error(
+              "LLVM callback lost its exact conversion stage");
         result = nativeCCallbackAddress(session, ir,
                                         *instruction.nativeCallbackAdapter);
         break;
@@ -1749,8 +1757,8 @@ private:
             llvm::Constant::getNullValue(session.layouts().get(type).value);
         for (std::size_t index = 0; index < instruction.operands.size();
              ++index) {
-          auto *element =
-              aggregateElement(instruction.operands[index], type.arguments.at(0));
+          auto *element = aggregateElement(instruction.operands[index],
+                                           type.arguments.at(0));
           if (type.arguments.at(0) == SemanticType::Bool)
             element = ir.CreateZExt(element, ir.getInt8Ty());
           if (type.arguments.at(0).kind == SemanticType::Class)
@@ -1838,9 +1846,8 @@ private:
                          moveDestination ? moveDestination : publishedAddress);
       }
       if (observedParameter(instruction)) {
-        auto *copy = publishedAddress
-                         ? publishedAddress
-                         : memory.temporary(instruction.info.type);
+        auto *copy = publishedAddress ? publishedAddress
+                                      : memory.temporary(instruction.info.type);
         store(result, copy, instruction.info.type);
         result = copy;
       }
@@ -2218,9 +2225,9 @@ private:
       for (const auto &target : term.switchTargets)
         if (target.value) {
           const auto &constant = target.value->value;
-          auto *bits = integerConstant(
-              llvm::cast<llvm::IntegerType>(value->getType()),
-              constant.negative, constant.magnitude);
+          auto *bits =
+              integerConstant(llvm::cast<llvm::IntegerType>(value->getType()),
+                              constant.negative, constant.magnitude);
           output->addCase(bits, edge(target.target, target.arguments));
         }
       break;
@@ -2298,7 +2305,7 @@ private:
       if (!failureDestination)
         throw std::logic_error("LLVM failure propagation has no destination");
       failures.copyChannel(ir, failureDestination,
-                            channels.at(term.failureRecord));
+                           channels.at(term.failureRecord));
       leaveFailureCleanup();
       ir.CreateRet(ir.getFalse());
       break;
@@ -2335,13 +2342,15 @@ private:
     auto *entry =
         llvm::BasicBlock::Create(session.context(), "entry", &function);
     ir.SetInsertPoint(entry);
-    if (std::any_of(input.blocks.begin(), input.blocks.end(),
-                    [](const MirBlock &block) { return block.activeFailure != 0; })) {
+    if (std::any_of(
+            input.blocks.begin(), input.blocks.end(),
+            [](const MirBlock &block) { return block.activeFailure != 0; })) {
       // A defined-failure chain cannot rejoin normal execution. One token
       // spans that invocation's cleanup, with no TLS work on successful paths.
       cleanupToken = ir.CreateAlloca(session.layouts().pointer());
-      ir.CreateStore(llvm::ConstantPointerNull::get(session.layouts().pointer()),
-                     cleanupToken);
+      ir.CreateStore(
+          llvm::ConstantPointerNull::get(session.layouts().pointer()),
+          cleanupToken);
     }
     if (auto *debug = session.debugInfo())
       debug->location(ir, address, 0, 0);
@@ -2455,13 +2464,17 @@ private:
     }
     if (input.kind == MirBodyKind::Constructor && owner &&
         owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
-      const auto *constructor = session.program().mir().findConstructorInstance(address.owner);
-      const auto payload = constructor ? nativeMutexConstructor(session.program().mir(), *constructor)
-                                       : std::nullopt;
+      const auto *constructor =
+          session.program().mir().findConstructorInstance(address.owner);
+      const auto payload =
+          constructor
+              ? nativeMutexConstructor(session.program().mir(), *constructor)
+              : std::nullopt;
       if (!payload || !thisAddress || parameters.size() != 1 ||
           parameters[0].binding != constructor->parameterBindings[0] ||
           parameters[0].type != *payload || !parameters[0].materialized)
-        throw BackendUnsupportedError("LLVM mutex initialization lost its sealed payload constructor");
+        throw BackendUnsupportedError(
+            "LLVM mutex initialization lost its sealed payload constructor");
       const auto layout = session.layouts().mutexStorage(owner->type);
       auto *source = memory.address(input.places.front().id);
       Mutexes(session, ir).initializeShell(thisAddress, owner->type);
@@ -2478,8 +2491,10 @@ private:
         store(load(source, *payload), destination, *payload);
       }
       lifetimes.moved(ir, source, *payload);
-      ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive | MutexStorageLayout::payloadLive),
-                     ir.CreateStructGEP(layout.object.storage, thisAddress, layout.payloadActiveIndex));
+      ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive |
+                                MutexStorageLayout::payloadLive),
+                     ir.CreateStructGEP(layout.object.storage, thisAddress,
+                                        layout.payloadActiveIndex));
     }
     if (input.kind == MirBodyKind::HostedStartup &&
         session.program().mir().hostedStartupPlan()->kind ==
@@ -2504,7 +2519,7 @@ private:
             CompilerCapabilityTypeKind::PolymorphicStorage) {
       // Initialize private representation without replacing the source body.
       polymorphicStorage.initializeDefaultConstructor(ir, *constructor,
-                                                       thisAddress);
+                                                      thisAddress);
     }
     if (constructor && constructor->dispatchState &&
         constructor->dispatchState->afterBaseInitialization == 0)
@@ -2705,10 +2720,10 @@ void Bodies::body(MirBodyAddress address) {
   if (auto *debug = session.debugInfo())
     debug->begin(address, *output);
   Body emission(
-      session, failures, dispatch, lifetimes, threadLocals, *output,
-      address, input, plan, parameters.concrete.lanes,
-      parameters.concrete.packs, parameters.sourceBindings, globals, callables,
-      threads, [&](MirBodyAddress target) { return function(target); },
+      session, failures, dispatch, lifetimes, threadLocals, *output, address,
+      input, plan, parameters.concrete.lanes, parameters.concrete.packs,
+      parameters.sourceBindings, globals, callables, threads,
+      [&](MirBodyAddress target) { return function(target); },
       [&](MirBodyAddress target) { return signature(target); }, classOwner,
       address.kind == MirBodyKind::Constructor
           ? session.program().mir().findConstructorInstance(address.owner)
@@ -2786,7 +2801,8 @@ void lowerC04Evaluation(Session &session, const LlvmAdmissionPlan &admission,
                         std::span<const HirFunctionInstanceId> functions,
                         bool fixedCallBoundaries,
                         C04EvaluationProfile profile) {
-  const auto bodies = validateC04Evaluation(session, admission, functions, profile);
+  const auto bodies =
+      validateC04Evaluation(session, admission, functions, profile);
   Bodies(session, admission).lowerEvaluation(bodies, fixedCallBoundaries);
 }
 #endif

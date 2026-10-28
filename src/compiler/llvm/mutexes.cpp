@@ -52,8 +52,7 @@ mutexComposition(const MirProgram &program, const SemanticType &type,
   MutexComposition result;
   const auto represented = [&](const auto &self,
                                const SemanticType &selected) -> bool {
-    if (std::find(visiting.begin(), visiting.end(), selected) !=
-        visiting.end())
+    if (std::find(visiting.begin(), visiting.end(), selected) != visiting.end())
       return false;
     visiting.push_back(selected);
     bool valid = false;
@@ -161,10 +160,9 @@ nativeMutexConstructor(const MirProgram &program,
       !constructor.typeArguments.empty() ||
       !constructor.valueArguments.empty() || constructor.requiresUnsafe ||
       constructor.borrowOrigin != BorrowOriginKind::None ||
-      (parameterRecipe && escapes) ||
-      !body.values.empty() || !body.loans.empty() ||
-      !body.fullExpressions.empty() || body.places.size() != 1 ||
-      body.dropObligations.size() > 1 ||
+      (parameterRecipe && escapes) || !body.values.empty() ||
+      !body.loans.empty() || !body.fullExpressions.empty() ||
+      body.places.size() != 1 || body.dropObligations.size() > 1 ||
       !verifyMirBody(body, constructor.id).valid())
     return {};
   const auto &parameter = body.places.front();
@@ -216,43 +214,47 @@ bool Mutexes::handles(IntrinsicKind intrinsic) {
 
 namespace {
 bool mutexCallMetadata(const MirProgram &program,
-                        const MirInstruction &instruction) {
+                       const MirInstruction &instruction) {
   const auto &target = program.target();
   return target.executionProfile == ExecutionProfile::Concurrent &&
-      target.runtimeCapabilities.threads &&
-      ((target.os == "macos" && target.arch == "arm64") ||
-       (target.os == "linux" && target.arch == "x86_64")) &&
-      instruction.kind == MirInstructionKind::Call &&
-      instruction.operation == MirOperation::None && !instruction.receiver &&
-      !instruction.functionTarget && !instruction.constructorTarget &&
-      !instruction.lambdaTarget && !instruction.bodyTarget &&
-      !instruction.nativeCalleeType && !instruction.nativeCallbackAdapter &&
-      !instruction.threadTaskAdapter && instruction.scopedThreadTasks.empty() &&
-      !instruction.functionPointerFunctionTarget &&
-      !instruction.functionPointerLambdaTarget &&
-      instruction.closureCaptureTypes.empty() &&
-      instruction.closureCaptureModes.empty() &&
-      instruction.callableArguments.empty() && !instruction.callableBoundary &&
-      !instruction.callableInvocation && !instruction.destination &&
-      !instruction.callInputRole && !instruction.retainedOwnerPlace &&
-      !instruction.preparedParameterDrop && !instruction.successResultDrop &&
-      !instruction.successResultDestination &&
-      instruction.lifecycle.empty() && !instruction.elementCleanup &&
-      !instruction.replacementCleanup && !instruction.replacementPair &&
-      !instruction.objectAllocation && !instruction.objectLayoutType &&
-      !instruction.rawMemoryAccess &&
-      instruction.unsafeOperation == UnsafeOperationKind::None &&
-      instruction.dispatch == CallDispatch::Static &&
-      instruction.dispatchOwner == SemanticType::Unknown &&
-      instruction.borrowArguments.empty() && instruction.borrowFields.empty() &&
-      !instruction.borrowPlace && !instruction.restoresReferenceResult &&
-      instruction.restoredBorrowFields.empty() &&
-      !instruction.dependentTextPublication && !instruction.provisionalTextRelays;
+         target.runtimeCapabilities.threads &&
+         ((target.os == "macos" && target.arch == "arm64") ||
+          (target.os == "linux" && target.arch == "x86_64")) &&
+         instruction.kind == MirInstructionKind::Call &&
+         instruction.operation == MirOperation::None && !instruction.receiver &&
+         !instruction.functionTarget && !instruction.constructorTarget &&
+         !instruction.lambdaTarget && !instruction.bodyTarget &&
+         !instruction.nativeCalleeType && !instruction.nativeCallbackAdapter &&
+         !instruction.threadTaskAdapter &&
+         instruction.scopedThreadTasks.empty() &&
+         !instruction.functionPointerFunctionTarget &&
+         !instruction.functionPointerLambdaTarget &&
+         instruction.closureCaptureTypes.empty() &&
+         instruction.closureCaptureModes.empty() &&
+         instruction.callableArguments.empty() &&
+         !instruction.callableBoundary && !instruction.callableInvocation &&
+         !instruction.destination && !instruction.callInputRole &&
+         !instruction.retainedOwnerPlace &&
+         !instruction.preparedParameterDrop && !instruction.successResultDrop &&
+         !instruction.successResultDestination &&
+         instruction.lifecycle.empty() && !instruction.elementCleanup &&
+         !instruction.replacementCleanup && !instruction.replacementPair &&
+         !instruction.objectAllocation && !instruction.objectLayoutType &&
+         !instruction.rawMemoryAccess &&
+         instruction.unsafeOperation == UnsafeOperationKind::None &&
+         instruction.dispatch == CallDispatch::Static &&
+         instruction.dispatchOwner == SemanticType::Unknown &&
+         instruction.borrowArguments.empty() &&
+         instruction.borrowFields.empty() && !instruction.borrowPlace &&
+         !instruction.restoresReferenceResult &&
+         instruction.restoredBorrowFields.empty() &&
+         !instruction.dependentTextPublication &&
+         !instruction.provisionalTextRelays;
 }
 } // namespace
 
 bool nativeMutexLockFailure(const MirProgram &program,
-                             const MirInstruction &instruction) {
+                            const MirInstruction &instruction) {
   const DefinedFailureOutcome outcome{
       DefinedFailureCode::InfallibleHostOperationFailed,
       DefinedFailureDetail::MutexLock};
@@ -265,11 +267,13 @@ bool nativeMutexLockFailure(const MirProgram &program,
          instruction.operands.empty() && instruction.parameterTypes.empty() &&
          !instruction.result && instruction.info.type == SemanticType::Void &&
          instruction.info.category == ValueCategory::Value &&
-         !instruction.loan && instruction.borrowOrigin == BorrowOriginKind::None &&
+         !instruction.loan &&
+         instruction.borrowOrigin == BorrowOriginKind::None &&
          !instruction.borrowArgument &&
          instruction.borrowAccess == AccessMode::ReadOnly &&
          instruction.synchronization == SynchronizationOperation{} &&
-         instruction.definedFailure.propagation == FailurePropagationKind::None &&
+         instruction.definedFailure.propagation ==
+             FailurePropagationKind::None &&
          instruction.definedFailure.localOrigins.size() == 1 &&
          instruction.definedFailure.localOrigins.front().outcomes ==
              std::vector<DefinedFailureOutcome>{outcome} &&

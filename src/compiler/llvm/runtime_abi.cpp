@@ -110,7 +110,8 @@ llvm::Function *declareRuntimeService(Session &session,
     noUnwind = true;
     name = "gti_rt_atomic_wait_v1";
     parameters = {ptr, llvm::Type::getInt64Ty(context),
-                  llvm::Type::getInt32Ty(context), llvm::Type::getInt32Ty(context)};
+                  llvm::Type::getInt32Ty(context),
+                  llvm::Type::getInt32Ty(context)};
     break;
   case RuntimeService::BeginCThreadRuntime:
   case RuntimeService::EndCThreadRuntime:

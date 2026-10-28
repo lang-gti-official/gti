@@ -67,7 +67,7 @@ public:
   void prepareProgramStorage(
       const std::map<SymbolId, llvm::GlobalVariable *> &globals);
   void publishProgramStorage(llvm::IRBuilder<> &ir,
-                              MirInstructionId instruction);
+                             MirInstructionId instruction);
   void retireProgramStorage(llvm::IRBuilder<> &ir);
   void generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
                       const MirBody &body, const MirInstruction &instruction,

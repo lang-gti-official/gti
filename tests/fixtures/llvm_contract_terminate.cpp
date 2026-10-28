@@ -15,7 +15,8 @@ extern "C" void contract_terminate_install() {
   });
 }
 
-extern "C" std::int32_t contract_invoke(Transform callback, std::int32_t value) {
+extern "C" std::int32_t contract_invoke(Transform callback,
+                                        std::int32_t value) {
   return callback(value);
 }
 

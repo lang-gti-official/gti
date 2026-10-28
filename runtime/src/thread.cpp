@@ -58,7 +58,7 @@ consumeTestFault(gti::runtime::detail::ThreadTestFault expected) noexcept {
 }
 
 void publishWorkerOutcome(void *context,
-                           const gti_thread_failure_view_v1 *failure);
+                          const gti_thread_failure_view_v1 *failure);
 
 class ActiveWorkerScope final {
 public:
@@ -157,9 +157,10 @@ void recordWorkerFailure(
 }
 
 void publishWorkerOutcome(void *context,
-                           const gti_thread_failure_view_v1 *failure) {
+                          const gti_thread_failure_view_v1 *failure) {
   auto *state = static_cast<gti_thread_state_v1 *>(context);
-  if (state == nullptr || state != activeWorker || failureSink != workerFailureSink)
+  if (state == nullptr || state != activeWorker ||
+      failureSink != workerFailureSink)
     std::terminate();
   const std::lock_guard lock(state->failureMutex);
   if (failure->failure_kind == GTI_THREAD_WORKER_FAILURE_ORDINARY_V1) {
@@ -169,7 +170,8 @@ void publishWorkerOutcome(void *context,
     recordWorkerFailure(*state, *failure->ordinary, failure->primary_artifact);
     return;
   }
-  if (!acceptsCleanupEnvelope(*state, *failure->cleanup, failure->primary_artifact))
+  if (!acceptsCleanupEnvelope(*state, *failure->cleanup,
+                              failure->primary_artifact))
     std::terminate();
   state->cleanupFailure = *failure->cleanup;
   state->failure = {};
@@ -691,13 +693,15 @@ gti_rt_thread_program_storage_retirement_ready_v1() noexcept {
   return programStoragePinned.load(std::memory_order_acquire) ? 0U : 1U;
 }
 
-extern "C" void gti_rt_thread_failure_sink_enter_v1(
-    gti_thread_failure_sink_v1 *sink, gti_thread_failure_publish_v1 publish,
-    void *context) noexcept {
+extern "C" void
+gti_rt_thread_failure_sink_enter_v1(gti_thread_failure_sink_v1 *sink,
+                                    gti_thread_failure_publish_v1 publish,
+                                    void *context) noexcept {
   if (publishingFailure || sink == nullptr || publish == nullptr ||
       sink->abi_version != GTI_THREAD_FAILURE_SINK_ABI_VERSION_V1 ||
-      sink->reserved != 0 || sink->owner != nullptr || sink->previous != nullptr ||
-      sink->publish != nullptr || sink->context != nullptr)
+      sink->reserved != 0 || sink->owner != nullptr ||
+      sink->previous != nullptr || sink->publish != nullptr ||
+      sink->context != nullptr)
     std::terminate();
   sink->previous = failureSink;
   sink->publish = publish;
@@ -706,8 +710,8 @@ extern "C" void gti_rt_thread_failure_sink_enter_v1(
   failureSink = sink;
 }
 
-extern "C" void gti_rt_thread_failure_sink_leave_v1(
-    gti_thread_failure_sink_v1 *sink) noexcept {
+extern "C" void
+gti_rt_thread_failure_sink_leave_v1(gti_thread_failure_sink_v1 *sink) noexcept {
   if (publishingFailure || sink == nullptr || failureSink != sink ||
       sink->owner != &failureSink ||
       sink->abi_version != GTI_THREAD_FAILURE_SINK_ABI_VERSION_V1 ||
@@ -723,7 +727,8 @@ extern "C" void gti_rt_thread_failure_sink_leave_v1(
 extern "C" void gti_rt_thread_failure_publish_v1(
     const gti_thread_failure_view_v1 *failure) noexcept {
   const auto validRecord = [](const gti_failure_record_v2 *record) {
-    return record != nullptr && record->abi_version == GTI_FAILURE_ABI_VERSION_V2 &&
+    return record != nullptr &&
+           record->abi_version == GTI_FAILURE_ABI_VERSION_V2 &&
            record->reserved == 0 && record->code != GTI_FAILURE_CODE_NONE_V1 &&
            record->message_size <= GTI_FAILURE_MESSAGE_CAPACITY_V2 &&
            (record->message_flags & ~GTI_FAILURE_MESSAGE_TRUNCATED_V2) == 0;
@@ -758,8 +763,8 @@ extern "C" void gti_rt_thread_failure_publish_v1(
   }
   if (failureSink != sink || sink->owner != snapshot.owner ||
       sink->abi_version != snapshot.abi_version || sink->reserved != 0 ||
-      sink->previous != snapshot.previous || sink->publish != snapshot.publish ||
-      sink->context != snapshot.context)
+      sink->previous != snapshot.previous ||
+      sink->publish != snapshot.publish || sink->context != snapshot.context)
     std::terminate();
   publishingFailure = false;
 }
@@ -768,17 +773,22 @@ extern "C" gti_thread_worker_failure_kind_v1
 gti_rt_thread_cleanup_failure_kind_v1(void) noexcept {
   return failureSink != nullptr && failureSink == workerFailureSink
              ? gti_runtime_detail::managed_task_cleanup_failure_kind()
-             : gti_thread_worker_failure_kind_v1{GTI_THREAD_WORKER_FAILURE_NONE_V1};
+             : gti_thread_worker_failure_kind_v1{
+                   GTI_THREAD_WORKER_FAILURE_NONE_V1};
 }
 
 extern "C" uint32_t gti_rt_thread_cleanup_primary_copy_v2(
     gti_failure_record_v2 *record,
     const gti_failure_artifact_descriptor_v1 **artifact) noexcept {
-  if (gti_rt_thread_cleanup_failure_kind_v1() != GTI_THREAD_WORKER_FAILURE_ORDINARY_V1)
+  if (gti_rt_thread_cleanup_failure_kind_v1() !=
+      GTI_THREAD_WORKER_FAILURE_ORDINARY_V1)
     return 0;
   if (record == nullptr || artifact == nullptr)
     std::terminate();
-  return gti_runtime_detail::copy_managed_task_cleanup_primary_v2(*record, *artifact) ? 1 : 0;
+  return gti_runtime_detail::copy_managed_task_cleanup_primary_v2(*record,
+                                                                  *artifact)
+             ? 1
+             : 0;
 }
 
 extern "C" gti_thread_spawn_result_v1

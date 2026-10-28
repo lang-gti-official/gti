@@ -1335,8 +1335,8 @@ private:
       if (type.arguments.size() != 1 || !owner->requiresActiveCleanup)
         return std::nullopt;
       auto payload = uniqueCleanupType(type.arguments.front(), visiting);
-      const bool shell = owner->compilerCapability ==
-                         CompilerCapabilityTypeKind::MutexStorage;
+      const bool shell =
+          owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage;
       if (!shell && (!payload || !payload->requiresActiveCleanup))
         return std::nullopt;
       if (shell && !payload) {
@@ -1360,15 +1360,15 @@ private:
                                         !enumeration.requiresActiveCleanup;
                                });
           if (value.kind == SemanticType::Lambda)
-            return std::any_of(program.lambdaInstances().begin(),
-                               program.lambdaInstances().end(),
-                               [&](const auto &lambda) {
-                                 return lambda.type == value &&
-                                        std::none_of(
-                                            lambda.captureRequiresActiveCleanup.begin(),
-                                            lambda.captureRequiresActiveCleanup.end(),
-                                            [](bool active) { return active; });
-                               });
+            return std::any_of(
+                program.lambdaInstances().begin(),
+                program.lambdaInstances().end(), [&](const auto &lambda) {
+                  return lambda.type == value &&
+                         std::none_of(
+                             lambda.captureRequiresActiveCleanup.begin(),
+                             lambda.captureRequiresActiveCleanup.end(),
+                             [](bool active) { return active; });
+                });
           return value.kind != SemanticType::UniqueOwner &&
                  value.kind != SemanticType::SharedPointer &&
                  value != SemanticType::Unknown;
@@ -1378,8 +1378,9 @@ private:
       }
       return MirDropType{.type = type,
                          .classInstance = owner->id,
-                         .aggregate = payload ? std::vector<MirDropType>{*payload}
-                                              : std::vector<MirDropType>{},
+                         .aggregate = payload
+                                          ? std::vector<MirDropType>{*payload}
+                                          : std::vector<MirDropType>{},
                          .requiresActiveCleanup = true};
     }
     if (owner != program.classInstances().end() && owner->destructor &&
@@ -7044,7 +7045,8 @@ private:
           // A by-reference capture's entry loan names the capture slot. A
           // receiver reached through it is the referent place itself, as a
           // reference formal's dereferenced receiver is.
-          if (const MirPlaceId referent = captureReferentPlace(*receiver, source))
+          if (const MirPlaceId referent =
+                  captureReferentPlace(*receiver, source))
             return referent;
           return canonicalBorrowSource(source);
         }
@@ -8195,8 +8197,7 @@ private:
              // formal has no entry loan at all.
              (output.loans[originLoan - 1].kind == MirLoanKind::Parameter &&
               isLifecycleBoundBorrowCarrier(value.info.type) &&
-              value.borrowArguments.empty() &&
-              value.borrowFields.size() <= 1 &&
+              value.borrowArguments.empty() && value.borrowFields.size() <= 1 &&
               value.borrowAccess == AccessMode::ReadOnly) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::CallResult &&
               value.borrowAccess == AccessMode::ReadOnly));
@@ -11924,18 +11925,17 @@ private:
           if (parent != 0 &&
               (desired->access == AccessMode::ReadOnly ||
                output.loans[parent - 1].access == AccessMode::Mutable)) {
-            const MirLoanId loan = createLoan(MirLoanKind::Local, referent,
-                                              desired->access, valueId, 0, 0,
-                                              parent);
-            (void)appendInstruction(
-                {.kind = MirInstructionKind::Borrow,
-                 .hirValue = valueId,
-                 .operands = {{.kind = MirOperandKind::Loan,
-                               .place = referent,
-                               .loan = parent,
-                               .type = value->info.type}},
-                 .loan = loan,
-                 .info = value->info});
+            const MirLoanId loan =
+                createLoan(MirLoanKind::Local, referent, desired->access,
+                           valueId, 0, 0, parent);
+            (void)appendInstruction({.kind = MirInstructionKind::Borrow,
+                                     .hirValue = valueId,
+                                     .operands = {{.kind = MirOperandKind::Loan,
+                                                   .place = referent,
+                                                   .loan = parent,
+                                                   .type = value->info.type}},
+                                     .loan = loan,
+                                     .info = value->info});
             scopes.back().loans.push_back(loan);
             valueLoans.insert_or_assign(valueId, loan);
             return {.kind = MirOperandKind::Loan,
@@ -13189,20 +13189,21 @@ private:
 
       const HirBinding *binding = findBinding(step.binding);
       const MirPlaceId storagePlace = placeForBinding(step.binding);
-      MirProgramInitializationStep lowered{.id = step.id,
-                                           .sourceUnit = step.sourceUnit,
-                                           .storageKind = step.kind,
-                                           .role = step.role,
-                                           .symbol = step.symbol,
-                                           .ownerClass = step.ownerClass,
-                                           .requiresActiveCleanup =
-                                               step.requiresActiveCleanup,
-                                           .nativeRetirement = step.nativeRetirement
-                                               ? std::optional{lowerDropType(*step.nativeRetirement)}
-                                               : std::nullopt,
-                                           .binding = step.binding,
-                                           .storagePlace = storagePlace,
-                                           .entryBlock = entryBlock};
+      MirProgramInitializationStep lowered{
+          .id = step.id,
+          .sourceUnit = step.sourceUnit,
+          .storageKind = step.kind,
+          .role = step.role,
+          .symbol = step.symbol,
+          .ownerClass = step.ownerClass,
+          .requiresActiveCleanup = step.requiresActiveCleanup,
+          .nativeRetirement =
+              step.nativeRetirement
+                  ? std::optional{lowerDropType(*step.nativeRetirement)}
+                  : std::nullopt,
+          .binding = step.binding,
+          .storagePlace = storagePlace,
+          .entryBlock = entryBlock};
       if (binding == nullptr || binding->info.symbol != step.symbol ||
           storagePlace == 0 ||
           step.requiresActiveCleanup != step.nativeRetirement.has_value()) {
@@ -13850,9 +13851,9 @@ private:
           // A carrier returned by a method of an accessor's referent, such
           // as `owner->lock()`, borrows that referent through the accessor
           // result, exactly as a constructor argument does.
-          const auto accessorReceiver =
-              initializer != nullptr ? receiverValue(*initializer)
-                                     : std::nullopt;
+          const auto accessorReceiver = initializer != nullptr
+                                            ? receiverValue(*initializer)
+                                            : std::nullopt;
           const bool exactAccessorReceiverParent =
               retained.kind == MirLoanKind::Stored && accessorReceiver &&
               initializer->functionTarget &&

@@ -836,7 +836,8 @@ void checkNativeResultInputs(Session &session) {
         malformed([](auto &, auto &value) {
           value.callInputKind = HirCallInputKind::MutableBorrow;
         });
-        malformed([](auto &, auto &value) { value.operands.front().value = 0; });
+        malformed(
+            [](auto &, auto &value) { value.operands.front().value = 0; });
         malformed([](auto &body, auto &value) {
           for (auto &block : body.blocks)
             for (auto &producer : block.instructions)
@@ -870,7 +871,8 @@ void checkFunctionBorrows(Session &session) {
         if (!nativeCFunctionBorrowInputContract(program, target, function.body,
                                                 stage))
           continue;
-        (stage.callInputKind == HirCallInputKind::MutableBorrow ? writes : reads)++;
+        (stage.callInputKind == HirCallInputKind::MutableBorrow ? writes
+                                                                : reads)++;
         const auto malformed = [&](const auto &mutate) {
           auto body = function.body;
           MirInstruction *selected = nullptr;
@@ -899,7 +901,8 @@ void checkFunctionBorrows(Session &session) {
         malformed([](auto &, auto &value) {
           value.operands.front().kind = MirOperandKind::Copy;
         });
-        malformed([](auto &, auto &value) { value.operands.front().place = 0; });
+        malformed(
+            [](auto &, auto &value) { value.operands.front().place = 0; });
         malformed([](auto &, auto &value) {
           value.info.type.arguments.front() = SemanticType::NativeFunction;
         });
@@ -924,10 +927,11 @@ void checkFunctionBorrows(Session &session) {
         auto detached = stage;
         detached.defaultArgument = !detached.defaultArgument;
         require(!nativeCFunctionBorrowInputContract(program, target,
-                                                     function.body, detached),
+                                                    function.body, detached),
                 "detached native borrow input must match its canonical stage");
       }
-  require(reads && writes, "native borrow fixture needs read and mutable inputs");
+  require(reads && writes,
+          "native borrow fixture needs read and mutable inputs");
 }
 
 void emitSourcePreflight(Session &session,
@@ -1162,23 +1166,26 @@ void checkNativeBoundaryReachability(Session &session) {
         if (stage.nativeCallbackAdapter) {
           const auto id = *stage.nativeCallbackAdapter;
           const auto *adapter = malformed.mir().findNativeCallbackAdapter(id);
-          require(adapter &&
-                      roots.contains(MirBodyAddress{MirBodyKind::Function,
-                                                    adapter->target}) &&
-                      roots.contains(LoweredGeneratedItemIdentity{
-                          .kind = LoweredGeneratedItemKind::NativeInteropAdapter,
-                          .owner = id}),
-                  "a callback must retain its exact adapter and target body");
+          require(
+              adapter &&
+                  roots.contains(
+                      MirBodyAddress{MirBodyKind::Function, adapter->target}) &&
+                  roots.contains(LoweredGeneratedItemIdentity{
+                      .kind = LoweredGeneratedItemKind::NativeInteropAdapter,
+                      .owner = id}),
+              "a callback must retain its exact adapter and target body");
           stage.nativeCallbackAdapter = 0;
-          require(reachableProgram(malformed).conservative,
-                  "a forged callback conversion must restore conservative roots");
+          require(
+              reachableProgram(malformed).conservative,
+              "a forged callback conversion must restore conservative roots");
           stage.nativeCallbackAdapter = id;
           ++checked;
         }
         if (stage.nativeCalleeType) {
           ++stage.callSite;
           require(reachableProgram(malformed).conservative,
-                  "a forged native signature stage must restore conservative roots");
+                  "a forged native signature stage must restore conservative "
+                  "roots");
           --stage.callSite;
           ++checked;
         }
@@ -1571,7 +1578,8 @@ int main(int argc, char **argv) {
       else
         checkNativeResultInputs(session);
       const auto admission = planLlvmAdmission(input, session.options());
-      require(!admission.firstUnsupported(), "native borrows need public admission");
+      require(!admission.firstUnsupported(),
+              "native borrows need public admission");
       lowerScalarProgram(session, admission);
     } else if (storageContracts) {
       checkStorageImports(session, input);

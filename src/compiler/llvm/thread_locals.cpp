@@ -85,22 +85,21 @@ llvm::Function *ThreadLocals::cleanup(const MirThreadLocalStorage &storage,
   ir.SetInsertPoint(inherit);
   // The registry owns this borrowed record and its possibly distinct artifact.
   // An existing outer cleanup context remains authoritative.
-  auto *token = failures.enterCleanupRecord(ir, function->getArg(2),
-                                            function->getArg(3));
+  auto *token =
+      failures.enterCleanupRecord(ir, function->getArg(2), function->getArg(3));
   auto *entered = ir.GetInsertBlock();
   ir.CreateBr(invoke);
   ir.SetInsertPoint(invoke);
   auto *cleanupToken = ir.CreatePHI(pointer, 2);
   cleanupToken->addIncoming(llvm::ConstantPointerNull::get(pointer), entry);
   cleanupToken->addIncoming(token, entered);
-  auto *status = ir.CreateCall(
-      lifetimes.cleanup(storage.cleanup),
-      {function->getArg(0), channel, hasPrimary});
+  auto *status = ir.CreateCall(lifetimes.cleanup(storage.cleanup),
+                               {function->getArg(0), channel, hasPrimary});
   if (failures.workerContainment()) {
     // A managed-worker emergency was already published to the worker sink,
     // which now owns the terminal envelope; the drain stops on that state.
-    auto *abandon = llvm::BasicBlock::Create(session.context(),
-                                             "worker.abandon", function);
+    auto *abandon =
+        llvm::BasicBlock::Create(session.context(), "worker.abandon", function);
     auto *resume = llvm::BasicBlock::Create(session.context(),
                                             "worker.continue", function);
     ir.CreateCondBr(failures.abandoning(ir), abandon, resume);
