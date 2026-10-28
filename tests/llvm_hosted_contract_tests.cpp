@@ -913,6 +913,7 @@ interface Observed {
   int observe();
 };
 struct Owner : public Observed {
+  Owner() = default;
   int tag = 22;
   int observe() override { return this.tag; }
   ~Owner() {}

@@ -1468,7 +1468,7 @@ def test_missing_include_and_format_config(executable, root):
     )
     format_path = source_root / "configured.gti"
     format_source = (
-        "class Box{public:int value=0; public: Box() = default; };uint32 legacy=0;"
+        "class Box{public:int value=0;};uint32 legacy=0;"
         "int inspect(int& value,Box& box){int bits=value&value;// note\n"
         "switch(bits){case 0:return 0;default:if(bits>0&&true||false){"
         "return(bits);}}return bits;}"
@@ -1517,7 +1517,7 @@ def test_missing_include_and_format_config(executable, root):
         )
         response = session.receive_until(lambda message: message.get("id") == 2)
         formatted = response["result"][0]["newText"]
-        assert "class Box\n{\npublic:\n    int value= 0;\n public: Box() = default; };" in formatted
+        assert "class Box\n{\npublic:\n    int value= 0;\n};" in formatted
         assert "uint32_t legacy= 0;" in formatted
         assert "int inspect(int &value, Box &box)\n{" in formatted
         assert "int &value" in formatted
@@ -1988,7 +1988,7 @@ def test_documentation_hover(executable, root):
         "uint64_t calculate(uint64_t value) { return value; }\n"
         "/// A value supplied by the API.\n"
         "class Value {\n"
-        "public:\n"
+        "public: Value() = default;\n"
         "  /// Reads this value.\n"
         "  uint64_t read() { return 7; }\n"
         "};\n"
@@ -6981,7 +6981,7 @@ def test_constraint_failure_provenance(executable, root):
     library_path.write_text(contract, encoding="utf-8")
     source = (
         '#include "constraint-contract.gti"\n'
-        "struct Item {};\n"
+        "struct Item { public: Item() = default; };\n"
         "int main() { Item first{}; Item target{}; "
         "return library::read(first, /* 😀 */ target); }\n"
     )
@@ -10892,7 +10892,7 @@ def test_document_symbols(executable, root):
 
 def test_flat_document_symbols(executable, root):
     source = (
-        "class Widget { public: int size() { return 1; }  public: Widget() = default; };\n"
+        "class Widget { public: int size() { return 1; } };\n"
         "int main() { return 0; }\n"
     )
     path = root / "flat-document-symbols.gti"
@@ -11401,7 +11401,7 @@ def test_restricted_arithmetic_operator_tooling(executable, root):
         assert "fixes" not in diagnostic["data"], diagnostic
         temporary_source = (
             "// 🙂\nclass Exact { public: "
-            "bool operator==(Exact& other) { return true; } };\n"
+            "bool operator==(Exact& other) { return true; } public: Exact() = default; };\n"
             "int main() { Exact value{}; "
             "if (value == Exact()) { return 1; } return 0; }\n"
         )
@@ -11677,7 +11677,7 @@ def main():
         "enum class Stage : uint8_t { Boot, Running = 4, };\n"
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
         "T& get() { return this.value; } };\n"
-        "class StaticArray<T, uint64_t N> { T values[N] = {}; public: "
+        "class StaticArray<T, uint64_t N> { T values[N] = {}; public: StaticArray() = default; "
         "uint64_t size() { return N; } };\n"
         "class FormattingProbe<T> { public: // Generic iterator access.\n"
         "Box<T> begin(); };\n"
@@ -11686,7 +11686,7 @@ def main():
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
         "void reset() mut { this.x = 0; } "
         "~Pixel() { this.reset(); } private: int y = 0; };\n"
-        "class Handle { mut Pixel pixel = Pixel(1); mut int value = 0; public: "
+        "class Handle { mut Pixel pixel = Pixel(1); mut int value = 0; public: Handle() = default; "
         "Pixel& operator->() { return this.pixel; } "
         "mut Pixel& operator->() mut { return this.pixel; } "
         "int& operator*() { return this.value; } "
@@ -12673,7 +12673,7 @@ class Resource {
 public:
   int add(int amount) mut { this.value += amount; return this.value; }
   int read() { return this.value; }
-};
+ public: Resource() = default; };
 class Service {
   mut Resource& resource;
 public:
@@ -12686,7 +12686,7 @@ class Client {
 public:
   Service auth() mut { return Service(this.resource); }
   int read() { return this.resource.read(); }
-};
+ public: Client() = default; };
 """
     valid = declarations + "int main() { mut Client api{}; return api.auth().update(1); }\n"
     escaping = declarations + "int main() { /* 🌱 */ mut Client api{}; [[discard]] api.auth().borrow(); return 0; }\n"
@@ -13375,7 +13375,7 @@ class Token {
 public:
   std::string_view view() { /*😀*/ return _token.view(); }
   void clear() mut { _token.clear(); }
-};
+  Token() = default; };
 int main() {
   mut Token token{};
   auto text = token.view();

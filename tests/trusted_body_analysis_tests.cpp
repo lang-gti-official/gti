@@ -417,7 +417,7 @@ void checkLibraryOnlyOmission(const std::filesystem::path &root) {
   // what the complete check reaches.
   const auto application =
       compare("instance of the file's own type",
-              "class App { public: int32_t width = 0; };\n"
+              "class App { public: App() = default; int32_t width = 0; };\n"
               "int main() { App app{}; return outer(app); }",
               true);
   expect(!application.first.empty(),

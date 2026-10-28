@@ -538,6 +538,7 @@ void examine() {
 class Slot {
   mut std::string value = std::string("old");
 public:
+  Slot() = default;
   mut std::string& operator*() mut { return value; }
 };
 int main() {
@@ -2033,16 +2034,16 @@ int expressions(int left, int right) {
          "operator spacing");
 
   const std::string pointerFormatted = lang::Formatter().format(
-      "class Byte{ public: Byte() = default; };void use(mut uint8_t * "
+      "class Byte{};void use(mut uint8_t * "
       "data,const uint8_t*read_only){"
       "mut uint8_t*alias=& data[0];* data=read_only [0];"
       "uint8_t product=data[0]*read_only[0];"
       "uint8_t bits=data[0]&read_only[0];return * alias;}"
-      "class Link{public:uint8_t value=0; public: Link() = default; };"
+      "class Link{public:uint8_t value=0;};"
       "uint8_t member(Link*link){return link -> value;}"
       "class RawBox<T>{T * value;const T * read(){return value;}};");
   const std::string expectedPointerFormatting =
-      R"(class Byte { public: Byte() = default; };
+      R"(class Byte {};
 void use(mut uint8_t* data, const uint8_t* read_only) {
   mut uint8_t* alias = &data[0];
   *data = read_only[0];
@@ -2053,8 +2054,6 @@ void use(mut uint8_t* data, const uint8_t* read_only) {
 class Link {
 public:
   uint8_t value = 0;
-public:
-  Link() = default;
 };
 uint8_t member(Link* link) {
   return link->value;
@@ -2174,7 +2173,7 @@ class RawBox<T> {
   const std::string configuredSource =
       "class Example{public:int run(int value){if(value>0){value+=1;"
       "// retain\n}else{return 0;}switch(value){case 1:value+=1;break;"
-      "default:return value;}} public: Example() = default; };";
+      "default:return value;}}};";
   const std::string configuredExpected = R"(class Example
 {
 public:
@@ -2197,8 +2196,6 @@ public:
                 return value;
         }
     }
-public:
-  Example() = default;
 };
 )";
   const std::string configured =

@@ -634,7 +634,7 @@ public:
 };
 [[no_share]] struct ExclusiveOnly { mut int value = 0;  public: ExclusiveOnly() = default; };
 [[no_transfer]] struct SharedOnly { int value = 0;  public: SharedOnly() = default; };
-[[no_transfer, no_share]] struct Affine { Affine() = default; int value = 0;  public: Affine() = default; };
+[[no_transfer, no_share]] struct Affine { Affine() = default; int value = 0; };
 [[no_transfer]] class LocalJob {
   int& value;
 public:

@@ -37,6 +37,7 @@ public:
 
 class Outer {
 public:
+  Outer() = default;
   mut Boxes inner = Boxes();
 };
 """
