@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.486.1 - Text relays of a formal's text field
+
+- A function that returns a text field of a reference parameter through a call
+  that relays text, such as
+  `std::string_view f(Label& label) { return relay(label.text); }`, now
+  compiles instead of failing with the internal error `GTI-B0001`. It is a
+  text field result exactly as `return label.text;` is: a caller passing a
+  `Label` that holds an owner's view keeps that owner borrowed while the
+  result lives (`GTI-S2017`), and cannot return the result past the owner
+  (`GTI-S2045`).
+
 ## 0.486.0 - Read-only arrow steps, projected references and capture ranges
 
 ### References to fields of returned references

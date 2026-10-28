@@ -2324,8 +2324,16 @@ dependency the caller's value holds in that field:
 - In the callee no loan derives the result from the origin. Lowering seeds no
   return-origin loan on a by-value formal; a reference formal keeps its
   ordinary entry loan, ended at the return. A return is the exact stored-field
-  load or another field result's call, and `TextContracts` requires every
-  return to read exactly the declared field or ownerless text.
+  load, another field result's call, or a by-value text relay of the field
+  such as `relay(label.text)`. `TextContracts` requires every return to read
+  exactly the declared field or ownerless text.
+- A by-value text call relaying a formal's or the receiver's text field
+  (`L-OWN-02`) keeps its result loan on that field place, never on the whole
+  referent the formal's entry loan names (`formalTextFieldPlace`), so the
+  relay is a use of that one field, which the field contract tracks, and its
+  return publishes exactly the declared source field. Program verification
+  admits a call-result loan that names a text field of the selected argument
+  source for a by-value text result.
 - At a call, `TextContracts` analyzes the callee under its field contracts and
   maps each returned field source onto the argument or receiver:
   `heldFieldSources` gives that formal's field here, unknown text for a

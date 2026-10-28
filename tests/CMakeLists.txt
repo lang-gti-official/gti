@@ -1329,6 +1329,11 @@ add_test(NAME text_storage_provenance_runtime
                  "${PROJECT_SOURCE_DIR}/tests/text_storage_provenance_runtime_test.py"
                  $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
 set_tests_properties(text_storage_provenance_runtime PROPERTIES TIMEOUT 300)
+add_test(NAME formal_text_field_relays_runtime
+         COMMAND "${Python3_EXECUTABLE}"
+                 "${PROJECT_SOURCE_DIR}/tests/formal_text_field_relays_test.py"
+                 $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
+set_tests_properties(formal_text_field_relays_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME projected_reference_bindings_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/projected_reference_bindings_test.py"

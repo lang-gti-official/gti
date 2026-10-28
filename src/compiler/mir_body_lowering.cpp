@@ -5861,6 +5861,33 @@ private:
     return crossed;
   }
 
+  // The text field place a by-value text argument reads through a reference
+  // formal, when `value` relays that argument as its text result.
+  [[nodiscard]] MirPlaceId formalTextFieldPlace(const HirValue &value,
+                                                HirValueId argument) {
+    const auto text = [](const SemanticType &type) {
+      return type.kind == SemanticType::StringView ||
+             type.kind == SemanticType::CString;
+    };
+    if (!text(value.info.type) || value.info.category != ValueCategory::Value ||
+        !value.borrowFields.empty())
+      return 0;
+    // Only an argument read from an already lowered place qualifies: never
+    // materialize a place here, which an unused place would leave behind.
+    const MirLoan *loan = output.findLoan(loanForValue(argument));
+    if (loan == nullptr || loan->kind != MirLoanKind::Parameter || !loan->entry)
+      return 0;
+    const auto found = valuePlaces.find(argument);
+    const MirPlaceId id = found == valuePlaces.end() ? 0 : found->second;
+    const MirPlace *place = output.findPlace(id);
+    if (place == nullptr || !text(place->type) ||
+        place->root != MirPlaceRootKind::Binding ||
+        place->projections.empty() ||
+        place->projections.back().kind != MirProjectionKind::Field)
+      return 0;
+    return id;
+  }
+
   [[nodiscard]] MirPlaceId borrowedSourcePlace(HirValueId id) const {
     const MirLoanId loan = loanForValue(id);
     const MirLoan *resolved = output.findLoan(loan);
@@ -7194,6 +7221,13 @@ private:
         value.borrowArgument < call.operands.size()) {
       const std::vector<HirValueId> arguments = callArgumentValues(value);
       if (value.borrowArgument < arguments.size()) {
+        // A text view relayed from a reference formal's text field holds the
+        // text of that field, which the function's field contract tracks
+        // (L-OWN-02), as a receiver's text field's does: keep the field
+        // place rather than the formal's entry loan on the whole referent.
+        if (const MirPlaceId field =
+                formalTextFieldPlace(value, arguments[value.borrowArgument]))
+          return canonicalBorrowSource(field);
         if (const MirPlaceId source =
                 borrowedSourcePlace(arguments[value.borrowArgument]);
             source != 0) {

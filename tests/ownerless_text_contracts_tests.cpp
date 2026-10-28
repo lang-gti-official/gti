@@ -2479,6 +2479,94 @@ int main() {
          "the ownerless relay keeps its loan without borrowed state");
 }
 
+// A by-value text relay of a reference formal's text field (L-OWN-02) is a
+// text field result, as returning the field directly is: the relay's result
+// loan names that field place, not the formal's whole referent, so the field
+// contract tracks one field and the function declares no ownerless
+// requirement on it. Dependent views relayed through the same call keep their
+// loans: escaping one reports GTI-S2045 and mutating its owner GTI-S2017.
+void testFormalTextFieldRelays() {
+  const std::string declarations = R"gti(
+#include <std/string>
+std::string_view relay(std::string_view value) { return value; }
+class Label {
+public:
+  std::string_view text;
+  Label() : text("label") {}
+  Label(std::string_view text) : text(text) {}
+};
+std::string_view field_relay(Label& label) { return relay(label.text); }
+)gti";
+  const auto valid = analyzeText(declarations + R"gti(
+int main() {
+  std::string owner{"dynamic"};
+  Label held{owner.view()};
+  Label fixed{};
+  return field_relay(held).size() + field_relay(fixed).size() == uint64_t(12)
+             ? 0
+             : 1;
+}
+)gti");
+  if (!valid.canGenerateCode())
+    printDiagnostics(valid);
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "a relayed formal text field verifies as a text field result");
+  bool fieldLoan = false;
+  bool required = false;
+  for (const auto &function : valid.mir.functionInstances()) {
+    required = required || !function.ownerlessTextFields.empty();
+    const auto &body = function.body;
+    for (const auto &block : body.blocks)
+      for (const auto &call : block.instructions) {
+        if (call.kind != lang::MirInstructionKind::Call || !call.loan ||
+            call.info.type.kind != lang::SemanticType::StringView)
+          continue;
+        const auto *loan = body.findLoan(*call.loan);
+        const auto *source = loan ? body.findPlace(loan->source) : nullptr;
+        fieldLoan =
+            fieldLoan ||
+            (loan && loan->kind == lang::MirLoanKind::Stored && source &&
+             source->root == lang::MirPlaceRootKind::Binding &&
+             source->type.kind == lang::SemanticType::StringView &&
+             !source->projections.empty() &&
+             source->projections.back().kind == lang::MirProjectionKind::Field);
+      }
+  }
+  expect(fieldLoan, "the relay's result loan names the formal's text field");
+  expect(!required, "a relayed text field adds no ownerless field requirement");
+
+  const auto escaped = analyzeText(declarations + R"gti(
+std::string_view leak() {
+  std::string owner{"dynamic"};
+  return relay(owner.view());
+}
+int main() { return int(leak().size()); }
+)gti");
+  expect(rejectedAtSource(escaped, "GTI-S2045"),
+         "a dependent view relayed out of its owner's scope is rejected");
+  const auto escapedField = analyzeText(declarations + R"gti(
+std::string_view leak() {
+  std::string owner{"dynamic"};
+  Label label{owner.view()};
+  return field_relay(label);
+}
+int main() { return int(leak().size()); }
+)gti");
+  expect(rejectedAtSource(escapedField, "GTI-S2045"),
+         "a relayed field holding a local owner's view cannot escape");
+  const auto mutated = analyzeText(declarations + R"gti(
+int main() {
+  mut std::string owner{"dynamic"};
+  Label label{owner.view()};
+  std::string_view kept = field_relay(label);
+  owner.append("!");
+  return int(kept.size());
+}
+)gti");
+  expect(rejectedAtSource(mutated, "GTI-S2017"),
+         "a relayed field's owner stays borrowed while its view lives");
+}
+
 // An invocation pointer's text result is ownerless (owner decision
 // 2026-10-27): its signature names no origin for text, so forming one from a
 // target whose text result depends on a parameter reports GTI-S2045 where it
@@ -2706,6 +2794,7 @@ constexpr NamedTest kTests[] = {
     {"testOperatorTextRelays", testOperatorTextRelays},
     {"testOwnerlessTextRelayLoans", testOwnerlessTextRelayLoans},
     {"testDependentTextCallBorrowedState", testDependentTextCallBorrowedState},
+    {"testFormalTextFieldRelays", testFormalTextFieldRelays},
     {"testInvocationPointerTextTargets", testInvocationPointerTextTargets},
     {"testInheritedTextFields", testInheritedTextFields},
     {"testOwnerlessForwarding", testOwnerlessForwarding},
