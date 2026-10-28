@@ -1265,6 +1265,10 @@ and `unsafe` must match. Parameter names may differ. Access, `static`, `virtual`
 declaration. A definition must be in the owner's namespace or an enclosing
 namespace and in the same package ownership domain. Duplicate/mismatched
 definitions and foreign-package definitions are errors (`GTI-S2120`).
+The definition's source file must directly include or import the types it
+spells, including return and parameter types. Including the owner's declaration
+does not make that declaration's includes transitively visible; an invisible
+signature type reports `GTI-S2024` with its direct-include guidance.
 
 A `borrowed_from` parameter name is resolved on that original declaration and
 retained by parameter position. Renaming parameters in the definition does not
