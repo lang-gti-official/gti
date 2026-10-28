@@ -55,7 +55,7 @@ constexpr std::array cases{
          "union first-field initialization failure", 15},
     Case{"llvm_hosted_generated_default.gti", 33333, "", 0},
     Case{"llvm_hosted_generated_default_failure.gti", 321,
-         "generated default argument failure", 17},
+         "generated default argument failure", 19},
     Case{"llvm_hosted_success.gti", 12354, "", 0},
     Case{"llvm_hosted_startup_failure.gti", 321, "hosted startup failure", 16},
     Case{"llvm_hosted_entry_failure.gti", 321, "hosted entry failure", 16},
