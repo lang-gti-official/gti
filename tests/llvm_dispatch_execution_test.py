@@ -83,6 +83,9 @@ SUCCESS_FILES = {
     "exchanged-transfers": "tests/fixtures/llvm_dispatch_exchanged_transfers.gti",
 }
 
+# Sources that start threads compile under the concurrent execution profile.
+CONCURRENT_CASES = frozenset({"thread-local-hierarchy-storage"})
+
 TRANSFER_ENDPOINTS = (
     *ENDPOINTS[:2],
     *(Endpoint("llvm", level) for level in ("O0", "O1", "O2", "O3")),
@@ -294,6 +297,7 @@ int main() {
     "assignment-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second{}; first = second; return first.read(); }\n", 1),
     "array-former-reject": (PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n", 1),
     "global-former-reject": (PLAIN + "Plain value{};\nint main() { return value.read(); }\n", 1),
+    "thread-local-former-reject": (PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n", 1),
     # A moved owned local with active cleanup leaves through the return edge.
     "returned-owned-move": ("""mut int dropped = 0;
 class Owned {
@@ -660,7 +664,9 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     # returning a payload value by value still transports its objects.
     "reject-payload-copy": PLAIN + "enum Mark { none, held(Plain value) };\nint main() { Mark first = Mark::held(Plain()); Mark second = first; switch (second) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-payload-return": PLAIN + "enum Mark { none, held(Plain value) };\nMark make() { return Mark::held(Plain()); }\nint main() { Mark mark = make(); switch (mark) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
-    "reject-thread-local": PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n",
+    # A thread-local object copied from program storage is not a fresh
+    # construction in its slot, and a copy from a symbol has no planned source.
+    "reject-thread-local-copy": PLAIN + "Plain global{};\nthread_local Plain copy = global;\nint main() { return copy.read(); }\n",
     # MIR stages owned base arguments and forwarded class or enum references,
     # but still leaves these base initializers unstaged: an owned argument
     # beside a reference formal, a borrow carrier passed by value and an array
@@ -992,7 +998,8 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
         failure_line = matches[0]
     for endpoint in endpoints:
         case = work / f"{name}-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard or 'native'}"
-        result = execute(gti, root, case, source, endpoint, env)
+        result = execute(gti, root, case, source, endpoint, env,
+                         concurrent=name in CONCURRENT_CASES)
         if cpp_limitation and endpoint.backend == "cpp":
             match = re.search(r"backend diagnostics saved at ([^\n]+)", result.stderr)
             detail = Path(match[1]).read_text(encoding="utf-8") if match else ""
@@ -1049,9 +1056,8 @@ def reject_case(gti: Path, root: Path, work: Path, name: str,
             expected = ("DestructorDispatchObservation" if "observation" in name
                         else "UnstagedBaseInitializer" if name.startswith("reject-unstaged-base-")
                         else "PureDispatchState" if name == "reject-observed-pure-phase"
-                        else None if name in {"reject-global", "reject-thread-local"}
                         else "PolymorphicTransfer")
-            if expected and f"Shape.{expected}" not in result.stderr:
+            if f"Shape.{expected}" not in result.stderr:
                 raise AssertionError(f"{name}: rejection did not exercise {expected}: {result}")
             if list(case.rglob("*.o")) or list(case.rglob("*.obj")):
                 raise AssertionError(f"{name}: rejected native source published an object")
@@ -1732,7 +1738,8 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
             source=origin or f"inline/{name}.gti",
             source_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
             source_kind="repository" if origin else "inline",
-            materialized_name=f"{name}.gti", execution_profile="single-threaded",
+            materialized_name=f"{name}.gti",
+            execution_profile="concurrent" if name in CONCURRENT_CASES else "single-threaded",
             loading="repository-source" if origin else "materialized-source-with-inherited-compiler-environment",
             observation="dispatch-rejection-control" if kind in {"backend-rejection", "source-rejection"}
                         else "dispatch-native-and-supported-comparator-execution",
@@ -2124,6 +2131,34 @@ int main() {
         capture_failure.replace("expected_cleanup = 21;", "expected_cleanup = 12;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=capture_needle,
         endpoints=TRANSFER_ENDPOINTS[2:])
+    transfers_origin = "tests/fixtures/llvm_dispatch_closure_transfers.gti"
+    transfers = (root / transfers_origin).read_text(encoding="utf-8")
+    transfers_marker = "// TRANSFERS_MAIN\n"
+    if transfers.count(transfers_marker) != 1:
+        raise AssertionError("closure transfer main marker is not unique")
+    # The C++ backend does not represent these copies and moves either; each
+    # program checks its own results and destructor IDs.
+    add("closure-transfers", transfers, origin=transfers_origin,
+        endpoints=TRANSFER_ENDPOINTS[2:])
+    # A failure in a closure holding a moved closure ends the inner capture
+    # once while unwinding.
+    transfer_failure = transfers.split(transfers_marker, 1)[0] + """int main() {
+  expected_cleanup = 4;
+  Guard guard{};
+  return nested(0);
+}
+"""
+    transfer_needle = "auto second = [inner = std::move(first)](int d) -> int { return inner() / d; };"
+    add("closure-transfer-failure", transfer_failure, "defined-failure",
+        expected_exit=70, failure_needle=transfer_needle, endpoints=TRANSFER_ENDPOINTS[2:])
+    add("closure-transfer-wrong-cleanup",
+        transfer_failure.replace("expected_cleanup = 4;", "expected_cleanup = 44;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=transfer_needle,
+        endpoints=TRANSFER_ENDPOINTS[2:])
+    thread_local_origin = "tests/fixtures/llvm_dispatch_thread_local_hierarchy.gti"
+    add("thread-local-hierarchy-storage",
+        (root / thread_local_origin).read_text(encoding="utf-8"),
+        origin=thread_local_origin, endpoints=TRANSFER_ENDPOINTS[2:])
     payloads = (root / SUCCESS_FILES["hierarchy-payloads"]).read_text(encoding="utf-8")
     payloads_marker = "// PAYLOADS_MAIN\n"
     if payloads.count(payloads_marker) != 1:
@@ -2366,7 +2401,11 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
             "array-former-reject"),
         "program-hierarchy-storage": (
-            "program-storage", "program-storage-failure", "global-former-reject"),
+            "program-storage", "program-storage-failure", "global-former-reject",
+            "thread-local-former-reject"),
+        "thread-local-hierarchy-storage": ("thread-local-hierarchy-storage",),
+        "closure-transfers": (
+            "closure-transfers", "closure-transfer-failure", "closure-transfer-wrong-cleanup"),
         "hierarchy-payloads": (
             "hierarchy-payloads", "hierarchy-payload-failure", "hierarchy-payload-wrong-cleanup",
             "payload-moves", "payload-move-failure"),
@@ -2399,7 +2438,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
 def evidence_manifest(root: Path) -> dict:
     origins = {name: case.context.source for name, case in dispatch_cases(root).items()
                if not case.is_control and case.context.source_kind == "repository"}
-    return build_manifest("llvm_dispatch_execution", evidence_cases(root), evidence_profiles(root), origins)
+    return build_manifest("llvm_dispatch_execution", evidence_cases(root), evidence_profiles(root), origins,
+                          execution_profiles={"thread-local-hierarchy-storage": "concurrent"})
 
 
 def evidence_partition_policy(root: Path) -> dict[str, str]:
@@ -2453,7 +2493,8 @@ def main() -> None:
              *OWNED_BASE_SOURCES, *OWNED_BASE_FAILURES,
              *(owned_base_wrong_cleanup(name) for name in OWNED_BASE_FAILURES),
              "hierarchy-captures", "hierarchy-capture-failure", "hierarchy-capture-wrong-cleanup",
-             *SOURCE_REJECTIONS)
+             "closure-transfers", "closure-transfer-failure", "closure-transfer-wrong-cleanup",
+             "thread-local-hierarchy-storage", *SOURCE_REJECTIONS)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gti", type=Path)
     parser.add_argument("root", type=Path)
@@ -2518,7 +2559,8 @@ def main() -> None:
                             if specification.failure_needle in value)
                 for endpoint in specification.endpoints:
                     case = work / f"{name}-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard or 'native'}"
-                    result = execute(gti, root, case, source, endpoint, env)
+                    result = execute(gti, root, case, source, endpoint, env,
+                                     concurrent=name in CONCURRENT_CASES)
                     divergence = specification.cpp_divergence
                     if divergence and endpoint.backend == "cpp":
                         if (result.error or result.returncode != divergence[0]

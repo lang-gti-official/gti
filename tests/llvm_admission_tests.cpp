@@ -801,7 +801,8 @@ int main() {
   expect(refused && !copiedPlacement.target(*moved->result),
          "a capture that is not a move has no typed relocation authority");
 
-  // In source: a by-copy capture of the same hierarchy object.
+  // In source: a by-copy capture of the same hierarchy object, copied with
+  // its generated logical-field copy, and a copy of that whole closure.
   const auto byCopy = planLlvmAdmission(lower(R"(
 class Root {
 public:
@@ -817,18 +818,22 @@ public:
 int main() {
   Leaf leaf = Leaf(4);
   auto reader = [leaf]() -> int { return leaf.value(); };
-  return reader() - 5;
+  auto again = reader;
+  return again() - 5;
 }
 )"));
-  expect(!byCopy.admitted() &&
-             std::any_of(
+  expect(byCopy.admitted() &&
+             std::none_of(
                  byCopy.requirements().begin(), byCopy.requirements().end(),
                  [](const auto &use) {
                    return use.required &&
                           use.entry->key() == "Shape.PolymorphicTransfer" &&
                           !use.implementedShape;
                  }),
-         "a by-copy hierarchy capture stays PolymorphicTransfer");
+         "a by-copy hierarchy capture and a closure copy are generated "
+         "copies: " +
+             byCopy.limitation());
+
 }
 
 void testUnstagedConstructorFieldPublicationPlan() {
@@ -3793,22 +3798,48 @@ void testDispatchPerUseWitnesses() {
          "a namespace hierarchy object constructed in place by its "
          "initialization step carries its program-storage witness: " +
              global.limitation());
-  const auto threadLocal = planLlvmAdmission(lower(R"(
-    class P { public: P() {} virtual int read() { return 1; } };
-    thread_local P value{};
+  // Each thread's dynamic initializer constructs a thread-local object in
+  // that thread's slot; its thread-exit cleanup runs each destructor under
+  // its own phase. A copy of program storage is not constructed in place.
+  const auto threadLocal = [&](const char *declarations) {
+    return planLlvmAdmission(lower(std::string(R"(
+    class P { public: P() {} virtual int read() { return 1; } )") +
+                                   declarations + R"(
     int main() { return value.read(); }
   )"));
-  expect(!threadLocal.admitted() &&
-             std::any_of(threadLocal.requirements().begin(),
-                         threadLocal.requirements().end(),
+  };
+  for (const auto *declarations :
+       {"};\n thread_local P value{};",
+        "~P() {} };\n thread_local P value{};"}) {
+    const auto plan = threadLocal(declarations);
+    expect(plan.admitted() &&
+               std::any_of(plan.requirements().begin(),
+                           plan.requirements().end(),
+                           [](const auto &use) {
+                             return use.required &&
+                                    use.entry->key() ==
+                                        "Shape.PolymorphicTransfer" &&
+                                    use.implementedShape &&
+                                    use.implementedShape->name ==
+                                        "NativeThreadLocalHierarchyStorage";
+                           }),
+           "a thread-local hierarchy object constructed in its thread's slot "
+           "carries its thread-storage witness: " +
+               plan.limitation());
+  }
+  const auto copiedThreadLocal =
+      threadLocal("};\n P global{};\n thread_local P value = global;");
+  expect(!copiedThreadLocal.admitted() &&
+             std::any_of(copiedThreadLocal.requirements().begin(),
+                         copiedThreadLocal.requirements().end(),
                          [](const auto &use) {
                            return use.required &&
                                   use.entry->key() ==
                                       "Shape.PolymorphicTransfer" &&
                                   !use.implementedShape;
                          }),
-         "thread-local storage keeps an explicit transfer exclusion even "
-         "when an unsupported receiver has the preferred diagnostic span");
+         "a thread-local copy of program storage keeps an explicit transfer "
+         "exclusion");
 }
 
 } // namespace
