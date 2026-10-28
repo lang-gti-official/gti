@@ -7371,6 +7371,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                                 .name = member->name().lexeme},
                                callUse),
           callUse ? callUse->top : ResultUseAccess::Unknown);
+    // Through `p->member`, the member's needs select the `operator->` step,
+    // which the callee itself resolves.
+    else if (member != nullptr && member->access().kind == TokenKind::ARROW)
+      receiverUse.emplace(
+          *this, member,
+          prependResultUseStep({.kind = ResultUseStep::Kind::Member,
+                                .name = member->name().lexeme},
+                               callUse),
+          callUse ? callUse->top : ResultUseAccess::Unknown, true);
     calleeType = analyze(expr.callee());
   }
   analyzingCallCallee = enclosingCallCallee;
@@ -9280,8 +9289,20 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
   // A field read uses its object through that field. A member callee has no
   // use of its own: its call keyed the receiver's use to the object.
   SemanticType objectType = SemanticType::Unknown;
+  // The `operator->` step's referent is used through this field or, for a
+  // callee, through the member its call names.
+  std::optional<ResultUse> arrowUse;
   {
     const std::optional<ResultUse> use = resultUseFor(expr);
+    if (use && expr.access().kind == TokenKind::ARROW)
+      arrowUse = ResultUse{
+          .expression = &expr,
+          .steps = use->arrowCallee ? use->steps
+                                    : prependResultUseStep(
+                                          {.kind = ResultUseStep::Kind::Field,
+                                           .name = expr.name().lexeme},
+                                          use),
+          .top = use->top};
     std::optional<ResultUseScope> objectUse;
     if (use && expr.access().kind != TokenKind::ARROW &&
         consultsResultUse(expr.object().get()))
@@ -9298,7 +9319,9 @@ auto SemanticVisitor::Impl::visitGetExpr(const Get &expr) -> void {
   }
   if (expr.access().kind == TokenKind::ARROW) {
     objectType =
-        arrowTargetType(expr, expr.object(), objectType, expr.access());
+        arrowTargetType(expr, expr.object(), objectType, expr.access(), false,
+                        readOnlyAccessorOperator(arrowUse, objectType,
+                                                 OverloadedOperator::Arrow));
     if (objectType == SemanticType::Unknown) {
       currentType = SemanticType::Unknown;
       return;

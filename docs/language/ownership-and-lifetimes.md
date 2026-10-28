@@ -1075,8 +1075,9 @@ their separately checked lifecycle/representation contracts are unaffected.
 
 Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only
-and mutable receiver overloads, while semantic analysis records the selected
-method and returned access mode. `operator->` performs exactly one checked
+and mutable receiver overloads, selected from the use of the result as for any
+accessor pair, while semantic analysis records the selected method and
+returned access mode. `operator->` performs exactly one checked
 reference step; recursive C++ proxy behavior is not exposed. `x->m` then names
 member `m` of the place that reference designates, looked up on the referenced
 type exactly as `.` looks it up on that place. The referent need not be a

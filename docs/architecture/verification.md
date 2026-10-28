@@ -3827,10 +3827,15 @@ dispatch or imply a persistent worker pool.
   below a reference parameter's entry loan. That program failed in MIR before
   on both backends; under the bug-fix-only C++ policy the test pins the C++
   failure and requires native execution instead.
-- **Out of scope.** A mutable owner's second read while a read-only binding
-  through its mutable `operator->` step lives still fails in MIR, pinned by
-  `projected_reference_mut_owner_control.gti` with its exact message; see the
-  open item in `mir.md`.
+- **Arrow step selection.** A mutable owner first selected the mutable
+  `operator->` step even for a read, so a read-only binding retained a mutable
+  call-result loan and a second read of the owner failed in MIR. The arrow
+  step now follows the accessor-pair rule (`static-semantics.md`), and
+  `projected_reference_mut_owner.gti` runs on both backends.
+  `arrow_step_selection.gti` counts the `mut` step of a user-defined pointer
+  across reads, bindings, ranges and mutations, and
+  `arrow_step_mutation_conflict.gti` keeps `GTI-S2017` for a mutation through
+  `->` while a read-only reference lives.
 
 ## Expected returns across scope cleanup (0.402.4)
 

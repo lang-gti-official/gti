@@ -1078,6 +1078,9 @@ private:
     const Expr *expression = nullptr;
     std::vector<ResultUseStep> steps;
     ResultUseAccess top = ResultUseAccess::Unknown;
+    // Keyed by a call to its `p->member` callee: the steps already begin
+    // with that member, applied to the `operator->` step's referent.
+    bool arrowCallee = false;
   };
 
   struct LoanFlowRecord {
@@ -3842,7 +3845,8 @@ private:
 
   SemanticType arrowTargetType(const Expr &site, const ExprPtr &receiver,
                                const SemanticType &receiverType,
-                               const Token &token, bool projection = false);
+                               const Token &token, bool projection = false,
+                               bool preferReadOnlyStep = false);
 
   void recordCallableForwardings(const Call &call,
                                  const CallableCandidate &target);
@@ -6117,10 +6121,11 @@ private:
   class ResultUseScope {
   public:
     ResultUseScope(Impl &impl, const Expr *expression,
-                   std::vector<ResultUseStep> steps, ResultUseAccess top)
+                   std::vector<ResultUseStep> steps, ResultUseAccess top,
+                   bool arrowCallee = false)
         : impl_(impl), active_(consultsResultUse(expression)) {
       if (active_)
-        set(expression, std::move(steps), top);
+        set(expression, std::move(steps), top, arrowCallee);
     }
     // A use passed through unchanged, as by a grouping or a conditional arm.
     ResultUseScope(Impl &impl, const Expr *expression,
@@ -6138,10 +6143,12 @@ private:
 
   private:
     void set(const Expr *expression, std::vector<ResultUseStep> steps,
-             ResultUseAccess top) {
+             ResultUseAccess top, bool arrowCallee = false) {
       saved_ = std::move(impl_.contextualResultUse);
-      impl_.contextualResultUse = ResultUse{
-          .expression = expression, .steps = std::move(steps), .top = top};
+      impl_.contextualResultUse = ResultUse{.expression = expression,
+                                            .steps = std::move(steps),
+                                            .top = top,
+                                            .arrowCallee = arrowCallee};
     }
 
     Impl &impl_;

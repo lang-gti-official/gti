@@ -20,9 +20,18 @@ for what minor and patch releases mean.
   `for (mut auto& x : dir->items)` through a `mut std::unique_ptr<Dir>&`
   parameter builds on the native backend; the C++ backend still reports
   `GTI-B0001` for it.
-- Two read-only references bound through the same mutable smart pointer while
-  both live, such as `root->items` and `(*root).items` on a `mut` root, still
-  report `GTI-B0001`.
+- An overloaded `operator->` with read-only and `mut` forms now selects its
+  form from the use of `p->member`, as other accessor pairs already do: a
+  read, a read-only reference binding, a range-for over the member or a
+  read-only member call takes the read-only form even on a `mut` object.
+  Assigning the member, binding it as `mut` or calling a mutating member still
+  takes the `mut` form, and still conflicts with a live read-only reference
+  (`GTI-S2017`). Two read-only references bound through the same mutable smart
+  pointer, such as `root->items` and `(*root).items`, now coexist.
+- A call returning an exclusive borrow carrier, such as `lock()` returning a
+  mutex guard, keeps selecting the `mut` form of an accessor pair or
+  `operator->` it is called through, so `holder.get().lock()` on a mutable
+  reference parameter now compiles instead of failing with `GTI-B0001`.
 
 ## 0.484.4 - Native virtual text relays, returned siblings and exchanges
 
