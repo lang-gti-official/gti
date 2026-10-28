@@ -4311,7 +4311,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/encoding_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
-  set_tests_properties(encoding_runtime PROPERTIES TIMEOUT 300)
+  # Its GCC sanitized build may take minutes under a parallel suite;
+  # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
+  set_tests_properties(encoding_runtime PROPERTIES TIMEOUT 1800)
   add_test(
     NAME source_location_runtime
     COMMAND "${Python3_EXECUTABLE}"
