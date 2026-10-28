@@ -176,7 +176,8 @@ allocation and code-size evidence. The implementation passes the focused
 macOS/Linux gates, 674/675 remote full-sweep tests and the sole remote
 permission-limited debugger gate locally; measured costs and exact snapshot
 identities are recorded in [verification](../architecture/verification.md#safe-atomic-waiting-2026-10-12).
-Final clean-head reconciliation remains the integration gate. Guard-aware
+That dated pre-integration checkpoint is historical; scalar waiting is now
+integrated. Later changes retain their own exact-head acceptance obligations. Guard-aware
 condition variables (loan suspension), timed waits and persistent worker pools
 remain separate goals, not claims of this slice.
 
@@ -384,9 +385,56 @@ deferral, constant folding, designated construction or class registration
 should reconcile with it. Status and residual questions live in the plan
 document.
 
+## Implementation Status Audit (2026-10-28)
+
+Source checkpoint: canonical main `d4acdb004`, GTI **0.486.1**. This is a
+source/registered-test/contract reconciliation across the active plan inventory,
+not a new whole-toolchain acceptance run. Historical checkpoint paragraphs,
+suite counts, branch assignments and “next” instructions below retain their
+dated meaning. Use the current queue, this reconciliation and canonical
+contracts before selecting work. Implementation availability does not certify
+every composition, target, installed package or performance gate.
+
+| Family previously described as missing | Current implementation evidence | What remains |
+| --- | --- | --- |
+| Scoped borrowing and scalar waiting | `std::parallel_invoke` in [`thread.gti`](../../stdlib/std/thread.gti); `scoped_thread_semantic_tests.cpp`, `runtime_scoped_thread_tests.cpp`, `atomic_wait_runtime_test.py` and the [concurrency contract](../language/concurrency.md). | Guard-aware condition variables, timed/cancellable waiting, pools, foreign-thread entry and broader lifecycle profiles; retain each campaign's exact acceptance record. |
+| Borrowing callbacks and result origins | `semantic_ownership_analysis.cpp`, `borrowing_capture_tests.cpp`, checked erasure/transport tests; L-CALL-03/04 and [ownership](../language/ownership-and-lifetimes.md). | General borrowed escape/storage graphs, owning results through `function_ptr`, inferred API results and inline consuming projection. |
+| Reference payload enums | `reference_payload_semantic_tests.cpp`, `fixtures/reference_payload_tryable.gti`, complete-borrow-summary tests and [payload semantics](../language/static-semantics.md). | Borrowed-value consuming handoffs, additional carrier containment, direct captures/polymorphic/native transport and richer patterns. Do not classify all stored reference alternatives as absent. |
+| Owner-dependent text fields | `view_field_tests.cpp`, nested-value and dependent-reference fixtures; L-OWN-02 phases 1/2 and **3a** are delivered. | Phase 3b's nested reference-carrier payload/results, additional nested copies/field contracts and phase 4 unification; arbitrary borrowed collections remain incomplete. |
+| Constexpr mutation and allocation | `mir_constant_evaluator.cpp`, `compiler_constexpr_tests.cpp`, `constexpr_results.gti`, `constexpr_allocation.gti`; [constant semantics](../language/static-semantics.md#transient-allocation-and-destruction). | Persistent allocation, stored-reference/raw/provider/shared/payload-enum/polymorphic profiles outside the stated evaluator contract, and retirement of remaining AST execution schedules. |
+| Protocol associated types and static queries | `semantic_protocol_concepts.cpp`, `semantic_requirement_expressions.cpp`, `protocol_concept_tests.cpp`, `general_requires_tests.cpp`; [concepts](../language/concepts.md). | Conditional member operators, additional expression/relationship families and generic associated families beyond implemented projections; operation borrow contracts are delivered. |
+| Typed macros and per-thread storage | `semantic_macro.cpp`, `macro_value_tests.cpp`, macro fixtures and `thread_local_{syntax,semantic}_tests.cpp` / `mir_thread_local_tests.cpp`; [static semantics](../language/static-semantics.md) and [concurrency](../language/concurrency.md). | General preprocessing is not the typed-macro contract; ordinary block static and C thread-specific-storage keys remain separate. |
+| Foreign C variables | `foreign_variable_tests.cpp`, `foreign_variable_borrow_tests.cpp`, native-variable bindgen tests; [native interop](../language/native-c-interop.md). | TLS/volatile/top-level-array objects, ownership annotations, retained/captured callbacks and foreign-thread entry; C-08B ordinary objects are implemented. |
+| Reflection and JSON | Reflection phases 1–3 and the reflected JSON client are delivered; `<std/json>` has used the promoted reflection-driven library since 0.409.0. See [reflection](reflection.md) and [JSON](../language/json.md). | Metaobject invocation/runtime reflection and named residual metadata/execution profiles; do not repeat the experimental-JSON gate. |
+| Container traversal and module/package tooling | [Container delivery](iterators-and-ranges.md#container-completion-campaign-delivered-2026-10-12), `source_modules_*`, registry/build-script tests and driver `ProjectFacts` integration. Aggregate `import std` exists. | Adaptors, subrange rewrites, reseating/invalidation precision, package/platform breadth and independent linkage; not foundational map/range/package/LSP implementation. |
+| Weak owners and shared libraries | `memory.gti` still has bodyless weak observers. `ManifestFeaturePolicy` enables library requests by default; `llvm_embedding_project_test.py` builds real infallible LLVM modules through ordinary project commands. | Executable weak lifetime/lock behavior and recoverable factories; fallible embedding containment and complete editor/installed/platform acceptance. Do not schedule basic library/header/cache publication as absent. |
+| LLVM production transition | Native source families and registered execution gates extend through classes, payloads, allocation, callables, dispatch, native calls and threads. macOS arm64 is promoted; see [the campaign](#llvm-production-backend-campaign). | Complete reconciled coverage and Linux/platform/installed/performance acceptance. Early O-LLVM “no lowering” checkpoints are not today's implementation status. |
+
+### Audit Coverage And Remaining Domain Owners
+
+Every active Markdown plan in `docs/plans/` was checked for delivered/open
+status and cross-plan contradictions. Archived plans preserve history; the
+compiler-bug-finding redirect is not another active campaign.
+
+| Plan | Audit disposition / remaining owner |
+| --- | --- |
+| [1.0 roadmap](roadmap-to-1.0.md), this sequence, [restriction ledger](language-alignment.md) | Correct stale absence claims; distinguish delivered profiles, partial features, planned work and release acceptance. The roadmap is the durable overview, this sequence the sole work queue. |
+| [Callable ownership](callable-ownership-and-escape.md) | L-CALL-01/02/03/04 delivered profiles; broader escape and inline consuming projection open. |
+| [Place/state](place-and-ownership-state.md) | Place/lifecycle/aggregate foundations delivered; projection/epoch/reseating and further provenance profiles remain. |
+| [Concurrency](concurrency-memory-model.md) | Owned/scoped threads, scalar waiting and TLS implemented; broader synchronization/entry profiles open. |
+| [Ranges](iterators-and-ranges.md) | Container traversal/proxies and bounded value yields delivered; adaptors, subrange rewriting and dependency replacement remain. |
+| [Reflection](reflection.md) | Phases 1–3 plus promoted JSON delivered; named residual metadata/invocation profiles remain. |
+| [Build/packages](build-system.md), [native import](native-bindings-import.md) | Project/cache/workspace/Git/registry/build-script/install and ordinary C-variable profiles delivered. Infallible LLVM project libraries are delivered; complete fallible/editor/installed embedding, target resources, native-cache breadth and C++ import remain. |
+| [LSP](lsp-evolution.md) | Snapshot queries, project facts, missing includes, snippets and bounded latency/reuse work delivered; project-wide index/rename and fault-state safety remain. |
+| [Optimization](optimization.md), [performance tooling](performance-tooling.md) | MIR pipeline/analysis/report/measurement and native backend foundations delivered; named transforms, workload expansion and exact-head cost/platform gates remain. |
+| [Diagnostic quality](diagnostic-quality.md) | Proposed causal-evidence/recovery/repair campaign remains proposed; existing diagnostic/quick-fix foundations do not close its milestones. |
+
+See [what remains before 1.0](roadmap-to-1.0.md#reading-what-remains-before-10)
+for the distinction between selected feature scope and release certification.
+
 ## Ready Queue
 
-### Reconciled Current Queue (2026-10-11)
+### Reconciled Current Queue (2026-10-28)
 
 This is the sole prompt-sized queue. Choose an unfinished outcome against current
 canonical main, not the first historical paragraph using the word "next".
@@ -397,22 +445,22 @@ workflow determine task scope and integration.
 
 | Outcome / owner | Current readiness | Prerequisite and first useful slice |
 | --- | --- | --- |
-| Native LLVM production backend (`O-LLVM-06` onward) | target/ABI, scalar/place/text and bounded ordinary-class/TLS execution profiles implemented | Follow the [LLVM campaign](#llvm-production-backend-campaign). Sealed roots, direct dependency closure and defined-failure channels remain authoritative. Remaining class-publication shapes and later payload/ownership/callable/dispatch/native-runtime families retain explicit gates. LLVM becomes the default only after complete macOS/Linux language, library, native-interop and performance acceptance. |
-| Reflection clients | ready after delivered phases 1–3 | Phase 3 is integrated in 0.400.0: structural construction, callable/source metadata, receiver/owner fixes and expansion-budget tests. The accepted next client is `std::experimental::json`; validate decoding, rollback, diagnostics and performance before the planned `std::json` deprecation. Metaobject invocation/runtime reflection remain separate goals in the [reflection plan](reflection.md). |
+| Native LLVM production backend (`O-LLVM-14/15/16` acceptance) | native implementations extend across the current language families; macOS arm64 is promoted | Follow the [LLVM campaign](#llvm-production-backend-campaign) and versioned readiness baseline. Reconcile unsupported compositions and run the complete required coverage/platform/installed/performance matrix, including Linux promotion; early infrastructure checkpoints do not describe current absence. |
+| Reflection clients | phases 1–3 and reflection-driven JSON delivered | `<std/json>` is the promoted reflected library since 0.409.0. Select remaining metadata/invocation/constant-execution clients from the [reflection plan](reflection.md), preserving construction, rollback and expansion budgets; do not repeat the experimental JSON gate. |
 | `L-UP-10` -> `L-UP-11` | acceptance closure, then adoption; may be co-validated | The retained borrowed-pack reproducer passes current O0/O3 probes. Complete the relevant constructor/cleanup composition matrix while adopting final-node emplacement; do not presume another compiler fix. |
 | `L-UP-12` -> `L-UP-18` | inline protocol is a new capability | Reuse delivered allocated final-address construction. Establish inline publication/rollback and structural wrapper lifecycle eligibility before claiming immovable optional support. |
 | `L-UP-14` | ready for a bounded new capability | Current staged MIR text/passive-record profile -> one constant-eligible pattern validator -> general required call-site literal validation. Dynamic formatting stays recoverable. |
 | `L-UP-15` | ready for a bounded new capability | Ordinary method requirements and operator selection exist; extend validity-only requirements to member operators and co-deliver conditional map indexing with unrelated-type proof. |
-| `L-OWN-02` owner-tracked view fields | phases 1 and 2 implemented; phase 3 (nested borrowing values) next | Value-level text dependencies on the existing stored-dependency model. Phase 1a covers local class and struct values; 1b-i relays them into functions and methods through inferred field-level contracts, and a function that returns one text field relays it to its result. Payload enums hold the same dependency in a text payload, and a temporary holds it within its expression. Phase 2a lets a function that returns a fresh value over its text formal relay it, including `std::make_pair` and `unexpected`; 2b adds reference accessors, generic class methods and nested publication through payload-enum fields, covering `optional<std::string_view>` and success `expected`; 2c publishes through implicit conversions, re-roots a class formal's text field in a constructor (`expected` from `unexpected_value`), and lets a function return a value over a reference formal's referent, as `parse(std::string&)` returning `unexpected(input.view())` does. Later steps cover nested borrowing values and retirement of the ownerless-text special cases. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
+| `L-OWN-02` owner-tracked view fields | phases 1/2 and phase 3a nested text values implemented | Phase 3b nested reference-carrier payload/results and phase 4 contract unification remain, along with the named nested-copy/field-contract restrictions. Preserve caller-owned origins, physical carrier lifetime, cleanup and conservative whole-carrier protection. See [`L-OWN-02`](#l-own-02-owner-tracked-view-fields). |
 | `L-UP-16` | ready for a bounded new capability | Existing multi-owner carrier facts -> explicit result-projection summary -> independently useful precise read-only projection. Proxy iteration needs a separate yield contract. |
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
-| `E-EMBED-01B` -> `E-EMBED-01C` -> `B-LIB-02` -> `T-EMBED-01` -> `Q-EMBED-01` | first step ready; later steps depend on it | ABI/configuration/export roots delivered. Build host context/failure containment first, then generated wrappers and actual shared artifacts, editor facts and installed load/call/fail/unload/reload evidence. |
+| `E-EMBED-01B/C`, `B-LIB-02`, `T-EMBED-01`, `Q-EMBED-01` | infallible LLVM context/wrapper/project-library workflow implemented; full campaign partial | Complete fallible closure containment, editor integration and installed load/call/fail/unload/reload/platform acceptance. Preserve the existing generated header, immutable generations, cache/report/clean and C/C++ host fixtures; see [embedding delivery](#engine-embedding-delivery-campaign). |
 | Native import `C-08B` | ordinary foreign objects implemented | Exact external-storage identity, unsafe loads/stores, inert addresses, explicit owner-witness borrowing, headers and bindgen cover scalar, recursive pointer, callback and passive-record objects. TLS/volatile and top-level arrays require their general access/address contracts. |
 | `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
-| `T-LSP` latency client | reachable trusted bodies implemented in 0.411.0; library-only instance reuse in 0.420.0; library-only instance bodies omitted from editor HIR in 0.421.0; trusted prefix preamble in 0.423.0 | Snapshots and completion use demand-driven trusted bodies, with explicit HIR-to-semantics requests and a bounded complete-check fallback. Editor snapshots reuse validated library-only concrete instance analyses, no longer lower library-only instance bodies, and resume from a preamble of the standard-library prefix analysed once per include graph (089 per-edit 470 to about 80 ms; exit measure met). Remaining: the adoption copy (about 17 ms per edit). See [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost). |
+| `T-LSP` latency client | trusted-body/preamble/instance reuse delivered; edit cancellation/debounce, library concept/storage-effect reuse, staged constant-call memoization and unchanged-source replay delivered through 0.486.1 | Re-measure current workloads before selecting reuse/adoption costs. The 0.423.0 timing is historical, not today's bottleneck ranking. [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost) records remaining identity/invalidation and completion work. |
 | `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Its closed-call proofs and failure closure are delivered in 0.468.0 ([RT-12](optimization.md)); exit sharing for exits that construct the result remains. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
-| Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements replace the historical 1.6-times scalar / 1.13-times string result. Singleton cleanup forwarding removes the preceding robust GCC/Linux string residual in fresh paired evidence at `560cafa9` (median 1.0035, interval spanning parity); fresh macOS measurements remain pending ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. `expected` is a source class on the same `std::tryable` protocol since 0.449.0, and conformance-block patterns over raw pointers and fixed-length arrays are delivered in 0.450.0. Further goals include signature-level borrow-origin contracts on concept operations, and moving member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
+| Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements replace the historical 1.6-times scalar / 1.13-times string result. Singleton cleanup forwarding removes the preceding robust GCC/Linux string residual in fresh paired evidence at `560cafa9` (median 1.0035, interval spanning parity); fresh macOS measurements remain pending ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. `expected` is a source class on the same `std::tryable` protocol since 0.449.0, and conformance-block patterns over raw pointers and fixed-length arrays are delivered in 0.450.0. Signature-level borrow-origin contracts on concept operations are implemented. Further goals include moving remaining member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
 | Library/host completion | independent clients where their exact prerequisites hold | Weak ownership and fallible shared allocation; unfinished iteration/invalidation; process capture and environment mutation/enumeration or child-local overrides; required text/range/service breadth. Owned read-only environment lookup is delivered in 0.402.0. Reconcile the [library gaps](../language/standard-library.md#77-library-specification-gaps) with source before choosing a slice. |
 
 This is priority/readiness information, not an artificial dependency chain.
@@ -1050,7 +1098,7 @@ and select an independent row.
 
 ### L-UP-10: Close Borrowed Constructor-Pack Staging
 
-- **Current-head check (2026-10-11):** a clean Release 0.399.1 compiler from
+- **Historical focused check (2026-10-11):** a clean Release 0.399.1 compiler from
   checkpoint `1f95c961` emits, builds and runs
   `forward_list_emplacement_borrowed.gti` at O0 and O3 under C++23 with zero
   diagnostics and exit zero. The former 0.366.0 backend failure is historical,
@@ -1158,12 +1206,13 @@ and select an independent row.
 
 ### L-UP-14: Validate Literal Patterns Through One Parser
 
-- **Adoption audit (2026-10-04):** passive text/record constexpr execution is
-  available (and used by row 6), but `validate_format_pattern` returns Expected
-  and current required constant evaluation does not execute that general
-  result shape. There is no general required call-site literal-validation
-  contract. Adding constexpr to a wrapper alone would not make invalid
-  literal calls diagnostic, so this remains a new-capability row.
+- **Current disposition (2026-10-28):** passive Expected/tryable constant
+  composition is implemented, superseding the 2026-10-04 result-shape
+  prerequisite. `validate_format_pattern` and its parser helpers remain
+  runtime functions, and no general required call-site literal-validation
+  contract is implemented. Make the shared parser constant-eligible, then
+  implement call-site enforcement; adding constexpr to one wrapper alone
+  would not diagnose every invalid literal call. This remains a capability row.
 - **Prerequisite/client:** the current literal-text/passive-record MIR profile.
   Substep A is a shared constant-eligible validator; substep B's call-site
   validation requires A's passing evidence. Adopt the general explicit
@@ -1209,6 +1258,11 @@ and select an independent row.
   special-member copying is not implicitly part of this feature.
 
 ### L-UP-16: Precise Borrowed Projections Before Proxy Ranges
+
+Current scope: paired/two-owner proxy traversal is already implemented by the
+container campaign. This row owns independently shortened projection
+dependencies and further proxy contracts, not permission to repeat basic
+proxy iteration. Its original heading is retained for stable links.
 
 - **Adoption audit (2026-10-04):** an unrelated `PairView` storing two spans,
   returning only its left element, still prevents mutation of the right owner
@@ -2486,9 +2540,13 @@ not add an AST/semantic/HIR-only C++ body case.
 
 ## Engine Embedding Delivery Campaign
 
-> **Campaign status:** foundation complete through `E-EMBED-01A`.
-> `E-EMBED-01B` is the next ready row; wrapper generation, artifact
-> publication, tooling, and the dynamic-host gate remain blocked behind it.
+> **Campaign status (reconciled 2026-10-28): partial.** E-EMBED-00,
+> B-LIB-01 and E-EMBED-01A are complete. Context lifecycle, generated LLVM
+> wrappers/header, real project library builds, immutable generations, caching,
+> reports and clean are implemented for the infallible macOS arm64/Linux
+> x86_64 profile. Fallible exports, full editor integration and the complete
+> installed/platform host acceptance remain open. Basic library publication
+> is no longer blocked behind a wholly unimplemented context API.
 
 This campaign delivers the two capabilities required before an engine can
 integrate GTI as a trusted native gameplay language:
@@ -2611,27 +2669,32 @@ compiler pipeline.
 
 ### Serialized Implementation Sequence
 
-The reconciled foundation ships its compiler SDK request/root metadata and
-explicit disabled-library diagnostics in 0.382.0. This is not library activation
-or a usable host ABI implementation. The original campaign's deferred-version
-assumption is revised for that observable packaged SDK surface; activation
-still requires its own surface/version review and the complete acceptance gate.
+Historical foundation: 0.382.0 shipped SDK request/root metadata and explicit
+disabled-library diagnostics. Current `ManifestFeaturePolicy` instead enables
+library requests, and the ordinary LLVM project workflow publishes infallible
+modules. `runtime/src/embedding.cpp`, `src/compiler/llvm/embedding.cpp`,
+`src/driver/embedding_library.cpp` and `tests/llvm_embedding_project_test.py`
+establish context lifecycle, generated wrappers/header, export allowlists,
+cache integrity and actual C17/C++20/C++23 hosts. The backend explicitly rejects
+fallible/native-unwind closures; that is not full E-EMBED-01B/C or Q-EMBED-01
+completion. Preserve the original full acceptance criteria below.
 
-Rows may land as reviewable commits on one campaign branch, but the manifest
-must not accept a user-visible half-target on a release branch. `library`
-activation, its minor `VERSION` advance, and public documentation happen only
-when the shared artifact and boundary pass `Q-EMBED-01`.
+The original all-or-nothing activation order below is superseded by the
+implemented, explicitly infallible LLVM profile. Further activation must name
+its supported closure/target contract and pass the applicable full host gates;
+the bounded delivery does not waive fallible containment, platform, installed
+or editor acceptance for the complete campaign.
 
 | Order | ID | State | Prerequisite | Phase outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `E-EMBED-00` | **complete** | Completed C ABI, failure, MIR-backend, project and runtime foundations | Freeze the embedding ABI, manifest schema and acceptance fixture before implementation. | Commit `ae8dbb71` accepts ADR 026 and freezes every ABI-v1 status, context/descriptor/wrapper prototype, 64-bit record layout, lifecycle, symbol, failure, and unload rule. The C17/C++20 header oracles and non-executable gameplay fixture pass in the complete matrix. |
 | 2 | `B-LIB-01` | **complete** | `E-EMBED-00` | Carry a dormant shared-library target and export request through driver and compiler ownership without exposing incomplete artifacts. | Commit `1fcbe268` carries library/shared/export facts and exact spans through manifest, workspace, project facts, build plan, cache identity, compilation request, and internal `check`. Focused project/CLI tests and the complete matrix prove missing/unknown linkage, selection and command legality, no executable regression, and default `GTI-B2000` rejection; no shared artifact is exposed. |
 | 3 | `E-EMBED-01A` | **complete** | `B-LIB-01` | Resolve exact exports semantically and make them the library's executable roots. | Commit `1fcbe268` resolves and validates the export set once in semantics, then exact-compares immutable canonical roots through HIR, MIR, optimization, failure metadata, and `LoweredProgram`. The positive/negative matrix covers declaration kinds, admitted and excluded boundary families, collisions/reserved names, `main`, callbacks, unused declarations, forged plans, and request/declaration-order independence. |
-| 4 | `E-EMBED-01B` | **ready** | `E-EMBED-01A` | Implement the reusable host-call containment and context lifecycle before dynamic loading obscures failures. | A public C17-compatible runtime header and private implementation supply versioned context/status primitives. A statically linked host harness proves create/init, repeated sequential calls, successful result publication, exact defined-failure return after cleanup, observer ordering, valid re-entry, poison rejection, recursive/concurrent/wrong-thread rejection, destruction, null/out-parameter validation, descriptor lifetime, and the terminal double-failure/observer/native-exception firewalls. Sanitizer coverage checks context and output lifetimes. |
-| 5 | `E-EMBED-01C` | **blocked** | `E-EMBED-01B` | Generate the exact C wrappers, artifact descriptor and matching host header solely from lowered ABI facts and verified MIR. | C and C++ compile oracles consume the same generated header. Wrapper runtime tests cover every admitted scalar/record/pointer parameter and result, `void`, success, propagated failure, prior effects, invocation-owned cleanup, module initialization failure, symbol stability and reserved-name diagnostics at C++20/C++23 and O0/O3. Backend preflight fails closed if a selected body, result publication, failure edge, or representation row is incomplete. No wrapper calls an unverified source-body route. |
-| 6 | `B-LIB-02` | **blocked** | `E-EMBED-01C` | Publish a self-contained shared library plus its embedding header through the normal project build. | `gti build` emits platform-correct `.dylib`, `.so`, or `.dll` output with PIC-compatible hidden runtime/support code and only the descriptor/context/export surface visible; Windows import artifacts are managed explicitly. Publication is atomic, paths remain contained, clean removes managed outputs, metadata/build reports name every artifact, and a schema-bumped cache keys target kind, linkage, export plan, embedding ABI, complete source graph, runtime and native toolchain. `run` and ordinary `gti test` reject library targets; direct mode remains unchanged. |
-| 7 | `T-EMBED-01` | **blocked** | `B-LIB-02`; extends the completed `T-LSP-04` project-facts client | Make the library target usable during real editing and integration rather than only from a terminal fixture. | Driver-owned project facts expose library/linkage/export configuration; the LSP analyzes a library root without inventing missing-`main` diagnostics, applies exact export diagnostics to dirty overlays, and rejects stale generations. CLI/reference documentation shows the manifest, generated files, ABI restrictions, failure handling and host lifecycle. No new Tree-sitter or formatter rule is added because the campaign adds no GTI source syntax. |
-| 8 | `Q-EMBED-01` | **blocked** | `T-EMBED-01` | Prove both requested capabilities together in a real dynamically loaded engine-style vertical slice. | A C17 and C++ host builds the module with the installed toolchain, loads it through `dlopen`/`dlsym` or `LoadLibrary`/`GetProcAddress`, validates ABI/descriptor identity, creates the context, calls initialize/update/event/shutdown-style exports repeatedly, observes one module call into a linked engine C shim, receives and resolves an exact GTI failure without host termination, calls again according to the validated re-entry rule, destroys the context, unloads, reloads, and repeats. Linux, macOS and Windows CI cover the platform surface; C++20/C++23 and O0/O3 produce equivalent behavior; export-table inspection finds no accidental GTI/C++ symbols; full compiler, driver, runtime, LSP, installed-toolchain and corpus gates pass. |
+| 4 | `E-EMBED-01B` | **partial: context lifecycle implemented; fallible containment open** | `E-EMBED-01A` | Implement the reusable host-call containment and context lifecycle before dynamic loading obscures failures. | A public C17-compatible runtime header and private implementation supply versioned context/status primitives. A statically linked host harness proves create/init, repeated sequential calls, successful result publication, exact defined-failure return after cleanup, observer ordering, valid re-entry, poison rejection, recursive/concurrent/wrong-thread rejection, destruction, null/out-parameter validation, descriptor lifetime, and the terminal double-failure/observer/native-exception firewalls. Sanitizer coverage checks context and output lifetimes. |
+| 5 | `E-EMBED-01C` | **partial: infallible LLVM wrappers/header implemented** | `E-EMBED-01B` | Generate the exact C wrappers, artifact descriptor and matching host header solely from lowered ABI facts and verified MIR. | C and C++ compile oracles consume the same generated header. Wrapper runtime tests cover every admitted scalar/record/pointer parameter and result, `void`, success, propagated failure, prior effects, invocation-owned cleanup, module initialization failure, symbol stability and reserved-name diagnostics at C++20/C++23 and O0/O3. Backend preflight fails closed if a selected body, result publication, failure edge, or representation row is incomplete. No wrapper calls an unverified source-body route. |
+| 6 | `B-LIB-02` | **partial: infallible LLVM project publication/cache/report/clean implemented** | `E-EMBED-01C` | Publish a self-contained shared library plus its embedding header through the normal project build. | `gti build` emits platform-correct `.dylib`, `.so`, or `.dll` output with PIC-compatible hidden runtime/support code and only the descriptor/context/export surface visible; Windows import artifacts are managed explicitly. Publication is atomic, paths remain contained, clean removes managed outputs, metadata/build reports name every artifact, and a schema-bumped cache keys target kind, linkage, export plan, embedding ABI, complete source graph, runtime and native toolchain. `run` and ordinary `gti test` reject library targets; direct mode remains unchanged. |
+| 7 | `T-EMBED-01` | **partial: driver facts delivered; complete editor acceptance open** | `B-LIB-02`; extends the completed `T-LSP-04` project-facts client | Make the library target usable during real editing and integration rather than only from a terminal fixture. | Driver-owned project facts expose library/linkage/export configuration; the LSP analyzes a library root without inventing missing-`main` diagnostics, applies exact export diagnostics to dirty overlays, and rejects stale generations. CLI/reference documentation shows the manifest, generated files, ABI restrictions, failure handling and host lifecycle. No new Tree-sitter or formatter rule is added because the campaign adds no GTI source syntax. |
+| 8 | `Q-EMBED-01` | **partial: infallible dynamic-host fixtures; complete installed/failure/platform gate open** | `T-EMBED-01` | Prove both requested capabilities together in a real dynamically loaded engine-style vertical slice. | A C17 and C++ host builds the module with the installed toolchain, loads it through `dlopen`/`dlsym` or `LoadLibrary`/`GetProcAddress`, validates ABI/descriptor identity, creates the context, calls initialize/update/event/shutdown-style exports repeatedly, observes one module call into a linked engine C shim, receives and resolves an exact GTI failure without host termination, calls again according to the validated re-entry rule, destroys the context, unloads, reloads, and repeats. Linux, macOS and Windows CI cover the platform surface; C++20/C++23 and O0/O3 produce equivalent behavior; export-table inspection finds no accidental GTI/C++ symbols; full compiler, driver, runtime, LSP, installed-toolchain and corpus gates pass. |
 
 ### Campaign Exit And Handoff To The Engine
 
@@ -9039,9 +9102,9 @@ prerequisite checkpoints as full acceptance.
   and struct values), 1b-i (relays and receivers) and 1b-ii (returns, payload
   enums and temporaries). Phase 2 is implemented: 2a (published text
   results), 2b (reference accessors, generic class methods and nested
-  publication) and 2c (conversions, field relays and returns). Phases 3–4
-  are planned.
-- **Problem and client:** no field can hold a view of caller-owned text. A
+  publication) and 2c (conversions, field relays and returns). Phase 3a nested text values is implemented in 0.468.0; phase 3b
+  nested reference-carrier payload/results and phase 4 unification remain open.
+- **Original problem and client (before phase 1):** no field could hold a view of caller-owned text. A
   `std::string_view` or `c_string` field, a payload-enum alternative of either
   type, and the storage of any constructor that keeps a text parameter accept
   only ownerless text. A token, diagnostic or error value over its input is
@@ -11215,7 +11278,8 @@ or resolve them using source.
 
 ### O-LLVM-01: Independent Native-Backend Foundation
 
-- **State/role:** complete infrastructure slice; no executable lowering.
+- **State/role:** complete infrastructure slice. At its delivery there was no
+  executable lowering; later native execution is implemented by the rows below.
 - **Implemented:** `LlvmBackend` is an installed independent consumer of sealed
   `LoweredProgram`; the driver and direct CLI select it without changing the
   C++ default; target-scoped LLVM Core/native-codegen dependencies, host target
@@ -11232,8 +11296,9 @@ or resolve them using source.
 
 ### O-LLVM-02: Coverage, Admission And Dependency Gates
 
-- **State:** complete contract/testing infrastructure in 0.474.0. All native
-  executable lowering remains pending. O-LLVM-03 supplies the emission session.
+- **State:** complete contract/testing infrastructure in 0.474.0. Native
+  lowering was pending at that checkpoint; later execution/session families
+  are implemented. Whole-language/platform acceptance remains O-LLVM-16.
 - **Deliver:** the exhaustive coverage ledger above, a deterministic required
   program/admission inventory, and a backend-selectable behavioral harness.
   Use the existing lowered verifier/generated graph; do not build a second
@@ -11376,6 +11441,11 @@ or resolve them using source.
 
 ### O-LLVM-06: Classes, Lifecycles And Program Storage
 
+Current disposition (2026-10-28): admitted class/lifecycle/TLS execution is
+implemented, with subsequent publication, hierarchy and loan corrections. The
+0.478.0 checkpoint below is not the end of current coverage; remaining
+compositions and full-platform acceptance follow the readiness contract.
+
 - **Status (2026-10-25):** the concrete non-polymorphic copyable/movable class
   profile is implemented: selected constructors/methods, designated construction,
   generated movement/copy snapshots, stored entry references, replacement,
@@ -11448,6 +11518,12 @@ or resolve them using source.
 
 ### O-LLVM-07: Unions, Payloads And Conditional Publication
 
+Current disposition (2026-10-28): admitted native unions, owning/reference
+payloads, tag observation, replacement and conditional publication have
+production lowering and registered execution fixtures. The initial checkpoint
+below remains historical; complete loan/cleanup/composition coverage is still
+a campaign acceptance obligation.
+
 - **State:** implementation in progress. The initial native tag/aligned-payload
   plan, exact final destinations, field extraction and active-alternative cleanup
   execute generic scalar and owning replacement/consuming probes. End-to-end
@@ -11492,6 +11568,12 @@ or resolve them using source.
   no unjustified tag/niche optimization; layout refinements remain local later.
 
 ### O-LLVM-08: Allocation, Object Lifetimes And Ownership
+
+**State (2026-10-28): implemented admitted profiles, complete acceptance
+pending.** Native `memory.cpp`, `lifetimes.cpp` and `placement.cpp` execute
+source storage/container and unique/shared-owner mechanisms. Broader
+composition, rejection, sanitizer and platform/cost gates remain the exit
+criteria below; allocation lowering is not an unstarted milestone.
 
 - **Unlock:** source vector/string/list/storage/allocator and owning pointers.
 - **Deliver:** allocation obligations, exact object-size/alignment queries,
@@ -11619,6 +11701,12 @@ execution remains an integration gate rather than component evidence.
   no accidental capture allocation. Unrelated user wrappers prove generality.
 
 ### O-LLVM-10: Inheritance, Interfaces And Polymorphism
+
+**State (2026-10-28): implemented admitted profiles, complete acceptance
+pending.** Native `dispatch.cpp`, `polymorphic_storage.cpp` and class layout
+services support hierarchy/interface calls and bounded inline/boxed owners.
+The prerequisite and checkpoint narratives below retain their dates; current
+remaining shapes and exact-source coverage must be reconciled before closure.
 
 **Inline-owner integration prerequisite:** the private polymorphic slot now has
 a target-checked representation plan and a dedicated component layout oracle.
@@ -11854,6 +11942,12 @@ elements passed by value.
 
 ### O-LLVM-11: Native C Calls, Storage, Callbacks And Embedding
 
+**State (2026-10-28): implemented admitted native-C and infallible embedding
+profiles; complete boundary acceptance remains.** Native ABI classification,
+foreign storage/callback paths, generated headers/context lifecycle and real
+project shared modules exist. Fallible embedding remains rejected; E-EMBED
+and the platform/native-oracle criteria below are not closed by these profiles.
+
 - **Unlock:** the complete existing bindgen/native-library/embedding surface.
 - **Deliver:** extend O-LLVM-03's ABI classifier through every admitted scalar,
   array, record, union, enum, opaque pointer, indirect call and callback shape;
@@ -11874,6 +11968,12 @@ elements passed by value.
   exception crosses a public native signature that does not declare it.
 
 ### O-LLVM-12: Hosted Execution And Library Closure
+
+**State (2026-10-28): hosted/runtime execution implemented for admitted
+profiles; whole-library closure acceptance remains.** `hosted.cpp`,
+`runtime_abi.cpp` and program-storage lowering provide real hosted programs.
+A remaining unsupported composition is not absence of the whole hosted
+backend; preserve the full service/corpus/runtime criteria below.
 
 - **Unlock:** complete command-line programs and present stdlib workloads,
   including a CSV library using existing file/text APIs.
@@ -11896,6 +11996,12 @@ elements passed by value.
   Concurrent workloads remain pending until O-LLVM-13.
 
 ### O-LLVM-13: Atomics, Synchronization And Threads
+
+**State (2026-10-28): native concurrency profiles implemented; complete
+interaction/platform/cost acceptance remains.** Atomic operations/waiting,
+mutexes, managed/scoped threads and TLS use the native family services and
+registered execution oracles. Reuse that implementation and retain the
+entry/cleanup/order and foreign-boundary obligations below.
 
 - **Unlock:** both current execution profiles and managed/scoped parallel work.
 - **Deliver:** atomic load/store/exchange/CAS/fetch operations and order pairs,
@@ -11962,6 +12068,12 @@ elements passed by value.
 
 ### O-LLVM-14: Project, Artifact And Installed-Toolchain Completion
 
+**State (2026-10-28): direct/project selection, object/cache/debug artifact
+and infallible shared-library workflows implemented; complete installed and
+platform acceptance remains.** The driver and LLVM cache/project fixtures
+are current implementation evidence, not a reason to repeat backend selection
+or native object publication. Finish the reconciled exit matrix below.
+
 - **Unlock:** ordinary users select LLVM in direct/project/build/test/run/install
   and package workflows, with correct native dependencies and cached builds.
 - **Deliver:** shared backend selection in project plans; binary artifact/cache
@@ -11981,6 +12093,12 @@ elements passed by value.
 
 ### O-LLVM-15: Optimization, Debugging And Runtime Cost
 
+**State (2026-10-28): native optimization/debug/inspection infrastructure
+and focused cost fixtures implemented; representative performance and
+complete target acceptance remain.** The native pipeline, debug-info and SIMD
+services are source-backed foundations. Earlier frozen timings do not
+certify current whole-program runtime, allocation, size or compile-memory cost.
+
 - **Unlock:** a usable optimized/debuggable production compiler across buckets.
 - **Deliver:** explicit O0/O1/O2/O3 LLVM pipelines using the supported pass
   manager and selected target machine; verified attributes/alias facts only;
@@ -11999,6 +12117,12 @@ elements passed by value.
   correction or explicit accepted tradeoffs before production promotion.
 
 ### O-LLVM-16: Complete Coverage And Production Promotion
+
+**State (2026-10-28): macOS arm64 default promotion delivered; complete
+production/platform acceptance remains, including Linux.** The dated
+consolidation counts below are measurements of those revisions. Current
+readiness requires reconciled baseline/provider/gate receipts and explicit
+campaign signoff, not a count copied from an older corpus sweep.
 
 - **Unlock:** LLVM becomes the public default for the whole supported language.
 - **Admission:** no pending executable ledger entries for the frozen baseline
@@ -12180,6 +12304,11 @@ this candidate claims it.
 #### LLVM Campaign Waves And Validation
 
 ##### Current Milestone Ownership
+
+**Historical assignment record:** the owner/branch table below records the
+2026-10-25 campaign allocation, not a live PR or agent inventory. Current source
+and readiness receipts determine remaining work; do not restart a merged
+milestone from an old assignment.
 
 **Owner revision (2026-10-25):** prefer one complete O-LLVM milestone per
 implementation agent. The narrow first-wave assignments below are historical
@@ -12495,7 +12624,7 @@ artifact policy stay in `gti_driver`, never `gti_compiler` or the LSP.
 | `T-LSP-02` | complete for current snapshots | Current-snapshot references, document highlights, hierarchical document symbols over parser-recorded extents, fail-closed function-local rename, and signature help from the selected overload and argument position are implemented through `LanguageQueries` with protocol tests. Project-wide coverage remains gated on `T-LSP-05`. |
 | `T-LSP-03` | measured defer | Extract document/snapshot service boundaries when a concrete feature makes the current server class costly to evolve. |
 | `T-LSP-04` | complete | Analysis and completion consume driver-owned `ProjectFacts` without fetching/building, publish project-resolution failures, preserve standalone mode, watch manifest/lock changes, and keep dirty dependency buffers authoritative. |
-| `T-EMBED-01` | blocked | Extend the completed T-LSP-04 ProjectFacts integration to library/export facts after B-LIB-02; dirty roots must use the exact no-main and export contract. |
+| `T-EMBED-01` | partial; editor acceptance open | Driver ProjectFacts already retains library/linkage/export facts and infallible project publication exists; complete dirty library-root/export/stale-generation editing acceptance; dirty roots must use the exact no-main and export contract. |
 | `T-LSP-05` | measured defer | A durable project index only after unopened-file references/rename proves a client. |
 | `T-LSP-06` | state-safety hardening planned; isolation separate | The crash guard/handlers exist, but recovery across shared-cache locks, partial mutation and C++ stack lifetimes is not proven state-safe. Define the recoverable boundary and run fault-injection checks for stranded locks/workers, rejected partial snapshots and a healthy following query. No current test establishes heap-corruption recovery; process isolation remains the stronger boundary when that containment is required. This is a source-audit finding, not a reproduced new crash. |
 | `T-LSP-07` | complete | Missing-include actions discover actual declarations across the selected project, direct package aliases and public standard-library units. Structured semantic lookup requests, canonical parsing, exact definition identity and speculative frontend reanalysis replace the hardcoded standard-type catalog. Dirty/new/deleted files invalidate discovery results; module/private/incompatible candidates fail closed. No durable project index is introduced. |
@@ -12516,7 +12645,7 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | `Q-DIAG-07` | planned; alongside family rollout after 03/06 contracts | Shared CLI/LSP explanations, multi-location presentation and tested explain-code material; no message parsing or duplicate semantic decisions. |
 | `Q-DIAG-08` | planned; after 03-07 | Close the selected diagnostic corpus against every applicable quality dimension, cross-phase regression and cost gate; adopt ongoing per-feature explanation tests. Not a claim of universal Rust parity. |
 | `Q-FAIL-01` | hosted consumer, same-thread native-callback firewall, and managed-task handoff/re-raise complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, terminal arbitration, callback termination adapter, and worker ordinary/`GTI-R0014` containment are implemented and focused tests pass. Embedding, foreign-thread callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |
-| `Q-EMBED-01` | blocked | After T-EMBED-01, run the dynamically loaded engine-host acceptance matrix before activating native libraries and generated embedding. |
+| `Q-EMBED-01` | partial; complete acceptance open | Retain implemented infallible LLVM project/dynamic-host coverage; complete editor, fallible containment and installed/platform load/call/fail/unload/reload acceptance. |
 | `Q-DEPRECATION-01` | planned | `D-COMPAT-01` is done. After `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |
 | `Q-FUZZ-01` | bounded compiler campaign complete — `Q-FUZZ-01A` capture/replay, `Q-FUZZ-01B` parser/formatter/pipeline/source-loader libFuzzer harnesses, `Q-FUZZ-01C` resumable bundle reduction, and `Q-FUZZ-01D` real-compiler typed differential/composition validation are implemented; constrained eleven-factor interaction generation, pairwise/selected-triple coverage, native/metamorphic oracles, measured-boundary triage, and bounded typed reduction extend that foundation; prerequisite `C-MIG-02` is done | Wider seeded exploration remains opt-in; the seed 20261003 campaign passes after the checked passive Expected argument fix recorded in verification; the fixed interaction smoke is a CTest, not a complete coverage claim. Arbitrary JSON-RPC/LSP fuzzing, a complete generator, and arbitrary semantics-aware source reduction remain deferred. Current commands and boundaries live in [verification](../architecture/verification.md#failure-capture-and-opt-in-fuzzing); the original campaign rationale remains in [the archived tooling record](archive/compiler-bug-finding-and-triage.md). |
 
@@ -12537,7 +12666,7 @@ owned by the rows and domain plans above.
 | Transfer/share facts and concurrent globals | **complete policy substrate** | `I-CAP-01`, `D-MEM-02`, `C-TYPE-01`, and `C-GLOBAL-01` done; bounded public concurrency is systems-ready work |
 | Public threads/atomics/mutex | source-defined owned `std::thread`, `std::thread_result<Result>`, ordered scalar `std::atomic<T>`, and scoped `std::mutex<T>`/`std::mutex_guard<T>` **complete** | `C-CALL-01`, `C-THREAD-01`, `C-RUNTIME-01`, `C-ATOM-01`, `C-ORDER-01`, `C-SYNC-01`, and their `C-CONFORM-01` subsets done |
 | Evaluation order | **implemented across admitted executable families** | `D-EXEC-01`, `M-LIFE-01`, `M-EXEC-01` and MIR backend cutover delivered. New composition profiles must extend the same ordered stages and verification; do not restart the migration. |
-| Runtime failure contract | **implemented hosted/task/callback boundary; engine embedding remains** | Defined-failure MIR propagation, cleanup/secondary failure, panic and explicit allocation abort are delivered. Context-owned engine containment follows `E-EMBED-01B/C`, not a repeat of `M-BACK-02`. |
+| Runtime failure contract | **implemented hosted/task/callback and infallible embedding profile; fallible embedding remains** | Defined-failure MIR propagation, cleanup/secondary failure, panic and explicit allocation abort are delivered. Context lifecycle/infallible LLVM embedding are implemented; full context-owned failure containment remains `E-EMBED-01B/C`, not a repeat of `M-BACK-02`. |
 | Source text and documentation comments | **retention, editor consumers and documentation projection delivered** | Shared symbol docs power hover/completion/signatures and the compiler documentation index; broader authored API coverage remains. |
 | Target/data-layout facts and `sizeof`/`alignof` | **complete supported scalar/native-record substrate** | `S-LAYOUT-01/02`, passive native layouts and public `layout_of` support delivered; broader ABI/layout profiles require their own contract. |
 | Compiler-private capability visibility | **complete** | `I-CAP-01` done; trusted source roles, exact private type identity, `GTI-S2058`, and compiler-owned LSP filtering |
@@ -12547,10 +12676,10 @@ owned by the rows and domain plans above.
 | Mutable iteration/views | **mutable spans/buffers and nested/multi-owner carriers delivered within their profiles** | Precise projection shortening (`L-UP-16`), reseatable views and proxy yields remain; existing mutable views do not wait for a new ownership representation. |
 | Ranges over `expected` payloads | **general range and borrow rules** since the source-defined `expected` (0.449.0) | `M-OWN-04` delivered the bounded byte-input client; its compiler route is retired |
 | Native C records/handles/callbacks | bounded records, generated adapter header, pointer-only opaque identity, strings, returned arrays, and exact same-thread callback adapters complete; captures, userdata ownership, foreign-thread entry, and ownership transfer remain systems-readiness breadth | `S-ABI-01/02/03`, `S-FFI-02` F1/F2/F3, and `S-CALL-01` done; complete GLFW 3.4 oracle is the acceptance evidence |
-| Owned callables and capture | **owning read/mut/once wrappers, retained invocation, exact items and bounded inline/boxed storage delivered** | `L-CALL-01/02` admitted contracts exist. Borrowed capture/results and inline consuming projection remain general lifetime/origin goals, not the original one-field-only transport boundary. |
+| Owned callables and capture | **owning read/mut/once wrappers, retained invocation, exact items and bounded inline/boxed storage delivered** | `L-CALL-01/02` admitted contracts exist. Checked shared/exclusive captures, borrowed callable views and signature-origin reference results are delivered by L-CALL-03/04. Broader borrowed escape, owning invocation-pointer results and inline consuming projection remain, not the original one-field-only transport boundary. |
 | Allocator/provenance model | **general raw/lifetime, programmable allocation and source storage delivered** | `S-ALLOC-01` through `S-ALLOC-09` admitted contracts and arena/pool/resource clients exist. Remaining allocator-aware variants, fallible owners and source-policy candidates have separate acceptance. |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
-| Payload enums/matching | **generic, structurally owned and borrowed-pattern profiles delivered; stored reference payloads in progress** | `L-SUM-01` and ADR 014 cover substituted alternative identity, finite nested payload enums, owning fixed arrays and representable owning wrappers, storage/source-wrapper transport and read/mut arm-scoped bindings. Consuming matches move payloads out of prvalue and explicitly moved subjects. Stored reference payloads still require conditional dependency and result-summary proofs; polymorphic transport and direct capture remain distinct goals. |
+| Payload enums/matching | **generic owning, stored-reference and borrowed-pattern profiles delivered within their contracts** | `L-SUM-01` and ADR 014 cover substituted alternative identity, finite nested payload enums, owning fixed arrays and representable owning wrappers, storage/source-wrapper transport and read/mut arm-scoped bindings. Consuming matches move payloads out of prvalue and explicitly moved subjects. Direct shared/exclusive and nested reference-enum alternatives retain conditional dependency and declared result-summary proofs. Borrowed-value consuming handoffs, further carrier containment, polymorphic transport and direct capture remain distinct goals. |
 | Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
@@ -12571,7 +12700,7 @@ owned by the rows and domain plans above.
 | Compiler structural ownership | **exclusive campaign complete** | `R-STRUCT-00` through `R-STRUCT-05`; [archived closure report](archive/compiler-structural-refactor.md) |
 | Source/semantic/HIR/MIR compiled migration | **complete foundation** | `C-MIG-02` through `C-MIG-07`; internal decomposition is owned by `R-STRUCT` |
 | Deterministic names/concrete instance emission | **self-contained lowered declaration/instance/symbol tables delivered** | Future independent linkage/library ABI profiles reuse them; the executable cutover is not pending. |
-| Project dependencies/cache | **project/tests/cache/path/Git/registry workflows delivered** | Further registry governance/backends, native cache profile coverage and library publication remain; do not repeat foundational stages. |
+| Project dependencies/cache | **project/tests/cache/path/Git/registry workflows delivered** | Further registry governance/backends, native cache profile coverage and complete fallible/platform library acceptance remain; do not repeat foundational stages. |
 | LSP project index/process isolation | **project facts/snapshot foundation delivered; fault-state safety incomplete** | `T-LSP-06` owns containment hardening or isolation; lazy trusted-body/scoped-completion work addresses latency before speculative cross-snapshot reuse. |
 | Optional out-of-class method bodies | Implemented, 0.416.0 | Ordinary non-generic member identity plus private registered implementation roots unlock an interface factory without a circular source import. Runtime/borrow/cleanup, module-cache/LSP and corpus/tooling tests cover this slice; the workflow verification record binds release acceptance to the reconciled head/base. Extending to generic owners/methods requires canonical binder substitution and instance-overlay evidence; special members/operators require their own existing lifecycle/operator identities, not name-based matching. |
 | Separate compilation/stable GTI ABI | later-breadth proposal | deterministic names, layout/ABI, package model, concrete emission |

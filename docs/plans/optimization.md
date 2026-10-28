@@ -1,5 +1,17 @@
 # GTI Optimization Architecture Proposal
 
+## Status Reconciliation (2026-10-28)
+
+The MIR editor/proof replay, per-instance effects, scalar promotion/folding,
+SCCP, bounded safety discharge, loop/range and alias facts, exact closed-call
+facts and optimizer reports are implemented. Current native session/layout,
+private call ABI, object emission and optimization/debug infrastructure also
+exist; they are not absent optimizer prerequisites. General memory transforms,
+loop transformations, inlining and the named RT follow-ups remain incomplete
+within their stated scopes. Earlier timings and C++-only architectural
+observations below are historical evidence. LLVM production coverage and
+platform/performance signoff remain separate O-LLVM obligations.
+
 ## Runtime Performance Policy Revision (2026-10-09)
 
 [ADR 012](../decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09)
@@ -1647,8 +1659,9 @@ Resolve these before the pass families that depend on them:
 - transform-specific loop legality, failure-order proof, and cost evidence;
 - transform-specific composition of the existing temporary/lifetime/drop
   authority, including ordered arguments and new cloned/inlined failure edges;
-- backend-neutral object layout, data layout, virtual tables, and calling
-  conventions;
+- transport of the implemented target/layout, virtual-dispatch and private
+  call-ABI facts into each new transform; a stable ordinary GTI binary ABI
+  remains separate, rather than a prerequisite to repeat native layout work;
 - the closed-world boundary once separate compilation or dynamic linkage exists;
 - cost models and size policy based on representative benchmark data.
 
