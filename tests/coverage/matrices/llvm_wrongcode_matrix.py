@@ -53,12 +53,13 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from llvm_wrongcode import (algorithms, bases, callables,  # noqa: E402
-                            containers,
+from llvm_wrongcode import (algorithms, arrays, bases, callables,  # noqa: E402
+                            containers, error_chains, formatting,
                             dispatch, enums, flow, hierarchy, library,
-                            callbacks, generics, order, poly_containers,
+                            callbacks, generics, nested_generics, operators,
+                            order, poly_containers, ranges, static_state,
                             raii, sum_types, text_relays, threads,
-                            transfer)
+                            transfer, trees)
 
 MATRICES = {"transfer": transfer, "containers": containers, "flow": flow,
             "hierarchy": hierarchy, "bases": bases, "enums": enums,
@@ -66,7 +67,11 @@ MATRICES = {"transfer": transfer, "containers": containers, "flow": flow,
             "library": library, "poly_containers": poly_containers,
             "callbacks": callbacks, "sum_types": sum_types,
             "text_relays": text_relays, "generics": generics,
-            "algorithms": algorithms, "threads": threads, "raii": raii}
+            "algorithms": algorithms, "threads": threads, "raii": raii,
+            "operators": operators, "ranges": ranges,
+            "nested_generics": nested_generics, "formatting": formatting,
+            "arrays": arrays, "trees": trees, "error_chains": error_chains,
+            "static_state": static_state}
 ENDPOINTS = (("cpp", "O0"), ("llvm", "O0"), ("llvm", "O2"))
 
 
