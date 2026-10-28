@@ -11776,7 +11776,13 @@ backend fails on all of these, so the `closure-transfers` and
 their own results natively. Before this change, a constructor field taking an
 inert hierarchy parameter raised an LLVM internal error; it now runs.
 Copies of program storage stay refused, including a thread-local initialized
-from a global, and `reject-thread-local-copy` pins that refusal. PARITY_COUNTS
+from a global, and `reject-thread-local-copy` pins that refusal.
+The 18 wrong-code matrices at `--jobs 2`, before and after this change, have
+809 cells each. Neither run has a `PolymorphicTransfer` refusal, wrong code or
+a new refusal; three unrelated refusals are parity gaps in both. None of the
+matrices' axes exercises these shapes. The 19 user-defined probes behind
+these cases went from 14 `PolymorphicTransfer` refusals and 5 internal errors
+to all running natively.
 
 Base-view replacement, exchange and swap, enum copies, enums moved into
 arguments or returns, payload values returned by value, copies of program
