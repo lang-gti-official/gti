@@ -2339,7 +2339,12 @@ dependency the caller's value holds in that field:
   relay is a use of that one field, which the field contract tracks, and its
   return publishes exactly the declared source field. Program verification
   admits a call-result loan that names a text field of the selected argument
-  source for a by-value text result.
+  source for a by-value text result. A by-value formal is an immutable local
+  copy that its cleanup ends at the return: the relay's own loan names the
+  copy's field and stays in the body, the return publishes no loan, as a
+  direct return of the field does, and verification admits that return when
+  the call's argument is the exact load of the declared source field
+  (`relayedFormalField`).
 - At a call, `TextContracts` analyzes the callee under its field contracts and
   maps each returned field source onto the argument or receiver:
   `heldFieldSources` gives that formal's field here, unknown text for a
