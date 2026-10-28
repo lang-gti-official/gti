@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.486.1 - Native function-pointer fields, base returns and mutex text witnesses
+
+- The native backend now builds these programs, which previously failed with
+  `GTI-B0003`, and matches the C++ backend:
+  - a polymorphic class holding a `std::function_ptr` field, copied into
+    `std::make_unique` or an owner of its interface;
+  - a function returning a base-class reference to a class that holds a
+    reference, such as `Base& up(Plain& p) { return p; }`;
+  - text built with `std::assume_string_view` or `std::assume_c_string` whose
+    owner is a `std::mutex`.
+
 ## 0.486.1 - Native copies of global objects and nested holder borrows
 
 - The native backend now copies objects of derived, polymorphic and

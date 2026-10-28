@@ -5089,7 +5089,8 @@ a checked selected source, or whole-binding Move, and exactly one Initialize
 into a fresh whole local. The producer, publication, ownership event and source,
 value and destination drop identities must agree. Explicit staged Move Construct,
 source-defined special members, borrowed fields and active-copy lifetimes reject.
-Scalar and ordinary record fields compose recursively. Each field retains its
+Scalar and ordinary record fields compose recursively; a function-pointer
+handle field, one code address, copies as bytes. Each field retains its
 own generated-member contract; an outer generated move does not bypass a
 field's source-defined or deleted constructor. Fixed-array, payload and owner
 fields retain their separate transfer prerequisites. Cleanup identity is checked
@@ -5293,9 +5294,10 @@ stored dependency is a `Stored` loan that binding carries, and an escaping
 `Return` loan whose one `Borrow` relays a supported loan with the same source
 and stored dependency. Any other stored dependency stays refused. A free call
 that relays such a view to a non-hierarchy base, as `pickBase(plain)` does,
-returns the callee's checked address, not a dispatch view. Returning a
-non-hierarchy base reference to a carrier parameter (`Base& up(Plain&)`)
-stays refused. `dispatch.upcast-carriers` and `carrier_reference_runtime`
+returns the callee's checked address, not a dispatch view, and so does a
+function returning a non-hierarchy base reference to a carrier parameter
+(`Base& up(Plain&)`): its reference return relays the parameter's loan like
+any class reference return. `dispatch.upcast-carriers` and `carrier_reference_runtime`
 run these forms at O0-O3.
 
 A base or interface view of a carrier now takes a `Local` loan on the
@@ -5724,8 +5726,8 @@ checked loan identity. Native owner representation admits passive witnesses or
 the same class boundary as raw references: a unique concrete class or struct
 instance without compiler capability or foreign ABI layout, including a
 complete polymorphic one through its exact dispatch metadata, or an interface or
-abstract view of an owner with dispatch metadata. Mutex storage is not a
-witness. The owner address is an independent lifetime
+abstract view of an owner with dispatch metadata, or mutex storage. The owner
+address is an independent lifetime
 witness; no owner bytes are read or copied. An unrelated owning user class
 checks both text forms, selected-owner identity and exact resource
 destruction; source escape, movement and mutation and unsupported witness

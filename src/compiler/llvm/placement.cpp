@@ -939,6 +939,23 @@ bool bitwiseGeneratedCopy(const MirProgram &program, const SemanticType &type) {
   if (type.kind == SemanticType::Array)
     return type.arguments.size() == 1 && !type.arrayLengthParameterId &&
            bitwiseGeneratedCopy(program, type.arguments.front());
+  // A function-pointer handle is one code address with no state or cleanup.
+  if (type.kind == SemanticType::Class) {
+    const MirClassInstance *owner = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == type) {
+        if (owner)
+          return false;
+        owner = &candidate;
+      }
+    return owner &&
+           owner->compilerCapability ==
+               CompilerCapabilityTypeKind::FunctionPointer &&
+           mir_detail::functionPointerSignature(program, type) &&
+           owner->declaredFields.empty() && owner->bases.empty() &&
+           owner->structuralBases.empty() && !owner->polymorphic &&
+           !owner->abstract && !owner->destructor;
+  }
   if (type.kind != SemanticType::Lambda)
     return false;
   const auto environment = closureEnvironmentLayout(program, type);
@@ -2567,6 +2584,11 @@ const Placement::Target *Placement::target(MirValueId value) const {
     return target(found->second->operands[0].value);
   const auto found = targets.find(value);
   return found == targets.end() ? nullptr : &found->second;
+}
+
+bool generatedCopyIsBitwise(const MirProgram &program,
+                            const SemanticType &type) {
+  return bitwiseGeneratedCopy(program, type);
 }
 
 bool carrierLoanDependency(

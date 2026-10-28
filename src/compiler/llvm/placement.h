@@ -122,6 +122,11 @@ struct FreshHierarchyTransfer {
 planFreshHierarchyTransfer(const MirProgram &program, const MirBody &body,
                            const MirInstruction &producer);
 
+// A value whose generated copy is a plain byte copy: passive scalars, raw
+// pointers, function items and handles, and arrays and closures of them.
+[[nodiscard]] bool generatedCopyIsBitwise(const MirProgram &program,
+                                          const SemanticType &type);
+
 // The generated copy of a concrete hierarchy class whose typed field copy is
 // implemented: borrow-free ordinary storage with generated copy members and
 // no active cleanup, recursively through scalar and record fields.
