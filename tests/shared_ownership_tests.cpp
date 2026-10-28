@@ -329,6 +329,8 @@ int main() {
   require(sawSynchronizedDrop, "shared release is a synchronization barrier");
   bool sawConstruction = false;
   bool sawAtomic = false;
+  bool sawReleaseDecrement = false;
+  bool sawAcquireObservation = false;
   bool sawBorrow = false;
   bool sawEmptyFailure = false;
   bool sawAllocationFailure = false;
@@ -343,6 +345,13 @@ int main() {
             instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct;
         sawAtomic |= instruction.synchronization.kind ==
                      lang::SynchronizationOperationKind::AtomicCompareExchange;
+        sawReleaseDecrement |=
+            instruction.intrinsic == lang::IntrinsicKind::AtomicFetchSubWrapping &&
+            instruction.synchronization.order == lang::AtomicMemoryOrder::Release;
+        sawAcquireObservation |=
+            instruction.intrinsic == lang::IntrinsicKind::AtomicLoad &&
+            instruction.synchronization.order == lang::AtomicMemoryOrder::Acquire &&
+            lang::effects(frontend.mir, instruction).maySynchronize;
         const bool borrow =
             instruction.intrinsic == lang::IntrinsicKind::RawBorrow;
         const bool empty =
@@ -387,6 +396,8 @@ int main() {
       }
     }
   }
+  require(sawReleaseDecrement && sawAcquireObservation,
+          "credit retirement retains release and acquire synchronization effects");
   require(sawConstruction && sawAtomic && sawBorrow && sawEmptyFailure &&
               sawAllocationFailure,
           "source ownership exercises lifetime, atomic, checked borrow and "

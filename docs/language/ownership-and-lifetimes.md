@@ -1674,8 +1674,8 @@ Empty dereference/member access raises `empty_owner_access` in `member_access`.
 
 The handle, control block, overflow-checked retain loop, final-release decision,
 view conversion and allocation policy are ordinary GTI source. Retain uses
-relaxed compare/exchange; release uses wrapping acquire-release decrement after
-establishing a live strong credit. General compiler facilities still supply
+relaxed compare/exchange; release uses wrapping release decrement after establishing a live strong
+credit, followed by an acquire load only on the final release. General compiler facilities still supply
 object layout/lifetime, borrow checking, capability predicates, function-pointer
 calls, atomic target instructions and defined failure. Public shared ownership
 no longer uses the private `shared_owner` capability.
@@ -1731,7 +1731,14 @@ original allocation. An expired observer can therefore be cloned, moved,
 queried and destroyed without accessing the retired payload. Promotion uses
 acquire compare/exchange on a positive strong count and never revives zero.
 Both strong and weak increments reject count overflow before modifying the
-count; credit-backed releases use wrapping acquire-release subtraction.
+count; credit-backed releases use wrapping release subtraction followed by a final-
+release acquire load of the same counter. After publication all modifications
+are read-modify-writes, and zero is never resurrected. Atomic write-read
+coherence makes the final acquire observe its preceding zero write; that write
+belongs to the release sequence of every earlier release. Thus destruction
+observes writes preceding all releases, including payload cleanup before the
+implicit weak release. The acquire remains a synchronization effect even though
+its numeric result is discarded.
 
 Weak handles have the same conditional thread permissions as strong handles:
 `T` must support both transfer and sharing, because promotion can create a last

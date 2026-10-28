@@ -1804,7 +1804,10 @@ unsafe void retain_weak<Payload>(shared_control* block) {
 unsafe void release_weak<Payload>(shared_control* block) {
   if (block == nullptr) { return; }
   unsafe {
-    if (block->weak.fetch_sub_wrapping(uint64_t(1), std::memory_order_acq_rel()) == uint64_t(1)) {
+    if (block->weak.fetch_sub_wrapping(uint64_t(1), std::memory_order_release()) == uint64_t(1)) {
+      // All published modifications are RMWs; zero cannot be resurrected.
+      // This acquire observes our zero in every preceding release sequence.
+      [[discard]] block->weak.load(std::memory_order_acquire());
       auto dispose = block->dispose;
       gti_internal::function_pointer_invoke(dispose, std::erase_address(block), false);
     }
@@ -1819,7 +1822,10 @@ public:
 unsafe void release_shared<Payload>(shared_control* block) {
   if (block == nullptr) { return; }
   unsafe {
-    if (block->strong.fetch_sub_wrapping(uint64_t(1), std::memory_order_acq_rel()) == uint64_t(1)) {
+    if (block->strong.fetch_sub_wrapping(uint64_t(1), std::memory_order_release()) == uint64_t(1)) {
+      // All published modifications are RMWs; zero cannot be resurrected.
+      // This acquire observes our zero in every preceding release sequence.
+      [[discard]] block->strong.load(std::memory_order_acquire());
       auto dispose = block->dispose;
       gti_internal::function_pointer_invoke(dispose, std::erase_address(block), true);
     }
