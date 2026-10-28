@@ -30,9 +30,10 @@ algorithm in either profile.
 
 `std::thread`, `std::thread_result<Result>`, `std::mutex<T>`,
 `std::parallel_invoke`, and atomic wait/notification still require the concurrent
-profile. All these facilities, including scalar atomics, retain the current
-target requirement for thread-capable concurrency support. Imports alone do not
-select the profile. Missing profile or target support is diagnosed as
+profile and a target with host thread-runtime support. Scalar atomic storage
+and nonblocking operations do not require that runtime; their availability is
+owned by target code generation. This revises the former shared thread-runtime
+gate (2026-10-28). Imports alone do not select the profile. Missing profile or target support is diagnosed as
 `GTI-S2084`; wait/notification requirements propagate through source wrappers.
 
 The `<std/cthread>` create/join, once-initialization, manual-mutex, and
@@ -682,9 +683,18 @@ operations deliberately do not inherit C++'s wrapping integral `fetch_add` or
 `fetch_sub` behavior. Bitwise fetch operations are total after the normal
 checked conversion back to the atomic's fixed-width type.
 
-The standard library defines the fetch families as strong compare/exchange
-loops over the sealed atomic operations rather than as new backend
-instructions. The initial observation is relaxed. A successful attempt uses
+`fetch_add_wrapping` and `fetch_sub_wrapping` explicitly select modulo 2^N
+arithmetic for the atomic's fixed-width integer type. Signed values use the
+same bit-width wraparound. Both return the value before their indivisible
+update, accept all five static memory-order tags, and default to sequential
+consistency. They cannot raise arithmetic overflow; `bool` is excluded. These
+general operations lower to native atomic read-modify-write instructions. A
+reference-count implementation may use wrapping decrement only when its own
+invariant proves a positive count; the operation itself does not prove that
+invariant. See `examples/178-wrapping-atomic-counters.gti`.
+
+The standard library defines the checked and bitwise fetch families as strong
+compare/exchange loops over the sealed atomic operations. The initial observation is relaxed. A successful attempt uses
 these success/failure pairs: relaxed/relaxed, acquire/acquire,
 release/relaxed, acq_rel/acquire, or seq_cst/seq_cst. Contention may cause the
 pure built-in update expression to be recomputed; the successful
@@ -846,3 +856,7 @@ also separate facilities; synchronous scoped invocation does not provide them.
 
 The absence of these APIs is not permission to call similarly named native
 facilities and treat their behavior as GTI synchronization.
+
+Wrapping atomic add/subtract currently require the LLVM backend. C++ reports
+`GTI-B0003` for an executable use; existing checked atomic operations retain
+their C++ support. Source shared ownership depends on wrapping subtraction.

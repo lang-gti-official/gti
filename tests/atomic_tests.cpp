@@ -359,15 +359,11 @@ int main() {
   expect(singleResult.canGenerateCode(),
          "scalar atomic use is available in the single-threaded profile");
 
-  const lang::FrontendResult unsupported =
-      analyze("atomic-unsupported-target.gti", use, concurrentTarget(false));
-  expect(
-      !unsupported.canGenerateCode() && hasCode(unsupported, "GTI-S2084") &&
-          hasMessage(unsupported,
-                     "does not provide thread-capable concurrency support") &&
-          !hasCode(unsupported, "GTI-B0001"),
-      "atomic use should fail before lowering when the target lacks "
-      "thread support");
+  for (auto target : {concurrentTarget(false), lang::TargetInfo::host()}) {
+    target.runtimeCapabilities.threads = false;
+    expect(analyze("atomic-without-thread-runtime.gti", use, target).canGenerateCode(),
+           "scalar atomics do not require a host thread runtime in either profile");
+  }
 
   const lang::FrontendResult privateStorage =
       analyze("atomic-private-storage.gti", R"(
@@ -848,6 +844,39 @@ void testVerifierMutations() {
          "intrinsic");
 }
 
+void testWrappingOperations() {
+  auto target = lang::TargetInfo::host();
+  target.runtimeCapabilities.threads = false;
+  const auto frontend = analyze("atomic-wrapping.gti",
+      fixtureSource("llvm_atomic_wrapping.gti"), target);
+  if (!frontend.canGenerateCode()) printDiagnostics(frontend);
+  expect(frontend.canGenerateCode(), "wrapping operations use exact integer storage without host threads");
+  if (!frontend.canGenerateCode()) return;
+  for (auto intrinsic : {lang::IntrinsicKind::AtomicFetchAddWrapping,
+                         lang::IntrinsicKind::AtomicFetchSubWrapping}) {
+    for (int mutation = 0; mutation < 6; ++mutation) {
+      auto invalid = frontend.mir;
+      auto *operation = findAtomic(invalid, intrinsic);
+      expect(operation != nullptr, "both wrapping operations reach MIR");
+      if (!operation) continue;
+      if (mutation == 0) operation->synchronization.order = lang::AtomicMemoryOrder::Count;
+      if (mutation == 1) operation->parameterTypes.clear();
+      if (mutation == 2) operation->operands[1].type = lang::SemanticType::Bool;
+      if (mutation == 3) operation->operands[0].place = 0;
+      if (mutation == 4) operation->result.reset();
+      if (mutation == 5) operation->synchronization.kind = lang::SynchronizationOperationKind::AtomicLoad;
+      expect(!lang::verifyMirProgram(invalid).valid(), "wrapping RMW rejects forged type/place/result/order contracts");
+    }
+  }
+  for (const std::string body : {
+      "std::atomic<bool> x{false}; x.fetch_add_wrapping(true);",
+      "std::atomic<int> x{0}; x.fetch_sub_wrapping(uint64_t(1));",
+      "std::atomic<int> x{0}; x.fetch_add_wrapping(1, 0);"}) {
+    const auto invalid = analyze("bad-wrapping.gti", "#include <std/atomic>\nint main() { " + body + " return 0; }", target);
+    expect(!invalid.canGenerateCode() && !hasCode(invalid, "GTI-B0001"), "invalid wrapping calls reject in semantics");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -859,5 +888,6 @@ int main() {
   testFetchOperations();
   testVerifierMutations();
   testWaiting();
+  testWrappingOperations();
   return failures == 0 ? 0 : 1;
 }

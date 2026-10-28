@@ -6851,6 +6851,8 @@ private:
                    resolved->intrinsic == IntrinsicKind::AtomicNotifyAll ||
                    resolved->intrinsic == IntrinsicKind::AtomicStore ||
                    resolved->intrinsic == IntrinsicKind::AtomicExchange ||
+                   resolved->intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
+                   resolved->intrinsic == IntrinsicKind::AtomicFetchSubWrapping ||
                    resolved->intrinsic ==
                        IntrinsicKind::AtomicCompareExchange) {
           value.synchronization = resolved->synchronization;
@@ -6864,7 +6866,9 @@ private:
                   ? SynchronizationOperationKind::AtomicNotify
               : resolved->intrinsic == IntrinsicKind::AtomicStore
                   ? SynchronizationOperationKind::AtomicStore
-              : resolved->intrinsic == IntrinsicKind::AtomicExchange
+              : resolved->intrinsic == IntrinsicKind::AtomicExchange ||
+                      resolved->intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
+                      resolved->intrinsic == IntrinsicKind::AtomicFetchSubWrapping
                   ? SynchronizationOperationKind::AtomicReadModifyWrite
                   : SynchronizationOperationKind::AtomicCompareExchange;
           if (value.synchronization.kind != expected ||

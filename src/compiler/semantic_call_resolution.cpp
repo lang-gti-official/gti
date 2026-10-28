@@ -5036,9 +5036,9 @@ auto SemanticVisitor::Impl::finalizeCThreadRequirements() -> void {
 auto SemanticVisitor::Impl::validateConcurrentSurfaceAvailability(
     const Token &location, std::string_view surface,
     bool requiresConcurrentProfile) -> bool {
-  if ((!requiresConcurrentProfile ||
-       target.executionProfile == ExecutionProfile::Concurrent) &&
-      target.runtimeCapabilities.threads) {
+  if (!requiresConcurrentProfile ||
+      (target.executionProfile == ExecutionProfile::Concurrent &&
+       target.runtimeCapabilities.threads)) {
     return true;
   }
   Diagnostic diagnostic = makeDiagnostic(

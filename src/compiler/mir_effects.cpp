@@ -435,6 +435,8 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .movesValue = true,
                     .invokesUserCode = true,
                     .maySynchronize = true}, // ThreadScope
+    MirEffectTraits{.initializesValue = true}, // AtomicFetchAddWrapping
+    MirEffectTraits{.initializesValue = true}, // AtomicFetchSubWrapping
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -732,6 +734,8 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "c-string-from-address",
     "require-allocation",
     "thread-scope",
+    "atomic-fetch-add-wrapping",
+    "atomic-fetch-sub-wrapping",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

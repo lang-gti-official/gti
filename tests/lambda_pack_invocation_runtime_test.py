@@ -12,7 +12,8 @@ from sanitizer_support import SANITIZED_BUILD_TIMEOUT
 
 
 def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
-         fixture_paths=None, native_inputs_by_name=None, native_arguments_by_case=None):
+         fixture_paths=None, native_inputs_by_name=None, native_arguments_by_case=None,
+         llvm_modes=False, cpp_unsupported=None):
     fixtures = pathlib.Path(__file__).parent / "fixtures"
     if names is None:
         names = ("lambda_pack_invocation", "stored_callable_signature",
@@ -23,6 +24,9 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
     modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
               ("sanitized", ["--std", "c++23", "-O1"],
                ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    if llvm_modes:
+        modes += [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [])
+                  for level in ("O0", "O1", "O2", "O3")]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=pathlib.Path)
     parser.add_argument("--fixture", action="append", choices=names,
@@ -53,8 +57,17 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
             if native_arguments:
                 command += ["--", *native_arguments]
             timeout = SANITIZED_BUILD_TIMEOUT if label == "sanitized" else 120
+            expected_cpp_limitation = cpp_unsupported and "--std" in flags
+            if expected_cpp_limitation:
+                binary.write_bytes(b"preserved unsupported output")
             built = subprocess.run(command, capture_output=True, text=True,
                                    timeout=timeout, env=environment)
+            if expected_cpp_limitation:
+                assert (built.returncode == 65 and "GTI-B0003" in built.stderr
+                        and cpp_unsupported in built.stderr
+                        and binary.read_bytes() == b"preserved unsupported output"), (name, label, built)
+                print(f"RECORDED C++ LIMITATION {name}/{label}: {cpp_unsupported}", flush=True)
+                return name, label, None
             if built.returncode != 0:
                 # Keep the compiler's saved reason in detached-run evidence,
                 # rather than leaving only a temporary remote path in the log.
@@ -71,6 +84,8 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
 
         def execute_fixture(compiled):
             name, label, binary = compiled
+            if binary is None:
+                return
             runs = (cases or {}).get(name, [((), (0, "", ""))])
             if not runs:
                 raise ValueError(f"{name} has no execution observations")

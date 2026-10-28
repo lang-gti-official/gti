@@ -15,6 +15,8 @@ def main():
     modes += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
               ("sanitized", ["--std", "c++23", "-O1"],
                ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])]
+    modes += [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [])
+              for level in ("O0", "O1", "O2", "O3")]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
     parser.add_argument("--mode", action="append", choices=[mode[0] for mode in modes])
@@ -27,13 +29,22 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-shared-failure-") as temporary:
         for name, flags, native in modes:
             binary = Path(temporary) / name
+            cpp_limitation = "--std" in flags
+            if cpp_limitation:
+                binary.write_bytes(b"preserved unsupported output")
             built = run([str(compiler), str(source), *flags, "-o", str(binary),
-                         "--", str(fixtures / "unique_scalar_allocation_fault.cpp"), *native])
+                         "--", str(fixtures / "shared_ownership_allocation_fault.cpp"), *native])
+            if cpp_limitation:
+                assert (built.returncode == 65 and "GTI-B0003" in built.stderr
+                        and "wrapping atomic read-modify-write" in built.stderr
+                        and binary.read_bytes() == b"preserved unsupported output"), (name, built)
+                print(f"RECORDED C++ LIMITATION shared ownership failure: {name}", flush=True)
+                continue
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             cases = [
-                (70, "99\n", "empty_owner_access in dereference"),
-                (ABORT_STATUS, "1\n", "allocation_failure in shared_owner"),
-                (ABORT_STATUS, "1\n", "allocation_failure in shared_owner"),
+                (70, "99\n", "empty_owner_access in member_access"),
+                (ABORT_STATUS, "1\n", "allocation_failure in private_storage"),
+                (ABORT_STATUS, "1\n", "allocation_failure in private_storage"),
                 (70, "1\n2\n7\n99\n", "division_by_zero"),
                 (0, "1\n2\n7\n12\n99\n", ""),
             ]

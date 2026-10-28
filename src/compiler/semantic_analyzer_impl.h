@@ -5731,7 +5731,7 @@ private:
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isSimdLibraryUnit(SourceUnitId sourceUnit) const;
 
-  [[nodiscard]] bool isFunctionalLibraryUnit(SourceUnitId sourceUnit) const;
+  [[nodiscard]] bool isFunctionPointerLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool
   isDefaultLibraryStorageBorrowCarrier(const ClassInfo &owner) const;

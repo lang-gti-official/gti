@@ -8,4 +8,5 @@ if __name__ == "__main__":
     main(("shared_ownership", "shared_ownership_upcast"), {
         "shared_ownership": [((), (0, "1\n7\n2\n8\n3\n9\n", ""))],
         "shared_ownership_upcast": [((), (0, "7\n8\n", ""))],
-    })
+    }, llvm_modes=True,
+         cpp_unsupported="wrapping atomic read-modify-write")

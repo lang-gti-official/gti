@@ -528,6 +528,8 @@ enum class IntrinsicKind {
   CStringFromAddress,
   RequireAllocation,
   ThreadScope,
+  AtomicFetchAddWrapping,
+  AtomicFetchSubWrapping,
   Count,
 };
 

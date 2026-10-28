@@ -378,6 +378,52 @@ void check(const std::filesystem::path &root) {
     }
   }
 }
+void checkWrapping(const std::filesystem::path &root) {
+  FrontendOptions options;
+  options.target = TargetInfo::host();
+  options.target.runtimeCapabilities.threads = false;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  const auto frontend = Frontend(options).analyze(
+      root / "tests/fixtures/llvm_atomic_wrapping.gti", std::nullopt,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  if (!frontend.canGenerateCode()) throw std::runtime_error("wrapping fixture must reach MIR");
+  std::vector<LoweredProgramIssue> issues;
+  auto input = verifiedLoweredProgram(gti_test::lowerProgram(
+      frontend, frontend.mir, frontend.mir, options.target), issues);
+  if (!input) throw std::runtime_error("wrapping fixture must seal");
+  const auto plan = planLlvmAdmission(*input);
+  expect(plan.admitted(), "wrapping atomics need no thread runtime");
+  const auto &program = input->program().mir();
+  Session session(*input, {});
+  auto *function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
+      llvm::GlobalValue::InternalLinkage, "wrapping_probe", session.module());
+  llvm::IRBuilder<> ir(llvm::BasicBlock::Create(session.context(), "entry", function));
+  std::set<std::tuple<IntrinsicKind, SemanticType::Kind, AtomicMemoryOrder>> seen;
+  for (const auto &owner : program.functionInstances())
+    for (const auto &block : owner.body.blocks)
+      for (const auto &operation : block.instructions) {
+        const bool add = operation.intrinsic == IntrinsicKind::AtomicFetchAddWrapping;
+        if (!add && operation.intrinsic != IntrinsicKind::AtomicFetchSubWrapping) continue;
+        expect(nativeAtomicCall(program, owner.body, operation), "exact wrapping RMW admits");
+        seen.emplace(operation.intrinsic, operation.info.type.kind, *operation.synchronization.order);
+        auto malformed = operation;
+        malformed.info.type = SemanticType::Bool;
+        expect(!nativeAtomicCall(program, owner.body, malformed), "wrapping rejects a bool result");
+        auto *lane = llvm::cast<llvm::IntegerType>(session.layouts().get(operation.info.type).storage);
+        auto *slot = ir.CreateAlloca(lane);
+        const std::array<llvm::Value *, 2> inputs{slot, llvm::ConstantInt::get(lane, 1)};
+        auto *result = Atomics(session, ir).emit(owner.body, operation, inputs);
+        auto *rmw = llvm::dyn_cast<llvm::AtomicRMWInst>(result);
+        expect(rmw && rmw->getOperation() == (add ? llvm::AtomicRMWInst::Add : llvm::AtomicRMWInst::Sub),
+               "wrapping emits one native add/sub RMW, not a compare/exchange loop");
+      }
+  expect(seen.size() == 24, "eight integer widths and every order reach both operations");
+  ir.CreateRetVoid();
+  session.verify();
+}
+
 void checkWaiting(const std::filesystem::path &root,
                   const std::filesystem::path &output = {},
                   std::string_view sanitizer = {}) {
@@ -548,6 +594,7 @@ int main(int argc, char **argv) {
                     std::filesystem::path(argv[3]), sanitizer);
     else {
       check(std::filesystem::path(argv[1]));
+      checkWrapping(std::filesystem::path(argv[1]));
       checkWaiting(std::filesystem::path(argv[1]));
     }
   } catch (const std::exception &error) {

@@ -580,6 +580,8 @@ exactAtomicSynchronization(IntrinsicKind intrinsic,
   case IntrinsicKind::AtomicStore:
     expected = SynchronizationOperationKind::AtomicStore;
     break;
+  case IntrinsicKind::AtomicFetchAddWrapping:
+  case IntrinsicKind::AtomicFetchSubWrapping:
   case IntrinsicKind::AtomicExchange:
     expected = SynchronizationOperationKind::AtomicReadModifyWrite;
     break;
@@ -13115,6 +13117,42 @@ exactAtomicWaitingContract(const MirProgram &program, const MirBody &body,
          instruction.parameterTypes[1] == *element;
 }
 
+[[nodiscard]] bool exactWrappingAtomicContract(
+    const MirProgram &program, const MirBody &body,
+    const MirInstruction &instruction) {
+  if (instruction.intrinsic != IntrinsicKind::AtomicFetchAddWrapping &&
+      instruction.intrinsic != IntrinsicKind::AtomicFetchSubWrapping)
+    return true;
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget || instruction.loan ||
+      instruction.unsafeOperation != UnsafeOperationKind::None ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly || !instruction.result ||
+      !instruction.definedFailure.empty() || !instruction.localFailureSites.empty() ||
+      !instruction.lifecycle.empty() || instruction.operands.size() != 2 ||
+      instruction.parameterTypes.size() != 2)
+    return false;
+  const auto &storage = instruction.operands[0];
+  const auto *element = exactCapabilityReferenceValue(
+      program, storage.type, AccessMode::ReadOnly,
+      CompilerCapabilityTypeKind::AtomicStorage);
+  const auto *place = body.findPlace(storage.place);
+  if (!element || !constantIntegerDomain(*element) ||
+      *element == SemanticType::Bool || *element == SemanticType::Char ||
+      storage.kind != MirOperandKind::BorrowRead || !place || storage.value ||
+      storage.loan || storage.literal || storage.type.arguments.front() != place->type ||
+      instruction.parameterTypes[0] != storage.type || instruction.info.type != *element)
+    return false;
+  const auto &operand = instruction.operands[1];
+  const auto *value = body.findValue(operand.value);
+  return operand.kind == MirOperandKind::Value && value && !operand.place &&
+         !operand.loan && !operand.literal && value->info.type == *element &&
+         operand.type == *element && instruction.parameterTypes[1] == *element;
+}
+
 [[nodiscard]] bool
 exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
                             const MirInstruction &instruction) {
@@ -18035,6 +18073,8 @@ verifyMirProgramContracts(const MirProgram &program) {
             instruction.intrinsic == IntrinsicKind::AtomicLoad ||
             instruction.intrinsic == IntrinsicKind::AtomicStore ||
             instruction.intrinsic == IntrinsicKind::AtomicExchange ||
+            instruction.intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
+            instruction.intrinsic == IntrinsicKind::AtomicFetchSubWrapping ||
             instruction.intrinsic == IntrinsicKind::AtomicCompareExchange;
         const bool layoutIntrinsic =
             instruction.intrinsic == IntrinsicKind::ObjectSize ||
@@ -18184,7 +18224,8 @@ verifyMirProgramContracts(const MirProgram &program) {
         if (atomicIntrinsic &&
             (!exactAtomicSynchronization(instruction.intrinsic,
                                          instruction.synchronization) ||
-             !exactAtomicWaitingContract(program, body, instruction))) {
+             !exactAtomicWaitingContract(program, body, instruction) ||
+             !exactWrappingAtomicContract(program, body, instruction))) {
           result.errors.push_back(
               {.bodyKind = body.kind,
                .owner = owner,

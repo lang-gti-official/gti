@@ -513,6 +513,8 @@ LLVM_COVERAGE_ENTRY(TextViewFromAddress, 5, Pending, None, "all represented shap
 LLVM_COVERAGE_ENTRY(CStringFromAddress, 5, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(RequireAllocation, 8, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(ThreadScope, 13, Pending, None, "all represented shapes remain pending native lowering")
+LLVM_COVERAGE_ENTRY(AtomicFetchAddWrapping, 13, Pending, None, "all represented shapes remain pending native lowering")
+LLVM_COVERAGE_ENTRY(AtomicFetchSubWrapping, 13, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_SENTINEL(Count)
 LLVM_COVERAGE_END()
 

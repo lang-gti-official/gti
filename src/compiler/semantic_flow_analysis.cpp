@@ -4012,7 +4012,9 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::AtomicNotifyOne:
         case IntrinsicKind::AtomicNotifyAll:
         case IntrinsicKind::AtomicStore:
-        case IntrinsicKind::AtomicExchange:
+        case IntrinsicKind::AtomicFetchAddWrapping:
+  case IntrinsicKind::AtomicFetchSubWrapping:
+  case IntrinsicKind::AtomicExchange:
         case IntrinsicKind::AtomicCompareExchange:
         case IntrinsicKind::MutexLock:
         case IntrinsicKind::MutexUnlock:
@@ -5340,14 +5342,14 @@ auto SemanticVisitor::Impl::isSimdLibraryUnit(SourceUnitId sourceUnit) const
          unit->standardLibraryName == "std/simd";
 }
 
-auto SemanticVisitor::Impl::isFunctionalLibraryUnit(
+auto SemanticVisitor::Impl::isFunctionPointerLibraryUnit(
     SourceUnitId sourceUnit) const -> bool {
   if (sourceGraph == nullptr) {
     return false;
   }
   const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
   return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
-         unit->standardLibraryName == "std/functional";
+         unit->standardLibraryName == "std/detail/function_pointer";
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowCarrier(

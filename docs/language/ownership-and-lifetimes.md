@@ -1658,16 +1658,30 @@ handle. Such a borrow protects the specific handle that supplied it; resetting
 a different alias is allowed because the borrowed handle still owns the
 object. `use_count()` is an observational snapshot, not exclusive-access proof.
 
-`std::make_shared<T>(args...)` uses the existing unique-allocation family:
-classes, structs, and scalars without stored borrowed state. Direct arrays,
-Expected values, and payload enums are not in this allocation family. The
-current representation allocates the object and its control block separately.
-Failure to allocate the
-block raises an aborting `allocation_failure` report in `shared_owner`; no
-pointee, argument, local or managed-worker cleanup runs before process abort.
-Successful publication still transfers exactly one ownership obligation. Last-owner
-release executes the ordinary verified cleanup recipe, including defined
-failure propagation. Empty dereference/member access raises `empty_owner_access`.
+`std::make_shared<T>(args...)` constructs a `storage_element` at its final
+address using the general raw-region allocation and typed lifetime operations.
+The object and its control block are allocated separately. Source guards own
+construction rollback and allocation leases. Allocation failure raises the
+aborting `allocation_failure` report in `private_storage`; no pointee,
+argument, local or managed-worker cleanup runs before process abort.
+Successful publication transfers exactly one strong credit. Last-owner release
+executes the exact payload type's verified cleanup through a stored function
+pointer, with allocation leases preserving cleanup on defined failure.
+Empty dereference/member access raises `empty_owner_access` in `member_access`.
+
+The handle, control block, overflow-checked retain loop, final-release decision,
+view conversion and allocation policy are ordinary GTI source. Retain uses
+relaxed compare/exchange; release uses wrapping acquire-release decrement after
+establishing a live strong credit. General compiler facilities still supply
+object layout/lifetime, borrow checking, capability predicates, function-pointer
+calls, atomic target instructions and defined failure. Public shared ownership
+no longer uses the private `shared_owner` capability.
+
+This source implementation requires the LLVM backend because wrapping atomic
+operations are LLVM-only. C++ compilation reports `GTI-B0003`; this is an explicit
+support regression accepted with the source replacement. Scalar atomics are
+available in both execution profiles without a host thread-runtime requirement;
+thread creation and waiting retain their separate restrictions.
 
 `shared_ptr<Derived>::upcast<Base>()` and the equivalent
 `std::upcast_shared<Base, Derived>(owner)` explicitly consume one derived-typed

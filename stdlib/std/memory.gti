@@ -3,6 +3,8 @@
 
 #include <std/detail/iterator>
 #include <std/meta>
+#include <std/atomic>
+#include <std/detail/function_pointer>
 
 namespace gti_internal {
 namespace runtime {
@@ -1717,70 +1719,148 @@ try_make_pool<T>(size_t capacity) requires gti_internal::movable_sparse_element<
   return std::move(result);
 }
 
-/// A move-only strong handle granting read-only access to one shared object.
-///
-/// Explicit clone() retains the same object. A mutable handle allows reset or
-/// swap, not mutable pointee access. A borrow protects the handle that supplied
-/// it; another handle may be reset independently. Strong cycles are not broken
-/// automatically. Cross-thread use requires both sharing and transfer
-/// permission from T, including permission for last-owner cleanup.
-class shared_ptr<T> {
-  mut gti_internal::shared_owner<T> owner =
-      gti_internal::shared_owner_empty<T>();
+namespace detail {
+// The block owns no automatic payload lifetime. Its last strong owner retires
+// both allocations, even when the selected payload destructor raises failure.
+constexpr bool shared_upcast_capabilities<Base, Derived>() {
+  return (!std::meta::is_transferable<Base>() || std::meta::is_transferable<Derived>()) &&
+         (!std::meta::is_shareable<Base>() || std::meta::is_shareable<Derived>());
+}
+class shared_control {
+public:
+  std::atomic<uint64_t> strong{uint64_t(1)};
+  void* object = nullptr;
+  std::function_ptr<void(void*)> destroy;
+  shared_control(void* object, std::function_ptr<void(void*)> destroy)
+      : object(object), destroy(destroy) {}
+};
+class shared_construction_guard {
+  mut shared_control* block = nullptr;
+public:
+  unsafe shared_construction_guard(shared_control* block) : block(block) {}
+  void disarm() mut { this.block = nullptr; }
+  ~shared_construction_guard() {
+    if (this.block != nullptr) { unsafe { std::destroy_at(this.block); } }
+  }
+};
+class shared_payload_guard<std::storage_element T> {
+  mut T* object = nullptr;
+public:
+  unsafe shared_payload_guard(T* object) : object(object) {}
+  void disarm() mut { this.object = nullptr; }
+  ~shared_payload_guard() {
+    if (this.object != nullptr) { unsafe { std::destroy_at(this.object); } }
+  }
+};
+unsafe void destroy_shared_object<std::storage_element T>(void* object) {
+  mut std::detail::process_lease lease{};
+  auto layout = std::layout_of<T>();
+  unsafe {
+    lease.attach(std::detail::raw_allocation(object, layout.bytes, layout.alignment, uint64_t(0)));
+    std::destroy_at(std::typed_address<T>(object));
+  }
+}
+unsafe void release_shared<Payload>(shared_control* block) {
+  if (block == nullptr) { return; }
+  unsafe {
+    if (block->strong.fetch_sub_wrapping(uint64_t(1), std::memory_order_acq_rel()) == uint64_t(1)) {
+      mut std::detail::process_lease lease{};
+      auto layout = std::layout_of<shared_control>();
+      lease.attach(std::detail::raw_allocation(std::erase_address(block), layout.bytes, layout.alignment, uint64_t(0)));
+      void* object = block->object;
+      auto destroy = block->destroy;
+      std::destroy_at(block);
+      destroy(object);
+    }
+  }
+}
+}
 
+/// A move-only strong handle granting read-only access to one shared object.
+/// Explicit clone() retains the object. A borrow protects its supplying handle.
+/// Cross-thread use requires both sharing and transfer permission from T,
+/// including permission for last-owner cleanup. Strong cycles are not broken.
+[[unsafe_transfer(std::transferable<T> && std::shareable<T>),
+  unsafe_share(std::transferable<T> && std::shareable<T>)]]
+class shared_ptr<T> {
+  mut std::detail::shared_control* block = nullptr;
+  mut const T* view = nullptr;
 public:
   shared_ptr() {}
   shared_ptr(nullptr_t empty) {}
-  shared_ptr(gti_internal::shared_owner<T> value) : owner(std::move(value)) {}
-
+  /// Adopts an already retained block and its live adjusted read-only view.
+  /// The caller transfers exactly one positive strong credit for this block.
+  /// Both pointers must be null, or the block must own a live payload and view
+  /// into it, with the matching exact-type destruction thunk and process leases.
+  /// The payload must satisfy every transfer/share permission promised by T;
+  /// adopting a more capable view must never launder thread-affine state.
+  unsafe shared_ptr(std::detail::shared_control* block, const T* view)
+      : block(block), view(view) {}
   shared_ptr(shared_ptr<T>& other) = delete;
   shared_ptr(shared_ptr<T>&& other) = default;
-
-  /// Adds a strong owner of the same object; does not copy the pointee.
   shared_ptr<T> clone() {
-    return shared_ptr<T>(gti_internal::shared_owner_clone(this.owner));
+    if (this.block == nullptr) { return shared_ptr<T>(); }
+    unsafe {
+      mut uint64_t count = this.block->strong.load(std::memory_order_relaxed());
+      while (true) {
+        gti_internal::require_allocation(count != uint64_t(18446744073709551615));
+        auto result = this.block->strong.compare_exchange_strong(
+            count, count + uint64_t(1), std::memory_order_relaxed());
+        if (result.exchanged()) { return shared_ptr<T>(this.block, this.view); }
+        count = result.observed();
+      }
+    }
   }
-
+  [[borrowed_from(this)]]
   T& operator*() {
-    return gti_internal::shared_owner_borrow(this.owner);
+    if (this.view == nullptr) { gti_internal::fail_empty_owner(); }
+    unsafe { return *this.view; }
   }
-
+  [[borrowed_from(this)]]
   T& operator->() {
-    return gti_internal::shared_owner_borrow(this.owner);
+    if (this.view == nullptr) { gti_internal::fail_empty_owner(); }
+    unsafe { return *this.view; }
   }
-
-  operator bool() {
-    return !gti_internal::shared_owner_is_null(this.owner);
-  }
-  bool operator==(nullptr_t other) {
-    return gti_internal::shared_owner_is_null(this.owner);
-  }
-  bool operator!=(nullptr_t other) {
-    return !gti_internal::shared_owner_is_null(this.owner);
-  }
+  operator bool() { return this.block != nullptr; }
+  bool operator==(nullptr_t other) { return this.block == nullptr; }
+  bool operator!=(nullptr_t other) { return this.block != nullptr; }
   size_t use_count() {
-    return gti_internal::shared_owner_use_count(this.owner);
+    if (this.block == nullptr) { return size_t(0); }
+    unsafe { return size_t(this.block->strong.load(std::memory_order_relaxed())); }
   }
-  /// Releases this handle and leaves it empty before last-owner destruction.
   void reset() mut {
-    shared_ptr<T> previous = shared_ptr<T>(std::move(this.owner));
-    this.owner = gti_internal::shared_owner_empty<T>();
+    auto previous = this.block;
+    this.block = nullptr;
+    this.view = nullptr;
+    unsafe { std::detail::release_shared<T>(previous); }
   }
-  void operator=(nullptr_t empty) mut {
-    this.reset();
-  }
+  void operator=(nullptr_t empty) mut { this.reset(); }
   void swap(mut shared_ptr<T>& other) mut {
-    gti_internal::shared_owner_swap(this.owner, other.owner);
+    auto block = this.block;
+    auto view = this.view;
+    this.block = other.block;
+    this.view = other.view;
+    other.block = block;
+    other.view = view;
   }
-
-  /// Consumes this handle and preserves its control block while viewing the
-  /// allocation through one public polymorphic base.
   shared_ptr<Base> upcast<Base>() mut {
-    mut gti_internal::shared_owner<Base> converted =
-        gti_internal::shared_owner_upcast<Base>(std::move(this.owner));
-    this.owner = gti_internal::shared_owner_empty<T>();
-    return shared_ptr<Base>(std::move(converted));
+    static_assert(std::meta::is_public_base_of<Base, T>());
+    static_assert(std::meta::is_polymorphic<Base>());
+    static_assert(std::detail::shared_upcast_capabilities<Base, T>());
+    if (this.block == nullptr) { return shared_ptr<Base>(); }
+    if constexpr (std::meta::is_public_base_of<Base, T>()) {
+      unsafe {
+        T& derived = *this.view;
+        Base& base = derived;
+        const Base* address = &base;
+        auto previous = this.block;
+        this.block = nullptr;
+        this.view = nullptr;
+        return shared_ptr<Base>(previous, address);
+      }
+    } else { gti_internal::panic("Invalid shared owner base"); }
   }
+  ~shared_ptr() { this.reset(); }
 };
 
 /// Consumes one shared handle and preserves all existing aliases while
@@ -1806,8 +1886,31 @@ public:
 /// object or control-block exhaustion reports allocation failure and aborts
 /// without cleanup. Ordinary constructor failure retains verified rollback.
 /// This factory is not recoverable.
-shared_ptr<T> make_shared<T, Args...>(Args... args) {
-  return shared_ptr<T>(gti_internal::shared_owner_from_unique(
-      gti_internal::allocate_unique_owner<T>(args...)));
+shared_ptr<T> make_shared<std::storage_element T, Args...>(Args... args) {
+  mut std::detail::process_lease object_lease{};
+  mut std::detail::process_lease block_lease{};
+  unsafe {
+    auto object_result = object_lease.allocate(std::layout_of<T>());
+    if (!object_result) { gti_internal::fail_allocation(object_result.error()); }
+    auto object_region = object_result.value();
+    object_lease.attach(object_region);
+    T* view = std::typed_address<T>(object_region.address);
+    std::construct_at(view, args...);
+    mut std::detail::shared_payload_guard<T> payload_guard{view};
+    auto block_result = block_lease.allocate(std::layout_of<std::detail::shared_control>());
+    if (!block_result) { gti_internal::fail_allocation(block_result.error()); }
+    auto block_region = block_result.value();
+    block_lease.attach(block_region);
+    auto block = std::typed_address<std::detail::shared_control>(block_region.address);
+    auto destroy = [](void* address) -> void { unsafe { std::detail::destroy_shared_object<T>(address); } };
+    std::function_ptr<void(void*)> destructor{destroy};
+    std::construct_at(block, object_region.address, destructor);
+    mut std::detail::shared_construction_guard guard{block};
+    guard.disarm();
+    payload_guard.disarm();
+    auto detached_object = object_lease.take();
+    auto detached_block = block_lease.take();
+    return shared_ptr<T>(block, view);
+  }
 }
 }

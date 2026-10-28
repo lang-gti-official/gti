@@ -111,6 +111,8 @@ bool Atomics::handles(IntrinsicKind intrinsic) {
   return intrinsic == IntrinsicKind::AtomicLoad ||
          intrinsic == IntrinsicKind::AtomicStore ||
          intrinsic == IntrinsicKind::AtomicExchange ||
+         intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
+         intrinsic == IntrinsicKind::AtomicFetchSubWrapping ||
          intrinsic == IntrinsicKind::AtomicCompareExchange || waiting(intrinsic);
 }
 
@@ -119,8 +121,8 @@ std::optional<SemanticType>
 atomicCallElement(const MirProgram &program, const MirBody &body,
                   const MirInstruction &instruction) {
   if ((waiting(instruction.intrinsic) &&
-       program.target().executionProfile != ExecutionProfile::Concurrent) ||
-      !program.target().runtimeCapabilities.threads ||
+       (program.target().executionProfile != ExecutionProfile::Concurrent ||
+        !program.target().runtimeCapabilities.threads)) ||
       !Atomics::handles(instruction.intrinsic) ||
       instruction.kind != MirInstructionKind::Call ||
       instruction.operation != MirOperation::None || instruction.receiver ||
@@ -171,10 +173,15 @@ bool nativeAtomicCall(const MirProgram &program, const MirBody &body,
   const auto expectedKind =
       compare ? SynchronizationOperationKind::AtomicCompareExchange
       : store ? SynchronizationOperationKind::AtomicStore
-      : instruction.intrinsic == IntrinsicKind::AtomicExchange
+      : instruction.intrinsic == IntrinsicKind::AtomicExchange ||
+                instruction.intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
+                instruction.intrinsic == IntrinsicKind::AtomicFetchSubWrapping
           ? SynchronizationOperationKind::AtomicReadModifyWrite
           : SynchronizationOperationKind::AtomicLoad;
-  if (instruction.synchronization.kind != expectedKind ||
+  if (((instruction.intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
+        instruction.intrinsic == IntrinsicKind::AtomicFetchSubWrapping) &&
+       *element == SemanticType::Bool) ||
+      instruction.synchronization.kind != expectedKind ||
       instruction.info.type != (store     ? SemanticType::Void
                                 : compare ? SemanticType::Bool
                                           : *element) ||
@@ -233,8 +240,7 @@ nativeAtomicConstructor(const MirProgram &program,
   const auto element =
       owner ? nativeAtomicElement(program, owner->type) : std::nullopt;
   const auto &body = constructor.body;
-  if (!element || !program.target().runtimeCapabilities.threads ||
-      constructor.definitionKind != MirDefinitionKind::Source ||
+  if (!element || constructor.definitionKind != MirDefinitionKind::Source ||
       constructor.parameterTypes != std::vector<SemanticType>{*element} ||
       constructor.parameterBindings.size() != 1 ||
       !constructor.parameterBindings[0] || !constructor.initializers.empty() ||
@@ -378,8 +384,14 @@ llvm::Value *Atomics::emit(const MirBody &body,
     stored->setAtomic(order, llvm::SyncScope::System);
     return nullptr;
   }
+  case IntrinsicKind::AtomicFetchAddWrapping:
+  case IntrinsicKind::AtomicFetchSubWrapping:
   case IntrinsicKind::AtomicExchange:
-    return value(ir.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, inputs[0],
+    return value(ir.CreateAtomicRMW(
+                    instruction.intrinsic == IntrinsicKind::AtomicFetchAddWrapping
+                        ? llvm::AtomicRMWInst::Add
+                    : instruction.intrinsic == IntrinsicKind::AtomicFetchSubWrapping
+                        ? llvm::AtomicRMWInst::Sub : llvm::AtomicRMWInst::Xchg, inputs[0],
                                     lane(inputs[1], layout.element), alignment,
                                     order, llvm::SyncScope::System),
                  layout.element);

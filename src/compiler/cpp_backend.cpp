@@ -24,6 +24,24 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
     throw std::logic_error("C++ backend requires a verified lowered program: " +
                            issues.front().detail);
   }
+  // New native atomic operations deliberately remain LLVM-only. Reject their
+  // exact executable identities before representation planning, rather than
+  // misreporting a valid program as a C++ emitter invariant failure.
+  for (const auto &row : verified->program().bodies()) {
+    if (row.role == LoweredBodyRole::DataOnly ||
+        row.role == LoweredBodyRole::AbiDeclaration)
+      continue;
+    const auto *body = findMirBody(verified->program().mir(), row.identity.address);
+    if (!body) continue;
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        if (!instruction.tombstone &&
+            (instruction.intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
+             instruction.intrinsic == IntrinsicKind::AtomicFetchSubWrapping))
+          throw BackendUnsupportedError(
+              "wrapping atomic read-modify-write operations require the LLVM backend",
+              row.identity.source);
+  }
   const PhaseTimeScope timeScope("backend-emit");
   return {.kind = BackendArtifactKind::Source,
           .contents = CppEmitter(*verified, standard, debugInfo).emit(),

@@ -2886,8 +2886,8 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       const bool trustedPolymorphicCapabilityScope =
           isPolymorphicLibraryUnit(currentSourceUnit) &&
           scope == std::vector<std::string>{"gti_internal"};
-      const bool trustedFunctionalCapabilityScope =
-          isFunctionalLibraryUnit(currentSourceUnit) &&
+      const bool trustedFunctionPointerCapabilityScope =
+          isFunctionPointerLibraryUnit(currentSourceUnit) &&
           scope == std::vector<std::string>{"gti_internal"};
       const auto &generics = classDecl->genericParameters();
       if (trustedMemoryCapabilityScope &&
@@ -2904,7 +2904,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       } else if (trustedMemoryCapabilityScope && generics.empty() &&
                  classDecl->name().lexeme == "erased_object") {
         compilerCapability = CompilerCapabilityTypeKind::ErasedObject;
-      } else if (trustedFunctionalCapabilityScope && generics.size() == 1 &&
+      } else if (trustedFunctionPointerCapabilityScope && generics.size() == 1 &&
                  !generics.front().valueType && !generics.front().pack &&
                  classDecl->name().lexeme == "function_pointer") {
         compilerCapability = CompilerCapabilityTypeKind::FunctionPointer;

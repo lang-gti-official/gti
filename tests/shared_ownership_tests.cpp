@@ -1,6 +1,7 @@
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "gti/lowered_program_builder.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -17,7 +18,11 @@ const std::filesystem::path root =
 lang::FrontendResult
 analyze(const std::string &source,
         lang::FrontendPhase phase = lang::FrontendPhase::Hir) {
-  return lang::Frontend({.stopAfter = phase})
+  lang::FrontendOptions options;
+  options.stopAfter = phase;
+  options.target = lang::TargetInfo::host();
+  options.target.runtimeCapabilities.threads = true;
+  return lang::Frontend(options)
       .analyze("shared-owner-check.gti", "#include <std/memory>\n" + source,
                {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
 }
@@ -61,17 +66,17 @@ int main() {
   require(frontend.hirValid, "shared-owner source policy must concretize");
   std::size_t owners = 0;
   for (const auto &instance : frontend.hir.classInstances()) {
-    if (instance.compilerCapability !=
-        lang::CompilerCapabilityTypeKind::SharedOwner) {
+    require(instance.compilerCapability != lang::CompilerCapabilityTypeKind::SharedOwner,
+            "the public source owner must not instantiate the private owner");
+    if (!instance.source || instance.source->name().lexeme != "shared_ptr")
       continue;
-    }
     ++owners;
     require(!instance.traits.copyable && instance.traits.movable &&
                 instance.traits.drop == lang::DropKind::Lexical &&
                 instance.requiresActiveCleanup,
             "strong handles must be move-only cleanup owners");
   }
-  require(owners != 0, "trusted shared-owner capability must be instantiated");
+  require(owners != 0, "source shared-owner class must be instantiated");
 }
 
 void checkRejections() {
@@ -224,104 +229,28 @@ int main() {
   }
   require(frontend.canGenerateCode(),
           "shared-owner polymorphic upcasts must lower to verified MIR");
-  bool observed = false;
   lang::HirClassInstanceId baseInstance = 0;
   lang::HirClassInstanceId sourceOwnerInstance = 0;
-  for (const auto &instance : frontend.mir.classInstances()) {
-    if (instance.type.kind == lang::SemanticType::Class &&
-        instance.type.classId != 0 && instance.polymorphic &&
-        instance.kind == lang::ClassKind::Interface) {
+  std::size_t sourceOwners = 0;
+  for (const auto &instance : frontend.hir.classInstances()) {
+    require(instance.compilerCapability != lang::CompilerCapabilityTypeKind::SharedOwner,
+            "upcasting must use ordinary source ownership");
+    if (instance.source && instance.source->name().lexeme == "shared_ptr") {
+      ++sourceOwners;
+      sourceOwnerInstance = instance.id;
+    }
+    if (instance.polymorphic && instance.kind == lang::ClassKind::Interface)
       baseInstance = instance.id;
-    }
   }
-  for (const auto &function : frontend.mir.functionInstances()) {
-    for (const auto &block : function.body.blocks) {
-      for (const auto &instruction : block.instructions) {
-        if (instruction.intrinsic != lang::IntrinsicKind::SharedOwnerUpcast) {
-          continue;
-        }
-        observed = true;
-        for (const auto &instance : frontend.mir.classInstances()) {
-          if (instance.type == instruction.operands.front().type) {
-            sourceOwnerInstance = instance.id;
-          }
-        }
-        require(
-            instruction.operands.size() == 1 && instruction.result &&
-                instruction.definedFailure.empty() &&
-                instruction.localFailureSites.empty() &&
-                std::count_if(instruction.lifecycle.begin(),
-                              instruction.lifecycle.end(),
-                              [](const auto &event) {
-                                return event.kind ==
-                                       lang::MirLifecycleEventKind::TransferOut;
-                              }) == 1 &&
-                std::count_if(instruction.lifecycle.begin(),
-                              instruction.lifecycle.end(),
-                              [](const auto &event) {
-                                return event.kind ==
-                                       lang::MirLifecycleEventKind::Initialize;
-                              }) == 1,
-            "shared-owner upcasts must consume one token without a "
-            "failure edge");
-        for (int mutation = 0; mutation != 6; ++mutation) {
-          auto malformed = frontend.mir;
-          auto *target = const_cast<lang::MirFunctionInstance *>(
-              malformed.findFunctionInstance(function.id));
-          auto &changed = *std::find_if(
-              target->body.blocks[block.id - 1].instructions.begin(),
-              target->body.blocks[block.id - 1].instructions.end(),
-              [&](const auto &candidate) {
-                return candidate.id == instruction.id;
-              });
-          if (mutation == 0) {
-            changed.lifecycle.clear();
-          } else if (mutation == 1) {
-            changed.parameterTypes.clear();
-          } else if (mutation == 2) {
-            changed.info.type = changed.operands.front().type;
-          } else if (mutation == 3) {
-            changed.localFailureSites.push_back(1);
-          } else {
-            const auto activation = std::find_if(
-                changed.lifecycle.begin(), changed.lifecycle.end(),
-                [](const auto &event) {
-                  return event.kind == lang::MirLifecycleEventKind::Initialize;
-                });
-            require(activation != changed.lifecycle.end(),
-                    "shared upcast mutation should find result activation");
-            if (activation == changed.lifecycle.end()) {
-              continue;
-            }
-            if (mutation == 4) {
-              changed.lifecycle.erase(activation);
-            } else {
-              activation->target = 0;
-            }
-          }
-          require(!lang::verifyMirProgram(malformed).valid(),
-                  "forged shared-owner upcast contracts must reject");
-        }
-      }
-    }
-  }
-  require(observed && baseInstance != 0 && sourceOwnerInstance != 0,
-          "upcast test must instantiate its polymorphic base capability");
+  require(sourceOwners == 2 && baseInstance && sourceOwnerInstance,
+          "upcast instantiates concrete and interface source handles");
   auto malformed = frontend.mir;
-  auto *base = const_cast<lang::MirClassInstance *>(
-      malformed.findClassInstance(baseInstance));
-  base->polymorphic = false;
-  require(!lang::verifyMirProgram(malformed).valid(),
-          "shared-owner upcast cannot forge polymorphic destruction");
-
-  malformed = frontend.mir;
   auto *sourceOwner = const_cast<lang::MirClassInstance *>(
       malformed.findClassInstance(sourceOwnerInstance));
   sourceOwner->traits.transferCapable = false;
   sourceOwner->traits.shareCapable = false;
   require(!lang::verifyMirProgram(malformed).valid(),
-          "shared-owner upcast cannot amplify erased concurrency "
-          "capabilities");
+          "source upcasts cannot forge their conditional capabilities");
 }
 
 void checkMirContract() {
@@ -364,102 +293,70 @@ int main() {
     }
   }
   require(sawSynchronizedDrop, "shared release is a synchronization barrier");
-  bool sawPromotion = false;
-  bool sawClone = false;
+  bool sawConstruction = false;
+  bool sawAtomic = false;
   bool sawBorrow = false;
+  bool sawEmptyFailure = false;
+  bool sawAllocationFailure = false;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
-        if (instruction.intrinsic !=
-                lang::IntrinsicKind::SharedOwnerFromUnique &&
-            instruction.intrinsic != lang::IntrinsicKind::SharedOwnerClone &&
-            instruction.intrinsic != lang::IntrinsicKind::SharedOwnerBorrow) {
+        require(instruction.intrinsic < lang::IntrinsicKind::SharedOwnerEmpty ||
+                    instruction.intrinsic > lang::IntrinsicKind::SharedOwnerUpcast,
+                "source policy cannot call specialized owner intrinsics");
+        sawConstruction |= instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct;
+        sawAtomic |= instruction.synchronization.kind ==
+                     lang::SynchronizationOperationKind::AtomicCompareExchange;
+        const bool borrow = instruction.intrinsic == lang::IntrinsicKind::RawBorrow;
+        const bool empty = instruction.intrinsic == lang::IntrinsicKind::FailEmptyOwner;
+        const bool allocation = instruction.intrinsic == lang::IntrinsicKind::RequireAllocation;
+        sawBorrow |= borrow;
+        sawEmptyFailure |= empty;
+        sawAllocationFailure |= allocation;
+        if (!borrow && !empty && !allocation)
           continue;
+        if (empty || allocation) {
+          require(instruction.definedFailure.mayUnwind() == empty &&
+                      instruction.definedFailure.mayAbortAllocation() == allocation,
+                  "empty access unwinds while count/allocation exhaustion aborts");
         }
-        const bool borrow =
-            instruction.intrinsic == lang::IntrinsicKind::SharedOwnerBorrow;
-        const bool invokes =
-            block.terminator.kind == lang::MirTerminatorKind::Invoke &&
-            block.terminator.invokeInstruction == instruction.id;
-        require(invokes == borrow,
-                "empty shared borrowing must Invoke; promotion and retain "
-                "exhaustion must not gain cleanup edges");
-        require(instruction.definedFailure.mayUnwind() == borrow &&
-                    instruction.definedFailure.mayAbortAllocation() != borrow,
-                "shared operations retain exact contained/terminal outcomes");
-        for (int mutation = 0; mutation != 5; ++mutation) {
+        for (int mutation = 0; mutation != 2; ++mutation) {
           auto malformed = frontend.mir;
           auto *target = const_cast<lang::MirFunctionInstance *>(
               malformed.findFunctionInstance(function.id));
           auto &changed = *std::find_if(
               target->body.blocks[block.id - 1].instructions.begin(),
               target->body.blocks[block.id - 1].instructions.end(),
-              [&](const auto &candidate) {
-                return candidate.id == instruction.id;
-              });
-          if (mutation == 1) {
-            changed.parameterTypes.clear();
-          } else if (mutation == 2) {
-            changed.definedFailure.localOrigins.front()
-                .outcomes.front()
-                .detail = lang::DefinedFailureDetail::None;
-          } else if (mutation == 3) {
-            if (borrow) {
-              target->body.blocks[block.id - 1].terminator.invokeInstruction =
-                  0;
-            } else {
-              // Terminal allocation still needs its exact source record;
-              // clearing a nonexistent Invoke would be a no-op mutation.
-              changed.localFailureSites.clear();
-            }
-          } else if (mutation == 4) {
-            changed.borrowArguments = {0, 1};
-          } else if (instruction.intrinsic ==
-                     lang::IntrinsicKind::SharedOwnerFromUnique) {
-            sawPromotion = true;
-            std::erase_if(changed.lifecycle, [](const auto &event) {
-              return event.kind == lang::MirLifecycleEventKind::TransferOut;
-            });
-          } else if (instruction.intrinsic ==
-                     lang::IntrinsicKind::SharedOwnerClone) {
-            sawClone = true;
-            changed.info.traits.copyable = true;
+              [&](const auto &candidate) { return candidate.id == instruction.id; });
+          if (borrow) {
+            if (mutation == 0) changed.parameterTypes.clear();
+            else changed.borrowAccess = lang::AccessMode::Mutable;
           } else {
-            sawBorrow = true;
-            changed.borrowAccess = lang::AccessMode::Mutable;
+            if (mutation == 0) changed.localFailureSites.clear();
+            else changed.definedFailure = {};
           }
           require(!lang::verifyMirProgram(malformed).valid(),
-                  "forged shared ownership, failure or borrow contracts must "
-                  "reject");
+                  "general borrow and failure witnesses remain mandatory");
         }
       }
     }
   }
-  require(sawPromotion && sawClone && sawBorrow,
-          "MIR tests must exercise promotion, cloning and checked borrowing");
-  for (const auto &instance : frontend.mir.classInstances()) {
-    if (instance.compilerCapability !=
-        lang::CompilerCapabilityTypeKind::SharedOwner) {
+  require(sawConstruction && sawAtomic && sawBorrow && sawEmptyFailure && sawAllocationFailure,
+          "source ownership exercises lifetime, atomic, checked borrow and failure facilities");
+  for (const auto &source : frontend.hir.classInstances()) {
+    if (!source.source || source.source->name().lexeme != "shared_ptr")
       continue;
-    }
-    for (int mutation = 0; mutation != 4; ++mutation) {
+    for (int mutation = 0; mutation != 2; ++mutation) {
       auto malformed = frontend.mir;
       auto *changed = const_cast<lang::MirClassInstance *>(
-          malformed.findClassInstance(instance.id));
-      if (mutation == 0) {
-        changed->requiresActiveCleanup = false;
-      }
-      if (mutation == 1) {
-        changed->traits.copyable = true;
-      }
-      if (mutation == 2) {
-        changed->traits.containsBorrowedState = true;
-      }
-      if (mutation == 3) {
-        changed->compilerCapability = lang::CompilerCapabilityTypeKind::None;
-      }
-      require(!lang::verifyMirProgram(malformed).valid(),
-              "forged shared capability identity or lifecycle must reject");
+          malformed.findClassInstance(source.id));
+      if (mutation == 0) changed->requiresActiveCleanup = false;
+      else changed->traits.copyable = true;
+      const auto sealed = lang::LoweredProgramBuilder().build(
+          frontend.program, frontend.semantics, frontend.hir, malformed,
+          malformed, {}, frontend.mir.target());
+      require(!sealed.valid(),
+              "source owner cleanup and explicit-clone policy retain their frontend provenance");
     }
   }
 }
@@ -481,10 +378,8 @@ int main() {
             "local shared ownership needs no thread permission");
     bool observed = false;
     for (const auto &instance : frontend.hir.classInstances()) {
-      if (instance.compilerCapability !=
-          lang::CompilerCapabilityTypeKind::SharedOwner) {
+      if (!instance.source || instance.source->name().lexeme != "shared_ptr")
         continue;
-      }
       observed = true;
       require(instance.traits.transferCapable == annotation.empty() &&
                   instance.traits.shareCapable == annotation.empty(),
