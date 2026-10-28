@@ -1045,11 +1045,17 @@ public:
       return {};
     auto type = unreference(source->type);
     if (const auto *producer = callResult(body, loan)) {
-      // A call on a proved dispatch view, as receiver or argument, selected
-      // this non-hierarchy referent; the address is the callee's checked
-      // result, not a view.
+      // A call on a proved dispatch view, as receiver or argument, or a free
+      // call relaying a borrow of hierarchy storage, selected this
+      // non-hierarchy referent; the address is the callee's checked result,
+      // not a view. The free call's arguments are proved by their own staged
+      // inputs.
       if (!related(producer->info.type))
-        return selectingInput(body, *producer, loan)
+        return selectingInput(body, *producer, loan) ||
+                       (producer->receiver
+                            ? borrowedUse(body, *producer->receiver) &&
+                                  borrowed(body, *producer->receiver)
+                            : producer->dispatch == CallDispatch::Static)
                    ? std::optional(Shape::NativeBorrowedDispatchView)
                    : std::nullopt;
       type = producer->info.type;

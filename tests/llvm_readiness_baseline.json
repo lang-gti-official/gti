@@ -11,7 +11,7 @@
       "kind": "source-census",
       "manifest": "tests/mir_census_baseline.json",
       "member_count": 173,
-      "inventory_sha256": "bdd5e59b376df78e188dcf4f3b68e140355ee2bd60f4b580a08e5df4a0038121"
+      "inventory_sha256": "307a514c59e7a8baf6f8c8d0cfa50cc49101fd8abd814697c57a3e10e48a3ec6"
     },
     {
       "id": "registered-llvm-evidence",
