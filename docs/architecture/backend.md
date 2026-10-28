@@ -608,6 +608,14 @@ once. A nested stage of the same consumer reuses the open scope. Queries about
 any other value, and every query outside a scope, compute the same answers
 directly.
 
+The LLVM backend applies the same rule to its inline hierarchy-storage query.
+`native_llvm::HierarchyStorageScope` is opened by `LlvmBackend::generate` for
+admission, lowering and emission, and by `planLlvmAdmission` when it runs
+alone. While it is open, each type's complete outcome for that exact program is
+computed once: the answer, or the rejection it rethrows. Only a finished
+top-level query is recorded, because its outcome depends on the type's whole
+reachable storage graph and never on another query's path.
+
 ## Generated Items
 
 Every generated family has a target-independent contract:

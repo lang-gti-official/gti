@@ -5905,6 +5905,7 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   LlvmAdmissionPlan plan(std::move(program), options);
   const auto &input = plan.program();
   const auto &mir = input.mir();
+  const native_llvm::HierarchyStorageScope hierarchyStorage(mir);
   const auto closure = native_llvm::reachableProgram(input);
   plan.closure_ = closure.conservative
                       ? LlvmAdmissionClosure::AllExecutableBodies

@@ -9,8 +9,11 @@
 #include "threads.h"
 
 #include <algorithm>
+#include <exception>
 #include <set>
 #include <stdexcept>
+#include <unordered_map>
+#include <vector>
 
 namespace lang::native_llvm {
 bool isFreshObjectProducer(const MirProgram &program,
@@ -485,8 +488,10 @@ bool uniqueOwnerPointee(const MirProgram &program,
          !selected->cOpaqueHandle;
 }
 
-bool containsHierarchyStorage(const MirProgram &program,
-                              const SemanticType &type) {
+namespace {
+
+[[nodiscard]] bool computeHierarchyStorage(const MirProgram &program,
+                                           const SemanticType &type) {
   // These keys and results live only for this immutable program query. A
   // completed sibling is not a cycle; only the current inline path is active.
   std::set<const void *> visiting;
@@ -760,6 +765,90 @@ bool containsHierarchyStorage(const MirProgram &program,
     });
   };
   return visit(visit, type);
+}
+
+[[nodiscard]] std::size_t outcomeHash(const SemanticType &type) {
+  // Only a bucket selector: equal types collide, and lookup confirms the
+  // complete type with operator==.
+  std::size_t hash = static_cast<std::size_t>(type.kind);
+  const auto mix = [&](std::size_t value) {
+    hash ^= value + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+  };
+  mix(type.classId);
+  mix(type.enumId);
+  mix(type.lambdaId);
+  mix(type.arrayLength);
+  mix(type.arguments.size());
+  for (const auto &argument : type.arguments)
+    mix(outcomeHash(argument));
+  return hash;
+}
+
+} // namespace
+
+struct HierarchyStorageScope::Outcomes {
+  struct Outcome {
+    SemanticType type;
+    bool result = false;
+    std::exception_ptr rejection;
+  };
+
+  explicit Outcomes(const MirProgram &program) : program(&program) {}
+
+  const MirProgram *program;
+  std::unordered_map<std::size_t, std::vector<Outcome>> buckets;
+  std::size_t size = 0;
+};
+
+namespace {
+
+thread_local HierarchyStorageScope::Outcomes *activeHierarchyOutcomes = nullptr;
+
+} // namespace
+
+HierarchyStorageScope::HierarchyStorageScope(const MirProgram &program)
+    : previous(activeHierarchyOutcomes) {
+  if (previous == nullptr || previous->program != &program) {
+    outcomes = std::make_unique<Outcomes>(program);
+    activeHierarchyOutcomes = outcomes.get();
+  }
+}
+
+HierarchyStorageScope::~HierarchyStorageScope() {
+  activeHierarchyOutcomes = previous;
+}
+
+std::size_t HierarchyStorageScope::cachedTypes() const {
+  return outcomes ? outcomes->size : previous->size;
+}
+
+bool containsHierarchyStorage(const MirProgram &program,
+                              const SemanticType &type) {
+  auto *outcomes = activeHierarchyOutcomes;
+  if (outcomes == nullptr || outcomes->program != &program)
+    return computeHierarchyStorage(program, type);
+  auto &bucket = outcomes->buckets[outcomeHash(type)];
+  for (const auto &outcome : bucket)
+    if (outcome.type == type) {
+      if (outcome.rejection)
+        std::rethrow_exception(outcome.rejection);
+      return outcome.result;
+    }
+  // Only a completed top-level query is recorded. Its outcome depends on the
+  // type's whole reachable storage graph, never on another query's path.
+  HierarchyStorageScope::Outcomes::Outcome outcome{.type = type};
+  try {
+    outcome.result = computeHierarchyStorage(program, type);
+  } catch (const BackendUnsupportedError &) {
+    outcome.rejection = std::current_exception();
+  }
+  const std::exception_ptr rejection = outcome.rejection;
+  const bool result = outcome.result;
+  bucket.push_back(std::move(outcome));
+  ++outcomes->size;
+  if (rejection)
+    std::rethrow_exception(rejection);
+  return result;
 }
 
 bool isPayloadFieldMove(const MirInstruction &stage) {

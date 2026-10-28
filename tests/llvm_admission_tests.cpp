@@ -1345,6 +1345,75 @@ int main() {
   }
 }
 
+void testHierarchyStorageScopeReplaysExactOutcomes() {
+  using namespace lang;
+  using native_llvm::containsHierarchyStorage;
+  using native_llvm::HierarchyStorageScope;
+  const auto plain = SemanticType::classType(1);
+  const auto polymorphic = SemanticType::classType(2);
+  const auto repeated = SemanticType::classType(3);
+  std::vector<MirClassInstance> classes{
+      {.id = 1,
+       .type = plain,
+       .declaredFields = {{.type = SemanticType::Int32}}},
+      {.id = 2, .type = polymorphic, .polymorphic = true},
+      {.id = 3,
+       .type = repeated,
+       .declaredFields = {{.type = plain}, {.type = plain}}}};
+  const auto program = MirProgramTestAccess::storageInventory(classes);
+  // The same class types denote a recursive graph in another program value.
+  classes[0].declaredFields.front().type = repeated;
+  const auto cyclic = MirProgramTestAccess::storageInventory(classes);
+  const auto rejection = [](const MirProgram &input,
+                            const SemanticType &type) -> std::string {
+    try {
+      static_cast<void>(containsHierarchyStorage(input, type));
+      return {};
+    } catch (const BackendUnsupportedError &error) {
+      return error.what();
+    }
+  };
+  const std::string missing = rejection(program, SemanticType::classType(99));
+  const std::string recursive = rejection(cyclic, plain);
+  expect(!missing.empty() && !recursive.empty(),
+         "unscoped hierarchy queries reject missing and recursive storage");
+
+  {
+    const HierarchyStorageScope scope(program);
+    for (int repeat = 0; repeat < 2; ++repeat) {
+      expect(!containsHierarchyStorage(program, plain) &&
+                 !containsHierarchyStorage(program, repeated) &&
+                 containsHierarchyStorage(program, polymorphic),
+             "a scoped query returns the program's exact answers");
+      expect(rejection(program, SemanticType::classType(99)) == missing,
+             "a scoped query replays the exact rejection it recorded");
+    }
+    expect(scope.cachedTypes() == 4,
+           "a repeated scoped query reuses its recorded outcome");
+    expect(rejection(cyclic, plain) == recursive && scope.cachedTypes() == 4,
+           "another program value never reads or fills the open outcomes");
+    {
+      const HierarchyStorageScope nested(cyclic);
+      expect(rejection(cyclic, plain) == recursive && nested.cachedTypes() == 1,
+             "a nested scope for another program records its own outcomes");
+      expect(!containsHierarchyStorage(program, plain),
+             "an inner scope never answers for the outer program");
+    }
+    {
+      const HierarchyStorageScope reused(program);
+      expect(!containsHierarchyStorage(program, plain) &&
+                 reused.cachedTypes() == 4,
+             "a nested scope for the same program reuses its outcomes");
+    }
+    expect(!containsHierarchyStorage(program, repeated) &&
+               scope.cachedTypes() == 4,
+           "closing a nested scope restores the enclosing outcomes");
+  }
+  expect(!containsHierarchyStorage(program, plain) &&
+             rejection(cyclic, plain) == recursive,
+         "queries after the scope closes compute the same answers directly");
+}
+
 void testHierarchyStorageExclusion() {
   using namespace lang;
   using native_llvm::containsHierarchyStorage;
@@ -3861,6 +3930,7 @@ int main() {
     testIntegralEnumReferences();
     testRawFieldWitnesses();
     testHierarchyStorageExclusion();
+    testHierarchyStorageScopeReplaysExactOutcomes();
     testInlineHierarchyFamilyComposition();
     testHierarchyPlacementOwnership();
     testDispatchStateDependencies();
