@@ -217,6 +217,8 @@ than mixed into the active queue.
   C-first `gti bindgen` plan: implemented bounded C17/LP64/LLP64 libclang
   import and manifest integration; remaining foreign storage and C++ import
 - [LSP evolution](plans/lsp-evolution.md)
+- [Diagnostic quality and explanations](plans/diagnostic-quality.md) — proposed
+  causal evidence, recovery, safe repairs and measurable CLI/LSP quality campaign
 - [Compile-time semantic reflection](plans/reflection.md) — three-phase
   campaign: metaobjects, `constexpr for`, attributes and enum/base/generic
   queries, structural construction and callable/source metadata are delivered;
