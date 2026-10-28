@@ -31,6 +31,18 @@ for what minor and patch releases mean.
   as in `Box(Plain held) : held(std::move(held))`, no longer fails with an
   internal compiler error (`GTI-B0001`) on the native backend.
 
+### Text relays of a formal's text field
+
+- A function that returns a text field of a reference parameter through a call
+  that relays text, such as
+  `std::string_view f(Label& label) { return relay(label.text); }`, now
+  compiles instead of failing with the internal error `GTI-B0001`. It is a
+  text field result exactly as `return label.text;` is: a caller passing a
+  `Label` that holds an owner's view keeps that owner borrowed while the
+  result lives (`GTI-S2017`), and cannot return the result past the owner
+  (`GTI-S2045`).
+
+
 ### References to fields of returned references
 
 - A reference bound to a field of a call's returned reference now compiles

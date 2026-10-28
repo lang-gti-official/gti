@@ -4723,7 +4723,36 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             "place rather than flattening it into its dependency origin",
             block.id, instruction.id);
       }
-      if (!exactSource && !sameCanonicalPlace(expectedPlace, actualPlace)) {
+      // A text view returned by value from a formal's text field names that
+      // field of the selected source (L-OWN-02), as one relayed from the
+      // receiver's text field does: the function's field contract tracks the
+      // field, not the whole referent.
+      const auto selectedTextField = [&] {
+        const auto text = [](const SemanticType &type) {
+          return type.kind == SemanticType::StringView ||
+                 type.kind == SemanticType::CString;
+        };
+        const auto *field = body.findPlace(loan->source);
+        if (field == nullptr || !text(field->type) ||
+            !text(instruction.info.type) ||
+            instruction.info.category != ValueCategory::Value ||
+            !instruction.borrowFields.empty() || field->projections.empty() ||
+            field->projections.back().kind != MirProjectionKind::Field ||
+            actualPlace.projections.empty() ||
+            actualPlace.projections.back().kind != MirProjectionKind::Field)
+          return false;
+        CanonicalPlace base = actualPlace;
+        base.projections.pop_back();
+        if (sameCanonicalPlace(expectedPlace, base))
+          return true;
+        if (base.projections.empty() ||
+            base.projections.back().kind != MirProjectionKind::Dereference)
+          return false;
+        base.projections.pop_back();
+        return sameCanonicalPlace(expectedPlace, base);
+      };
+      if (!exactSource && !sameCanonicalPlace(expectedPlace, actualPlace) &&
+          !selectedTextField()) {
         const std::string expected =
             expectedSource ? std::to_string(*expectedSource) : "unresolved";
         return verificationFailure(
