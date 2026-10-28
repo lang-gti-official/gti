@@ -1,0 +1,98 @@
+#include <std/memory>
+#include <std/vector>
+
+// A reference bound to a field of a call's returned reference, including the
+// hidden range of a range-for, keeps that call's owner borrowed: through a
+// method, an overloaded `operator->` or `operator*`, a smart pointer held
+// locally or by reference, and a user-defined pointer-like class alike.
+class Dir {
+public:
+  mut std::vector<int32_t> items = std::vector<int32_t>();
+  Dir() = default;
+};
+
+class Holder {
+public:
+  mut Dir dir;
+  Holder() : dir(Dir()) {}
+  Dir& get() { return this.dir; }
+  mut Dir& get() mut { return this.dir; }
+};
+
+// A pointer-like user type, not a library type.
+class Pointer {
+public:
+  mut Dir target;
+  Pointer() : target(Dir()) {}
+  Dir& operator->() { return this.target; }
+  mut Dir& operator->() mut { return this.target; }
+};
+
+class Node {
+public:
+  int32_t value;
+  mut std::vector<std::unique_ptr<Node>> children =
+      std::vector<std::unique_ptr<Node>>();
+  Node(int32_t value) : value(value) {}
+};
+
+int32_t sum_items(std::unique_ptr<Dir>& dir) {
+  mut int32_t total = 0;
+  for (auto& item : dir->items)
+    total += item;
+  return total;
+}
+
+// A recursive n-ary fold through each child's smart pointer.
+int32_t fold(std::unique_ptr<Node>& node) {
+  mut int32_t total = node->value;
+  for (auto& child : node->children)
+    total += fold(child);
+  return total;
+}
+
+int main() {
+  mut std::unique_ptr<Dir> root = std::make_unique<Dir>();
+  root->items.push_back(3);
+  root->items.push_back(4);
+  mut int32_t local = 0;
+  for (auto& item : root->items)
+    local += item;
+  if (local != 7)
+    return 1;
+  {
+    std::vector<int32_t>& viewed = root->items;
+    if (viewed.size() != std::size_t(2))
+      return 2;
+  }
+  {
+    std::vector<int32_t>& starred = (*root).items;
+    if (starred[std::size_t(1)] != 4)
+      return 2;
+  }
+  if (sum_items(root) != 7)
+    return 3;
+
+  mut Holder holder{};
+  holder.get().items.push_back(5);
+  mut int32_t held = 0;
+  for (auto& item : holder.get().items)
+    held += item;
+  std::vector<int32_t>& accessed = holder.get().items;
+  if (held != 5 || accessed.size() != std::size_t(1))
+    return 4;
+
+  mut Pointer pointer{};
+  pointer->items.push_back(6);
+  mut int32_t pointed = 0;
+  for (auto& item : pointer->items)
+    pointed += item;
+  if (pointed != 6)
+    return 5;
+
+  mut std::unique_ptr<Node> tree = std::make_unique<Node>(1);
+  tree->children.push_back(std::make_unique<Node>(2));
+  tree->children.push_back(std::make_unique<Node>(3));
+  tree->children[std::size_t(0)]->children.push_back(std::make_unique<Node>(4));
+  return fold(tree) == 10 ? 0 : 6;
+}

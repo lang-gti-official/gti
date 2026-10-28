@@ -2011,6 +2011,23 @@ loan's pointer local; re-borrowing the provenance place would re-point the
 published reference at the receiver's storage instead of the returned
 element.
 
+A reference bound to a field or element of a call's returned reference, such
+as `std::vector<int32_t>& v = holder.get().items`, `root->items` or
+`(*root).items` through an overloaded `operator->` or `operator*`, or the hidden
+range of `for (auto& x : root->items)`, retains that call's result loan, as a
+reference bound to the returned reference itself does. Its address is the
+projected place rooted at that loan. Lowering does this when the place's only
+projections are fields and elements and the call's loan has the binding's
+semantic parent: none for a local owner, the entry loan of a reference
+parameter such as `std::unique_ptr<Dir>&`. A Local loan on the projected
+place would leave the call's owner unborrowed, and one on the semantic origin
+could not name the address; `referenceAddressRetainsLoan` rejects both.
+
+A read-only binding through a mutable owner's smart pointer retains a
+read-only call-result loan: semantics selects the read-only `operator->` or
+`operator*` step from the binding's use (static semantics, accessor pairs), so
+two such bindings, or a binding and a later read of the owner, coexist.
+
 A reference to a borrowed carrier, of the carrier's own type or a base or
 interface type, is initialized from a loan on the carrier object, as a `Borrow`
 of a same-class reference publishes it. `verifyMirBorrowProducers` rejects one

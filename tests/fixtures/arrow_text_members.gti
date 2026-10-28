@@ -12,7 +12,9 @@ public:
   std::string_view& operator->() { return this.text; }
 };
 
-// Paired receiver overloads: a mutable object selects the mutable step.
+// Paired receiver overloads: the step's use selects its form. A mutable
+// object takes the read-only step for a read such as `changing->size()`,
+// and the mutable step only when the use may mutate the referent.
 class Slot {
 public:
   mut std::string_view text;

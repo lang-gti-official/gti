@@ -1,0 +1,26 @@
+#include <std/memory>
+#include <std/vector>
+
+// A mutable range over a field reached through a mutable smart-pointer
+// reference parameter writes each element in place: the hidden range retains
+// the `operator->` call's loan below the parameter's entry loan.
+class Dir {
+public:
+  mut std::vector<int32_t> items = std::vector<int32_t>();
+  Dir() = default;
+};
+
+void double_items(mut std::unique_ptr<Dir>& dir) {
+  for (mut auto& item : dir->items)
+    item = item * 2;
+}
+
+int main() {
+  mut std::unique_ptr<Dir> root = std::make_unique<Dir>();
+  root->items.push_back(3);
+  root->items.push_back(4);
+  double_items(root);
+  return root->items[std::size_t(0)] == 6 && root->items[std::size_t(1)] == 8
+             ? 0
+             : 1;
+}

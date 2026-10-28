@@ -9,7 +9,33 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.485.1 - Range-for over by-reference lambda captures
+## 0.486.0 - Read-only arrow steps, projected references and capture ranges
+
+### References to fields of returned references
+
+- A reference bound to a field of a call's returned reference now compiles
+  instead of failing with the internal error `GTI-B0001`. This covers
+  `for (auto& x : root->items)` with `root` a `std::unique_ptr` held locally or
+  by reference, recursive folds over child smart pointers, and
+  `std::vector<int32_t>& v = root->items`, `(*root).items` or
+  `holder.get().items`. A mutable range such as
+  `for (mut auto& x : dir->items)` through a `mut std::unique_ptr<Dir>&`
+  parameter builds on the native backend; the C++ backend still reports
+  `GTI-B0001` for it.
+- An overloaded `operator->` with read-only and `mut` forms now selects its
+  form from the use of `p->member`, as other accessor pairs already do: a
+  read, a read-only reference binding, a range-for over the member or a
+  read-only member call takes the read-only form even on a `mut` object.
+  Assigning the member, binding it as `mut` or calling a mutating member still
+  takes the `mut` form, and still conflicts with a live read-only reference
+  (`GTI-S2017`). Two read-only references bound through the same mutable smart
+  pointer, such as `root->items` and `(*root).items`, now coexist.
+- A call returning an exclusive borrow carrier, such as `lock()` returning a
+  mutex guard, keeps selecting the `mut` form of an accessor pair or
+  `operator->` it is called through, so `holder.get().lock()` on a mutable
+  reference parameter now compiles instead of failing with `GTI-B0001`.
+
+### Range-for over by-reference lambda captures
 
 - A range-for loop over a container captured by reference in a lambda, such
   as `[&values]() { for (auto& v : values) ... }` or a mutable loop through
