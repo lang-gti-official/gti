@@ -25,7 +25,10 @@ for what minor and patch releases mean.
   Existing checked operations retain their arithmetic contract. Consequently,
   the source shared owner now requires LLVM; C++ reports `GTI-B0003` for its
   wrapping atomic operation. This backend support change is deliberate.
-- Production `std::weak_ptr` remains unimplemented.
+- `std::weak_ptr` implements explicit weak cloning, promotion through `lock()`,
+  expiry/count snapshots, reset and swap in source. Weak observers retain the
+  control block after payload destruction and cannot revive an expired object.
+  Shared and weak handles use the same conditional thread permissions.
 
 ## 0.488.1 - Native global copies, function-pointer fields, base returns and nested holders
 

@@ -69,12 +69,17 @@ int main() {
   int count = gti_cost_iterations(); mut uint64_t checksum = 7;
   gti_cost_begin();
   for (mut int i = 0; i < count; i += 1) {
-    auto owner = std::make_shared<int>(257);
+    mut auto owner = std::make_shared<int>(257);
+    auto observer = owner.downgrade();
     for (mut int j = 0; j < 10; j += 1) {
       auto alias = owner.clone();
       if (alias.use_count() != 2 || *alias != 257) { return 1; }
     }
     checksum = (checksum * 33 + uint64_t(*owner)) % 1000003;
+    { auto promoted = observer.lock(); if (!promoted || *promoted != 257) { return 2; } }
+    owner.reset();
+    auto expired = observer.clone();
+    if (!expired.expired() || expired.lock()) { return 3; }
   }
   return gti_cost_end(c_ulonglong(checksum), c_ulonglong(0));
 }

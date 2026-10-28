@@ -1,0 +1,41 @@
+#include <std/memory>
+#include <std/vector>
+#include <std/atomic>
+std::atomic<int> drops{0};
+interface View { int read(); };
+class Item : public View {
+  int value;
+public:
+  Item(int value) : value(value) {}
+  int read() override { return this.value; }
+  ~Item() { [[discard]] drops.fetch_add(1); }
+};
+int main() {
+  mut std::weak_ptr<int> empty{};
+  if (!empty.expired() || empty.use_count() != 0 || empty.lock()) { return 1; }
+  auto empty_copy = empty.clone();
+  if (!empty_copy.expired()) { return 2; }
+  mut auto owner = std::make_shared<Item>(42);
+  mut auto weak = owner.downgrade();
+  mut std::weak_ptr<Item> other{owner};
+  if (owner.use_count() != 1 || weak.use_count() != 1) { return 3; }
+  mut auto base = std::upcast_shared<View, Item>(owner.clone());
+  mut auto base_weak = base.downgrade();
+  mut auto alias = base_weak.lock();
+  if (!alias || alias->read() != 42 || alias.use_count() != 3) { return 4; }
+  owner.reset(); base.reset();
+  if (weak.expired() || drops.load() != 0) { return 5; }
+  alias.reset();
+  if (drops.load() != 1 || !weak.expired() || !base_weak.expired()) { return 6; }
+  if (weak.lock() || base_weak.lock()) { return 7; }
+  // Expired observations still clone/move/swap without touching retired T.
+  mut auto expired_copy = weak.clone();
+  other.swap(expired_copy);
+  mut std::vector<std::weak_ptr<Item>> observers{};
+  observers.push_back(other.clone()); observers.push_back(weak.clone());
+  weak.reset(); other = nullptr; expired_copy.reset(); base_weak.reset();
+  observers.clear();
+  if (drops.load() != 1) { return 8; }
+  // Weak handles stored in the payload release before the implicit hold.
+  return 0;
+}

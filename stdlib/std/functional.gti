@@ -4,6 +4,35 @@
 #include <std/iterator>
 #include <std/meta>
 
+namespace std {
+/// A non-null, non-owning GTI invocation pointer. Construction accepts one
+/// exact namespace function item or zero-capture lambda; signatures match
+/// exactly. It does not borrow an environment or allocate storage.
+class function_ptr<R(Args...)> {
+  gti_internal::function_pointer<R(Args...)> target;
+public:
+  function_ptr<F>(F target)
+      : target(gti_internal::function_pointer_from_item<R(Args...)>(target)) {}
+  R operator()(Args... args) {
+    return gti_internal::function_pointer_invoke(this.target, args...);
+  }
+};
+
+/// An invocation pointer whose result is a read-only reference. The result
+/// borrows the one reference argument the signature's origin names.
+class function_ptr<R&(Args...)> {
+  gti_internal::function_pointer<R&(Args...)> target;
+public:
+  function_ptr<F>(F target)
+      : target(gti_internal::function_pointer_from_item<R&(Args...)>(target)) {}
+  [[borrowed_from(args)]]
+  R& operator()(Args... args) {
+    return gti_internal::function_pointer_invoke(this.target, args...);
+  }
+};
+
+}
+
 // Callable relationships and source-defined owning callback policy.
 
 namespace gti_internal {

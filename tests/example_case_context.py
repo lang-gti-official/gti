@@ -13,7 +13,7 @@ CENSUS_TIMEOUT = 180
 # Owner-approved LLVM-only wrapping operations are used by source shared owners.
 LLVM_ONLY_EXAMPLES = frozenset({
     "066-managed-threads.gti", "098-shared-ownership.gti",
-    "178-wrapping-atomic-counters.gti",
+    "178-wrapping-atomic-counters.gti", "179-weak-ownership.gti",
 })
 
 

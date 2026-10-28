@@ -1734,8 +1734,7 @@ try_make_pool<T>(size_t capacity) requires gti_internal::movable_sparse_element<
 }
 
 namespace detail {
-// The block owns no automatic payload lifetime. Its last strong owner retires
-// its allocation, even when the selected payload destructor raises failure.
+// Strong and weak credits protect independent object lifetimes in one region.
 constexpr bool shared_upcast_capabilities<Base, Derived>() {
   return (!std::meta::is_transferable<Base>() || std::meta::is_transferable<Derived>()) &&
          (!std::meta::is_shareable<Base>() || std::meta::is_shareable<Derived>());
@@ -1743,19 +1742,24 @@ constexpr bool shared_upcast_capabilities<Base, Derived>() {
 class shared_control {
 public:
   std::atomic<uint64_t> strong{uint64_t(1)};
+  // Includes one implicit credit while any strong owner exists.
+  std::atomic<uint64_t> weak{uint64_t(1)};
   void* object = nullptr;
-  std::function_ptr<void(void*)> destroy;
-  shared_control(void* object, std::function_ptr<void(void*)> destroy)
-      : object(object), destroy(destroy) {}
+  gti_internal::function_pointer<void(void*, bool)> dispose;
+  shared_control<F>(void* object, F dispose)
+      : object(object), dispose(gti_internal::function_pointer_from_item<void(void*, bool)>(dispose)) {}
 };
-// Generated field lifetime constructs and retires the payload in place.
-class shared_allocation<std::storage_element T> {
-public:
-  mut shared_control control;
-  mut T value;
-  shared_allocation<Args...>(void* address, std::function_ptr<void(void*)> destroy, Args... args)
-      : control(shared_control(address, destroy)), value(T(args...)) {}
-};
+size_t shared_payload_offset<std::storage_element T>() {
+  auto control = std::layout_of<shared_control>();
+  auto payload = std::layout_of<T>();
+  return ((control.bytes + payload.alignment - size_t(1)) / payload.alignment) * payload.alignment;
+}
+std::layout shared_allocation_layout<std::storage_element T>() {
+  auto control = std::layout_of<shared_control>();
+  auto payload = std::layout_of<T>();
+  auto alignment = control.alignment > payload.alignment ? control.alignment : payload.alignment;
+  return std::layout(shared_payload_offset<T>() + payload.bytes, alignment);
+}
 class shared_payload_guard<std::storage_element T> {
   mut T* object = nullptr;
 public:
@@ -1765,24 +1769,64 @@ public:
     if (this.object != nullptr) { unsafe { std::destroy_at(this.object); } }
   }
 };
-// The erased thunk retires the carrier through its verified field cleanup;
-// the lease releases its bytes even when payload cleanup fails.
-unsafe void destroy_shared_block<std::storage_element T>(void* address) {
+// The payload and control block are separately constructed complete objects.
+// Releasing storage never implicitly repeats payload destruction.
+unsafe void dispose_shared<std::storage_element T>(void* address, bool payload) {
   unsafe {
     auto block = std::typed_address<shared_control>(address);
-    auto whole = std::typed_address<shared_allocation<T>>(block->object);
-    auto layout = std::layout_of<shared_allocation<T>>();
-    mut std::detail::process_lease lease{};
-    lease.attach(std::detail::raw_allocation(block->object, layout.bytes, layout.alignment, uint64_t(0)));
-    std::destroy_at(whole);
+    if (payload) {
+      std::destroy_at(std::typed_address<T>(block->object));
+    } else {
+      // Same immutable target/type layout already checked before allocation.
+      // Publication proves this arithmetic cannot overflow during cleanup.
+      auto layout = shared_allocation_layout<T>();
+      mut std::detail::process_lease lease{};
+      lease.attach(std::detail::raw_allocation(address, layout.bytes, layout.alignment, uint64_t(0)));
+      std::destroy_at(block);
+    }
+  }
+}
+unsafe void retain_weak<Payload>(shared_control* block) {
+  if (block == nullptr) { return; }
+  unsafe {
+    mut uint64_t count = block->weak.load(std::memory_order_relaxed());
+    while (true) {
+      gti_internal::require_allocation(count != uint64_t(18446744073709551615));
+      auto result = block->weak.compare_exchange_strong(
+          count, count + uint64_t(1), std::memory_order_relaxed());
+      if (result.exchanged()) { return; }
+      count = result.observed();
+    }
+  }
+}
+unsafe void release_weak<Payload>(shared_control* block) {
+  if (block == nullptr) { return; }
+  unsafe {
+    if (block->weak.fetch_sub_wrapping(uint64_t(1), std::memory_order_acq_rel()) == uint64_t(1)) {
+      auto dispose = block->dispose;
+      gti_internal::function_pointer_invoke(dispose, std::erase_address(block), false);
+    }
+  }
+}
+class implicit_weak_guard<Payload> {
+  shared_control* block = nullptr;
+public:
+  unsafe implicit_weak_guard(shared_control* block) : block(block) {}
+  ~implicit_weak_guard() { unsafe { release_weak<Payload>(this.block); } }
+};
+unsafe void destroy_last_shared<Payload>(shared_control* block) {
+  unsafe {
+    // Always release the implicit weak credit, even if payload cleanup fails.
+    mut implicit_weak_guard<Payload> guard{block};
+    auto dispose = block->dispose;
+    gti_internal::function_pointer_invoke(dispose, std::erase_address(block), true);
   }
 }
 unsafe void release_shared<Payload>(shared_control* block) {
   if (block == nullptr) { return; }
   unsafe {
     if (block->strong.fetch_sub_wrapping(uint64_t(1), std::memory_order_acq_rel()) == uint64_t(1)) {
-      auto destroy = block->destroy;
-      destroy(std::erase_address(block));
+      destroy_last_shared<Payload>(block);
     }
   }
 }
@@ -1872,6 +1916,13 @@ public:
       }
     } else { gti_internal::panic("Invalid shared owner base"); }
   }
+  /// Creates an observer without retaining the payload's lifetime.
+  weak_ptr<T> downgrade() {
+    unsafe {
+      std::detail::retain_weak<T>(this.block);
+      return weak_ptr<T>(this.block, this.view);
+    }
+  }
   ~shared_ptr() { unsafe { std::detail::release_shared<T>(this.block); } }
 };
 
@@ -1881,15 +1932,72 @@ shared_ptr<Base> upcast_shared<Base, Derived>(mut shared_ptr<Derived> owner) {
   return owner.upcast<Base>();
 }
 
+/// A move-only observer. lock() acquires a strong credit only while the
+/// payload is live; expiry is irreversible. Observations are snapshots.
+[[unsafe_transfer(std::transferable<T> && std::shareable<T>),
+  unsafe_share(std::transferable<T> && std::shareable<T>)]]
 class weak_ptr<T> {
+  mut std::detail::shared_control* block = nullptr;
+  mut const T* view = nullptr;
 public:
   weak_ptr() {}
-
-  bool expired();
-  size_t use_count();
-  shared_ptr<T> lock();
-  void reset() mut;
-  void swap(mut weak_ptr<T>& other) mut;
+  weak_ptr(nullptr_t empty) {}
+  weak_ptr(shared_ptr<T>& owner) {
+    mut auto observer = owner.downgrade();
+    this.block = observer.block;
+    this.view = observer.view;
+    observer.block = nullptr;
+    observer.view = nullptr;
+  }
+  /// Adopts exactly one retained weak credit and its original adjusted view.
+  /// The view may be expired and must never be dereferenced without first
+  /// acquiring a positive strong credit. Both pointers are null or correspond
+  /// to this block; the payload satisfies T's thread-capability promises.
+  unsafe weak_ptr(std::detail::shared_control* block, const T* view)
+      : block(block), view(view) {}
+  weak_ptr(weak_ptr<T>& other) = delete;
+  weak_ptr(weak_ptr<T>&& other) = default;
+  weak_ptr<T> clone() {
+    unsafe {
+      std::detail::retain_weak<T>(this.block);
+      return weak_ptr<T>(this.block, this.view);
+    }
+  }
+  size_t use_count() {
+    if (this.block == nullptr) { return size_t(0); }
+    unsafe { return size_t(this.block->strong.load(std::memory_order_relaxed())); }
+  }
+  bool expired() { return this.use_count() == size_t(0); }
+  shared_ptr<T> lock() {
+    if (this.block == nullptr) { return shared_ptr<T>(); }
+    unsafe {
+      mut uint64_t count = this.block->strong.load(std::memory_order_relaxed());
+      while (count != uint64_t(0)) {
+        gti_internal::require_allocation(count != uint64_t(18446744073709551615));
+        auto result = this.block->strong.compare_exchange_strong(
+            count, count + uint64_t(1), std::memory_order_acquire(), std::memory_order_relaxed());
+        if (result.exchanged()) { return shared_ptr<T>(this.block, this.view); }
+        count = result.observed();
+      }
+    }
+    return shared_ptr<T>();
+  }
+  void reset() mut {
+    auto previous = this.block;
+    this.block = nullptr;
+    this.view = nullptr;
+    unsafe { std::detail::release_weak<T>(previous); }
+  }
+  void operator=(nullptr_t empty) mut { this.reset(); }
+  void swap(mut weak_ptr<T>& other) mut {
+    auto block = this.block;
+    auto view = this.view;
+    this.block = other.block;
+    this.view = other.view;
+    other.block = block;
+    other.view = view;
+  }
+  ~weak_ptr() { unsafe { std::detail::release_weak<T>(this.block); } }
 };
 
 /// Constructs one owned object and its strong-reference control block.
@@ -1901,19 +2009,24 @@ public:
 shared_ptr<T> make_shared<std::storage_element T, Args...>(Args... args) {
   mut std::detail::process_lease lease{};
   unsafe {
-    auto result = lease.allocate(std::layout_of<std::detail::shared_allocation<T>>());
+    auto result = lease.allocate(std::detail::shared_allocation_layout<T>());
     if (!result) { gti_internal::fail_allocation(result.error()); }
     auto region = result.value();
     lease.attach(region);
-    auto whole = std::typed_address<std::detail::shared_allocation<T>>(region.address);
-    auto destroy = [](void* address) -> void { unsafe { std::detail::destroy_shared_block<T>(address); } };
-    std::function_ptr<void(void*)> destructor{destroy};
-    std::construct_at(whole, region.address, destructor, args...);
-    mut std::detail::shared_payload_guard<std::detail::shared_allocation<T>> guard{whole};
-    T* view = &whole->value;
-    guard.disarm();
+    auto block = std::typed_address<std::detail::shared_control>(region.address);
+    auto bytes = std::typed_address<uint8_t>(region.address);
+    T* view = std::typed_address<T>(std::erase_address(&bytes[std::detail::shared_payload_offset<T>()]));
+    auto dispose = [](void* address, bool payload) -> void {
+      unsafe { std::detail::dispose_shared<T>(address, payload); }
+    };
+    std::construct_at(block, std::erase_address(view), std::move(dispose));
+    mut std::detail::shared_payload_guard<std::detail::shared_control> block_guard{block};
+    std::construct_at(view, args...);
+    mut std::detail::shared_payload_guard<T> payload_guard{view};
+    payload_guard.disarm();
+    block_guard.disarm();
     auto detached = lease.take();
-    return shared_ptr<T>(&whole->control, view);
+    return shared_ptr<T>(block, view);
   }
 }
 }

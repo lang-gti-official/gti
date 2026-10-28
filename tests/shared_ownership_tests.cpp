@@ -98,6 +98,32 @@ void checkRejections() {
   const std::vector<std::string> sources = {
       R"(int main() {
            auto owner = std::make_shared<int>(7);
+           auto weak = owner.downgrade();
+           auto copied = weak;
+           return int(copied.use_count());
+         })",
+      R"(int main() {
+           auto owner = std::make_shared<int>(7);
+           auto weak = owner.downgrade();
+           auto moved = std::move(weak);
+           return int(weak.use_count());
+         })",
+      R"(int main() {
+           auto owner = std::make_shared<int>(7);
+           auto weak = owner.downgrade();
+           mut auto locked = weak.lock();
+           int& borrowed = *locked;
+           locked.reset();
+           return borrowed;
+         })",
+      R"(int main() {
+           auto owner = std::make_shared<int>(7);
+           auto weak = owner.downgrade();
+           return *weak;
+         })",
+
+      R"(int main() {
+           auto owner = std::make_shared<int>(7);
            auto copied = owner;
            return *copied;
          })",
@@ -264,6 +290,8 @@ void checkMirContract() {
 int main() {
   mut auto first = std::make_shared<int>(7);
   mut auto second = first.clone();
+  auto weak = first.downgrade();
+  auto weak_copy = weak.clone();
   int& read = *second;
   first.reset();
   int value = read;
@@ -389,7 +417,9 @@ void checkConcurrencyCapabilities() {
 class Payload { int value = 7;  public: Payload() = default; };
 int main() {
   auto value = std::make_shared<Payload>();
-  return int(value.use_count()) - 1;
+  auto weak = value.downgrade();
+  auto locked = weak.lock();
+  return int(value.use_count()) - 2;
 }
 
 )");
@@ -400,7 +430,8 @@ int main() {
             "local shared ownership needs no thread permission");
     bool observed = false;
     for (const auto &instance : frontend.hir.classInstances()) {
-      if (!instance.source || instance.source->name().lexeme != "shared_ptr")
+      if (!instance.source || (instance.source->name().lexeme != "shared_ptr" &&
+                               instance.source->name().lexeme != "weak_ptr"))
         continue;
       observed = true;
       require(instance.traits.transferCapable == annotation.empty() &&

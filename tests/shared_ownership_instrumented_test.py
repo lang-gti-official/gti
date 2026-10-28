@@ -14,7 +14,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-source-owner-instrumented-") as directory:
         for name in ("shared_ownership", "shared_ownership_upcast", "shared_ownership_threads",
                      "shared_mutex_threads", "transfer_function_threads", "mutex_owned_pointees",
-                     "shared_ownership_constructor_failure"):
+                     "shared_ownership_constructor_failure", "weak_ownership", "weak_ownership_threads", "weak_ownership_failure"):
             for level in ("O0", "O3"):
                 binary = Path(directory) / f"{name}-{level}"
                 built = subprocess.run([str(emitter), str(root / "stdlib"),
@@ -25,8 +25,9 @@ def main():
                                          capture_output=True, text=True, check=True).stdout
                 assert "__asan_report_" in symbols, "generated owner code must contain address checks"
                 result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60, env=env)
-                if name == "shared_ownership_constructor_failure":
-                    assert result.returncode == 70 and result.stdout == "1\n7\n99\n", (name, level, result)
+                if name in ("shared_ownership_constructor_failure", "weak_ownership_failure"):
+                    expected = "7\n99\n" if name == "weak_ownership_failure" else "1\n7\n99\n"
+                    assert result.returncode == 70 and result.stdout == expected, (name, level, result)
                     assert "runtime error[GTI-R0002]" in result.stderr, (name, level, result)
                     assert "Sanitizer" not in result.stderr and "misaligned" not in result.stderr, (name, level, result)
                 else:

@@ -1,0 +1,22 @@
+#include <std/memory>
+
+// An observer does not extend the payload lifetime. Keep the result of lock()
+// alive for as long as any reference borrowed from it is needed.
+class Message {
+public:
+  int value;
+  Message(int value) : value(value) {}
+};
+int main() {
+  mut auto owner = std::make_shared<Message>(42);
+  auto observer = owner.downgrade();
+  {
+    auto locked = observer.lock();
+    if (!locked) { return 1; }
+    std::println(locked->value);
+  }
+  owner.reset();
+  if (!observer.expired() || observer.lock()) { return 2; }
+  std::println("expired");
+  return 0;
+}

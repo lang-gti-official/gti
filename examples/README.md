@@ -375,6 +375,7 @@ is a teaching helper, not a production server.
 | `176-profile-independent-atomics.gti` | source-defined atomic ticket counter usable in either execution profile; scalar operations do not enable threads or blocking waits |
 | `177-capability-predicates.gti` | source concept conjunctions for audited transfer/share promises, preserving local use of thread-affine and exclusive payloads |
 | `178-wrapping-atomic-counters.gti` | explicit modulo atomic updates and prior-value results without a host thread runtime |
+| `179-weak-ownership.gti` | source-defined weak observation, checked promotion, and expiry after last strong release |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

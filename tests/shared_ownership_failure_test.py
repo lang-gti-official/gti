@@ -70,6 +70,18 @@ def main():
             assert result.returncode == 70 and result.stdout == "1\n7\n99\n", (name, result)
             assert "runtime error[GTI-R0002]" in result.stderr, (name, result)
             print(f"shared ownership constructor rollback: {name} passed", flush=True)
+            weak_binary = Path(temporary) / f"weak-{name}"
+            built = run([str(compiler), str(fixtures / "weak_ownership_failure.gti"),
+                         *flags, "-o", str(weak_binary)])
+            assert built.returncode == 0, (name, built.stdout, built.stderr)
+            for args, status, output, code in [
+                    ([], 70, "7\n99\n", "GTI-R0002"),
+                    (["overflow-weak"], ABORT_STATUS, "", "GTI-R0011"),
+                    (["overflow-lock", "overflow"], ABORT_STATUS, "", "GTI-R0011")]:
+                result = run([str(weak_binary), *args])
+                assert result.returncode == status and result.stdout == output, (name, args, result)
+                assert f"runtime error[{code}]" in result.stderr, (name, args, result)
+            print(f"weak ownership cleanup and overflow: {name} passed", flush=True)
             thread_binary = Path(temporary) / f"thread-{name}"
             built = run([str(compiler), str(fixtures / "shared_ownership_thread_cleanup_failure.gti"),
                          *flags, "--execution-profile", "concurrent", "-o", str(thread_binary),

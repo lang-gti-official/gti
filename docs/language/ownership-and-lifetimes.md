@@ -1661,13 +1661,15 @@ object. `use_count()` is an observational snapshot, not exclusive-access proof.
 `std::make_shared<T>(args...)` constructs a `storage_element` at its final
 address using the general raw-region allocation and typed lifetime operations.
 The object and its control block occupy one correctly aligned allocation.
-A source aggregate constructs the payload field at its final address; generated
-field cleanup and a source allocation lease own rollback and retirement. Allocation failure raises the
+The source factory places two independently constructed complete objects in
+one region, aligning the payload after the control block. Separate source
+guards and the allocation lease own constructor rollback. Allocation failure raises the
 aborting `allocation_failure` report in `private_storage`; no pointee,
 argument, local or managed-worker cleanup runs before process abort.
 Successful publication transfers exactly one strong credit. Last-owner release
 executes the exact payload type's verified cleanup through a stored function
-pointer, with allocation leases preserving cleanup on defined failure.
+pointer, with an implicit weak-credit guard preserving control-block lifetime during
+payload cleanup, including defined failure.
 Empty dereference/member access raises `empty_owner_access` in `member_access`.
 
 The handle, control block, overflow-checked retain loop, final-release decision,
@@ -1711,8 +1713,37 @@ be destroyed on another thread. Consequently a shared mutex owner can cross
 threads when its payload transfers. A lock guard remains non-transferable;
 neither allocation nor shared reference counting overrides thread affinity.
 
-Shared ownership does not solve cycles. Weak observation remains incomplete;
-strong ownership cycles must be avoided.
+`std::weak_ptr<T>` is a move-only observer, constructed from a strong handle
+or returned by `shared_ptr::downgrade()`. `clone()` adds a weak credit;
+reset, null assignment, generated move assignment, and swap manipulate the
+observer. Empty and expired observers report zero `use_count()` and true
+`expired()`. These queries are snapshots, not a guarantee that promotion will
+succeed. `lock()` returns an empty strong handle after expiry; otherwise it
+atomically acquires a strong credit and returns a read-only shared handle.
+There is no weak dereference operation. Borrows come from the promoted strong
+handle and protect that handle in the ordinary way.
+
+The control block has strong and weak atomic counts. Weak includes one implicit
+credit for the entire live strong population. Last strong release destroys the
+payload exactly once, then drops that implicit credit even when cleanup raises
+a defined failure. Last weak release destroys the control block and frees the
+original allocation. An expired observer can therefore be cloned, moved,
+queried and destroyed without accessing the retired payload. Promotion uses
+acquire compare/exchange on a positive strong count and never revives zero.
+Both strong and weak increments reject count overflow before modifying the
+count; credit-backed releases use wrapping acquire-release subtraction.
+
+Weak handles have the same conditional thread permissions as strong handles:
+`T` must support both transfer and sharing, because promotion can create a last
+strong owner on the receiving thread. A weak observer created from an already
+upcast strong handle preserves its adjusted view. There is no implicit view
+conversion and no conversion that inspects an expired payload.
+
+Weak observation can break ownership cycles, but strong cycles are not collected.
+An expired observer retains the combined allocation, including the former
+payload's storage, until the final weak credit is released. The current source
+weak handle, like the source strong handle, occupies 24 bytes on the measured
+64-bit target; this is an implementation detail, not a frozen ABI.
 
 ## Nullability And Allocation Failure
 
