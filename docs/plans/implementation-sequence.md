@@ -11759,9 +11759,12 @@ last two also have failure and wrong-trace variants:
 Base-view replacement, exchange and swap, enum copies, enums moved into
 arguments or returns, payload values returned by value, by-copy captures of
 hierarchy objects, closure copies, thread-local hierarchy objects and
-observable pure phases stay `PolymorphicTransfer` or `PureDispatchState`. Exchange and swap of a polymorphic class with derived
-classes are refused even for complete objects, because the generic bodies
-cannot tell them from base views.
+observable pure phases stay `PolymorphicTransfer` or `PureDispatchState`.
+Exchange and swap of a polymorphic class with derived classes are a semantic
+error for now (`GTI-S2018`, owner decision 2026-10-28), even for complete
+objects, because the generic bodies cannot tell them from base views;
+complete-object provenance could later relax it. The LLVM refusal of such
+exchanges remains as a second line of defence.
 A derived constructor passing an owned value to its base constructor, moved
 in or created in place, now runs natively: MIR stages each owned argument as a
 prepared parameter that `InitializeBase` hands to the base constructor. A

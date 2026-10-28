@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.485.0 - Restoring exchanges of polymorphic bases rejected
+
+- `std::swap` and `std::exchange` of a polymorphic class that another class
+  derives from are now a compile-time error (`GTI-S2018`), on every backend.
+  Through a `mut Base&` that named part of a derived object, the native
+  backend before 0.484.4 replaced that object's dispatch state, so its later
+  virtual calls ran the base methods, and the C++ backend failed with an
+  internal error. The rule is
+  conservative for now and also rejects two complete objects of such a class.
+  Classes nothing derives from, non-polymorphic classes, and element swaps
+  such as `swap_elements`, `sort` and `reverse` are unaffected.
+
 ## 0.484.5 - Function items through class aliases
 
 - Constructing a class through an alias now treats a function-name argument

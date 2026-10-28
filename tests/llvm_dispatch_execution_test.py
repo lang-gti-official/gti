@@ -315,8 +315,8 @@ int main() {
 }
 """, 0),
     # Restoring swap and exchange of complete locals of a polymorphic class
-    # that nothing derives from relocate whole objects; the base-view refusal
-    # does not reach them.
+    # that nothing derives from relocate whole objects; the rule against
+    # exchanging a polymorphic base does not reach them.
     "complete-polymorphic-swap": ("""#include <std/memory>
 #include <std/utility>
 interface Shape { int area(); };
@@ -733,53 +733,6 @@ public:
 };
 int main() { Derived value{}; return value.read(); }
 """,
-    # A restoring exchange or swap relocates whole objects. Through a base
-    # view it would replace the dispatch state of the enclosing derived
-    # object, so a polymorphic place must be complete. The generic bodies see
-    # only a reference's referent, whose class here has a derived class.
-    "reject-exchange-base-view": """#include <std/utility>
-class Base {
-public:
-  int value;
-  Base(int value) : value(value) {}
-  virtual int read() { return this.value; }
-};
-class Derived : public Base {
-public:
-  Derived(int value) : Base(value) {}
-  int read() override { return this.value * 100; }
-};
-int replace(mut Base& view) {
-  Base old = std::exchange(view, Base(5));
-  return old.read() + view.read();
-}
-int main() { mut Derived value = Derived(3); return replace(value) + value.read(); }
-""",
-    "reject-swap-base-view": """#include <std/utility>
-class Base {
-public:
-  int value;
-  Base(int value) : value(value) {}
-  virtual int read() { return this.value; }
-};
-class Left : public Base {
-public:
-  Left(int value) : Base(value) {}
-  int read() override { return this.value * 100; }
-};
-class Right : public Base {
-public:
-  Right(int value) : Base(value) {}
-  int read() override { return this.value * 10000; }
-};
-void flip(mut Base& first, mut Base& second) { std::swap(first, second); }
-int main() {
-  mut Left left = Left(3);
-  mut Right right = Right(4);
-  flip(left, right);
-  return left.read() + right.read();
-}
-""",
 }
 
 # Former destructor-observation rejections. A base destructor runs under its
@@ -933,9 +886,57 @@ int main() {
   return viewer.read();
 }
 """,
+    # A restoring exchange or swap of a polymorphic class that another class
+    # derives from is a source error for now: through a base view it would
+    # replace the dispatch state of the enclosing derived object.
+    "reject-source-exchange-base-view": """#include <std/utility>
+class Base {
+public:
+  int value;
+  Base(int value) : value(value) {}
+  virtual int read() { return this.value; }
+};
+class Derived : public Base {
+public:
+  Derived(int value) : Base(value) {}
+  int read() override { return this.value * 100; }
+};
+int replace(mut Base& view) {
+  Base old = std::exchange(view, Base(5));
+  return old.read() + view.read();
+}
+int main() { mut Derived value = Derived(3); return replace(value) + value.read(); }
+""",
+    "reject-source-swap-base-view": """#include <std/utility>
+class Base {
+public:
+  int value;
+  Base(int value) : value(value) {}
+  virtual int read() { return this.value; }
+};
+class Left : public Base {
+public:
+  Left(int value) : Base(value) {}
+  int read() override { return this.value * 100; }
+};
+class Right : public Base {
+public:
+  Right(int value) : Base(value) {}
+  int read() override { return this.value * 10000; }
+};
+void flip(mut Base& first, mut Base& second) { std::swap(first, second); }
+int main() {
+  mut Left left = Left(3);
+  mut Right right = Right(4);
+  flip(left, right);
+  return left.read() + right.read();
+}
+""",
 }
 
 SOURCE_REJECTION_CODES = {
+    "reject-source-exchange-base-view": "GTI-S2018",
+    "reject-source-swap-base-view": "GTI-S2018",
     "reject-source-deleted-copy": "GTI-S2020",
     "reject-source-use-after-move": "GTI-S2018",
     "reject-source-self-borrowing-carrier": "GTI-S2045",

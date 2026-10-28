@@ -5146,10 +5146,10 @@ exchange result initializes, as a taken thread result is. As for replacement,
 each polymorphic place must be a complete object. Inside the generic
 `std::exchange` and `std::swap` bodies a place is the referent of a reference
 parameter, which is complete only when nothing in the sealed program derives
-from its class. Exchanging or swapping an object of a class with derived
-classes, including a base view inside a larger object, stays
-`PolymorphicTransfer`. Semantics currently accepts such a base view, and the
-C++ backend cannot represent it (`GTI-B0001`). `dispatch.exchanged-transfers`
+from its class. Semantics rejects exchanging or swapping a polymorphic class
+that another class derives from (`GTI-S2018`), so a valid program never reaches
+an exchange of such a class; the backend still refuses it as
+`PolymorphicTransfer` as a second line of defence. `dispatch.exchanged-transfers`
 compares vector elements, fields and inline slots of user-defined hierarchy
 classes, and erased transferable callables holding owned state, with the C++
 oracle at O0-O3.
