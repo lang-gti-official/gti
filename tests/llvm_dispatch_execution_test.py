@@ -300,6 +300,30 @@ int main() {
     "global-former-reject": (PLAIN + "Plain value{};\nint main() { return value.read(); }\n", 1),
     "thread-local-former-reject": (PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n", 1),
     "thread-local-copy-former-reject": (PLAIN + "Plain global{};\nthread_local Plain copy = global;\nint main() { return copy.read(); }\n", 1),
+    # A function pointer field's generated copy is its code address: a
+    # polymorphic object holding one copies into a local, a unique owner and
+    # a by-copy capture with the generated logical-field copy.
+    "function-pointer-field-copies": ("""#include <std/functional>
+#include <std/memory>
+interface Action { int64_t fire(int64_t x); };
+using Step = std::function_ptr<int64_t(int64_t)>;
+int64_t triple(int64_t x) { return x * 3; }
+int64_t square(int64_t x) { return x * x; }
+class Button : public Action {
+  Step on_fire;
+public:
+  Button(Step on_fire) : on_fire(on_fire) {}
+  int64_t fire(int64_t x) override { return this.on_fire(x); }
+};
+int main() {
+  Button first = Button(Step(triple));
+  Button copied = first;
+  Action& view = copied;
+  std::unique_ptr<Action> owner = std::upcast_unique<Action, Button>(std::make_unique<Button>(Button(Step(square))));
+  auto captured = [first]() -> int64_t { return first.fire(int64_t(5)); };
+  return view.fire(int64_t(2)) == 6 && owner->fire(int64_t(3)) == 9 && captured() == 15 ? 0 : 1;
+}
+""", 0),
     "global-copy-former-reject": (PLAIN + "Plain global{};\nint main() { Plain copy = global; return copy.read(); }\n", 1),
     # A moved owned local with active cleanup leaves through the return edge.
     "returned-owned-move": ("""mut int dropped = 0;
@@ -2466,7 +2490,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "cleanup-helper-cycle-base-phase-former-reject",
             "rollback-virtual-observation-former-reject"),
         "polymorphic-ownership": (
-            "polymorphic-owners", "heap-polymorphic-owner-former-reject",
+            "polymorphic-owners", "function-pointer-field-copies",
+            "heap-polymorphic-owner-former-reject",
             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
             "polymorphic-owner-constructor-rollback", "closure-models",
             "closure-model-failure", "closure-model-wrong-cleanup",
