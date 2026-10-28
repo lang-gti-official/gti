@@ -926,12 +926,26 @@ const MirBody &ownedTransferBody(const MirProgram &program,
 }
 
 // A value whose generated copy is exactly its bytes: passive scalars, raw
-// and C-string addresses, stateless function items, and arrays or closures
-// built from them by value without cleanup. Any other field keeps its own
-// class-level generated-member contract.
+// and C-string addresses, stateless function items, a function pointer's code
+// address, and arrays or closures built from them by value without cleanup.
+// Any other field keeps its own class-level generated-member contract.
 bool bitwiseGeneratedCopy(const MirProgram &program, const SemanticType &type) {
   if (isPassiveScalarValueType(type) || type == SemanticType::CString)
     return true;
+  if (type.kind == SemanticType::Class) {
+    const auto found = std::find_if(
+        program.classInstances().begin(), program.classInstances().end(),
+        [&](const MirClassInstance &candidate) {
+          return candidate.type == type;
+        });
+    const auto *owner =
+        found == program.classInstances().end() ? nullptr : &*found;
+    return owner != nullptr &&
+           owner->compilerCapability ==
+               CompilerCapabilityTypeKind::FunctionPointer &&
+           owner->traits.copyable && !owner->requiresActiveCleanup &&
+           mirTypeRelocationKind(program, type) == RelocationKind::Bitwise;
+  }
   if (type.kind == SemanticType::FunctionItem)
     return type.hasFunctionItemShape();
   if (type.kind == SemanticType::RawPointer)
@@ -2371,6 +2385,11 @@ private:
 };
 
 } // namespace
+
+bool bitwiseGeneratedFieldCopy(const MirProgram &program,
+                               const SemanticType &type) {
+  return bitwiseGeneratedCopy(program, type);
+}
 
 void preflightGeneratedHierarchyCopy(const MirProgram &program,
                                      const SemanticType &type) {

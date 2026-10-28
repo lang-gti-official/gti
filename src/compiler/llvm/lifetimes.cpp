@@ -978,7 +978,8 @@ void Lifetimes::generatedCopy(llvm::IRBuilder<> &ir, llvm::Value *destination,
           session.layouts().fieldIndex(object.type, field.symbol);
       auto *sourceField = ir.CreateStructGEP(storage, from, index);
       auto *destinationField = ir.CreateStructGEP(storage, to, index);
-      if (field.type.kind == SemanticType::Class)
+      if (field.type.kind == SemanticType::Class &&
+          !bitwiseGeneratedFieldCopy(session.program().mir(), field.type))
         self(self, session.layouts().instance(field.type), sourceField,
              destinationField, false);
       else

@@ -5258,6 +5258,11 @@ in the following places:
 - a closure captured by copy into another closure;
 - an element of a fresh array copied from a checked object.
 
+Inside a copied object, a field whose generated copy is its bytes is stored as
+those bytes: scalars, addresses, function items, and an invocation pointer's
+code address (the `FunctionPointer` capability inside `std::function_ptr`).
+Every other class field is copied by its own logical fields.
+
 A constructor field initialized from an inert by-value parameter has no
 rollback obligation. MIR records no drop and no lifecycle transition for it,
 so the planner publishes it without one. Before this change, admission passed

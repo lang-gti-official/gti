@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.486.2 - Native copies of objects holding function pointers
+
+- The native backend now copies an object of a derived, polymorphic or
+  interface-implementing class that holds a `std::function_ptr` field. This
+  covers a plain copy, `std::make_unique<Button>(Button(...))`, and a by-copy
+  capture. These previously failed with `GTI-B0003`, although the C++ backend
+  ran them.
+
 ## 0.486.1 - Native copies of global objects and nested holder borrows
 
 - The native backend now copies objects of derived, polymorphic and

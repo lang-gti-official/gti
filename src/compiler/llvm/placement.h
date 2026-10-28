@@ -125,6 +125,9 @@ planFreshHierarchyTransfer(const MirProgram &program, const MirBody &body,
 // The generated copy of a concrete hierarchy class whose typed field copy is
 // implemented: borrow-free ordinary storage with generated copy members and
 // no active cleanup, recursively through scalar and record fields.
+// A field whose generated copy is exactly its bytes.
+bool bitwiseGeneratedFieldCopy(const MirProgram &program,
+                               const SemanticType &type);
 void preflightGeneratedHierarchyCopy(const MirProgram &program,
                                      const SemanticType &type);
 
