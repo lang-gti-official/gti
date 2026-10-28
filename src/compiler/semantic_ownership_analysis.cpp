@@ -11702,7 +11702,19 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     // publication: the new object has its own storage and dependency. A
     // carrier that arrives as a call result or by name (a fallible borrow,
     // a view) keeps the shared path, aliasing its external referent's loan.
-    if (sourceLoan->access == AccessMode::ReadOnly &&
+    // A range over a by-reference capture takes its own child reborrow of
+    // the capture's loan, as a range over a reference formal reborrows the
+    // formal's referent; the capture's entry loan is not the iteration's.
+    const Symbol *capturedRange =
+        binding.isRangeOwner() && source->carrier != nullptr
+            ? resolvedBorrowVariable(*source->carrier)
+            : nullptr;
+    const bool capturedRangeOwner =
+        capturedRange != nullptr &&
+        capturedRange->bindingKind == SemanticBindingKind::LambdaCapture &&
+        capturedRange->type.kind == SemanticType::Reference &&
+        carrier->type.kind == SemanticType::Reference;
+    if (sourceLoan->access == AccessMode::ReadOnly && !capturedRangeOwner &&
         !(retainedStoredBorrow &&
           sourceLoan->kind == SemanticLoanKind::Reference && !rangeForBinding &&
           (construction != nullptr ||
