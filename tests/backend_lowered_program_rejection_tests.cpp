@@ -130,6 +130,8 @@ int main() { return 0; }
 } // namespace
 
 int main() {
+  // A stale seal is rejected only while validation is enabled.
+  lang::setLoweredProgramSealValidation(true);
   testBackendsRejectMalformedLoweredPrograms();
   if (failures != 0) {
     std::cerr << failures << " backend rejection test(s) failed\n";
