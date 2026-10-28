@@ -527,7 +527,11 @@ bool nativeUniqueConstructionShape(const MirProgram &program,
            (isPassiveScalarValueType(type) ||
             type == SemanticType::StringView ||
             type.kind == SemanticType::RawPointer ||
-            type.kind == SemanticType::NativeFunction) &&
+            type == SemanticType::NullPtr ||
+            type.kind == SemanticType::NativeFunction ||
+            (type.kind == SemanticType::Enum &&
+             program.findIntegralEnum(type) &&
+             !program.findPayloadEnum(type))) &&
            !instruction.constructorTarget && instruction.operands.size() <= 1 &&
            instruction.operands.size() == instruction.parameterTypes.size() &&
            (instruction.operands.empty() ||

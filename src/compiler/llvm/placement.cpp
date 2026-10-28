@@ -472,6 +472,12 @@ bool uniqueOwnerPointee(const MirProgram &program,
                         const SemanticType &pointee) {
   if (mir_detail::completeObjectType(program, pointee))
     return true;
+  // A null pointer value and a native function pointer are passive scalar
+  // objects: an owner allocates and frees their one address-sized slot.
+  if (pointee == SemanticType::NullPtr ||
+      (pointee.kind == SemanticType::NativeFunction &&
+       !pointee.arguments.empty()))
+    return true;
   if (pointee.kind != SemanticType::Class)
     return false;
   const MirClassInstance *selected = nullptr;
