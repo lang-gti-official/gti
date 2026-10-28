@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.5 - Faster checked calls on the native backend
+
+- Small functions that use checked arithmetic, such as
+  `int32_t step(int32_t v, int32_t b) { return (v * 17 + b) % 65521; }`, are
+  now inlined into their callers by the native backend at `-O2`/`-O3`. Before
+  this, each failure check carried enough cold code to keep the function out
+  of line. Overflow failures, their diagnostics and cleanup are unchanged.
+  On an Apple M-series host, compared with 0.484.4 at `-O2`:
+  `interface-exact-dispatch` runs in 0.52 of the time, and the
+  `payload-optional-string`, `payload-borrowed-result` and `game-update-stage`
+  workloads run in 0.74 to 0.93 of the time.
+
 ## 0.484.4 - Native virtual text relays, returned siblings and exchanges
 
 - The native backend now builds these programs, which previously failed with
