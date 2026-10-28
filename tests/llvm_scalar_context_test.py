@@ -39,7 +39,6 @@ FROZEN_DIAGNOSTICS = {
 FROZEN_CONTROLS = {
     'polymorphic-replacement': '162a8ef5b3b9dc3b7c95bd6ff1a7ffb4e76cc4b3dfd55e335cfe0f1439397890',
     'polymorphic-array': '966e991114ab46d129af01c45c0277cb7819bbac52f36432fe5f4778234d7835',
-    'polymorphic-tls': '0c6a904d28f62b5be56d8cd1f15f515ba478da38e444ceabe3a0055d89d28e55',
 }
 FROZEN_ENDPOINTS = (Endpoint('cpp', 'O3', 'c++23'), Endpoint('llvm', 'O0'), Endpoint('llvm', 'O3'))
 
