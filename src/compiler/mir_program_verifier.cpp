@@ -4471,6 +4471,20 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             }
           }
         }
+        // A single dependency that names its carrier's one stored reference
+        // also covers an input that is the subobject holding that reference:
+        // the input's own sole path is the tail of the carrier's path.
+        if (selected == sources.end() && sources.size() == 1 &&
+            inputPaths.size() == 1 && !inputPaths.front().fields.empty() &&
+            inputPaths.front().fields.size() <
+                sources.front().designatedFields.size() &&
+            std::equal(inputPaths.front().fields.rbegin(),
+                       inputPaths.front().fields.rend(),
+                       sources.front().designatedFields.rbegin()) &&
+            prefixOf(inputPaths.front().fields, mapping.sourceFields)) {
+          selected = sources.begin();
+          prefixLength = inputPaths.front().fields.size();
+        }
         if (selected == sources.end() || selected->source == 0)
           return verificationFailure(
               body, owner, "returned field loses its selected input field",
