@@ -19,6 +19,11 @@ public:
   Box& shared;
   Holder(mut Box& box, Box& shared) : box(box), shared(shared) {}
 };
+class Grip {
+public:
+  mut Box& box;
+  Grip(mut Box& box) : box(box) {}
+};
 class Rack {
 public:
   mut Holder& holder;
@@ -90,6 +95,24 @@ int main() {
   }
   store_value(Holder(first, second), int64_t(30));
   std::println(first.value);
+  {
+    // A local holder with one reference field.
+    mut Grip grip = Grip(first);
+    grip.box.slot() = int64_t(60);
+    mut int64_t& field = grip.box.value;
+    field += int64_t(1);
+    mut Box& held = grip.box;
+    held.slot() += int64_t(1);
+  }
+  std::println(first.value);
+  {
+    // A local holder with two reference fields.
+    mut Holder pair = Holder(first, second);
+    pair.box.slot() = int64_t(70);
+    int64_t& shared = pair.shared.value;
+    std::println(shared);
+  }
+  std::println(first.value);
   mut Crate crate = Crate(int64_t(4));
   {
     mut Shelf shelf = Shelf(crate);
@@ -103,6 +126,8 @@ int main() {
     mut Teller teller = Teller(account);
     open(teller, int64_t(50));
     open(teller, int64_t(51));
+    mut auto lease = teller.account.open();
+    lease.set(int64_t(52));
   }
   std::println(account.counter.value * int64_t(10) + account.counter.closes);
   return 0;

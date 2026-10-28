@@ -9,7 +9,33 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.484.5 - Native relays of selected references, spans and records
+## 0.485.0 - Polymorphic swap rule and LLVM parity follow-ups
+
+### Restoring exchanges of polymorphic bases rejected
+
+- `std::swap` and `std::exchange` of a polymorphic class that another class
+  derives from are now a compile-time error (`GTI-S2018`), on every backend.
+  Through a `mut Base&` that named part of a derived object, the native
+  backend before 0.484.4 replaced that object's dispatch state, so its later
+  virtual calls ran the base methods, and the C++ backend failed with an
+  internal error. The rule is
+  conservative for now and also rejects two complete objects of such a class.
+  Classes nothing derives from, non-polymorphic classes, and element swaps
+  such as `swap_elements`, `sort` and `reverse` are unaffected.
+
+### Native closures over hierarchy objects
+
+- The native backend now builds lambdas whose init-capture moves an object of
+  a derived class, a polymorphic class or an interface implementation into the
+  closure, which previously failed with `GTI-B0003`. This covers a closure such
+  as `auto reader = [held = std::move(local)]() -> int64_t { return
+  held.check(); };` called in place, moved to another local, or passed to
+  `std::thread_result<T>::start` and joined. Each captured object keeps its own
+  dispatch state, and the closure's cleanup ends its captures in reverse
+  declaration order, once each. A by-copy capture of such an object and a copy
+  of such a closure still report `GTI-B0003`.
+
+### Native relays of selected references, spans and records
 
 - The native backend now builds programs that relay a reference, a span or a
   record reference selected out of a polymorphic object, which previously
@@ -22,29 +48,7 @@ for what minor and patch releases mean.
     function relaying such a function's result;
   - writes through a relayed mutable reference.
 
-## 0.485.0 - Restoring exchanges of polymorphic bases rejected
-
-- `std::swap` and `std::exchange` of a polymorphic class that another class
-  derives from are now a compile-time error (`GTI-S2018`), on every backend.
-  Through a `mut Base&` that named part of a derived object, the native
-  backend before 0.484.4 replaced that object's dispatch state, so its later
-  virtual calls ran the base methods, and the C++ backend failed with an
-  internal error. The rule is
-  conservative for now and also rejects two complete objects of such a class.
-  Classes nothing derives from, non-polymorphic classes, and element swaps
-  such as `swap_elements`, `sort` and `reverse` are unaffected.
-
-## 0.484.5 - Function items through class aliases
-
-- Constructing a class through an alias now treats a function-name argument
-  exactly as constructing it through the class name does. With
-  `using T = Tag;` or `using C = std::function_ptr<int64_t(int64_t)>;`,
-  `T(work)` and `C(work)` in a return or an initializer previously failed with
-  the internal error `GTI-B0001`. They now compile on both backends, and an
-  ambiguous overloaded name reports `GTI-S2090` with the same candidates as
-  `Tag(work)`.
-
-## 0.484.6 - Borrows through reference fields and returned closures
+### Borrows through reference fields and returned closures
 
 - Calling a method through a reference field of a parameter now compiles
   instead of failing with an internal compiler error (`GTI-B0001`). This covers
@@ -65,17 +69,27 @@ for what minor and patch releases mean.
   with a local `Holder holder`, still reports an internal compiler error. The
   language is unchanged.
 
-## 0.484.5 - Native closures over hierarchy objects
+### Borrows through a local object's reference fields
 
-- The native backend now builds lambdas whose init-capture moves an object of
-  a derived class, a polymorphic class or an interface implementation into the
-  closure, which previously failed with `GTI-B0003`. This covers a closure such
-  as `auto reader = [held = std::move(local)]() -> int64_t { return
-  held.check(); };` called in place, moved to another local, or passed to
-  `std::thread_result<T>::start` and joined. Each captured object keeps its own
-  dispatch state, and the closure's cleanup ends its captures in reverse
-  declaration order, once each. A by-copy capture of such an object and a copy
-  of such a closure still report `GTI-B0003`.
+- A borrow through a reference field of a local object now compiles instead
+  of failing with an internal compiler error (`GTI-B0001`). This covers
+  `holder.box.slot() = value;`, `mut int64_t& v = holder.box.value;` and
+  `mut Box& b = holder.box;` where `holder` is a local `Holder` with a
+  `mut Box&` field, including a holder with several reference fields.
+- A generic function that returns a closure it received by value now compiles
+  when the closure borrows a local, as in `F identity<F>(F f) { return f; }`
+  called with `[&s]`, and also when written `return std::move(f);`, including
+  with a `mut F` parameter. The language is unchanged.
+
+### Function items through class aliases
+
+- Constructing a class through an alias now treats a function-name argument
+  exactly as constructing it through the class name does. With
+  `using T = Tag;` or `using C = std::function_ptr<int64_t(int64_t)>;`,
+  `T(work)` and `C(work)` in a return or an initializer previously failed with
+  the internal error `GTI-B0001`. They now compile on both backends, and an
+  ambiguous overloaded name reports `GTI-S2090` with the same candidates as
+  `Tag(work)`.
 
 ## 0.484.4 - Native virtual text relays, returned siblings and exchanges
 

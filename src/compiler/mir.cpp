@@ -5734,10 +5734,19 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                " cannot mutably reborrow a read-only parent",
                            block.id, instruction.id);
           }
-          const MirCanonicalPlace parentPlace = canonicalPlace(
-              body, body.loans[parent - 1].source, bindingLoans, active);
+          // A composed parent protects each of its sources; a child derived
+          // through any one of them is contained, as a direct reborrow is.
+          auto parentSources = body.loans[parent - 1].additionalSources();
+          parentSources.insert(parentSources.begin(),
+                               body.loans[parent - 1].source);
           if (!fieldMapped &&
-              !canonicalPlaceContains(parentPlace, childPlace)) {
+              std::none_of(parentSources.begin(), parentSources.end(),
+                           [&](MirPlaceId source) {
+                             return canonicalPlaceContains(
+                                 canonicalPlace(body, source, bindingLoans,
+                                                active),
+                                 childPlace);
+                           })) {
             return failure(body, owner,
                            "derived loan " + std::to_string(loan) +
                                " is not contained within storage protected "

@@ -147,7 +147,7 @@ void storedReferenceReceivers() {
       }
     }
   }
-  expect(selected == 9,
+  expect(selected == 12,
          "every receiver behind a stored reference field is checked (" +
              std::to_string(selected) + ")");
 }
@@ -317,11 +317,94 @@ void returnedConfinedCallables() {
                             std::to_string(returned) + ")");
 }
 
+// A local holder with one stored reference field names that field in its
+// stored loan, so a borrow through the field is contained in the referent.
+// Without the field, the borrow would only overlap the holder shell.
+void localHolderFields() {
+  const auto frontend =
+      analyzeFixture("stored_reference_receivers.gti", false);
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t named = 0;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    const auto &body = function.body;
+    for (const auto &block : body.blocks)
+      for (const auto &borrow : block.instructions) {
+        if (borrow.kind != lang::MirInstructionKind::Borrow || !borrow.loan)
+          continue;
+        const auto parent = body.loans[*borrow.loan - 1].parent;
+        if (parent == 0)
+          continue;
+        const auto &holder = body.loans[parent - 1];
+        if (holder.kind != lang::MirLoanKind::Stored || holder.entry ||
+            holder.designatedFields.size() != 1 ||
+            !holder.additionalDependencies.empty() || holder.carriers.empty())
+          continue;
+        const auto *place = body.findPlace(body.loans[*borrow.loan - 1].source);
+        if (place == nullptr || !behindStoredReference(*place))
+          continue;
+        ++named;
+        auto unnamed = frontend.mir;
+        mutableFunction(unnamed, function.id)
+            .body.loans[parent - 1]
+            .designatedFields.clear();
+        expect(!lang::verifyMirProgram(unnamed).valid(),
+               "a borrow through a local holder's reference field needs the "
+               "field named by the holder's stored loan");
+      }
+  }
+  expect(named == 2, "every local holder field borrow is checked (" +
+                         std::to_string(named) + ")");
+}
+
+// An owned closure parameter that its callee returns carries its borrowed
+// captures out only through that exact return.
+void returnedOwnedClosures() {
+  const auto frontend = analyzeFixture("returned_owned_closures.gti", false);
+  expect(frontend.canGenerateCode(),
+         "owned closures returned by value construct MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t returned = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &call : block.instructions) {
+        if (call.kind != lang::MirInstructionKind::Call || !call.loan ||
+            !call.functionTarget ||
+            call.borrowOrigin != lang::BorrowOriginKind::Argument)
+          continue;
+        const auto *target =
+            frontend.mir.findFunctionInstance(*call.functionTarget);
+        if (target == nullptr ||
+            std::none_of(target->callableParameters.begin(),
+                         target->callableParameters.end(),
+                         [&](const auto &parameter) {
+                           return parameter.parameterIndex ==
+                                      call.borrowArgument &&
+                                  parameter.boundary ==
+                                      lang::CallableBoundary::Owned &&
+                                  parameter.ownedTransport;
+                         }))
+          continue;
+        ++returned;
+        auto escaped = frontend.mir;
+        mutableFunction(escaped, target->id).returnBorrowOrigin =
+            lang::BorrowOriginKind::None;
+        expect(!lang::verifyMirProgram(escaped).valid(),
+               "an owned borrowing closure must leave through its exact "
+               "return summary");
+      }
+  expect(returned == 3, "every returned owned closure is checked (" +
+                            std::to_string(returned) + ")");
+}
+
 } // namespace
 
 int main() {
   storedReferenceReceivers();
   synchronizedReferenceFields();
   returnedConfinedCallables();
+  localHolderFields();
+  returnedOwnedClosures();
   return failures == 0 ? 0 : 1;
 }
