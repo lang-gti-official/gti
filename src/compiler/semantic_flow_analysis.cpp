@@ -9822,7 +9822,8 @@ auto SemanticVisitor::Impl::mergedProjectedValueStates(const Symbol &left,
         for (const auto &candidate : symbol->projectedValueStates) {
           if (candidate.projections == projections &&
               candidate.state != ValueState::Available)
-            origins = SemanticMoveOrigins::merge(origins, candidate.moveOrigins);
+            origins =
+                SemanticMoveOrigins::merge(origins, candidate.moveOrigins);
         }
       }
       result.push_back({.projections = projections,

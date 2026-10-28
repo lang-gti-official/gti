@@ -149,6 +149,20 @@ int main() { Command cmd{}; cmd.name = 1; return 0; }
         # independently invalid bool offset remains.
         assert not any(d.get("code") == "GTI-S2001" for d in remaining), remaining
         assert sum(d.get("code") == "GTI-S2056" for d in remaining) == 1, remaining
+
+        branches = '#include <std/string>\nvoid use(int path) {\n'
+        branches += '  std::string owner{"text"};\n'
+        for index in range(5):
+            branches += (f'  if (path == {index}) {{ auto moved = std::move(owner); }} else ')
+        branches += '{ auto moved = std::move(owner); }\n  std::println(owner.view());\n}\n'
+        output = terminal(branches)
+        assert "additional ownership-transfer location" in output, output
+        assert output.count("note: Ownership transferred here.") == 4, output
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri, "version": 6}, "contentChanges": [{"text": branches}]}})
+        bounded = next(d for d in publication(6) if d.get("code") == "GTI-S2018")
+        assert "additional ownership-transfer location" in bounded["message"], bounded
+        assert len(bounded["relatedInformation"]) == 4, bounded
     finally:
         session.close()
 

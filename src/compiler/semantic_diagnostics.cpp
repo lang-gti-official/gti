@@ -41,10 +41,16 @@ SemanticMoveOrigins::merge(const SemanticMoveOrigins &left,
 void SemanticMoveOrigins::appendTo(Diagnostic &diagnostic) const {
   for (const auto &origin : sites)
     diagnostic.related.push_back({origin, "Ownership transferred here."});
+  if (sites.size() > 1 || omittedLowerBound != 0)
+    diagnostic.hints.emplace_back(
+        "These transfer locations are alternatives across control-flow paths, "
+        "not a single execution trace.");
   if (omittedLowerBound != 0)
-    diagnostic.hints.push_back("At least " + std::to_string(omittedLowerBound) +
-                               " additional ownership-transfer location(s) "
-                               "omitted from this explanation.");
+    diagnostic.hints.push_back(
+        "At least " + std::to_string(omittedLowerBound) +
+        " additional ownership-transfer " +
+        (omittedLowerBound == 1 ? "location is" : "locations are") +
+        " omitted from this explanation.");
 }
 
 std::string

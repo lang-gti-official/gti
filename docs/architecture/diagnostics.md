@@ -194,6 +194,16 @@ LSP.
 - a user-facing message;
 - optional related spans, fix-its, hints, and presentation tags.
 
+`FixIt` carries `RepairApplicability` independently of its UI `preferred` flag.
+The default is `RequiresReview`; only an explicitly proven producer may mark a
+repair `MachineApplicable`. `Incomplete` suggestions are not executable edits.
+Within one diagnostic, equal nonempty `repairId` values form an atomic edit
+group; different IDs are alternatives. Empty IDs preserve legacy singleton
+alternatives. A group with mixed applicability or an invalid member is rejected
+as a whole. No existing producer becomes machine-applicable merely because its
+edit was previously preferred. These are repair contracts, not new language
+conversions or permission to alter ownership intent.
+
 Warnings remain in the shared diagnostic stream but do not make semantic
 analysis fail or prevent HIR/MIR/backend work. Consumers must test severity
 rather than treating a non-empty diagnostic list as failure.
@@ -324,7 +334,9 @@ related spans, and what intentional alternatives remain through hints:
   a hint reports a proven lower bound on their count. Joins take the maximum
   of known distinct counts, not their sum: repeated joins may contain the same
   omitted sites and must not invent additional causes. Storage and intermediate
-  joins remain bounded independently of diagnostic rendering. Restoration
+  joins remain bounded independently of diagnostic rendering. Multiple sites
+  are explicitly described as path alternatives, not one execution trace.
+  Restoration
   clears old causes with the existing moved state; shadowed declarations do not
   share causes. This private provenance does not decide availability or lifetime.
 - Retained-borrow `GTI-S2017` relates the borrowing origin and, when the flow

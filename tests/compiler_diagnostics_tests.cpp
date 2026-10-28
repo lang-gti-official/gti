@@ -1,5 +1,5 @@
-#include "compiler_test_fixture.h"
 #include "../src/compiler/semantic_diagnostics.h"
+#include "compiler_test_fixture.h"
 
 namespace {
 
@@ -195,6 +195,9 @@ void examine(bool condition) {
                  branched.find("original);") &&
              branchError->related[1].span.start == branched.rfind("original);"),
          "control-flow joins preserve both transfer causes in source order");
+  expect(hasDiagnosticHint(branchResult.diagnostics,
+                           "not a single execution trace"),
+         "multiple branch witnesses are not presented as one actual path");
   auto reinitialized = branched;
   reinitialized.insert(reinitialized.find("  std::println"),
                        "  original = std::string(\"replacement\");\n");
@@ -328,7 +331,7 @@ public:
                             }),
          "move causes are bounded and deterministic across many branch joins");
   expect(hasDiagnosticHint(manyResult.diagnostics,
-                            "additional ownership-transfer location(s) omitted"),
+                           "additional ownership-transfer location"),
          "bounded move explanations must explicitly disclose omitted causes");
   expect(manyResult.diagnostics == analyze(manyPaths).diagnostics,
          "bounded witness rendering is deterministic across fresh requests");
@@ -3090,18 +3093,17 @@ int main() {
 )");
   expect(!failedOffset.canGenerateCode(),
          "recovered expressions must never admit invalid source to lowering");
-  expect(std::count_if(failedOffset.diagnostics.begin(),
-                       failedOffset.diagnostics.end(), [](const auto &item) {
-                         return item.code == "GTI-S2001";
-                       }) == 4,
+  expect(std::count_if(
+             failedOffset.diagnostics.begin(), failedOffset.diagnostics.end(),
+             [](const auto &item) { return item.code == "GTI-S2001"; }) == 4,
          "each independent undefined operand retains its own root diagnostic");
-  expect(std::count_if(failedOffset.diagnostics.begin(),
-                       failedOffset.diagnostics.end(), [](const auto &item) {
-                         return item.code == "GTI-S2056";
-                       }) == 1,
+  expect(std::count_if(
+             failedOffset.diagnostics.begin(), failedOffset.diagnostics.end(),
+             [](const auto &item) { return item.code == "GTI-S2056"; }) == 1,
          "only the independently invalid pointer operand is diagnosed again");
-  expect(hasDiagnostic(failedOffset.diagnostics, "Cannot initialize 'unrelated'"),
-         "causal recovery does not suppress unrelated declaration errors");
+  expect(
+      hasDiagnostic(failedOffset.diagnostics, "Cannot initialize 'unrelated'"),
+      "causal recovery does not suppress unrelated declaration errors");
   const auto repaired = lang::Frontend().analyze("failed-offset.gti", R"(
 int main() {
   unsafe {
@@ -3114,7 +3116,8 @@ int main() {
 )");
   expect(repaired.canGenerateCode(),
          "a fresh valid snapshot must not retain recovery identities");
-  const auto invalidPointee = lang::Frontend().analyze("invalid-pointee.gti", R"(
+  const auto invalidPointee =
+      lang::Frontend().analyze("invalid-pointee.gti", R"(
 int main() {
   unsafe { void* pointer = nullptr; auto result = pointer + missing; }
   return 0;

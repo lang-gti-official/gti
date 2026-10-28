@@ -11927,14 +11927,15 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
       diagnostics.back().missingIncludeName = expr.name().lexeme;
     }
     requestSession.recoveryCauses.insert_or_assign(
-        &expr, std::make_shared<const SemanticRecoveryCause>(
-                   SemanticRecoveryCause{diagnostics.back().primary,
-                                         diagnostics.back().code}));
+        &expr,
+        std::make_shared<const SemanticRecoveryCause>(SemanticRecoveryCause{
+            diagnostics.back().primary, diagnostics.back().code}));
     currentType = SemanticType::Unknown;
     return;
   }
   if (symbol->type == SemanticType::Unknown && symbol->recoveryCause)
-    requestSession.recoveryCauses.insert_or_assign(&expr, symbol->recoveryCause);
+    requestSession.recoveryCauses.insert_or_assign(&expr,
+                                                   symbol->recoveryCause);
   if (currentProgramEffectOwner.kind == ProgramEffectOwnerKind::Initializer &&
       isThreadLocalStorage(currentProgramEffectOwner.id) &&
       (symbol->bindingKind == SemanticBindingKind::LocalVariable ||

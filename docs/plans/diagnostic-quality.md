@@ -46,8 +46,9 @@ The following inspected implementation is the starting point:
 | Terminal and editor | `src/cli/`, `src/lsp/main.cpp`, `tests/diagnostic_explanations_test.py` | Cross-family parity, repair grouping/applicability and snapshot-bound causal details |
 | Recovery and regression tests | `tests/compiler_diagnostics_tests.cpp`, `tests/diagnostic_recovery_lsp_test.py`, `tests/diagnostic_registry_generator_test.py` | Representative scored corpus, causal cascade suppression and systematic repair validation |
 
-Current `FixIt` has one span/replacement/message and a `preferred` Boolean;
-preference is not a safety/applicability classification. Existing related notes
+The initial `FixIt` model had one span/replacement/message and a `preferred`
+Boolean. The first repair slice adds conservative applicability and atomic
+group identity; preference is still not a safety classification. Existing related notes
 are useful and must remain available. The absence of a general cause graph does
 not justify replacing already-correct family-specific evidence structures.
 
@@ -199,6 +200,13 @@ an overall quality score. The registered diagnostic explanation tests and
 compiler diagnostic tests own the executable assertions. Constraint traces,
 constexpr frames, capture/lifetime witnesses and parser-wide root identities
 remain future slices. Do not mark Q-DIAG-03 or Q-DIAG-05 complete from this work.
+
+Facility 4's first slice adds conservative `FixIt` applicability, diagnostic-local
+atomic/alternative group identities and exact-snapshot LSP validation. Existing
+producers remain review-required; no automatic ownership or mutability choice is
+introduced. Discard and include pilots cover application, reanalysis, idempotence
+and stale-overlay rejection. Cross-file transactions, broader producer proof
+migration and richer prerequisites remain open; Q-DIAG-06 is partial, not closed.
 
 | Milestone | Dependencies and bounded work | Exit evidence |
 | --- | --- | --- |

@@ -6878,6 +6878,15 @@ for an owner-dependent span. The architecture and LLVM-adoption documents
 record the private terminal-width boundary; public diagnostic types do not
 gain terminal- or LLVM-specific fields.
 
+`lsp_repair_groups` exercises the production adapter's atomic groups, alternative
+separation, all-or-nothing rejection, source/range/Unicode boundaries,
+applicability and snapshot identity. `lsp_repair_contract` applies discard and
+include alternatives, reanalyzes them, and checks idempotence, stale same-text
+versions, CRLF/Unicode, macro call sites, and ownership/mutability negatives.
+Existing discard/include/export/unsafe protocol checks retain manual repairs
+without assuming that preference proves machine applicability. These focused
+checks cover the first Q-DIAG-06 slice, not all planned repair producers.
+
 The 0.368.1 all-target Release build passes on macOS arm64 with AppleClang 21
 and LLVM 22.1.8. The full 404-test run initially passes 399 checks. The two
 localhost HTTP checks pass with socket permission; the construction-only
