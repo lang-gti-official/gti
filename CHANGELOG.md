@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.5 - Faster editor updates with large imports
+
+- `gti_lsp` updates diagnostics sooner after an edit in a file whose imports
+  load much of the standard library, such as `import std;`. Each edit
+  re-copied and rescanned every loaded source unit's tokens. Units whose
+  syntax cannot depend on configuration flags now replay a cached processed
+  form and only re-resolve their imports and includes. On Apple silicon, an
+  edit in a small project with `import std;` shows or clears its error in
+  about 0.35 s instead of 0.55–0.85 s.
+- Include suggestions for an unknown name no longer reload the whole program
+  to probe the edited file itself, so an edit that introduces such an error
+  is no slower than one that clears it.
+
 ## 0.484.4 - Native virtual text relays, returned siblings and exchanges
 
 - The native backend now builds these programs, which previously failed with

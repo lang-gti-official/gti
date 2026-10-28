@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -59,7 +60,9 @@ struct SourceDependency {
 struct SourceUnit {
   SourceUnitId id = 0;
   std::filesystem::path path;
-  std::vector<Token> tokens;
+  // Post-directive tokens for the parser. Unchanged units share them with
+  // the frontend cache, so they are immutable here.
+  std::shared_ptr<const std::vector<Token>> tokens;
   // Exact source-text identity used by caches after loading. A zero digest
   // means the graph was supplied by a caller that did not establish one.
   std::uint64_t sourceDigest = 0;
