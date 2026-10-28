@@ -1,9 +1,9 @@
 #include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/layout.h"
 #include "../src/compiler/llvm/mutexes.h"
+#include "../src/compiler/llvm/runtime_abi.h"
 #include "../src/compiler/llvm/thread_lifecycle.h"
 #include "../src/compiler/llvm/threads.h"
-#include "../src/compiler/llvm/runtime_abi.h"
 #include "cpp_backend_test_support.h"
 #include "gti/runtime_thread.h"
 
@@ -11,8 +11,8 @@
 #include <set>
 
 #include <iostream>
-#include <tuple>
 #include <llvm/IR/Instructions.h>
+#include <tuple>
 
 namespace {
 using namespace lang;
@@ -119,20 +119,21 @@ void check(const std::filesystem::path &root) {
       }
     require(emitted == 1, "exactly one real call is emitted for each boundary");
   }
-  for (const auto &[service, arguments, returnsKind] : {
-           std::tuple{RuntimeService::EnterThreadFailureSink, 3U, false},
-           std::tuple{RuntimeService::LeaveThreadFailureSink, 1U, false},
-           std::tuple{RuntimeService::PublishThreadFailure, 1U, false},
-           std::tuple{RuntimeService::ThreadCleanupFailureKind, 0U, true},
-           std::tuple{RuntimeService::CopyThreadCleanupPrimary, 2U, true},
-           std::tuple{RuntimeService::QuarantineThread, 1U, false},
-           std::tuple{RuntimeService::ProgramStorageRetirementReady, 0U, true}}) {
+  for (const auto &[service, arguments, returnsKind] :
+       {std::tuple{RuntimeService::EnterThreadFailureSink, 3U, false},
+        std::tuple{RuntimeService::LeaveThreadFailureSink, 1U, false},
+        std::tuple{RuntimeService::PublishThreadFailure, 1U, false},
+        std::tuple{RuntimeService::ThreadCleanupFailureKind, 0U, true},
+        std::tuple{RuntimeService::CopyThreadCleanupPrimary, 2U, true},
+        std::tuple{RuntimeService::QuarantineThread, 1U, false},
+        std::tuple{RuntimeService::ProgramStorageRetirementReady, 0U, true}}) {
     const auto *function = declareRuntimeService(session, service);
-    require(function->arg_size() == arguments && function->doesNotThrow() &&
-                !function->hasFnAttribute(llvm::Attribute::NoReturn) &&
-                (returnsKind ? function->getReturnType()->isIntegerTy(32)
-                             : function->getReturnType()->isVoidTy()),
-            "worker outcome C declaration matches the nonthrowing runtime header");
+    require(
+        function->arg_size() == arguments && function->doesNotThrow() &&
+            !function->hasFnAttribute(llvm::Attribute::NoReturn) &&
+            (returnsKind ? function->getReturnType()->isIntegerTy(32)
+                         : function->getReturnType()->isVoidTy()),
+        "worker outcome C declaration matches the nonthrowing runtime header");
     for (const auto &argument : function->args())
       require(argument.getType()->isPointerTy(),
               "worker outcome C arguments are borrowed records or callbacks");
@@ -174,17 +175,21 @@ void checkManagedThreads(const std::filesystem::path &root) {
         mutate(bad);
         require(!nativeThreadTaskAdapter(program, bad), message);
       };
-      reject([](auto &task) {
-        task.invocation = CallableInvocationCapability::Read;
-      }, "an adapter must consume its task once");
+      reject(
+          [](auto &task) {
+            task.invocation = CallableInvocationCapability::Read;
+          },
+          "an adapter must consume its task once");
       reject([](auto &task) { task.catchesWorkerFailure = false; },
              "uncontained worker failure cannot cross the C boundary");
       reject([](auto &task) { task.taskType = SemanticType::Int32; },
              "an adapter cannot be rebound to another task type");
-      reject([](auto &task) {
-        task.lambdaTarget = 1;
-        task.functionTarget = 1;
-      }, "an adapter selects exactly one entry");
+      reject(
+          [](auto &task) {
+            task.lambdaTarget = 1;
+            task.functionTarget = 1;
+          },
+          "an adapter selects exactly one entry");
     }
     for (const auto address : enumerateMirBodyAddresses(program)) {
       const auto *body = findMirBody(program, address);
@@ -202,35 +207,48 @@ void checkManagedThreads(const std::filesystem::path &root) {
           };
           reject([](auto &call) { call.functionTarget = 1; },
                  "a thread operation names no source target");
-          reject([](auto &call) {
-            call.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeCall;
-          }, "a thread operation is not an unsafe call");
-          reject([](auto &call) {
-            call.synchronization.order = AtomicMemoryOrder::Relaxed;
-          }, "thread synchronization carries no atomic order");
+          reject(
+              [](auto &call) {
+                call.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeCall;
+              },
+              "a thread operation is not an unsafe call");
+          reject(
+              [](auto &call) {
+                call.synchronization.order = AtomicMemoryOrder::Relaxed;
+              },
+              "thread synchronization carries no atomic order");
           reject([](auto &call) { call.dispatch = CallDispatch::Virtual; },
                  "a thread operation is statically dispatched");
           if (instruction.intrinsic == IntrinsicKind::ThreadSpawn) {
             reject([](auto &call) { call.threadTaskAdapter.reset(); },
                    "spawn requires its exact sealed adapter");
-            reject([](auto &call) {
-              call.operands[0].kind = MirOperandKind::BorrowRead;
-            }, "spawn requires exclusive handle access");
-            reject([](auto &call) {
-              call.definedFailure.propagation = FailurePropagationKind::TaskJoin;
-            }, "spawn has no failure edge");
+            reject(
+                [](auto &call) {
+                  call.operands[0].kind = MirOperandKind::BorrowRead;
+                },
+                "spawn requires exclusive handle access");
+            reject(
+                [](auto &call) {
+                  call.definedFailure.propagation =
+                      FailurePropagationKind::TaskJoin;
+                },
+                "spawn has no failure edge");
           }
           if (instruction.intrinsic == IntrinsicKind::ThreadJoin ||
               instruction.intrinsic == IntrinsicKind::ThreadAutoJoin)
-            reject([](auto &call) {
-              call.definedFailure.propagation = FailurePropagationKind::None;
-            }, "join re-raises through its verified TaskJoin edge");
+            reject(
+                [](auto &call) {
+                  call.definedFailure.propagation =
+                      FailurePropagationKind::None;
+                },
+                "join re-raises through its verified TaskJoin edge");
           if (instruction.intrinsic == IntrinsicKind::ThreadScope)
             reject([](auto &call) { call.scopedThreadTasks.pop_back(); },
                    "every scoped operand needs its adapter");
           if (instruction.intrinsic == IntrinsicKind::ThreadHandleEmpty)
-            require(nativeThreadHandle(program, instruction.info.type).has_value(),
-                    "the handle is the trusted capability");
+            require(
+                nativeThreadHandle(program, instruction.info.type).has_value(),
+                "the handle is the trusted capability");
         }
     }
     const auto admission = planLlvmAdmission(*input);
@@ -244,28 +262,29 @@ void checkManagedThreads(const std::filesystem::path &root) {
     const auto size = [&](llvm::Type *type) {
       return layout.getTypeAllocSize(type).getFixedValue();
     };
-    require(size(types.spawnResult) == sizeof(gti_thread_spawn_result_v1) &&
-                size(types.joinResult) == sizeof(gti_thread_join_result_v2) &&
-                size(types.valueJoin) ==
-                    sizeof(gti_thread_value_join_result_v2) &&
-                size(types.scopeResult) == sizeof(gti_thread_scope_result_v1) &&
-                size(types.scopedTask) == sizeof(gti_thread_scoped_task_v1) &&
-                layout.getStructLayout(types.joinResult)->getElementOffset(4) ==
-                    offsetof(gti_thread_join_result_v2, failure) &&
-                layout.getStructLayout(types.joinResult)->getElementOffset(5) ==
-                    offsetof(gti_thread_join_result_v2, cleanup_failure) &&
-                layout.getStructLayout(types.joinResult)->getElementOffset(6) ==
-                    offsetof(gti_thread_join_result_v2, primary_artifact) &&
-                layout.getStructLayout(types.scopeResult)->getElementOffset(4) ==
-                    offsetof(gti_thread_scope_result_v1, worker),
-            "managed-thread runtime records match the C declarations");
-    for (const auto *name : {"gti_rt_thread_join_v2", "gti_rt_thread_join_value_v2",
-                             "gti_rt_thread_scope_v1"})
+    require(
+        size(types.spawnResult) == sizeof(gti_thread_spawn_result_v1) &&
+            size(types.joinResult) == sizeof(gti_thread_join_result_v2) &&
+            size(types.valueJoin) == sizeof(gti_thread_value_join_result_v2) &&
+            size(types.scopeResult) == sizeof(gti_thread_scope_result_v1) &&
+            size(types.scopedTask) == sizeof(gti_thread_scoped_task_v1) &&
+            layout.getStructLayout(types.joinResult)->getElementOffset(4) ==
+                offsetof(gti_thread_join_result_v2, failure) &&
+            layout.getStructLayout(types.joinResult)->getElementOffset(5) ==
+                offsetof(gti_thread_join_result_v2, cleanup_failure) &&
+            layout.getStructLayout(types.joinResult)->getElementOffset(6) ==
+                offsetof(gti_thread_join_result_v2, primary_artifact) &&
+            layout.getStructLayout(types.scopeResult)->getElementOffset(4) ==
+                offsetof(gti_thread_scope_result_v1, worker),
+        "managed-thread runtime records match the C declarations");
+    for (const auto *name :
+         {"gti_rt_thread_join_v2", "gti_rt_thread_join_value_v2",
+          "gti_rt_thread_scope_v1"})
       if (const auto *function = session.module().getFunction(name))
         require(function->hasStructRetAttr() && function->doesNotThrow(),
                 "large runtime records return through an indirect result");
-    for (const auto *name : {"gti_rt_thread_spawn_v1",
-                             "gti_rt_thread_spawn_value_v1"})
+    for (const auto *name :
+         {"gti_rt_thread_spawn_v1", "gti_rt_thread_spawn_value_v1"})
       if (const auto *function = session.module().getFunction(name))
         require(function->doesNotThrow() &&
                     session.dataLayout().getTypeAllocSize(
@@ -334,18 +353,20 @@ void checkMutexComposition(const std::filesystem::path &root) {
            ++index) {
         const bool borrowed = isBorrowingCapture(lambda.captureModes[index]);
         borrowing |= borrowed;
-        mutexCapture |= !borrowed && holdsMutexStorage(holdsMutexStorage,
-                                                       lambda.captureTypes[index],
-                                                       0);
+        mutexCapture |=
+            !borrowed &&
+            holdsMutexStorage(holdsMutexStorage, lambda.captureTypes[index], 0);
       }
       borrowingMutexClosures += mutexCapture && borrowing;
     }
     for (const auto &constructor : program.constructorInstances()) {
       const auto *owner = program.findClassInstance(constructor.owner);
       if (!owner ||
-          owner->compilerCapability != CompilerCapabilityTypeKind::MutexStorage ||
+          owner->compilerCapability !=
+              CompilerCapabilityTypeKind::MutexStorage ||
           constructor.body.dropObligations.size() != 1 ||
-          constructor.body.dropObligations.front().dropType.requiresActiveCleanup ||
+          constructor.body.dropObligations.front()
+              .dropType.requiresActiveCleanup ||
           constructor.parameterTypes.size() != 1 ||
           constructor.parameterTypes.front().kind != SemanticType::Class)
         continue;
@@ -419,14 +440,17 @@ void checkManualCThreadBindings(const std::filesystem::path &root) {
              "an operation tag cannot authorize another native symbol");
       reject([](auto &row) { row.linkage = LanguageLinkage::Gti; },
              "the operation is a C declaration");
-      reject([](auto &row) { row.parameterTypes.push_back(SemanticType::Int32); },
-             "the exact C signature is required");
-      reject([](auto &row) {
-        row.cThreadOperation = row.cThreadOperation ==
-                                       CThreadRuntimeOperation::Create
-                                   ? CThreadRuntimeOperation::Join
-                                   : CThreadRuntimeOperation::Create;
-      }, "a declaration cannot be rebound to another operation");
+      reject(
+          [](auto &row) { row.parameterTypes.push_back(SemanticType::Int32); },
+          "the exact C signature is required");
+      reject(
+          [](auto &row) {
+            row.cThreadOperation =
+                row.cThreadOperation == CThreadRuntimeOperation::Create
+                    ? CThreadRuntimeOperation::Join
+                    : CThreadRuntimeOperation::Create;
+          },
+          "a declaration cannot be rebound to another operation");
       reject([](auto &row) { row.definitionKind = MirDefinitionKind::Source; },
              "a source body is not the runtime service");
     }
@@ -439,18 +463,18 @@ void checkManualCThreadBindings(const std::filesystem::path &root) {
         CThreadRuntimeOperation::ConditionWait})
     require(bound.contains(operation),
             "fixtures exercise the manual C-thread service families");
-  require(cThreadOperationSynchronization(CThreadRuntimeOperation::Create) ==
-                  SynchronizationOperationKind::ThreadSpawn &&
-              cThreadOperationSynchronization(
-                  CThreadRuntimeOperation::MutexTimedLock) ==
-                  SynchronizationOperationKind::MutexLock &&
-              cThreadOperationSynchronization(
-                  CThreadRuntimeOperation::ConditionBroadcast) ==
-                  SynchronizationOperationKind::ConditionNotify &&
-              cThreadOperationSynchronization(
-                  CThreadRuntimeOperation::MutexInit) ==
-                  SynchronizationOperationKind::None,
-          "C-thread synchronization records match semantic resolution");
+  require(
+      cThreadOperationSynchronization(CThreadRuntimeOperation::Create) ==
+              SynchronizationOperationKind::ThreadSpawn &&
+          cThreadOperationSynchronization(
+              CThreadRuntimeOperation::MutexTimedLock) ==
+              SynchronizationOperationKind::MutexLock &&
+          cThreadOperationSynchronization(
+              CThreadRuntimeOperation::ConditionBroadcast) ==
+              SynchronizationOperationKind::ConditionNotify &&
+          cThreadOperationSynchronization(CThreadRuntimeOperation::MutexInit) ==
+              SynchronizationOperationKind::None,
+      "C-thread synchronization records match semantic resolution");
 }
 
 } // namespace

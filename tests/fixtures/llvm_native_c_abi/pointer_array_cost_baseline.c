@@ -1,8 +1,10 @@
 #include <stdint.h>
 
-extern uint64_t native_array_read(uint64_t**, uint64_t);
-typedef struct { uint64_t* slots[2]; } PointerArray;
-static uint64_t snapshot(PointerArray value, uint64_t* next, uint64_t index) {
+extern uint64_t native_array_read(uint64_t **, uint64_t);
+typedef struct {
+  uint64_t *slots[2];
+} PointerArray;
+static uint64_t snapshot(PointerArray value, uint64_t *next, uint64_t index) {
   value.slots[0] = next;
   return native_array_read(value.slots, index);
 }

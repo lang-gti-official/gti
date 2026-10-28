@@ -12,8 +12,8 @@
 #include <utility>
 
 #ifdef GTI_WAIT_LLVM_NOTIFY
-#define GTI_DECLARE_NOTIFY(Bits) \
-  extern "C" void gti_test_wait_u##Bits##_one(const void *); \
+#define GTI_DECLARE_NOTIFY(Bits)                                               \
+  extern "C" void gti_test_wait_u##Bits##_one(const void *);                   \
   extern "C" void gti_test_wait_u##Bits##_all(const void *);
 GTI_DECLARE_NOTIFY(8)
 GTI_DECLARE_NOTIFY(16)
@@ -32,11 +32,16 @@ void notify(const void *lane, std::uint32_t width, std::uint32_t all) {
 #ifdef GTI_WAIT_LLVM_NOTIFY
   require(all <= 1);
   switch (width) {
-  case 1: return all ? gti_test_wait_u8_all(lane) : gti_test_wait_u8_one(lane);
-  case 2: return all ? gti_test_wait_u16_all(lane) : gti_test_wait_u16_one(lane);
-  case 4: return all ? gti_test_wait_u32_all(lane) : gti_test_wait_u32_one(lane);
-  case 8: return all ? gti_test_wait_u64_all(lane) : gti_test_wait_u64_one(lane);
-  default: std::abort();
+  case 1:
+    return all ? gti_test_wait_u8_all(lane) : gti_test_wait_u8_one(lane);
+  case 2:
+    return all ? gti_test_wait_u16_all(lane) : gti_test_wait_u16_one(lane);
+  case 4:
+    return all ? gti_test_wait_u32_all(lane) : gti_test_wait_u32_one(lane);
+  case 8:
+    return all ? gti_test_wait_u64_all(lane) : gti_test_wait_u64_one(lane);
+  default:
+    std::abort();
   }
 #else
   gti_rt_atomic_notify_v1(lane, width, all);
@@ -209,7 +214,7 @@ void coalescedNotifications() {
 // calls. Production has no hook, callback or waiter allocation. Every unchanged
 // lane exhausts its bounded pre-parking probe and reaches this real sleep.
 extern "C" int gti_test_wait_init(pthread_mutex_t *mutex,
-                                   const pthread_mutexattr_t *attributes) {
+                                  const pthread_mutexattr_t *attributes) {
   const auto count = initializations.fetch_add(1);
   if (std::strcmp(fault, "init") == 0 && count == 3)
     return 12;
@@ -227,7 +232,7 @@ extern "C" int gti_test_wait_lock(pthread_mutex_t *mutex) {
   return pthread_mutex_lock(mutex);
 }
 extern "C" int gti_test_wait_sleep(pthread_cond_t *condition,
-                                    pthread_mutex_t *mutex) {
+                                   pthread_mutex_t *mutex) {
   if (std::strcmp(fault, "wait") == 0)
     return 22;
   if (probe) {

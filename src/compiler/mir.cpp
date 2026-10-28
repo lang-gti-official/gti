@@ -8738,15 +8738,16 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
         bool nativeShutdown = false;
         if (block.terminator.kind == MirTerminatorKind::ContainFailure &&
             !block.instructions.empty() &&
-            block.instructions.back().kind == MirInstructionKind::RetireProgramStorage) {
+            block.instructions.back().kind ==
+                MirInstructionKind::RetireProgramStorage) {
           auto suffix = block.instructions.rbegin();
           nativeShutdown = suffix->id == instruction.id;
           ++suffix;
           if (suffix != block.instructions.rend() &&
               suffix->kind == MirInstructionKind::Call &&
               suffix->functionTarget && suffix->definedFailure.empty() &&
-              suffix->info.type == SemanticType::Void &&
-              !suffix->result && suffix->operands.empty()) {
+              suffix->info.type == SemanticType::Void && !suffix->result &&
+              suffix->operands.empty()) {
             nativeShutdown = nativeShutdown || suffix->id == instruction.id;
             ++suffix;
           }
@@ -12271,12 +12272,11 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       // A staged base hands each owned prepared parameter to its selected
       // constructor before that constructor begins, as a construction does.
       const auto transfers = static_cast<std::size_t>(
-          std::find_if(instruction.lifecycle.begin(),
-                       instruction.lifecycle.end(),
-                       [](const MirLifecycleEvent &event) {
-                         return event.kind !=
-                                MirLifecycleEventKind::TransferOut;
-                       }) -
+          std::find_if(
+              instruction.lifecycle.begin(), instruction.lifecycle.end(),
+              [](const MirLifecycleEvent &event) {
+                return event.kind != MirLifecycleEventKind::TransferOut;
+              }) -
           instruction.lifecycle.begin());
       const bool preparedTransfers = std::all_of(
           instruction.lifecycle.begin(),
@@ -12286,8 +12286,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             const MirDropObligation *prepared =
                 body.findDropObligation(event.source);
             return instruction.constructorTarget && prepared != nullptr &&
-                   prepared->kind ==
-                       MirDropObligationKind::PreparedParameter &&
+                   prepared->kind == MirDropObligationKind::PreparedParameter &&
                    event.target == 0 && !event.conditional &&
                    !event.failureCleanup;
           });
@@ -12295,9 +12294,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           instruction.lifecycle.data() + transfers,
           instruction.lifecycle.size() - transfers);
       return body.kind == MirBodyKind::Constructor && noOperation &&
-             preparedTransfers &&
-             !hasResult && base != nullptr && rollback != nullptr &&
-             !instruction.receiver && instruction.constructorInitializer != 0 &&
+             preparedTransfers && !hasResult && base != nullptr &&
+             rollback != nullptr && !instruction.receiver &&
+             instruction.constructorInitializer != 0 &&
              instruction.operands.size() == instruction.parameterTypes.size() &&
              std::equal(
                  instruction.operands.begin(), instruction.operands.end(),

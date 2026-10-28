@@ -1733,8 +1733,8 @@ lowered_detail::deriveSourceRanges(const MirProgram &program,
       case MirInstructionKind::Modify:
       case MirInstructionKind::Call:
       case MirInstructionKind::Construct:
-        if (const auto *anchor = anchors.find(
-                instruction.hirStatement, instruction.hirValue, true))
+        if (const auto *anchor = anchors.find(instruction.hirStatement,
+                                              instruction.hirValue, true))
           scopes[i] = anchor->scope;
         break;
       default:

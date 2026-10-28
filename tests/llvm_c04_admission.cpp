@@ -3,8 +3,8 @@
 #include "../src/compiler/mir_verification_queries.h"
 
 #include <algorithm>
-#include <set>
 #include <functional>
+#include <set>
 
 #if !defined(GTI_LLVM_C04_MIR_EVALUATION)
 #error "C04 admission is for isolated evaluation targets only"
@@ -36,10 +36,11 @@ bool scalarInput(const SemanticType &type) {
 }
 } // namespace
 
-std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
-                           const LlvmAdmissionPlan &admission,
-                           std::span<const HirFunctionInstanceId> functions,
-                           C04EvaluationProfile profile) {
+std::vector<MirBodyAddress>
+validateC04Evaluation(const Session &session,
+                      const LlvmAdmissionPlan &admission,
+                      std::span<const HirFunctionInstanceId> functions,
+                      C04EvaluationProfile profile) {
   if (profile != C04EvaluationProfile::ScalarCleanup &&
       profile != C04EvaluationProfile::NativeBoundary &&
       profile != C04EvaluationProfile::DynamicCalls &&
@@ -47,13 +48,13 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
     reject("unknown evaluation profile");
   const bool workers = profile == C04EvaluationProfile::ScopedWorkers;
   const bool dynamic = profile == C04EvaluationProfile::DynamicCalls || workers;
-  if (&session.program() != &admission.program() || (!dynamic && !admission.admitted()) ||
+  if (&session.program() != &admission.program() ||
+      (!dynamic && !admission.admitted()) ||
       session.options().optimization != admission.options().optimization ||
       session.options().debugInfo != admission.options().debugInfo)
     throw BackendUnsupportedError(
         "C04 evaluation requires the exact admitted snapshot and options");
-  std::set<HirFunctionInstanceId> selected(functions.begin(),
-                                                 functions.end());
+  std::set<HirFunctionInstanceId> selected(functions.begin(), functions.end());
   if (selected.empty() || selected.size() != functions.size() ||
       !session.program().mir().programInitializationPlan().steps.empty())
     reject("empty/duplicate selection or program initialization");
@@ -76,7 +77,8 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
       for (const auto &argument : value.arguments)
         type(argument);
       for (const auto &instance : program.classInstances())
-        if (instance.type == value && demandedClasses.insert(instance.id).second)
+        if (instance.type == value &&
+            demandedClasses.insert(instance.id).second)
           for (const auto &field : instance.declaredFields)
             type(field.type);
     };
@@ -117,7 +119,8 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
           if (stage.functionTarget && stage.intrinsic == IntrinsicKind::None)
             demand({MirBodyKind::Function, *stage.functionTarget});
           if (stage.functionPointerFunctionTarget)
-            demand({MirBodyKind::Function, *stage.functionPointerFunctionTarget});
+            demand(
+                {MirBodyKind::Function, *stage.functionPointerFunctionTarget});
           if (workers && stage.intrinsic == IntrinsicKind::ThreadScope)
             for (auto target : c04ScopedTargets(session, address, stage))
               demand({MirBodyKind::Function, target});
@@ -133,8 +136,10 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
   const auto knownClass = [&](const SemanticType &type) {
     return std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
-        [&](const auto &instance) { return instance.type == type &&
-            (!dynamic || demandedClasses.contains(instance.id)); });
+        [&](const auto &instance) {
+          return instance.type == type &&
+                 (!dynamic || demandedClasses.contains(instance.id));
+        });
   };
   std::function<bool(const SemanticType &)> passiveEnum;
   passiveEnum = [&](const SemanticType &type) {
@@ -155,18 +160,23 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
   for (const auto &instance : program.classInstances()) {
     if (dynamic && !demandedClasses.contains(instance.id))
       continue;
-    const auto *pointer = dynamic ? mir_detail::functionPointerSignature(program, instance.type) : nullptr;
+    const auto *pointer =
+        dynamic ? mir_detail::functionPointerSignature(program, instance.type)
+                : nullptr;
     if (pointer && (pointer->arguments.empty() ||
-                    !std::all_of(pointer->arguments.begin(), pointer->arguments.end(), scalarOrReference)))
+                    !std::all_of(pointer->arguments.begin(),
+                                 pointer->arguments.end(), scalarOrReference)))
       reject("dynamic invocation signature outside scalar/reference profile");
-    if ((instance.compilerCapability != CompilerCapabilityTypeKind::None && !pointer) ||
+    if ((instance.compilerCapability != CompilerCapabilityTypeKind::None &&
+         !pointer) ||
         instance.polymorphic || instance.abstract || instance.cAbiRecord ||
         instance.cOpaqueHandle || instance.unionLayout ||
         !instance.bases.empty() || !instance.structuralBases.empty() ||
         !instance.virtualDispatch.empty() ||
         !std::all_of(instance.declaredFields.begin(),
                      instance.declaredFields.end(), [&](const auto &field) {
-                       return scalarInput(field.type) || knownClass(field.type) || passiveEnum(field.type);
+                       return scalarInput(field.type) ||
+                              knownClass(field.type) || passiveEnum(field.type);
                      }))
       reject("class outside ordinary scalar/reference/observer/record-field "
              "cleanup "
@@ -176,13 +186,21 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
   std::function<bool(const SemanticType &)> localType;
   localType = [&](const SemanticType &type) {
     return scalarInput(type) || type == SemanticType::NullPtr ||
-           knownClass(type) || passiveEnum(type) || (workers && type == SemanticType::Void) || (dynamic &&
-             ((type.kind == SemanticType::Reference && type.arguments.size() == 1 && knownClass(type.arguments.front())) ||
-              type.hasFunctionItemShape() ||
-              (type.kind == SemanticType::TypePack && type.concretePack &&
-               std::all_of(type.arguments.begin(), type.arguments.end(), [&](const auto &element) {
-                 return workers ? localType(element) && element.kind != SemanticType::TypePack : scalarOrReference(element);
-               }))));
+           knownClass(type) || passiveEnum(type) ||
+           (workers && type == SemanticType::Void) ||
+           (dynamic &&
+            ((type.kind == SemanticType::Reference &&
+              type.arguments.size() == 1 &&
+              knownClass(type.arguments.front())) ||
+             type.hasFunctionItemShape() ||
+             (type.kind == SemanticType::TypePack && type.concretePack &&
+              std::all_of(type.arguments.begin(), type.arguments.end(),
+                          [&](const auto &element) {
+                            return workers ? localType(element) &&
+                                                 element.kind !=
+                                                     SemanticType::TypePack
+                                           : scalarOrReference(element);
+                          }))));
   };
   const auto recordDestination = [&](const MirPlace *place) {
     return place && place->root == MirPlaceRootKind::Binding &&
@@ -195,17 +213,21 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
   for (auto id : selected) {
     const auto *function = session.program().mir().findFunctionInstance(id);
     if (!function || function->definitionKind != MirDefinitionKind::Source ||
-        function->linkage != LanguageLinkage::Gti || (!dynamic && function->owner) ||
+        function->linkage != LanguageLinkage::Gti ||
+        (!dynamic && function->owner) ||
         function->entryKind != ProgramEntryKind::None ||
         function->requiresUnsafe || function->neverReturns ||
         (!scalar(function->returnType) && !knownClass(function->returnType) &&
-         !(workers && (function->returnType == SemanticType::Void || passiveEnum(function->returnType)))) ||
+         !(workers && (function->returnType == SemanticType::Void ||
+                       passiveEnum(function->returnType)))) ||
         !std::all_of(function->parameterTypes.begin(),
                      function->parameterTypes.end(), localType))
       reject("function signature or definition");
   }
   for (const auto &constructor : program.constructorInstances()) {
-    if (dynamic && std::find(bodies.begin(), bodies.end(), MirBodyAddress{MirBodyKind::Constructor, constructor.id}) == bodies.end())
+    if (dynamic && std::find(bodies.begin(), bodies.end(),
+                             MirBodyAddress{MirBodyKind::Constructor,
+                                            constructor.id}) == bodies.end())
       continue;
     if (!classes.contains(constructor.owner) || constructor.requiresUnsafe ||
         constructor.definitionKind != MirDefinitionKind::Source ||
@@ -247,14 +269,17 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
                                    MirProjectionKind::Dereference &&
                                projection.kind !=
                                    MirProjectionKind::RawDereference &&
-                               !(dynamic && projection.kind == MirProjectionKind::PackElement);
+                               !(dynamic && projection.kind ==
+                                                MirProjectionKind::PackElement);
                       }))
         throw BackendUnsupportedError(
-            "C04 evaluation place outside scalar/reference/local class profile: body " +
+            "C04 evaluation place outside scalar/reference/local class "
+            "profile: body " +
             std::to_string(static_cast<unsigned>(address.kind)) + "/" +
-            std::to_string(address.owner) + " place " + std::to_string(place.id) +
-            " type " + std::to_string(static_cast<unsigned>(place.type.kind)) +
-            " root " + std::to_string(static_cast<unsigned>(place.root)));
+            std::to_string(address.owner) + " place " +
+            std::to_string(place.id) + " type " +
+            std::to_string(static_cast<unsigned>(place.type.kind)) + " root " +
+            std::to_string(static_cast<unsigned>(place.root)));
     for (const auto &value : body.values)
       if (!localType(value.info.type))
         reject("value outside scalar/reference/local class profile");
@@ -271,30 +296,40 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
       for (const auto &instruction : block.instructions) {
         if (instruction.tombstone)
           continue;
-        const bool pointerOperation = dynamic &&
+        const bool pointerOperation =
+            dynamic &&
             (instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem ||
              instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke) &&
             mir_detail::functionPointerOperation(program, instruction);
-        const bool scopeOperation = workers && instruction.intrinsic == IntrinsicKind::ThreadScope;
+        const bool scopeOperation =
+            workers && instruction.intrinsic == IntrinsicKind::ThreadScope;
         if (scopeOperation) {
           (void)c04ScopedTargets(session, address, instruction);
           ++scopes;
         }
-        const bool moveOperation = workers && instruction.intrinsic == IntrinsicKind::Move &&
-            instruction.kind == MirInstructionKind::Move && !instruction.receiver &&
-            !instruction.functionTarget && instruction.operands.size() == 1 &&
-            instruction.parameterTypes.empty() && instruction.info.type == instruction.operands[0].type &&
+        const bool moveOperation =
+            workers && instruction.intrinsic == IntrinsicKind::Move &&
+            instruction.kind == MirInstructionKind::Move &&
+            !instruction.receiver && !instruction.functionTarget &&
+            instruction.operands.size() == 1 &&
+            instruction.parameterTypes.empty() &&
+            instruction.info.type == instruction.operands[0].type &&
             localType(instruction.info.type);
         if (pointerOperation) {
-          formations += instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem;
-          invocations += instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke;
+          formations +=
+              instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem;
+          invocations +=
+              instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke;
         }
-        if ((instruction.intrinsic != IntrinsicKind::None && !pointerOperation && !scopeOperation && !moveOperation) ||
+        if ((instruction.intrinsic != IntrinsicKind::None &&
+             !pointerOperation && !scopeOperation && !moveOperation) ||
             instruction.elementCleanup || instruction.nativeCallbackAdapter ||
             instruction.threadTaskAdapter)
-          throw BackendUnsupportedError("C04 evaluation non-scalar instruction facts: " +
-              std::to_string(static_cast<unsigned>(address.kind)) + "/" + std::to_string(address.owner) +
-              " instruction " + std::to_string(instruction.id) + " intrinsic " +
+          throw BackendUnsupportedError(
+              "C04 evaluation non-scalar instruction facts: " +
+              std::to_string(static_cast<unsigned>(address.kind)) + "/" +
+              std::to_string(address.owner) + " instruction " +
+              std::to_string(instruction.id) + " intrinsic " +
               std::to_string(static_cast<unsigned>(instruction.intrinsic)));
         if (instruction.rawMemoryAccess &&
             (instruction.unsafeOperation !=
@@ -353,18 +388,24 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
           const bool scopeTransfer =
               publication && scopeOperation &&
               source->kind == MirDropObligationKind::PreparedParameter &&
-              std::any_of(instruction.operands.begin(), instruction.operands.end(),
-                          [&](const auto &operand) {
+              std::any_of(instruction.operands.begin(),
+                          instruction.operands.end(), [&](const auto &operand) {
                             return operand.type == source->dropType.type;
                           });
           const bool workerConstructorTransfer =
-              workers && publication && instruction.kind == MirInstructionKind::Construct &&
+              workers && publication &&
+              instruction.kind == MirInstructionKind::Construct &&
               instruction.constructorTarget &&
-              std::find(bodies.begin(), bodies.end(), MirBodyAddress{
-                  MirBodyKind::Constructor, *instruction.constructorTarget}) != bodies.end() &&
+              std::find(bodies.begin(), bodies.end(),
+                        MirBodyAddress{MirBodyKind::Constructor,
+                                       *instruction.constructorTarget}) !=
+                  bodies.end() &&
               source->kind == MirDropObligationKind::PreparedParameter &&
-              std::any_of(instruction.parameterTypes.begin(), instruction.parameterTypes.end(),
-                          [&](const auto &type) { return type == source->dropType.type; });
+              std::any_of(instruction.parameterTypes.begin(),
+                          instruction.parameterTypes.end(),
+                          [&](const auto &type) {
+                            return type == source->dropType.type;
+                          });
           const bool resultPublication =
               publication && address.kind == MirBodyKind::Function &&
               term == MirTerminatorKind::Return &&
@@ -396,12 +437,17 @@ std::vector<MirBodyAddress> validateC04Evaluation(const Session &session,
           }
           if (event.kind == MirLifecycleEventKind::TransferOut &&
               !constructorPublication && !fieldInitializerPublication &&
-              !parameterTransfer && !workerConstructorTransfer && !scopeTransfer && !resultPublication)
-            throw BackendUnsupportedError("C04 evaluation replacement or escaping owner lifecycle: " +
-                std::to_string(static_cast<unsigned>(address.kind)) + "/" + std::to_string(address.owner) +
-                " instruction " + std::to_string(instruction.id) + " intrinsic " +
-                std::to_string(static_cast<unsigned>(instruction.intrinsic)) + " source-kind " +
-                std::to_string(source ? static_cast<unsigned>(source->kind) : 999));
+              !parameterTransfer && !workerConstructorTransfer &&
+              !scopeTransfer && !resultPublication)
+            throw BackendUnsupportedError(
+                "C04 evaluation replacement or escaping owner lifecycle: " +
+                std::to_string(static_cast<unsigned>(address.kind)) + "/" +
+                std::to_string(address.owner) + " instruction " +
+                std::to_string(instruction.id) + " intrinsic " +
+                std::to_string(static_cast<unsigned>(instruction.intrinsic)) +
+                " source-kind " +
+                std::to_string(source ? static_cast<unsigned>(source->kind)
+                                      : 999));
         }
         switch (instruction.kind) {
         case MirInstructionKind::Lifecycle:
