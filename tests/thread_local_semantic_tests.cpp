@@ -1110,9 +1110,9 @@ int main() {
       {"void selected<T>() { " + assertion + "}", "selected"},
       {"class Selected<T> { public: Selected() { " + assertion + "} };",
        "construct"},
-      {"class Selected<T> { public: ~Selected() { " + assertion + "} };",
+      {"class Selected<T> { public: Selected() = default; ~Selected() { " + assertion + "} };",
        "destroy"},
-      {"class Selected<T> { " + assertion + "public: int field = 1; };",
+      {"class Selected<T> { " + assertion + "public: Selected() = default; int field = 1; };",
        "fields"},
   };
   for (const auto &[declaration, kind] : instances) {

@@ -533,7 +533,7 @@ int main() {
 
 void checkLegacyBorrowedOperatorSchedules() {
   const std::string source = R"gti(
-struct Counter { int value = 4; };
+struct Counter { int value = 4; Counter() = default; };
 class Cursor {
   Counter& counter;
 public:
@@ -1949,15 +1949,17 @@ public:
   Guard(char& source) : value(source) {}
   ~Guard() { int check = 1 / (this.value == 'a' ? 1 : 0); }
 };
-class Finish {};
+class Finish { public: Finish() = default; };
 class Cursor {
 public:
+  Cursor() = default;
   char operator*() { return 'a'; }
   void operator++() mut {}
   bool operator!=(Finish finish) { return true; }
 };
 class Sequence {
 public:
+  Sequence() = default;
   Cursor begin() { return Cursor(); }
   Finish end() { return Finish(); }
 };

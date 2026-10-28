@@ -24,6 +24,7 @@ public:
 
 class class_task {
 public:
+  class_task() = default;
   void operator()() { std::println("class read task"); }
   void operator()() mut { std::println("class mutable task"); }
   void operator()() && { std::println("class once task"); }
@@ -31,6 +32,7 @@ public:
 
 class fresh_task {
 public:
+  fresh_task() = default;
   void operator()() { std::println("fresh class task"); }
 };
 

@@ -12,7 +12,7 @@ def main():
     source = (
         "// supplementary character: \U0001f600\n"
         "using Action = void();\n"
-        "class Tag<S = void> {};\n"
+        "class Tag<S = void> { public: Tag() = default; };\n"
         "int describe<R>(Tag<R()>& tag) { return 0; }\n"
         "int main() { Tag<Action> tag{}; Tag<void> metadata{}; return describe(tag); }\n"
     )
@@ -173,7 +173,7 @@ def main():
             assert not diagnostics(18)
 
             # One public signature binds the class's result and argument pack.
-            pattern = "// \U0001f600\nclass Callback<R(Args...)> {};\n"
+            pattern = "// \U0001f600\nclass Callback<R(Args...)> { public: Callback() = default; };\n"
             change(19, pattern)
             assert not diagnostics(19)
             selected = request("textDocument/hover", {
@@ -276,8 +276,8 @@ def main():
             assert not diagnostics(32)
             family = (
                 "// \U0001f600\n"
-                "class Callback<R(Args...)> { public: int mode() { return 1; } };\n"
-                "class Callback<R(Args...) mut> { public: int mode() { return 2; } };\n"
+                "class Callback<R(Args...)> { public: Callback() = default; int mode() { return 1; } };\n"
+                "class Callback<R(Args...) mut> { public: Callback() = default; int mode() { return 2; } };\n"
                 "int main() { Callback<int() mut> value{}; return value.mode(); }\n"
             )
             change(33, family)

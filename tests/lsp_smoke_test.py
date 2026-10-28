@@ -1810,7 +1810,7 @@ def test_class_scoped_type_alias_tooling(executable, root):
         "  /// The scalar value exposed by Traits.\n"
         "  using value_type = int32_t;\n"
         "  value_type identity(value_type value) { return value; }\n"
-        " public: Traits() = default; };\n"
+        "};\n"
         "using Value = Traits::value_type;\n"
         "int main() { Value value = 7; return value - 7; }\n"
     )

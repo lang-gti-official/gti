@@ -42,6 +42,7 @@ private:
 };
 
 struct defaulted_wrapper {
+  defaulted_wrapper() = default;
   holder value = holder::one(resource(4));
 };
 

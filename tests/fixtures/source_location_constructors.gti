@@ -17,8 +17,6 @@ public:
 
 struct DesignatedLocations {
   std::source_location explicit_where{};
-public:
-  DesignatedLocations() = default;
 };
 
 int main() {

@@ -23,8 +23,6 @@ static thread_local int first = 1;
 thread_local static int second = 2;
 class Store {
   static thread_local mut Store* current = nullptr;
-public:
-  Store() = default;
 };
 int main() {
   thread_local mut int local = 0;

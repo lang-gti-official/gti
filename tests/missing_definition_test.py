@@ -56,6 +56,7 @@ int inspect<T>() {
 """
         specialization = """class traits::Mapper<int> {
 public:
+  Mapper() = default;
   int decode(int& input) { return input; }
   int inspect() { return 3; }
 };

@@ -102,6 +102,7 @@ public:
 
 // A generated default constructor runs the same declaration default.
 struct Split {
+  Split() = default;
   int32_t lap = Gauge(12).reading().value;
 };
 
@@ -134,6 +135,7 @@ public:
 };
 
 struct Gauged {
+  Gauged() = default;
   Reading mark = measure(Probe(40));
 };
 

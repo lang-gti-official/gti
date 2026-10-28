@@ -49,6 +49,7 @@ PROGRAMS = (
         + """\
 class Boxes {
 public:
+  Boxes() = default;
   mut Box left = Box(1);
   mut Box right = Box(2);
 };

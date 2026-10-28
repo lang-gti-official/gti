@@ -123,7 +123,7 @@ def main():
             members = (
                 "// 😀 UTF-16 control\n"
                 "concept readable<T> = requires(T& x) { unsafe { x.read() } -> int; };\n"
-                "struct Meter { unsafe int read() { return 7; } };\n"
+                "struct Meter { Meter() = default; unsafe int read() { return 7; } };\n"
                 "int main() { Meter meter{}; return meter.read(); }\n"
             )
             member_error = next(d for d in change(members, 9) if d["code"] == "GTI-S2055")
