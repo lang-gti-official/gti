@@ -14462,6 +14462,34 @@ auto SemanticVisitor::Impl::analyzeRestoringIntrinsicCall(
     return;
   }
   const bool swap = intrinsic == IntrinsicKind::RestoringSwap;
+  // A polymorphic class that another class derives from may be reached
+  // through a base view; relocating it would replace the dispatch state of
+  // the enclosing object. A generic class whose base names the class's
+  // definition counts, whatever its arguments, so the answer does not depend
+  // on which instances exist. Until complete-object provenance is tracked,
+  // such exchanges are rejected (owner decision, 2026-10-28).
+  if (const ClassInfo *owner =
+          type.kind == SemanticType::Class ? classInfo(type) : nullptr;
+      owner && owner->polymorphic &&
+      std::any_of(classes.begin(), classes.end(), [&](const ClassInfo &other) {
+        return std::any_of(other.bases.begin(), other.bases.end(),
+                           [&](const ClassBaseTypeInfo &base) {
+                             return base.type.kind == SemanticType::Class &&
+                                    base.type.classId == type.classId;
+                           });
+      })) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2018", DiagnosticPhase::Semantics, tokenSpan(expr.paren()),
+        "Restoring transfer of '" + typeSpelling(type) +
+            "' is not supported: a reference to it may name the base part of "
+            "a derived object.");
+    diagnostic.hints.emplace_back(
+        "Swap or exchange objects of the most-derived class, or replace the "
+        "whole object by assignment.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    currentType = SemanticType::Unknown;
+    return;
+  }
   for (const ExprPtr &argument : expr.arguments()) {
     if (isOwnerDependentTextExpression(argument)) {
       reportOwnerDependentTextStorage(argument,

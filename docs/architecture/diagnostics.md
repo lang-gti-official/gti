@@ -761,6 +761,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   field token and explains that field cleanup belongs to the enclosing object.
   Explicit and implicit `this` paths share this rule; separately owned locals
   remain movable. No fix-it changes cleanup ownership.
+  A restoring swap or exchange of a polymorphic class that another class
+  derives from also reports `GTI-S2018`, at the user's call, with the library
+  instance and the instantiating call as related notes. The message names the
+  type and says a reference to it may name the base part of a derived object;
+  the hint suggests exchanging objects of the most-derived class or replacing
+  the whole object by assignment. No fix-it: which object to exchange is the
+  programmer's choice.
 - `GTI-S2003` retains an ordinary assignment mismatch when a move-only type
   cannot be copied through a dereference. Dereference writes use the same
   copy/move-assignment policy as binding, field, and subscript writes; point at

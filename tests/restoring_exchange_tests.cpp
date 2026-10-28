@@ -562,5 +562,86 @@ int main() {
                         [](const auto &d) { return d.code == "GTI-B0001"; }),
            "indexed misuse is a source diagnostic, not a backend failure");
   }
+  // A restoring swap or exchange of a polymorphic class that another class
+  // derives from is rejected for now: a reference to it may name the base
+  // part of a derived object, whose dispatch state relocation would replace.
+  const std::string hierarchy = R"(#include <std/utility>
+#include <std/vector>
+class Base {
+public:
+  int value;
+  Base(int value) : value(value) {}
+  virtual int read() { return this.value; }
+};
+class Left : public Base {
+public:
+  Left(int value) : Base(value) {}
+  int read() override { return this.value * 100; }
+};
+interface Shape { int area(); };
+class Square : public Shape {
+public:
+  int side;
+  Square(int side) : side(side) {}
+  int area() override { return this.side * this.side; }
+};
+class Plain { public: int value; Plain(int value) : value(value) {} };
+class Wider : public Plain { public: Wider(int value) : Plain(value) {} };
+class Holder<T> { public: T held; Holder(T held) : held(std::move(held)) {} virtual int tag() { return 1; } };
+class Special<T> : public Holder<T> { public: Special(T held) : Holder<T>(std::move(held)) {} int tag() override { return 2; } };
+T rotate<T>(mut T& place, T next) requires std::relocatable<T> { return std::exchange(place, std::move(next)); }
+)";
+  for (const std::string body :
+       {// A leaf polymorphic class, a non-polymorphic base and indexed
+        // element swaps of a polymorphic base stay valid.
+        "mut Square a = Square(1); mut Square b = Square(2); std::swap(a, b); "
+        "Square c = rotate(a, Square(3)); return a.area() + c.area();",
+        "mut Wider a = Wider(1); mut Wider b = Wider(2); mut Plain& x = a; "
+        "mut Plain& y = b; std::swap(x, y); return a.value;",
+        "mut std::vector<Base> row{}; row.push_back(Base(1)); "
+        "row.push_back(Base(2)); row.swap_elements(std::size_t(0), "
+        "std::size_t(1)); return row[std::size_t(0)].read();"}) {
+    const auto valid =
+        analyzeWithStandardLibrary("restoring-polymorphic-valid.gti",
+                                   hierarchy + "int main() { " + body + " }\n");
+    expect(valid.canGenerateCode(), "leaf polymorphic, non-polymorphic and "
+                                    "indexed restoring transfers stay valid: " +
+                                        body);
+  }
+  for (const std::string body :
+       {"mut Left left = Left(3); mut Left other = Left(4); flip(left, other); "
+        "return left.read();",
+        "mut Left left = Left(3); return replace(left);",
+        "mut Base a = Base(1); mut Base b = Base(2); std::swap(a, b); return "
+        "a.read();",
+        "mut Base whole = Base(3); Base old = rotate<Base>(whole, Base(5)); "
+        "return old.read();",
+        "mut Holder<int> a = Holder<int>(1); Holder<int> old = "
+        "std::exchange(a, Holder<int>(2)); return old.tag();"}) {
+    const std::string source =
+        hierarchy +
+        "void flip(mut Base& first, mut Base& second) { std::swap(first, "
+        "second); }\n"
+        "int replace(mut Base& view) { Base old = std::exchange(view, "
+        "Base(5)); return old.read(); }\n"
+        "int main() { " +
+        body + " }\n";
+    const auto rejected =
+        analyzeWithStandardLibrary("restoring-polymorphic-base.gti", source);
+    const auto found = std::find_if(
+        rejected.diagnostics.begin(), rejected.diagnostics.end(),
+        [](const auto &d) {
+          return d.code == "GTI-S2018" &&
+                 d.message.find("may name the base part of a derived object") !=
+                     std::string::npos;
+        });
+    expect(
+        !rejected.canGenerateCode() && found != rejected.diagnostics.end() &&
+            found->primary.source.ends_with("restoring-polymorphic-base.gti") &&
+            !found->hints.empty(),
+        "restoring transfer of a polymorphic base is a source error at the "
+        "user's call: " +
+            body);
+  }
   return failures ? 1 : 0;
 }
