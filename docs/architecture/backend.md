@@ -5617,12 +5617,14 @@ Its producer must satisfy the centralized `textAddressResultLoan` query for
 `TextViewFromAddress` or `CStringFromAddress`, including the raw character
 address, counted extent where present, ordered readonly owner witness and
 checked loan identity. Native owner representation admits passive witnesses or
-the same ordinary class boundary as raw references: a unique native class or
-struct instance without compiler capability, polymorphism, bases, union or
-foreign ABI layout. The owner address is an independent lifetime witness; no
-owner bytes are read or copied. An unrelated owning user class checks both text
-forms, selected-owner identity and exact resource destruction; source escape,
-movement and mutation and unsupported witness layouts remain rejected.
+the same class boundary as raw references: a unique concrete class or struct
+instance without compiler capability or foreign ABI layout, including a
+complete polymorphic one through its exact dispatch metadata. An interface view
+of the owner is not a witness. The owner address is an independent lifetime
+witness; no owner bytes are read or copied. An unrelated owning user class
+checks both text forms, selected-owner identity and exact resource
+destruction; source escape, movement and mutation and unsupported witness
+layouts remain rejected.
 Raw and declared-unsafe source authority cannot substitute for one another;
 both retain dedicated forgery controls. Parent-derived stored carriers and
 unsupported owner representations remain outside this return proof.
