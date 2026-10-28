@@ -4,7 +4,8 @@
 A result borrowed from a receiver behind a carrier's stored reference field,
 including a mutex guard, and a confined callable returned as its call's exact
 result run on both backends. The C++ emitter does not represent a returned
-confined callable, so that fixture runs natively only.
+confined callable or a holder's reference field selected through a returned
+inner holder, so those fixtures run natively only.
 """
 
 import argparse
@@ -23,6 +24,7 @@ CASES = (
     ("returned_owned_closures.gti", [], "29\n2\n", True),
     ("captured_reference_ranges.gti", [], "1039\n89\n", True),
     ("local_holder_views.gti", [], "6\n9\n9\n", True),
+    ("nested_holder_accessors.gti", [], "4\n60\n", False),
 )
 
 

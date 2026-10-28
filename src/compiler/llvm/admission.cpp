@@ -2331,7 +2331,10 @@ private:
   bool referenceReturn(const MirBody &body, const MirTerminator &term) const {
     if (term.kind != MirTerminatorKind::Return || !term.returnLoan ||
         !term.value || term.value->kind != MirOperandKind::Loan ||
-        term.value->loan != *term.returnLoan || !referent(body.returnType))
+        term.value->loan != *term.returnLoan ||
+        body.returnType.kind != SemanticType::Reference ||
+        body.returnType.arguments.size() != 1 ||
+        body.returnType.arguments.front().kind != SemanticType::Class)
       return false;
     const auto *loan = body.findLoan(*term.returnLoan);
     if (!loan || loan->kind != MirLoanKind::Return || !loan->escapes ||
@@ -4158,13 +4161,15 @@ public:
     // The exact MIR query owns the address/count, ordered readonly witness
     // and loan. Native representation only proves the independent owner's
     // existing address contract; it does not read, copy or rebuild the owner.
-    // An interface or abstract view of an owner with dispatch metadata is
-    // also an address only: the selected view, never its bytes.
+    // Any other owner storage the backend represents is an address only:
+    // an interface or abstract view with dispatch metadata, or mutex
+    // storage, whose bytes are never read.
     const auto &owner = formal.arguments.front();
     return passiveReferenceType(formal) || ordinaryRawReferenceObject(owner) ||
            (owner.kind == SemanticType::Class &&
-            dispatchProofs.contains(owner) &&
-            dispatchProofs.metadata(owner).has_value());
+            ((dispatchProofs.contains(owner) &&
+              dispatchProofs.metadata(owner).has_value()) ||
+             mutexShape(owner).has_value()));
   }
 
   const MirInstruction *earlierLiveCallResult(

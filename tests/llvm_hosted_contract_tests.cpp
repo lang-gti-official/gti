@@ -930,13 +930,13 @@ int main() {
         gti_test::lowerProgram(viewed, viewed.mir, viewed.mir), issues);
     require(viewedProgram && planLlvmAdmission(*viewedProgram).admitted(),
             "text construction admits an interface view of its owner");
-    // Mutex storage is outside the witness boundary.
+    // Mutex storage is represented native storage: an address witness too.
     FrontendOptions concurrent = options;
     concurrent.target.executionProfile = ExecutionProfile::Concurrent;
     concurrent.target.runtimeCapabilities.threads = true;
-    const auto unsupported = Frontend(concurrent)
-                                 .analyze("unsupported-text-owner-layout.gti",
-                                          std::string(R"(
+    const auto mutexOwner = Frontend(concurrent)
+                                .analyze("mutex-text-owner.gti",
+                                         std::string(R"(
 #include <std/memory>
 #include <std/mutex>
 #include <std/string_view>
@@ -944,17 +944,16 @@ int main() {
   std::mutex<int> owner{1};
   char bytes[3] = {'a', '\0', 'b'};
 )") + type + " result = unsafe { " + construct +
-                                              " }; return " + use + "; }",
-                                          {repository / "stdlib/prelude.gti"},
-                                          {}, {repository / "stdlib"});
-    require(unsupported.canGenerateCode(),
-            "unsupported text witness layout is valid source");
-    const auto pending = verifiedLoweredProgram(
-        gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir,
+                                             " }; return " + use + "; }",
+                                         {repository / "stdlib/prelude.gti"},
+                                         {}, {repository / "stdlib"});
+    require(mutexOwner.canGenerateCode(), "mutex text witness is valid source");
+    const auto mutexProgram = verifiedLoweredProgram(
+        gti_test::lowerProgram(mutexOwner, mutexOwner.mir, mutexOwner.mir,
                                concurrent.target),
         issues);
-    require(pending && !planLlvmAdmission(*pending).admitted(),
-            "text construction does not admit mutex storage as its witness");
+    require(mutexProgram && planLlvmAdmission(*mutexProgram).admitted(),
+            "text construction admits mutex storage as its witness");
   }
 }
 

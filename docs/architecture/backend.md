@@ -5089,7 +5089,8 @@ a checked selected source, or whole-binding Move, and exactly one Initialize
 into a fresh whole local. The producer, publication, ownership event and source,
 value and destination drop identities must agree. Explicit staged Move Construct,
 source-defined special members, borrowed fields and active-copy lifetimes reject.
-Scalar and ordinary record fields compose recursively. Each field retains its
+Scalar and ordinary record fields compose recursively; a function-pointer
+handle field, one code address, copies as bytes. Each field retains its
 own generated-member contract; an outer generated move does not bypass a
 field's source-defined or deleted constructor. Fixed-array, payload and owner
 fields retain their separate transfer prerequisites. Cleanup identity is checked
@@ -5293,9 +5294,10 @@ stored dependency is a `Stored` loan that binding carries, and an escaping
 `Return` loan whose one `Borrow` relays a supported loan with the same source
 and stored dependency. Any other stored dependency stays refused. A free call
 that relays such a view to a non-hierarchy base, as `pickBase(plain)` does,
-returns the callee's checked address, not a dispatch view. Returning a
-non-hierarchy base reference to a carrier parameter (`Base& up(Plain&)`)
-stays refused. `dispatch.upcast-carriers` and `carrier_reference_runtime`
+returns the callee's checked address, not a dispatch view, and so does a
+function returning a non-hierarchy base reference to a carrier parameter
+(`Base& up(Plain&)`): its reference return relays the parameter's loan like
+any class reference return. `dispatch.upcast-carriers` and `carrier_reference_runtime`
 run these forms at O0-O3.
 
 A base or interface view of a carrier now takes a `Local` loan on the
@@ -5317,9 +5319,15 @@ thread's slot as a fresh construction or by-value result, so every thread's
 object installs its own dispatch state. Code borrows it through its symbol as
 a complete object. At thread exit, its cleanup runs each destructor under the
 lifecycle phase of that destructor's own class, as any other complete cleanup
-does. A thread-local initialized by copying program storage stays
-`PolymorphicTransfer`, because the transfer planner has no source view of a
-symbol.
+does. A thread-local initialized by copying program storage is a generated
+copy made in the slot.
+
+A copy may read program storage in place: a namespace object, a static field
+or a thread-local, named by its symbol. It may also read a class field of any
+checked source, because a by-value field is a complete object of its declared
+class. Moves out of either still take their own planned paths. A copied
+fixed-array element, selected through a checked index, stays
+`PolymorphicTransfer`.
 
 A shared owner of a polymorphic object keeps one control block across clones
 and verified upcasts. An upcast moves only the handle's view to the static
@@ -5336,8 +5344,7 @@ closure's relocation moves exactly its captures.
 - replacement of base views;
 - captures and non-generated wrappers;
 - whole-array transport;
-- copies of program storage, including into thread-local storage, and other
-  nonlocal destinations;
+- copied array elements and nonlocal destinations;
 - callback, native and thread combinations, including a moved erased callable
   consumed by a thread spawn.
 
@@ -5719,8 +5726,8 @@ checked loan identity. Native owner representation admits passive witnesses or
 the same class boundary as raw references: a unique concrete class or struct
 instance without compiler capability or foreign ABI layout, including a
 complete polymorphic one through its exact dispatch metadata, or an interface or
-abstract view of an owner with dispatch metadata. Mutex storage is not a
-witness. The owner address is an independent lifetime
+abstract view of an owner with dispatch metadata, or mutex storage. The owner
+address is an independent lifetime
 witness; no owner bytes are read or copied. An unrelated owning user class
 checks both text forms, selected-owner identity and exact resource
 destruction; source escape, movement and mutation and unsupported witness

@@ -47,6 +47,7 @@ public:
 Gauge& up(Scaled& scaled) { return scaled; }
 Gauge& pick(Gauge& gauge) { return gauge; }
 Base& pickBase(Base& base) { return base; }
+Base& upBase(Plain& plain) { return plain; }
 
 int32_t views(mut int32_t& scale) {
   Scaled direct{2, scale};
@@ -62,7 +63,8 @@ int32_t bases(mut int32_t& scale) {
   Plain plain{5, scale};
   Base& local = plain;
   Base& relayed = pickBase(plain);
-  int32_t seen = local.get() * 10 + relayed.get();
+  Base& returned = upBase(plain);
+  int32_t seen = local.get() * 100 + relayed.get() * 10 + returned.get();
   Plain kept = std::move(plain);
   return seen * 100 + kept.read();
 }
@@ -83,5 +85,5 @@ int main() {
   int32_t first = views(scale);
   int32_t second = bases(scale);
   int32_t third = witness();
-  return first == 2886026 && second == 5515 && third == 47 ? 0 : 1;
+  return first == 2886026 && second == 55515 && third == 47 ? 0 : 1;
 }

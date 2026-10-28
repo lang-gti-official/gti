@@ -5838,12 +5838,27 @@ private:
   // alias's own access never reaches through a read-only stored reference.
   [[nodiscard]] std::optional<AccessMode>
   storedReferenceAccessFor(const MirPlace &place) const {
-    if (place.root != MirPlaceRootKind::Binding)
+    // The root object is a binding, or the referent a call returned by
+    // reference (a loan-rooted place selects within that referent).
+    SemanticType type;
+    if (place.root == MirPlaceRootKind::Binding) {
+      const HirBinding *binding = findBinding(place.binding);
+      if (binding == nullptr)
+        return std::nullopt;
+      type = binding->info.type;
+    } else if (place.root == MirPlaceRootKind::Loan) {
+      const MirLoan *loan = output.findLoan(place.loan);
+      const HirValue *referent =
+          loan != nullptr && loan->kind == MirLoanKind::CallResult
+              ? findValue(loan->producedBy)
+              : nullptr;
+      if (referent == nullptr ||
+          referent->info.category != ValueCategory::Place)
+        return std::nullopt;
+      type = referent->info.type;
+    } else {
       return std::nullopt;
-    const HirBinding *binding = findBinding(place.binding);
-    if (binding == nullptr)
-      return std::nullopt;
-    SemanticType type = binding->info.type;
+    }
     bool storedReference = false;
     std::optional<AccessMode> crossed;
     for (const auto &projection : place.projections) {
@@ -5897,38 +5912,6 @@ private:
         place->projections.back().kind != MirProjectionKind::Field)
       return 0;
     return id;
-  }
-
-  // A by-value text call relaying a text field of a by-value formal: the
-  // field's text is the caller's under the function's field contract
-  // (L-OWN-02), while the formal is an immutable local copy whose cleanup
-  // leaves that text alone.
-  [[nodiscard]] bool
-  byValueFormalTextRelay(const HirValue &value,
-                         const std::vector<HirValueId> &arguments) const {
-    const auto text = [](const SemanticType &type) {
-      return type.kind == SemanticType::StringView ||
-             type.kind == SemanticType::CString;
-    };
-    if (function == nullptr || !text(value.info.type) ||
-        value.info.category != ValueCategory::Value ||
-        value.borrowOrigin != BorrowOriginKind::Argument ||
-        !value.borrowFields.empty() || value.borrowArgument >= arguments.size())
-      return false;
-    const auto found = valuePlaces.find(arguments[value.borrowArgument]);
-    const MirPlace *place =
-        found == valuePlaces.end() ? nullptr : output.findPlace(found->second);
-    if (place == nullptr || !text(place->type) ||
-        place->root != MirPlaceRootKind::Binding ||
-        place->projections.size() != 1 ||
-        place->projections.front().kind != MirProjectionKind::Field)
-      return false;
-    for (std::size_t index = 0; index < function->parameterBindings.size() &&
-                                index < function->parameterTypes.size();
-         ++index)
-      if (function->parameterBindings[index] == place->binding)
-        return function->parameterTypes[index].kind == SemanticType::Class;
-    return false;
   }
 
   [[nodiscard]] MirPlaceId borrowedSourcePlace(HirValueId id) const {
@@ -15961,19 +15944,8 @@ private:
         const bool completeEmpty =
             result && completeEmptyBorrowValue(*statement.value, *result,
                                                output.returnType);
-        // A text field result exports no loan for a relay of its by-value
-        // formal's field: the call's own loan names the formal's local
-        // copy, which ends here, while the text is the caller's, as for a
-        // direct return of that field (L-OWN-02).
-        const bool relayedFormalField =
-            value != nullptr && function != nullptr &&
-            mir_detail::textFieldResult(function->returnType,
-                                        function->returnBorrowOrigin,
-                                        function->returnBorrowParameter,
-                                        function->returnBorrowFields) &&
-            byValueFormalTextRelay(*value, callArgumentValues(*value));
         if (value != nullptr && value->info.traits.containsBorrowedState &&
-            !completeEmpty && !relayedFormalField) {
+            !completeEmpty) {
           MirLoanId retained = loanForValue(*statement.value);
           if (retained == 0 &&
               (output.returnType.kind == SemanticType::Class ||

@@ -105,7 +105,12 @@ int main() {
     return inner() + 1;
   };
   Holder holder = Holder(twice);
-  if (outer() != 611 || again() != 610 || holder.value() != 18) { return 9; }
+  Twice taken = holder.held;
+  Base& taken_base = taken;
+  if (outer() != 611 || again() != 610 || holder.value() != 18 ||
+      taken_base.value() != 18) {
+    return 9;
+  }
   // Array elements copied from a checked object, independent of it.
   Twice pair[2] = {twice, twice};
   twice.seed = 1;

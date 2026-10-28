@@ -1,7 +1,9 @@
 // Hierarchy objects in program storage: namespace globals and a static
 // field, each constructed in place by its program initialization step from a
 // fresh construction or by-value result, and borrowed through its symbol as a
-// complete object. Program storage carries no source or owning cleanup.
+// complete object. Program storage carries no source or owning cleanup. A
+// copy of program storage reads that complete object in place with the
+// generated copy, which installs the copy's own dispatch state.
 interface Shape { int area(); };
 
 interface Named { int code(); };
@@ -26,6 +28,21 @@ public:
 
 Square scaled(int divisor) { return Square(12 / divisor); }
 
+Square square_seed = Square(5);
+
+class Shelf {
+public:
+  Square item;
+  Shelf() : item(Square(6)) {}
+};
+
+Shelf shelf{};
+Square snapshot() { return square_seed; }
+int measure(Square value) {
+  Shape& shape = value;
+  return shape.area();
+}
+
 mut Square square = Square(3);
 Square made = scaled(3);
 
@@ -45,5 +62,18 @@ int main() {
   if (square.area() != 16 || square.code() != 14) { return 2; }
   Registry::counter.bump();
   Registry::counter.bump();
-  return Registry::counter.area() == 2 ? 0 : 3;
+  if (Registry::counter.area() != 2) { return 3; }
+  // Copies of program storage are independent complete objects.
+  mut Square copy = square;
+  copy.grow();
+  Shape& view = copy;
+  if (view.area() != 25 || square.area() != 16) { return 4; }
+  Counter counted = Registry::counter;
+  Square pair[2] = {square_seed, square};
+  Named& second = pair[1];
+  Square shelved = shelf.item;
+  if (counted.area() != 2 || second.code() != 14 || shelved.area() != 36) {
+    return 5;
+  }
+  return snapshot().area() + measure(square_seed) == 50 ? 0 : 6;
 }

@@ -3917,19 +3917,25 @@ void testDispatchPerUseWitnesses() {
            "carries its thread-storage witness: " +
                plan.limitation());
   }
+  // A copy of program storage reads that complete object in place, into a
+  // thread's slot as into a local; a copied array element stays refused.
   const auto copiedThreadLocal =
       threadLocal("};\n P global{};\n thread_local P value = global;");
-  expect(!copiedThreadLocal.admitted() &&
-             std::any_of(copiedThreadLocal.requirements().begin(),
-                         copiedThreadLocal.requirements().end(),
+  expect(copiedThreadLocal.admitted(),
+         "a thread-local copy of program storage is a generated copy: " +
+             copiedThreadLocal.limitation());
+  const auto copiedElement = threadLocal(
+      "};\n P values[2] = {P(), P()};\n P value = values[1];");
+  expect(!copiedElement.admitted() &&
+             std::any_of(copiedElement.requirements().begin(),
+                         copiedElement.requirements().end(),
                          [](const auto &use) {
                            return use.required &&
                                   use.entry->key() ==
                                       "Shape.PolymorphicTransfer" &&
                                   !use.implementedShape;
                          }),
-         "a thread-local copy of program storage keeps an explicit transfer "
-         "exclusion");
+         "a copied array element keeps an explicit transfer exclusion");
 }
 
 } // namespace
