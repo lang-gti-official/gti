@@ -135,6 +135,17 @@ def run(executable, root):
         diagnostics = change('int main() { int value = "wrong"; return 0; }\n')
         assert any(d.get("severity") == 1 for d in diagnostics)
         assert all(actions(d) == [] for d in diagnostics)
+        for source, code in [
+            ('#include <std/string>\nvoid consume(std::string value) {}\n'
+             'int main() { std::string value = std::string("x"); consume(value); return 0; }\n',
+             "GTI-S2018"),
+            ('class Counter { public: mut int value = 0; Counter() = default; '
+             'void update() { value = 1; } };\n', "GTI-S2002"),
+        ]:
+            diagnostic = next(d for d in change(source) if d["code"] == code)
+            assert not diagnostic.get("data", {}).get("fixes"), diagnostic
+            assert actions(diagnostic) == []
+            assert actions(diagnostic, automatic=True) == []
     finally:
         session.close()
     print("discard/include repair round trips, alternatives, Unicode/CRLF and stale identity passed")
