@@ -257,8 +257,9 @@ semantics §3.12.5), method/operator/constructor/parameter metaobjects and
 source locations (§3.12.6), budget coverage over nested callable expansions,
 and the roadmap/ledger closure. Decoding clients are the byte and text readers
 of `tests/fixtures/reflection_construct.gti` and
-`examples/138-structural-construction.gti`; the reflected JSON decoder was subsequently implemented and promoted as
-described in the completed acceptance gate below. The two reflection defects found by the audit (GitHub #4, dropped
+`examples/138-structural-construction.gti`; the reflected JSON decoder was
+subsequently implemented and promoted as described in the completed acceptance
+gate below. The two reflection defects found by the audit (GitHub #4, dropped
 receiver evaluation; GitHub #5, unchecked owner type) are fixed here.
 Invocation through a metaobject (`invoke`) is not provided (Q16: metadata
 first); static fields and a declaration-position type spelling (R7) remain
@@ -392,7 +393,7 @@ decisions; the residual sub-questions are listed afterwards.
 ## Residual Questions
 
 - **R1 (implemented).** Per-statement element and per-declaration expanded-body
-  limits are enforced by `analyzeConstexprForStmt` and report `GTI-S2108`; the
+  limits are enforced by `SemanticVisitor::Impl::visitConstexprForStmt` and report `GTI-S2108`; the
   nested expansion/budget fixtures are part of phase-3 acceptance. These are
   separate from the constant evaluator's shared step/depth budgets.
 - **R2 (implemented constant metadata).** Field name/type/index queries fold

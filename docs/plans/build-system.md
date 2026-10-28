@@ -5,8 +5,7 @@
 > [`docs/architecture/build-and-driver.md`](../architecture/build-and-driver.md).
 
 Status (reconciled 2026-10-28): implementation in progress; Milestones 0
-through 7 are complete for
-their bounded local/path/native and pinned-Git dependency scopes. The source
+through 7 are complete for their bounded local/path/native and pinned-Git dependency scopes. The source
 registry bootstrap is also implemented; Stage 4 below records its accepted
 scope and remaining service/governance work.
 
@@ -26,8 +25,8 @@ still not implemented. Public `kind = "library"` is implemented for infallible
 LLVM closures on macOS arm64/Linux x86_64, including generated headers,
 immutable generations and cache/report/clean integration. Fallible exports and
 complete E-EMBED/B-LIB/T-EMBED/Q-EMBED acceptance remain; this is not the
-backend's ordinary object ABI. Aggregate `import std` and read-only LSP `ProjectFacts`
-consumption are delivered, not remaining project foundations.
+backend's ordinary object ABI. Aggregate `import std` and read-only LSP
+`ProjectFacts` consumption are delivered, not remaining project foundations.
 
 ## Current Implementation
 

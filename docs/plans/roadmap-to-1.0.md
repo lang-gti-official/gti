@@ -19,8 +19,8 @@ lifetime, checked borrowing, target operations and verified failure control
 flow. Each private/source boundary needs its own rationale. Removing a private
 handle is not success if safety, supported programs or execution cost regress.
 
-Implementation-status audit: **2026-10-28, canonical main `cdcf47894`,
-GTI 0.486.0**. This supersedes the 0.399.1/2026-10-11 status checkpoint.
+Implementation-status audit: **2026-10-28, canonical main `d4acdb004`,
+GTI 0.486.1**. This supersedes the 0.399.1/2026-10-11 status checkpoint.
 The audit compares current source, registered positive/negative fixtures and
 canonical contracts across every active plan listed in `docs/index.md`.
 It does not rerun or certify the release-wide execution/performance matrix.
@@ -110,10 +110,10 @@ acceptance is a baseline to preserve, not proof that later extensions are free.
 
 | Outcome | Current foundation | Remaining readiness work |
 | --- | --- | --- |
-| Real C-library wrapper | Layout-stable records, opaque handles, callbacks, native pointer/scalar families and generated bindings. | Broader ownership/retention contracts and foreign storage where a real binding needs them; keep exact ABI and native fixture evidence. |
+| Real C-library wrapper | Layout-stable records, opaque handles, callbacks, native pointer/scalar families and generated bindings. | Broader ownership/retention contracts and additional foreign-storage profiles where a real binding needs them; keep exact ABI and native fixture evidence. |
 | Application-owned arena or pool | Typed providers, leases, source allocator policy, manual lifetime and allocator clients exist. | Extend allocator-aware clients without private policy shortcuts; verify layout, rollback, exhaustion, release identity and execution cost. |
 | Multithreaded work queue | Owned and scoped borrowed tasks, ordered atomics/fetch/wait/notify, scoped mutex guards, join, worker failure and per-thread storage are executable. | Safe guard-aware condition variables, timed/cancellable waits, persistent pools and foreign-thread entry remain distinct goals. Preserve exact ownership, publication and worker cleanup evidence. |
-| Renderer/game update | Mutable containers/views, source prefix storage, time/files/allocation, payloads and exact domain operators exist. | Direct final-address/inline construction, useful range/operator breadth and optimized representative frame workloads. |
+| Renderer/game update | Mutable containers/views, source prefix storage, time/files/allocation, payloads and exact domain operators exist. | Remaining node/inline/immovable construction profiles, useful range/operator breadth and optimized representative frame workloads. |
 | Compiler-style AST/protocol | Generic payload enums, matching and owned transport have delivered profiles. | Record any newly needed recursive/indirect/callable composition as a concrete lifecycle prerequisite, rather than restarting the enum feature. |
 | Fallible application pipeline | Owned and checked borrowed Expected extraction, `?`, mapping and source-defined host wrappers exist. | Broaden applicable construction/borrowed-combinator profiles, recoverable owner factories and service composition with exact cleanup. |
 | Host-embedded gameplay module | Infallible LLVM library targets, generated versioned wrappers/header, context lifecycle and immutable shared-artifact/cache/report/clean publication are implemented for macOS arm64/Linux x86_64. | Fallible export containment, editor integration and full installed load/call/fail/unload/reload acceptance. See [embedding delivery](implementation-sequence.md#engine-embedding-delivery-campaign). |
@@ -131,7 +131,7 @@ slices. This table is the durable scope map; it is not another numbered queue.
 | Goal family | Remaining scope and prerequisites |
 | --- | --- |
 | Final-address and inline construction | Close the remaining borrowed-pack composition acceptance, adopt direct node emplacement, extend optional-like inline publication/rollback and prove immovable wrapper eligibility. Sparse allocated final-address emplacement already exists. `L-UP-10/11/12/18` distinguish these outcomes. |
-| Borrow precision and traversal | Independently shorten selected owner dependencies, support justified reseatable/proxy/output-range forms and refine invalidation. Preserve whole-carrier dependencies while that carrier remains live. `L-UP-16` and the [range plan](iterators-and-ranges.md) own the next clients. |
+| Borrow precision and traversal | Independently shorten selected owner dependencies, support justified reseatable and further proxy/output-range forms and refine invalidation. Preserve whole-carrier dependencies while that carrier remains live. `L-UP-16` and the [range plan](iterators-and-ranges.md) own the next clients. |
 | Ownership-library completion | Recoverable unique/shared factories, executable weak ownership and selected aliasing/co-allocation. Source-policy candidates M05–M10 require per-operation proofs; they do not mandate erasing irreducible lifetime, borrowing or propagation support. See [the operation ledger](../architecture/standard-library-and-runtime.md#operation-ownership-ledger). |
 | Compile-time execution and reflection | Extend the staged MIR profile rather than permanently duplicate runtime rules in an AST interpreter. Reflection's structural construction and callable metadata are delivered within initialization/ownership/budget contracts. The reflection-driven JSON client and its promotion to `<std/json>` are delivered (0.409.0). Metaobject invocation/runtime reflection, remaining metadata kinds and broader constant-execution profiles remain distinct work. See `L-CONST-01` and [reflection](reflection.md). |
 | Generic contracts and text | Conditional member operators, required literal-format validation, further range/callable/hash relationships, named/dynamic fields and explicit text decoding. Associated types, protocol operation contracts, static queries, exact formatter contracts and ordinary method requirements are delivered; broader constraints need their own source rule. `L-UP-14/15` and the [restriction ledger](language-alignment.md) own these boundaries. |
@@ -141,8 +141,9 @@ slices. This table is the durable scope map; it is not another numbered queue.
 | Daily development latency | On-demand trusted-body facts, scoped completion, appropriate reuse, whole-program reachability and cleanup/emission scaling, with bounded diagnostics and identity/invalidation contracts. See [LSP evolution](lsp-evolution.md) and [performance tooling](performance-tooling.md). |
 | Packaging/module/platform breadth | Further platform selection and installed target resources, migration of remaining library compatibility facades to real source exports, registry governance/backend extensions, freestanding or further target profiles, and separate compilation when a named outcome requires it. Existing manifests/cache/Git/registry/project-aware LSP are foundations, not tasks to repeat. |
 
-General requires-expressions beyond the implemented validity-only/static-query profiles, generic associated-type families beyond current protocol projections, partial specialization, broader
-inheritance, coroutines, unrestricted reflection and ordinary GTI binary ABI
+General requires-expressions beyond the implemented validity-only/static-query
+profiles, generic associated-type families beyond current protocol projections,
+partial specialization, broader inheritance, coroutines, unrestricted reflection and ordinary GTI binary ABI
 remain separate design goals when justified. Intentional exact overloads,
 explicit movement, compiler-controlled lifecycle and absence of textual macros
 are not automatically missing features. Do not reintroduce withdrawn custom

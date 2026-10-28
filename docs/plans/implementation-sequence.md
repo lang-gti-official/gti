@@ -176,7 +176,8 @@ allocation and code-size evidence. The implementation passes the focused
 macOS/Linux gates, 674/675 remote full-sweep tests and the sole remote
 permission-limited debugger gate locally; measured costs and exact snapshot
 identities are recorded in [verification](../architecture/verification.md#safe-atomic-waiting-2026-10-12).
-Final clean-head reconciliation remains the integration gate. Guard-aware
+That dated pre-integration checkpoint is historical; scalar waiting is now
+integrated. Later changes retain their own exact-head acceptance obligations. Guard-aware
 condition variables (loan suspension), timed waits and persistent worker pools
 remain separate goals, not claims of this slice.
 
@@ -386,7 +387,7 @@ document.
 
 ## Implementation Status Audit (2026-10-28)
 
-Source checkpoint: canonical main `cdcf47894`, GTI **0.486.0**. This is a
+Source checkpoint: canonical main `d4acdb004`, GTI **0.486.1**. This is a
 source/registered-test/contract reconciliation across the active plan inventory,
 not a new whole-toolchain acceptance run. Historical checkpoint paragraphs,
 suite counts, branch assignments and “next” instructions below retain their
@@ -402,7 +403,7 @@ every composition, target, installed package or performance gate.
 | Owner-dependent text fields | `view_field_tests.cpp`, nested-value and dependent-reference fixtures; L-OWN-02 phases 1/2 and **3a** are delivered. | Phase 3b's nested reference-carrier payload/results, additional nested copies/field contracts and phase 4 unification; arbitrary borrowed collections remain incomplete. |
 | Constexpr mutation and allocation | `mir_constant_evaluator.cpp`, `compiler_constexpr_tests.cpp`, `constexpr_results.gti`, `constexpr_allocation.gti`; [constant semantics](../language/static-semantics.md#transient-allocation-and-destruction). | Persistent allocation, stored-reference/raw/provider/shared/payload-enum/polymorphic profiles outside the stated evaluator contract, and retirement of remaining AST execution schedules. |
 | Protocol associated types and static queries | `semantic_protocol_concepts.cpp`, `semantic_requirement_expressions.cpp`, `protocol_concept_tests.cpp`, `general_requires_tests.cpp`; [concepts](../language/concepts.md). | Conditional member operators, additional expression/relationship families and generic associated families beyond implemented projections; operation borrow contracts are delivered. |
-| Typed macros and per-thread storage | `semantic_macro.cpp`, `macro_value_tests.cpp` and macro fixtures and `thread_local_{syntax,semantic}_tests.cpp` / `mir_thread_local_tests.cpp`; [static semantics](../language/static-semantics.md) and [concurrency](../language/concurrency.md). | General preprocessing is not the typed-macro contract; ordinary block static and C thread-specific-storage keys remain separate. |
+| Typed macros and per-thread storage | `semantic_macro.cpp`, `macro_value_tests.cpp`, macro fixtures and `thread_local_{syntax,semantic}_tests.cpp` / `mir_thread_local_tests.cpp`; [static semantics](../language/static-semantics.md) and [concurrency](../language/concurrency.md). | General preprocessing is not the typed-macro contract; ordinary block static and C thread-specific-storage keys remain separate. |
 | Foreign C variables | `foreign_variable_tests.cpp`, `foreign_variable_borrow_tests.cpp`, native-variable bindgen tests; [native interop](../language/native-c-interop.md). | TLS/volatile/top-level-array objects, ownership annotations, retained/captured callbacks and foreign-thread entry; C-08B ordinary objects are implemented. |
 | Reflection and JSON | Reflection phases 1–3 and the reflected JSON client are delivered; `<std/json>` has used the promoted reflection-driven library since 0.409.0. See [reflection](reflection.md) and [JSON](../language/json.md). | Metaobject invocation/runtime reflection and named residual metadata/execution profiles; do not repeat the experimental-JSON gate. |
 | Container traversal and module/package tooling | [Container delivery](iterators-and-ranges.md#container-completion-campaign-delivered-2026-10-12), `source_modules_*`, registry/build-script tests and driver `ProjectFacts` integration. Aggregate `import std` exists. | Adaptors, subrange rewrites, reseating/invalidation precision, package/platform breadth and independent linkage; not foundational map/range/package/LSP implementation. |
@@ -423,7 +424,7 @@ compiler-bug-finding redirect is not another active campaign.
 | [Concurrency](concurrency-memory-model.md) | Owned/scoped threads, scalar waiting and TLS implemented; broader synchronization/entry profiles open. |
 | [Ranges](iterators-and-ranges.md) | Container traversal/proxies and bounded value yields delivered; adaptors, subrange rewriting and dependency replacement remain. |
 | [Reflection](reflection.md) | Phases 1–3 plus promoted JSON delivered; named residual metadata/invocation profiles remain. |
-| [Build/packages](build-system.md), [native import](native-bindings-import.md) | Project/cache/workspace/Git/registry/build-script/install and ordinary C-variable profiles delivered; public embedding, target resources, native-cache breadth and C++ import remain; infallible LLVM project libraries are delivered, while complete fallible/editor/installed embedding remains partial. |
+| [Build/packages](build-system.md), [native import](native-bindings-import.md) | Project/cache/workspace/Git/registry/build-script/install and ordinary C-variable profiles delivered. Infallible LLVM project libraries are delivered; complete fallible/editor/installed embedding, target resources, native-cache breadth and C++ import remain. |
 | [LSP](lsp-evolution.md) | Snapshot queries, project facts, missing includes, snippets and bounded latency/reuse work delivered; project-wide index/rename and fault-state safety remain. |
 | [Optimization](optimization.md), [performance tooling](performance-tooling.md) | MIR pipeline/analysis/report/measurement and native backend foundations delivered; named transforms, workload expansion and exact-head cost/platform gates remain. |
 | [Diagnostic quality](diagnostic-quality.md) | Proposed causal-evidence/recovery/repair campaign remains proposed; existing diagnostic/quick-fix foundations do not close its milestones. |
@@ -456,7 +457,7 @@ workflow determine task scope and integration.
 | `E-EMBED-01B/C`, `B-LIB-02`, `T-EMBED-01`, `Q-EMBED-01` | infallible LLVM context/wrapper/project-library workflow implemented; full campaign partial | Complete fallible closure containment, editor integration and installed load/call/fail/unload/reload/platform acceptance. Preserve the existing generated header, immutable generations, cache/report/clean and C/C++ host fixtures; see [embedding delivery](#engine-embedding-delivery-campaign). |
 | Native import `C-08B` | ordinary foreign objects implemented | Exact external-storage identity, unsafe loads/stores, inert addresses, explicit owner-witness borrowing, headers and bindgen cover scalar, recursive pointer, callback and passive-record objects. TLS/volatile and top-level arrays require their general access/address contracts. |
 | `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
-| `T-LSP` latency client | trusted-body/preamble/instance reuse delivered; edit cancellation/debounce, library concept/storage-effect reuse and staged constant-call memoization delivered through 0.480.5 | Re-measure current workloads before selecting reuse/adoption costs. The 0.423.0 timing is historical, not today's bottleneck ranking. [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost) records remaining identity/invalidation and completion work. |
+| `T-LSP` latency client | trusted-body/preamble/instance reuse delivered; edit cancellation/debounce, library concept/storage-effect reuse, staged constant-call memoization and unchanged-source replay delivered through 0.486.1 | Re-measure current workloads before selecting reuse/adoption costs. The 0.423.0 timing is historical, not today's bottleneck ranking. [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost) records remaining identity/invalidation and completion work. |
 | `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Its closed-call proofs and failure closure are delivered in 0.468.0 ([RT-12](optimization.md)); exit sharing for exits that construct the result remains. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
 | Protocol concepts (`L-CONCEPT-02`) | phase 1 delivered in 0.434.0; several parameters in 0.435.0 | Concepts with a body and `for concept` blocks are implemented ([ADR 028](../decisions/028-protocol-concepts.md)), including concepts over several types. Prefix `?` propagates every non-`expected` type through the prelude's `std::tryable` in 0.436.0 ([ADR 029](../decisions/029-tryable-propagation.md)). `std::experimental::optional`, source-defined over a payload enum, propagates through `?` without a copy in 0.439.0. General payload-enum destination construction, tagged representation and observation/retirement improvements replace the historical 1.6-times scalar / 1.13-times string result. Singleton cleanup forwarding removes the preceding robust GCC/Linux string residual in fresh paired evidence at `560cafa9` (median 1.0035, interval spanning parity); fresh macOS measurements remain pending ([RT-11](optimization.md#pr-166-audit-disposition-2026-10-09)). Promotion to `std::optional` still requires surface, failure-behaviour and platform performance acceptance, not merely the representation change. `expected` is a source class on the same `std::tryable` protocol since 0.449.0, and conformance-block patterns over raw pointers and fixed-length arrays are delivered in 0.450.0. Signature-level borrow-origin contracts on concept operations are implemented. Further goals include moving remaining member-name protocols (collection hooks, iterator value types) onto protocol concepts where coherent. |
@@ -11440,6 +11441,11 @@ or resolve them using source.
 
 ### O-LLVM-06: Classes, Lifecycles And Program Storage
 
+Current disposition (2026-10-28): admitted class/lifecycle/TLS execution is
+implemented, with subsequent publication, hierarchy and loan corrections. The
+0.478.0 checkpoint below is not the end of current coverage; remaining
+compositions and full-platform acceptance follow the readiness contract.
+
 - **Status (2026-10-25):** the concrete non-polymorphic copyable/movable class
   profile is implemented: selected constructors/methods, designated construction,
   generated movement/copy snapshots, stored entry references, replacement,
@@ -11512,6 +11518,12 @@ or resolve them using source.
 
 ### O-LLVM-07: Unions, Payloads And Conditional Publication
 
+Current disposition (2026-10-28): admitted native unions, owning/reference
+payloads, tag observation, replacement and conditional publication have
+production lowering and registered execution fixtures. The initial checkpoint
+below remains historical; complete loan/cleanup/composition coverage is still
+a campaign acceptance obligation.
+
 - **State:** implementation in progress. The initial native tag/aligned-payload
   plan, exact final destinations, field extraction and active-alternative cleanup
   execute generic scalar and owning replacement/consuming probes. End-to-end
@@ -11556,6 +11568,12 @@ or resolve them using source.
   no unjustified tag/niche optimization; layout refinements remain local later.
 
 ### O-LLVM-08: Allocation, Object Lifetimes And Ownership
+
+**State (2026-10-28): implemented admitted profiles, complete acceptance
+pending.** Native `memory.cpp`, `lifetimes.cpp` and `placement.cpp` execute
+source storage/container and unique/shared-owner mechanisms. Broader
+composition, rejection, sanitizer and platform/cost gates remain the exit
+criteria below; allocation lowering is not an unstarted milestone.
 
 - **Unlock:** source vector/string/list/storage/allocator and owning pointers.
 - **Deliver:** allocation obligations, exact object-size/alignment queries,
@@ -11683,6 +11701,12 @@ execution remains an integration gate rather than component evidence.
   no accidental capture allocation. Unrelated user wrappers prove generality.
 
 ### O-LLVM-10: Inheritance, Interfaces And Polymorphism
+
+**State (2026-10-28): implemented admitted profiles, complete acceptance
+pending.** Native `dispatch.cpp`, `polymorphic_storage.cpp` and class layout
+services support hierarchy/interface calls and bounded inline/boxed owners.
+The prerequisite and checkpoint narratives below retain their dates; current
+remaining shapes and exact-source coverage must be reconciled before closure.
 
 **Inline-owner integration prerequisite:** the private polymorphic slot now has
 a target-checked representation plan and a dedicated component layout oracle.
@@ -11918,6 +11942,12 @@ elements passed by value.
 
 ### O-LLVM-11: Native C Calls, Storage, Callbacks And Embedding
 
+**State (2026-10-28): implemented admitted native-C and infallible embedding
+profiles; complete boundary acceptance remains.** Native ABI classification,
+foreign storage/callback paths, generated headers/context lifecycle and real
+project shared modules exist. Fallible embedding remains rejected; E-EMBED
+and the platform/native-oracle criteria below are not closed by these profiles.
+
 - **Unlock:** the complete existing bindgen/native-library/embedding surface.
 - **Deliver:** extend O-LLVM-03's ABI classifier through every admitted scalar,
   array, record, union, enum, opaque pointer, indirect call and callback shape;
@@ -11938,6 +11968,12 @@ elements passed by value.
   exception crosses a public native signature that does not declare it.
 
 ### O-LLVM-12: Hosted Execution And Library Closure
+
+**State (2026-10-28): hosted/runtime execution implemented for admitted
+profiles; whole-library closure acceptance remains.** `hosted.cpp`,
+`runtime_abi.cpp` and program-storage lowering provide real hosted programs.
+A remaining unsupported composition is not absence of the whole hosted
+backend; preserve the full service/corpus/runtime criteria below.
 
 - **Unlock:** complete command-line programs and present stdlib workloads,
   including a CSV library using existing file/text APIs.
@@ -11960,6 +11996,12 @@ elements passed by value.
   Concurrent workloads remain pending until O-LLVM-13.
 
 ### O-LLVM-13: Atomics, Synchronization And Threads
+
+**State (2026-10-28): native concurrency profiles implemented; complete
+interaction/platform/cost acceptance remains.** Atomic operations/waiting,
+mutexes, managed/scoped threads and TLS use the native family services and
+registered execution oracles. Reuse that implementation and retain the
+entry/cleanup/order and foreign-boundary obligations below.
 
 - **Unlock:** both current execution profiles and managed/scoped parallel work.
 - **Deliver:** atomic load/store/exchange/CAS/fetch operations and order pairs,
@@ -12026,6 +12068,12 @@ elements passed by value.
 
 ### O-LLVM-14: Project, Artifact And Installed-Toolchain Completion
 
+**State (2026-10-28): direct/project selection, object/cache/debug artifact
+and infallible shared-library workflows implemented; complete installed and
+platform acceptance remains.** The driver and LLVM cache/project fixtures
+are current implementation evidence, not a reason to repeat backend selection
+or native object publication. Finish the reconciled exit matrix below.
+
 - **Unlock:** ordinary users select LLVM in direct/project/build/test/run/install
   and package workflows, with correct native dependencies and cached builds.
 - **Deliver:** shared backend selection in project plans; binary artifact/cache
@@ -12045,6 +12093,12 @@ elements passed by value.
 
 ### O-LLVM-15: Optimization, Debugging And Runtime Cost
 
+**State (2026-10-28): native optimization/debug/inspection infrastructure
+and focused cost fixtures implemented; representative performance and
+complete target acceptance remain.** The native pipeline, debug-info and SIMD
+services are source-backed foundations. Earlier frozen timings do not
+certify current whole-program runtime, allocation, size or compile-memory cost.
+
 - **Unlock:** a usable optimized/debuggable production compiler across buckets.
 - **Deliver:** explicit O0/O1/O2/O3 LLVM pipelines using the supported pass
   manager and selected target machine; verified attributes/alias facts only;
@@ -12063,6 +12117,12 @@ elements passed by value.
   correction or explicit accepted tradeoffs before production promotion.
 
 ### O-LLVM-16: Complete Coverage And Production Promotion
+
+**State (2026-10-28): macOS arm64 default promotion delivered; complete
+production/platform acceptance remains, including Linux.** The dated
+consolidation counts below are measurements of those revisions. Current
+readiness requires reconciled baseline/provider/gate receipts and explicit
+campaign signoff, not a count copied from an older corpus sweep.
 
 - **Unlock:** LLVM becomes the public default for the whole supported language.
 - **Admission:** no pending executable ledger entries for the frozen baseline
