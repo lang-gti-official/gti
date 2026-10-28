@@ -16,5 +16,14 @@ int main() {
   auto invalid = std::encoding::base64::decode("Zh==");
   if (invalid || invalid.error() != std::encoding::decode_errc::non_canonical_input) { return 2; }
   // Encoding is not encryption. Never treat Base64 as protection for secrets.
+  // UTF-8 traversal yields scalar values, not bytes or grapheme clusters.
+  auto text = std::encoding::utf8::encode(uint32_t(0x1f600)).expect("valid scalar");
+  auto view = text.view();
+  mut std::encoding::utf8::decoder scalars{view};
+  auto first = scalars.next();
+  if (!first || first.value().value != uint32_t(0x1f600) ||
+      first.value().width != 4 || !scalars.done()) { return 3; }
+  auto valid = std::encoding::utf8::validate(view);
+  if (!valid) { return 4; }
   return 0;
 }

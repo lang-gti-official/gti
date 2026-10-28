@@ -90,7 +90,7 @@
     "091-json-documents.gti": 618,
     "092-json-codecs.gti": 589,
     "093-http-json-client.gti": 689,
-    "094-binary-text-encoding.gti": 168,
+    "094-binary-text-encoding.gti": 208,
     "095-explicit-cloning.gti": 217,
     "096-error-mapping.gti": 43,
     "097-constexpr-tables.gti": 58,
@@ -174,5 +174,5 @@
     "174-typed-macros.gti": 211,
     "175-thread-local-storage.gti": 274
   },
-  "total": 24141
+  "total": 24181
 }

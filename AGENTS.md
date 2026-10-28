@@ -159,7 +159,12 @@ not a C++ wrapper, and neither backend defines its semantics.
   stacking full suites on each other. Focused tests (`ctest -R '^name$'`, one
   harness fixture) and single-file compiles run directly. `verify` takes a
   local suite slot itself; `verify --focused` instead permits automation-only
-  owning checks directly after checking the source diff. Compiler components
+  or source-only GTI stdlib owning checks directly after checking the diff.
+  Source-only stdlib changes may include their GTI fixtures/examples, Python
+  test harnesses, census metadata and documentation, but not compiler, native
+  runtime or build-system changes. Run exact owning checks with an optimized
+  compiler; full builds and broad suites still require the shared window.
+  Compiler components
   use structured `batch enroll`, not this exception.
   `verify --remote-steps-file <plan.json>` instead uses
   the configured remote host's window. `build_window.py --status` shows local

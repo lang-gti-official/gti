@@ -9,6 +9,17 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.487.0 - Source-defined UTF-8 codecs
+
+- `<std/encoding>` adds `std::encoding::utf8` validation, scalar decoding,
+  encoding/append and a borrowed incremental decoder, implemented in GTI source
+  without new compiler or runtime capabilities.
+- Errors report byte offsets and reject malformed, overlong, surrogate and
+  out-of-range sequences. Invalid append input leaves the destination unchanged;
+  a failed decoder step does not advance. Validation and traversal do not allocate.
+- Strings and indexing remain byte-oriented. UTF-16 conversion, normalization,
+  grapheme segmentation and JSON migration are not included in this first phase.
+
 ## 0.486.1 - Faster editor updates with large imports
 
 - `gti_lsp` updates diagnostics sooner after an edit in a file whose imports

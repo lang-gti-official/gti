@@ -1,0 +1,25 @@
+#include <std/encoding>
+#include <std/string>
+
+int main() {
+  mut std::string bytes{};
+  for (mut uint32_t point = 0; point <= uint32_t(0x10ffff); point++) {
+    bytes.clear();
+    auto appended = std::encoding::utf8::append(bytes, point);
+    if (point >= uint32_t(0xd800) && point <= uint32_t(0xdfff)) {
+      if (appended || !bytes.empty() ||
+          appended.error().code != std::encoding::utf8::errc::surrogate) { return 1; }
+      continue;
+    }
+    if (!appended) { return 2; }
+    auto decoded = std::encoding::utf8::decode(bytes.view());
+    if (!decoded || decoded.value().value != point ||
+        decoded.value().width != bytes.size()) { return 3; }
+    mut std::size_t width = 1;
+    if (point >= uint32_t(0x10000)) { width = 4; }
+    else if (point >= uint32_t(0x800)) { width = 3; }
+    else if (point >= uint32_t(0x80)) { width = 2; }
+    if (bytes.size() != width) { return 4; }
+  }
+  return 0;
+}

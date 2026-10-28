@@ -31,6 +31,57 @@ AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md", ".gitea/workflows/ci.yml"}
 
 
+def focused_scope(paths):
+    """Classify local focused eligibility, independently of advisory CI policy."""
+    if ci_mode({}, paths) == "automation":
+        return "automation"
+    metadata = {"VERSION", "CHANGELOG.md", "README.md", "stdlib/README.md", "examples/README.md",
+                "tests/stdlib_surface_manifest.json", "tests/mir_census_baseline.json",
+                "tests/lowered_program_census_baseline.json"}
+    def library(path):
+        return path.startswith(("stdlib/std/", "stdlib/modules/")) and path.endswith(".gti")
+    def allowed(path):
+        return (library(path) or path in metadata or path.startswith("docs/") and path.endswith(".md") or
+                path.startswith(("examples/", "tests/fixtures/")) and path.endswith(".gti") or
+                re.fullmatch(r"tests/[A-Za-z0-9_]+_test\.py", path) is not None)
+    if paths and any(library(path) for path in paths) and all(allowed(path) for path in paths):
+        return "source-stdlib"
+    return None
+
+
+def source_focused_checks(checks):
+    """Reject obvious broad work; harness scope/coverage still needs human review."""
+    commands(checks)
+    owning = False
+    for command in checks:
+        program = Path(command[0]).name
+        if program in {"cmake", "ninja", "make", "gmake", "sh", "bash", "zsh"}:
+            raise ValueError("Focused source-stdlib checks cannot run builds or shell wrappers")
+        if program == "ctest":
+            if any(arg.startswith(("--rerun-failed", "--script", "--build-and-test")) or arg == "-S"
+                   for arg in command[1:]):
+                raise ValueError("Focused source-stdlib CTest requires one exact test name")
+            expressions = []
+            for index, arg in enumerate(command[1:], 1):
+                if arg in {"-R", "--tests-regex"} and index + 1 < len(command):
+                    expressions.append(command[index + 1])
+                elif arg.startswith("--tests-regex="):
+                    expressions.append(arg.split("=", 1)[1])
+            if len(expressions) != 1 or not re.fullmatch(r"\^[A-Za-z0-9_][A-Za-z0-9_-]*\$", expressions[0]):
+                raise ValueError("Focused source-stdlib CTest requires one exact test name")
+            owning = True
+        elif program.startswith("python") and len(command) > 1:
+            script = command[1]
+            if Path(script).name in {"build_window.py", "agent_workflow.py", "remote_runner.py",
+                                     "mir_census_test.py", "lowered_program_census_test.py"}:
+                raise ValueError("Broad orchestration/corpus checks require the shared window")
+            if Path(script).name == "stdlib_surface_test.py" and "--validate-only" not in command:
+                raise ValueError("Full stdlib surface execution requires the shared window")
+            owning |= re.fullmatch(r"tests/[A-Za-z0-9_]+_test\.py", script) is not None
+    if not owning:
+        raise ValueError("Focused source-stdlib validation needs a named owning test harness or exact CTest")
+
+
 def git(root, *args):
     return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
 
