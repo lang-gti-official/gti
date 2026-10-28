@@ -502,6 +502,8 @@ public:
           if (stage.replacementCleanup &&
               contains(stage.replacementCleanup->type) && !replaced)
             proof.transfer = true;
+          if (restoringBaseView(body, stage))
+            proof.transfer = true;
           // A typed destruction runs the element's exact recipe in place;
           // only other element-cleanup consumers would transport the object.
           if (stage.elementCleanup && contains(stage.elementCleanup->type) &&
@@ -1547,6 +1549,36 @@ private:
     }
     return false;
   }
+  // A restoring swap or exchange relocates whole objects between its places.
+  // Like a replacement, it needs a complete polymorphic object: relocating
+  // through a base view would replace the dispatch state of the object that
+  // encloses it. A generic body sees only its reference parameter's referent,
+  // which is complete when nothing in the sealed program derives from it.
+  bool restoringBaseView(const MirBody &body,
+                         const MirInstruction &stage) const {
+    const bool swap = stage.intrinsic == IntrinsicKind::RestoringSwap;
+    if (stage.kind != MirInstructionKind::Call ||
+        (!swap && stage.intrinsic != IntrinsicKind::RestoringExchange))
+      return false;
+    const std::size_t places = swap ? 2 : 1;
+    if (stage.operands.size() < places)
+      return true;
+    for (std::size_t index = 0; index != places; ++index) {
+      const auto &operand = stage.operands[index];
+      const auto &type = unreference(operand.type);
+      if (type.kind != SemanticType::Class || !contains(type))
+        continue;
+      const auto *loan = operand.loan ? body.findLoan(operand.loan) : nullptr;
+      const auto *place = body.findPlace(operand.place ? operand.place
+                                         : loan        ? loan->source
+                                                       : 0);
+      if (!place || place->type != type ||
+          (instance(type).polymorphic &&
+           !native_llvm::completeObjectPlace(program, *place)))
+        return true;
+    }
+    return false;
+  }
   // A place observation of a checked view whose only use is one
   // replacement's generated copy source.
   bool copiedView(const MirBody &body, const MirInstruction &producer,
@@ -2217,6 +2249,13 @@ private:
             return {};
           return Shape::NativeHierarchyThreadTask;
         }
+        // The replacement a restoring exchange relocates into the place it
+        // vacates moves with this type's generated relocation.
+        if (transfer.publishes ==
+            native_llvm::FreshHierarchyPublication::Exchange)
+          return generatedRelocation(stage.info.type)
+                     ? std::optional(Shape::NativeFreshHierarchyTransfer)
+                     : std::nullopt;
         // A payload enum moved whole, or a hierarchy field moved out of its
         // payload alternative, relocates under the payload contract.
         if (transfer.type.kind == SemanticType::Enum || transfer.sourceVariant)
@@ -2563,6 +2602,45 @@ public:
   const MirBody *currentBody = nullptr;
 
   bool nativeValue(const SemanticType &type) const { return natives(type); }
+  // The Return loan of a view this body returns by value, such as text a
+  // virtual or static call returned: every return naming it returns a value
+  // that is neither a reference nor hierarchy storage, and the one Borrow
+  // producing it relays that value's own loan. It names the view's owner, not
+  // an address in it, so a virtual call's view keeps a static call's source.
+  bool viewReturnLoan(const MirBody &mir, const MirLoan &loan) const {
+    if (loan.kind != MirLoanKind::Return || !loan.escapes ||
+        loan.referenceSelection || !loan.additionalDependencies.empty() ||
+        !loan.conditions.empty() || loan.twoPhase || loan.lifecycleBound ||
+        loan.entry)
+      return false;
+    bool returned = false;
+    for (const auto &block : mir.blocks) {
+      const auto &term = block.terminator;
+      if (!term.returnLoan || *term.returnLoan != loan.id)
+        continue;
+      if (term.kind != MirTerminatorKind::Return || !term.value ||
+          term.value->kind != MirOperandKind::Value ||
+          term.value->type.kind == SemanticType::Reference ||
+          dispatchProofs.related(term.value->type))
+        return false;
+      returned = true;
+    }
+    const MirInstruction *relay = nullptr;
+    for (const auto &block : mir.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone || stage.loan != loan.id)
+          continue;
+        if (relay || stage.kind != MirInstructionKind::Borrow ||
+            stage.operands.size() != 1 ||
+            stage.operands.front().kind != MirOperandKind::Loan ||
+            stage.info.type.kind == SemanticType::Reference ||
+            dispatchProofs.related(stage.info.type) ||
+            dispatchProofs.related(stage.operands.front().type))
+          return false;
+        relay = &stage;
+      }
+    return returned && relay != nullptr;
+  }
   // A native value or hierarchy storage with exact dispatch metadata. Only a
   // representation fact: every operation keeps its own transfer proof.
   bool representedValue(const SemanticType &type) const {
@@ -4705,10 +4783,21 @@ public:
                             ? origin->type.arguments.front()
                             : origin->type)
               .has_value();
+      // A returned view of hierarchy storage depends on its owner without
+      // an address in it: borrow metadata, as for a static call's view.
+      const bool viewReturn =
+          hierarchy && viewReturnLoan(mir, loan) &&
+          dispatchProofs
+              .metadata(origin->type.kind == SemanticType::Reference &&
+                                origin->type.arguments.size() == 1
+                            ? origin->type.arguments.front()
+                            : origin->type)
+              .has_value();
       const auto view =
-          storedRecord ? std::optional(Shape::NativeBorrowMetadata)
-          : hierarchy  ? dispatchProofs.loan(mir, loan)
-                       : std::nullopt;
+          storedRecord || viewReturn
+              ? std::optional(Shape::NativeBorrowMetadata)
+          : hierarchy ? dispatchProofs.loan(mir, loan)
+                      : std::nullopt;
       add(loan.kind, hierarchy     ? (view || !mutexShellLoan(mir, loan.id)
                                           ? view
                                           : std::optional(

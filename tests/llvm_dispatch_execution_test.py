@@ -77,6 +77,9 @@ SUCCESS_FILES = {
     "payload-moves": "tests/fixtures/llvm_dispatch_payload_moves.gti",
     "borrowed-carriers": "tests/fixtures/llvm_dispatch_borrowed_carriers.gti",
     "moved-carriers": "tests/fixtures/llvm_dispatch_moved_carriers.gti",
+    "virtual-text-relays": "tests/fixtures/llvm_dispatch_virtual_text_relays.gti",
+    "returned-siblings": "tests/fixtures/llvm_dispatch_returned_siblings.gti",
+    "exchanged-transfers": "tests/fixtures/llvm_dispatch_exchanged_transfers.gti",
 }
 
 TRANSFER_ENDPOINTS = (
@@ -309,6 +312,31 @@ int main() {
     if (kept.read() != 4 || dropped != 0) { return 1; }
   }
   return dropped == 4 ? 0 : 2;
+}
+""", 0),
+    # Restoring swap and exchange of complete locals of a polymorphic class
+    # that nothing derives from relocate whole objects; the base-view refusal
+    # does not reach them.
+    "complete-polymorphic-swap": ("""#include <std/memory>
+#include <std/utility>
+interface Shape { int area(); };
+class Gauge : public Shape {
+  int side;
+  std::unique_ptr<int> label;
+public:
+  Gauge(int side) : side(side), label(std::make_unique<int>(side + 1)) {}
+  int code() { return *this.label; }
+  int area() override { return this.side * this.side; }
+};
+int main() {
+  mut Gauge first = Gauge(2);
+  mut Gauge second = Gauge(3);
+  std::swap(first, second);
+  Shape& view = first;
+  if (view.area() != 9 || second.area() != 4 || first.code() != 4) { return 1; }
+  Gauge old = std::exchange(first, Gauge(5));
+  Shape& again = first;
+  return again.area() == 25 && old.area() == 9 && old.code() == 4 ? 0 : 2;
 }
 """, 0),
     "heap-polymorphic-owner-former-reject": ("""#include <std/memory>
@@ -705,6 +733,53 @@ public:
 };
 int main() { Derived value{}; return value.read(); }
 """,
+    # A restoring exchange or swap relocates whole objects. Through a base
+    # view it would replace the dispatch state of the enclosing derived
+    # object, so a polymorphic place must be complete. The generic bodies see
+    # only a reference's referent, whose class here has a derived class.
+    "reject-exchange-base-view": """#include <std/utility>
+class Base {
+public:
+  int value;
+  Base(int value) : value(value) {}
+  virtual int read() { return this.value; }
+};
+class Derived : public Base {
+public:
+  Derived(int value) : Base(value) {}
+  int read() override { return this.value * 100; }
+};
+int replace(mut Base& view) {
+  Base old = std::exchange(view, Base(5));
+  return old.read() + view.read();
+}
+int main() { mut Derived value = Derived(3); return replace(value) + value.read(); }
+""",
+    "reject-swap-base-view": """#include <std/utility>
+class Base {
+public:
+  int value;
+  Base(int value) : value(value) {}
+  virtual int read() { return this.value; }
+};
+class Left : public Base {
+public:
+  Left(int value) : Base(value) {}
+  int read() override { return this.value * 100; }
+};
+class Right : public Base {
+public:
+  Right(int value) : Base(value) {}
+  int read() override { return this.value * 10000; }
+};
+void flip(mut Base& first, mut Base& second) { std::swap(first, second); }
+int main() {
+  mut Left left = Left(3);
+  mut Right right = Right(4);
+  flip(left, right);
+  return left.read() + right.read();
+}
+""",
 }
 
 # Former destructor-observation rejections. A base destructor runs under its
@@ -806,6 +881,38 @@ public:
 };
 int main() { Bundle first{}; Bundle moved = std::move(first); return 0; }
 """,
+    # A view a virtual call returns keeps its owner borrowed: it cannot
+    # escape that owner, and the owner cannot change while the view lives.
+    "reject-source-virtual-view-escape": """#include <std/string>
+class Base {
+public:
+  std::string text;
+  Base() : text(std::string("ann")) {}
+  virtual std::string_view name() { return this.text.view(); }
+};
+std::string_view escape() {
+  Base local{};
+  Base& view = local;
+  return view.name();
+}
+int main() { return int(escape().size()); }
+""",
+    "reject-source-virtual-view-owner-mutation": """#include <std/string>
+class Base {
+public:
+  mut std::string text;
+  Base() : text(std::string("ann")) {}
+  virtual std::string_view name() { return this.text.view(); }
+  void grow() mut { this.text.append("!"); }
+};
+int main() {
+  mut Base owner{};
+  Base& view = owner;
+  std::string_view name = view.name();
+  owner.grow();
+  return int(name.size());
+}
+""",
     "reject-source-moved-carrier-referent": """interface Gauge { int read(); };
 class Small : public Gauge {
   int value;
@@ -833,6 +940,8 @@ SOURCE_REJECTION_CODES = {
     "reject-source-use-after-move": "GTI-S2018",
     "reject-source-self-borrowing-carrier": "GTI-S2045",
     "reject-source-moved-carrier-referent": "GTI-S2017",
+    "reject-source-virtual-view-escape": "GTI-S2045",
+    "reject-source-virtual-view-owner-mutation": "GTI-S2017",
 }
 
 
@@ -1634,7 +1743,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers", "owned-base-arguments", "reference-base-arguments"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers", "owned-base-arguments", "reference-base-arguments", "virtual-text-relays", "returned-siblings", "exchanged-transfers"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -2128,6 +2237,60 @@ int main() { return broken.area() + square.area(); }
         array_field_failure.replace("expected_cleanup = 54;", "expected_cleanup = 55;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=array_needle,
         endpoints=TRANSFER_ENDPOINTS)
+    siblings = (root / SUCCESS_FILES["returned-siblings"]).read_text(encoding="utf-8")
+    siblings_marker = "// RETURNED_SIBLINGS_MAIN\n"
+    if siblings.count(siblings_marker) != 1:
+        raise AssertionError("returned sibling main marker is not unique")
+    # The sibling's cleanup fails after the returned local was relocated into
+    # the caller's storage: the callee's failure path destroys it, once.
+    sibling_failure = siblings.split(siblings_marker, 1)[0] + """mut int32_t expected_cleanup = 0;
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding.
+    int32_t checked_cleanup = 1 / (trace == expected_cleanup ? 1 : 0);
+  }
+};
+
+int main() {
+  expected_cleanup = 430291;
+  Guard guard{};
+  Obj result = build(1, 0);
+  return 0;
+}
+"""
+    sibling_needle = "~Base() { note(9 / this.divisor); }"
+    add("returned-sibling-failure", sibling_failure, "defined-failure",
+        expected_exit=70, failure_needle=sibling_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("returned-sibling-wrong-cleanup",
+        sibling_failure.replace("expected_cleanup = 430291;", "expected_cleanup = 430292;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=sibling_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    exchanges = (root / SUCCESS_FILES["exchanged-transfers"]).read_text(encoding="utf-8")
+    exchanges_marker = "// EXCHANGED_TRANSFERS_MAIN\n"
+    if exchanges.count(exchanges_marker) != 1:
+        raise AssertionError("exchanged transfer main marker is not unique")
+    # A replacement that fails before its exchange leaves the element in
+    # place; the earlier exchanged-out object and the element end once each.
+    exchange_failure = exchanges.split(exchanges_marker, 1)[0] + """int main() {
+  expected_cleanup = 15;
+  Guard guard{};
+  mut std::vector<Square> row{};
+  row.push_back(Square(1));
+  Square old = std::exchange(row[std::size_t(0)], Square(5));
+  Square broken = std::exchange(row[std::size_t(0)], make(0));
+  return old.area() + broken.area();
+}
+"""
+    exchange_needle = "Square make(int side) { return Square(12 / side); }"
+    add("exchanged-transfer-failure", exchange_failure, "defined-failure",
+        expected_exit=70, failure_needle=exchange_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("exchanged-transfer-wrong-cleanup",
+        exchange_failure.replace("expected_cleanup = 15;", "expected_cleanup = 16;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=exchange_needle,
+        endpoints=TRANSFER_ENDPOINTS)
     for name, source in REJECTIONS.items():
         add(name, source, "backend-rejection")
     for name, source in SOURCE_REJECTIONS.items():
@@ -2165,7 +2328,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
                                "virtual-signatures", "virtual-signature-failure",
                                "virtual-signature-wrong-cleanup", "temporary-receivers",
                                "temporary-receiver-failure",
-                               "temporary-receiver-wrong-cleanup"),
+                               "temporary-receiver-wrong-cleanup",
+                               "virtual-text-relays"),
         "dispatch-lifecycle": ("virtual-failure-cleanup", "constructor-rollback",
                                "cleanup-oracle-wrong-trace", "nonobserving-cleanup-helper-cycle"),
         "fresh-local-generated-transfers": (
@@ -2176,7 +2340,11 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "owned-transfers", "owned-transfer-failure", "owned-transfer-wrong-cleanup",
             "local-return-former-reject", "returned-owned-move",
             "hierarchy-arrays", "hierarchy-payloads", "moved-carriers",
-            "moved-borrow-carrier-former-reject"),
+            "moved-borrow-carrier-former-reject", "complete-polymorphic-swap",
+            "returned-siblings",
+            "returned-sibling-failure", "returned-sibling-wrong-cleanup",
+            "exchanged-transfers", "exchanged-transfer-failure",
+            "exchanged-transfer-wrong-cleanup"),
         "fresh-publication": (
             "fresh-publication", "fresh-return-former-reject",
             "fresh-value-argument-former-reject",
@@ -2272,6 +2440,8 @@ def main() -> None:
              "replacement-failure", "replacement-wrong-cleanup",
              "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
              "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
+             "returned-sibling-failure", "returned-sibling-wrong-cleanup",
+             "exchanged-transfer-failure", "exchanged-transfer-wrong-cleanup",
              "program-storage-failure",
              "shared-polymorphic-owner-failure", "shared-polymorphic-owner-wrong-cleanup",
              *LIFECYCLE_FORMER_REJECTS, "rollback-virtual-observation-former-reject",

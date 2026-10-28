@@ -3914,6 +3914,190 @@ void test(Session &session, const VerifiedLoweredProgram &input) {
             << " views=" << views.size() << " dispatch-pointer-bytes="
             << physical.size() * session.dataLayout().getPointerSize() << '\n';
 }
+// A restoring exchange takes its moved replacement from the value's own
+// storage and publishes the previous object directly in its destination. A
+// local returned beside a sibling whose cleanup can fail reaches the caller
+// through the body's return-result obligation. Each plan binds the exact
+// lifecycle MIR proves; any other release of the moved value's obligation
+// refuses rather than guessing which cleanup owns the object.
+void testExchangedAndReturnedTransferPlanning() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto load = [&](const char *relative) {
+    const auto frontend =
+        Frontend({.requireEntryPoint = true,
+                  .lowerReachableOnly = true,
+                  .lowerLibraryReachableOnly = true,
+                  .trustedBodies = TrustedBodyAnalysis::Reachable})
+            .analyze(root / relative, std::nullopt,
+                     {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+    if (!frontend.canGenerateCode())
+      throw std::runtime_error(std::string(relative) + " lost valid source");
+    std::vector<LoweredProgramIssue> issues;
+    auto input = verifiedLoweredProgram(
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+    if (!input)
+      throw std::runtime_error(std::string(relative) + " lost its MIR seal");
+    return std::move(*input);
+  };
+  const auto find = [](MirBody &body, MirInstructionId id) -> MirInstruction & {
+    for (auto &block : body.blocks)
+      for (auto &stage : block.instructions)
+        if (stage.id == id)
+          return stage;
+    throw std::runtime_error("transfer mutation lost its stage");
+  };
+  const auto obligation = [](MirBody &body,
+                             MirDropObligationId id) -> MirDropObligation & {
+    for (auto &drop : body.dropObligations)
+      if (drop.id == id)
+        return drop;
+    throw std::runtime_error("transfer mutation lost its obligation");
+  };
+
+  const auto exchanged =
+      load("tests/fixtures/llvm_dispatch_exchanged_transfers.gti");
+  const auto &program = exchanged.program().mir();
+  std::size_t exchanges = 0;
+  for (const auto address : enumerateMirBodyAddresses(program)) {
+    const auto &body = *findMirBody(program, address);
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (!isFreshHierarchyTransferProducer(stage) ||
+            stage.kind != MirInstructionKind::Move)
+          continue;
+        FreshHierarchyTransfer planned;
+        try {
+          if (!containsHierarchyStorage(program, stage.info.type))
+            continue;
+          planned = planFreshHierarchyTransfer(program, body, stage);
+        } catch (const BackendUnsupportedError &) {
+          continue;
+        }
+        if (planned.publishes != FreshHierarchyPublication::Exchange)
+          continue;
+        ++exchanges;
+        const auto &exchange = *planned.publication;
+        const Placement placement(program, body);
+        const MirInstruction *initialize = nullptr;
+        for (const auto &candidate : block.instructions)
+          if (candidate.kind == MirInstructionKind::Initialize &&
+              candidate.operands.size() == 1 &&
+              candidate.operands.front().value == *exchange.result)
+            initialize = &candidate;
+        expect(exchange.intrinsic == IntrinsicKind::RestoringExchange &&
+                   exchange.operands.size() == 2 &&
+                   exchange.operands[1].value == *stage.result &&
+                   planned.valueDrop && !placement.target(*stage.result),
+               "an exchanged replacement waits in its own value storage");
+        expect(isFreshObjectProducer(program, exchange) && initialize &&
+                   placement.target(*exchange.result) &&
+                   placement.target(*exchange.result)->place ==
+                       *initialize->destination,
+               "the previous object publishes directly in its destination");
+        // The exchange must take over the moved value's obligation exactly:
+        // a conditional, missing or retyped release refuses.
+        for (unsigned mutation = 0; mutation != 3; ++mutation) {
+          auto changed = program;
+          auto &changedBody = *findMirBody(changed, address);
+          auto &events = find(changedBody, exchange.id).lifecycle;
+          const auto release = std::find_if(
+              events.begin(), events.end(), [&](const auto &event) {
+                return event.kind == MirLifecycleEventKind::TransferOut &&
+                       event.source == planned.valueDrop;
+              });
+          if (release == events.end())
+            throw std::runtime_error("exchange lost its value release");
+          if (mutation == 0)
+            release->conditional = true;
+          else if (mutation == 1)
+            release->kind = MirLifecycleEventKind::Drop;
+          else
+            events.erase(release);
+          rejects<BackendUnsupportedError>(
+              [&] {
+                static_cast<void>(planFreshHierarchyTransfer(
+                    changed, changedBody, find(changedBody, stage.id)));
+              },
+              "an exchanged replacement requires the exchange's exact release");
+        }
+      }
+  }
+  expect(exchanges >= 3,
+         "exchanged elements, fields and slots were planned and mutated");
+
+  const auto siblings =
+      load("tests/fixtures/llvm_dispatch_returned_siblings.gti");
+  const auto &returned = siblings.program().mir();
+  std::size_t reparented = 0;
+  for (const auto address : enumerateMirBodyAddresses(returned)) {
+    const auto &body = *findMirBody(returned, address);
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (!isFreshHierarchyTransferProducer(stage) ||
+            stage.kind != MirInstructionKind::Move)
+          continue;
+        FreshHierarchyTransfer planned;
+        try {
+          if (!containsHierarchyStorage(returned, stage.info.type))
+            continue;
+          planned = planFreshHierarchyTransfer(returned, body, stage);
+        } catch (const BackendUnsupportedError &) {
+          continue;
+        }
+        if (planned.publishes != FreshHierarchyPublication::Returned ||
+            !planned.valueDrop)
+          continue;
+        // The reparent into the return-result obligation that a failing
+        // sibling cleanup drops instead of the moved value obligation.
+        MirInstructionId handoff = 0;
+        MirDropObligationId result = 0;
+        for (const auto &candidate : body.blocks)
+          for (const auto &instruction : candidate.instructions)
+            for (const auto &event : instruction.lifecycle)
+              if (event.kind == MirLifecycleEventKind::Reparent &&
+                  event.source == planned.valueDrop) {
+                handoff = instruction.id;
+                result = event.target;
+              }
+        const auto *target = result ? body.findDropObligation(result) : nullptr;
+        if (!target || target->kind != MirDropObligationKind::ReturnResult)
+          continue;
+        ++reparented;
+        MirInstructionId release = 0;
+        for (const auto &candidate : body.blocks)
+          for (const auto &instruction : candidate.instructions)
+            for (const auto &event : instruction.lifecycle)
+              if (event.kind == MirLifecycleEventKind::TransferOut &&
+                  event.source == result)
+                release = instruction.id;
+        expect(release != 0,
+               "the return releases its return-result obligation");
+        for (unsigned mutation = 0; mutation != 4; ++mutation) {
+          auto changed = returned;
+          auto &changedBody = *findMirBody(changed, address);
+          if (mutation == 0)
+            for (auto &event : find(changedBody, handoff).lifecycle)
+              event.conditional = true;
+          else if (mutation == 1)
+            obligation(changedBody, result).initiallyActive = true;
+          else if (mutation == 2)
+            obligation(changedBody, result).kind = MirDropObligationKind::Value;
+          else
+            for (auto &event : find(changedBody, release).lifecycle)
+              if (event.source == result)
+                event.conditional = true;
+          rejects<BackendUnsupportedError>(
+              [&] {
+                static_cast<void>(planFreshHierarchyTransfer(
+                    changed, changedBody, find(changedBody, stage.id)));
+              },
+              "a returned local needs one exact return-result handoff");
+        }
+      }
+  }
+  expect(reparented >= 2, "both returned siblings reparent at the return");
+}
+
 void testInertRelocation() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto frontend =
@@ -4591,6 +4775,7 @@ int main() { return 0; }
   testFreshTransferPlanning();
   testNestedFreshTransferPlanning();
   testFreshCopyViewPlanning();
+  testExchangedAndReturnedTransferPlanning();
   testInertRelocation();
   testGeneratedEmpty();
   testDeclarationInitializers();

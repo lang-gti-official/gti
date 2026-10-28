@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.484.4 - Native closures over hierarchy objects
+## 0.484.5 - Native closures over hierarchy objects
 
 - The native backend now builds lambdas whose init-capture moves an object of
   a derived class, a polymorphic class or an interface implementation into the
@@ -20,6 +20,24 @@ for what minor and patch releases mean.
   dispatch state, and the closure's cleanup ends its captures in reverse
   declaration order, once each. A by-copy capture of such an object and a copy
   of such a closure still report `GTI-B0003`.
+
+## 0.484.4 - Native virtual text relays, returned siblings and exchanges
+
+- The native backend now builds these programs, which previously failed with
+  `GTI-B0003`, and matches the C++ backend:
+  - a function returning the view a virtual call returns, such as
+    `std::string_view call(Base& n) { return n.name(); }` with `name`
+    virtual. The view keeps its owner borrowed exactly as a static call's
+    view does;
+  - a derived or polymorphic local returned by value beside a sibling local
+    that is destroyed at the return, including when that destructor fails;
+  - `std::exchange` of objects holding polymorphic state, such as a
+    `std::transfer_function<int64_t()>` with owned state in a vector element
+    or a field, or a class with virtual methods.
+- `std::swap` of a polymorphic class that has derived classes now fails with
+  `GTI-B0003` on the native backend, as `std::exchange` of one does. Through
+  a base view it replaced the derived object's dispatch state, so later
+  virtual calls on that object ran the base methods.
 
 ## 0.484.3 - Owned and forwarded base-constructor arguments on LLVM
 

@@ -23,10 +23,13 @@ bool isFreshObjectProducer(const MirProgram &program,
   // itself is still fresh.
   if (producer.kind == MirInstructionKind::Construct)
     return producer.constructorKind == ConstructorKind::Ordinary;
-  // A taken thread result is relocated out of its runtime box into the
-  // destination its operation is given, like a by-value call result.
+  // A taken thread result is relocated out of its runtime box, and the
+  // previous object of a restoring exchange out of the place the exchange
+  // vacates, into the destination the operation is given, like a by-value
+  // call result.
   if (producer.kind == MirInstructionKind::Call &&
-      producer.intrinsic == IntrinsicKind::ThreadResultTake)
+      (producer.intrinsic == IntrinsicKind::ThreadResultTake ||
+       producer.intrinsic == IntrinsicKind::RestoringExchange))
     return !producer.loan && !producer.receiver && !producer.functionTarget &&
            !producer.constructorTarget && !producer.lambdaTarget &&
            !producer.bodyTarget && !producer.threadTaskAdapter;
@@ -1068,6 +1071,20 @@ public:
             // generated relocation; the spawn takes over its obligation.
             result.publication = &stage;
             result.publishes = FreshHierarchyPublication::Task;
+          } else if (result.kind == ConstructorKind::Move &&
+                     stage.kind == MirInstructionKind::Call &&
+                     stage.intrinsic == IntrinsicKind::RestoringExchange &&
+                     index == 1 && stage.operands.size() == 2 &&
+                     stage.parameterTypes.size() == 2 &&
+                     stage.parameterTypes[1] == owner.type && stage.result &&
+                     stage.info.type == owner.type && !stage.destination &&
+                     !stage.receiver) {
+            // The moved object waits in its own value storage until the
+            // restoring exchange relocates it, with this type's generated
+            // relocation, into the place the exchange vacates; the exchange
+            // takes over its obligation.
+            result.publication = &stage;
+            result.publishes = FreshHierarchyPublication::Exchange;
           } else if (result.kind == ConstructorKind::Move && index == 0 &&
                      stage.kind == MirInstructionKind::Assign &&
                      stage.destination &&
@@ -1236,9 +1253,14 @@ public:
                       "to its aggregate");
       } else if (result.publishes == FreshHierarchyPublication::Task) {
         if (result.valueDrop &&
-            !spawnedObligation(result.valueDrop, result.publication))
+            !handedObligation(result.valueDrop, result.publication))
           unsupported("LLVM thread task transfer must hand its value "
                       "obligation to the spawn");
+      } else if (result.publishes == FreshHierarchyPublication::Exchange) {
+        if (result.valueDrop &&
+            !handedObligation(result.valueDrop, result.publication))
+          unsupported("LLVM exchanged transfer must hand its value "
+                      "obligation to the exchange");
       } else if (!local && !argument &&
                  (owner.requiresActiveCleanup || result.valueDrop ||
                   (result.publishes == FreshHierarchyPublication::Slot &&
@@ -1293,6 +1315,12 @@ public:
       return selected && selected->root == MirPlaceRootKind::Value &&
              selected->value == *producer.result;
     };
+    // A returned value's obligation may move into the return-result
+    // obligation that a failing cleanup before the return drops instead.
+    const MirDropObligationId returnResult =
+        result.publishes == FreshHierarchyPublication::Returned
+            ? reparentedReturnResult(result.valueDrop)
+            : 0;
     for (const auto &block : body.blocks) {
       for (const auto &stage : block.instructions) {
         if (stage.tombstone)
@@ -1308,7 +1336,9 @@ public:
              std::none_of(stage.lifecycle.begin(), stage.lifecycle.end(),
                           [&](const auto &event) {
                             return event.kind == MirLifecycleEventKind::Drop &&
-                                   event.source == result.valueDrop;
+                                   (event.source == result.valueDrop ||
+                                    (returnResult &&
+                                     event.source == returnResult));
                           })))
           unsupported("LLVM transfer result has an intermediate destination");
       }
@@ -1589,7 +1619,7 @@ private:
       // relocates it into the runtime task box with its generated relocation;
       // the spawn takes over its value obligation.
       if (!result.valueDrop ||
-          !spawnedObligation(result.valueDrop, publication))
+          !handedObligation(result.valueDrop, publication))
         unsupported("LLVM thread task transfer must hand its value "
                     "obligation to the spawn");
       result.publication = publication;
@@ -1771,28 +1801,93 @@ private:
   }
   // The moved value's obligation is created by the producer's move and ends
   // only through one unconditional TransferOut in the block whose terminator
-  // returns it, or through a failure-path drop before that release.
+  // returns it, or through a failure-path drop before that release. When a
+  // cleanup that can fail runs between the move and the return, such as a
+  // sibling local's destructor, MIR first reparents it, unconditionally and
+  // once, into the body's return-result obligation on the same value place;
+  // that obligation then ends the same way.
   bool returnedObligation(MirDropObligationId obligation) const {
+    const auto *moved = body.findDropObligation(obligation);
+    MirDropObligationId result = 0;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone)
+          continue;
+        for (const auto &event : stage.lifecycle) {
+          if (event.source != obligation ||
+              event.kind != MirLifecycleEventKind::Reparent)
+            continue;
+          const auto *target = body.findDropObligation(event.target);
+          if (result || !moved || !target ||
+              target->kind != MirDropObligationKind::ReturnResult ||
+              target->place != moved->place ||
+              target->dropType != moved->dropType || target->initiallyActive)
+            return false;
+          result = target->id;
+        }
+      }
+    return result ? releasedAtReturn(obligation, 0, result) &&
+                        releasedAtReturn(result, obligation, 0)
+                  : releasedAtReturn(obligation, 0, 0);
+  }
+  // The return-result obligation a moved value's obligation is reparented
+  // into before a cleanup that can fail, if any.
+  MirDropObligationId
+  reparentedReturnResult(MirDropObligationId obligation) const {
+    if (!obligation)
+      return 0;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone)
+          for (const auto &event : stage.lifecycle)
+            if (event.source == obligation &&
+                event.kind == MirLifecycleEventKind::Reparent)
+              if (const auto *target = body.findDropObligation(event.target);
+                  target && target->kind == MirDropObligationKind::ReturnResult)
+                return target->id;
+    return 0;
+  }
+  // Whether `obligation` ends only through failure-path drops plus either one
+  // unconditional TransferOut in the block whose terminator returns, or, with
+  // `next`, one unconditional Reparent into `next`. It is created by the
+  // producer's move or, with `incoming`, by that obligation's Reparent.
+  bool releasedAtReturn(MirDropObligationId obligation,
+                        MirDropObligationId incoming,
+                        MirDropObligationId next) const {
     const MirBlock *release = nullptr;
+    bool handed = false;
     for (const auto &block : body.blocks)
       for (const auto &stage : block.instructions) {
         if (stage.tombstone)
           continue;
         for (const auto &event : stage.lifecycle) {
           if (event.target == obligation &&
-              event.kind != MirLifecycleEventKind::Move)
+              event.kind != MirLifecycleEventKind::Move &&
+              !(incoming && event.kind == MirLifecycleEventKind::Reparent &&
+                event.source == incoming && !event.conditional &&
+                !event.failureCleanup))
             return false;
           if (event.source != obligation)
             continue;
           if (event.kind == MirLifecycleEventKind::Drop &&
               stage.kind == MirInstructionKind::Drop)
             continue;
+          if (next) {
+            if (handed || event.kind != MirLifecycleEventKind::Reparent ||
+                event.target != next || event.conditional ||
+                event.failureCleanup)
+              return false;
+            handed = true;
+            continue;
+          }
           if (release || event.kind != MirLifecycleEventKind::TransferOut ||
               event.target || event.conditional || event.failureCleanup)
             return false;
           release = &block;
         }
       }
+    if (next)
+      return handed;
     return release && release->terminator.kind == MirTerminatorKind::Return &&
            release->terminator.value;
   }
@@ -1822,10 +1917,11 @@ private:
     return true;
   }
   // The moved value's obligation ends only through one unconditional
-  // TransferOut at the spawn that relocates it into its task box, or through
-  // a failure-path drop before that spawn.
-  bool spawnedObligation(MirDropObligationId obligation,
-                         const MirInstruction *spawn) const {
+  // TransferOut at the consumer that relocates it out of the value's own
+  // storage -- a spawn into its task box, or a restoring exchange into the
+  // place it vacates -- or through a failure-path drop before that consumer.
+  bool handedObligation(MirDropObligationId obligation,
+                        const MirInstruction *consumer) const {
     bool released = false;
     for (const auto &block : body.blocks)
       for (const auto &stage : block.instructions) {
@@ -1840,7 +1936,7 @@ private:
           if (event.kind == MirLifecycleEventKind::Drop &&
               stage.kind == MirInstructionKind::Drop)
             continue;
-          if (released || &stage != spawn ||
+          if (released || &stage != consumer ||
               event.kind != MirLifecycleEventKind::TransferOut ||
               event.target || event.conditional || event.failureCleanup)
             return false;
@@ -2106,8 +2202,9 @@ Placement::Placement(const MirProgram &program, const MirBody &body) {
       // Bind only the exact proven publication. Do not replay the generic
       // CallInput/aggregate/return scan after enabling hierarchy freshness.
       // A slot construction relocates from the moved binding itself, a
-      // consumed receiver, replacing value or spawned task lives in its own
-      // value storage, and an element lives in its aggregate's slot.
+      // consumed receiver, replacing value, spawned task or exchanged
+      // replacement lives in its own value storage, and an element lives in
+      // its aggregate's slot.
       if (transfer->publishes == FreshHierarchyPublication::Returned)
         bind(*stage.result, {.returned = true});
       else if (transfer->publishes == FreshHierarchyPublication::Element)
@@ -2121,7 +2218,8 @@ Placement::Placement(const MirProgram &program, const MirBody &body) {
       else if (transfer->publishes != FreshHierarchyPublication::Slot &&
                transfer->publishes != FreshHierarchyPublication::Receiver &&
                transfer->publishes != FreshHierarchyPublication::Replacement &&
-               transfer->publishes != FreshHierarchyPublication::Task)
+               transfer->publishes != FreshHierarchyPublication::Task &&
+               transfer->publishes != FreshHierarchyPublication::Exchange)
         bind(*stage.result, {.place = transfer->destination});
     }
 }
@@ -2226,7 +2324,8 @@ bool Placement::fresh(MirValueId value) const {
          (stage.kind == MirInstructionKind::Call &&
           (!stage.loan || stage.info.category == ValueCategory::Value) &&
           (stage.intrinsic == IntrinsicKind::None ||
-           stage.intrinsic == IntrinsicKind::ThreadResultTake)) ||
+           stage.intrinsic == IntrinsicKind::ThreadResultTake ||
+           stage.intrinsic == IntrinsicKind::RestoringExchange)) ||
          (stage.kind == MirInstructionKind::Compute &&
           (stage.operation == MirOperation::Aggregate ||
            stage.operation == MirOperation::PayloadConstruct ||
