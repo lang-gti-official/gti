@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.484.8 - Range-for over by-reference lambda captures
+## 0.485.1 - Range-for over by-reference lambda captures
 
 - A range-for loop over a container captured by reference in a lambda, such
   as `[&values]() { for (auto& v : values) ... }` or a mutable loop through
@@ -17,8 +17,6 @@ for what minor and patch releases mean.
   error (`GTI-B0001`). This also covers user-defined ranges. Modifying the
   captured container inside the loop is still rejected with `GTI-S2017`. The
   language is unchanged.
-
-## 0.484.7 - Borrows through a local object's reference fields
 
 ## 0.485.0 - Polymorphic swap rule and LLVM parity follow-ups
 
