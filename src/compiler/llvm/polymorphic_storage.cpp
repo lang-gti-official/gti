@@ -60,9 +60,8 @@ void PolymorphicStorage::preflight(const MirBody &body,
   if (instruction.intrinsic == IntrinsicKind::PolymorphicStorageConstruct) {
     const auto &model = instruction.operands.at(1).type;
     Lifetimes::preflightInertRelocation(session, dispatch, model);
-    static_cast<void>(
-        session.layouts().baseSubobject(model, slot.arguments.at(0),
-                                        "polymorphicStorage.slotModel"));
+    static_cast<void>(session.layouts().baseSubobject(
+        model, slot.arguments.at(0), "polymorphicStorage.slotModel"));
   }
 }
 
@@ -106,9 +105,10 @@ PolymorphicStorage::descriptor(const SemanticType &slot,
   for (const auto &entry : descriptors)
     if (entry.model == model && entry.interface == interface)
       return entry.value;
-  const auto offset = session.layouts().baseSubobject(model, interface,
-                                             "polymorphicStorage.interface")
-                            .offset;
+  const auto offset =
+      session.layouts()
+          .baseSubobject(model, interface, "polymorphicStorage.interface")
+          .offset;
   auto *relocate = lifetimes.inertRelocation(model);
   auto *type = descriptorType();
   auto *value = new llvm::GlobalVariable(
@@ -202,10 +202,10 @@ llvm::Value *PolymorphicStorage::emit(llvm::IRBuilder<> &ir,
     auto *destination =
         ir.CreateStructGEP(layout.type.storage, slot, layout.payloadIndex);
     ir.CreateCall(lifetimes.inertRelocation(model), {destination, inputs[1]});
-    const auto offset =
-        session.layouts().baseSubobject(model, type.arguments[0],
-                                        "polymorphicStorage.readModel")
-            .offset;
+    const auto offset = session.layouts()
+                            .baseSubobject(model, type.arguments[0],
+                                           "polymorphicStorage.readModel")
+                            .offset;
     auto *view = ir.CreateGEP(ir.getInt8Ty(), destination, ir.getInt64(offset));
     ir.CreateStore(view, ir.CreateStructGEP(layout.type.storage, slot,
                                             layout.interfaceIndex));

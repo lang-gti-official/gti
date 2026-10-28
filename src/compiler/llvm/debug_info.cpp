@@ -242,7 +242,8 @@ public:
     } else if (value.kind == SemanticType::UniqueOwner) {
       const auto layout = session.layouts().get(value);
       if (value.arguments.size() != 1 || !layout.storage->isPointerTy())
-        throw std::logic_error("LLVM debug owner lost its typed pointer layout");
+        throw std::logic_error(
+            "LLVM debug owner lost its typed pointer layout");
       // Describe the existing private handle, not a second pointee object or
       // an owning source reference. Source wrappers retain their own members.
       result = builder.createPointerType(type(value.arguments.front()),

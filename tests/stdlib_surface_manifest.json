@@ -29,7 +29,7 @@
     "stdlib/std/list.gti": "a72d8a3c66c909802740b49864bb59f4509a563c9d8d81517f030d877f25a0f1",
     "stdlib/std/map.gti": "e3d8791e6d607ec1bf654d3f6595230de9f21ba1e2f6d03f3ae973b9063a1edc",
     "stdlib/std/memory.gti": "2c9b75f4eea4b3a9146f0e1f1b15172f87596a2f970497da95a0eed7c35873a8",
-    "stdlib/std/meta.gti": "e6968acc00a01597f471bae16aada5b2d9757d96102964dc4033cf6b6a51d34d",
+    "stdlib/std/meta.gti": "3123232fd328eee1c8819ccafb31cb1472baab3be7911b76d7581bbd9d9d9d01",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "e5a9c1c5d786b02b97f57c822f552d3af9695b3746e94530261c212429a8e347",
     "stdlib/std/optional.gti": "2e82bc676e104581097ac037bec38fc90b6c977a6ac1c52110b8e2cab67c4628",
@@ -975,6 +975,49 @@
         "exit_code": 0,
         "stdout": "",
         "stderr": ""
+      }
+    },
+    {
+      "id": "enum-name",
+      "mode": "run",
+      "source": "tests/fixtures/enum_name.gti",
+      "native_sources": [
+        "tests/fixtures/enum_name_native.cpp"
+      ],
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "world\nmissing\n<unknown>\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "enum-name-non-enum",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/enum_name_non_enum.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2029",
+          "integral enum"
+        ]
+      }
+    },
+    {
+      "id": "enum-name-payload",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/enum_name_payload.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2029",
+          "integral enum"
+        ]
       }
     },
     {
@@ -4741,6 +4784,55 @@
       ],
       "required_instantiations": [
         "Base/Derived"
+      ]
+    },
+    {
+      "id": "meta.enum-name",
+      "source": "stdlib/std/meta.gti",
+      "status": "executable",
+      "operations": [
+        "std::enum_name"
+      ],
+      "case_ids": [
+        "enum-name"
+      ],
+      "required_instantiations": [
+        "scoped and unscoped enum names",
+        "signed and wide unsigned values",
+        "first declaration for aliases",
+        "unnamed native value fallback",
+        "expected enum error observation",
+        "non-enum and payload-enum rejection"
+      ],
+      "evidence": [
+        "tests/fixtures/enum_name.gti",
+        "tests/fixtures/enum_name_native.cpp",
+        "tests/fixtures/enum_name_non_enum.gti",
+        "tests/fixtures/enum_name_payload.gti",
+        "examples/169-source-expected.gti",
+        "stdlib/std/meta.gti"
+      ]
+    },
+    {
+      "id": "meta.enum-name-rejected-types",
+      "source": "stdlib/std/meta.gti",
+      "status": "unsupported",
+      "operations": [
+        "std::enum_name<non-enum>",
+        "std::enum_name<payload-enum>"
+      ],
+      "case_ids": [
+        "enum-name-non-enum",
+        "enum-name-payload"
+      ],
+      "reason": "The source helper requires an integral enum with comparable reflected values.",
+      "required_instantiations": [
+        "integer argument rejection",
+        "payload enum argument rejection"
+      ],
+      "evidence": [
+        "tests/fixtures/enum_name_non_enum.gti",
+        "tests/fixtures/enum_name_payload.gti"
       ]
     },
     {

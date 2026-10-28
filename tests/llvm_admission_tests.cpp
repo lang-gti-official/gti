@@ -833,7 +833,6 @@ int main() {
          "a by-copy hierarchy capture and a closure copy are generated "
          "copies: " +
              byCopy.limitation());
-
 }
 
 void testUnstagedConstructorFieldPublicationPlan() {
@@ -2410,7 +2409,8 @@ int main() {
   return copy[1][1] == &value ? 0 : 1;
 }
 )"));
-  expect(pointerArrays.admitted(), "raw pointer arrays use passive value storage");
+  expect(pointerArrays.admitted(),
+         "raw pointer arrays use passive value storage");
   bool pointerAggregate = false;
   for (const auto &use : pointerArrays.requirements())
     if (use.entry->family == "MirOperation" && use.entry->name == "Aggregate") {
@@ -2727,10 +2727,10 @@ int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return
   // pointee; only the virtual call above still needs a dispatch view.
   bool fieldWitnessed = false;
   for (const auto &use : unsupported.requirements())
-    fieldWitnessed |=
-        use.required && use.entry->family == "UnsafeOperationKind" &&
-        use.entry->name == "RawMember" && use.implementedShape &&
-        use.implementedShape->name == "NativeClassRawAccess";
+    fieldWitnessed |= use.required &&
+                      use.entry->family == "UnsafeOperationKind" &&
+                      use.entry->name == "RawMember" && use.implementedShape &&
+                      use.implementedShape->name == "NativeClassRawAccess";
   expect(unsupported.admitted() && fieldWitnessed,
          "a raw field read of hierarchy storage uses its exact metadata "
          "layout: " +
@@ -3080,7 +3080,8 @@ class Base {
 public:
   std::string text;
   Base() : text(std::string("ann")) {}
-  )") + (dispatched ? "virtual " : "") + R"(std::string_view name() { return this.text.view(); }
+  )") + (dispatched ? "virtual " : "") +
+           R"(std::string_view name() { return this.text.view(); }
 };
 class Derived : public Base {
 public:
@@ -3836,8 +3837,7 @@ void testDispatchPerUseWitnesses() {
               return use.required && use.body == address &&
                      use.block == block.id && use.instruction == stage.id &&
                      use.implementedShape &&
-                     use.implementedShape->name ==
-                         "NativeHierarchyReplacement";
+                     use.implementedShape->name == "NativeHierarchyReplacement";
             });
         objectReplacement |= replaced && !rejected;
         objectMutation |= !replaced && transfers == 2;
@@ -3877,21 +3877,19 @@ void testDispatchPerUseWitnesses() {
     int main() { return value.read(); }
   )"));
   };
-  for (const auto *declarations :
-       {"};\n thread_local P value{};",
-        "~P() {} };\n thread_local P value{};"}) {
+  for (const auto *declarations : {"};\n thread_local P value{};",
+                                   "~P() {} };\n thread_local P value{};"}) {
     const auto plan = threadLocal(declarations);
     expect(plan.admitted() &&
-               std::any_of(plan.requirements().begin(),
-                           plan.requirements().end(),
-                           [](const auto &use) {
-                             return use.required &&
-                                    use.entry->key() ==
-                                        "Shape.PolymorphicTransfer" &&
-                                    use.implementedShape &&
-                                    use.implementedShape->name ==
-                                        "NativeThreadLocalHierarchyStorage";
-                           }),
+               std::any_of(
+                   plan.requirements().begin(), plan.requirements().end(),
+                   [](const auto &use) {
+                     return use.required &&
+                            use.entry->key() == "Shape.PolymorphicTransfer" &&
+                            use.implementedShape &&
+                            use.implementedShape->name ==
+                                "NativeThreadLocalHierarchyStorage";
+                   }),
            "a thread-local hierarchy object constructed in its thread's slot "
            "carries its thread-storage witness: " +
                plan.limitation());

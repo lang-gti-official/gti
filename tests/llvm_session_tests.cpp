@@ -130,15 +130,18 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
   expect(array.addressOnly && array.size == 10 && array.stride == 2 &&
              array.alignment == 2,
          "arrays retain their exact stride and aggregate storage");
-  const auto pointerSlots = layouts.get(SemanticType::arrayOf(
-      SemanticType::rawPointerTo(SemanticType::Void), 3));
-  expect(pointerSlots.addressOnly && pointerSlots.size == 24 &&
-             pointerSlots.stride == 8 && pointerSlots.alignment == 8 &&
-             llvm::cast<llvm::ArrayType>(pointerSlots.storage)
-                 ->getElementType()->isPointerTy(),
-         "pointer arrays store exact pointer-width values, not pointee layouts");
+  const auto pointerSlots = layouts.get(
+      SemanticType::arrayOf(SemanticType::rawPointerTo(SemanticType::Void), 3));
+  expect(
+      pointerSlots.addressOnly && pointerSlots.size == 24 &&
+          pointerSlots.stride == 8 && pointerSlots.alignment == 8 &&
+          llvm::cast<llvm::ArrayType>(pointerSlots.storage)
+              ->getElementType()
+              ->isPointerTy(),
+      "pointer arrays store exact pointer-width values, not pointee layouts");
   const auto pointerGrid = layouts.get(SemanticType::arrayOf(
-      SemanticType::arrayOf(SemanticType::rawPointerTo(SemanticType::Int32), 3), 2));
+      SemanticType::arrayOf(SemanticType::rawPointerTo(SemanticType::Int32), 3),
+      2));
   expect(pointerGrid.size == 48 && pointerGrid.stride == 24 &&
              pointerGrid.alignment == 8,
          "nested pointer arrays preserve row stride and natural alignment");

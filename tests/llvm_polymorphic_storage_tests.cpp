@@ -127,11 +127,11 @@ int run(int mode) {
          "exact slot operations are admitted by NativeInlinePolymorphicSlot");
   bool slotWitness = false;
   for (const auto &use : admission.requirements())
-    slotWitness |= use.required &&
-                   use.entry->key() ==
-                       "IntrinsicKind.PolymorphicStorageConstruct" &&
-                   use.implementedShape &&
-                   use.implementedShape->name == "NativeInlinePolymorphicSlot";
+    slotWitness |=
+        use.required &&
+        use.entry->key() == "IntrinsicKind.PolymorphicStorageConstruct" &&
+        use.implementedShape &&
+        use.implementedShape->name == "NativeInlinePolymorphicSlot";
   expect(slotWitness,
          "slot construction carries the exact inline-slot operation witness");
   const auto &program = input->program().mir();

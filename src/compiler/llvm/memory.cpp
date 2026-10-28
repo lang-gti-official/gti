@@ -6,8 +6,8 @@
 #include <algorithm>
 #include <array>
 #include <limits>
-#include <optional>
 #include <llvm/Support/Alignment.h>
+#include <optional>
 
 namespace lang::native_llvm {
 
@@ -281,13 +281,13 @@ llvm::Value *Memory::shared(const MirInstruction &instruction,
       auto *adjusted =
           ir.CreateGEP(ir.getInt8Ty(), view,
                        ir.getInt64(static_cast<std::int64_t>(base.offset)));
-      value = ir.CreateInsertValue(
-          value,
-          ir.CreateSelect(ir.CreateIsNull(view),
-                          llvm::ConstantPointerNull::get(
-                              session.layouts().pointer()),
-                          adjusted),
-          layout.handleView);
+      value =
+          ir.CreateInsertValue(value,
+                               ir.CreateSelect(ir.CreateIsNull(view),
+                                               llvm::ConstantPointerNull::get(
+                                                   session.layouts().pointer()),
+                                               adjusted),
+                               layout.handleView);
     }
     ir.CreateStore(value, result);
     return result;
@@ -402,8 +402,7 @@ bool uninitializedStorageRepresentation(const MirProgram &program,
 // A shared pointee is a complete object type, or a polymorphic class viewed
 // through one of its bases, whose last owner recovers the complete object and
 // cleanup from the installed dispatch descriptor as a unique owner does.
-static bool sharedPointee(const MirProgram &program,
-                          const SemanticType &type) {
+static bool sharedPointee(const MirProgram &program, const SemanticType &type) {
   if (mir_detail::completeObjectType(program, type))
     return true;
   const MirClassInstance *owner = nullptr;
@@ -773,8 +772,8 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
         instruction.parameterTypes[0].arguments.size() != 1)
       throw std::logic_error("LLVM indexed swap lost its exact storage");
     const auto &storage = instruction.parameterTypes[0].arguments.front();
-    if (storage.kind != SemanticType::Array ||
-        storage.arguments.size() != 1 || !inputs[1]->getType()->isIntegerTy(64) ||
+    if (storage.kind != SemanticType::Array || storage.arguments.size() != 1 ||
+        !inputs[1]->getType()->isIntegerTy(64) ||
         !inputs[2]->getType()->isIntegerTy(64))
       throw std::logic_error("LLVM indexed swap lost its fixed array");
     const auto &element = storage.arguments.front();
@@ -793,10 +792,10 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
     ir.CreateCondBr(ir.CreateICmpEQ(inputs[1], inputs[2]), done, exchange);
     ir.SetInsertPoint(exchange);
     auto *array = session.layouts().get(storage).storage;
-    auto *left = ir.CreateInBoundsGEP(array, inputs[0],
-                                      {ir.getInt64(0), inputs[1]});
-    auto *right = ir.CreateInBoundsGEP(array, inputs[0],
-                                       {ir.getInt64(0), inputs[2]});
+    auto *left =
+        ir.CreateInBoundsGEP(array, inputs[0], {ir.getInt64(0), inputs[1]});
+    auto *right =
+        ir.CreateInBoundsGEP(array, inputs[0], {ir.getInt64(0), inputs[2]});
     auto *slot = held(element);
     transfer(slot, left, element);
     transfer(left, right, element);

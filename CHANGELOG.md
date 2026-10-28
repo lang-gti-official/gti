@@ -20,6 +20,19 @@ for what minor and patch releases mean.
 - Strings and indexing remain byte-oriented. UTF-16 conversion, normalization,
   grapheme segmentation and JSON migration are not included in this first phase.
 
+## 0.486.1 - Faster editor updates with large imports
+
+- `gti_lsp` updates diagnostics sooner after an edit in a file whose imports
+  load much of the standard library, such as `import std;`. Each edit
+  re-copied and rescanned every loaded source unit's tokens. Units whose
+  syntax cannot depend on configuration flags now replay a cached processed
+  form and only re-resolve their imports and includes. On Apple silicon, an
+  edit in a small project with `import std;` shows or clears its error in
+  about 0.35 s instead of 0.55–0.85 s.
+- Include suggestions for an unknown name no longer reload the whole program
+  to probe the edited file itself, so an edit that introduces such an error
+  is no slower than one that clears it.
+
 ## 0.486.0 - Read-only arrow steps, closure copies, projected references and capture ranges
 
 ### Text relays of a by-value formal's text field
