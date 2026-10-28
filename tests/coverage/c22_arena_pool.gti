@@ -1,5 +1,5 @@
 #include <std/memory>
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 int main() {
   mut auto arena_result = std::try_make_arena<int32_t>(std::size_t(4));
   if (!arena_result.has_value()) { std::println("arena unavailable"); return 0; }

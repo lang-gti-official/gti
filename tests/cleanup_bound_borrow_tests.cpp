@@ -25,6 +25,8 @@ mut int observed = 0;
 struct Resource {
   mut int value = 7;
   void reset() mut { this.value = 9; }
+public:
+  Resource() = default;
 };
 class Guard {
   Resource& resource;
@@ -450,6 +452,8 @@ int main() { mut Resource owner{}; Guard guard{owner}; owner.reset(); return 0; 
            R"gti(
 struct Error {
   ~Error() { observed += 1; }
+public:
+  Error() = default;
 };
 expected<Resource&, Error> lookup(Resource& owner) { return owner; }
 int main() {

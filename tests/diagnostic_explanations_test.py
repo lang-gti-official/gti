@@ -108,7 +108,7 @@ int main() {
             "context": {"diagnostics": [error], "only": ["quickfix"]}}})
         assert session.receive_until(lambda message: message.get("id") == 2)["result"] == []
 
-        readonly = '''struct Command { mut int name = 0; };
+        readonly = '''struct Command { mut int name = 0;  public: Command() = default; };
 int main() { Command cmd{}; cmd.name = 1; return 0; }
 '''
         session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {

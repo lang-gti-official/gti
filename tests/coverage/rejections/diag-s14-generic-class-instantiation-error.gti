@@ -8,6 +8,8 @@ public:
 
 struct Plain {
   int v = 0;
+public:
+  Plain() = default;
 };
 
 int main() {

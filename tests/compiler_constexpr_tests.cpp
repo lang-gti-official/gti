@@ -761,6 +761,8 @@ int main() {
 class Path {
 public:
   Path(std::string value) {}
+public:
+  Path() = default;
 };
 int main() {
   mut std::string source = std::string("/hello/world.txt");
@@ -1174,6 +1176,8 @@ void testCheckedArithmeticAndCompoundAssignments() {
       lang::Frontend().analyze("checked-arithmetic.gti", R"(
 struct Meter {
   mut int value = 1;
+public:
+  Meter() = default;
 };
 
 int calculate(int left, int right) {
@@ -1976,9 +1980,13 @@ int main() { return 0; }
           .analyze("constexpr-enum-type-arguments.gti", R"(
 struct underlying_probe<E, U> {
   bool matches() requires std::enum_underlying<E, U> { return true; }
+public:
+  underlying_probe() = default;
 };
 struct plain_probe<T> {
   bool matches() { return true; }
+public:
+  plain_probe() = default;
 };
 enum class small : uint8_t { low, high };
 enum class wide : uint16_t { low, high };
@@ -2333,7 +2341,7 @@ void testConstexprOperators() {
   const std::vector<Rejection> rejected{
       {"struct Item { int* x = nullptr; constexpr int operator()() mut { "
        "return 0; } "
-       "};",
+       " public: Item() = default; };",
        "structural aggregate", "operator()", 8},
       {"struct Item { int x; constexpr Item(int x) : x(x) {} int operator+(int "
        "n) { return this.x + n; } }; "
@@ -3262,12 +3270,12 @@ void testConstexprResults() {
         "constexpr E bad = succeed().error();",
         "constexpr int eager() { return succeed().value_or(divide(0)); } "
         "constexpr int bad = eager();",
-        "int runtime() { return 3; } struct P { int x = runtime(); }; "
+        "int runtime() { return 3; } struct P { int x = runtime();  public: P() = default; }; "
         "constexpr P bad = P();",
         "struct P { int x; constexpr P(mut int& value) : x(value) { value += "
         "1; } }; constexpr P bad = P(3);",
         "struct P { int& x; constexpr P(int& value) : x(value) {} };",
-        "struct P { int x = 1; ~P() {} }; constexpr P bad = P();"}) {
+        "struct P { int x = 1; ~P() {}  public: P() = default; }; constexpr P bad = P();"}) {
     const auto invalid = lang::Frontend().analyze(
         "constexpr-results-invalid.gti",
         prefix + body + " int main() { return 0; }", {standardLibraryPrelude()},
@@ -3861,6 +3869,8 @@ struct Sized<T, uint64_t N> {
 };
 struct Utility {
   static constexpr int twice(int value) { return value * 2; }
+public:
+  Utility() = default;
 };
 constexpr Sized<int, 3> first = Sized<int, 3>(9);
 constexpr Sized<int, 5> second = Sized<int, 5>(17);
@@ -4280,7 +4290,7 @@ struct Label {
   constexpr Label(std::string_view initial) : text(initial) {}
   constexpr uint64_t size() { return this.text.size(); }
 };
-struct Capacity<uint64_t N> { int values[N] = {}; };
+struct Capacity<uint64_t N> { int values[N] = {};  public: Capacity() = default; };
 constexpr std::string_view text = identity("a\0z");
 constexpr Label label = Label(text);
 constexpr uint64_t length = count(text);
@@ -4440,6 +4450,8 @@ class Limits {
 public:
   static constexpr uint64_t count = extent;
   static constexpr uint64_t twice(uint64_t value) { return value * 2; }
+public:
+  Limits() = default;
 };
 
 constexpr uint64_t doubled = Limits::twice(uint64_t(21));
@@ -4447,6 +4459,8 @@ constexpr uint64_t doubled = Limits::twice(uint64_t(21));
 class Block<T, uint64_t N> {
 public:
   T values[N] = {};
+public:
+  Block() = default;
 };
 
 int main() {
@@ -4632,6 +4646,8 @@ constexpr int32_t called = runtime_value();
 constexpr int32_t generic_values<Args...>(Args... values) { return 0; }
 class InvalidMember {
   constexpr int32_t value = 1;
+public:
+  InvalidMember() = default;
 };
 struct RuntimePoint {
   int32_t value;
@@ -4713,6 +4729,8 @@ static_assert(expected_width == uint64_t(4),
 struct Packet {
   static_assert(sizeof(int32_t) == uint64_t(4), "packet field width");
   int32_t value = 0;
+public:
+  Packet() = default;
 };
 
 interface Contract {
@@ -4848,6 +4866,8 @@ int verify(int value) {
       lang::Frontend().analyze("unused-dependent-static-assert.gti", R"(
 class Unused<T, uint64_t N> {
   static_assert(sizeof(T) == N, "instance-only invariant");
+public:
+  Unused() = default;
 };
 int main() { return 0; }
 )");
@@ -4872,6 +4892,8 @@ int main() { return 0; }
       lang::Frontend().analyze("dependent-static-assert.gti", R"(
 class Bound<T, uint64_t N> {
   static_assert(N <= uint64_t(4), "capacity too large");
+public:
+  Bound() = default;
 };
 
 int main() {
@@ -4917,6 +4939,8 @@ public:
   Extent<uint64_t N>(int values[N]) {
     static_assert(N <= uint64_t(2), "too many constructor values");
   }
+public:
+  Extent() = default;
 };
 int main() {
   Extent value = Extent({1, 2, 3});
@@ -4942,6 +4966,8 @@ public:
                   "unsupported method instance");
     return values[0];
   }
+public:
+  Validator() = default;
 };
 int main() {
   Validator<int64_t> validator{};
@@ -4966,6 +4992,8 @@ int main() {
           .analyze("no-tooling-static-assert.gti", R"(
 class Limited<uint64_t N> {
   static_assert(N < uint64_t(2), "extent is too large");
+public:
+  Limited() = default;
 };
 int main() {
   Limited<3> value{};
@@ -4982,6 +5010,8 @@ int main() {
       lang::Frontend().analyze("immediate-generic-static-assert.gti", R"(
 class Broken<T> {
   static_assert(false, "not dependent");
+public:
+  Broken() = default;
 };
 int main() { return 0; }
 )");
@@ -5133,17 +5163,23 @@ public:
   static mut int count = 0;
   static int current() { return count; }
   int value = 3;
+public:
+  Counter() = default;
 };
 
 class Empty {
 public:
   static Empty value = Empty();
+public:
+  Empty() = default;
 };
 
 class Managed {
 public:
   static mut int live = 0;
   ~Managed() {}
+public:
+  Managed() = default;
 };
 
 int main() {
@@ -5238,6 +5274,8 @@ public:
   static int missing;
   int value = 1;
   static int read() { return this.value; }
+public:
+  Bad() = default;
 };
 )");
   expect(!invalidMembers.semanticValid &&
@@ -5253,6 +5291,8 @@ public:
 class Registry {
 public:
   static int value = 1;
+public:
+  Registry() = default;
 };
 
 int main() {
@@ -5270,6 +5310,8 @@ int main() {
 class Registry<T> {
 public:
   static int value = 1;
+public:
+  Registry() = default;
 };
 )");
   expect(!genericStatic.semanticValid &&
@@ -5322,6 +5364,8 @@ static mut int internal_count = 0;
 class Registry {
 public:
   static mut int current = 0;
+public:
+  Registry() = default;
 };
 int main() { return namespace_count + internal_count + Registry::current; }
 )";
@@ -5361,6 +5405,8 @@ int main() { return namespace_count + internal_count + Registry::current; }
 class Registry<T> {
 public:
   static mut int current = 0;
+public:
+  Registry() = default;
 };
 )");
   expect(!genericStatic.canGenerateCode() &&
@@ -5381,6 +5427,8 @@ public:
 };
 [[unsafe_share]] class ReviewedSharedState {
   mut int value = 0;
+public:
+  ReviewedSharedState() = default;
 };
 Count published = 1;
 static Count internal = 2;
@@ -5389,6 +5437,8 @@ ReviewedSharedState synchronized = ReviewedSharedState();
 class Registry {
 public:
   static int value = 4;
+public:
+  Registry() = default;
 };
 int main() { return published + internal + Registry::value - 7; }
 )";
@@ -5415,6 +5465,8 @@ public:
 class Wrapper {
 public:
   Cleanup nested = Cleanup();
+public:
+  Wrapper() = default;
 };
 class CleanupBase {
 public:
@@ -5432,6 +5484,8 @@ DerivedCleanup base_cleanup{};
 class Registry {
 public:
   static Wrapped static_cleanup{};
+public:
+  Registry() = default;
 };
 int main() { return 0; }
 )";
@@ -5481,6 +5535,8 @@ public:
 class Expand<T> {
 public:
   expected<Expand<Expand<T>>, int> nested = unexpected(0);
+public:
+  Expand() = default;
 };
 class Branch<T> {
 public:
@@ -5550,18 +5606,20 @@ int main() { return 0; }
       "cleanup-free generic branches");
 
   const std::string nonShareableSource = R"(
-class RawState { int* address = nullptr; };
+class RawState { int* address = nullptr;  public: RawState() = default; };
 using RawAlias = RawState;
 class Box<T> {
   T value;
 public:
   Box(T input) : value(input) {}
 };
-[[no_share]] class NativeLikeHandle { int descriptor = -1; };
+[[no_share]] class NativeLikeHandle { int descriptor = -1;  public: NativeLikeHandle() = default; };
 class Cleanup {
   int value = 0;
 public:
   ~Cleanup() {}
+public:
+  Cleanup() = default;
 };
 int* raw_address = nullptr;
 std::string_view view = "view";
@@ -5572,6 +5630,8 @@ Cleanup cleanup = Cleanup();
 class StaticRaw {
 public:
   static int* address = nullptr;
+public:
+  StaticRaw() = default;
 };
 int main() { return 0; }
 )";
@@ -5664,6 +5724,8 @@ class PlatformInfo {
 #endif
 public:
   int selected_bits() { return this.bits; }
+public:
+  PlatformInfo() = default;
 };
 
 int main() {
@@ -5947,6 +6009,8 @@ class PlatformState {
 #error "PlatformState is unavailable on this target."
 #endif
   int value = 1;
+public:
+  PlatformState() = default;
 };
 
 int main() {

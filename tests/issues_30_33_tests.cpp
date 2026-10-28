@@ -137,6 +137,8 @@ void schedules() {
 struct Counter { mut uint16_t value = 1;
   void implicit_update() mut { value += uint16_t(2); }
   void explicit_update() mut { this.value += uint16_t(2); }
+public:
+  Counter() = default;
 };
 int main() { mut uint8_t value = 1; uint8_t old = value++; --value;
   mut Counter counter{}; counter.implicit_update(); counter.explicit_update(); return int(old); }
@@ -216,8 +218,8 @@ int main() { mut uint8_t value = 1; uint8_t old = value++; --value;
 }
 
 void borrows() {
-  const std::string declarations = "struct Grid { mut int cells[2] = {}; }; "
-                                   "struct Frame { mut Grid grid{}; };\n";
+  const std::string declarations = "struct Grid { mut int cells[2] = {};  public: Grid() = default; }; "
+                                   "struct Frame { mut Grid grid{};  public: Frame() = default; };\n";
   const auto valid = analyze(declarations + R"(
 int read(Frame& frame, uint64_t index) { return frame.grid.cells[index]; }
 void write(mut Frame& frame, uint64_t index) { frame.grid.cells[index] = 3; }

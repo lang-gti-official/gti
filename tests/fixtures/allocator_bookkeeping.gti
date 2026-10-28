@@ -5,6 +5,8 @@
 struct Metadata {
   mut int visits = 0;
   ~Metadata() { std::println(this.visits); }
+public:
+  Metadata() = default;
 };
 
 // This is an unrelated bookkeeping owner, not an allocator intrinsic. The

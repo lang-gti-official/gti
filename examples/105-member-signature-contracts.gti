@@ -12,6 +12,8 @@ struct Counter {
     this.total += amount;
     return this.total;
   }
+public:
+  Counter() = default;
 };
 
 int advance<C>(mut C& counter, int& amount, mut int& previous)

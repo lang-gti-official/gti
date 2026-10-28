@@ -31,6 +31,8 @@ class Other : public Reader {
 public:
   int root = 999;
   int read() override { return 19; }
+public:
+  Other() = default;
 };
 
 class Front : public Reader, public Root {
@@ -57,16 +59,22 @@ interface SnapshotMaker { Snapshot make(); };
 class MakeSnapshot : public SnapshotMaker {
 public:
   Snapshot make() override { return Snapshot(3); }
+public:
+  MakeSnapshot() = default;
 };
 interface Truth { bool yes(); };
 class TrueValue : public Truth {
 public:
   bool yes() override { return true; }
+public:
+  TrueValue() = default;
 };
 interface TextLabel { std::string_view label(); };
 class Labeled : public TextLabel {
 public:
   std::string_view label() override { return "gti"; }
+public:
+  Labeled() = default;
 };
 interface TypedRead<T> { T get(); };
 interface TypedEcho<T> { T echo(T value); };

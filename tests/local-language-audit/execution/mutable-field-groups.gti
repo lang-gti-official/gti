@@ -14,6 +14,8 @@ struct State {
   int total() {
     return this.first + this.second + this.identity;
   }
+public:
+  State() = default;
 };
 
 int main() {

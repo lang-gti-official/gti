@@ -48,24 +48,34 @@ public:
 class Unified : public Reader, public Mirror {
 public:
   int read() override { return 6; }
+public:
+  Unified() = default;
 };
 class Open : public Base {
 public:
   virtual int pending() = 0;
+public:
+  Open() = default;
 };
 class Generic<T> : public Scale<T> {
 public:
   T scale(T value) override { return value; }
+public:
+  Generic() = default;
 };
 class CheckedBase {
 public:
   CheckedBase(int divisor) { mut int value = 12 / divisor; }
   virtual int read() { return 8; }
+public:
+  CheckedBase() = default;
 };
 class CheckedDerived : public CheckedBase {
   int value = 7;
 public:
   CheckedDerived(int divisor) : CheckedBase(divisor) {}
+public:
+  CheckedDerived() = default;
 };
 int through(Reader& value) { return value.read(); }
 int main() {

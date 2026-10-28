@@ -28,6 +28,8 @@ struct Reader {
   const int32_t* pointer = nullptr;
   unsafe int32_t read() { unsafe { return *this.pointer; } }
   unsafe static int32_t identity(int32_t value) { return value; }
+public:
+  Reader() = default;
 };
 unsafe int32_t read_generic<T>(T& source) requires readable<T> {
   unsafe { return source.read(); }

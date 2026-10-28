@@ -1,5 +1,7 @@
 struct Opaque {
   int v = 0;
+public:
+  Opaque() = default;
 };
 
 T minimum<std::ordered T>(T left, T right) {

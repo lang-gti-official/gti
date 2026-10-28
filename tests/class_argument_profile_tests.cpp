@@ -246,6 +246,8 @@ public:
   Packet(T* value) : payload(value) {}
   T* value() { return this.payload; }
   int kind() { return 4; }
+public:
+  Packet() = default;
 };
 class Packet<const T*, E> {
   const T* payload = nullptr;
@@ -253,6 +255,8 @@ public:
   Packet(const T* value) : payload(value) {}
   const T* value() { return this.payload; }
   int kind() { return 5; }
+public:
+  Packet() = default;
 };
 )";
   accepted(owned + pointers + R"(
@@ -271,7 +275,7 @@ int main() {
 
   rejected(owned + owned, "GTI-S2006", "Duplicate declaration");
   rejected(owned + empty + empty, "GTI-S2006", "Duplicate declaration");
-  rejected("class Packet<T&, E> {}; class Packet<T, E&> {};", "GTI-S2006",
+  rejected("class Packet<T&, E> { public: Packet() = default; }; class Packet<T, E&> {};", "GTI-S2006",
            "Duplicate declaration");
   rejected(owned + borrowed + R"(
 Packet<int&, int> bad() {

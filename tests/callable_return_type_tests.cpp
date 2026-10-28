@@ -214,14 +214,14 @@ int main() { return 0; }
            "GTI-S2023", "Callable return-type reflection requires");
   rejected(R"(
 #include <std/meta>
-class Overloaded { public: int operator()(int x) { return x; } };
+class Overloaded { public: int operator()(int x) { return x; }  public: Overloaded() = default; };
 using Invalid = std::meta::callable_return_type<Overloaded>;
 int main() { return 0; }
 )",
            "GTI-S2023", "does not select an overloaded operator()");
   rejected(R"(
 #include <std/meta>
-struct Holder<F> { std::meta::callable_return_type<F> value; };
+struct Holder<F> { std::meta::callable_return_type<F> value;  public: Holder() = default; };
 int main() { Holder<int> holder{}; return 0; }
 )",
            "GTI-S2023", "Callable return-type reflection requires");
@@ -232,7 +232,7 @@ int main() { Holder<int> holder{}; return 0; }
     const std::string source = R"(
 #include <std/meta>
 std::meta::callable_return_type<F> apply<F>(F& fn) { return fn(1); }
-struct Mapper { int operator()(int value) { return value; } };
+struct Mapper { int operator()(int value) { return value; }  public: Mapper() = default; };
 int main() { Mapper mapper{}; return apply(mapper); }
 )";
     const auto result = analyze(source);

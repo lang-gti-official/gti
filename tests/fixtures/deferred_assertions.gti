@@ -13,6 +13,8 @@ struct Observations {
   static mut int local_drop_order = 0;
   static mut int loop_visits = 0;
   static mut int loop_bodies = 0;
+public:
+  Observations() = default;
 };
 
 struct Record {

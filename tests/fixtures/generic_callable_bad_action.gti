@@ -3,6 +3,8 @@
 class value_action {
 public:
   int32_t operator()() && { return 1; }
+public:
+  value_action() = default;
 };
 
 int main() {

@@ -13,6 +13,8 @@ struct Point {
 struct RequiredInput {
   int value = -1;
   RequiredInput(int input) : value(input) {}
+public:
+  RequiredInput() = default;
 };
 
 // Class members are private by default. A trailing `mut` allows a method to

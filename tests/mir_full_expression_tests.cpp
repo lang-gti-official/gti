@@ -483,6 +483,8 @@ class Runner {
 public:
   static int Create(int count = 3);
   int Run(int count = 7);
+public:
+  Runner() = default;
 };
 int Runner::Create(int renamed) { return renamed; }
 int Runner::Run(int renamed) { return renamed; }
@@ -553,7 +555,7 @@ int main() { Runner runner{}; return Runner::Create() + runner.Run(); }
   }
   const auto invalidDefault =
       lang::Frontend().analyze("/tmp/gti-invalid-declaration-default.gti", R"(
-class Runner { public: int Run(int count = "bad"); };
+class Runner { public: int Run(int count = "bad");  public: Runner() = default; };
 int Runner::Run(int renamed) { return renamed; }
 int main() { Runner runner{}; return runner.Run(); }
 )");
@@ -587,6 +589,8 @@ public:
 };
 struct Split {
   Meters lap = Feet(12).to_meters();
+public:
+  Split() = default;
 };
 int main() {
   Track declared{};

@@ -46,6 +46,8 @@ int forward<F>(F& f, int n) { return read(f, n); }
 class Cleanup {
 public:
   ~Cleanup() { std::println(90); }
+public:
+  Cleanup() = default;
 };
 int main(int argc, std::vector<std::string> argv) {
   {

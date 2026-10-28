@@ -21,6 +21,8 @@ struct Receiver {
     this.total += value;
     std::println("accepted");
   }
+public:
+  Receiver() = default;
 };
 int divide(int value) { return 12 / value; }
 int main(int argc, std::vector<std::string> args) {

@@ -2,7 +2,7 @@
 
 // Scoped tasks borrow disjoint caller state and are cleaned in reverse
 // argument order on the caller after every worker joined.
-struct tally { mut int32_t left = 0; mut int32_t right = 0; };
+struct tally { mut int32_t left = 0; mut int32_t right = 0;  public: tally() = default; };
 
 [[unsafe_transfer]] class add_left {
   mut int32_t& target;

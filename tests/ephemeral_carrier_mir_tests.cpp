@@ -22,7 +22,7 @@ bool failurePathReaches(const lang::MirBody &body, lang::MirBlockId from,
 }
 
 const std::string declarations = R"gti(
-struct Counter { mut int value = 4; };
+struct Counter { mut int value = 4;  public: Counter() = default; };
 class Service {
   mut Counter& counter;
 public:
@@ -444,7 +444,7 @@ void checkConstructorRollbackMutations() {
 void checkForbiddenResultMutation() {
   const auto frontend =
       lang::Frontend().analyze("ephemeral-carrier-result.gti", R"gti(
-struct Owner { int value = 4; };
+struct Owner { int value = 4;  public: Owner() = default; };
 class View {
   Owner& owner;
 public:
@@ -588,6 +588,8 @@ class Slot {
 public:
   int& operator[](int index) { return this.value; }
   mut int& operator[](int index) mut { return this.value; }
+public:
+  Slot() = default;
 };
 void bump(mut Slot& slot) { slot[0] = slot[0] + 1; }
 int main() {
@@ -978,7 +980,7 @@ int main() {
       "temporary-fallible-borrow-extraction.gti", R"gti(
 #include <std/utility>
 enum class Error { absent };
-struct Owner { int value = 7; };
+struct Owner { int value = 7;  public: Owner() = default; };
 expected<Owner&, Error> lookup(Owner& source) { return source; }
 Owner& relay(Owner& source) { return lookup(source).expect("owner required"); }
 int main() {
@@ -1001,7 +1003,7 @@ int main() {
 void checkConditionalParentReborrowMutation() {
   const auto frontend =
       lang::Frontend().analyze("conditional-parent-reborrow.gti", R"gti(
-struct Owner { mut int first = 4; mut int second = 7; };
+struct Owner { mut int first = 4; mut int second = 7;  public: Owner() = default; };
 class View {
   mut int& value;
 public:
@@ -1126,7 +1128,7 @@ int main() {
 void checkTemporaryCursorRetainedOwnerDependencies() {
   const auto frontend = lang::Frontend().analyze(
       "temporary-multiowner-cursor-comparison.gti", R"gti(
-struct Finish {};
+struct Finish { public: Finish() = default; };
 class OwnerPair {
   int& first;
   int& second;
@@ -1237,8 +1239,8 @@ int main() {
 void checkTemporaryCursorCleanupProviderLifetime() {
   const auto frontend =
       lang::Frontend().analyze("temporary-cursor-cleanup-provider.gti", R"gti(
-struct Provider { int value = 0; };
-struct Finish {};
+struct Provider { int value = 0;  public: Provider() = default; };
+struct Finish { public: Finish() = default; };
 class Binding {
   Provider& provider;
 public:

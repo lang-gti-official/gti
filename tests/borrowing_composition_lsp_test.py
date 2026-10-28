@@ -267,7 +267,7 @@ int main() {
             change(20, concrete_errors.replace("Broken<0>", "Broken<3>").replace(
                 "Broken<1>", "Broken<4>"))
             assert not diagnostics(20)
-            carrier_access = """struct Counter { mut int value = 7; };
+            carrier_access = """struct Counter { mut int value = 7;  public: Counter() = default; };
 class Shared {
   Counter& counter;
 public:

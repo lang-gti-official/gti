@@ -124,6 +124,8 @@ public:
   int decode(T& input);
   int inspect();
   int operator+(int delta);
+public:
+  Mapper() = default;
 };
 }
 int decode<T>(T& input) {
@@ -141,6 +143,8 @@ int adjust<T>() {
 class Wrapper<T> {
 public:
   int read<U>(U& input) { return decode<U>(input); }
+public:
+  Wrapper() = default;
 };
 )";
   const std::string specialized = R"(

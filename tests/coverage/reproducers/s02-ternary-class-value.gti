@@ -1,4 +1,4 @@
-class Val { mut int32_t n = 0; public: Val(int32_t n) : n(n) {} int32_t get() { return this.n; } };
+class Val { mut int32_t n = 0; public: Val(int32_t n) : n(n) {} int32_t get() { return this.n; }  public: Val() = default; };
 int main() {
   bool flag = true;
   mut Val x = flag ? Val(1) : Val(2);

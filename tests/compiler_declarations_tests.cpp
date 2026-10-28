@@ -351,6 +351,8 @@ class Label {
 public:
   std::string_view view() { return text.view(); }
   void edit() mut { this.text.clear(); }
+public:
+  Label() = default;
 };
 )";
   const auto ownerRelay = lang::Frontend().analyze(
@@ -425,6 +427,8 @@ class Owner {
 public:
   std::string_view view(std::string& text) { return text.view(); }
   void edit() mut { text.clear(); }
+public:
+  Owner() = default;
 };
 int main() {
   mut Owner owner{};
@@ -445,6 +449,8 @@ class StaticText {
   static std::string_view text = "static";
 public:
   std::string_view view() { return text; }
+public:
+  StaticText() = default;
 };
 int main() {
   auto text = StaticText().view();
@@ -923,6 +929,8 @@ public:
     int self = 1;
     return this.value + self - 1;
   }
+public:
+  Counter() = default;
 };
 
 int main() {
@@ -969,6 +977,8 @@ class Vault {
 public:
   int reveal() { return this.secret; }
   int reveal_other(Vault other) { return other.secret; }
+public:
+  Vault() = default;
 };
 
 struct Reading {
@@ -979,6 +989,8 @@ private:
 
 public:
   int total() { return this.value + this.hidden; }
+public:
+  Reading() = default;
 };
 
 int open(mut Vault vault) { return vault.reveal(); }
@@ -1054,12 +1066,16 @@ class A {
 public:
   int visible = 2;
   int inspect(A other) { return other.private_value; }
+public:
+  A() = default;
 };
 
 struct B {
   int public_value = 1;
 private:
   int hidden = 2;
+public:
+  B() = default;
 };
 
 A wrong_type(B value) { return value; }
@@ -1071,6 +1087,8 @@ class Duplicate {
   int value = 1;
 public:
   int value = 2;
+public:
+  Duplicate() = default;
 };
 
 class InvalidFields {
@@ -1118,6 +1136,8 @@ public:
 private:
 #endif
   int value = 1;
+public:
+  PlatformValue() = default;
 };
 int read_platform(PlatformValue value) { return value.value; }
 )");
@@ -1152,11 +1172,11 @@ int main() { return 0; }
       "parser recovery should resume at access labels and later declarations");
 
   const std::string formatted = lang::Formatter().format(
-      "class Box{public:int value=1;private:int hidden=2;};"
-      "struct Point{int x=0;};");
+      "class Box{public:int value=1;private:int hidden=2; public: Box() = default; };"
+      "struct Point{int x=0; public: Point() = default; };");
   expect(formatted == "class Box {\npublic:\n  int value = 1;\nprivate:\n"
-                      "  int hidden = 2;\n};\nstruct Point {\n"
-                      "  int x = 0;\n};\n",
+                      "  int hidden = 2;\n public: Box() = default; };\nstruct Point {\n"
+                      "  int x = 0;\n public: Point() = default; };\n",
          "formatter should outdent C++-style access labels");
   expect(lang::Formatter().format(formatted) == formatted,
          "formatted class access labels should be idempotent");
@@ -1188,6 +1208,8 @@ public:
   int value() {
     return this.first + this.second + this.identity;
   }
+public:
+  Counter() = default;
 };
 
 [[c_abi]] struct GroupedNative {
@@ -1340,7 +1362,7 @@ int main() {
          "the C++ backend should consume flattened field declarations only");
 
   const std::string formatted = lang::Formatter().format(
-      "struct Sample{private:mut{int first=0;int second=1;}int id=2;};");
+      "struct Sample{private:mut{int first=0;int second=1;}int id=2; public: Sample() = default; };");
   const std::string expectedFormatting = R"(struct Sample {
 private:
   mut {
@@ -1348,6 +1370,8 @@ private:
     int second = 1;
   }
   int id = 2;
+public:
+  Sample() = default;
 };
 )";
   expect(formatted == expectedFormatting &&
@@ -1431,6 +1455,8 @@ public:
 struct Origin {
   int x = 0;
   Origin(int initial) : x(initial) {}
+public:
+  Origin() = default;
 };
 
 class LifecycleValue {
@@ -1439,6 +1465,8 @@ class LifecycleValue {
 public:
   LifecycleValue(LifecycleValue& other) = default;
   LifecycleValue(LifecycleValue&& other) = default;
+public:
+  LifecycleValue() = default;
 };
 
 class MoveOnlyPolicy {
@@ -1447,6 +1475,8 @@ class MoveOnlyPolicy {
 public:
   MoveOnlyPolicy(MoveOnlyPolicy& other) = delete;
   MoveOnlyPolicy(MoveOnlyPolicy&& other) = default;
+public:
+  MoveOnlyPolicy() = default;
 };
 
 int inspect(Counter counter) { return counter.read(); }
@@ -1616,6 +1646,8 @@ class Value {
 public:
   Value(Value& other) = default;
   Value(Value&& other) = default;
+public:
+  Value() = default;
 };
 class GenericValue<T> {
   T value;
@@ -1760,6 +1792,8 @@ class ReservedCopy {
 
 public:
   ReservedCopy(ReservedCopy& other) : value(other.value) {}
+public:
+  ReservedCopy() = default;
 };
 
 class CleanupCopy {
@@ -1768,6 +1802,8 @@ class CleanupCopy {
 public:
   CleanupCopy(CleanupCopy& other) = default;
   ~CleanupCopy() {}
+public:
+  CleanupCopy() = default;
 };
 
 class DeletedCopy {
@@ -1776,6 +1812,8 @@ class DeletedCopy {
 public:
   DeletedCopy(DeletedCopy& other) = delete;
   DeletedCopy(DeletedCopy&& other) = default;
+public:
+  DeletedCopy() = default;
 };
 
 class DeletedMove {
@@ -1784,6 +1822,8 @@ class DeletedMove {
 public:
   DeletedMove(DeletedMove& other) = default;
   DeletedMove(DeletedMove&& other) = delete;
+public:
+  DeletedMove() = default;
 };
 
 class InvalidDefaultTarget {
@@ -1791,10 +1831,14 @@ class InvalidDefaultTarget {
 
 public:
   InvalidDefaultTarget(int value) = default;
+public:
+  InvalidDefaultTarget() = default;
 };
 
 class PrivatePolicy {
   PrivatePolicy(PrivatePolicy& other) = delete;
+public:
+  PrivatePolicy() = default;
 };
 
 void invalid_rvalue_reference(DeletedCopy&& value) {}
@@ -1812,6 +1856,8 @@ public:
   void mutate() { this.value = 1; }
   void mutate_other(MutableValue other) mut { other.value = 1; }
   void bump() mut { this.value += 1; }
+public:
+  MutableValue() = default;
 };
 
 class ImmutableField {
@@ -1819,6 +1865,8 @@ class ImmutableField {
 
 public:
   void replace() mut { this.value = 1; }
+public:
+  ImmutableField() = default;
 };
 
 int main() {
@@ -1941,7 +1989,7 @@ int main() {
 
 void testOutOfClassMethods() {
   const std::string splitText =
-      "struct Test{int value();};int Test::value(){return 1;}";
+      "struct Test{int value(); public: Test() = default; };int Test::value(){return 1;}";
   const auto formatted = lang::Formatter().format(splitText);
   const auto originalTokens = lang::Lexer().scan(splitText);
   const auto formattedTokens = lang::Lexer().scan(formatted);
@@ -2044,6 +2092,8 @@ int main() {
       "split-contract-position.gti", R"(
 struct Relay {
   [[borrowed_from(selected)]] static int& choose(int& other, int& selected);
+public:
+  Relay() = default;
 };
 int& Relay::choose(int& selected, int& other) { return other; }
 int main() {
@@ -2077,6 +2127,8 @@ struct Cell {
   int& read();
   void set(int value) mut;
   int take() &&;
+public:
+  Cell() = default;
 };
 int& Cell::read() { return this.number; }
 void Cell::set(int value) mut { this.number = value; }
@@ -2103,28 +2155,28 @@ int Cell::take() && { return this.number; }
   for (const auto &[source, message] :
        std::vector<std::pair<std::string, std::string>>{
            {"int Missing::read() { return 1; }", "visible"},
-           {"struct A {}; int A::read() { return 1; }", "No declared method"},
-           {"struct A { int read(); }; bool A::read() { return true; }",
+           {"struct A { public: A() = default; }; int A::read() { return 1; }", "No declared method"},
+           {"struct A { int read();  public: A() = default; }; bool A::read() { return true; }",
             "return type"},
-           {"struct A { int read() { return 1; } }; int A::read() { return 2; "
+           {"struct A { int read() { return 1; }  public: A() = default; }; int A::read() { return 2; "
             "}",
             "already has"},
-           {"struct A { int read(); }; int A::read() { return 1; } int "
+           {"struct A { int read();  public: A() = default; }; int A::read() { return 1; } int "
             "A::read() { return 2; }",
             "already has"},
            {"interface A { int read(); }; int A::read() { return 1; }", "pure"},
-           {"struct A { static int read(); }; static int A::read() { return 1; "
+           {"struct A { static int read();  public: A() = default; }; static int A::read() { return 1; "
             "}",
             "specifiers"},
-           {"struct A { int read(int x = 1); }; int A::read(int x = 2) { "
+           {"struct A { int read(int x = 1);  public: A() = default; }; int A::read(int x = 2) { "
             "return x; }",
             "Default arguments"},
-           {"struct A { int read() mut; }; int A::read() { return 1; }",
+           {"struct A { int read() mut;  public: A() = default; }; int A::read() { return 1; }",
             "receiver qualifier"},
-           {"struct A { static T read<T>(T x); }; T A::read<T>(T x) { return "
+           {"struct A { static T read<T>(T x);  public: A() = default; }; T A::read<T>(T x) { return "
             "x; }",
             "non-generic"},
-           {"struct A { int read(); }; namespace wrong { int A::read() { "
+           {"struct A { int read();  public: A() = default; }; namespace wrong { int A::read() { "
             "return 1; } }",
             "enclosing namespace"}}) {
     const auto invalid = lang::Frontend().analyze(
@@ -2240,10 +2292,10 @@ int main() {
   return invoke() - 7;
 }
 interface Marker { static int code() { return 1; } };
-class Marked : public Marker {};
+class Marked : public Marker { public: Marked() = default; };
 interface LeftFactory { static int create() { return 1; } };
 interface RightFactory { static int create() { return 2; } };
-class BothFactories : public LeftFactory, public RightFactory {};
+class BothFactories : public LeftFactory, public RightFactory { public: BothFactories() = default; };
 concept Number<T> = std::numeric<T>;
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -2372,7 +2424,7 @@ void testInterfaceStaticAmbiguity() {
   const auto ambiguous = lang::Frontend().analyze("ambiguous-static.gti", R"(
 interface Left { static int create() { return 1; } };
 interface Right { static int create() { return 2; } };
-class Both : public Left, public Right {};
+class Both : public Left, public Right { public: Both() = default; };
 int main() { return Both::create(); }
 )");
   expect(
@@ -2425,11 +2477,15 @@ public:
 class ClassContract {
 public:
   virtual int class_only() = 0;
+public:
+  ClassContract() = default;
 };
 
 class ClassImplementation : public ClassContract {
 public:
   int class_only() override { return 1; }
+public:
+  ClassImplementation() = default;
 };
 
 int invoke(Renderable& renderable) {
@@ -2789,7 +2845,7 @@ int main() {
       "interface Renderable{int render(int frame);};"
       "class Sprite:public Entity,public Renderable{public:"
       "Sprite(int id):Entity(id){}int render(int frame)override{return frame;}"
-      "};");
+      " public: Sprite() = default; };");
   if (formatted.find("interface Renderable {") == std::string::npos ||
       formatted.find("class Sprite : public Entity, public Renderable {") ==
           std::string::npos ||
@@ -2821,10 +2877,10 @@ interface LegacyPureSyntax {
   int old_style() = 0;
 };
 
-class Left {};
-class Right {};
-class TooMany : public Left, public Right {};
-class HiddenBase : Left {};
+class Left { public: Left() = default; };
+class Right { public: Right() = default; };
+class TooMany : public Left, public Right { public: TooMany() = default; };
+class HiddenBase : Left { public: HiddenBase() = default; };
 
 interface RootContract { int root(); };
 interface LeftContract : public RootContract {};
@@ -2838,16 +2894,22 @@ class CycleRight : public CycleLeft {};
 class Abstract {
 public:
   virtual int work(int value) = 0;
+public:
+  Abstract() = default;
 };
 
-class Missing : public Abstract {};
+class Missing : public Abstract { public: Missing() = default; };
 class Accidental : public Abstract {
 public:
   int work(int value) { return value; }
+public:
+  Accidental() = default;
 };
 class ReturnMismatch : public Abstract {
 public:
   bool work(int value) override { return true; }
+public:
+  ReturnMismatch() = default;
 };
 
 class RequiresArgument {
@@ -2864,23 +2926,33 @@ public:
 class Plain {
 public:
   int read() { return 1; }
+public:
+  Plain() = default;
 };
 class HidesPlain : public Plain {
 public:
   int read() override { return 2; }
+public:
+  HidesPlain() = default;
 };
 
 class PrivateState {
   int secret = 1;
+public:
+  PrivateState() = default;
 };
 class LeaksPrivateState : public PrivateState {
 public:
   int leak() { return secret; }
+public:
+  LeaksPrivateState() = default;
 };
 
 class Concrete : public Abstract {
 public:
   int work(int value) override { return value; }
+public:
+  Concrete() = default;
 };
 int consume(Abstract& value) { return value.work(1); }
 int main() {
@@ -2936,19 +3008,25 @@ void testInheritedGenericTargetInstances() {
 class Base<T> {
 public:
   T echo(T value) { return value; }
+public:
+  Base() = default;
 };
 
 class Derived<First, Second> : public Base<Second> {
 public:
   Second indirect(Second value) { return echo(value); }
+public:
+  Derived() = default;
 };
 
 class SizedBase<T, uint64_t N> {
 public:
   uint64_t extent() { return N; }
+public:
+  SizedBase() = default;
 };
 
-class SizedDerived<T, uint64_t N> : public SizedBase<T, N> {};
+class SizedDerived<T, uint64_t N> : public SizedBase<T, N> { public: SizedDerived() = default; };
 
 int main() {
   Derived<int32_t, uint64_t> value{};
@@ -3129,6 +3207,8 @@ class Holder {
 
 public:
   int read() { return this.box.read(); }
+public:
+  Holder() = default;
 };
 
 class Pair {
@@ -3142,6 +3222,8 @@ public:
 
 struct Point {
   int x = 4;
+public:
+  Point() = default;
 };
 
 int main() {
@@ -3230,6 +3312,8 @@ int main() {
 class Sample {
 public:
   Sample(int value) {}
+public:
+  Sample() = default;
 };
 
 int main() {
@@ -3298,7 +3382,7 @@ int main() {
          "unambiguous brace form");
 
   const std::string formatted = lang::Formatter().format(
-      "class Box<T>{public:Box(T value){}};int main(){mut Box<int> "
+      "class Box<T>{public:Box(T value){} public: Box() = default; };int main(){mut Box<int> "
       "value { 1, };Box<int> empty { };int values[1]={1};return 0;}");
   if (formatted.find("mut Box<int> value{1,};") == std::string::npos ||
       formatted.find("Box<int> empty{};") == std::string::npos ||
@@ -3477,11 +3561,13 @@ int main() {
          "without reopening C++ dependent-template lookup");
 
   auto invalidTokens = lexer.scan(R"(
-class Duplicate<T, T> {};
-class SameName<SameName> {};
+class Duplicate<T, T> { public: Duplicate() = default; };
+class SameName<SameName> { public: SameName() = default; };
 class Shadow<T> {
 public:
   T replace<T>(T value) { return value; }
+public:
+  Shadow() = default;
 };
 class Box<T> {
   T value;
@@ -3626,6 +3712,8 @@ public:
   Result<int> result();
   void accept(Result<bool> input);
   Result<T> dependent(Result<T> input) { return input; }
+public:
+  Dormant() = default;
 };
 int main() { return 0; }
 )");
@@ -3694,17 +3782,23 @@ void testExactQualifiedClassSpecializations() {
 class demo::Value<int> {
 public:
   int read() { return 2; }
+public:
+  Value() = default;
 };
 
 namespace demo {
 class Value<T> {
 public:
   int read() { return 1; }
+public:
+  Value() = default;
 };
 
 class Count<uint64_t N> {
 public:
   int read() { return 1; }
+public:
+  Count() = default;
 };
 }
 
@@ -3713,6 +3807,8 @@ int read_exact(demo::Value<int>& value) { return value.read(); }
 class demo::Count<7> {
 public:
   int read() { return 7; }
+public:
+  Count() = default;
 };
 
 int read_through_generic<T>(demo::Value<T>& value) {
@@ -3785,7 +3881,7 @@ int main() {
   }
 
   const std::string formatted = lang::Formatter().format(
-      "namespace demo{class Value<T>{};}class demo::Value<int>{};");
+      "namespace demo{class Value<T>{ public: Value() = default; };}class demo::Value<int>{ public: Value() = default; };");
   expect(formatted.find("class demo::Value<int> {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "the formatter should preserve qualified exact-specialization "
@@ -3794,11 +3890,11 @@ int main() {
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-exact-qualified-specialization.gti", R"(
 namespace demo {
-class Value<T> {};
-class Nested<T> {};
+class Value<T> { public: Value() = default; };
+class Nested<T> { public: Nested() = default; };
 }
 using signed_int = int32_t;
-class demo::Value<int> {};
+class demo::Value<int> { public: Value() = default; };
 class demo::Value<signed_int> {};
 class demo::Nested<UnknownType> {};
 class demo::Value<int>;
@@ -3826,7 +3922,7 @@ namespace misplaced {
 
   const lang::FrontendResult wrongArity =
       lang::Frontend().analyze("wrong-arity-exact-specialization.gti", R"(
-namespace demo { class Value<T> {}; }
+namespace demo { class Value<T> { public: Value() = default; }; }
 class demo::Value<int, bool> {};
 )");
   expect(!wrongArity.canGenerateCode() &&
@@ -3845,10 +3941,14 @@ class Widget {
   int value = 42;
 public:
   int read() { return this.value; }
+public:
+  Widget() = default;
 };
 class std::hash<Widget> {
 public:
   size_t operator()(Widget& value) { return size_t(value.read()); }
+public:
+  hash() = default;
 };
 int main() {
   Widget value{};
@@ -3884,7 +3984,7 @@ int main() { return 0; }
       root / "nested-orphan-hash.gti", R"(
 #include <std/functional>
 #include <std/vector>
-class Widget {};
+class Widget { public: Widget() = default; };
 class std::hash<std::vector<Widget>> {
 public:
   size_t operator()(std::vector<Widget>& value) { return 0; }
@@ -4323,6 +4423,8 @@ T floating_value<std::floating_point T>(T value) { return value; }
 class EqualOnly {
 public:
   bool operator==(EqualOnly& other) { return true; }
+public:
+  EqualOnly() = default;
 };
 
 class AlmostOrdered {
@@ -4332,6 +4434,8 @@ public:
   bool operator<(AlmostOrdered& other) { return false; }
   bool operator<=(AlmostOrdered& other) { return true; }
   bool operator>(AlmostOrdered& other) { return false; }
+public:
+  AlmostOrdered() = default;
 };
 
 class DeletedCopy {
@@ -4606,7 +4710,7 @@ void testFiniteWrapperTraits() {
       "finite-wrapper-traits.gti", R"(
 struct Wrapper<T> { T value; };
 struct Closed { Wrapper<int> nested; };
-struct RawField { int* pointer = nullptr; };
+struct RawField { int* pointer = nullptr;  public: RawField() = default; };
 struct ClosedRaw { Wrapper<RawField> nested; };
 int main() {
   Wrapper<Closed> finite = {.value = {.nested = {.value = 7}}};
@@ -4649,6 +4753,8 @@ void testConcurrencyTypeCapabilities() {
 
 struct Scalar {
   int value = 0;
+public:
+  Scalar() = default;
 };
 
 class Box<T> {
@@ -4660,20 +4766,28 @@ public:
 class Node {
   int value = 0;
   mut std::unique_ptr<Node> next = std::unique_ptr<Node>();
+public:
+  Node() = default;
 };
 
 class RawBox {
   int* address = nullptr;
+public:
+  RawBox() = default;
 };
 
 [[no_transfer, unsafe_share]] class PolicyValue {
   int value = 0;
+public:
+  PolicyValue() = default;
 };
 
 [[unsafe_transfer]] class AuditedCleanup {
   int* address = nullptr;
 public:
   ~AuditedCleanup() {}
+public:
+  AuditedCleanup() = default;
 };
 
 [[transfer, share]] interface ConcurrentValue {
@@ -4684,6 +4798,8 @@ class ConcurrentScalar : public ConcurrentValue {
   int value = 0;
 public:
   int read() override { return this.value; }
+public:
+  ConcurrentScalar() = default;
 };
 
 T transfer_value<std::transferable T>(T value) {
@@ -4883,13 +4999,15 @@ int main() {
   const std::string invalidSource = R"(
 #include <std/memory>
 
-class RawBox { int* address = nullptr; };
+class RawBox { int* address = nullptr;  public: RawBox() = default; };
 class Cleanup {
   int value = 0;
 public:
   ~Cleanup() {}
+public:
+  Cleanup() = default;
 };
-[[no_transfer, no_share]] class Affine { int token = 0; };
+[[no_transfer, no_share]] class Affine { int token = 0;  public: Affine() = default; };
 
 T require_transfer<std::transferable T>(T value) { return value; }
 void require_share<std::shareable T>(T& value) {}
@@ -4928,7 +5046,7 @@ int main() {
 
   const std::string interfaceFailureSource = R"(
 [[transfer, share]] interface Concurrent {};
-[[no_transfer]] class Broken : public Concurrent { int value = 0; };
+[[no_transfer]] class Broken : public Concurrent { int value = 0;  public: Broken() = default; };
 )";
   const lang::FrontendResult interfaceFailure = lang::Frontend().analyze(
       "invalid-capability-interface.gti", interfaceFailureSource,
@@ -4948,10 +5066,10 @@ int main() {
          "implementation span and related requirement span");
 
   const std::string policyFailureSource = R"(
-[[transfer]] class WrongPositive {};
+[[transfer]] class WrongPositive { public: WrongPositive() = default; };
 [[unsafe_share]] interface WrongInterface {};
-[[no_share, unsafe_share]] class Conflicting {};
-[[mystery]] struct UnknownPolicy {};
+[[no_share, unsafe_share]] class Conflicting { public: Conflicting() = default; };
+[[mystery]] struct UnknownPolicy { public: UnknownPolicy() = default; };
 )";
   const lang::FrontendResult policyFailure = lang::Frontend().analyze(
       "invalid-capability-policy.gti", policyFailureSource,
@@ -4972,10 +5090,10 @@ int main() {
          "diagnostic per invalid attribute without parser cascades");
 
   const std::string formatted = lang::Formatter().format(
-      "[[no_transfer,no_share]]class NativeHandle{int descriptor=0;};");
+      "[[no_transfer,no_share]]class NativeHandle{int descriptor=0; public: NativeHandle() = default; };");
   expect(formatted == "[[no_transfer, no_share]] class NativeHandle {\n"
                       "  int descriptor = 0;\n"
-                      "};\n" &&
+                      " public: NativeHandle() = default; };\n" &&
              lang::Formatter().format(formatted) == formatted,
          "concurrency capability attributes should format idempotently with "
          "C++-familiar declaration placement");
@@ -4992,12 +5110,12 @@ int read<A, B>(A& unrelated, B& value) requires readable<B> {
 }
 )";
   const std::vector<std::pair<std::string, std::string>> rejected{
-      {"struct Item {};", "has no member 'snapshot()'"},
-      {"struct Item { bool snapshot() { return true; } };",
+      {"struct Item { public: Item() = default; };", "has no member 'snapshot()'"},
+      {"struct Item { bool snapshot() { return true; }  public: Item() = default; };",
        "returns 'bool', but the required exact result is 'int32_t'"},
-      {"class Item { int snapshot() { return 1; } };",
+      {"class Item { int snapshot() { return 1; }  public: Item() = default; };",
        "not publicly accessible"},
-      {"struct Item { int snapshot() mut { return 1; } };",
+      {"struct Item { int snapshot() mut { return 1; }  public: Item() = default; };",
        "not a read-only, nongeneric instance method"},
   };
   for (const auto &[definition, reason] : rejected) {
@@ -5032,7 +5150,7 @@ int main() {
         "application, exact second argument, leaf reason and safe guidance");
   }
   const std::string accepted = prefix + R"(
-struct Item { int snapshot() { return 7; } };
+struct Item { int snapshot() { return 7; }  public: Item() = default; };
 int main() { Item value{}; return library::read(value, value); }
 )";
   const auto valid = lang::Frontend().analyze(
@@ -5065,7 +5183,7 @@ int main() { return read(true); }
   const std::string shared = R"(
 concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
 int read<T>(T& first, T& second) requires snapshots<T> { return first.snapshot(); }
-struct Item {};
+struct Item { public: Item() = default; };
 int main() { Item value{}; return read(value, value); }
 )";
   const auto sharedFailure = lang::Frontend().analyze(
@@ -5082,8 +5200,8 @@ int main() { Item value{}; return read(value, value); }
   const auto nestedArgument = lang::Frontend().analyze(
       "nested-argument-constraint-provenance.gti", R"(
 concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
-struct Holder<T> {};
-struct Item {};
+struct Holder<T> { public: Holder() = default; };
+struct Item { public: Item() = default; };
 int read<T>(Holder<T>& value) requires snapshots<T> { return 0; }
 int main() { Holder<Item> value{}; return read(value); }
 )",
@@ -5102,7 +5220,7 @@ concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
 concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
 concept readable<T> = snapshots<T> || serializes<T>;
 int read<T>(T& value) requires readable<T> { return 0; }
-struct Item {};
+struct Item { public: Item() = default; };
 int main() { Item value{}; return read(value); }
 )";
   const auto disjunction = lang::Frontend().analyze(
@@ -5125,7 +5243,7 @@ int read<T>(T& value) requires snapshots<T> { return value.snapshot(); }
 int read<T>(T& value, int mode = 0) requires serializes<T> {
   return value.serialize();
 }
-struct Item {};
+struct Item { public: Item() = default; };
 int main() { Item value{}; return read(value); }
 )";
   const auto overloadFailure = lang::Frontend().analyze(
@@ -5158,6 +5276,8 @@ concept snapshot_and_copy<T> = snapshot_value<T> && std::copy_constructible<T>;
 struct Sample {
   int value = 7;
   Sample snapshot() { Sample result{.value = this.value + 1}; return result; }
+public:
+  Sample() = default;
 };
 T take_snapshot<T>(T& value) requires snapshot_value<T> {
   return value.snapshot();
@@ -5203,15 +5323,15 @@ int main() {
   }
 
   const std::vector<std::string> rejected{
-      "struct Item {};",
-      "struct Item { int snapshot() { return 1; } };",
-      "struct Item { Item snapshot() mut { Item result{}; return result; } };",
-      "struct Item { Item snapshot() && { Item result{}; return result; } };",
+      "struct Item { public: Item() = default; };",
+      "struct Item { int snapshot() { return 1; }  public: Item() = default; };",
+      "struct Item { Item snapshot() mut { Item result{}; return result; }  public: Item() = default; };",
+      "struct Item { Item snapshot() && { Item result{}; return result; }  public: Item() = default; };",
       "struct Item { static Item snapshot() { Item result{}; return result; } "
-      "};",
-      "class Item { Item snapshot() { Item result{}; return result; } };",
+      " public: Item() = default; };",
+      "class Item { Item snapshot() { Item result{}; return result; }  public: Item() = default; };",
       "struct Item { Item snapshot(int value) { Item result{}; return result; "
-      "} };",
+      "}  public: Item() = default; };",
   };
   for (const auto &definition : rejected) {
     const auto invalid = lang::Frontend().analyze(
@@ -5284,7 +5404,7 @@ int main() { return relay(7) - 7; }
       "member-requirement-unsafe.gti",
       "struct Item { unsafe Item snapshot() { "
       "Item result{}; return result; "
-      "} }; int main() { static_assert(!(requires(Item& x) "
+      "}  public: Item() = default; }; int main() { static_assert(!(requires(Item& x) "
       "{ { x.snapshot() } -> Item; })); return 0; }",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(unsafeMember.canGenerateCode(),
@@ -5297,10 +5417,14 @@ struct Recursive {
     Recursive result{};
     return result;
   }
+public:
+  Recursive() = default;
 };
 struct Borrowed {
   int value = 0;
   int& snapshot() { return this.value; }
+public:
+  Borrowed() = default;
 };
 int main() {
   static_assert(!(requires(Recursive& x) { { x.snapshot() } -> Recursive; }));
@@ -5394,11 +5518,15 @@ namespace gti_internal {
 concept probe_equality<E> = std::equality_comparable<E>;
 struct plain_probe<T> {
   bool matches() { return true; }
+public:
+  plain_probe() = default;
 };
 struct underlying_probe<E, U> {
   bool matches() requires gti_internal::probe_equality<E> && std::enum_underlying<E, U> {
     return true;
   }
+public:
+  underlying_probe() = default;
 };
 }
 enum class small : uint8_t { low, high };
@@ -5460,6 +5588,8 @@ int main() {
 namespace gti_internal {
 struct plain_probe<T> {
   bool matches() { return true; }
+public:
+  plain_probe() = default;
 };
 }
 concept probe_matches<P> = requires(P& item) { { item.matches() } -> bool; };
@@ -5494,6 +5624,8 @@ int invoke<C>(mut C& receiver, int& input, mut int& output)
   const std::string good = R"(
 struct Processor {
   int apply(int& input, mut int& output) mut { output = input; return 1; }
+public:
+  Processor() = default;
 };
 int main() { mut Processor p{}; int input = 7; mut int output = 0;
   return invoke(p, input, output) - 1; }
@@ -5558,7 +5690,7 @@ int bad<C>(C& receiver, int& input, mut int& output)
   }
   const auto unrelated = analyze(R"(
 struct Box<T> { T value; };
-struct Adapter<T> { Box<T> adapt(T& value) { Box<T> b{.value = value}; return b; } };
+struct Adapter<T> { Box<T> adapt(T& value) { Box<T> b{.value = value}; return b; }  public: Adapter() = default; };
 concept adapted<T> = requires(Adapter<T>& a, T& v) { { a.adapt(v) } -> Box<T>; };
 concept indirect<T> = adapted<T>;
 Box<T> get<T>(T& value) requires indirect<T> { Adapter<T> a{}; return a.adapt(value); }
@@ -5575,6 +5707,8 @@ struct Result<T> { T value; };
 namespace nested {
 struct Reader {
   Result<count> read() mut { Result<count> r = {.value = 3}; return r; }
+public:
+  Reader() = default;
 };
 concept reader<R> = requires(mut R& stream) {
   { stream.read() } -> Result<count>;
@@ -5590,6 +5724,8 @@ int main() { mut app::nested::Reader r{}; auto result = app::nested::call(r); re
 struct Overloaded {
   int get(int& value) { return value; }
   bool get(bool& value) { return value; }
+public:
+  Overloaded() = default;
 };
 concept reads_both<R> =
   requires(R& receiver, int& value) { { receiver.get(value) } -> int; } &&
@@ -5606,7 +5742,7 @@ int main() { Overloaded r{}; int value = 7; bool condition = true;
          "only a member name or result");
 
   const std::string formatPrefix =
-      "#include <std/format>\n#include <std/string>\nstruct Item {};\n";
+      "#include <std/format>\n#include <std/string>\nstruct Item { public: Item() = default; };\n";
   for (const auto &call :
        {"std::format(\"{}\", Item())", "std::try_format(\"{}\", Item())",
         "std::try_format(\"{} {}\", 1, Item())",
@@ -5848,7 +5984,7 @@ concept meter<T> = gauge<T>;
 int sample<T>(T& item) requires gauge<T> { return 0; }
 int turn<T>(T& item) requires dial<T> { return 0; }
 int measure<T>(T& item) requires meter<T> { return 0; }
-class Plank {};
+class Plank { public: Plank() = default; };
 int main() {
   Plank plank{};
   return sample(plank) + turn(plank) + measure(plank);
@@ -6167,10 +6303,14 @@ int main() { return 0; }
 class readable {
 public:
   int32_t operator()(int32_t& value) { return value + 1; }
+public:
+  readable() = default;
 };
 class mutable_callable {
 public:
   int32_t operator()(int32_t& value) mut { return value + 2; }
+public:
+  mutable_callable() = default;
 };
 int32_t invoke<Callable>(int32_t value, mut Callable callable)
   requires std::read_callable<Callable, int32_t, int32_t> ||
@@ -6524,6 +6664,8 @@ public:
   T doubled(T value) requires std::numeric<T> {
     return T(value + value);
   }
+public:
+  NumericBox() = default;
 };
 
 int main() {
@@ -6543,6 +6685,8 @@ public:
   T doubled(T value) requires std::numeric<T> {
     return T(value + value);
   }
+public:
+  NumericBox() = default;
 };
 
 int main() {
@@ -6576,6 +6720,8 @@ public:
     requires std::numeric<T> {
     return false;
   }
+public:
+  ConstrainedOperator() = default;
 };
 )",
                                {standardLibraryPrelude()}, {},
@@ -6593,6 +6739,8 @@ class AbstractValues<T> {
 public:
   virtual T concrete() requires std::numeric<T> { return T(0); }
   virtual T abstract() requires std::numeric<T> = 0;
+public:
+  AbstractValues() = default;
 };
 
 interface ValueContract<T> {
@@ -6606,6 +6754,8 @@ interface PlainContract<T> {
 class DerivedValues<T> : public PlainContract<T> {
 public:
   T inherited() requires std::numeric<T> override { return T(0); }
+public:
+  DerivedValues() = default;
 };
 )",
                                {standardLibraryPrelude()}, {},
@@ -6657,6 +6807,8 @@ T invalid_forward<Iterator, Sentinel, std::numeric T>(
 #include <std/iterator>
 
 class BaseEnd {
+public:
+  BaseEnd() = default;
 };
 
 class DerivedEnd : public BaseEnd {
@@ -6666,12 +6818,14 @@ public:
   int position() { return this.limit; }
 };
 
-class OtherEnd {};
+class OtherEnd { public: OtherEnd() = default; };
 
 class GenericComparable<T, uint64_t N> {
 public:
   bool operator!=(GenericComparable<T, N>& other) { return true; }
   bool differs(GenericComparable<T, N>& other) { return this != other; }
+public:
+  GenericComparable() = default;
 };
 
 interface IteratorContract {
@@ -6782,6 +6936,8 @@ class End {
   int limit = 1;
 public:
   int position() { return this.limit; }
+public:
+  End() = default;
 };
 
 class MissingDereference {
@@ -6791,6 +6947,8 @@ public:
   bool operator!=(End& sentinel) {
     return this.current != sentinel.position();
   }
+public:
+  MissingDereference() = default;
 };
 
 class WrongIncrement {
@@ -6801,6 +6959,8 @@ public:
   bool operator!=(End& sentinel) {
     return this.current != sentinel.position();
   }
+public:
+  WrongIncrement() = default;
 };
 
 class WrongSentinelParameter {
@@ -6811,6 +6971,8 @@ public:
   bool operator!=(mut End& sentinel) {
     return this.current != sentinel.position();
   }
+public:
+  WrongSentinelParameter() = default;
 };
 
 class WrongElement {
@@ -6822,6 +6984,8 @@ public:
   bool operator!=(End& sentinel) {
     return this.current != sentinel.position();
   }
+public:
+  WrongElement() = default;
 };
 
 int main() {
@@ -6872,6 +7036,8 @@ class End {
   int limit = 1;
 public:
   int position() { return this.limit; }
+public:
+  End() = default;
 };
 
 class MissingIncrement {
@@ -6881,6 +7047,8 @@ public:
   bool operator!=(End& sentinel) {
     return this.current != sentinel.position();
   }
+public:
+  MissingIncrement() = default;
 };
 
 int main() {
@@ -6905,6 +7073,8 @@ class End {
   int limit = 1;
 public:
   int position() { return this.limit; }
+public:
+  End() = default;
 };
 
 class MutableOnlyDereference {
@@ -6915,6 +7085,8 @@ public:
   bool operator!=(End& sentinel) {
     return this.current != sentinel.position();
   }
+public:
+  MutableOnlyDereference() = default;
 };
 
 int main() {
@@ -7055,6 +7227,8 @@ void testCallableConceptCapabilities() {
 class reader {
 public:
   bool operator()(int32_t& value) { return value == 7; }
+public:
+  reader() = default;
 };
 
 class counter {
@@ -7071,6 +7245,8 @@ public:
 class once_reader {
 public:
   bool operator()(int32_t& value) && { return value == 7; }
+public:
+  once_reader() = default;
 };
 
 class descending {
@@ -7078,11 +7254,15 @@ public:
   bool operator()(int32_t& left, int32_t& right) {
     return left > right;
   }
+public:
+  descending() = default;
 };
 
 class once_action {
 public:
   void operator()() && {}
+public:
+  once_action() = default;
 };
 
 bool read_value<Function>(int32_t value, Function function)
@@ -7157,6 +7337,8 @@ int main() {
 class mutable_only {
 public:
   bool operator()(int32_t& value) mut { return value > 0; }
+public:
+  mutable_only() = default;
 };
 bool inspect<Function>(int32_t value, Function function)
   requires std::read_callable<Function, int32_t, bool> {
@@ -7173,6 +7355,8 @@ int main() { return inspect(1, mutable_only()) ? 0 : 1; }
 class once_only {
 public:
   bool operator()(int32_t& value) && { return value > 0; }
+public:
+  once_only() = default;
 };
 bool inspect<Function>(int32_t value, mut Function function)
   requires std::predicate<Function, int32_t> {
@@ -7189,6 +7373,8 @@ int main() { return inspect(1, once_only()) ? 0 : 1; }
 class integer_result {
 public:
   int32_t operator()(int32_t& value) { return value; }
+public:
+  integer_result() = default;
 };
 bool inspect<Function>(int32_t value, mut Function function)
   requires std::predicate<Function, int32_t> {
@@ -7204,6 +7390,8 @@ int main() { return inspect(1, integer_result()) ? 0 : 1; }
 class borrowed_result {
 public:
   int32_t& operator()(int32_t& value) { return value; }
+public:
+  borrowed_result() = default;
 };
 int32_t transform<Function>(int32_t value, mut Function function)
   requires std::operation<Function, int32_t, int32_t> {
@@ -7222,6 +7410,8 @@ class ambiguous {
 public:
   bool operator()(int32_t value) { return value > 0; }
   bool operator()(int32_t& value) { return value > 0; }
+public:
+  ambiguous() = default;
 };
 bool inspect<Function>(int32_t value, Function function)
   requires std::read_callable<Function, int32_t, bool> {
@@ -7823,6 +8013,8 @@ int main() {
 class Capture {
 public:
   Capture<T>(T value) {}
+public:
+  Capture() = default;
 };
 
 void discard_constructor_pack<Args...>(Args... args) {}
@@ -7831,6 +8023,8 @@ public:
   PackedCapture<Args...>(int fixed, Args... args) {
     discard_constructor_pack(args...);
   }
+public:
+  PackedCapture() = default;
 };
 
 class Tagged<Stored> {
@@ -8066,10 +8260,12 @@ int main() {
   };
   const lang::FrontendResult missingInference =
       analyze("constructor-missing-inference.gti", R"(
-class Wrapper<T> {};
+class Wrapper<T> { public: Wrapper() = default; };
 class Missing {
 public:
   Missing<T>(Wrapper<T> value) {}
+public:
+  Missing() = default;
 };
 int main() {
   Missing value = Missing(1);
@@ -8093,6 +8289,8 @@ int main() {
 class Conflict {
 public:
   Conflict<T>(T left, T right) {}
+public:
+  Conflict() = default;
 };
 int main() {
   Conflict value = Conflict(1, true);
@@ -8112,6 +8310,8 @@ int main() {
 class IntegralOnly {
 public:
   IntegralOnly<std::integral T>(T value) {}
+public:
+  IntegralOnly() = default;
 };
 int main() {
   IntegralOnly value = IntegralOnly(true);
@@ -8145,14 +8345,20 @@ int main() { return 0; }
 class Owner<T> {
 public:
   Owner<T>(int value) {}
+public:
+  Owner() = default;
 };
 class Packed {
 public:
   Packed<Args...>(Args value) {}
+public:
+  Packed() = default;
 };
 class Uninferable {
 public:
   Uninferable<T>(int value) {}
+public:
+  Uninferable() = default;
 };
 int main() { return 0; }
 )");
@@ -8194,11 +8400,15 @@ class CharacterIterator {
   char value = 'x';
 public:
   char& operator*() { return this.value; }
+public:
+  CharacterIterator() = default;
 };
 class CharacterOnly {
 public:
   CharacterOnly<Iterator>(Iterator value)
     requires std::dereferences_to<Iterator, char> {}
+public:
+  CharacterOnly() = default;
 };
 int main() {
   CharacterOnly value = CharacterOnly(CharacterIterator());
@@ -8211,11 +8421,13 @@ int main() {
 
   const lang::FrontendResult dependentRequirement =
       analyze("constructor-dependent-requirement.gti", R"(
-class Wrapper<T> {};
+class Wrapper<T> { public: Wrapper() = default; };
 concept copyable_wrapper<T> = std::copyable<T>;
 class Invalid {
 public:
   Invalid<T>(T value) requires copyable_wrapper<Wrapper<T>> {}
+public:
+  Invalid() = default;
 };
 int main() { return 0; }
 )");
@@ -8236,11 +8448,11 @@ int main() { return 0; }
 
 void testDependentTypeDefaultConstraints() {
   const std::string declarations = R"(
-class Ordered<std::totally_ordered T> {};
-class NotOrdered {};
-class Holder<T, Compare = Ordered<T>> {};
-class Nested<T, Compare = Holder<T>> {};
-class Constrained<T, std::integral U = T> {};
+class Ordered<std::totally_ordered T> { public: Ordered() = default; };
+class NotOrdered { public: NotOrdered() = default; };
+class Holder<T, Compare = Ordered<T>> { public: Holder() = default; };
+class Nested<T, Compare = Holder<T>> { public: Nested() = default; };
+class Constrained<T, std::integral U = T> { public: Constrained() = default; };
 )";
   const auto analyze = [&](const std::string &suffix) {
     return lang::Frontend().analyze(
@@ -8266,7 +8478,7 @@ int main() {
         "int main() { Nested<NotOrdered> value{}; return 0; }",
         "int main() { Constrained<double> value{}; return 0; }",
         "void consume(Holder<NotOrdered>& value) {}",
-        "class Bad<T, Compare = Ordered<double*>> {};"}) {
+        "class Bad<T, Compare = Ordered<double*>> { public: Bad() = default; };"}) {
     const auto invalid = analyze(suffix);
     expect(!invalid.canGenerateCode() &&
                hasDiagnosticCode(invalid.diagnostics, "GTI-S2029"),
@@ -8306,6 +8518,8 @@ class StaticArray<T, uint64_t N> {
 public:
   uint64_t size() { return N; }
   T first() { return this.values[0]; }
+public:
+  StaticArray() = default;
 };
 
 class WrappedArray<T, uint64_t N> {
@@ -8313,6 +8527,8 @@ class WrappedArray<T, uint64_t N> {
 
 public:
   uint64_t size() { return this.value.size(); }
+public:
+  WrappedArray() = default;
 };
 
 class DefaultArray<T = int, uint64_t N = default_array_size> {
@@ -8320,6 +8536,8 @@ class DefaultArray<T = int, uint64_t N = default_array_size> {
 
 public:
   uint64_t size() { return N; }
+public:
+  DefaultArray() = default;
 };
 
 int main() {
@@ -8426,12 +8644,14 @@ int main() {
 
   lang::Lexer lexer;
   lang::Parser invalidParser(lexer.scan(R"(
-class WrongType<T, int N> {};
-class WrongOrder<uint64_t N, T> {};
-class NeedsValue<T, uint64_t N> {};
+class WrongType<T, int N> { public: WrongType() = default; };
+class WrongOrder<uint64_t N, T> { public: WrongOrder() = default; };
+class NeedsValue<T, uint64_t N> { public: NeedsValue() = default; };
 class ImmutableValue<uint64_t N> {
 public:
   void overwrite() { N = 2; }
+public:
+  ImmutableValue() = default;
 };
 uint64_t invalid_function<uint64_t N>() { return N; }
 T same_default<T>(T value) { return value; }
@@ -8440,17 +8660,19 @@ NeedsValue<int, int> wrong_value;
 NeedsValue<4, 4> wrong_type;
 NeedsValue<int, Missing> missing_value;
 int invalid_extent[Missing] = {};
-class MissingAfterDefault<T = int, U> {};
-class ForwardDefault<T = U, U = int> {};
-class ForwardValue<uint64_t N = M, uint64_t M = 2> {};
-class BadValueDefault<uint64_t N = 1 / 0> {};
-class BadValueUnderflow<uint64_t N = 1 - 2> {};
-class BadValueOverflow<uint64_t N = 18446744073709551615 + 1> {};
-class BadValueName<uint64_t N = Missing> {};
+class MissingAfterDefault<T = int, U> { public: MissingAfterDefault() = default; };
+class ForwardDefault<T = U, U = int> { public: ForwardDefault() = default; };
+class ForwardValue<uint64_t N = M, uint64_t M = 2> { public: ForwardValue() = default; };
+class BadValueDefault<uint64_t N = 1 / 0> { public: BadValueDefault() = default; };
+class BadValueUnderflow<uint64_t N = 1 - 2> { public: BadValueUnderflow() = default; };
+class BadValueOverflow<uint64_t N = 18446744073709551615 + 1> { public: BadValueOverflow() = default; };
+class BadValueName<uint64_t N = Missing> { public: BadValueName() = default; };
 void default_pack<T = int, Args...>() {}
 class ConstructorDefault {
 public:
   ConstructorDefault<T = int>(T value) {}
+public:
+  ConstructorDefault() = default;
 };
 )"));
   lang::Program invalidProgram = invalidParser.parse();
@@ -8537,7 +8759,7 @@ public:
          "substitution failures");
 
   const lang::FrontendResult lateDefault = lang::Frontend().analyze(
-      "late-generic-default.gti", "class LateDefault<uint64_t N = later> {};\n"
+      "late-generic-default.gti", "class LateDefault<uint64_t N = later> { public: LateDefault() = default; };\n"
                                   "constexpr uint64_t later = 3;\n");
   expect(!lateDefault.canGenerateCode() &&
              hasDiagnostic(lateDefault.diagnostics,
@@ -8547,7 +8769,7 @@ public:
          "declared later in source order");
 
   const std::string formatted = lang::Formatter().format(
-      "class StaticArray<T,uint64_t N>{T values[N]={};};StaticArray<int,4> "
+      "class StaticArray<T,uint64_t N>{T values[N]={}; public: StaticArray() = default; };StaticArray<int,4> "
       "values=StaticArray<int,4>();T choose<T=int,uint64_t N=2+1>(){return "
       "T();}");
   expect(formatted.find("class StaticArray<T, uint64_t N> {") !=
@@ -8569,12 +8791,12 @@ public:
          "boundary and preserve the following function");
 
   lang::Parser typeArgumentParser(lexer.scan(R"(
-class Widget {};
+class Widget { public: Widget() = default; };
 T identity<T>(T value) { return value; }
 void accept_type_arguments(Widget* pointer) {
   identity<Widget*>(pointer);
 }
-class CallbackHolder<T> {};
+class CallbackHolder<T> { public: CallbackHolder() = default; };
 void accept_callback(CallbackHolder<(int)->void> callback) {}
 )"));
   (void)typeArgumentParser.parse();
@@ -8861,11 +9083,15 @@ class DuplicateConstructor {
 public:
   DuplicateConstructor<uint64_t N>(int values[N]) {}
   DuplicateConstructor<uint64_t M>(int values[M]) {}
+public:
+  DuplicateConstructor() = default;
 };
 
 class ShadowedConstructor<uint64_t N> {
 public:
   ShadowedConstructor<uint64_t N>(int values[N]) {}
+public:
+  ShadowedConstructor() = default;
 };
 
 int main() {
@@ -8961,7 +9187,7 @@ int main() {
 
 void testVariadicGenerics() {
   const std::string source = R"(
-class Packed<T...> {};
+class Packed<T...> { public: Packed() = default; };
 void consume<Args...>(Args... values) {}
 
 void route<Rest...>(int first, Rest... rest) { consume(rest...); }
@@ -8983,6 +9209,8 @@ public:
   void send<Args...>(Args... values) {
     relay(values...);
   }
+public:
+  Forwarder() = default;
 };
 
 int main() {
@@ -9036,7 +9264,7 @@ int main() {
       "move-pack.gti", R"(
 #include <std/memory>
 
-class PackedValue {};
+class PackedValue { public: PackedValue() = default; };
 
 void consume_owner<Args...>(Args... values) {}
 
@@ -9069,7 +9297,7 @@ int main() {
       "reused-move-pack.gti", R"(
 #include <std/memory>
 
-class PackedValue {};
+class PackedValue { public: PackedValue() = default; };
 
 void consume_owner<Args...>(Args... values) {}
 
@@ -9393,6 +9621,8 @@ float pow(float base, float exponent) { return base * exponent; }
 struct Selector<T, U> {
   T apply(T value) { return value; }
   U apply(U value) { return value; }
+public:
+  Selector() = default;
 };
 
 struct Receiver {
@@ -9402,6 +9632,8 @@ struct Receiver {
     this.value += 1;
     return this.value;
   }
+public:
+  Receiver() = default;
 };
 
 int main() {
@@ -9502,6 +9734,8 @@ U echo<U>(U value) { return value; }
 
 struct MutableOnly {
   int inspect() mut { return 1; }
+public:
+  MutableOnly() = default;
 };
 
 int choose(int value) { return value; }
@@ -9622,6 +9856,8 @@ public:
 
   void bump() mut { this.samples[1] += 4; }
   uint64_t count() { return this.samples.size(); }
+public:
+  Buffers() = default;
 };
 
 int main() {
@@ -9769,6 +10005,8 @@ class ReadOnlyArrayReceiver {
 
 public:
   void write() { slots[0] = 1; }
+public:
+  ReadOnlyArrayReceiver() = default;
 };
 
 int overflow_extent[18446744073709551615 + 1] = {};
@@ -10037,6 +10275,8 @@ class Box {
 public:
   Box(int value) : value(value) {}
   int read() { return this.value; }
+public:
+  Box() = default;
 };
 
 T preserve<T>(T value) {
@@ -10137,6 +10377,8 @@ auto global = 1;
 
 class InvalidField {
   auto value = 1;
+public:
+  InvalidField() = default;
 };
 
 auto inferred_return() { return 1; }
@@ -10174,6 +10416,8 @@ int main() {
 class Value {
 public:
   int number = 1;
+public:
+  Value() = default;
 };
 
 int main() {
@@ -10197,6 +10441,8 @@ int main() {
 class Value {
 public:
   int number = 1;
+public:
+  Value() = default;
 };
 
 int main() {
@@ -10468,14 +10714,20 @@ int main() {
       "invalid-structured-bindings.gti", R"(
 class Hidden {
   int secret = 1;
+public:
+  Hidden() = default;
 };
 
 struct Base {
   int base = 1;
+public:
+  Base() = default;
 };
 
 struct Derived : public Base {
   int own = 2;
+public:
+  Derived() = default;
 };
 
 struct MoveOnly {
@@ -10483,6 +10735,8 @@ struct MoveOnly {
 
   MoveOnly(MoveOnly& other) = delete;
   MoveOnly(MoveOnly&& other) = default;
+public:
+  MoveOnly() = default;
 };
 
 int main() {
@@ -10589,6 +10843,8 @@ private:
   using hidden_type = int;
 public:
   value_type identity(value_type value) { return value; }
+public:
+  Traits() = default;
 };
 
 using IntBox = Box<int>;
@@ -10680,6 +10936,8 @@ class NumericBox<std::numeric T> {
 public:
   using value_type = T;
   value_type copy(value_type input) { return value_type(input); }
+public:
+  NumericBox() = default;
 };
 int main() {
   NumericBox<int> box{};
@@ -10695,8 +10953,8 @@ int main() {
       lang::Frontend().analyze("concrete-alias-members.gti", R"(
 using Value = Concrete::nested_type::value_type;
 using Concrete = Outer<int>;
-struct Inner<T> { using value_type = T; };
-struct Outer<T> { using nested_type = Inner<T>; };
+struct Inner<T> { using value_type = T;  public: Inner() = default; };
+struct Outer<T> { using nested_type = Inner<T>;  public: Outer() = default; };
 int main() { Value value = 7; return value - 7; }
 )");
   expect(qualifiedAliases.canGenerateCode(),
@@ -10704,8 +10962,8 @@ int main() { Value value = 7; return value - 7; }
          "substitution independently of declaration order");
   const auto privateQualifier =
       lang::Frontend().analyze("private-alias-qualifier.gti", R"(
-struct Inner<T> { using value_type = T; };
-class Outer<T> { using hidden = Inner<T>; };
+struct Inner<T> { using value_type = T;  public: Inner() = default; };
+class Outer<T> { using hidden = Inner<T>;  public: Outer() = default; };
 using Concrete = Outer<int>;
 using Leaked = Concrete::hidden::value_type;
 int main() { return 0; }
@@ -10717,7 +10975,7 @@ int main() { return 0; }
   const lang::FrontendResult classKinds =
       lang::Frontend().analyze("class-kind-type-aliases.gti",
                                R"(
-struct RecordTraits { using value_type = int; };
+struct RecordTraits { using value_type = int;  public: RecordTraits() = default; };
 interface ContractTraits { using value_type = int; };
 union UnionTraits {
   using value_type = int;
@@ -10738,7 +10996,7 @@ int main() {
          "default access and remain usable as direct type members");
 
   const std::string completionSource =
-      "class Traits { public: using value_type = int; }; "
+      "class Traits { public: using value_type = int;  public: Traits() = default; }; "
       "using Value = Traits::val; int main() { return 0; }";
   const lang::CompletionResult completion = lang::LanguageQueries().complete(
       {.entryPath = "class-alias-completion.gti",
@@ -10767,6 +11025,8 @@ class Box<T> {
   using value_hidden = T;
 public:
   using value_type = T;
+public:
+  Box() = default;
 };
 using Concrete = Box<int>;
 using Partial = Concrete::val;
@@ -10789,8 +11049,8 @@ int main() { return 0; }
       "concrete alias completion should substitute member types and retain "
       "private filtering");
   const auto nestedCompletion = completeAlias(R"(
-struct Inner<T> { using value_type = T; };
-struct Outer<T> { using nested_type = Inner<T>; };
+struct Inner<T> { using value_type = T;  public: Inner() = default; };
+struct Outer<T> { using nested_type = Inner<T>;  public: Outer() = default; };
 using Concrete = Outer<uint64_t>;
 using Partial = Concrete::nested_type::val;
 int main() { return 0; }
@@ -10806,8 +11066,8 @@ int main() { return 0; }
          "chained concrete alias completion should preserve every owner "
          "substitution");
   const auto hiddenCompletion = completeAlias(R"(
-struct Inner<T> { using value_type = T; };
-class Outer<T> { using hidden = Inner<T>; };
+struct Inner<T> { using value_type = T;  public: Inner() = default; };
+class Outer<T> { using hidden = Inner<T>;  public: Outer() = default; };
 using Concrete = Outer<int>;
 using Partial = Concrete::hidden::val;
 int main() { return 0; }
@@ -10849,30 +11109,40 @@ class PrivateTraits {
   using secret_type = int;
 public:
   secret_type identity(secret_type value) { return value; }
+public:
+  PrivateTraits() = default;
 };
 using Leaked = PrivateTraits::secret_type;
 
 struct DuplicateMember {
   using value_type = int;
   int value_type = 0;
+public:
+  DuplicateMember() = default;
 };
 
 class CallbackOwner {
 public:
   using Callback = (int) -> void;
+public:
+  CallbackOwner() = default;
 };
 
 class GenericOwner<T> {
 public:
   using value_type = T;
+public:
+  GenericOwner() = default;
 };
 using UnboundGenericMember = GenericOwner::value_type;
 
 class BaseOwner {
 public:
   using inherited_type = int;
+public:
+  BaseOwner() = default;
 };
-class DerivedOwner : public BaseOwner {};
+class DerivedOwner : public BaseOwner { public: DerivedOwner() = default; };
 using UninheritedMember = DerivedOwner::inherited_type;
 
 int main() { return 0; }
@@ -10914,11 +11184,13 @@ int main() { return 0; }
       "local type aliases should be rejected by the parser");
 
   const std::string formatted = lang::Formatter().format(
-      "class Traits{using hidden=int;public:using value_type=hidden;};");
+      "class Traits{using hidden=int;public:using value_type=hidden; public: Traits() = default; };");
   expect(formatted == R"(class Traits {
   using hidden = int;
 public:
   using value_type = hidden;
+public:
+  Traits() = default;
 };
 )" && lang::Formatter().format(formatted) == formatted,
          "the formatter should indent class-scoped aliases as ordinary "
@@ -10930,7 +11202,7 @@ void testNamespacesAndAliases() {
   const std::string source = R"(
 namespace engine {
 namespace graphics {
-class Renderer {};
+class Renderer { public: Renderer() = default; };
 void render() {}
 void renderTwice() {
   render();
@@ -11373,7 +11645,7 @@ int main() {
       analyzeTrustedStandalonePreludeFixture("shadowed-c-record.gti", R"(
 namespace gti_internal { class text_view {}; }
 namespace native {
-struct gti_c_string_view {};
+struct gti_c_string_view { public: gti_c_string_view() = default; };
 extern "C" {
 int32_t measure_text(gti_internal::text_view value);
 }
@@ -11561,7 +11833,7 @@ int main() { return 0; }
 
   const lang::FrontendResult invalid =
       analyzeTrustedPreludeFixture("invalid-extern-c.gti", R"(
-class Handle {};
+class Handle { public: Handle() = default; };
 enum class Mode { One };
 [[link_name("native_plain")]] int32_t plain();
 extern "C" {
@@ -12182,7 +12454,7 @@ int main() {
   const lang::FrontendResult receiverReference = lang::Frontend().analyze(
       "default-receiver-reference.gti",
       "class Item { public: int read(int value = this.read()) { return "
-      "value; } };");
+      "value; }  public: Item() = default; };");
   expect(!receiverReference.canGenerateCode() &&
              hasDiagnosticCode(receiverReference.diagnostics, "GTI-S2077") &&
              hasDiagnostic(receiverReference.diagnostics, "cannot use 'this'"),
@@ -12259,11 +12531,11 @@ int main() {
       {"default-operator.gti",
        "class Number { public: int operator[](uint64_t value = 1) { return "
        "int(value); "
-       "} };",
+       "}  public: Number() = default; };",
        "operator declarations"},
       {"default-virtual.gti",
        "class Base { public: virtual int inspect(int value = 1) { return "
-       "value; } };",
+       "value; }  public: Base() = default; };",
        "virtual, override, or interface methods"},
       {"default-lambda.gti",
        "int main() { auto fn = [](int value = 1) -> int { return value; }; "
@@ -12333,7 +12605,7 @@ int identity(int value) { return value; }
       {"generic", "[[noreturn]] void run<T>(T value) { stop(); } void "
                   "instantiate() { run(1); }"},
       {"tracked-method",
-       "struct Guard { [[track_caller]] void check() { stop(); } };"},
+       "struct Guard { [[track_caller]] void check() { stop(); }  public: Guard() = default; };"},
       {"tracked-direct-item",
        "[[track_caller]] int compute(int value) { return value; } int run() { "
        "auto target = compute; return target(1); }"},
@@ -12369,13 +12641,13 @@ int identity(int value) { return value; }
        "stop(); } }"},
       {"duplicate", "[[noreturn, noreturn]] void run() { stop(); }"},
       {"tracked-operator", "struct Index { [[track_caller]] int "
-                           "operator[](std::size_t index) { return 0; } };"},
+                           "operator[](std::size_t index) { return 0; }  public: Index() = default; };"},
       {"terminal-operator",
-       "struct Action { [[noreturn]] void operator()() { stop(); } };"},
+       "struct Action { [[noreturn]] void operator()() { stop(); }  public: Action() = default; };"},
       {"unknown", "[[noreturn, surprise]] void run() { stop(); }"},
       {"bodyless", "[[track_caller]] void run();"},
       {"virtual",
-       "class Guard { public: [[track_caller]] virtual void check() {} };"},
+       "class Guard { public: [[track_caller]] virtual void check() {}  public: Guard() = default; };"},
       {"native", "extern \"C\" { [[track_caller]] void run(); }"},
   };
   for (const auto &[name, body] : rejected) {
@@ -12540,6 +12812,8 @@ mut int closed = 0;
 struct Counter {
   unsafe int read() { return 7; }
   unsafe void close() { closed += 1; }
+public:
+  Counter() = default;
 };
 concept readable<T> = requires(T& source) {
   unsafe { source.read() } -> int;
@@ -12566,9 +12840,9 @@ public:
   Outer(Monitor<T> inner) : inner(std::move(inner)) {}
   int read() { return this.inner.read(); }
 };
-class Unused<closable T> { int value = 0; };
-class Defaulted<closable T = Counter> { int value = 0; };
-class Packed<closable T...> { int value = 0; };
+class Unused<closable T> { int value = 0;  public: Unused() = default; };
+class Defaulted<closable T = Counter> { int value = 0;  public: Defaulted() = default; };
+class Packed<closable T...> { int value = 0;  public: Packed() = default; };
 )";
   const auto analyze = [&](const std::string &source) {
     return lang::Frontend().analyze("structural-class-contract.gti", source,
@@ -12603,14 +12877,14 @@ int main() {
          "existing generic annotation syntax formats without losing facts");
 
   for (const auto &suffix :
-       {"struct Missing {}; int main() { Unused<Missing> value{}; return 0; }",
-        "struct Wrong { int read(){return 1;} int close(){return 0;} }; "
+       {"struct Missing { public: Missing() = default; }; int main() { Unused<Missing> value{}; return 0; }",
+        "struct Wrong { int read(){return 1;} int close(){return 0;}  public: Wrong() = default; }; "
         "int main() { Unused<Wrong> value{}; return 0; }",
-        "class Hidden { int read(){return 1;} void close(){} }; "
+        "class Hidden { int read(){return 1;} void close(){}  public: Hidden() = default; }; "
         "int main() { Unused<Hidden> value{}; return 0; }",
-        "struct Missing {}; int main() { Packed<Counter, Missing> value{}; "
+        "struct Missing { public: Missing() = default; }; int main() { Packed<Counter, Missing> value{}; "
         "return 0; }",
-        "struct Missing {}; class InvalidDefault<closable T=Missing> {}; "
+        "struct Missing { public: Missing() = default; }; class InvalidDefault<closable T=Missing> { public: InvalidDefault() = default; }; "
         "int main() { InvalidDefault<> value{}; return 0; }"}) {
     const auto rejected = analyze(declarations + suffix);
     expect(!rejected.canGenerateCode() &&
@@ -12635,7 +12909,7 @@ int main() {
                        "~Bad(){ this.source.close(); } }; "
                        "int main(){return 0;}",
         std::string("concept pair<T,U> = std::copyable<T> && "
-                    "std::copyable<U>; class Bad<pair T> { int value=0; }; "
+                    "std::copyable<U>; class Bad<pair T> { int value=0;  public: Bad() = default; }; "
                     "int main(){return 0;}")}) {
     const auto rejected = analyze(source);
     expect(!rejected.canGenerateCode() &&
@@ -12723,7 +12997,7 @@ int main() { return read(1); }
   // unlike the later-resolved class lifecycle above, this isolates formation
   // of a closed compound argument inside the provisional clause scope.
   const auto closedPrimitive = analyze(R"(
-class IntegerBox<std::integral T> { public: int get() { return 0; } };
+class IntegerBox<std::integral T> { public: int get() { return 0; }  public: IntegerBox() = default; };
 int read<T>(T value) requires std::integral<bool> && boxed_int<IntegerBox<bool>> { return 0; }
 int main() { return 0; }
 )");

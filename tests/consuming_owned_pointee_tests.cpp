@@ -7,6 +7,8 @@ interface Operation { int operator()(int value) &&; };
 class Increment : public Operation {
 public:
   int operator()(int value) && override { return value + 1; }
+public:
+  Increment() = default;
 };
 void observe(Operation& value) {}
 class Owner {
@@ -335,11 +337,15 @@ class Transparent<T> {
   mut gti_internal::unique_owner<T> resource = nullptr;
 public:
   mut T& access() mut { return gti_internal::unique_owner_borrow_mut(this.resource); }
+public:
+  Transparent() = default;
 };
 class Holder {
   mut Transparent<Operation> operation{};
 public:
   int operator()(int value) && { return std::move(this.operation.access())(value); }
+public:
+  Holder() = default;
 };
 int invoke(Holder holder) { return std::move(holder)(3); }
 int main() { return 0; }

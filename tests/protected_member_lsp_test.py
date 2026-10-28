@@ -47,7 +47,7 @@ def main():
                 "publishDiagnostics": {"relatedInformation": True}}}})
             legend = init["capabilities"]["semanticTokensProvider"]["legend"]["tokenTypes"]
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
-            valid = BASE + "struct Derived : public Base { int get(Derived& peer) { return peer.secret; } };\n"
+            valid = BASE + "struct Derived : public Base { int get(Derived& peer) { return peer.secret; }  public: Derived() = default; };\n"
             assert not publish(valid)
             use = valid.rindex("secret")
             hover = request("textDocument/hover", at(valid, use))

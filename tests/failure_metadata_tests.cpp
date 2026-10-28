@@ -380,6 +380,8 @@ class Box {
   Item item{};
 public:
   Box(Item input) : item(input) {}
+public:
+  Box() = default;
 };
 expected<Item, int> parse(bool valid) {
   if (!valid) { return unexpected(7); }
@@ -1833,7 +1835,7 @@ void testModuleImplementationSourceIdentity() {
          .moduleImplementations = {{"factory", {implementation}}}}};
     const std::unordered_map<std::string, std::string> sources{
         {api.string(), "export module factory; export class Widget { public: "
-                       "static int read(); };"},
+                       "static int read();  public: Widget() = default; };"},
         {implementation.string(),
          "import factory;\n#include \"helpers.gti\"\n"
          "struct Local { int value; };\n"
@@ -2533,7 +2535,7 @@ void testUniqueOwnerBorrowFailureEdges() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "/tmp/gti-owner-failure/main.gti", R"(
 #include <std/memory>
-struct Record { mut int32_t value = 1; };
+struct Record { mut int32_t value = 1;  public: Record() = default; };
 int32_t read(std::unique_ptr<Record>& owner) {
   return (*owner).value + owner->value;
 }
@@ -2794,7 +2796,7 @@ void testImplicitUniqueAllocationContracts() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-implicit-allocation/main.gti", R"(
 #include <std/memory>
-class Empty { public: ~Empty() {} };
+class Empty { public: ~Empty() {}  public: Empty() = default; };
 int main() { auto owner = std::make_unique<Empty>(); return 0; }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -3737,6 +3739,8 @@ std::string relay(std::string value) { return std::move(value); }
 class Fields {
   std::string first = relay(std::string("first field"));
   std::string second = relay(std::string("second field"));
+public:
+  Fields() = default;
 };
 class Caller {
 public:

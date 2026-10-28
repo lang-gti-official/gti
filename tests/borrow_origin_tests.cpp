@@ -211,7 +211,7 @@ void checkStoredViewReturns() {
   const auto invalid =
       analyzeWithStandardLibrary("invalid-stored-view-return.gti", R"gti(
 #include <std/string>
-struct Inner { std::string_view name = "inner"; };
+struct Inner { std::string_view name = "inner";  public: Inner() = default; };
 class Holder {
   std::string_view name = "stored";
   std::string text{"owned"};
@@ -646,7 +646,7 @@ void checkOwnedFieldPlaces() {
 
 void checkLoweringFailureContext() {
   const auto frontend = analyze("lowering-context.gti", R"gti(
-struct Item { mut int value = 0; };
+struct Item { mut int value = 0;  public: Item() = default; };
 int main() {
   Item item{};
   Item& alias = item;

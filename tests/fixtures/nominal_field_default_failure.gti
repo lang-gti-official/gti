@@ -19,5 +19,7 @@ class Outer {
   Failing failing;
 public:
   ~Outer() { std::println("must not drop incomplete outer"); }
+public:
+  Outer() = default;
 };
 int main() { Outer object{}; return 0; }

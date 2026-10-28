@@ -11,12 +11,16 @@ struct pair_value {
   int32_t first = 0;
   int32_t second = 0;
   pair_value(int32_t first, int32_t second) : first(first), second(second) {}
+public:
+  pair_value() = default;
 };
 
 // A cleanup-free class error alternative.
 struct code_value {
   int32_t code = 0;
   code_value(int32_t code) : code(code) {}
+public:
+  code_value() = default;
 };
 
 // An owning payload keeps MIR's value drop and its transfer slot.
@@ -165,6 +169,8 @@ public:
     pair_holder held{made};
     this.total = held.total + read_pair(made);
   }
+public:
+  copying_holder() = default;
 };
 
 expected<int32_t, int32_t> relay_holder(bool ok) {

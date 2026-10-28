@@ -84,16 +84,16 @@ def main():
             assert not diagnostics(5)
             # Concrete aliases must be revalidated in the editor too; int(void)
             # is invalid even when the symbolic alias int(S) was valid.
-            invalid_alias = source.replace("class Tag<S = void> {};",
-                                           "class Tag<S = void> { using Bad = int(S); };")
+            invalid_alias = source.replace("class Tag<S = void> { public: Tag() = default; };",
+                                           "class Tag<S = void> { using Bad = int(S);  public: Tag() = default; };")
             change(6, invalid_alias)
             assert any(error.get("code") == "GTI-S2093" for error in diagnostics(6))
             change(7, source)
             assert not diagnostics(7)
             packs = (
-                "class Signature<R, Args...> { using type = R(Args...); };\n"
-                "class Forward<R, Args...> { Signature<R, Args...> field{}; };\n"
-                "class Types<Args...> {};\n"
+                "class Signature<R, Args...> { using type = R(Args...);  public: Signature() = default; };\n"
+                "class Forward<R, Args...> { Signature<R, Args...> field{};  public: Forward() = default; };\n"
+                "class Types<Args...> { public: Types() = default; };\n"
                 "int main() { Forward<void, int&> value{}; Types<> empty{}; return 0; }\n"
             )
             change(8, packs)
@@ -120,7 +120,7 @@ def main():
             change(12, formatted)
             assert not diagnostics(12)
             methods = (
-                "class Relay<Args...> { public: void send(Args... args) {} };\n"
+                "class Relay<Args...> { public: void send(Args... args) {}  public: Relay() = default; };\n"
                 "int main() { Relay<int, bool> value{}; value.send(1, true); return 0; }\n"
             )
             change(13, methods)
@@ -147,7 +147,7 @@ def main():
             change(15, methods)
             assert not diagnostics(15)
             decomposition = (
-                "class Tag<S> {};\n"
+                "class Tag<S> { public: Tag() = default; };\n"
                 "int unpack<R, Args...>(Tag<R(Args...)>& tag) { return 7; }\n"
                 "int main() { Tag<int(int, bool)> tag{}; return unpack(tag); }\n"
             )
@@ -200,7 +200,7 @@ def main():
 
             borrowed = (
                 "#include <std/functional>\n"
-                "struct Read { int operator()(int& value) { return value; } };\n"
+                "struct Read { int operator()(int& value) { return value; }  public: Read() = default; };\n"
                 "int main() {\n"
                 "  Read reader{};\n"
                 "  std::function<int(int&)> callback{std::move(reader)};\n"
@@ -251,7 +251,7 @@ def main():
             assert not diagnostics(27)
             qualified = (
                 "using Mutable = int(int) mut;\n"
-                "class Tag<R(Args...) mut> {};\n"
+                "class Tag<R(Args...) mut> { public: Tag() = default; };\n"
                 "int main() { Tag<Mutable> value{}; return 0; }\n"
             )
             change(28, qualified)
@@ -339,7 +339,7 @@ def main():
                 "interface Operation { int operator()(int value) &&; };\n"
                 "class Increment : public Operation { public:\n"
                 "  int operator()(int value) && override { return value + 1; }\n"
-                "};\n"
+                " public: Increment() = default; };\n"
                 "int main() { Increment operation{}; return std::move(operation)(2); }\n"
             )
             change(42, consuming_virtual)
@@ -411,7 +411,7 @@ def main():
             # Keep the callback's generic angles and anonymous reference
             # parameters compact, without recognizing std::function by name.
             (pathlib.Path(directory) / "events.gti").write_text(
-                "export module events;\nexport struct Event { int code = 0; };\n")
+                "export module events;\nexport struct Event { int code = 0;  public: Event() = default; };\n")
             window = (
                 "// supplementary character: \U0001f600\n"
                 "export module window;\nimport std;\nimport \"events.gti\";\n"

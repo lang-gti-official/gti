@@ -21,6 +21,8 @@ struct Guard {
     }
     std::println("guard-cleaned");
   }
+public:
+  Guard() = default;
 };
 struct Owned {
   std::unique_ptr<int> value;
@@ -43,6 +45,8 @@ public:
     std::formatter<int> integer{};
     return integer.format(*value.value, output, spec);
   }
+public:
+  formatter() = default;
 };
 class std::formatter<sample::Broken> {
 public:
@@ -50,6 +54,8 @@ public:
       mut std::string& output, std::format_spec& spec) {
     return unexpected(std::format_errc::unsupported_argument);
   }
+public:
+  formatter() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

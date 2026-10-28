@@ -20,6 +20,8 @@ public:
 struct Frame {
   mut int32_t slots[4] = {0, 0, 0, 0};
   mut int32_t count = 0;
+public:
+  Frame() = default;
 };
 
 int32_t run(int32_t which, Guard parameter) {

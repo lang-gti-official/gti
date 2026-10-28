@@ -75,6 +75,13 @@ struct Record {
 struct Wrapper { Record record; Wrapper() = default; };
 struct Derived : public Record { Derived() = default; };
 struct FieldSupplied { int value; };
+struct BodyDefault { int value; BodyDefault() : value(19) {} };
+class ProtectedBase { protected: ProtectedBase() = default; };
+struct ProtectedDerived : public ProtectedBase { ProtectedDerived() = default; };
+namespace tags { [[attribute]] struct Label { int value = 4; Label() = default; }; }
+[[tags::Label]] struct Tagged { int value = 0; Tagged() = default; };
+constexpr Record constant{};
+static_assert(constant.value == 5);
 static_assert(!std::meta::is_default_initializable<Required>());
 static_assert(std::meta::is_default_initializable<Record>());
 static_assert(std::meta::is_default_initializable<DefaultArgument>());
@@ -82,6 +89,10 @@ T make<std::default_initializable T>() { return T(); }
 int main() {
   { auto value = std::make_unique<Ready>(); if (value->read() != 7) { return 1; } }
   if (drops != 1) { return 2; }
+  BodyDefault body{};
+  ProtectedDerived protected_base{};
+  tags::Label label = {.value = 6};
+  if (body.value != 19 || label.value != 6) { return 4; }
   Required original{9};
   Required copied = original;
   Required moved = std::move(copied);

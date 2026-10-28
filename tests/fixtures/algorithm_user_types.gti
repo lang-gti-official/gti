@@ -28,6 +28,8 @@ public:
   int& at(std::size_t index) { return this.data[index]; }
   cursor begin() { return cursor(this, std::size_t(0)); }
   stop end() { return stop(std::size_t(4)); }
+public:
+  series() = default;
 };
 
 mut int destroyed = 0;

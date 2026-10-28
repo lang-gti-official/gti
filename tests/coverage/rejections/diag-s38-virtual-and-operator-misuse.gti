@@ -1,6 +1,8 @@
 struct Point {
   int x = 0;
   Point(int x) : x(x) {}
+public:
+  Point() = default;
 };
 
 int main() {

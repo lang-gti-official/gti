@@ -5,6 +5,8 @@ class SignatureTag<S = void> {
 public:
   using signature = S;
   int value() { return 7; }
+public:
+  SignatureTag() = default;
 };
 
 int identify<S>(SignatureTag<S>& value) { return value.value(); }
@@ -21,16 +23,22 @@ class Signature<R, Args...> {
 public:
   using type = R(Args...);
   int value() { return 7; }
+public:
+  Signature() = default;
 };
 class Forward<R, Args...> {
   using nested = Signature<R, Args...>;
   nested stored{};
 public:
   int value() { return stored.value(); }
+public:
+  Forward() = default;
 };
 class Types<Args...> {
 public:
   int value() { return 7; }
+public:
+  Types() = default;
 };
 
 void consume<Values...>(Values... values) {}
@@ -40,11 +48,15 @@ public:
   int inspect<T>(T first, Args... args) { consume(first, args...); return 7; }
   void twice(Args... args) { send(args...); send(args...); }
   int operator()(Args... args) { consume(args...); return 7; }
+public:
+  Relay() = default;
 };
 interface Invocable<Args...> { int invoke(Args... args); };
 class Target<Args...> : public Invocable<Args...> {
 public:
   int invoke(Args... args) override { consume(args...); return 7; }
+public:
+  Target() = default;
 };
 int dispatch(Invocable<int, bool>& target) { return target.invoke(1, true); }
 int dispatch_empty(Invocable<>& target) { return target.invoke(); }

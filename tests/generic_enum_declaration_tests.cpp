@@ -495,8 +495,8 @@ int main() { return keep(unexpected(1)); }
 void testCrossNominalDefaultsAndFiniteLayouts() {
   const std::string event =
       "enum Event<T, U = Later> { item(T value, U detail) }; ";
-  const std::string early = "struct Early<W = Event<int>> {}; ";
-  const std::string later = "struct Later {}; ";
+  const std::string early = "struct Early<W = Event<int>> { public: Early() = default; }; ";
+  const std::string later = "struct Later { public: Later() = default; }; ";
   for (const std::string &declarations :
        {event + early + later, later + event + early, early + event + later,
         early + later + event}) {
@@ -512,12 +512,12 @@ void testCrossNominalDefaultsAndFiniteLayouts() {
   }
 
   for (const auto source :
-       {"struct Earlier<T = Later<>> {}; "
-        "struct Later<T = int> {}; using Selected = Earlier<>; "
+       {"struct Earlier<T = Later<>> { public: Earlier() = default; }; "
+        "struct Later<T = int> { public: Later() = default; }; using Selected = Earlier<>; "
         "int main() { return 0; }",
         "enum Self<T = Self<int>> { item(int value) }; "
         "int main() { auto value = Self<>::item(7); return 0; }",
-        "struct Self<T = Self<int>> {}; "
+        "struct Self<T = Self<int>> { public: Self() = default; }; "
         "using Selected = Self<>; int main() { return 0; }",
         "enum Event<T> { item(T value) }; "
         "struct Leaf { int value; }; struct B { Event<Leaf> value; }; "
@@ -527,7 +527,7 @@ void testCrossNominalDefaultsAndFiniteLayouts() {
         "struct A { Event<Box<Box<int>>> value; }; "
         "int main() { return 0; }",
         "constexpr uint64_t Earlier = 3; "
-        "struct Count<uint64_t N = Earlier> {}; "
+        "struct Count<uint64_t N = Earlier> { public: Count() = default; }; "
         "using Selected = Count<>; int main() { return 0; }"}) {
     const auto result =
         lang::Frontend().analyze("finite-nominal-defaults.gti", source);
@@ -564,12 +564,12 @@ void testCrossNominalDefaultsAndFiniteLayouts() {
            "reject in semantics before executable lowering");
   }
   for (const auto source :
-       {"struct Count<uint64_t N = Later> {}; constexpr uint64_t Later = 3; "
+       {"struct Count<uint64_t N = Later> { public: Count() = default; }; constexpr uint64_t Later = 3; "
         "int main() { return 0; }",
-        "struct First<T = Later<>> {}; struct Later<T = First<>> {}; "
+        "struct First<T = Later<>> { public: First() = default; }; struct Later<T = First<>> { public: Later() = default; }; "
         "int main() { return 0; }",
         "enum Event<T = Box<>> { item(int value) }; "
-        "struct Box<T = Event<>> {}; int main() { return 0; }"}) {
+        "struct Box<T = Event<>> { public: Box() = default; }; int main() { return 0; }"}) {
     const auto result =
         lang::Frontend().analyze("invalid-nominal-default-cycle.gti", source);
     expect(!result.semanticValid && std::none_of(result.diagnostics.begin(),

@@ -1074,6 +1074,8 @@ int main() {
     const auto nondependent = analyze(generic + R"gti(
 class Invalid<T> {
   int& bad() { int local = 7; return local; }
+public:
+  Invalid() = default;
 };
 int main() { return 0; }
 )gti");

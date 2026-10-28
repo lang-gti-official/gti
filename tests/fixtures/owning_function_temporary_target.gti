@@ -5,6 +5,8 @@ class Call {
 public:
   ~Call() { destroyed++; }
   int operator()(int value) { return value; }
+public:
+  Call() = default;
 };
 
 int exercise() {

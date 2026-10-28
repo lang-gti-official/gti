@@ -21,6 +21,8 @@ public:
 struct line_record {
   std::string sku = std::string("");
   uint32_t quantity = 0;
+public:
+  line_record() = default;
 };
 
 class std::json::codec<LineItem> {
@@ -38,12 +40,16 @@ public:
     }
     return LineItem(std::string(record.sku.view()), record.quantity);
   }
+public:
+  codec() = default;
 };
 
 struct Order {
   std::string id = std::string("");
   std::vector<LineItem> items = std::vector<LineItem>();
   std::optional<std::string> coupon = std::optional<std::string>();
+public:
+  Order() = default;
 };
 
 int main() {

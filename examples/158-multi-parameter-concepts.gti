@@ -48,7 +48,7 @@ adds_to<L, R>::sum_type total<L, R>(L& left, R& right)
   return adds_to<L, R>::add(left, right);
 }
 
-struct Apples {};
+struct Apples { public: Apples() = default; };
 
 int main() {
   Meters length{2};

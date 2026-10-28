@@ -25,9 +25,9 @@ public:
   void operator()() { if (this.input != 21) std::panic("incorrect shared input"); }
 };
 
-struct Once { void operator()() && {} };
-struct Data { mut int left = 0; mut int right = 0; };
-struct Record { int number = 7; };
+struct Once { void operator()() && {}  public: Once() = default; };
+struct Data { mut int left = 0; mut int right = 0;  public: Data() = default; };
+struct Record { int number = 7;  public: Record() = default; };
 void noop() {}
 
 class Nested {

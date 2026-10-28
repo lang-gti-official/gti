@@ -1,6 +1,6 @@
 #include <std/memory>
 
-struct Reading { mut int value = 42; };
+struct Reading { mut int value = 42;  public: Reading() = default; };
 
 [[borrowed_from(owner)]]
 unsafe T& observe<T, Owner>(const T* address, Owner& owner) {
@@ -19,6 +19,8 @@ public:
 // after the original allocation has gone. None of these functions accesses it.
 struct Address {
   const int* value = nullptr;
+public:
+  Address() = default;
 };
 
 Address relay(Address address) { return address; }

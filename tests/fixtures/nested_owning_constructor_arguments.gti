@@ -4,7 +4,7 @@
 
 // No allocator or standard-library carrier is involved: an ordinary owning
 // argument forwards a caller's borrowed source through two constructor levels.
-struct Source { int value = 7; };
+struct Source { int value = 7;  public: Source() = default; };
 class Borrow {
   Source& source;
 public:

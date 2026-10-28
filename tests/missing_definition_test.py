@@ -41,6 +41,8 @@ class Mapper<T> {
 public:
   int decode(T& input);
   int inspect();
+public:
+  Mapper() = default;
 };
 }
 int decode<T>(T& input) {

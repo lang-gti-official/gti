@@ -1,7 +1,7 @@
 // A50: designated construction omitting a field whose default is 'Inner inner{};' is a
 // backend ICE.
-struct Inner { int32_t r = 3; };
-struct Item { int32_t port = 80; Inner inner{}; };
+struct Inner { int32_t r = 3;  public: Inner() = default; };
+struct Item { int32_t port = 80; Inner inner{};  public: Item() = default; };
 int main() {
   Item it = {.port = 1};
   return it.inner.r - 3;

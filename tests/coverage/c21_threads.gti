@@ -1,6 +1,6 @@
 // @coverage-profile: concurrent
 #include <std/thread>
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 int main() {
   mut auto handle = std::thread::start([]() -> void { });
   if (handle.has_value()) {

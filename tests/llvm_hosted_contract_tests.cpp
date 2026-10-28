@@ -709,6 +709,8 @@ struct Owner {
   int value = 7;
   virtual int observe() { return this.value; }
   ~Owner() {}
+public:
+  Owner() = default;
 };
 int main() {
   mut Owner owner{};
@@ -740,8 +742,10 @@ Slot fill() { return Slot::held(Square(3)); }
 struct Referent {
   int value = 7;
   Slot slot = fill();
+public:
+  Referent() = default;
 };
-struct Owner { int marker = 11; };
+struct Owner { int marker = 11;  public: Owner() = default; };
 int main() {
   Referent referent{};
   Owner owner{};

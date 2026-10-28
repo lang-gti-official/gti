@@ -7,6 +7,8 @@ public:
     std::unique_ptr<int32_t> empty = std::unique_ptr<int32_t>();
     int32_t value = *empty;
   }
+public:
+  failing_cleanup() = default;
 };
 
 int32_t fail(int32_t divisor) {

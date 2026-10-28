@@ -1,6 +1,8 @@
 // A14: a constructor-less struct field initialized in a class with a user constructor ICEs.
 struct Value {
   mut int number = 0;
+public:
+  Value() = default;
 };
 
 class Handle {

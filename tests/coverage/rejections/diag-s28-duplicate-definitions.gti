@@ -4,6 +4,8 @@ int helper() { return 2; } //!ERR
 struct Pair {
   int a = 0;
   int a = 1; //!ERR
+public:
+  Pair() = default;
 };
 
 int main() {

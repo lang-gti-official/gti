@@ -18,7 +18,7 @@ namespace counter {
       total = total + 1;
       return true;
     }
-  };
+   public: Registry() = default; };
 
 #ifdef DEP_FLAG
   export bool dep_flag_seen() { return true; }

@@ -148,8 +148,8 @@ def main():
                         "index_out_of_bounds in fixed_array\n"
                     ), failed
         for name, source in (
-            ("unsafe-required", "struct F{int values[2]={1,2};};int main(){F f{};const F* p=&f;return p->values[0];}"),
-            ("const-write", "struct F{mut int values[2]={1,2};};int main(){F f{};const F* p=&f;unsafe{p->values[0]=7;}return 0;}"),
+            ("unsafe-required", "struct F{int values[2]={1,2}; public: F() = default; };int main(){F f{};const F* p=&f;return p->values[0];}"),
+            ("const-write", "struct F{mut int values[2]={1,2}; public: F() = default; };int main(){F f{};const F* p=&f;unsafe{p->values[0]=7;}return 0;}"),
             ("binding-readonly", "struct V{mut int n;V(int n):n(n){}};int main(){V values[2]={V(1),V(2)};auto[first,second]=values;first.n=3;return 0;}"),
             ("binding-arity", "struct V{int n;V(int n):n(n){}};int main(){V values[2]={V(1),V(2)};auto[first]=values;return 0;}"),
             ("binding-copy-owner", "#include <std/string>\n#include <std/utility>\nclass V{public:std::string n;V(std::string n):n(std::move(n)){}};int main(){V values[2]={V(std::string(\"one\")),V(std::string(\"two\"))};auto[first,second]=values;return 0;}"),

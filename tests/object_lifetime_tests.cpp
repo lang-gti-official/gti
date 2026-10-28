@@ -91,6 +91,8 @@ public:
   Sensor(Sensor& other) = delete;
   Sensor(Sensor&& other) = delete;
   ~Sensor() { std::panic("sensor cleanup failed"); }
+public:
+  Sensor() = default;
 };
 int main() {
   int* scalar = nullptr;
@@ -349,7 +351,7 @@ int main() {
   const auto transfers = analyze(R"(
 #include <std/memory>
 #include <std/string>
-struct Record { int number = 4; };
+struct Record { int number = 4;  public: Record() = default; };
 int main() {
   Record record{};
   Record* copy = nullptr;

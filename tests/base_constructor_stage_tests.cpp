@@ -8,12 +8,14 @@ void checkSelectedGeneratedBaseSchedule() {
 class Base {
 public:
   int state = 7;
+public:
+  Base() = default;
 };
 class ExplicitDerived : public Base {
 public:
   ExplicitDerived() : Base() {}
 };
-class GeneratedDerived : public Base { int tag = 9; };
+class GeneratedDerived : public Base { int tag = 9;  public: GeneratedDerived() = default; };
 int main() {
   ExplicitDerived explicit_value{};
   GeneratedDerived generated_value{};
@@ -225,7 +227,7 @@ int main() { Derived value{3}; return 0; }
       analyzeWithStandardLibrary("effectful-base-argument.gti", R"(
 mut int observed = 0;
 int observe() { observed = 7; return observed; }
-class Base { public: Base(int value) {} };
+class Base { public: Base(int value) {}  public: Base() = default; };
 class Derived : public Base {
   int field;
 public:
@@ -243,7 +245,7 @@ void checkOwningEnumBaseArgumentAuthority() {
       analyzeWithStandardLibrary("owning-enum-base-traits.gti", R"(
 class Resource { public: Resource() {} ~Resource() {} };
 enum class Parcel { empty, item(Resource value) };
-class Base { public: Base(int value) {} };
+class Base { public: Base(int value) {}  public: Base() = default; };
 class Derived : public Base { public: Derived() : Base(7) {} };
 int main() { Derived value{}; Parcel parcel = Parcel::empty; return 0; }
 )");
@@ -988,7 +990,7 @@ int main() {
   }
   const auto prematureField =
       analyzeWithStandardLibrary("premature-derived-field.gti", R"(
-class Base { public: Base(int value) {} };
+class Base { public: Base(int value) {}  public: Base() = default; };
 class Derived : public Base {
   int field;
 public:

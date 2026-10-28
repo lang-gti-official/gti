@@ -8,6 +8,8 @@ struct Dimensions {
   mut int height = 4;
   constexpr Dimensions(int scale) { this.width *= scale; this.height *= scale; }
   constexpr int area() { return this.width * this.height; }
+public:
+  Dimensions() = default;
 };
 
 constexpr expected<int, parse_error> parse_digit(std::string_view text) {
@@ -109,11 +111,15 @@ constexpr int invalid_default(int divisor) { return 1 / divisor; }
 struct Selected {
   int value = invalid_default(0);
   constexpr Selected(int input) : value(input) {}
+public:
+  Selected() = default;
 };
 
 struct Defaults {
   Dimensions dimensions = Dimensions(2);
   expected<int, parse_error> reading = twice("7");
+public:
+  Defaults() = default;
 };
 
 constexpr int defaults_value() {

@@ -215,7 +215,7 @@ is a teaching helper, not a production server.
 | `002-control-flow.gti` | conditions, `for`, `while`, `break`, and `continue` |
 | `003-functions.gti` | typed parameters, return values, and calls |
 | `004-integers.gti` | fixed-width integers, arithmetic, and bitwise operators |
-| `005-objects.gti` | structs, classes, constructors, checked base arguments, state-bearing bases, declared cleanup, access, and mutable methods |
+| `005-objects.gti` | structs, classes, explicit default-constructor opt-in, required constructor arguments, checked base arguments, state-bearing bases, declared cleanup, access, and mutable methods |
 | `006-namespaces.gti` | nested namespace shorthand, qualification, and aliases |
 | `007-generics.gti` | type generics, exact inference, and class value parameters |
 | `008-expected.gti` | explicit recoverable errors and `?` propagation with `expected<T, E>` |

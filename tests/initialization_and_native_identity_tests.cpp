@@ -46,6 +46,8 @@ class Empty {
 public:
   Empty(nullptr_t value) {}
   int read() { return this.marker; }
+public:
+  Empty() = default;
 };
 class Parent {
   Empty first;
@@ -62,13 +64,13 @@ int main() { Parent parent{}; return parent.read() - 14; }
     expect(!gti_test::emitCpp(nullable).contents.empty(),
            "nullable field construction must retain executable authority");
   rejected(R"gti(
-class Empty { public: Empty(nullptr_t value) {} };
+class Empty { public: Empty(nullptr_t value) {}  public: Empty() = default; };
 void take(Empty value) {}
 int main() { take(nullptr); return 0; }
 )gti",
            "GTI-S2003");
   rejected(R"gti(
-class Empty { Empty(nullptr_t value) {} };
+class Empty { Empty(nullptr_t value) {}  public: Empty() = default; };
 class Parent { Empty field; public: Parent() : field(nullptr) {} };
 int main() { return 0; }
 )gti",
@@ -90,6 +92,8 @@ struct Pair {
   int first = 0;
   int second = 0;
   Pair(int left, int right) : first(left), second(right) {}
+public:
+  Pair() = default;
 };
 struct Sum {
   int total;
@@ -160,7 +164,7 @@ struct GenericBox<T> {
   implicit GenericBox(T initial) : value(std::move(initial)) {}
 };
 GenericBox<T> boxed<T>(int value) { return value; }
-struct Factory { Score make(int value) { return value; } };
+struct Factory { Score make(int value) { return value; }  public: Factory() = default; };
 int main() {
   auto produce = [](int value) -> Score { return value; };
   Score first = score(1);
@@ -214,7 +218,7 @@ int main() {
     }
   }
   expect(analyze(R"gti(
-struct Empty { implicit Empty(nullptr_t value) {} };
+struct Empty { implicit Empty(nullptr_t value) {}  public: Empty() = default; };
 Empty empty() { return nullptr; }
 int main() { Empty value = empty(); return 0; }
 )gti")
@@ -232,14 +236,14 @@ int main() { return 0; }
              .canGenerateCode(),
          "eligible implicit returns use the staged MIR constant profile");
   rejected(R"gti(
-struct Explicit { Explicit(int value) {} };
+struct Explicit { Explicit(int value) {}  public: Explicit() = default; };
 T construct<T>(int value) { return value; }
 int main() { Explicit value = construct<Explicit>(1); return 0; }
 )gti",
            "GTI-S2003");
   rejected(R"gti(
 #include <std/meta>
-struct Explicit { Explicit(int value) {} };
+struct Explicit { Explicit(int value) {}  public: Explicit() = default; };
 Explicit exact(int value) { return Explicit(value); }
 std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
   return value;
@@ -253,8 +257,8 @@ int main() {
            "GTI-S2003", true);
   rejected(R"gti(
 #include <std/meta>
-struct Middle { implicit Middle(int value) {} };
-struct End { implicit End(Middle value) {} };
+struct Middle { implicit Middle(int value) {}  public: Middle() = default; };
+struct End { implicit End(Middle value) {}  public: End() = default; };
 End exact(Middle value) { return End(value); }
 std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
   return value;
@@ -277,18 +281,18 @@ int main() { auto result = boxed<bool>(1); return 0; }
            "GTI-S2003", true);
   // Explicit constructors and the declaration-only nullptr exception do not
   // become implicit at returns.
-  rejected("struct Plain { Plain(int value) {} };\n"
+  rejected("struct Plain { Plain(int value) {}  public: Plain() = default; };\n"
            "Plain make() { return 1; }\nint main() { return 0; }\n",
            "GTI-S2003");
-  rejected("struct Plain { Plain(nullptr_t value) {} };\n"
+  rejected("struct Plain { Plain(nullptr_t value) {}  public: Plain() = default; };\n"
            "Plain make() { return nullptr; }\nint main() { return 0; }\n",
            "GTI-S2003");
-  rejected("class Hidden { implicit Hidden(int value) {} };\n"
+  rejected("class Hidden { implicit Hidden(int value) {}  public: Hidden() = default; };\n"
            "Hidden make() { return 1; }\nint main() { return 0; }\n",
            "GTI-S2007");
   rejected(R"gti(
-struct Middle { implicit Middle(int value) {} };
-struct End { implicit End(Middle value) {} };
+struct Middle { implicit Middle(int value) {}  public: Middle() = default; };
+struct End { implicit End(Middle value) {}  public: End() = default; };
 End make() { return 1; }
 int main() { return 0; }
 )gti",
@@ -297,6 +301,8 @@ int main() { return 0; }
 struct Twice {
   implicit Twice(int value) {}
   implicit Twice(int value, int extra = 2) {}
+public:
+  Twice() = default;
 };
 Twice make() { return 1; }
 int main() { return 0; }
@@ -359,6 +365,8 @@ struct Owner {
   Owner(int initial) : value(initial) {}
   Owner(Owner& other) = delete;
   Owner(Owner&& other) = default;
+public:
+  Owner() = default;
 };
 struct Holder {
   Owner owner;
@@ -403,7 +411,7 @@ int main() { Buffer buffer = 64; return buffer.capacity; }
   }
   // `implicit` marks only an ordinary constructor callable with zero or one
   // explicit argument, with a source body and no unsafe obligation.
-  rejected("struct Pair { implicit Pair(int a, int b) {} };\n"
+  rejected("struct Pair { implicit Pair(int a, int b) {}  public: Pair() = default; };\n"
            "int main() { return 0; }\n",
            "GTI-S2121");
   expect(analyze("struct Empty { implicit Empty() {} };\n"

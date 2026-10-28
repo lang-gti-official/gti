@@ -7,6 +7,8 @@ public:
 class Guard {
 public:
   ~Guard() { std::println("caller cleaned"); }
+public:
+  Guard() = default;
 };
 expected<Record, inspect_error> inspect(int divisor) {
   return Record(12 / divisor);

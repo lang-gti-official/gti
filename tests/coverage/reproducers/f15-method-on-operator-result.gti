@@ -4,6 +4,8 @@ public:
   Counter(int32_t n) : n(n) {}
   int32_t value() { return this.n; }
   Counter operator+(Counter& o) { return Counter(this.n + o.n); }
+public:
+  Counter() = default;
 };
 int main() {
   Counter a = Counter(3);

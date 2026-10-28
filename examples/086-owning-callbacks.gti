@@ -16,6 +16,8 @@ public:
       this.login_callback();
     }
   }
+public:
+  Authentication() = default;
 };
 
 void configure(mut Authentication& auth) {
@@ -39,6 +41,8 @@ public:
     this.total += amount;
     return this.total;
   }
+public:
+  Counter() = default;
 };
 
 int main() {

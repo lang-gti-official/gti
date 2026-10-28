@@ -88,6 +88,8 @@ class DefaultApplication {
   DefaultResource second = DefaultResource(2);
 public:
   ~DefaultApplication() { std::println(30); }
+public:
+  DefaultApplication() = default;
 };
 
 class GenericDefault<T> {
@@ -95,6 +97,8 @@ class GenericDefault<T> {
   std::unique_ptr<T> second = std::make_unique<T>(2);
 public:
   ~GenericDefault() { std::println(30); }
+public:
+  GenericDefault() = default;
 };
 
 class DefaultBase {
@@ -108,12 +112,16 @@ class DefaultDerived : public DefaultBase {
   DefaultResource second = DefaultResource(2);
 public:
   ~DefaultDerived() { std::println(30); }
+public:
+  DefaultDerived() = default;
 };
 
 class NestedDefault {
   DefaultApplication nested = DefaultApplication();
 public:
   ~NestedDefault() { std::println(40); }
+public:
+  NestedDefault() = default;
 };
 
 class ExpectedSuccessDefault<T> {
@@ -121,6 +129,8 @@ class ExpectedSuccessDefault<T> {
   DefaultResource second = DefaultResource(2);
 public:
   ~ExpectedSuccessDefault() { std::println(30); }
+public:
+  ExpectedSuccessDefault() = default;
 };
 
 class ExpectedErrorDefault<T> {
@@ -128,6 +138,8 @@ class ExpectedErrorDefault<T> {
   DefaultResource second = DefaultResource(2);
 public:
   ~ExpectedErrorDefault() { std::println(30); }
+public:
+  ExpectedErrorDefault() = default;
 };
 
 class ExpectedPassiveDefault<T> {
@@ -135,6 +147,8 @@ class ExpectedPassiveDefault<T> {
   DefaultResource second = DefaultResource(2);
 public:
   ~ExpectedPassiveDefault() { std::println(30); }
+public:
+  ExpectedPassiveDefault() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

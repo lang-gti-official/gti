@@ -26,6 +26,8 @@ public:
     std::hash<int32_t> hash{};
     return hash(value);
   }
+public:
+  hash() = default;
 };
 
 class KeyEqual {
@@ -33,6 +35,8 @@ public:
   bool operator()(Key& left, Key& right) {
     return left.get() == right.get();
   }
+public:
+  KeyEqual() = default;
 };
 
 class OwningHasher {

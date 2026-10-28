@@ -22,6 +22,8 @@ public:
     this.result = parse(divisor);
     std::println("done");
   }
+public:
+  Holder() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

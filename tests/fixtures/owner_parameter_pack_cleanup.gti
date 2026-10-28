@@ -18,6 +18,8 @@ public:
   void accept(int divisor, Args... args) override {
     int result = 1 / divisor;
   }
+public:
+  Target() = default;
 };
 void dispatch(Sink<Token, Token>& target, int divisor, int cleanup_divisor) {
   target.accept(divisor, Token(1, cleanup_divisor), Token(2, 1));

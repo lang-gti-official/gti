@@ -404,6 +404,8 @@ public:
       values[index] *= multiplier;
     }
   }
+public:
+  VirtualScaler() = default;
 };
 
 int main() {

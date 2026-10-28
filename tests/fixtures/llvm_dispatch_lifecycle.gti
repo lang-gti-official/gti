@@ -3,6 +3,8 @@ class Token {
 public:
   Token(int value) : divisor(value) {}
   ~Token() { int checked = 12 / this.divisor; }
+public:
+  Token() = default;
 };
 
 class Base {
@@ -13,6 +15,8 @@ public:
   }
   virtual int phase() { return 1; }
   ~Base() { int observed = this.phase(); }
+public:
+  Base() = default;
 };
 
 interface Side { int side(); };
@@ -29,6 +33,8 @@ public:
   int side() override { return 6; }
   int other_side() override { return 7; }
   ~Derived() { int observed = this.phase(); }
+public:
+  Derived() = default;
 };
 
 class Trivial {

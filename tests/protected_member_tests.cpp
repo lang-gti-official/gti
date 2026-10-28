@@ -61,13 +61,13 @@ protected:
   static int secret() { return 3; }
   static mut int shared = 2;
   using Number = int;
-  struct Detail { int code = 4; };
+  struct Detail { int code = 4;  public: Detail() = default; };
 public:
   Base() {}
   int inspect(Base& peer) { return peer.value; }
   virtual int api() { return value; }
 };
-struct Sibling : public Base {};
+struct Sibling : public Base { public: Sibling() = default; };
 )";
 } // namespace
 int main() {
@@ -82,17 +82,21 @@ struct Derived : public Base {
   int types() { Base::Number x = 2; Base::Detail d{}; return x + d.code; }
   static int helper() { return Base::secret() + Base::shared; }
   int api() override { return method(); }
+public:
+  Derived() = default;
 };
-struct Leaf : public Derived { int read_leaf(Leaf& peer) { return peer.value; } };
+struct Leaf : public Derived { int read_leaf(Leaf& peer) { return peer.value; }  public: Leaf() = default; };
 int main() { mut Derived d{}; d.update(); return d.api() - 9; }
 )");
-  accept(R"(class Base { protected: Base() {} }; struct D : public Base {};
+  accept(R"(class Base { protected: Base() {} }; struct D : public Base { public: D() = default; };
 int main() { D value{}; return 0; })");
-  accept(base + R"(struct Derived : public Base { int read(); };
+  accept(base + R"(struct Derived : public Base { int read();  public: Derived() = default; };
 int Derived::read() { return value; }
 int main() { Derived d{}; return d.read() - 1; })");
   accept(base + R"(struct Derived : public Base {
-struct Nested { static int read(Derived& value) { return value.value; } };
+struct Nested { static int read(Derived& value) { return value.value; }  public: Nested() = default; };
+public:
+  Derived() = default;
 }; int main() { Derived d{}; return Derived::Nested::read(d) - 1; })");
   for (const std::string expression :
        {"item.value", "item.method()", "Base::secret()", "Base::shared"})
@@ -105,56 +109,60 @@ struct Nested { static int read(Derived& value) { return value.value; } };
   reject(base + "int test() { Base::shared = 4; return 0; }");
   reject(base + "using Hidden = Base::Number;");
   reject(base + "Base::Detail make() { return Base::Detail(); }");
-  reject(R"(class Base { protected: Base(int x) {} };
+  reject(R"(class Base { protected: Base(int x) {}  public: Base() = default; };
 struct Derived : public Base { Derived() : Base(1) {} Base make() { return Base(2); } };)");
   reject(
       R"(class Base { protected: Base() {} }; int main() { Base value{}; return 0; })");
   accept(R"(class Converted { protected: implicit Converted(int value) {}
-public: static int make() { Converted value = 1; return 0; } };
+public: static int make() { Converted value = 1; return 0; }  public: Converted() = default; };
 int main() { return Converted::make(); })");
-  reject(R"(class Converted { protected: implicit Converted(int value) {} };
+  reject(R"(class Converted { protected: implicit Converted(int value) {}  public: Converted() = default; };
 int main() { Converted value = 1; return 0; })");
-  reject(R"(class Converted { protected: implicit Converted(int value) {} };
+  reject(R"(class Converted { protected: implicit Converted(int value) {}  public: Converted() = default; };
 struct Derived : public Converted { Derived() : Converted(1) {}
 int read() { Converted value = 1; return 0; } };)");
-  reject(R"(struct Base {}; struct Derived : protected Base {};)", "GTI-S2040");
-  reject(R"(class Bad { protected: ~Bad() {} };)", "GTI-S2021");
+  reject(R"(struct Base { public: Base() = default; }; struct Derived : protected Base { public: Derived() = default; };)", "GTI-S2040");
+  reject(R"(class Bad { protected: ~Bad() {}  public: Bad() = default; };)", "GTI-S2021");
   reject(R"(union Bad { protected: int value; };)", "GTI-S2066");
   reject(R"([[c_abi]] struct Bad { protected: int value; };)", "GTI-S2064");
   reject(base +
-             "struct Derived : public Base { void bad() { this.value = 2; } };",
+             "struct Derived : public Base { void bad() { this.value = 2; }  public: Derived() = default; };",
          "GTI-S2000");
   reject(base + "interface Bad { protected: int read(); };", "GTI-S2041");
   reject(
       R"(class Base<T> { protected: T value; public: Base(T x) : value(x) {} };
 struct D<T> : public Base<T> { D(T x) : Base<T>(x) {} T bad(Base<T>& b) { return b.value; } };
 int main() { D<int> d{1}; Base<int> b{2}; return d.bad(b); })");
-  reject(R"(class Base<T> { protected: static int secret() { return 1; } };
-struct Derived : public Base<int> { int bad() { return Base<bool>::secret(); } };
+  reject(R"(class Base<T> { protected: static int secret() { return 1; }  public: Base() = default; };
+struct Derived : public Base<int> { int bad() { return Base<bool>::secret(); }  public: Derived() = default; };
 int main() { Derived d{}; return d.bad(); })",
          "GTI-S2039");
-  reject(R"(class Base<T> { protected: static int secret = 1; };
-struct Derived : public Base<int> { int bad() { return Base<bool>::secret; } };
+  reject(R"(class Base<T> { protected: static int secret = 1;  public: Base() = default; };
+struct Derived : public Base<int> { int bad() { return Base<bool>::secret; }  public: Derived() = default; };
 int main() { Derived d{}; return d.bad(); })",
          "GTI-S2039");
-  reject(R"(class Base<T> { protected: int value = 1; };
-struct D<T> : public Base<T> { int bad(D<bool>& peer) { return peer.value; } };
+  reject(R"(class Base<T> { protected: int value = 1;  public: Base() = default; };
+struct D<T> : public Base<T> { int bad(D<bool>& peer) { return peer.value; }  public: D() = default; };
 int main() { D<int> d{}; D<bool> peer{}; return d.bad(peer); })");
   accept(base + R"(struct Derived : public Base {
 unsafe int raw(Derived* peer) { unsafe { return peer->value; } }
+public:
+  Derived() = default;
 };)");
   reject(base + R"(struct Derived : public Base {
 unsafe int raw(Base* peer) { unsafe { return peer->value; } }
+public:
+  Derived() = default;
 };)");
-  reject(R"(class Base<T> { protected: using Hidden = T; };
-struct Derived : public Base<int> { int bad() { Base<bool>::Hidden value = true; return 0; } };)");
-  accept(R"(class Base<T> { protected: using Hidden = T; };
-struct Derived : public Base<int> { int good() { Base<int>::Hidden value = 1; return value; } };)");
-  accept(R"(class Base { public: virtual int read() { return 1; } };
-class Derived : public Base { protected: int read() override { return 2; } };
+  reject(R"(class Base<T> { protected: using Hidden = T;  public: Base() = default; };
+struct Derived : public Base<int> { int bad() { Base<bool>::Hidden value = true; return 0; }  public: Derived() = default; };)");
+  accept(R"(class Base<T> { protected: using Hidden = T;  public: Base() = default; };
+struct Derived : public Base<int> { int good() { Base<int>::Hidden value = 1; return value; }  public: Derived() = default; };)");
+  accept(R"(class Base { public: virtual int read() { return 1; }  public: Base() = default; };
+class Derived : public Base { protected: int read() override { return 2; }  public: Derived() = default; };
 int main() { Derived d{}; Base& b = d; return b.read() - 2; })");
-  reject(R"(class Base { public: virtual int read() { return 1; } };
-class Derived : public Base { protected: int read() override { return 2; } };
+  reject(R"(class Base { public: virtual int read() { return 1; }  public: Base() = default; };
+class Derived : public Base { protected: int read() override { return 2; }  public: Derived() = default; };
 int main() { Derived d{}; return d.read(); })");
   accept(
       R"(class Base<T, uint64_t N> { protected: T value; public: Base(T x) : value(x) {} };

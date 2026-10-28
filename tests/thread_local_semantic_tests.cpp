@@ -68,6 +68,8 @@ thread_local mut int counter = 0;
 class Registry {
 public:
   static thread_local mut int value = 1;
+public:
+  Registry() = default;
 };
 int next() {
   thread_local mut int local = 3;
@@ -232,9 +234,9 @@ void modify() { value = 2; }
 )";
   for (const std::string source :
        {"class Reader { public: Reader(int& input) { modify(); int copied = "
-        "input; } }; int main() { Reader reader{value}; return 0; }",
+        "input; }  public: Reader() = default; }; int main() { Reader reader{value}; return 0; }",
         "struct Reader { int operator()(int& input) { modify(); return input; "
-        "} }; int main() { Reader reader{}; return reader(value); }",
+        "}  public: Reader() = default; }; int main() { Reader reader{}; return reader(value); }",
         "struct View { int& item; View(int& source) : item(source) {} }; int "
         "read(View view) { modify(); return view.item; } int main() { return "
         "read(View(value)); }",
@@ -247,17 +249,17 @@ void modify() { value = 2; }
         "int initialize() { modify(); return 3; } int read(int& input, int "
         "copied = initialize()) { return input + copied; } int main() { return "
         "read(value); }",
-        "struct Cleanup { ~Cleanup() { modify(); } }; int& current() { Cleanup "
+        "struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; int& current() { Cleanup "
         "cleanup{}; return value; } int main() { return current(); }",
-        "struct Cleanup { ~Cleanup() { modify(); } }; int main() { int& "
+        "struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; int main() { int& "
         "borrowed = value; [[discard]] Cleanup(); return borrowed; }",
-        "struct Cleanup { ~Cleanup() { modify(); } }; void inspect(Cleanup& "
+        "struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; void inspect(Cleanup& "
         "input) {} int main() { int& borrowed = value; inspect(Cleanup()); "
         "return borrowed; }",
-        "struct Cleanup { ~Cleanup() { modify(); } }; int main() { mut Cleanup "
+        "struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; int main() { mut Cleanup "
         "destination{}; int& borrowed = value; destination = Cleanup(); return "
         "borrowed; }",
-        "struct Cleanup { ~Cleanup() { modify(); } }; struct Hold { int& "
+        "struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; struct Hold { int& "
         "input; Hold(int& source) : input(source) {} ~Hold() { int copied = "
         "this.input; } }; int main() { Hold first{value}; Cleanup second{}; "
         "return 0; }"}) {
@@ -269,17 +271,17 @@ void modify() { value = 2; }
            "constructors, operators, aggregate relays, forwarding and cleanup "
            "preserve persistent-loan protection");
   }
-  positive(prefix + "struct Cleanup { ~Cleanup() { modify(); } }; int& "
+  positive(prefix + "struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; int& "
                     "current() { { Cleanup cleanup{}; } return value; } int "
                     "main() { return current(); }",
            "completed earlier cleanup does not conflict with a later returned "
            "borrow");
-  positive(prefix + "struct Cleanup { ~Cleanup() { modify(); } }; int main() { "
+  positive(prefix + "struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; int main() { "
                     "int& borrowed = value; Cleanup held{}; int copied = "
                     "borrowed; return copied; }",
            "constructing an owned local does not prematurely run its deferred "
            "cleanup");
-  positive(prefix + "struct Cleanup { ~Cleanup() { modify(); } }; struct Hold "
+  positive(prefix + "struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; struct Hold "
                     "{ int& input; Hold(int& source) : input(source) {} "
                     "~Hold() { int copied = this.input; } }; int main() { "
                     "Cleanup first{}; Hold second{value}; return 0; }",
@@ -310,12 +312,16 @@ void exactWholeObjectVirtualEffects() {
 class Base {
 public:
   virtual int read() { return 1; }
+public:
+  Base() = default;
 };
 class Reader : public Base {
 public:
   int read() override { return 2; }
+public:
+  Reader() = default;
 };
-class Leaf : public Reader {};
+class Leaf : public Reader { public: Leaf() = default; };
 )";
   for (const std::string storage : {"", "thread_local "}) {
     const bool concurrent = !storage.empty();
@@ -375,6 +381,8 @@ interface ReaderContract { int read(); };
 class InterfaceReader : public ReaderContract {
 public:
   int read() override { return 2; }
+public:
+  InterfaceReader() = default;
 };
 )" + storage + R"(
 InterfaceReader reader{};
@@ -384,15 +392,17 @@ int main() { int& held = guarded; return reader.read() + held; }
              "target even when the virtual root has no executable body");
     accepted(declared +
                  "class Holder { int kept = reader.read(); "
-                 "public: int value() { return this.kept; } }; "
+                 "public: int value() { return this.kept; }  public: Holder() = default; }; "
                  "int main() { Holder held{}; return held.value() - 2; }",
              "field initialization may call an independent complete object's "
              "virtual method without treating constructor this as complete");
     accepted(prefix + R"(
-class BaseCall { public: virtual int operator()() { return 1; } };
+class BaseCall { public: virtual int operator()() { return 1; }  public: BaseCall() = default; };
 class ReaderCall : public BaseCall {
 public:
   int operator()() override { return 2; }
+public:
+  ReaderCall() = default;
 };
 )" + storage + R"(
 ReaderCall callable{};
@@ -406,10 +416,14 @@ void change() { guarded = 9; }
 class Base {
 public:
   virtual int read() { return 1; }
+public:
+  Base() = default;
 };
 class Reader : public Base {
 public:
   int read() override { change(); return 2; }
+public:
+  Reader() = default;
 };
 )" + storage + "Reader reader{}; ";
     rejected(effectful + "int main() { int& held = guarded; "
@@ -419,10 +433,12 @@ public:
              "writes and rejects the actual overlapping persistent path");
     rejected(prefix + R"(
 void change() { guarded = 9; }
-class BaseCall { public: virtual int operator()() { return 1; } };
+class BaseCall { public: virtual int operator()() { return 1; }  public: BaseCall() = default; };
 class ReaderCall : public BaseCall {
 public:
   int operator()() override { change(); return 2; }
+public:
+  ReaderCall() = default;
 };
 )" + storage + R"(
 ReaderCall callable{};
@@ -437,7 +453,7 @@ int main() { int& held = guarded; return callable() + held; }
              "a base reference must never replace its mutating override with "
              "the harmless statically selected base body");
     rejected(prefix + R"(
-class Base { public: virtual int read() { return 1; } };
+class Base { public: virtual int read() { return 1; }  public: Base() = default; };
 class Reader : public Base {
 public:
   Reader() {
@@ -457,6 +473,8 @@ class Reader {
 public:
   mut int value = 1;
   virtual int read() { change(); return this.value; }
+public:
+  Reader() = default;
 };
 )" + storage + R"(
 mut Reader reader{};
@@ -1149,6 +1167,8 @@ public:
                   sizeof(U) != uint64_t(4) || MethodValue != uint64_t(9),
                   "exact owner and method instance");
   }
+public:
+  Keyed() = default;
 };
 )";
   const std::string owners =
@@ -1386,6 +1406,8 @@ void lateConcreteQueryContexts() {
 struct Relay<T> {
   void invoke<F>(F& callback, T value) { callback(value); }
   void invoke<F>(F& callback) { callback(); }
+public:
+  Relay() = default;
 };
 F retain<F>(F& callback) { return callback; }
 void escape<F>(F& callback) { auto held = retain(callback); held(); }
@@ -1511,11 +1533,11 @@ int main() {
 void reflectedQueryEffects() {
   const std::string prefix = R"(
 #include <std/meta>
-struct Reading { int first = 1; int second = 2; };
-struct Empty {};
+struct Reading { int first = 1; int second = 2;  public: Reading() = default; };
+struct Empty { public: Empty() = default; };
 thread_local mut int guarded = 1;
 thread_local mut int other = 2;
-class Types<Elements...> {};
+class Types<Elements...> { public: Types() = default; };
 )";
   for (const bool reflected : {false, true}) {
     for (const std::string mutation : {"", "other = 9;", "guarded = 9;"}) {
@@ -1589,7 +1611,7 @@ void reflectionRegistrySnapshots() {
       std::filesystem::weakly_canonical(library / "std/meta.gti");
   const std::string text = R"(
 #include <std/meta>
-struct Reading { int first = 1; int second = 2; };
+struct Reading { int first = 1; int second = 2;  public: Reading() = default; };
 void inspect<T>() { constexpr for (auto field : std::meta::fields_of<T>()) {} }
 int main() { inspect<Reading>(); return 0; }
 )";
@@ -1670,7 +1692,7 @@ int main() { inspect<Reading>(); return 0; }
 
 void emptyPackDestructorProvider() {
   const auto source = analyze(R"(
-class Empty<Args...> { public: ~Empty() {} };
+class Empty<Args...> { public: ~Empty() {}  public: Empty() = default; };
 int main() { Empty<> value{}; return 0; }
 )");
   lang::SemanticVisitor semantic(lang::TargetInfo::host(), &source.sourceGraph,
@@ -1793,7 +1815,7 @@ void orderedInputProtection() {
          "a stabilized reference input is protected at the exact later "
          "mutating argument span");
   for (const std::string body :
-       {"struct Read { Read(int& input, int copied) {} }; int main() { Read "
+       {"struct Read { Read(int& input, int copied) {}  public: Read() = default; }; int main() { Read "
         "read{value, modify()}; return 0; }",
         "struct View { int& item; View(int& source) : item(source) {} }; int "
         "read(View view, int copied) { return view.item + copied; } int "
@@ -1819,7 +1841,7 @@ void fullExpressionCleanup() {
   const std::string prefix = R"(
 thread_local mut int value = 1;
 void modify() { value = 2; }
-struct Cleanup { ~Cleanup() { modify(); } };
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
 bool inspect(Cleanup& input) { return true; }
 int& current(Cleanup& input) { return value; }
 )";
@@ -1904,7 +1926,7 @@ int& current(Cleanup& input) { return value; }
         "std::move(value); return taken; }",
         "int main() { thread_local mut int value = 1; int taken = "
         "std::move(value); return taken; }",
-        "struct State { mut int value = 1; }; int main() { thread_local mut "
+        "struct State { mut int value = 1;  public: State() = default; }; int main() { thread_local mut "
         "State state{}; int taken = std::move(state.value); return taken; }",
         "class Resource { public: Resource() {} Resource(Resource&) = "
         "delete; Resource(Resource&&) = default; ~Resource() {} }; Resource "
@@ -1924,17 +1946,17 @@ int& current(Cleanup& input) { return value; }
 
 void invalidDeclarations() {
   for (const std::string source :
-       {"class Bad { thread_local mut int field = 0; }; int main() { return 0; "
+       {"class Bad { thread_local mut int field = 0;  public: Bad() = default; }; int main() { return 0; "
         "}",
         "thread_local constexpr int value = 0; int main() { return value; }",
         "int generic<T>(T input) { thread_local mut int value = 0; return "
         "value; } int main() { return generic(1) + generic(true); }",
-        "class Bad<T> { public: static thread_local mut int value = 0; }; int "
+        "class Bad<T> { public: static thread_local mut int value = 0;  public: Bad() = default; }; int "
         "main() { return Bad<int>::value + Bad<bool>::value; }",
         "int use(int input) { thread_local int value = input; return value; } "
         "int main() { return use(1); }",
         "class Bad { int value = 1; public: int use() { thread_local int copy "
-        "= this.value; return copy; } }; int main() { return 0; }"}) {
+        "= this.value; return copy; }  public: Bad() = default; }; int main() { return 0; }"}) {
     const auto result = analyze(source);
     expect(!result.semanticValid && code(result, "GTI-S2124") &&
                !code(result, "GTI-B0001"),
@@ -1942,7 +1964,7 @@ void invalidDeclarations() {
            "source diagnostics");
   }
   const std::string source =
-      "class Bad { thread_local mut int field = 0; }; int main() { return 0; }";
+      "class Bad { thread_local mut int field = 0;  public: Bad() = default; }; int main() { return 0; }";
   const auto invalid = analyze(source);
   const auto diagnostic =
       std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
@@ -2004,7 +2026,7 @@ void instanceCleanupCache() {
 thread_local mut int value = 1;
 thread_local mut int other = 2;
 void modify() { value = 2; }
-struct Cleanup { ~Cleanup() { modify(); } };
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
 bool inspect(Cleanup& input) { return true; }
 int selected<uint64_t Mode>() {
   if constexpr (Mode == 0) {
@@ -2164,7 +2186,7 @@ void requirementProbeIsolation() {
 thread_local mut int value = 1;
 thread_local mut int other = 2;
 void modify() { value = 2; }
-struct Cleanup { ~Cleanup() { modify(); } };
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
 bool inspect(Cleanup& input) { return true; }
 bool with_flag(Cleanup& input, bool flag) { return flag; }
 )";
@@ -2507,7 +2529,7 @@ void deferredProbeIsolation() {
 thread_local mut int value = 1;
 thread_local mut int other = 2;
 void modify() { value = 2; }
-struct Cleanup { ~Cleanup() { modify(); } };
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
 bool inspect(Cleanup& input) { return true; }
 void observe(bool value) {}
 #macro ignore(bool value) {}

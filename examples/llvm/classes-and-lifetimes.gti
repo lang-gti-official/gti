@@ -23,6 +23,8 @@ public:
 
 struct Configuration {
   int limit = 7;
+public:
+  Configuration() = default;
 };
 
 Configuration configuration{};

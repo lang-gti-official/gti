@@ -7,6 +7,8 @@ mut int32_t observations = int32_t(0);
 
 struct Owner {
   mut { int32_t payload = int32_t(7); }
+public:
+  Owner() = default;
 };
 
 std::meta::field<Owner, 0> make_field() {

@@ -30,7 +30,7 @@ std::string metadata(const std::string &path) {
   const auto frontend =
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
           .analyze(path, R"(
-struct Node { mut Node* next = nullptr; mut int value = 7; };
+struct Node { mut Node* next = nullptr; mut int value = 7;  public: Node() = default; };
 enum class Mode : int64_t { Minus = -1, Plus = 7 };
 extern "C" { int foreign(int input); }
 int inspect(Node& owner, int input) {
@@ -371,7 +371,7 @@ void lifecycleIdentities() {
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
           .analyze("/scope/lifecycle.gti", R"(
 class Sample { public: Sample() {} ~Sample() {} };
-struct Generated { int value = 7; };
+struct Generated { int value = 7;  public: Generated() = default; };
 int main() { Sample value{}; Generated generated{}; return generated.value == 7 ? 0 : 1; }
 )");
   if (!frontend.canGenerateCode())
@@ -1071,7 +1071,7 @@ int main() { return inspect(debug_input()) == 9 ? 0 : 1; }
 )gti"
                                          : ownedPack  ? R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
-class Owner { public: int32_t value = 9; ~Owner() { debug_checkpoint(this.value); } };
+class Owner { public: int32_t value = 9; ~Owner() { debug_checkpoint(this.value); }  public: Owner() = default; };
 int32_t inspect<Args...>(int32_t input, Args... rest) {
   mut int32_t local = input & 31;
   debug_checkpoint(local);
@@ -1098,6 +1098,8 @@ public:
     debug_checkpoint(local);
     return local;
   }
+public:
+  Receiver() = default;
 };
 int main() { Receiver owner{}; return owner.inspect(debug_input()) == 4 ? 0 : 1; }
 )gti"
@@ -1595,8 +1597,10 @@ void generatedConstructorDebug(LlvmCodegenOptimization optimization) {
 class Solo {
 public:
   virtual int read() { return 3; }
+public:
+  Solo() = default;
 };
-class Stateful : public Solo {};
+class Stateful : public Solo { public: Stateful() = default; };
 int main() {
   Stateful stateful{};
   return stateful.read() == 3 ? 0 : 1;

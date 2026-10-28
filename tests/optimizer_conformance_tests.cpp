@@ -515,7 +515,7 @@ int main() {
   testCallableBodySignatures();
   const auto frontend =
       lang::Frontend().analyze("optimizer-conformance.gti", R"(
-struct UserRecord { mut int32_t value = 1; };
+struct UserRecord { mut int32_t value = 1;  public: UserRecord() = default; };
 extern "C" { void analysis_barrier(); }
 int constant() { return (42); }
 int guarded_array() {

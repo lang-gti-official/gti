@@ -241,6 +241,8 @@ class P {
 public:
   P(int32_t number) : number(number) {}
   int32_t get() { return this.number; }
+public:
+  P() = default;
 };
 enum Family<T> { item(T value), empty };
 int main() {
@@ -263,6 +265,8 @@ class P {
 public:
   P(int32_t number) : number(number) {}
   int32_t get() { return this.number; }
+public:
+  P() = default;
 };
 enum E { item(P value), empty };
 int main() {

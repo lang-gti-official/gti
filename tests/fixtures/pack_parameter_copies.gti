@@ -11,6 +11,8 @@ struct Printer {
     std::println(first.number);
     std::println(second.number);
   }
+public:
+  Printer() = default;
 };
 
 void repeat<T, Args...>(Args... args) {

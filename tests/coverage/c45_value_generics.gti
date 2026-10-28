@@ -1,5 +1,5 @@
 // Generic classes and functions parameterized by values, and contextual arrays.
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 class Ring<T, uint64_t N> {
   mut T slots[N];

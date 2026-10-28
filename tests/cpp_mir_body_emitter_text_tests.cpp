@@ -99,12 +99,16 @@ public:
   mut int32_t converted = int32_t(7);
   mut int32_t converted_expression = int32_t(3 + 4);
   mut int8_t checked_conversion = int8_t(conversion_source);
+public:
+  expression_owner_t() = default;
 };
 
 class payload_owner_t {
 public:
   mut payload_t empty = payload_t::none;
   mut payload_t valued = payload_t::one(int32_t(9));
+public:
+  payload_owner_t() = default;
 };
 
 int main() {
@@ -472,6 +476,8 @@ int main() {
       analyze("cpp-mir-body-logical-not-field-expression.gti", R"(
 class logical_not_t {
   bool flag = !false;
+public:
+  logical_not_t() = default;
 };
 
 int main() {
@@ -680,6 +686,8 @@ void testLexicalCopyCaptureThroughCallableTemplate() {
       analyzeWithStandardLibrary("cpp-mir-lexical-copy-capture.gti", R"(
 struct Scalar {
   int value = 0;
+public:
+  Scalar() = default;
 };
 
 int inspect_transfer<std::transferable T>(T value) {
@@ -3547,6 +3555,8 @@ public:
   int add<uint64_t N>(int values[N]) {
     return values[0];
   }
+public:
+  Total() = default;
 };
 
 int main() {
@@ -3727,6 +3737,8 @@ public:
   int operator()() && {
     return 0;
   }
+public:
+  fallback_counter() = default;
 };
 
 int invoke_once<Operation>(Operation operation) {
@@ -4045,7 +4057,7 @@ int32_t main() {
 void testRetainedReferenceAddressAndConcreteDefaultReturn() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-retained-reference-address.gti", R"(
-struct Sentinel {};
+struct Sentinel { public: Sentinel() = default; };
 
 class BorrowingIterator<T> {
   T& value;
@@ -5015,6 +5027,8 @@ struct CopyValue {
   int32_t value = 0;
   CopyValue(int32_t initial) : value(initial) {}
   int32_t read() { return this.value; }
+public:
+  CopyValue() = default;
 };
 
 int main() {
@@ -5107,6 +5121,8 @@ class inner {
 
 public:
   mut int& operator[](uint64_t index) mut { return this.elements[index]; }
+public:
+  inner() = default;
 };
 
 class outer {
@@ -5114,6 +5130,8 @@ class outer {
 
 public:
   mut int& operator[](uint64_t index) mut { return this.data[index]; }
+public:
+  outer() = default;
 };
 
 int main() {
@@ -5537,11 +5555,15 @@ void testCleanupFreeExpectedClassArgumentSlot() {
 struct pair_value {
   int32_t first = 0;
   pair_value(int32_t first) : first(first) {}
+public:
+  pair_value() = default;
 };
 
 struct code_value {
   int32_t code = 0;
   code_value(int32_t code) : code(code) {}
+public:
+  code_value() = default;
 };
 
 class tracked {
@@ -5549,6 +5571,8 @@ public:
   int32_t value = 0;
   tracked(int32_t value) : value(value) {}
   ~tracked() {}
+public:
+  tracked() = default;
 };
 
 expected<pair_value, int32_t> make_pair(bool ok) {
@@ -5615,6 +5639,8 @@ void testCleanupFreeExpectedClassConstructorArgumentSlot() {
 struct pair_value {
   int32_t first = 0;
   pair_value(int32_t first) : first(first) {}
+public:
+  pair_value() = default;
 };
 
 class tracked {
@@ -5622,6 +5648,8 @@ public:
   int32_t value = 0;
   tracked(int32_t value) : value(value) {}
   ~tracked() {}
+public:
+  tracked() = default;
 };
 
 expected<pair_value, int32_t> make_pair(bool ok) {
@@ -5655,6 +5683,8 @@ public:
     pair_holder held{make_pair(ok)};
     this.first = held.first;
   }
+public:
+  outer() = default;
 };
 
 int main() {
@@ -5730,11 +5760,15 @@ void testCleanupFreeExpectedClassCopiedArgumentSlot() {
 struct pair_value {
   int32_t first = 0;
   pair_value(int32_t first) : first(first) {}
+public:
+  pair_value() = default;
 };
 
 struct code_value {
   int32_t code = 0;
   code_value(int32_t code) : code(code) {}
+public:
+  code_value() = default;
 };
 
 expected<pair_value, int32_t> make_pair(bool ok) {
@@ -5834,11 +5868,15 @@ void testCleanupFreeExpectedClassAssignmentSlot() {
 struct pair_value {
   int32_t first = 0;
   pair_value(int32_t first) : first(first) {}
+public:
+  pair_value() = default;
 };
 
 struct code_value {
   int32_t code = 0;
   code_value(int32_t code) : code(code) {}
+public:
+  code_value() = default;
 };
 
 expected<pair_value, int32_t> make_pair(bool ok) {
@@ -6192,6 +6230,8 @@ void testExpectedClassReplacementSources() {
 struct pair_value {
   int32_t first = 0;
   pair_value(int32_t first) : first(first) {}
+public:
+  pair_value() = default;
 };
 
 class tracked {
@@ -6199,6 +6239,8 @@ public:
   int32_t value = 0;
   tracked(int32_t value) : value(value) {}
   ~tracked() {}
+public:
+  tracked() = default;
 };
 
 expected<pair_value, int32_t> make_pair(bool ok) {
@@ -6389,11 +6431,15 @@ void testOwningExpectedReplacementSources() {
 struct pair_value {
   int32_t first = 0;
   pair_value(int32_t first) : first(first) {}
+public:
+  pair_value() = default;
 };
 
 struct code_value {
   int32_t code = 0;
   code_value(int32_t code) : code(code) {}
+public:
+  code_value() = default;
 };
 
 class tracked {
@@ -6401,6 +6447,8 @@ public:
   int32_t value = 0;
   tracked(int32_t value) : value(value) {}
   ~tracked() {}
+public:
+  tracked() = default;
 };
 
 expected<tracked, int32_t> make_tracked(bool ok) {
@@ -7840,6 +7888,8 @@ public:
   int32_t value = 0;
   tracked(int32_t value) : value(value) {}
   ~tracked() {}
+public:
+  tracked() = default;
 };
 
 expected<item_value, int32_t> make_item() { return item_value(7); }
@@ -7973,6 +8023,8 @@ public:
   int32_t value = 0;
   tracked(int32_t value) : value(value) {}
   ~tracked() {}
+public:
+  tracked() = default;
 };
 
 expected<item_value, int32_t> make_item(bool ok) {

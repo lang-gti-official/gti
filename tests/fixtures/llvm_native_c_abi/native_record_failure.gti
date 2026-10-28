@@ -8,7 +8,7 @@ extern "C" {
   int32_t native_record_mark(int32_t value);
   int32_t native_record_zero();
 }
-struct Guard { ~Guard() { [[discard]] native_record_mark(99); } };
+struct Guard { ~Guard() { [[discard]] native_record_mark(99); }  public: Guard() = default; };
 int main() {
   Guard guard{};
   native_record_consume_pair(native_record_mark_packet(1), native_packet_make(1 / native_record_zero()));

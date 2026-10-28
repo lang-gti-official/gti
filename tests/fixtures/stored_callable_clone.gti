@@ -4,7 +4,7 @@ interface CloneInvoker<R, Args...> {
   R invoke(Args... args);
   std::unique_ptr<CloneInvoker<R, Args...>> clone();
 };
-class CloneSignature<S> {};
+class CloneSignature<S> { public: CloneSignature() = default; };
 
 class CloneModel<T, R, Args...> : public CloneInvoker<R, Args...> {
   T callback;

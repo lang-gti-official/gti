@@ -11,7 +11,7 @@ bool hasMirIssue(const lang::MirVerificationResult &result,
 
 void checkTemporaryOwnerBorrow() {
   const auto passive = lang::Frontend().analyze("passive-owner-borrow.gti", R"(
-class Owner { int value = 3; public: int& get() { return this.value; } };
+class Owner { int value = 3; public: int& get() { return this.value; }  public: Owner() = default; };
 Owner produce() { return Owner(); }
 int read(int& value) { return value; }
 int main() { return read(produce().get()) + read(Owner().get()) - 6; }
@@ -49,7 +49,7 @@ int main() { return read(produce().get()) + read(Owner().get()) - 6; }
   }
 
   const auto targetless = lang::Frontend().analyze("targetless-owner.gti", R"(
-class Owner { public: int get() { return 3; } };
+class Owner { public: int get() { return 3; }  public: Owner() = default; };
 Owner produce() { return Owner(); }
 int main() { return produce().get() + Owner().get() - 6; }
 )");
@@ -173,9 +173,9 @@ int main() {
         "std::string(\"hello\"); }\nint main() { auto view = produce().view(); "
         "return int(view.size()); }",
         "class Owner { int value = 3; public: int& get() { return this.value; "
-        "} }; int& escape() { return Owner().get(); } int main() { return 0; }",
+        "}  public: Owner() = default; }; int& escape() { return Owner().get(); } int main() { return 0; }",
         "class Owner { mut int value = 3; public: mut int& get() mut { return "
-        "this.value; } }; int main() { [[discard]] Owner().get(); return 0; "
+        "this.value; }  public: Owner() = default; }; int main() { [[discard]] Owner().get(); return 0; "
         "}"}) {
     const auto invalid =
         analyzeTrustedPreludeFixture("escaping-temporary-borrow.gti", source);

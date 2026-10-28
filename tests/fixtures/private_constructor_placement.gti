@@ -22,6 +22,8 @@ public:
 class Guard {
 public:
   ~Guard() { std::println(9); }
+public:
+  Guard() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

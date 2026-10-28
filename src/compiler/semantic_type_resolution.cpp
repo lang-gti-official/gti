@@ -2232,13 +2232,16 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                     "' is ambiguous; multiple constructors exactly match.");
       if (viable.empty() && arguments.empty() &&
           (owner.kind == ClassKind::Class || owner.kind == ClassKind::Struct) &&
+          !owner.cAbiRecord && !owner.cOpaqueHandle && !owner.compilerPrivate &&
           defaultConstructorCandidateCount(owner) == 0) {
         diagnostic.related.push_back(
-            {tokenSpan(owner.name), "Type declared here without a zero-argument constructor."});
+            {tokenSpan(owner.name),
+             "Type declared here without a zero-argument constructor."});
         diagnostic.hints.emplace_back(
             "Default construction requires an explicitly declared constructor. "
             "Pass the required constructor arguments, or declare '" +
-            owner.name.lexeme + "() = default;' if an empty/default state is intended.");
+            owner.name.lexeme +
+            "() = default;' if an empty/default state is intended.");
       } else {
         diagnostic.hints.emplace_back(
             "Constructor calls do not perform implicit conversions; convert "

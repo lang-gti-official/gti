@@ -39,12 +39,14 @@ void reject(const std::string &source, std::string_view code,
 int main() {
   const std::string source = R"(
 namespace user {
-struct Inner<T> { using value_type = T; };
+struct Inner<T> { using value_type = T;  public: Inner() = default; };
 struct Box<T = int> {
   using value_type = T;
   using nested = Inner<T>;
+public:
+  Box() = default;
 };
-struct Fixed<T, uint64_t N> { using array_type = T[N]; };
+struct Fixed<T, uint64_t N> { using array_type = T[N];  public: Fixed() = default; };
 }
 using Value = user::Box<int>::nested::value_type;
 using Array = user::Fixed<int, 2>::array_type;
@@ -70,14 +72,14 @@ int main() {
         "generics through MIR");
 
   reject(R"(
-namespace user { struct Select<T> { using value_type = int; }; }
-struct user::Select<bool> { using value_type = uint64_t; };
+namespace user { struct Select<T> { using value_type = int;  public: Select() = default; }; }
+struct user::Select<bool> { using value_type = uint64_t;  public: Select() = default; };
 )",
          "GTI-S2030",
          "exact-definition aliases retain their existing restriction");
   const auto defaults = analyze(R"(
-struct Box<T> { using value_type = T; };
-struct Later<T = Box<U>::value_type, U = int> {};
+struct Box<T> { using value_type = T;  public: Box() = default; };
+struct Later<T = Box<U>::value_type, U = int> { public: Later() = default; };
 )");
   check(!defaults.semanticValid &&
             std::any_of(
@@ -87,7 +89,7 @@ struct Later<T = Box<U>::value_type, U = int> {};
 
   const auto moveOnly = analyze(R"(
 #include <std/memory>
-struct Box<T> { using value_type = T; };
+struct Box<T> { using value_type = T;  public: Box() = default; };
 int main() {
   Box<std::unique_ptr<int>>::value_type first = std::make_unique<int>(7);
   Box<std::unique_ptr<int>>::value_type second = first;
@@ -125,6 +127,8 @@ int main() {
 struct CursorTraits<std::vector_element T> {
   using iterator = std::vector<T>::const_iterator;
   using sentinel = std::vector<T>::sentinel;
+public:
+  CursorTraits() = default;
 };
 int main() {
   mut std::vector<int> values{};
@@ -153,7 +157,7 @@ int main() {
         "nested type members navigate to the original alias declaration");
 
   const std::string missing =
-      "struct Box<T> {}; using Bad = Box<int>::missing;";
+      "struct Box<T> { public: Box() = default; }; using Bad = Box<int>::missing;";
   const auto missingResult = analyze(missing);
   check(std::any_of(missingResult.diagnostics.begin(),
                     missingResult.diagnostics.end(),
@@ -187,33 +191,33 @@ int main() {
   check(!bounded.syntaxValid && !bounded.canGenerateCode(),
         "qualified type chains retain the parser resource bound");
 
-  reject("class Box<T> { using hidden = T; }; using Bad = Box<int>::hidden;",
+  reject("class Box<T> { using hidden = T;  public: Box() = default; }; using Bad = Box<int>::hidden;",
          "GTI-S2007", "private member aliases stay private");
-  reject("struct Inner<T> { using value_type = T; }; class Box<T> { using "
-         "hidden = Inner<T>; }; "
+  reject("struct Inner<T> { using value_type = T;  public: Inner() = default; }; class Box<T> { using "
+         "hidden = Inner<T>;  public: Box() = default; }; "
          "using Bad = Box<int>::hidden::value_type;",
          "GTI-S2007",
          "private intermediate aliases cannot leak public members");
-  reject("struct Box<T> { int value = 0; }; using Bad = Box<int>::value;",
+  reject("struct Box<T> { int value = 0;  public: Box() = default; }; using Bad = Box<int>::value;",
          "GTI-S2030", "a value member cannot be used as a type");
-  reject("struct Box<T> {}; using Bad = Box<int>::missing;", "GTI-S2030",
+  reject("struct Box<T> { public: Box() = default; }; using Bad = Box<int>::missing;", "GTI-S2030",
          "missing member aliases stop in semantics");
-  reject("struct Box<T> { using scalar = int; }; using Bad = "
+  reject("struct Box<T> { using scalar = int;  public: Box() = default; }; using Bad = "
          "Box<int>::scalar::missing;",
          "GTI-S2030", "a primitive alias is not a class-like qualifier");
-  reject("struct Box<T> { using value_type = T; }; using Bad = "
+  reject("struct Box<T> { using value_type = T;  public: Box() = default; }; using Bad = "
          "Box<int>::value_type<int>;",
          "GTI-S2030", "member aliases are not alias templates");
-  reject("struct Box<T> { using recursive = Box<T>::recursive; };", "GTI-S2030",
+  reject("struct Box<T> { using recursive = Box<T>::recursive;  public: Box() = default; };", "GTI-S2030",
          "qualified alias cycles are diagnosed");
 
   const auto constrained = analyze(R"(
-struct Box<std::integral T> { using value_type = T; };
+struct Box<std::integral T> { using value_type = T;  public: Box() = default; };
 using Bad = Box<double>::value_type;
 )");
   check(!constrained.semanticValid,
         "an owner constraint cannot be bypassed through a type member");
-  const auto arity = analyze("struct Box<T> { using value_type = T; }; using "
+  const auto arity = analyze("struct Box<T> { using value_type = T;  public: Box() = default; }; using "
                              "Bad = Box<int, bool>::value_type;");
   check(!arity.semanticValid, "specialized owners retain exact generic arity");
 
@@ -222,6 +226,8 @@ class Box<T> {
   using value_hidden = T;
 public:
   using value_type = T;
+public:
+  Box() = default;
 };
 using Selected = Box<uint64_t>::val;
 )";
@@ -242,7 +248,7 @@ using Selected = Box<uint64_t>::val;
                      }),
         "completion filters private member aliases");
   const std::string staticCompletionSource =
-      "struct Box<T> { static int flag = 0; }; "
+      "struct Box<T> { static int flag = 0;  public: Box() = default; }; "
       "int main() { return Box<int>::fl; }";
   const auto staticCompletion = lang::LanguageQueries().complete(
       {.entryPath = "qualified_static_completion.gti",

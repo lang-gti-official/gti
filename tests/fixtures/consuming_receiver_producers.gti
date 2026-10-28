@@ -14,6 +14,8 @@ struct Passive {
   int take() && { return this.value; }
   int read() { return this.value; }
   int touch() mut { this.value = 8; return this.value; }
+public:
+  Passive() = default;
 };
 
 int main() {

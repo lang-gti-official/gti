@@ -293,8 +293,8 @@ int main() { return constrained(1); }
          "written caller through the ordinary constraint diagnostic");
   const auto finite =
       lang::Frontend(options).analyze("macro-finite-query.gti", R"(
-struct Leaf {};
-struct Wrap<T> {};
+struct Leaf { public: Leaf() = default; };
+struct Wrap<T> { public: Wrap() = default; };
 concept available<T> = requires(T value) { { step(value) } -> int; };
 int step(Leaf value) { return 1; }
 int step<T>(Wrap<T> value) requires available<T> { return 1; }

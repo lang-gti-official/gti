@@ -87,6 +87,8 @@ int main() {
 struct Handle {
   const int* pointer = nullptr;
   implicit Handle(const int* input) : pointer(input) {}
+public:
+  Handle() = default;
 };
 Handle handle(const int* pointer) { return pointer; }
 int inspect() {
@@ -148,7 +150,7 @@ int inspect(bool choice) {
             start + "unsafe { return read(choice, pointer); }" + end,
         false);
   check("uncertain owner preserves inner field uncertainty", R"(
-struct Address { mut const int* pointer = nullptr; };
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
 int inspect(bool choice, const Address* other) {
   mut Address address{};
   { int dead = 2; address.pointer = &dead; }

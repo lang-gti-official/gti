@@ -12,6 +12,8 @@ thread_local Marker late{2};
 struct Cleanup {
   int read() { return 3; }
   ~Cleanup() { trace = trace * 10 + 3; }
+public:
+  Cleanup() = default;
 };
 int fail_later() {
   std::panic("generated default argument failure");

@@ -7,6 +7,8 @@
 class TraversalGuard {
 public:
   ~TraversalGuard() { std::println("cleaned"); }
+public:
+  TraversalGuard() = default;
 };
 
 class TrackedNode {

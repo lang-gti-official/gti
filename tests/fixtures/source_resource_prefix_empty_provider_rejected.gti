@@ -12,6 +12,8 @@ public:
     unsafe { this.process.release(allocation); }
   }
   void reset() mut {}
+public:
+  Provider() = default;
 };
 
 int main() {

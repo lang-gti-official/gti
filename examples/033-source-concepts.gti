@@ -15,7 +15,7 @@ T absolute<signed_value T>(T value) {
 // The attribute states the contract for every unsatisfied requirement.
 [[unsatisfied("A readable source has 'int read()'.")]]
 concept readable<T> = requires(T& source) { { source.read() } -> int; };
-struct Meter { int read() { return 7; } };
+struct Meter { int read() { return 7; }  public: Meter() = default; };
 mut int final_sample = 0;
 class Session<readable T> {
   T& source;

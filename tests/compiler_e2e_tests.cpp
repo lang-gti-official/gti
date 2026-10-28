@@ -716,6 +716,8 @@ struct Item {
 struct Receiver {
   void Accept(Item item) mut {}
   void Observe(Item item) {}
+public:
+  Receiver() = default;
 };
 int main() {
   mut Receiver receiver{};
@@ -1089,6 +1091,8 @@ public:
           MovedValue moved, MovedValue temporary) {
     changed += scalar;
   }
+public:
+  Product() = default;
 };
 
 class Empty {
@@ -1522,6 +1526,8 @@ class Marker {
 public:
   Marker(int input) {}
   ~Marker() {}
+public:
+  Marker() = default;
 };
 
 Token make_token(int value) { return Token(value); }
@@ -1529,6 +1535,8 @@ Token make_token(int value) { return Token(value); }
 class Holder {
   Token field = make_token(10);
   Token other = make_token(11);
+public:
+  Holder() = default;
 };
 
 int consume(Token left, Token right) {
@@ -3054,10 +3062,12 @@ int main(mut int argc, mut arguments_type argv) {
   const lang::FrontendResult lookalikeArguments =
       lang::Frontend().analyze("main-lookalike-arguments.gti", R"(
 namespace std {
-class string {};
+class string { public: string() = default; };
 class vector<T> {
 public:
   void push_back(T value) {}
+public:
+  vector() = default;
 };
 }
 int main(int count, std::vector<std::string> values) { return count; }
@@ -3090,6 +3100,8 @@ mut double ratio_copy = ratio;
 class Registry {
 public:
   static mut int32_t value = negative_copy;
+public:
+  Registry() = default;
 };
 
 int main() { return Registry::value + zeroed + negative_copy + 7; }
@@ -3149,6 +3161,8 @@ class DeferredGlobals {
 public:
   static mut int32_t first = DeferredGlobals::later;
   static constexpr int32_t later = -7;
+public:
+  DeferredGlobals() = default;
 };
 int main() { return DeferredGlobals::first + DeferredGlobals::later + 7; }
 )");
@@ -3208,6 +3222,8 @@ public:
   static constexpr int32_t later = -7;
   static mut int32_t forced =
       SubstitutionLocality::inspect((SubstitutionLocality::later));
+public:
+  SubstitutionLocality() = default;
 };
 int main() { return SubstitutionLocality::first +
                     SubstitutionLocality::forced + 7; }
@@ -3445,6 +3461,8 @@ public:
   static mut int32_t first = Globals::later;
   static mut int32_t later = 1;
   static mut int32_t self = Globals::self;
+public:
+  Globals() = default;
 };
 int main() { return Globals::first + Globals::later + Globals::self; }
 )";
@@ -3499,6 +3517,8 @@ class Globals {
 public:
   static mut int32_t first = Globals::zeroed;
   static mut int32_t zeroed;
+public:
+  Globals() = default;
 };
 int main() { return Globals::first; }
 )");
@@ -3514,6 +3534,8 @@ public:
   static int32_t read_later() { return Globals::later; }
   static mut int32_t first = Globals::read_later();
   static mut int32_t later = 1;
+public:
+  Globals() = default;
 };
 int main() { return Globals::first; }
 )");
@@ -3530,6 +3552,8 @@ public:
   static int32_t inspect(int32_t& value) { return value; }
   static mut int32_t first = Globals::inspect(Globals::later);
   static constexpr int32_t later = -3;
+public:
+  Globals() = default;
 };
 int main() { return Globals::first; }
 )");
@@ -3548,6 +3572,8 @@ public:
   }
   static mut int32_t first = ReferenceReturnGlobals::borrow_later();
   static constexpr int32_t later = -7;
+public:
+  ReferenceReturnGlobals() = default;
 };
 int main() { return ReferenceReturnGlobals::first; }
 )");
@@ -3566,6 +3592,8 @@ class BodylessGlobals {
 public:
   static mut int32_t first = opaque();
   static mut int32_t later = 1;
+public:
+  BodylessGlobals() = default;
 };
 int main() { return BodylessGlobals::first; }
 )");
@@ -3590,6 +3618,8 @@ public:
   }
   static mut int32_t first = Globals::make_box();
   static constexpr int32_t later = 4;
+public:
+  Globals() = default;
 };
 int main() { return Globals::first; }
 )");
@@ -3610,6 +3640,8 @@ public:
   }
   static mut int32_t first = Globals::call_native();
   static constexpr int32_t later = 5;
+public:
+  Globals() = default;
 };
 int main() { return Globals::first; }
 )");
@@ -3700,6 +3732,8 @@ int main() { return Probe::result; }
 class Registry<T> {
 public:
   static mut int32_t value = 0;
+public:
+  Registry() = default;
 };
 )");
   expect(!genericStatic.semanticValid &&
@@ -3718,6 +3752,8 @@ void testTypedHirGenericInstances() {
 struct Widget {
 public:
   int value = 7;
+public:
+  Widget() = default;
 };
 
 T transfer<T>(T value) {
@@ -3845,7 +3881,7 @@ int main() {
       R"(
 #include <std/memory>
 
-struct Widget {};
+struct Widget { public: Widget() = default; };
 
 T accidental_copy<T>(T value) {
   return value;

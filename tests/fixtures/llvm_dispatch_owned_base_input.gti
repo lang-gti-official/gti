@@ -5,6 +5,8 @@ class Token {
 public:
   ~Token() {}
   int read() { return this.value; }
+public:
+  Token() = default;
 };
 
 class OwnerBase {

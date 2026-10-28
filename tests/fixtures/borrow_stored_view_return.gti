@@ -5,6 +5,8 @@
 struct Label {
   std::string_view text = "label";
   c_string native = nullptr;
+public:
+  Label() = default;
 };
 
 class Named {

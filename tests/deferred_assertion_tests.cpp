@@ -35,7 +35,7 @@ void positive() {
   auto result = analyze(R"(
 #include <std/assert>
 #include <std/string>
-struct Value { int number = 7; };
+struct Value { int number = 7;  public: Value() = default; };
 namespace policy { constexpr bool enabled = false; }
 int impossible() { std::assert(false); }
 namespace app {
@@ -122,7 +122,7 @@ void expansionSourceOwnership() {
   std::unordered_set<lang::HirFunctionInstanceId> expectedConstructors;
   {
     auto result = analyze(R"(
-struct Cleanup { ~Cleanup() {} };
+struct Cleanup { ~Cleanup() {}  public: Cleanup() = default; };
 bool inspect(Cleanup& value) { return true; }
 void observe(bool value) {}
 #macro force(bool value) { observe(value); }
@@ -304,7 +304,7 @@ void localBindingsAndLoops() {
 #include <std/assert>
 #include <std/string>
 namespace library {
-  struct Item { int code = 1; };
+  struct Item { int code = 1;  public: Item() = default; };
   #macro once(bool enabled, int expression) {
     if (enabled) {
       int saved = expression;
@@ -349,7 +349,7 @@ namespace library {
   #macro check_lambda(bool condition) { std::assert(condition); }
 }
 namespace application {
-  struct Item { int code = 2; };
+  struct Item { int code = 2;  public: Item() = default; };
   int run() {
     int saved = 9;
     mut int evaluations = 0;

@@ -2315,7 +2315,8 @@ auto SemanticVisitor::Impl::registerClassAttributes(
         report(attribute,
                "[[attribute]] applies only to struct declarations: an "
                "attribute type is a struct with public value fields, "
-               "declaration defaults, and no declared constructors or bases.",
+               "declaration defaults, no bases, and only structural default "
+               "constructors.",
                "GTI-S2113");
         continue;
       }
@@ -3921,7 +3922,7 @@ auto SemanticVisitor::Impl::analyzeDeclarationAttributeList(
           "GTI-S2113", DiagnosticPhase::Semantics, anchor,
           "Attribute type '" + spelling +
               "' must be a non-generic struct with public value fields and "
-              "no declared constructors or bases.");
+              "no bases or constructors other than a structural default.");
       diagnostic.related.push_back(
           {tokenSpan(attribute->name), "Attribute type declared here."});
       diagnostics.emplace_back(std::move(diagnostic));
@@ -9279,8 +9280,9 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
     if (owner.kind != ClassKind::Struct || owner.compilerPrivate ||
         owner.cAbiRecord || owner.cOpaqueHandle || !owner.bases.empty() ||
         !std::all_of(owner.constructors.begin(), owner.constructors.end(),
-                     requestsStructuralDefaultConstruction) || owner.copyConstructor ||
-        owner.moveConstructor || owner.fields.empty()) {
+                     requestsStructuralDefaultConstruction) ||
+        owner.copyConstructor || owner.moveConstructor ||
+        owner.fields.empty()) {
       continue;
     }
     bool eligible = true;

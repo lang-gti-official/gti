@@ -13,6 +13,8 @@ extern "C" {
 }
 struct Guard {
   ~Guard() { native_example_cleanup(); }
+public:
+  Guard() = default;
 };
 int main() {
   Guard guard{};

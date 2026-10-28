@@ -330,6 +330,8 @@ class Callback {
 public:
   ~Callback() {}
   int operator()() && { return 1; }
+public:
+  Callback() = default;
 };
 class Owner {
 public:
@@ -337,6 +339,8 @@ public:
     Callback local{};
     [[discard]] std::move(local)();
   }
+public:
+  Owner() = default;
 };
 int main() { Owner owner{}; return 0; }
 )gti");

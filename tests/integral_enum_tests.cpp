@@ -6,6 +6,8 @@ enum class Wire : uint64_t { high = 18446744073709551615 };
 enum class Payload { value(int data) };
 struct Encoding<E, U> {
   bool matches() requires std::integral_enum<E> && std::enum_underlying<E, U> { return true; }
+public:
+  Encoding() = default;
 };
 static_assert(requires(Encoding<Wire, uint64_t>& probe) { { probe.matches() } -> bool; });
 static_assert(!requires(Encoding<Wire, int64_t>& probe) { { probe.matches() } -> bool; });
@@ -77,9 +79,9 @@ int main() { return decode(Wire::high) == uint64_t(18446744073709551615) ? 0 : 1
         "#include <std/format>\nenum class E { x(int value) }; int main() { "
         "[[discard]] std::format(\"{}\", E::x(1)); return 0; }",
         "#include <std/format>\nenum class E { x }; class std::formatter<E> "
-        "{}; int main() { [[discard]] std::format(\"{}\", E::x); return 0; }",
+        "{ public: formatter() = default; }; int main() { [[discard]] std::format(\"{}\", E::x); return 0; }",
         "#include <std/format>\nenum class E { x }; class std::formatter<E> { "
-        "public: int format(E& value) { return 0; } }; int main() { "
+        "public: int format(E& value) { return 0; }  public: formatter() = default; }; int main() { "
         "[[discard]] std::format(\"{}\", E::x); return 0; }",
         "enum class E { x }; int main() { return "
         "gti_internal::enum_underlying_value<int32_t,E>(E::x); }"}) {

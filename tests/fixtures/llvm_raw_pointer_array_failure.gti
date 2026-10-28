@@ -1,4 +1,4 @@
-struct Cleanup { ~Cleanup() { std::println("array-cleanup"); } };
+struct Cleanup { ~Cleanup() { std::println("array-cleanup"); }  public: Cleanup() = default; };
 int index() { return 2; }
 int later() { std::println("later-index"); return 0; }
 int main() {

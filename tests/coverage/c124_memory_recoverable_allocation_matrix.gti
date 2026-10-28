@@ -6,7 +6,7 @@
 #include <std/memory>
 #include <std/string>
 
-struct Wide { mut int64_t a = 0; mut int64_t b = 0; mut int64_t c = 0; };
+struct Wide { mut int64_t a = 0; mut int64_t b = 0; mut int64_t c = 0;  public: Wide() = default; };
 
 int32_t classify(std::alloc_errc error) {
   switch (error) {

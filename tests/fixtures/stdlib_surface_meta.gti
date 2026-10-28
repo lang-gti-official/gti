@@ -1,21 +1,23 @@
 #include <std/meta>
 
 namespace tags {
-[[attribute]] struct key { std::string_view name = ""; };
+[[attribute]] struct key { std::string_view name = "";  public: key() = default; };
 }
 
 struct Player {
   [[tags::key("hp")]]
   uint32_t health = 100;
   bool alive = true;
+public:
+  Player() = default;
 };
 
 enum class color { red = 1, green = 2 };
 
 enum class fail { nope };
-class QueryBase { public: virtual int read() { return 1; } };
-class QueryLeaf : public QueryBase {};
-class QueryCleanup { public: ~QueryCleanup() {} };
+class QueryBase { public: virtual int read() { return 1; }  public: QueryBase() = default; };
+class QueryLeaf : public QueryBase { public: QueryLeaf() = default; };
+class QueryCleanup { public: ~QueryCleanup() {}  public: QueryCleanup() = default; };
 struct fixed_producer {
   expected<std::meta::field_type<T, I>, fail> produce<T, uint64_t I>(std::meta::field<T, I> field) mut {
     if constexpr (std::meta::type_of<std::meta::field_type<T, I>>().is_bool()) {
@@ -24,6 +26,8 @@ struct fixed_producer {
       return std::meta::field_type<T, I>(5);
     }
   }
+public:
+  fixed_producer() = default;
 };
 
 int main() {

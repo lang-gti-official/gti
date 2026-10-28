@@ -21,7 +21,7 @@ def main():
             "namespace api {\n"
             "  int hidden() { return 42; }\n"
             "  export int answer() { return hidden(); }\n"
-            "  struct Detail { int read() { return 7; } };\n"
+            "  struct Detail { int read() { return 7; }  public: Detail() = default; };\n"
             "  export Detail make() { return Detail(); }\n"
             "}\n"
         )

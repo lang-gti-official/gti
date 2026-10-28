@@ -54,6 +54,8 @@ public:
       return *pointer + 1;
     }
   }
+public:
+  AddressOwner() = default;
 };
 
 unsafe int* reference_address(AddressOwner& owner) { return owner.slot; }

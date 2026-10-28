@@ -6,6 +6,8 @@
 // so its transfer capability is the relevant cross-thread requirement.
 [[no_share]] struct State {
   mut int total = 0;
+public:
+  State() = default;
 };
 
 // The closure-storage rule is structural, not a mutex exception.

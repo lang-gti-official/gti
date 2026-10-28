@@ -32,6 +32,8 @@ Square made = scaled(3);
 class Registry {
 public:
   static mut Counter counter = Counter();
+public:
+  Registry() = default;
 };
 
 // PROGRAM_STORAGE_MAIN

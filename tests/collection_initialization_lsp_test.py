@@ -8,7 +8,7 @@ from lsp_smoke_test import LspSession
 
 def main():
     source = ('#include <std/vector>\n'
-              'struct Command { int number = 0; std::vector<Command> children{}; };\n'
+              'struct Command { int number = 0; std::vector<Command> children{};  public: Command() = default; };\n'
               'int main() { Command root = {.children = {{.number = 1}}}; return 0; }\n')
     with tempfile.TemporaryDirectory(prefix="gti-collection-lsp-") as root:
         path = pathlib.Path(root) / "main.gti"

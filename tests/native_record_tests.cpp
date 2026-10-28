@@ -467,7 +467,7 @@ void expectNativeIdentifierFailure(std::string_view name, std::string source,
 void testNativeRecordDiagnostics() {
   expectNativeRecordFailure(
       "wrong-kind.gti",
-      "[[c_abi]] class Bad { public: int32_t value = 0; }; "
+      "[[c_abi]] class Bad { public: int32_t value = 0;  public: Bad() = default; }; "
       "int main() { return 0; }",
       "only to passive struct");
   expectNativeRecordFailure(
@@ -475,7 +475,7 @@ void testNativeRecordDiagnostics() {
       "[[c_abi]] struct Bad<T> { T value; }; int main() { return 0; }",
       "cannot declare generic");
   expectNativeRecordFailure("empty.gti",
-                            "[[c_abi]] struct Bad {}; int main() { return 0; }",
+                            "[[c_abi]] struct Bad { public: Bad() = default; }; int main() { return 0; }",
                             "at least one field");
   expectNativeRecordFailure(
       "method.gti",
@@ -532,7 +532,7 @@ void testNativeRecordDiagnostics() {
       "int main() { return 0; }",
       "cannot be combined");
   expectNativeRecordFailure("field-initializer.gti",
-                            "[[c_abi]] struct Bad { int32_t value = 1; }; "
+                            "[[c_abi]] struct Bad { int32_t value = 1;  public: Bad() = default; }; "
                             "int main() { return 0; }",
                             "cannot have a GTI initializer");
 
@@ -673,7 +673,7 @@ int main() { return 0; }
 
   const lang::FrontendResult ordinaryHostNames =
       analyze("ordinary-host-name-namespaces.gti", R"(
-namespace FILE { struct Local { int32_t value = 0; }; }
+namespace FILE { struct Local { int32_t value = 0;  public: Local() = default; }; }
 namespace EOF { int32_t value = 1; }
 int main() { return EOF::value; }
 )");
@@ -792,7 +792,7 @@ int main() {
       "cannot declare generic");
   expectOpaqueHandleFailure(
       "opaque-base.gti",
-      "struct Base {}; [[c_opaque]] struct Bad : public Base; "
+      "struct Base { public: Base() = default; }; [[c_opaque]] struct Bad : public Base; "
       "int main() { return 0; }",
       "cannot declare base");
   expectOpaqueHandleFailure(

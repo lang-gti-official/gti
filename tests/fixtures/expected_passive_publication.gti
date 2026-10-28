@@ -28,6 +28,8 @@ expected<MoveOnly, int> move_only() { return MoveOnly(23); }
 struct Factory {
   Marker make(int number) { return Marker(number); }
   expected<Marker, int> wrapped(int number) { return this.make(number); }
+public:
+  Factory() = default;
 };
 
 struct Report {

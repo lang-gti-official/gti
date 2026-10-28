@@ -87,6 +87,8 @@ struct Destination {
       std::println(int(this.values[lane]));
     }
   }
+public:
+  Destination() = default;
 };
 int main() {
   mut Destination destination{};

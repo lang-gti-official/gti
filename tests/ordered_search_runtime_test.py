@@ -26,10 +26,14 @@ def negative_sources():
 class OncePredicate {
 public:
   bool operator()(int& value) && { return value < 2; }
+public:
+  OncePredicate() = default;
 };
 class OnceComparator {
 public:
   bool operator()(int& left, int& right) && { return left < right; }
+public:
+  OnceComparator() = default;
 };
 """
     setup = "mut std::vector<int> values = {1, 2, 3}; int key = 2; "

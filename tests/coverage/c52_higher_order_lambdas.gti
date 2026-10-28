@@ -1,5 +1,5 @@
 // Lambdas as values: stored, returned, composed, and passed by value.
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 int32_t apply<Op>(mut Op op, int32_t v) { return op(v); }
 

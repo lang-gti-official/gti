@@ -13,6 +13,8 @@ public:
 class Seven : public Step {
 public:
   int apply(int value) override { return value + 7; }
+public:
+  Seven() = default;
 };
 
 int direct_sum(int amount, int count) {

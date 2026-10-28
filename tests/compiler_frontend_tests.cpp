@@ -122,6 +122,8 @@ int missing_target_return() {
 class Broken {
 public:
   int value() {}
+public:
+  Broken() = default;
 };
 
 int main() {
@@ -733,7 +735,7 @@ void testStandardLibraryImports() {
 
   const std::string privateSource =
       "#include <std/memory>\n"
-      "namespace gti_internal { class forged {}; }\n"
+      "namespace gti_internal { class forged { public: forged() = default; }; }\n"
       "namespace private_alias = gti_internal;\n"
       "using forged_storage = gti_internal::unique_owner<int>;\n"
       "int main() { gti_internal::runtime::write_stdout(\"x\"); return 0; }\n";
@@ -758,7 +760,7 @@ void testStandardLibraryImports() {
 
   const lang::FrontendResult forgedSpelling = lang::Frontend().analyze(
       root / "forged-private-spelling.gti",
-      "namespace ordinary { class storage<T> {}; }\n"
+      "namespace ordinary { class storage<T> { public: storage() = default; }; }\n"
       "ordinary::storage<int> value = ordinary::storage<int>();\n"
       "int main() { return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -825,7 +827,7 @@ void testStandardLibraryImports() {
       root / "inherited-mixed-private-overload.gti",
       "#include <std/array>\n"
       "class Derived : public std::PrivateBase { public: "
-      "int select(int value) { return value; } };\n"
+      "int select(int value) { return value; }  public: Derived() = default; };\n"
       "int main() { Derived value = Derived(); return value.select(7); }\n",
       {standardLibraryPrelude()},
       {{leakyKey,
@@ -1572,7 +1574,7 @@ int main() {
 
 int invalid_condition() { return 1 ? 2 : 3; }
 bool mismatched_arms(bool condition) { return condition ? 1 : false; }
-struct Item {};
+struct Item { public: Item() = default; };
 std::unique_ptr<Item> implicit_copy(
     bool condition,
     std::unique_ptr<Item> left,
@@ -2993,17 +2995,23 @@ class Used {
 public:
   int read() { return this.value; }
   int unread() { return 2; }
+public:
+  Used() = default;
 };
 class Unused {
   int value = 3;
 public:
   int read() { return this.value; }
+public:
+  Unused() = default;
 };
 int initialize_only() { return 7; }
 int unreferenced_global = initialize_only();
 class StaticOnly {
 public:
   static int value = initialize_only();
+public:
+  StaticOnly() = default;
 };
 using UnusedAlias = Unused;
 int unused_helper() {
@@ -3255,7 +3263,7 @@ void testAnnotatedFunctionContracts() {
         "[[test]] void invalid(int value) {}", "[[test]] void invalid<T>() {}",
         "[[test]] void invalid();", "[[test, test]] void invalid() {}",
         "[[test]] static void invalid() {}",
-        "struct Owner { [[test]] void invalid() {} };"}) {
+        "struct Owner { [[test]] void invalid() {}  public: Owner() = default; };"}) {
     const auto invalid =
         lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics})
             .analyze("invalid-test.gti", source);

@@ -109,8 +109,10 @@ class UserMutableField {
   mut int32_t value = 1;
 public:
   void write() mut { this.value = 2; }
+public:
+  UserMutableField() = default;
 };
-struct UserRawOwner { mut UserMutableField field{}; };
+struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = default; };
 """
         invalid = {
             "owner-mutation": "mut std::forward_list<int32_t> values{}; values.push_front(1); "

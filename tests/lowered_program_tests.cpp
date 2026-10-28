@@ -881,6 +881,8 @@ class Owned {
 public:
   mut int value = 3;
   ~Owned() { this.value = 0; }
+public:
+  Owned() = default;
 };
 void lifetime() {
   Owned first{};
@@ -1008,6 +1010,8 @@ class Receiver {
 public:
   int value = 4;
   int read() { return this.value; }
+public:
+  Receiver() = default;
 };
 int packed<Args...>(int first, Args... rest) { return first; }
 int main() { Receiver value{}; return packed(value.read(), 9, 11) - 4; }
@@ -1144,8 +1148,8 @@ mut int32_t trace = 0;
 int32_t seed() { trace++; return trace; }
 int32_t global = seed();
 thread_local int32_t per_thread = seed();
-struct Defaulted { int32_t value = seed(); };
-struct StaticStorage { static int32_t value = seed(); };
+struct Defaulted { int32_t value = seed();  public: Defaulted() = default; };
+struct StaticStorage { static int32_t value = seed();  public: StaticStorage() = default; };
 struct Selected {
   int32_t value = seed();
   Selected() {}
@@ -1153,8 +1157,10 @@ struct Selected {
 };
 struct Generic<T> {
   int32_t value = seed();
+public:
+  Generic() = default;
 };
-struct EmptyPack<Ts...> { int32_t value = seed(); };
+struct EmptyPack<Ts...> { int32_t value = seed();  public: EmptyPack() = default; };
 int main() {
   Defaulted first{};
   Selected second{};
@@ -1280,6 +1286,8 @@ public:
   mut int32_t value = 0;
 
   int32_t read() { return this.value; }
+public:
+  Counter() = default;
 };
 
 class Cursor {
@@ -1288,34 +1296,46 @@ public:
   int32_t& operator*() { return this.current; }
   void operator++() mut { this.current++; }
   bool operator!=(Cursor& other) { return this.current != other.current; }
+public:
+  Cursor() = default;
 };
 
 class Increment {
 public:
   int32_t operator()(int32_t value) { return value + 1; }
+public:
+  Increment() = default;
 };
 
 class Cleanup {
   mut int32_t value = 1;
 public:
   ~Cleanup() { this.value = 0; }
+public:
+  Cleanup() = default;
 };
 
 class GenericConstruction {
 public:
   GenericConstruction<Left, Right>(Left left, Right right) {}
+public:
+  GenericConstruction() = default;
 };
 
 namespace demo {
 class Marker<T> {
 public:
   int32_t read() { return 1; }
+public:
+  Marker() = default;
 };
 }
 
 class demo::Marker<int32_t> {
 public:
   int32_t read() { return 2; }
+public:
+  Marker() = default;
 };
 
 mut int32_t process_seed = 1;
@@ -1733,6 +1753,8 @@ public:
     checkpoint();
     return this.value & before;
   }
+public:
+  Receiver() = default;
 };
 int main() { Receiver owner{}; return owner.read(); }
 )gti");
@@ -1895,7 +1917,7 @@ void testDebugOwnedPackLifetimes() {
       lang::Frontend(
           {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
           .analyze("debug-owned-pack.gti", R"gti(
-class Owner { public: int value = 9; ~Owner() {} };
+class Owner { public: int value = 9; ~Owner() {}  public: Owner() = default; };
 int first<Args...>(int input, Args... rest) { return input; }
 int main() { return first(7, Owner(), Owner()) == 7 ? 0 : 1; }
 )gti");
@@ -2656,6 +2678,8 @@ void testMutationRejection() {
 class Factory {
 public:
   static int Build(int value) { return value; }
+public:
+  Factory() = default;
 };
 interface FactoryApi {
   static int Select(int value) { return Factory::Build(value); }
@@ -2664,6 +2688,8 @@ interface FactoryApi {
 class Signal : public FactoryApi {
 public:
   int value() override { return 3; }
+public:
+  Signal() = default;
 };
 int main() {
   Signal signal{};
@@ -2963,12 +2989,14 @@ int main() { return execute() + execute(4) + execute(7, true) - 9; }
 void testConcreteClassAliases() {
   auto frontend = lang::Frontend().analyze("concrete-class-aliases.gti", R"gti(
 namespace shapes {
-struct Layer<uint64_t N> { Layer<N - 1> inner; int value = 1; };
+struct Layer<uint64_t N> { Layer<N - 1> inner; int value = 1;  public: Layer() = default; };
 }
-struct shapes::Layer<0> { int value = 100; };
+struct shapes::Layer<0> { int value = 100;  public: Layer() = default; };
 struct Box<uint64_t N> {
   using Previous = shapes::Layer<N - 1>;
   Previous inner;
+public:
+  Box() = default;
 };
 int main() { Box<1> first{}; Box<2> second{}; Box<3> third{}; return 0; }
 )gti");
@@ -3080,6 +3108,8 @@ void checked_iteration<T, Result>() requires requires(T& range) {
 struct Cell {
   mut int32_t value = 0;
   mut int32_t& edit() mut { return this.value; }
+public:
+  Cell() = default;
 };
 void borrowed<T>() requires requires(mut T& owner) {
   { owner.edit() } -> mut int32_t& [[borrowed_from(owner)]];
@@ -3090,6 +3120,8 @@ void inferred_borrow<T>() requires requires(mut T& owner) {
 class Reader {
 public:
   int32_t read() { return 7; }
+public:
+  Reader() = default;
 };
 void member<T>() requires requires(T& value) {
   { value.read() } -> int32_t;
@@ -3097,6 +3129,8 @@ void member<T>() requires requires(T& value) {
 class Box {
 public:
   Box<T>(T value) requires requires(T& input) { { input + input } -> T; } {}
+public:
+  Box() = default;
 };
 int main() {
   named<int32_t>();
@@ -3338,9 +3372,9 @@ int main() {
 
 void testClassDefinitionFamilyIdentity() {
   const auto frontend = lang::Frontend().analyze("definition-family.gti", R"(
-class Record<T, E> { public: int kind() { return 1; } };
-class Record<void, E> { public: int kind() { return 2; } };
-class Unrelated<T, E> {};
+class Record<T, E> { public: int kind() { return 1; }  public: Record() = default; };
+class Record<void, E> { public: int kind() { return 2; }  public: Record() = default; };
+class Unrelated<T, E> { public: Unrelated() = default; };
 int main() {
   Record<int, int> value{};
   Record<void, int> empty{};

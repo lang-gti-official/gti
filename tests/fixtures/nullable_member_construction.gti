@@ -3,6 +3,8 @@ class Empty {
 public:
   Empty(nullptr_t value) {}
   int read() { return this.marker; }
+public:
+  Empty() = default;
 };
 class Parent {
   Empty first;

@@ -7,6 +7,8 @@ mut int32_t zero = 0;
 
 struct Trace {
   ~Trace() { std::println(9); }
+public:
+  Trace() = default;
 };
 
 struct Node {

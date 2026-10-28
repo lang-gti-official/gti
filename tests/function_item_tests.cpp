@@ -640,6 +640,8 @@ void testConstructorValueArguments() {
 class Box {
 public:
   Box<Callable>(Callable callable) {}
+public:
+  Box() = default;
 };
 void work(int value) {}
 void work(bool value) {}
@@ -662,6 +664,8 @@ public:
   T route<F>(F& callback, T value) { return this.forward(callback, value); }
 private:
   T forward<F>(F& callback, T value) { return callback(value); }
+public:
+  Router() = default;
 };
 )";
   const auto result = analyze("forwarded-function-item.gti", declarations + R"(

@@ -2,6 +2,8 @@
 class Cleanup {
 public:
   ~Cleanup() { std::println(55); }
+public:
+  Cleanup() = default;
 };
 int main() {
   Cleanup cleanup{};

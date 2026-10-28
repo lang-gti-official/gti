@@ -17,10 +17,14 @@ expected<Result, int> produce(int divisor) {
 
 struct MutableProducer {
   expected<Result, int> operator()(int divisor) mut { return produce(divisor); }
+public:
+  MutableProducer() = default;
 };
 
 struct ConsumingProducer {
   expected<Result, int> operator()(int divisor) && { return produce(divisor); }
+public:
+  ConsumingProducer() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

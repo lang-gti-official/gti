@@ -26,14 +26,20 @@ Payload create(int id) { return Payload(id); }
 struct Success {
   expected<Payload, int> first = create(1);
   Payload later = create(2);
+public:
+  Success() = default;
 };
 struct Error {
   expected<int, Payload> first = unexpected(create(1));
   Payload later = create(2);
+public:
+  Error() = default;
 };
 struct Passive {
   expected<int, Payload> first = 1;
   Payload later = create(2);
+public:
+  Passive() = default;
 };
 int main() {
   Success success{};
@@ -215,7 +221,7 @@ int main() {
   }
   std::size_t plainProducerControls = 0, plainProducerMutations = 0;
   for (const std::string_view payload :
-       {"class Payload<T> { public: int marker = 1; ~Payload() {} };",
+       {"class Payload<T> { public: int marker = 1; ~Payload() {}  public: Payload() = default; };",
         "class Payload<T> { public: int marker; "
         "Payload() : marker(7) {} ~Payload() {} };"}) {
     const auto control = analyzeWithStandardLibrary(
@@ -224,6 +230,8 @@ class Wrapped<T> {
   expected<Payload<T>, int> success = Payload<T>();
   expected<int, Payload<T>> error = unexpected(Payload<T>());
   expected<int, Payload<T>> passive = 1;
+public:
+  Wrapped() = default;
 };
 int main() { Wrapped<int> value{}; return 0; }
 )gti");

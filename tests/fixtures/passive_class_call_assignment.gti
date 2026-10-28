@@ -5,9 +5,11 @@ struct Packet {
     this.lanes[0] = first;
   }
   Packet next() { return Packet(this.lanes[0] + 1.0); }
+public:
+  Packet() = default;
 };
 
-struct Point { mut int value = 0; };
+struct Point { mut int value = 0;  public: Point() = default; };
 Point make_point() { Point result = {.value = 7}; return result; }
 
 int main() {

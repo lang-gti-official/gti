@@ -1,6 +1,6 @@
 #include <std/meta>
 
-struct Coordinates { int32_t x = 0; int32_t y = 0; };
+struct Coordinates { int32_t x = 0; int32_t y = 0;  public: Coordinates() = default; };
 class MoveOnly {
 public:
   MoveOnly() {}
@@ -22,12 +22,12 @@ class CopyConstructionOnly {
 public:
   CopyConstructionOnly(int32_t& source) : value(source) {}
 };
-struct RawAddress { int32_t* value = nullptr; };
-[[no_transfer, no_share]] struct ThreadAffine { int32_t value = 0; };
+struct RawAddress { int32_t* value = nullptr;  public: RawAddress() = default; };
+[[no_transfer, no_share]] struct ThreadAffine { int32_t value = 0;  public: ThreadAffine() = default; };
 enum class Code : uint16_t { none = 0, failed = 1 };
 enum Tagged { empty, value(int32_t item) };
 struct Envelope<T> { T value; };
-class Opaque<T> {};
+class Opaque<T> { public: Opaque() = default; };
 
 // A known outer category can fold before its nested type is concrete. A bare
 // type parameter and a computed field-type projection must still defer.

@@ -5,16 +5,22 @@ mut int32_t action_count = 0;
 class read_action {
 public:
   void operator()() { action_count++; }
+public:
+  read_action() = default;
 };
 
 class mut_action {
 public:
   void operator()() mut { action_count++; }
+public:
+  mut_action() = default;
 };
 
 class once_action {
 public:
   void operator()() && { action_count++; }
+public:
+  once_action() = default;
 };
 
 int main() {

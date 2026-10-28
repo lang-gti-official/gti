@@ -134,6 +134,8 @@ class Counters {
 public:
   mut int32_t left = 1;
   mut int32_t right = 2;
+public:
+  Counters() = default;
 };
 thread_local mut Counters state{};
 void change_right() { state.right = 3; }
@@ -350,7 +352,7 @@ void generatedDefaultHasExactEmptyTargets(std::string_view storage) {
       "/tmp/gti-mir-persistent-storage/generated-default.gti",
       std::string(storage) + " mut int32_t first = 1;\n" +
           std::string(storage) + " mut int32_t second = 2;\n" + R"(
-struct Cleanup { ~Cleanup() { second = 9; } };
+struct Cleanup { ~Cleanup() { second = 9; }  public: Cleanup() = default; };
 void inspect(Cleanup& input) {}
 void execute() { inspect(Cleanup()); }
 int main() { int32_t& borrowed = first; execute(); return borrowed; }
@@ -435,9 +437,11 @@ int main() { int32_t& borrowed = first; execute(); return borrowed; }
 
   const auto effectsFrontend = lang::Frontend().analyze(
       "/tmp/gti-mir-persistent-storage/generated-construction-effects.gti", R"(
-struct Empty {};
+struct Empty { public: Empty() = default; };
 struct Factory {
   Empty produce(int32_t& input) { return Empty(); }
+public:
+  Factory() = default;
 };
 int main() {
   int32_t value = 7;
@@ -527,11 +531,11 @@ int main() {
 }
 
 void generatedDefaultSchedulesRetainEffects(std::string_view storage) {
-  for (const auto shape : {"struct Outer { int32_t field = initialize(); };",
+  for (const auto shape : {"struct Outer { int32_t field = initialize();  public: Outer() = default; };",
                            "struct Member { Member() { mutate(); } }; "
-                           "struct Outer { Member member; };",
-                           "struct Base { int32_t field = initialize(); }; "
-                           "struct Outer : public Base {};"}) {
+                           "struct Outer { Member member;  public: Outer() = default; };",
+                           "struct Base { int32_t field = initialize();  public: Base() = default; }; "
+                           "struct Outer : public Base { public: Outer() = default; };"}) {
     const auto source = [&](std::string_view target) {
       return std::string(storage) + " mut int32_t first = 1;\n" +
              std::string(storage) + " mut int32_t second = 2;\n" +
@@ -580,10 +584,14 @@ void referenceRootDoesNotAcquireExactVirtualType(bool localAlias) {
 class Source {
 public:
   virtual int32_t read() { return 1; }
+public:
+  Source() = default;
 };
 class Reader : public Source {
 public:
   int32_t read() override { return 3; }
+public:
+  Reader() = default;
 };
 Source& relay(Source& input) { return input; }
 int32_t owned_copy(Source& input) {
@@ -731,6 +739,8 @@ void ordinaryBindingsRetainPhysicalStorageTypes() {
 class Sample {
 public:
   int32_t member = 3;
+public:
+  Sample() = default;
 };
 Sample& identity(Sample& input) { return input; }
 int32_t read(Sample& input) {
@@ -803,15 +813,21 @@ class Source {
 public:
   virtual int32_t read() { return 1; }
   virtual int32_t other() { return 0; }
+public:
+  Source() = default;
 };
 class Reader : public Source {
 public:
   int32_t read() override { second = 9; return 3; }
   int32_t other() override { return 0; }
+public:
+  Reader() = default;
 };
 class Sibling : public Source {
 public:
   int32_t read() override { return 4; }
+public:
+  Sibling() = default;
 };
 Reader reader{};
 Sibling sibling{};
@@ -1304,6 +1320,8 @@ void forward<Args...>(int tag, Args... args) { consume(args...); }
 class Relay<R(Args...)> {
 public:
   void forward(Args... args) { consume(args...); }
+public:
+  Relay() = default;
 };
 int main() {
   int value = 3;

@@ -71,7 +71,7 @@ void internalTrialsDoNotReportProgress() {
   } counter;
   Fixture f;
   f.options.progress = &counter;
-  f.write("api.gti", "struct ProgressValue { int value = 7; };\n");
+  f.write("api.gti", "struct ProgressValue { int value = 7;  public: ProgressValue() = default; };\n");
   const auto result =
       f.analyze("int main() { ProgressValue item{}; return item.value; }\n");
   const auto suggestions = fixes(result);
@@ -92,11 +92,11 @@ void projectDeclarations() {
   f.write("api.gti", R"(
 namespace example {
   int test() { return 7; }
-  struct Value { int n = 0; };
+  struct Value { int n = 0;  public: Value() = default; };
   using Number = int;
   enum class Mode { ready };
   constexpr int count = 2;
-  class Factory { public: static int make() { return 3; } };
+  class Factory { public: static int make() { return 3; }  public: Factory() = default; };
 }
 )");
   for (const std::string source :
@@ -130,7 +130,7 @@ namespace example {
   expect(fixes(f.analyze("int main() { return wrong::test(); }")).empty(),
          "equal leaf names in the wrong namespace must not guess an include");
   f.write("private.gti",
-          "class Hidden { static int inaccessible() { return 1; } };");
+          "class Hidden { static int inaccessible() { return 1; }  public: Hidden() = default; };");
   expect(
       fixes(f.analyze("int main() { return Hidden::inaccessible(); }")).empty(),
       "no include fix bypasses private member access");

@@ -1,13 +1,17 @@
-struct Cell { mut int32_t value = 7; };
+struct Cell { mut int32_t value = 7;  public: Cell() = default; };
 struct Frame {
   mut int32_t slots[4] = {1, 2, 3, 4};
   mut Cell cells[2] = {};
+public:
+  Frame() = default;
 };
 
 class Receiver {
   Cell cells[2] = {};
 public:
   int sum() { return this.cells[0].value + this.cells[1].value; }
+public:
+  Receiver() = default;
 };
 
 int next_index(mut int& evaluations) {

@@ -16,6 +16,8 @@ public:
     this.count = 7;
     return unexpected(1);
   }
+public:
+  Ticket() = default;
 };
 
 expected<void, int> relay(mut Ticket& ticket, bool accepted) {

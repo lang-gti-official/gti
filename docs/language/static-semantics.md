@@ -592,8 +592,9 @@ and designated entries cannot be mixed. Omitted fields require declaration
 initializers; there is no implicit zero initialization of missing fields.
 Nested designated lists receive their destination field's type.
 
-This form is limited to structs without declared constructors or inheritance,
-and public value fields. Reference, fixed-array, borrowed-state, and native-layout
+This form is limited to structs with public value fields and no inheritance.
+An optional structural `Type() = default;` declaration is permitted; other
+declared constructors exclude this form. Reference, fixed-array, borrowed-state, and native-layout
 records are excluded from this first slice. Classes retain constructor-based
 initialization. Normal ownership rules still apply: a fresh owning value is
 accepted, while transferring a named move-only value requires `std::move`.
@@ -1310,18 +1311,29 @@ wrappers whose actual storage is indirect form indirection boundaries.
 `GTI-S2082` diagnoses the field that would make the containing object layout
 infinite before lifecycle inference or constructor-body analysis.
 
-Default, copy, and move construction; copy and move assignment; and destruction
-are generated from structural field traits. Declaring an ordinary constructor
-does not suppress otherwise valid generated lifecycle operations.
+Default construction of an ordinary class or struct is an explicitly declared
+API. An empty field list or declaration initializers do not introduce a
+zero-argument constructor. Write a constructor body, a constructor whose
+arguments all have defaults, or `Type() = default;` to permit construction
+without arguments. This applies equally to direct construction, generic
+factories, omitted nominal fields, and `std::default_initializable`. A missing
+operation is diagnosed at the construction site (`GTI-S2012`).
+
+Copy and move construction, copy and move assignment, and destruction remain
+generated from structural field traits. Declaring an ordinary constructor does
+not suppress those operations. Union zero-storage initialization is a separate
+operation and retains its existing rules.
 
 The exact declaration `Type() = default;` explicitly selects the generated
 zero-argument construction operation. It is valid only when every field has a
 declaration initializer or is a nominal class/struct field whose exact type has
 an accessible zero-argument construction operation, and the state-bearing base has an accessible
-zero-argument constructor, which are the same conditions used when the
-declaration is omitted. It introduces no executable body, initializer list,
+zero-argument constructor. Without this declaration or another callable
+zero-argument constructor, default construction is unavailable. It introduces no executable body, initializer list,
 generic parameters, or requirements. Its source access is the written member
-access. Ordinary-constructor `= delete` is not implemented.
+access. The structural declaration does not prevent an otherwise eligible
+struct from using named-field initialization; supplying fields is a separate
+construction operation. Ordinary-constructor `= delete` is not implemented.
 
 An omitted nominal field is default-constructed in declaration order, unless
 an explicit constructor initializer overrides it. This is a selected GTI
@@ -2232,8 +2244,8 @@ unit and are unavailable to application code (`GTI-S2049`, `GTI-S2058`).
 ### 3.12.3 Declared Attributes
 
 A struct declared `[[attribute]]` is an **attribute type**: a non-generic
-struct with public value fields, declaration defaults and no declared
-constructors or bases (`GTI-S2113` otherwise). `[[ns::name(arguments)]]`
+struct with public value fields, declaration defaults and no bases or
+constructors other than an optional structural `Type() = default;` (`GTI-S2113` otherwise). `[[ns::name(arguments)]]`
 before a class-like declaration or an instance field **applies** it: the
 arguments initialize the attribute struct's fields positionally, or by
 designator (`[[ns::name(.key = "x")]]`), with constant expressions; a field
@@ -2308,8 +2320,9 @@ production and is the result, and the values produced so far are destroyed by
 the ordinary cleanup of the values a call holds. When every field has a
 value, `T` is initialized through the same generated constructor that
 designated construction uses, so the eligibility is designated
-construction's: a struct with public value fields and no declared
-constructors or bases (`GTI-S2118` otherwise). Constructors and invariants are
+construction's: a struct with public value fields and no bases or declared
+constructors other than an optional structural `Type() = default;`
+(`GTI-S2118` otherwise). Constructors and invariants are
 never bypassed, nothing is default-constructed and then assigned, and no
 storage is written before its object exists. The compiler-private step
 `gti_internal::meta_construct<T>(values...)` is the selection of that

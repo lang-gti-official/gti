@@ -460,8 +460,8 @@ int main() { return 0; }
 void checkContextualCallableArguments() {
   const std::string prefix = R"(
 int combine(int left, int right) { return left + right; }
-class Sink { public: Sink(int value) {} };
-class Invoke { public: int operator()(int value) { return value; } };
+class Sink { public: Sink(int value) {}  public: Sink() = default; };
+class Invoke { public: int operator()(int value) { return value; }  public: Invoke() = default; };
 int exact<T>(T value) { return 0; }
 int choose(int selector, int value) { return value; }
 int choose(bool selector, bool value) { return 0; }
@@ -676,7 +676,7 @@ public:
   Box(int identity, Payload payload)
       : identity(identity), payload(std::move(payload)) {}
 };
-struct Other { int foreign = 0; };
+struct Other { int foreign = 0;  public: Other() = default; };
 int main() {
   Payload payload{};
   Box box{8, std::move(payload)};
@@ -1101,7 +1101,7 @@ int main() {
   const auto borrowedReceiver =
       analyzeTrustedPreludeFixture("retained-borrowed-owner.gti", R"(
 class Piece { public: Piece() {} int operator()() && { return 1; } };
-struct Container { mut Piece field{}; };
+struct Container { mut Piece field{};  public: Container() = default; };
 int invoke(mut Container& owner) { return std::move(owner.field)(); }
 int main() { return 0; }
 )");

@@ -18,6 +18,8 @@ class Factory {
 public:
   static int Create(int initial = first(), Payload input = Payload(), int last = later());
   int Read(int value = 7);
+public:
+  Factory() = default;
 };
 int Factory::Create(int renamed, Payload owned, int tail) {
   std::println(3);

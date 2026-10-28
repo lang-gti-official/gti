@@ -310,7 +310,7 @@ void testSemanticLayoutConstants() {
 
 void testPointerLayoutDoesNotRequirePointeeLayout() {
   const lang::FrontendResult result = analyze("layout-query-pointees.gti", R"(
-class Opaque {};
+class Opaque { public: Opaque() = default; };
 
 uint64_t pointer_layout<T>() { return sizeof(T*); }
 
@@ -404,7 +404,7 @@ void expectLayoutFailure(std::string_view name, std::string source,
 
 void testLayoutDiagnostics() {
   expectLayoutFailure("layout-query-class.gti", R"(
-class Box {};
+class Box { public: Box() = default; };
 uint64_t query() { return sizeof(Box); }
 )",
                       "no GTI layout contract", "Box");
@@ -441,6 +441,8 @@ uint64_t query<T>() { return sizeof(T); }
 class ArrayShape<uint64_t N> {
 public:
   uint64_t query() { return alignof(int32_t[N]); }
+public:
+  ArrayShape() = default;
 };
 )",
                       "concrete fixed-array extent", "N");

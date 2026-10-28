@@ -259,8 +259,8 @@ def main() -> None:
         # Base-view replacement stays refused; move this control to another
         # refused construct as LLVM coverage grows.
         unsupported = member(
-            "unsupported", "class Owner { public: virtual int read() { return 0; } };\n"
-            "class Derived : public Owner {};\n"
+            "unsupported", "class Owner { public: virtual int read() { return 0; }  public: Owner() = default; };\n"
+            "class Derived : public Owner { public: Derived() = default; };\n"
             "unsafe int create(mut Owner& value, Owner& other) { value = other; return 0; }\n"
             "int main() { mut Derived first{}; Derived second{}; "
             "unsafe { return create(first, second); } }\n", [single])

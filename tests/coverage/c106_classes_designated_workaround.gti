@@ -15,12 +15,16 @@ struct Limits {
   using count_type = int32_t;
   count_type retries = 3;
   count_type timeout_ms = 1000;
+public:
+  Limits() = default;
 };
 
 struct Endpoint {
   std::string host{};
   int32_t port = 80;
   Limits limits = Limits(); // WORKAROUND: `Limits limits{};` ICEs when omitted
+public:
+  Endpoint() = default;
 };
 
 struct Service {
@@ -28,6 +32,8 @@ struct Service {
   Level level = Level::info;
   std::vector<Endpoint> endpoints{};
   std::vector<std::string> tags{};
+public:
+  Service() = default;
 };
 
 class Registry {
@@ -58,6 +64,8 @@ public:
 struct Pair {
   int32_t left = 0;
   int32_t right = 0;
+public:
+  Pair() = default;
 };
 
 int32_t doubled(int32_t v) { return v * 2; }

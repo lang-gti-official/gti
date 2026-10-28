@@ -1,7 +1,7 @@
 #include <std/memory>
 
 interface SignatureInvoker<R, Args...> { R invoke(Args... args); };
-class SignatureTag<S> {};
+class SignatureTag<S> { public: SignatureTag() = default; };
 
 class SignatureModel<T, R, Args...> : public SignatureInvoker<R, Args...> {
   T callback;

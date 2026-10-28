@@ -29,6 +29,8 @@ private:
 
 struct default_package {
   holder content = holder::occupied(resource(4));
+public:
+  default_package() = default;
 };
 
 int main() {

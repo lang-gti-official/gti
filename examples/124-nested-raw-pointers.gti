@@ -18,6 +18,8 @@ void replace(EndSlot slot, c_char* value) {
 
 struct Cursor {
   mut c_char* end = nullptr;
+public:
+  Cursor() = default;
 };
 
 int main() {

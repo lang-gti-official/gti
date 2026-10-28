@@ -1,13 +1,15 @@
 #include <std/utility>
 
 // A context borrows its services; it does not own or copy them.
-struct Settings { int frame_step = 2; };
+struct Settings { int frame_step = 2;  public: Settings() = default; };
 struct Renderer {
   mut int frames = 0;
   void advance(int count) mut { this.frames += count; }
+public:
+  Renderer() = default;
 };
-struct Logger { int events_per_frame = 3; };
-struct Cache { mut int events = 0; };
+struct Logger { int events_per_frame = 3;  public: Logger() = default; };
+struct Cache { mut int events = 0;  public: Cache() = default; };
 
 struct Services {
   Settings& settings;

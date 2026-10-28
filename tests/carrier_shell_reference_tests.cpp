@@ -6,7 +6,7 @@ namespace {
 
 const std::string declarations = R"gti(
 #include <std/utility>
-struct Counter { mut int value = 4; };
+struct Counter { mut int value = 4;  public: Counter() = default; };
 class Shared {
   Counter& counter;
   mut int offset = 2;
@@ -663,18 +663,24 @@ void checkIoConceptDiagnostics() {
 class WrongResult {
 public:
   int read_some(mut std::mutable_span<uint8_t>& output) mut { return 0; }
+public:
+  WrongResult() = default;
 };
 class ReadonlyOutput {
 public:
   expected<std::size_t, std::io_errc> read_some(std::span<uint8_t>& output) mut {
     return std::size_t(0);
   }
+public:
+  ReadonlyOutput() = default;
 };
 class MissingFlush {
 public:
   expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& input) mut {
     return input.size();
   }
+public:
+  MissingFlush() = default;
 };
 )gti";
   const std::vector<std::string> calls{
@@ -785,13 +791,17 @@ struct Leaf {
   mut int value = 4;
   int& reference() { return this.value; }
   View view() { return View(this.value); }
+public:
+  Leaf() = default;
 };
-struct Record { mut Leaf leaf{}; };
+struct Record { mut Leaf leaf{};  public: Record() = default; };
 class Owner {
   mut Record record{};
 public:
   mut Record& get() mut { return this.record; }
   void change() mut { this.record.leaf.value += 1; }
+public:
+  Owner() = default;
 };
 )gti";
   for (const bool borrowedValue : {false, true}) {
@@ -1208,6 +1218,8 @@ class Marker {
 public:
   Marker(bool fail) { if (fail) { std::panic("initializer failure"); } }
   ~Marker() {}
+public:
+  Marker() = default;
 };
 class Adapter {
   Carrier& target;

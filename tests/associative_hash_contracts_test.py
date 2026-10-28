@@ -29,7 +29,7 @@ std::size_t invoke<Hash>(Hash hash, int32_t& key)
                    "int main() { int32_t key = 1; return int(invoke(Bad(), key)); }\n"
                    for name, body in cases.items()}
         sources["unspecialized"] = """#include <std/functional>
-class Key {};
+class Key { public: Key() = default; };
 std::size_t invoke<Hash>(Hash hash, Key& key)
   requires std::read_callable<Hash, Key, std::size_t> { return hash(key); }
 int main() {
@@ -39,7 +39,7 @@ int main() {
 }
 """
         sources["mutable-equality"] = """#include <std/functional>
-class Bad { public: bool operator()(int32_t& a, int32_t& b) mut { return true; } };
+class Bad { public: bool operator()(int32_t& a, int32_t& b) mut { return true; }  public: Bad() = default; };
 bool invoke<Equal>(Equal equal, int32_t& a, int32_t& b)
   requires std::read_binary_callable<Equal, int32_t, int32_t, bool> {
   return equal(a, b);

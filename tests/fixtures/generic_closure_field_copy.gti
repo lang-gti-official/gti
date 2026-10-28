@@ -51,6 +51,8 @@ public:
 class Defaulted {
 public:
   int amount = 40;
+public:
+  Defaulted() = default;
 };
 
 class Implicit<F> : public Defaulted {

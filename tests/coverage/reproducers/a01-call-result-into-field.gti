@@ -1,6 +1,8 @@
 // A01: the same field assignment from a class-valued call result.
 struct Cents {
   mut int64_t amount = 0;
+public:
+  Cents() = default;
 };
 
 Cents make(int64_t amount) {
@@ -11,6 +13,8 @@ Cents make(int64_t amount) {
 
 struct Holder {
   mut Cents balance = Cents();
+public:
+  Holder() = default;
 };
 
 int main() {

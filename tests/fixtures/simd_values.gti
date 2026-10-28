@@ -5,6 +5,8 @@
 
 struct LanePacket {
   std::simd<float, 7> values{2.0};
+public:
+  LanePacket() = default;
 };
 
 int floating_edges<std::floating_point T>(int normal_exponent, int digits) {

@@ -5,15 +5,21 @@ concept shaped<T> = requires(T& value) { { value.area() } -> int32_t; };
 struct Square {
   int32_t edge = 2;
   int32_t area() { return this.edge * this.edge; }
+public:
+  Square() = default;
 };
 
 struct Mutating {
   mut int32_t n = 0;
   int32_t area() mut { this.n++; return this.n; }
+public:
+  Mutating() = default;
 };
 
 struct WrongResult {
   int64_t area() { return 1; }
+public:
+  WrongResult() = default;
 };
 
 int32_t area_of<T>(T& value) requires shaped<T> { return value.area(); }

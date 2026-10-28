@@ -340,7 +340,7 @@ void testSemanticRejections() {
                           "int64_t pick(int64_t v) { return v; }",
                           libraryRequest({{"pick", "pick_v1"}}), "overloaded");
   expectSemanticRejection(
-      "method", "struct Item { int32_t read(int32_t v) { return v; } };",
+      "method", "struct Item { int32_t read(int32_t v) { return v; }  public: Item() = default; };",
       libraryRequest({{"Item::read", "item_read_v1"}}), "namespace-scope");
   expectSemanticRejection(
       "generic function", "T identity<T>(T value) { return value; }",
@@ -349,7 +349,7 @@ void testSemanticRejections() {
                           libraryRequest({{"declared", "declared_v1"}}),
                           "with a body");
   expectSemanticRejection("ordinary class boundary",
-                          "struct Value { int32_t value = 0; }; "
+                          "struct Value { int32_t value = 0;  public: Value() = default; }; "
                           "Value read(Value value) { return value; }",
                           libraryRequest({{"read", "read_v1"}}),
                           "type outside");

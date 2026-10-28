@@ -6,8 +6,8 @@
 // before the consuming call. The receiver's address stays stable across that
 // diamond for a standard container and for an unrelated user-defined sink.
 
-struct Flags { bool alive = true; bool armed = false; };
-struct binary_writer { mut { std::vector<uint8_t> bytes; } };
+struct Flags { bool alive = true; bool armed = false;  public: Flags() = default; };
+struct binary_writer { mut { std::vector<uint8_t> bytes; }  public: binary_writer() = default; };
 
 class ByteSink {
   mut int total = 0;
@@ -21,8 +21,8 @@ public:
   int sum() { return this.total; }
   int size() { return this.count; }
 };
-struct Frame { mut { ByteSink sink; } };
-struct Session { mut { Frame frame; } };
+struct Frame { mut { ByteSink sink; }  public: Frame() = default; };
+struct Session { mut { Frame frame; }  public: Session() = default; };
 
 void write(mut binary_writer& out, Flags& value) {
   out.bytes.push_back(value.alive ? uint8_t(1) : uint8_t(0));

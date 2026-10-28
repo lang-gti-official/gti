@@ -59,7 +59,7 @@ void rejects(Action action, const char *message) {
 
 VerifiedLoweredProgram fixture() {
   const auto frontend = Frontend().analyze("llvm-session.gti", R"(
-struct Node { mut Node* next = nullptr; mut int32_t value = 0; };
+struct Node { mut Node* next = nullptr; mut int32_t value = 0;  public: Node() = default; };
 [[c_abi]] struct Packet { mut uint8_t tag; mut uint64_t value; };
 [[c_abi]] union Overlay { mut uint64_t bits; mut double value; };
 enum Data { empty, number(int value), pair(uint8_t tag, uint64_t value), node(Node value), flag(bool value) };
@@ -913,6 +913,8 @@ public:
   Ticket(int input) : value(input) { events = events * 10 + 1; }
   ~Ticket() { events = events * 10 + 2; }
   int read() { return this.value; }
+public:
+  Ticket() = default;
 };
 int divide(int value) { return 1 / value; }
 class Field {

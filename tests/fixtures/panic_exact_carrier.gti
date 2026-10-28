@@ -4,15 +4,19 @@ namespace sample {
 class Reader<T> {
 public:
   int read() { return 1; }
+public:
+  Reader() = default;
 };
 }
 
 class sample::Reader<int> {
 public:
   int read() { return 2; }
+public:
+  Reader() = default;
 };
 
-struct Unrelated {};
+struct Unrelated { public: Unrelated() = default; };
 int invoke<F>(F callback) { return callback(); }
 
 int main() {

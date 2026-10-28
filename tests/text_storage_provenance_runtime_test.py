@@ -125,6 +125,8 @@ RAW_C_STRINGS = r'''
 struct Slots {
   c_string* items = nullptr;
   int32_t count = 0;
+public:
+  Slots() = default;
 };
 mut c_string kept = nullptr;
 void put(c_string* items, int32_t at, c_string value) { unsafe { items[at] = value; } }

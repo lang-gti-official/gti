@@ -66,6 +66,8 @@ public:
   Payload(int initial) : value(initial) {}
   Payload(Payload& other) = delete;
   Payload(Payload&& other) = default;
+public:
+  Payload() = default;
 };
 
 expected<Payload, source_errc> read_payload(bool fail) {
@@ -231,6 +233,8 @@ int map_again(AppError error) {
 struct DefaultError {
   int code = 4;
   ~DefaultError() { std::println(50); }
+public:
+  DefaultError() = default;
 };
 DefaultError map_default(SourceError error) { return DefaultError(); }
 

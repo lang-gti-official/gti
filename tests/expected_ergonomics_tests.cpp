@@ -214,7 +214,7 @@ void testDiagnostics() {
   // expected<T, E> is an ordinary source class, so an owning payload enum is
   // an admitted mapping result rather than a carrier containment error.
   const auto payloadResult =
-      analyze("struct Resource { ~Resource() {} };\n"
+      analyze("struct Resource { ~Resource() {}  public: Resource() = default; };\n"
               "enum class Packet { item(Resource value), idle };\n"
               "expected<int, int> read() { return 7; }\n"
               "Packet map(int input) { return Packet::item(Resource()); }\n"

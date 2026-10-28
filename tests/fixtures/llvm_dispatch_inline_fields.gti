@@ -20,8 +20,8 @@ public:
   int read() override { return this.payload; }
   void write(int value) mut override { this.payload = value; }
 };
-struct Inner { mut Leaf leaf{7}; };
-struct Outer { mut Inner inner{}; };
+struct Inner { mut Leaf leaf{7};  public: Inner() = default; };
+struct Outer { mut Inner inner{};  public: Outer() = default; };
 struct Explicit {
   mut Leaf leaf;
   Explicit(int value) : leaf(Leaf(value)) {}

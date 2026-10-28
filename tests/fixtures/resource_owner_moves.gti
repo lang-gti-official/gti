@@ -16,6 +16,8 @@ public:
     unsafe { this.process.release(allocation); }
   }
   ~Provider() { std::println(901); }
+public:
+  Provider() = default;
 };
 class Element {
   int id;

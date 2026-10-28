@@ -51,6 +51,8 @@ public:
   int read(int extra) override { return 4 + extra; }
   bool good(bool expected) override { return expected; }
   ~Empty() { empty_destroyed = 4; }
+public:
+  Empty() = default;
 };
 
 int via_root(Root& value) { return value.phase(); }

@@ -62,12 +62,14 @@ void test(const std::filesystem::path &root) {
 namespace slot_operation_probe {
 interface First {};
 interface Target {};
-class Model : public First, public Target { public: mut int number = 41; };
-class Other : public Target, public First { public: mut int number = 41; };
+class Model : public First, public Target { public: mut int number = 41;  public: Model() = default; };
+class Other : public Target, public First { public: mut int number = 41;  public: Other() = default; };
 class Plain { public: Plain() {} };
 struct Holder {
   mut gti_internal::polymorphic_storage<Target, 64, 16> first{};
   mut gti_internal::polymorphic_storage<Target, 64, 16> second{};
+public:
+  Holder() = default;
 };
 int run(int mode) {
   Plain plain{};

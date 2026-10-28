@@ -54,6 +54,8 @@ int consume_box(Box box) { return box.value; }
 struct Flag {
   operator bool() { return true; }
   implicit operator int() { return 19; }
+public:
+  Flag() = default;
 };
 #macro Flag flag() { return Flag(); }
 Box boxed_result() { return choose(true, 41, 0); }
@@ -105,6 +107,8 @@ struct InitRecord {
   int field = initial_value(7);
   static int shared = initial_value(9);
   uint64_t wide = initial_value(uint64_t(5));
+public:
+  InitRecord() = default;
 };
 int initialized_global = initial_value(3);
 namespace setup { int namespaced = initial_value(4); }

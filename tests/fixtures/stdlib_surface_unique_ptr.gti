@@ -5,6 +5,8 @@ public:
   int32_t value() {
     return 7;
   }
+public:
+  Value() = default;
 };
 
 int main() {

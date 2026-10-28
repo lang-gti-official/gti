@@ -62,6 +62,8 @@ interface Shape {
 class Square : public Shape {
 public:
   int sides() override { return 4; }
+public:
+  Square() = default;
 };
 
 // Read-only and mutable class referents, beside a literal and a scalar formal.

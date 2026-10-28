@@ -10,6 +10,8 @@
 std::atomic<int> observed{0};
 struct Observer {
   void operator()(int& value) { observed.fetch_add(value); }
+public:
+  Observer() = default;
 };
 
 struct Tracked {

@@ -86,22 +86,24 @@ int main() { Holder<int, bool> pair{}; Holder<> empty{}; return 0; }
 class Owner<Args...> {
 public:
   void bad<Args>(Args... args) {}
+public:
+  Owner() = default;
 };
 int main() { Owner<int> value{}; return 0; }
 )gti",
         false, "a non-pack method parameter cannot borrow a shadowed pack name",
         "GTI-S2023");
   check(R"gti(
-class Owner<Args...> { public: void invoke(Args... args) {} };
+class Owner<Args...> { public: void invoke(Args... args) {}  public: Owner() = default; };
 int main() { Owner<void> value{}; return 0; }
 )gti",
         false, "concrete owner packs still reject non-object element types",
         "GTI-S2023");
   constexpr std::string_view layers = R"gti(
 namespace shapes {
-struct Layer<uint64_t N> { Layer<N - 1> inner; int32_t value = 1; };
+struct Layer<uint64_t N> { Layer<N - 1> inner; int32_t value = 1;  public: Layer() = default; };
 }
-struct shapes::Layer<0> { int32_t value = 100; };
+struct shapes::Layer<0> { int32_t value = 100;  public: Layer() = default; };
 )gti";
   check(std::string(layers) + R"gti(
 int main() { shapes::Layer<2> stack{}; return stack.inner.inner.value - 100; }
@@ -129,8 +131,8 @@ int main() { Box<> object{}; return object.inner.inner.value - 100; }
         "aliases, generic defaults and field extents retain concrete identity");
   check(
       R"gti(
-struct Inner { int32_t value = 17; };
-struct Outer { Inner inner; };
+struct Inner { int32_t value = 17;  public: Inner() = default; };
+struct Outer { Inner inner;  public: Outer() = default; };
 int main() { Outer object{}; return object.inner.value - 17; }
 )gti",
       true,
@@ -145,8 +147,10 @@ public:
 class Derived : public Base {
 public:
   int read() override { return this.stamp; }
+public:
+  Derived() = default;
 };
-struct Holder { Derived value; };
+struct Holder { Derived value;  public: Holder() = default; };
 int main() { Holder owner{}; return owner.value.read() - 5; }
 )gti",
         true,
@@ -240,6 +244,8 @@ class Token {
   int identity = 4;
 public:
   Token(int identity) : identity(identity) {}
+public:
+  Token() = default;
 };
 int main() { Token value{}; return 0; }
 )gti",
@@ -271,7 +277,7 @@ int main() { Node object{}; return 0; }
     }
   }
   check(R"gti(
-struct Growing<uint64_t N> { Growing<N + 1> next; int value = 1; };
+struct Growing<uint64_t N> { Growing<N + 1> next; int value = 1;  public: Growing() = default; };
 int main() { Growing<0> object{}; return 0; }
 )gti",
         false,
@@ -279,13 +285,13 @@ int main() { Growing<0> object{}; return 0; }
         "diagnostic",
         "GTI-S2105");
   check(R"gti(
-struct Underflow<uint64_t N> { Underflow<N - 1> next; int value = 1; };
+struct Underflow<uint64_t N> { Underflow<N - 1> next; int value = 1;  public: Underflow() = default; };
 int main() { Underflow<0> object{}; return 0; }
 )gti",
         false, "closed substituted arithmetic remains checked", "GTI-S2026");
   std::optional<lang::CompileTimeValue> retained;
   check(R"gti(
-struct Overflow<uint64_t N> { Overflow<N + 1> next; int value = 1; };
+struct Overflow<uint64_t N> { Overflow<N + 1> next; int value = 1;  public: Overflow() = default; };
 int main() { Overflow<18446744073709551615> object{}; return 0; }
 )gti",
         false, "closed substituted overflow remains checked", "GTI-S2026");

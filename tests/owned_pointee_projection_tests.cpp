@@ -132,7 +132,7 @@ lang::FrontendResult trusted(std::string name, const std::string &source) {
 void checkSourceDefinedIdentity() {
   const auto frontend = trusted("gti-owned-pointee-renamed.gti", R"gti(
 #include <std/memory>
-class Item { public: int read() { return 4; } };
+class Item { public: int read() { return 4; }  public: Item() = default; };
 class UnrelatedName<T> {
   mut gti_internal::unique_owner<T> resource = nullptr;
 public:
@@ -145,11 +145,15 @@ public:
   T& with_parameter(int unrelated) {
     return gti_internal::unique_owner_borrow(this.resource);
   }
+public:
+  UnrelatedName() = default;
 };
 class Borrowed {
   mut Item value{};
 public:
   mut Item& alter() mut { return this.value; }
+public:
+  Borrowed() = default;
 };
 int read(UnrelatedName<Item>& owner) { return owner.inspect().read(); }
 int write(mut UnrelatedName<Item>& owner) { return owner.alter().read(); }

@@ -241,6 +241,8 @@ using Callback = (int32_t) -> int32_t;
 class Owner {
 public:
   static int32_t transform(int32_t value) { return value; }
+public:
+  Owner() = default;
 };
 int main() { Callback callback = Owner::transform; return 0; }
 )");
@@ -251,7 +253,7 @@ int main() { Callback callback; return 0; }
 )");
 
   expectCallbackFailure("owned-callback-boundary.gti", R"(
-class Owner {};
+class Owner { public: Owner() = default; };
 using Callback = (Owner) -> void;
 int main() { return 0; }
 )");
@@ -654,7 +656,7 @@ int main() {
         "[[thread_confined_callback]] void f<T>() {}",
         "[[thread_confined_callback, track_caller]] void f() {}",
         "[[thread_confined_callback, thread_confined_callback]] void f() {}",
-        "class C { public: [[thread_confined_callback]] static void f() {} };",
+        "class C { public: [[thread_confined_callback]] static void f() {}  public: C() = default; };",
         "[[thread_confined_callback]] int main() { return 0; }"}) {
     const auto rejected = analyze("bad-confined.gti", invalid);
     expect(!rejected.canGenerateCode() && hasCode(rejected, "GTI-S2099"),

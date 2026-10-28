@@ -18,6 +18,8 @@ public:
 class Maker {
 public:
   virtual Tracked make() { return Tracked(1); }
+public:
+  Maker() = default;
 };
 
 // A traced receiver family. Each receiver prints 100 + its tag when destroyed.

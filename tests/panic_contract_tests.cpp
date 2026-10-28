@@ -223,7 +223,7 @@ void moved() {
   Guard owner{88};
   consume(std::move(owner), terminal_argument(), later());
 }
-struct Plain { int value = 1; };
+struct Plain { int value = 1;  public: Plain() = default; };
 void consume_copy(Plain first, int second) {}
 void copied() { Plain value{}; consume_copy(value, terminal_argument()); }
 void consume_borrow(int& first, int second) {}

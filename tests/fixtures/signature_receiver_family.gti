@@ -5,32 +5,34 @@ namespace callbacks {
     using result_type = R;
     using nested_alias = result_type;
     int mode() { return 2; }
-  };
+   public: Callback() = default; };
   class Callback<R(Args...) &&> {
   public:
     using result_type = R;
     using nested_alias = result_type;
     int mode() { return 3; }
-  };
+   public: Callback() = default; };
   class Callback<R(Args...)> {
   public:
     using result_type = R;
     using nested_alias = result_type;
     int mode() { return 1; }
-  };
+   public: Callback() = default; };
   class Special<R(Args...)> {
   public:
     int mode() { return 1; }
-  };
+   public: Special() = default; };
   class Special<R(Args...) mut> {
   public:
     int mode() { return 2; }
-  };
+   public: Special() = default; };
 }
 
 class callbacks::Special<int() mut> {
 public:
   int mode() { return 42; }
+public:
+  Special() = default;
 };
 
 using Read = int(int);

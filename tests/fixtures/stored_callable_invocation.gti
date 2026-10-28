@@ -54,6 +54,8 @@ public:
     this.total += value;
     return this.total;
   }
+public:
+  Counter() = default;
 };
 
 int exercise() {

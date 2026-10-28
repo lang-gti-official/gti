@@ -94,11 +94,15 @@ public:
   void operator()() { std::println("class read task"); }
   void operator()() mut { std::println("class mutable task"); }
   void operator()() && { std::println("class once task"); }
+public:
+  class_task() = default;
 };
 
 class fresh_task {
 public:
   void operator()() { std::println("fresh class task"); }
+public:
+  fresh_task() = default;
 };
 
 int main() {
@@ -695,7 +699,7 @@ int main() {
                         "transfer-safe exact void() task", true, true);
   expectThreadRejection("nontransfer-thread-capture.gti", R"(
 #include <std/thread>
-[[no_transfer, no_share]] class local_only { int32_t value = 0; };
+[[no_transfer, no_share]] class local_only { int32_t value = 0;  public: local_only() = default; };
 int main() {
   local_only state = local_only();
   auto task = [state]() -> void {};
@@ -839,6 +843,8 @@ void testTransferQualifiedCallables() {
 #include <std/thread>
 struct PackedTask<Args...> {
   int operator()(Args... arguments) { return 42; }
+public:
+  PackedTask() = default;
 };
 int main() {
   mut std::thread_result<int> worker{};
@@ -856,6 +862,8 @@ int main() {
 #include <std/thread>
 struct PackedTask<Args...> {
   int operator()(Args... arguments) { return 42; }
+public:
+  PackedTask() = default;
 };
 int main() {
   mut std::thread_result<int> worker{};
@@ -967,7 +975,7 @@ int main() {
 #include <std/memory>
 #include <std/thread>
 [[transfer]] interface Job { int perform(); };
-class Work : public Job { public: int perform() override { return 42; } };
+class Work : public Job { public: int perform() override { return 42; }  public: Work() = default; };
 class Runner {
   std::unique_ptr<Job> job;
 public:

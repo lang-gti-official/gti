@@ -168,6 +168,8 @@ public:
       return *pointer + 1;
     }
   }
+public:
+  AddressPair() = default;
 };
 
 struct NestedAddresses {
@@ -215,6 +217,8 @@ unsafe int constructed_nested_field(NestedAddresses& nested) {
 
 struct Metadata {
   mut int count = 0;
+public:
+  Metadata() = default;
 };
 
 unsafe int constructed_with_metadata(mut Metadata& metadata, int* address) {

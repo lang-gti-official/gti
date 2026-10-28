@@ -142,6 +142,8 @@ void testResolvedSignatures() {
 struct Holder {
   int value = 7;
   [[borrowed_from(this)]] int& get() { return this.value; }
+public:
+  Holder() = default;
 };
 int& implicit(int& owner) { return owner; }
 int main() {

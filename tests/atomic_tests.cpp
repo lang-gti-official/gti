@@ -327,7 +327,7 @@ int main() {
            {"borrowed", "std::string_view", "\"text\""}}) {
     const std::string declarations = type == "choice"
                                          ? "enum class choice { one };\n"
-                                     : type == "payload" ? "class payload {};\n"
+                                     : type == "payload" ? "class payload { public: payload() = default; };\n"
                                                          : "";
     const lang::FrontendResult invalid =
         analyze("atomic-invalid-" + name + ".gti",
@@ -711,6 +711,8 @@ public:
     this.state.wait(0, std::memory_order_seq_cst());
   }
   void wake() { this.state.notify_one(); this.state.notify_all(); }
+public:
+  Completion() = default;
 };
 int main() { Completion completion{}; completion.wait(); completion.wake(); return 0; }
 )";

@@ -59,11 +59,13 @@ def reject_invalid_sources(compiler: pathlib.Path) -> None:
 }""",
         "mutable-hasher": """class Hash {
 public: std::size_t operator()(int& key) mut { return 0; }
+public:
+  Hash() = default;
 };
 int main() { std::unordered_map<int, int, Hash> values{}; return 0; }
 """,
-        "missing-hasher": """class Key {};
-class Equal { public: bool operator()(Key& left, Key& right) { return true; } };
+        "missing-hasher": """class Key { public: Key() = default; };
+class Equal { public: bool operator()(Key& left, Key& right) { return true; }  public: Equal() = default; };
 int main() { std::unordered_map<Key, int, std::hash<Key>, Equal> values{}; return 0; }
 """,
     }

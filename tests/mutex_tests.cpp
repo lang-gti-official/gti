@@ -325,6 +325,8 @@ Box global{};
 class Registry {
 public:
   static Box item{};
+public:
+  Registry() = default;
 };
 thread_local mut int touched = 0;
 int main() {
@@ -408,8 +410,8 @@ int main() {
   expect(normal == 1 && failure != 0,
          "normal and ordinary failure exits both contain native retirement");
   for (const std::string declaration : {
-           "class Owned { public: ~Owned() {} }; Owned global{};",
-           "class Owned { public: ~Owned() {} }; "
+           "class Owned { public: ~Owned() {}  public: Owned() = default; }; Owned global{};",
+           "class Owned { public: ~Owned() {}  public: Owned() = default; }; "
            "std::mutex<Owned> global{Owned()};"}) {
     const std::string source = "#include <std/mutex>\n" + declaration +
                                "\nint main() { return 0; }\n";
@@ -1057,7 +1059,7 @@ void testPayloadConcurrencyCapabilities() {
     const auto frontend =
         analyze("mutex-payload-capabilities.gti",
                 "#include <std/mutex>\n#include <std/memory>\n" + policy + R"(
-struct Payload { mut int value = 0; };
+struct Payload { mut int value = 0;  public: Payload() = default; };
 int main() {
   auto owned = std::make_shared<std::mutex<Payload>>(Payload());
   return 0;
@@ -1109,7 +1111,7 @@ int main() {
 #include <std/mutex>
 #include <std/memory>
 #include <std/thread>
-[[no_transfer]] struct Affine { int value = 0; };
+[[no_transfer]] struct Affine { int value = 0;  public: Affine() = default; };
 int main() {
   auto owner = std::make_shared<std::mutex<Affine>>(Affine());
   auto started = std::thread::start([value = std::move(owner)]() -> void {});

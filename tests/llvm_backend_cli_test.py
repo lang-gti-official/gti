@@ -77,7 +77,7 @@ def main() -> int:
         # structured rejection and the existing-artifact boundary.
         source.write_text("""
 int helper() { auto call = []() -> int { return 9; }; return call(); }
-class Value { public: virtual int read() { return helper(); } };
+class Value { public: virtual int read() { return helper(); }  public: Value() = default; };
 int main() { Value value{}; return 0; }
 """, encoding="utf-8")
         mir = root / "required.mir"

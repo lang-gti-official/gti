@@ -45,6 +45,8 @@ struct Audit {
     }
     provider_test_mode(0);
   }
+public:
+  Audit() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

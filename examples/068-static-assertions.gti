@@ -9,6 +9,8 @@ class Packet<uint64_t Capacity> {
 
 public:
   uint64_t capacity() { return Capacity; }
+public:
+  Packet() = default;
 };
 
 int main() {

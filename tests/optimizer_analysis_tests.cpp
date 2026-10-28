@@ -558,6 +558,8 @@ struct Pair {
   int32_t right = 0;
 
   Pair(int32_t first, int32_t second) : left(first), right(second) {}
+public:
+  Pair() = default;
 };
 
 union Overlay {
@@ -703,6 +705,8 @@ class Box {
 public:
   mut int value = 1;
   mut int& get() mut { return this.value; }
+public:
+  Box() = default;
 };
 
 int& relay(int& source) { return source; }
@@ -972,6 +976,8 @@ class Pair {
 public:
   mut int index = 0;
   mut int other = 0;
+public:
+  Pair() = default;
 };
 
 int disjoint_field_read() {

@@ -92,11 +92,15 @@ struct NativeValue {
 [[c_opaque]] struct UnusedHandle;
 
 class UnusedTemplate<T> {
+public:
+  UnusedTemplate() = default;
 };
 
 class Constants {
 public:
   static constexpr int32_t answer = 42;
+public:
+  Constants() = default;
 };
 
 constexpr int32_t seed = 1;
@@ -443,6 +447,8 @@ T unused_free<T>(T value) { return value; }
 class UnusedOperators<T> {
 public:
   bool operator==(UnusedOperators<T>& other) { return true; }
+public:
+  UnusedOperators() = default;
 };
 
 class UnusedMembers {
@@ -948,6 +954,8 @@ int32_t initial_value() { return 1; }
 class StaticOnly {
 public:
   static int32_t value = initial_value();
+public:
+  StaticOnly() = default;
 };
 int main() { return StaticOnly::value - 1; }
 )");
@@ -1288,6 +1296,8 @@ public:
       return observed;
     }, value);
   }
+public:
+  calculator() = default;
 };
 
 int main() {
@@ -1578,11 +1588,15 @@ public:
   int32_t& operator*() { return this.current; }
   void operator++() mut { this.current++; }
   bool operator!=(Cursor& other) { return this.current != other.current; }
+public:
+  Cursor() = default;
 };
 
 class Increment {
 public:
   int32_t operator()(int32_t value) { return value + 1; }
+public:
+  Increment() = default;
 };
 
 int main() {
@@ -1661,12 +1675,16 @@ class OrdinaryCleanup {
   mut int32_t value = 1;
 public:
   ~OrdinaryCleanup() { this.value = 0; }
+public:
+  OrdinaryCleanup() = default;
 };
 
 class GenericCleanup<T> {
   mut int32_t value = 1;
 public:
   ~GenericCleanup() { this.value = 0; }
+public:
+  GenericCleanup() = default;
 };
 
 int main() {
@@ -2331,7 +2349,7 @@ int main() {
 
 void testRetainedConstructorDeclarations() {
   const auto frontend = lang::Frontend().analyze("alias-constructors.gti", R"(
-struct Cursor<T> {};
+struct Cursor<T> { public: Cursor() = default; };
 struct Packet<T> {
   using cursor = Cursor<T>;
   T value;
@@ -2394,7 +2412,7 @@ int main() {
 void testTypeOnlyConcreteAliases() {
   const auto frontend = lang::Frontend().analyze("type-only-aliases.gti", R"(
 namespace sample {
-struct Value { int value = 0; };
+struct Value { int value = 0;  public: Value() = default; };
 struct Box<T> { T value; };
 using Nested = Box<Box<Value>>;
 class Catalog {
@@ -2405,6 +2423,8 @@ public:
 class Chain<T> {
   using Next = Chain<Chain<T>>;
   using Entry = Box<Value>;
+public:
+  Chain() = default;
 };
 struct ShelfItem<T, uint64_t N> { T value; };
 class Shelf<T, uint64_t N> {
@@ -2499,13 +2519,17 @@ namespace sample {
 class Reader<T> {
 public:
   int read() { return 1; }
+public:
+  Reader() = default;
 };
 }
 class sample::Reader<int> {
 public:
   int read() { return 2; }
+public:
+  Reader() = default;
 };
-struct Unrelated {};
+struct Unrelated { public: Unrelated() = default; };
 int invoke<F>(F callback) { return callback(); }
 int main() {
   sample::Reader<int> exact{};
@@ -2761,6 +2785,8 @@ class Envelope<T> {
 public:
   Envelope<F>(F callback) {}
   int read() { return 3; }
+public:
+  Envelope() = default;
 };
 int main() {
   Envelope<int> value{[]() -> int { return 3; }};

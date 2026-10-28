@@ -177,6 +177,8 @@ struct Counter {
     this.calls++;
     return this.calls;
   }
+public:
+  Counter() = default;
 };
 Builder make() { return Builder("made"); }
 int main() {
@@ -204,10 +206,14 @@ class Shape {
 public:
   virtual int sides() { return 0; }
   operator int() { return this.sides(); }
+public:
+  Shape() = default;
 };
 class Square : public Shape {
 public:
   int sides() override { return 4; }
+public:
+  Square() = default;
 };
 struct Box<T> {
   T value;
@@ -298,6 +304,8 @@ int main() { return read(Reading(7)) - 7; }
 struct Source {
   int value = 7;
   implicit operator int() { return this.value; }
+public:
+  Source() = default;
 };
 T convert<T>(Source value) { return value; }
 int main() { return convert<int>(Source()) - 7; }
@@ -307,8 +315,10 @@ int main() { return convert<int>(Source()) - 7; }
 struct End {
   End(int value) {}
   implicit End(Source& value) {}
+public:
+  End() = default;
 };
-struct Source { implicit operator End() { return End(7); } };
+struct Source { implicit operator End() { return End(7); }  public: Source() = default; };
 End make(Source& value) { return value; }
 int main() { return 0; }
 )gti",
@@ -355,9 +365,9 @@ int main() { return take(7); }
            "GTI-S2012", "brace construction never calls");
   // One step only: no chain through an intermediate type.
   rejected(R"gti(
-struct C { int raw = 7; };
-struct B { implicit operator C() { return C(); } };
-struct A { implicit operator B() { return B(); } };
+struct C { int raw = 7;  public: C() = default; };
+struct B { implicit operator C() { return C(); }  public: B() = default; };
+struct A { implicit operator B() { return B(); }  public: A() = default; };
 int main() { A start{}; C chained = start; return chained.raw; }
 )gti",
            "GTI-S2003", "Cannot initialize 'chained'");
@@ -377,6 +387,8 @@ struct Target {
 struct Source {
   int raw = 2;
   implicit operator Target() { return Target(this.raw); }
+public:
+  Source() = default;
 };
 )gti";
   rejected(ambiguous + "int main() { Source source{}; Target target = "
@@ -414,6 +426,8 @@ struct Counter {
     this.calls++;
     return this.calls;
   }
+public:
+  Counter() = default;
 };
 int main() { Counter fixed{}; return int(fixed); }
 )gti",
@@ -457,7 +471,7 @@ int main() { return 0; }
   // A generic body is checked before its instances: a type-parameter target
   // stays a numeric conversion.
   rejected(R"gti(
-struct Meters { int value = 1; operator int() { return this.value; } };
+struct Meters { int value = 1; operator int() { return this.value; }  public: Meters() = default; };
 T convert<T>(Meters meters) { return T(meters); }
 int main() { return convert<int>(Meters()); }
 )gti",
@@ -470,9 +484,11 @@ class Globals {
 public:
   struct Source {
     implicit operator int() { return Globals::later; }
-  };
+   public: Source() = default; };
   static int32_t early = Source();
   static mut int32_t later = 5;
+public:
+  Globals() = default;
 };
 int main() { return Globals::early; }
 )gti",
@@ -482,9 +498,11 @@ class Globals {
 public:
   struct Source {
     operator int() { return Globals::later; }
-  };
+   public: Source() = default; };
   static int32_t early = int(Source());
   static mut int32_t later = 5;
+public:
+  Globals() = default;
 };
 int main() { return Globals::early; }
 )gti",
@@ -494,9 +512,11 @@ class Globals {
 public:
   struct Source {
     operator bool() { return Globals::later > 0; }
-  };
+   public: Source() = default; };
   static bool tested = Source() ? true : false;
   static mut int32_t later = 5;
+public:
+  Globals() = default;
 };
 int main() { return Globals::tested ? 1 : 0; }
 )gti",

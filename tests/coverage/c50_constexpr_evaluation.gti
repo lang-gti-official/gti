@@ -1,5 +1,5 @@
 // constexpr functions, compile-time constants and their use in types.
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 constexpr int32_t square(int32_t v) { return v * v; }
 constexpr uint64_t pow2(uint64_t exponent) {

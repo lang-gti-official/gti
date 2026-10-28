@@ -11,11 +11,15 @@ class Target {
 public:
   ~Target() { std::println(90); }
   Packet operator()(int divisor) { return Packet(12 / divisor); }
+public:
+  Target() = default;
 };
 
 class Caller {
 public:
   ~Caller() { std::println(9); }
+public:
+  Caller() = default;
 };
 
 void accept(Packet packet, int after) {

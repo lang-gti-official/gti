@@ -6,6 +6,8 @@ int main() {
 [[unsafe_transfer]] class task_cleanup_failure {
 public:
   ~task_cleanup_failure() { int32_t zero = 0; int32_t value = 1 / zero; }
+public:
+  task_cleanup_failure() = default;
 };
 int main() {
   task_cleanup_failure guard = task_cleanup_failure();

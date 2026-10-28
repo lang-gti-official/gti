@@ -8,6 +8,8 @@ extern "C" {
 
 struct Guard {
   ~Guard() { int32_t checked = 100 / native_confined_cleanup_divisor(); }
+public:
+  Guard() = default;
 };
 
 [[thread_confined_callback]]

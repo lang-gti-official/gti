@@ -14,6 +14,8 @@ public:
     unsafe { this.process.release(allocation); }
   }
   ~ReportingResource() { std::println(901); }
+public:
+  ReportingResource() = default;
 };
 class Part {
   int id;

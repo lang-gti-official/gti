@@ -1,6 +1,6 @@
 #include <std/memory>
 
-struct EntryRecord { int code = 7; };
+struct EntryRecord { int code = 7;  public: EntryRecord() = default; };
 
 // The allocation owns the address independently of the storage handle's place.
 // Construction happens in that address, not in a temporary that is moved in.

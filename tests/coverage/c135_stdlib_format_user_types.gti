@@ -41,6 +41,8 @@ public:
     }
     return std::try_format_to(output, "({}, {})", value.x, value.y);
   }
+public:
+  formatter() = default;
 };
 
 // Delegates both endpoints to the Point formatter (copies of passive values).
@@ -52,6 +54,8 @@ public:
     geo::Point to = value.to;
     return std::try_format_to(output, "{} -> {}", from, to);
   }
+public:
+  formatter() = default;
 };
 
 // An exact specialization for one instance of an application generic.
@@ -66,6 +70,8 @@ public:
     output.push_back('>');
     return;
   }
+public:
+  formatter() = default;
 };
 
 // Delegates width/fill/alignment to the owning-string formatter.
@@ -76,6 +82,8 @@ public:
     std::formatter<std::string> text{};
     return text.format(value.text, output, spec);
   }
+public:
+  formatter() = default;
 };
 
 std::string describe<T>(std::string_view name, T value) requires std::formattable<T> {

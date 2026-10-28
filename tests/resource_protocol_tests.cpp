@@ -99,7 +99,7 @@ int main() {
   }
   positive(
       R"(
-struct Owner { int value = 42; };
+struct Owner { int value = 42;  public: Owner() = default; };
 class Handle {
   Owner& owner;
 public:
@@ -128,6 +128,8 @@ concept number_source<T> = requires(T& value) { { value.number() } -> int; };
 class Adapter<T> {
 public:
   int number() { return 42; }
+public:
+  Adapter() = default;
 };
 int read<T>(T& value) requires number_source<T> { return value.number(); }
 int relay<T>(Adapter<T>& value) { return read(value); }
@@ -217,6 +219,8 @@ struct Budget {
     return unexpected(std::alloc_errc::resource_exhausted);
   }
   unsafe void release(std::raw_allocation allocation) {}
+public:
+  Budget() = default;
 };
 int use(std::resource_ref<Budget> resource) {
   mut std::resource_storage<int,Budget> slots{resource};
@@ -301,7 +305,7 @@ int main() {
            "GTI-S2058",
            "applications cannot forge the source-defined resource seal");
   negative(R"(
-struct Incomplete {};
+struct Incomplete { public: Incomplete() = default; };
 int main() { Incomplete resource{}; unsafe { auto bound=std::bind_resource(resource); } return 0; }
 )",
            "GTI-S2029",
@@ -312,6 +316,8 @@ struct Wrong {
     return unexpected(std::alloc_errc::resource_exhausted);
   }
   unsafe void release(std::raw_allocation allocation) {}
+public:
+  Wrong() = default;
 };
 int main() { mut Wrong resource{}; unsafe { auto bound=std::bind_resource(resource); } return 0; }
 )",
@@ -384,6 +390,8 @@ struct Resource {
   }
   unsafe void release(std::raw_allocation allocation) {}
   void reset() mut {}
+public:
+  Resource() = default;
 };
 int main() {
   mut Resource resource{};
@@ -428,6 +436,8 @@ struct Resource {
   }
   unsafe void release(std::raw_allocation allocation) {}
   void reset() mut {}
+public:
+  Resource() = default;
 };
 class Fixed {
   int value;

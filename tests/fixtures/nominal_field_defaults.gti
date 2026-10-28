@@ -18,7 +18,7 @@ public:
   }
 };
 
-struct Generated { Leaf first; Leaf second; };
+struct Generated { Leaf first; Leaf second;  public: Generated() = default; };
 class Declared {
   Leaf first;
   Leaf second;
@@ -35,8 +35,10 @@ public:
 class Derived : public Base {
 public:
   int read() override { return this.stamp; }
+public:
+  Derived() = default;
 };
-struct NominalDerived { Derived value; };
+struct NominalDerived { Derived value;  public: NominalDerived() = default; };
 
 class PlainValue {
 public:
@@ -68,7 +70,7 @@ public:
   }
 };
 
-struct OwnedCounts { int identity = 37; };
+struct OwnedCounts { int identity = 37;  public: OwnedCounts() = default; };
 [[no_transfer, no_share]] class BorrowedOwner<R> {
   R& source;
   int limit;

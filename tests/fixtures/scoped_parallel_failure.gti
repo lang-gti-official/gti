@@ -8,6 +8,8 @@ struct World {
   mut int first = 0;
   mut int second = 0;
   ~World() { std::println(this.first); std::println(this.second); }
+public:
+  World() = default;
 };
 
 [[unsafe_transfer]] class Job {

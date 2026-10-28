@@ -5,6 +5,8 @@ public:
   using signature = R(Args...);
   int value() { return 7; }
   T extra<T>(T value) { return value; }
+public:
+  Signature() = default;
 };
 
 class Stored<R()> {
@@ -17,22 +19,30 @@ public:
 class Identity<R(R)> {
 public:
   R call(R value) { return value; }
+public:
+  Identity() = default;
 };
 
 class Action<void(Args...)> {
 public:
   void call(Args... args) {}
+public:
+  Action() = default;
 };
 
 class Prefix<R(int, Args...)> {
 public:
   int value() { return 7; }
+public:
+  Prefix() = default;
 };
 
 class Forward<S> {
 public:
   Signature<S> child{};
   int value() { return child.value(); }
+public:
+  Forward() = default;
 };
 
 int inspect<S>(Signature<S>& tag) { return tag.value(); }

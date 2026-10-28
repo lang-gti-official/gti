@@ -20,6 +20,8 @@ struct Receiver {
     this.total += value;
     std::println("object accepted");
   }
+public:
+  Receiver() = default;
 };
 
 expected<std::unique_ptr<Token>, int> make_owner(bool missing) {

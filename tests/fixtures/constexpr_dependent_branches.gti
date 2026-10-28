@@ -38,6 +38,8 @@ static_assert(width_class<int>() == 4 && width_class<double>() == 8);
 
 struct underlying_probe<E, U> {
   bool matches() requires std::enum_underlying<E, U> { return true; }
+public:
+  underlying_probe() = default;
 };
 enum class narrow_tag : uint8_t { low, high };
 enum class wide_tag : uint16_t { low, high };
