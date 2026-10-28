@@ -1775,6 +1775,8 @@ unsafe void dispose_shared<std::storage_element T>(void* address, bool payload) 
   unsafe {
     auto block = std::typed_address<shared_control>(address);
     if (payload) {
+      // Keep the implicit weak credit through the complete payload cleanup.
+      mut implicit_weak_guard<T> guard{block};
       std::destroy_at(std::typed_address<T>(block->object));
     } else {
       // Same immutable target/type layout already checked before allocation.
@@ -1814,19 +1816,12 @@ public:
   unsafe implicit_weak_guard(shared_control* block) : block(block) {}
   ~implicit_weak_guard() { unsafe { release_weak<Payload>(this.block); } }
 };
-unsafe void destroy_last_shared<Payload>(shared_control* block) {
-  unsafe {
-    // Always release the implicit weak credit, even if payload cleanup fails.
-    mut implicit_weak_guard<Payload> guard{block};
-    auto dispose = block->dispose;
-    gti_internal::function_pointer_invoke(dispose, std::erase_address(block), true);
-  }
-}
 unsafe void release_shared<Payload>(shared_control* block) {
   if (block == nullptr) { return; }
   unsafe {
     if (block->strong.fetch_sub_wrapping(uint64_t(1), std::memory_order_acq_rel()) == uint64_t(1)) {
-      destroy_last_shared<Payload>(block);
+      auto dispose = block->dispose;
+      gti_internal::function_pointer_invoke(dispose, std::erase_address(block), true);
     }
   }
 }
@@ -1848,6 +1843,8 @@ public:
   /// The caller transfers exactly one positive strong credit for this block.
   /// Both pointers must be null, or the block must own a live payload and view
   /// into it, with the matching exact-type destruction thunk and allocation lease.
+  /// The thunk must release the implicit weak credit after payload cleanup,
+  /// including its defined-failure path.
   /// The payload must satisfy every transfer/share permission promised by T;
   /// adopting a more capable view must never launder thread-affine state.
   unsafe shared_ptr(std::detail::shared_control* block, const T* view)
