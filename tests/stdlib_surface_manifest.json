@@ -15,7 +15,7 @@
     "stdlib/std/deque.gti": "c0e5fd8a5be59682871b2ded7e2d7e1b066ceec1fb18372288d9f12da2010c80",
     "stdlib/std/detail/iterator.gti": "37ee100c51eb970cdf06df5f79a8a27afab75f977787ec148b752f1a8bb9aab9",
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
-    "stdlib/std/encoding.gti": "8c98b63d176bae88734e91f0f7bcd4f1515741e389d71c5dac3e4d71a7615295",
+    "stdlib/std/encoding.gti": "7a2eeea4faadd7aad158f65dc6f9514a06388a4c8336b9fed54ae0bf6c27b633",
     "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
     "stdlib/std/experimental/optional.gti": "47f04282ad4da9c60f38dbdd6fba8e8aa9add6052addc0bf0245381bef0a45fa",
     "stdlib/std/filesystem.gti": "c023d1f5d67afe2662bc2c84c1eff7cde9b285b9dba3025735c28e04c4dcb932",
@@ -3437,7 +3437,15 @@
         "std::encoding::base64::encode",
         "std::encoding::decode_errc",
         "std::encoding::hex::decode",
-        "std::encoding::hex::encode"
+        "std::encoding::hex::encode",
+        "std::encoding::utf8::append",
+        "std::encoding::utf8::decode",
+        "std::encoding::utf8::decoder",
+        "std::encoding::utf8::encode",
+        "std::encoding::utf8::errc",
+        "std::encoding::utf8::error",
+        "std::encoding::utf8::scalar",
+        "std::encoding::utf8::validate"
       ],
       "case_ids": [
         "encoding"
@@ -3445,7 +3453,9 @@
       "required_instantiations": [
         "RFC 4648 empty and one/two/three-byte tails",
         "all 256 byte values through Base64 and hexadecimal round trips",
-        "strict invalid length, character, padding, and canonical-bit errors"
+        "strict invalid length, character, padding, and canonical-bit errors",
+        "UTF-8 scalar boundaries, malformed sequences and exact error offsets",
+        "UTF-8 cursor exhaustion and failure without advancement"
       ],
       "evidence": [
         "docs/language/encoding.md",

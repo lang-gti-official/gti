@@ -9933,7 +9933,15 @@ follow-ups:
   comments and string literals. The lexer rejects invalid UTF-8, lone CR, and
   non-ASCII syntax before later phases can cascade; the formatter, source
   manager, Tree-sitter grammar, and UTF-16 LSP boundary follow the same policy.
-- **Remaining scope:** State the public runtime byte/UTF-8 policy,
+- **Implemented runtime UTF-8 sub-slice:** `<std/encoding>` now supplies
+  source-defined `std::encoding::utf8` validation, single-scalar decoding,
+  encoding/append and a borrowed fallible cursor. Strings remain counted bytes;
+  malformed sequences return errors with byte offsets rather than replacement
+  characters. Traversal does not allocate. Scalar boundaries, all Unicode scalar
+  values, malformed inputs and retained input borrows have focused coverage.
+  UTF-16, normalization, grapheme segmentation and migration of JSON's duplicate
+  implementation remain later work; see [the API contract](../language/encoding.md).
+- **Remaining scope:** Extend the public runtime byte/UTF-8 policy,
   owning/view conversions, numeric parsing, formatting, and explicit failure.
   Prefer ordinary GTI algorithms and narrow host calls over exposing C buffers.
   The current formatter recognizes automatic or numeric-indexed fields,

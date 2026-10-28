@@ -9,7 +9,108 @@ bool bytes_equal(std::string& value, uint8_t first, uint8_t second,
          uint8_t(value[std::size_t(2)]) == third;
 }
 
+bool utf8_rejects(std::string_view hex, std::encoding::utf8::errc code,
+                  int32_t offset) {
+  auto bytes = std::encoding::hex::decode(hex).expect("invalid test hex");
+  auto checked = std::encoding::utf8::validate(bytes.view());
+  return !checked && checked.error().code == code && checked.error().offset == std::size_t(offset);
+}
+
+bool utf8_roundtrip(uint32_t point, std::string_view hex) {
+  auto encoded = std::encoding::utf8::encode(point);
+  if (!encoded || std::encoding::hex::encode(encoded.value().view()) != hex) { return false; }
+  auto decoded = std::encoding::utf8::decode(encoded.value().view());
+  return decoded && decoded.value().value == point &&
+         decoded.value().width == encoded.value().size();
+}
+
+using errc = std::encoding::utf8::errc;
+
+int check_utf8() {
+  if (!std::encoding::utf8::validate("") ||
+      !utf8_roundtrip(uint32_t(0), "00") ||
+      !utf8_roundtrip(uint32_t(0x7f), "7f") ||
+      !utf8_roundtrip(uint32_t(0x80), "c280") ||
+      !utf8_roundtrip(uint32_t(0x7ff), "dfbf") ||
+      !utf8_roundtrip(uint32_t(0x800), "e0a080") ||
+      !utf8_roundtrip(uint32_t(0xd7ff), "ed9fbf") ||
+      !utf8_roundtrip(uint32_t(0xe000), "ee8080") ||
+      !utf8_roundtrip(uint32_t(0xffff), "efbfbf") ||
+      !utf8_roundtrip(uint32_t(0x10000), "f0908080") ||
+      !utf8_roundtrip(uint32_t(0x10ffff), "f48fbfbf")) { return 10; }
+
+  if (!utf8_rejects("80", errc::invalid_lead, 0) ||
+      !utf8_rejects("c080", errc::invalid_lead, 0) ||
+      !utf8_rejects("c1bf", errc::invalid_lead, 0) ||
+      !utf8_rejects("f5808080", errc::invalid_lead, 0) ||
+      !utf8_rejects("ff", errc::invalid_lead, 0) ||
+      !utf8_rejects("c2", errc::unexpected_end, 1) ||
+      !utf8_rejects("e0a0", errc::unexpected_end, 2) ||
+      !utf8_rejects("f09080", errc::unexpected_end, 3) ||
+      !utf8_rejects("e08080", errc::overlong, 0) ||
+      !utf8_rejects("f0808080", errc::overlong, 0) ||
+      !utf8_rejects("eda080", errc::surrogate, 0) ||
+      !utf8_rejects("edbfbf", errc::surrogate, 0) ||
+      !utf8_rejects("f4908080", errc::out_of_range, 0) ||
+      !utf8_rejects("c241", errc::invalid_continuation, 1) ||
+      !utf8_rejects("e0a041", errc::invalid_continuation, 2) ||
+      !utf8_rejects("f0908041", errc::invalid_continuation, 3) ||
+      !utf8_rejects("41c241", errc::invalid_continuation, 2)) { return 11; }
+
+  auto eof = std::encoding::utf8::decode("a", std::size_t(1));
+  auto beyond = std::encoding::utf8::decode("a", std::size_t(2));
+  auto extreme = std::encoding::utf8::decode("a", ~std::size_t(0));
+  if (eof || eof.error().code != errc::unexpected_end || eof.error().offset != 1 ||
+      beyond || beyond.error().code != errc::invalid_offset || beyond.error().offset != 2 ||
+      extreme || extreme.error().code != errc::invalid_offset) { return 12; }
+
+  mut std::string output = "unchanged";
+  auto surrogate = std::encoding::utf8::append(output, uint32_t(0xd800));
+  auto too_large = std::encoding::utf8::append(output, uint32_t(0x110000));
+  auto maximum = std::encoding::utf8::encode(uint32_t(0xffffffff));
+  if (surrogate || surrogate.error().code != errc::surrogate ||
+      too_large || too_large.error().code != errc::out_of_range ||
+      maximum || maximum.error().code != errc::out_of_range || output != "unchanged") { return 13; }
+
+  // Independent byte oracle, including NUL, BOM and a noncharacter.
+  auto bytes = std::encoding::hex::decode("0041c280e282acf09f9880efbbbfefbfbf").expect("test bytes");
+  auto view = bytes.view();
+  mut std::encoding::utf8::decoder cursor{view};
+  uint32_t points[7] = {0, 65, 128, 0x20ac, 0x1f600, 0xfeff, 0xffff};
+  mut std::size_t index = 0;
+  while (!cursor.done()) {
+    auto next = cursor.next();
+    if (!next || index >= 7 || next.value().value != points[index]) { return 14; }
+    index++;
+  }
+  if (index != 7 || cursor.position() != bytes.size()) { return 15; }
+  auto end = cursor.next();
+  if (end || end.error().code != errc::unexpected_end || !cursor.done()) { return 16; }
+
+  auto bad_bytes = std::encoding::hex::decode("41ff").expect("test bytes");
+  auto bad_view = bad_bytes.view();
+  mut std::encoding::utf8::decoder bad{bad_view};
+  if (!bad.next()) { return 17; }
+  auto failed = bad.next();
+  auto repeated = bad.next();
+  if (failed || repeated || bad.position() != 1 || bad.done() ||
+      failed.error().code != errc::invalid_lead || repeated.error().offset != 1) { return 18; }
+
+  // Every single byte is either ASCII or an error, never a replacement scalar.
+  for (mut uint32_t byte = 0; byte < uint32_t(256); byte++) {
+    mut std::string single{};
+    single.push_back(char(uint8_t(byte)));
+    auto result = std::encoding::utf8::decode(single.view());
+    if (byte < uint32_t(128)) {
+      if (!result || result.value().value != byte || result.value().width != 1) { return 19; }
+    } else if (result) { return 20; }
+  }
+  return 0;
+}
+
 int main() {
+  int utf8_result = check_utf8();
+  if (utf8_result != 0) { return utf8_result; }
   if (std::encoding::base64::encode("") != "" ||
       std::encoding::base64::encode("f") != "Zg==" ||
       std::encoding::base64::encode("fo") != "Zm8=" ||

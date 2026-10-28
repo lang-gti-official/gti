@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Strict Base64 and hexadecimal codecs across native configurations."""
+"""Strict UTF-8, Base64 and hexadecimal codecs across native configurations."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 
 
 def main() -> int:
@@ -21,6 +22,10 @@ def main() -> int:
         (f"{standard}-{level}", ["--std", standard, f"-{level}"], [])
         for standard in ("c++20", "c++23")
         for level in ("O0", "O1", "O3")
+    ]
+    modes += [
+        (f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [])
+        for level in ("O0", "O1", "O2", "O3")
     ]
     modes += [
         (
@@ -79,6 +84,41 @@ def main() -> int:
                     f"stdout={executed.stdout}\nstderr={executed.stderr}"
                 )
             print(f"encoding runtime: {label} passed", flush=True)
+        for backend in ("llvm", "cpp"):
+            binary = root / f"utf8-exhaustive-{backend}"
+            exhaustive = repository / "tests/fixtures/utf8_scalar_exhaustive.gti"
+            subprocess.run(
+                [str(compiler), str(exhaustive), "--backend", backend, "-O3",
+                 "--progress", "never", "-o", str(binary)],
+                check=True, capture_output=True, text=True, timeout=180, env=environment,
+            )
+            started = time.monotonic()
+            subprocess.run([str(binary)], check=True, capture_output=True,
+                           text=True, timeout=60, env=environment)
+            print(f"UTF-8 all scalar values: {backend} passed in "
+                  f"{time.monotonic() - started:.3f}s; binary {binary.stat().st_size} bytes",
+                  flush=True)
+
+        rejected = subprocess.run(
+            [str(compiler), str(repository / "tests/fixtures/utf8_decoder_owner_mutation_error.gti"),
+             "--emit-mir", "--progress", "never"],
+            capture_output=True, text=True, timeout=60, env=environment,
+        )
+        if (rejected.returncode != 65 or "GTI-S2017" not in rejected.stderr or
+                "Retained borrow originates here" not in rejected.stderr):
+            raise AssertionError(f"UTF-8 decoder must retain its input borrow: {rejected.stderr}")
+        print("UTF-8 decoder owner mutation rejected", flush=True)
+
+        example = repository / "examples/094-binary-text-encoding.gti"
+        binary = root / "example"
+        subprocess.run([str(compiler), str(example), "--backend", "llvm", "-O3",
+                        "--progress", "never", "-o", str(binary)],
+                       check=True, capture_output=True, text=True, timeout=180, env=environment)
+        executed = subprocess.run([str(binary)], capture_output=True, text=True,
+                                  timeout=60, env=environment)
+        if (executed.returncode, executed.stdout, executed.stderr) != (0, "QQBC\n410042\n", ""):
+            raise AssertionError(f"UTF-8 example failed: {executed}")
+        print("UTF-8 example passed", flush=True)
     return 0
 
 

@@ -592,8 +592,10 @@ The current implemented foundation includes:
   padded RFC 4648 Base64 and lowercase hexadecimal encoders preserve all
   counted input bytes, including embedded zeroes. Their decoders return
   `expected<std::string, std::encoding::decode_errc>` and reject malformed,
-  non-canonical, or policy-ambiguous input; see
-  [Binary-to-text encoding](encoding.md); and
+  non-canonical, or policy-ambiguous input. `std::encoding::utf8` adds strict
+  scalar decoding, validation, encoding, append and a borrowed decoder cursor
+  with byte-offset errors, without changing byte-oriented string semantics;
+  see [Text and binary encoding](encoding.md); and
 - `<std/chrono>` exact signed `std::chrono::nanoseconds`, distinct monotonic and
   Unix-wall-clock time points, recoverable clock reads, checked elapsed
   subtraction, and normalized pre-epoch Unix second/subsecond decomposition;
