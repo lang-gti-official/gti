@@ -11731,9 +11731,21 @@ Hierarchy storage beside borrowed state is admitted. It is constructed in
 place, borrowed by reference and destroyed. It also moves, including scoped
 thread tasks passed by value. A carrier's generated value move relocates it
 under `mirTypeMoveRelocationKind`, while `std::relocatable` is unchanged
-(owner decision 2026-10-28). A carrier borrowed through an upcast interface
-view waits on a MIR soundness fix: such a borrow takes no `Local` loan on the
-carrier.
+(owner decision 2026-10-28). A base or interface view of a carrier takes a
+`Local` loan on the carrier since the MIR fix of 2026-10-28; upcast arguments
+and interface relays run natively, while local upcast views, upcast returns and
+base-class relays stay O-LLVM-05 refusals like their same-class forms.
+
+Closures holding hierarchy storage are admitted (`NativeHierarchyCapture`). An
+init-capture relocates a moved derived, polymorphic or interface-implementing
+object into its environment slot, the closure publishes into a whole local or
+a prepared by-value argument, and a by-value closure parameter moves into a
+managed-thread spawn as a hierarchy task. The 21 cells the 2026-10-28 wrong-code
+matrices found C++ running and LLVM refusing, locally called and joined-thread
+init-captures, now run natively at O0-O3 with checked results and destruction
+order. The `hierarchy-captures` dispatch profile is native-only because the C++
+backend does not represent these closures; `threads.hierarchy-tasks` compares
+the thread form with the C++ oracle.
 
 Three C++/LLVM parity gaps found by the wrong-code matrices closed on
 2026-10-28. Each has a user-defined `llvm_dispatch_execution` case, and the
@@ -11745,9 +11757,9 @@ last two also have failure and wrong-trace variants:
   field.
 
 Base-view replacement, exchange and swap, enum copies, enums moved into
-arguments or returns, payload values returned by value, thread-local
-hierarchy objects and observable pure phases stay `PolymorphicTransfer` or
-`PureDispatchState`. Exchange and swap of a polymorphic class with derived
+arguments or returns, payload values returned by value, by-copy captures of
+hierarchy objects, closure copies, thread-local hierarchy objects and
+observable pure phases stay `PolymorphicTransfer` or `PureDispatchState`. Exchange and swap of a polymorphic class with derived
 classes are refused even for complete objects, because the generic bodies
 cannot tell them from base views.
 A derived constructor passing an owned value to its base constructor, moved
