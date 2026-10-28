@@ -21,8 +21,15 @@ int promote(int input) { mut int local = input; return local; }
 int checked(int left, int right) { return left + right; }
 double strict(double left, double right, double addend) { return left * right + addend; }
 double divide(double left, double right) { return left / right; }
+int step(int value, int bias) { return (value * 17 + bias) % 65521; }
+int drive(int seed, int rounds) {
+  mut int value = seed;
+  for (mut int round = 0; round < rounds; round++) { value = step(value, round % 127); }
+  return value;
+}
 int main() {
   if (promote(7) != 7 || checked(1, 2) != 3) { return 1; }
+  if (drive(1, 3) != 4932) { return 3; }
   if (strict(2.0d, 3.0d, 4.0d) != 10.0d || divide(4.0d, 2.0d) != 2.0d) { return 2; }
   return 0;
 }
@@ -52,7 +59,8 @@ int main() {
       throw std::runtime_error(admission.limitation());
     Session session(*input, options);
     lowerScalarProgram(session, admission);
-    llvm::Function *promote = nullptr, *checked = nullptr, *strict = nullptr;
+    llvm::Function *promote = nullptr, *checked = nullptr, *strict = nullptr,
+                   *step = nullptr, *drive = nullptr;
     std::string privateName, entryName;
     for (const auto &function : input->program().mir().functionInstances()) {
       const auto *declaration =
@@ -65,16 +73,20 @@ int main() {
         checked = session.abi().declareFunction(function.id);
       if (declaration->qualifiedName == "strict")
         strict = session.abi().declareFunction(function.id);
+      if (declaration->qualifiedName == "step")
+        step = session.abi().declareFunction(function.id);
+      if (declaration->qualifiedName == "drive")
+        drive = session.abi().declareFunction(function.id);
       if (declaration->qualifiedName == "divide")
         privateName =
             session.abi().declareFunction(function.id)->getName().str();
       if (function.entryKind != ProgramEntryKind::None)
         entryName = session.abi().declareFunction(function.id)->getName().str();
     }
-    if (!promote || !checked || !strict)
+    if (!promote || !checked || !strict || !step || !drive)
       throw std::runtime_error("missing pipeline function");
     // Keep these unknown-input observation roots available after optimization.
-    llvm::appendToUsed(session.module(), {promote, checked, strict});
+    llvm::appendToUsed(session.module(), {promote, checked, strict, drive});
     const auto allocas = [](const llvm::Function &function) {
       unsigned count = 0;
       for (const auto &block : function)
@@ -130,6 +142,46 @@ int main() {
     if (!overflow)
       throw std::runtime_error(
           "unknown-input checked addition lost overflow detection");
+    // A checked operation originates its record through one cold helper, so
+    // the record's fixed-size fill never inflates the checked body. A body
+    // whose failure chain only propagates neither enters nor leaves the
+    // incoming-cleanup context, which nothing inside that chain can observe.
+    // Together they leave a two-check scalar helper small enough to inline
+    // into its loop at O2/O3.
+    const auto *originator =
+        session.module().getFunction("__gti_failure_originate_v1");
+    if (!originator || originator->isDeclaration() ||
+        !originator->hasFnAttribute(llvm::Attribute::Cold) ||
+        !originator->hasFnAttribute(llvm::Attribute::NoInline) ||
+        !originator->hasInternalLinkage())
+      throw std::runtime_error("failure origination is not one cold helper");
+    const auto *recordType = session.abi().failureRecord();
+    for (const auto &function : session.module())
+      for (const auto &block : function)
+        for (const auto &row : block)
+          if (const auto *write = llvm::dyn_cast<llvm::StoreInst>(&row);
+              write && write->getValueOperand()->getType() == recordType &&
+              &function != originator)
+            throw std::runtime_error("a body stores a whole failure record "
+                                     "outside the cold originator");
+    unsigned originations = 0, stepCalls = 0;
+    for (const auto &block : *drive)
+      for (const auto &row : block)
+        if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&row)) {
+          const auto *callee = call->getCalledFunction();
+          originations += callee == originator;
+          stepCalls += callee == step;
+          if (callee &&
+              (callee->getName() == "gti_rt_failure_cleanup_enter_v1" ||
+               callee->getName() == "gti_rt_failure_cleanup_leave_v1"))
+            throw std::runtime_error("a propagate-only failure chain entered "
+                                     "the incoming-cleanup context");
+        }
+    const bool inlines = level == LlvmCodegenOptimization::Default ||
+                         level == LlvmCodegenOptimization::Aggressive;
+    if (inlines && (stepCalls != 0 || originations == 0))
+      throw std::runtime_error(
+          "a two-check scalar helper was not inlined into its loop");
     Session invalid(*input, options);
     auto *malformed = llvm::Function::Create(
         llvm::FunctionType::get(llvm::Type::getVoidTy(invalid.context()),
@@ -150,5 +202,5 @@ int main() {
   std::cout << levels
             << " real pipelines: private/hosted visibility, storage promotion, "
                "strict FP, checked "
-               "overflow and rejection passed\n";
+               "overflow, cold failure origination and rejection passed\n";
 }
