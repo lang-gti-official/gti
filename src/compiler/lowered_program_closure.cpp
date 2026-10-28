@@ -4,9 +4,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <ostream>
 #include <streambuf>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -202,7 +205,31 @@ private:
   std::uint64_t state = 0x6A09E667F3BCC908ULL;
 };
 
+[[nodiscard]] std::atomic<bool> &sealValidation() {
+  static std::atomic<bool> enabled = [] {
+    const char *value = std::getenv("GTI_COMPILER_VALIDATION");
+    return value != nullptr && *value != '\0' && std::string_view(value) != "0";
+  }();
+  return enabled;
+}
+
 } // namespace
+
+} // namespace lang::lowered_detail
+
+namespace lang {
+
+bool loweredProgramSealValidation() noexcept {
+  return lowered_detail::sealValidation().load(std::memory_order_relaxed);
+}
+
+void setLoweredProgramSealValidation(bool enabled) noexcept {
+  lowered_detail::sealValidation().store(enabled, std::memory_order_relaxed);
+}
+
+} // namespace lang
+
+namespace lang::lowered_detail {
 
 std::uint64_t constructionSeal(const LoweredProgram &program) {
   SealHashBuffer hash;

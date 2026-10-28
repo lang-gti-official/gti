@@ -5809,3 +5809,11 @@ if(GTI_RELEASE_BUILD)
     "GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
   )
 endif()
+
+# Every build-tree test runs the compiler's self-checks, such as the
+# lowered-program construction seal, that ordinary compiles skip. Tests that
+# exercise a self-check also enable it explicitly, so they do not depend on
+# this inventory.
+get_property(gti_validation_tests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${gti_validation_tests} APPEND PROPERTY ENVIRONMENT
+  "GTI_COMPILER_VALIDATION=1")

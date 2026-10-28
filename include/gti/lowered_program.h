@@ -809,6 +809,17 @@ struct LoweredProgramIssue {
 class LoweredProgram;
 class VerifiedLoweredProgram;
 
+// The construction seal is a compiler self-check, not a cost of every
+// compile. Nothing outside the builder can change a LoweredProgram, so the
+// seal only detects test forgeries, memory corruption or a future mutation
+// path. While enabled, the builder seals each program and every consumer
+// re-checks the seal; while disabled, neither prints the program, and the
+// inventory checks still run. It starts enabled exactly when the
+// GTI_COMPILER_VALIDATION environment variable is set to a nonempty value
+// other than "0"; the test suite sets it for every build-tree test.
+[[nodiscard]] bool loweredProgramSealValidation() noexcept;
+void setLoweredProgramSealValidation(bool enabled) noexcept;
+
 namespace lowered_detail {
 // Builder-only: every verifier check except the construction seal, which the
 // builder establishes from the same value once these checks pass.
@@ -948,8 +959,9 @@ verifyLoweredProgram(const LoweredProgram &program);
 
 // Takes an independent value for a consumer and returns owning evidence only
 // when that exact snapshot passes verification. Lvalues copy; rvalues move.
-// The construction seal supplements the inventory checks; the inspection
-// print is not an exhaustive serialization of every verified invariant.
+// The construction seal, checked while loweredProgramSealValidation() is
+// enabled, supplements the inventory checks; the inspection print is not an
+// exhaustive serialization of every verified invariant.
 [[nodiscard]] std::optional<VerifiedLoweredProgram>
 verifiedLoweredProgram(LoweredProgram program,
                        std::vector<LoweredProgramIssue> &issues);

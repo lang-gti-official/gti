@@ -58,6 +58,8 @@ void rejected(std::string source, std::string_view code,
 } // namespace
 
 int main() {
+  // Forged lowered programs below also exercise the construction seal.
+  lang::setLoweredProgramSealValidation(true);
   rejected(R"(
 #include <std/meta>
 [[borrowed_from(value)]]
