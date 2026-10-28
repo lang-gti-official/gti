@@ -3663,15 +3663,17 @@ private:
   [[nodiscard]] static std::string
   functionSignatureSpelling(const CallableCandidate &function);
 
-  [[nodiscard]] bool
-  typeRequiresThreads(const SemanticType &type,
-                      std::unordered_set<ClassId> &visiting) const;
+  [[nodiscard]] bool typeRequiresThreads(const SemanticType &type,
+                                         std::unordered_set<ClassId> &visiting,
+                                         bool includeAtomics) const;
 
-  [[nodiscard]] bool typeRequiresThreads(const SemanticType &type) const;
+  [[nodiscard]] bool typeRequiresThreads(const SemanticType &type,
+                                         bool includeAtomics = true) const;
 
   [[nodiscard]] bool
   validateConcurrentSurfaceAvailability(const Token &location,
-                                        std::string_view surface);
+                                        std::string_view surface,
+                                        bool requiresConcurrentProfile = true);
 
   void finalizeCThreadRequirements();
 

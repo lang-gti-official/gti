@@ -372,6 +372,7 @@ is a teaching helper, not a production server.
 | `173-general-requires.gti` | exact expression/construction and mutation requirements, constexpr reflection predicates, symbolic declaration proofs and source concept composition over unrelated domain types |
 | `174-typed-macros.gti` | typed `#macro` calls, lazy scalar/owning results and initializer contexts, local returns and evaluate-once bindings, fresh lambda captures, written expression text, hygienic lookup, and skipped owner movement |
 | `175-thread-local-storage.gti` | namespace, static-field and block `thread_local` storage, independent worker values and owning class cleanup before join; requires `--execution-profile concurrent` |
+| `176-profile-independent-atomics.gti` | source-defined atomic ticket counter usable in either execution profile; scalar operations do not enable threads or blocking waits |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

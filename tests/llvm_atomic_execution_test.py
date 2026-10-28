@@ -15,6 +15,10 @@ from llvm_evidence_manifest import build_manifest
 def cases() -> dict[str, str]:
     return {
         "scalar": "atomic_scalar.gti",
+        "scalar-single": "atomic_scalar.gti",
+        "values-single": "llvm_atomic_values.gti",
+        "orders-single": "llvm_atomic_orders.gti",
+        "example-single": "../../examples/176-profile-independent-atomics.gti",
         "values": "llvm_atomic_values.gti",
         "orders": "llvm_atomic_orders.gti",
         "wait-ready": "llvm_atomic_wait_ready.gti",
@@ -31,6 +35,7 @@ def cases() -> dict[str, str]:
 def profiles() -> dict[str, list[str]]:
     return {
         "atomic.scalar-core": ["scalar", "values", "orders"],
+        "atomic.scalar-single": ["scalar-single", "values-single", "orders-single", "example-single"],
         "atomic.wait-ready": ["wait-ready"],
         "atomic.checked-fetch": ["checked-fetch", "overflow-before-update"],
         "atomic.blocking-workers": ["worker-contention", "worker-publication", "wait-notify"],
@@ -55,6 +60,7 @@ def evidence_manifest(root: Path) -> dict:
         {name: f"tests/fixtures/{fixture}" for name, fixture in cases().items()},
         execution_profiles={
             "atomic.scalar-core": "concurrent",
+            "atomic.scalar-single": "single-threaded",
             "atomic.wait-ready": "concurrent",
             "atomic.checked-fetch": "concurrent",
             "atomic.blocking-workers": "concurrent",
@@ -94,7 +100,7 @@ def main() -> None:
                 result = execute(gti, root,
                                  work / f"{name}-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard}",
                                  root / "tests/fixtures" / fixture, endpoint,
-                                 env, concurrent=True)
+                                 env, concurrent=not name.endswith("-single"))
                 failure = name == "overflow-before-update"
                 if result.error or result.returncode != (70 if failure else 0):
                     raise AssertionError(f"{name} {endpoint}: {result}")

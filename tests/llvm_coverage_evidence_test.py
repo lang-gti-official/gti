@@ -510,12 +510,12 @@ def execution_profile_controls(evidence: Path, root: Path) -> None:
                 "ExecutionProfile.SingleThreaded" in default.stdout.splitlines(),
                 "default probe changed its execution profile")
         source.write_text("#include <std/atomic>\nint main() { "
-                          "std::atomic<int> value{0}; return value.load(); }\n",
+                          "std::atomic<int> value{1}; value.wait(0); return value.load(); }\n",
                           encoding="utf-8")
         for arguments in ([], ["single-threaded"]):
             rejected = run([str(evidence), "--probe", str(root), str(source), *arguments])
             require(rejected.returncode == 1 and "GTI-S2084" in rejected.stderr,
-                    "single-threaded atomic probe lost its source rejection")
+                    "single-threaded atomic-wait probe lost its source rejection")
         concurrent = run([str(evidence), "--probe", str(root), str(source), "concurrent"])
         require(concurrent.returncode == 0 and {
                     "ExecutionProfile.Concurrent", "Shape.NativeAtomicOperation"

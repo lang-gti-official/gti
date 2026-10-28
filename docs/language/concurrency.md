@@ -21,13 +21,19 @@ A project profile uses `execution-profile = "concurrent"`. Selection occurs
 before semantic analysis and is preserved through HIR and MIR. Source imports,
 native flags, incidental host threads, and emitted C++ never infer it.
 
-`std::thread`, `std::thread_result<Result>`, `std::atomic<T>`, and
-`std::mutex<T>`, and `std::parallel_invoke` require the concurrent profile and a target advertising
-thread-capable concurrency support. Merely importing `<std/thread>`,
-`<std/atomic>`, or `<std/mutex>` without constructing or calling their public
-values remains valid in the default profile and does not select native
-synchronization support. An executable use fails in semantics with
-`GTI-S2084` when either requirement is absent.
+Scalar `std::atomic<T>` construction, load/store, exchange, compare/exchange,
+and integer fetch operations are available in both execution profiles on
+supported targets. They retain their atomic and memory-order semantics in the
+single-threaded profile; using them does not authorize workers or weaken global
+storage rules. This lets ordinary source owners use one reference-count
+algorithm in either profile.
+
+`std::thread`, `std::thread_result<Result>`, `std::mutex<T>`,
+`std::parallel_invoke`, and atomic wait/notification still require the concurrent
+profile. All these facilities, including scalar atomics, retain the current
+target requirement for thread-capable concurrency support. Imports alone do not
+select the profile. Missing profile or target support is diagnosed as
+`GTI-S2084`; wait/notification requirements propagate through source wrappers.
 
 The `<std/cthread>` create/join, once-initialization, manual-mutex, and
 condition-variable operations have the same profile and target requirements

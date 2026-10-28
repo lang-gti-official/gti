@@ -118,7 +118,8 @@ namespace {
 std::optional<SemanticType>
 atomicCallElement(const MirProgram &program, const MirBody &body,
                   const MirInstruction &instruction) {
-  if (program.target().executionProfile != ExecutionProfile::Concurrent ||
+  if ((waiting(instruction.intrinsic) &&
+       program.target().executionProfile != ExecutionProfile::Concurrent) ||
       !program.target().runtimeCapabilities.threads ||
       !Atomics::handles(instruction.intrinsic) ||
       instruction.kind != MirInstructionKind::Call ||
@@ -232,9 +233,7 @@ nativeAtomicConstructor(const MirProgram &program,
   const auto element =
       owner ? nativeAtomicElement(program, owner->type) : std::nullopt;
   const auto &body = constructor.body;
-  if (!element ||
-      program.target().executionProfile != ExecutionProfile::Concurrent ||
-      !program.target().runtimeCapabilities.threads ||
+  if (!element || !program.target().runtimeCapabilities.threads ||
       constructor.definitionKind != MirDefinitionKind::Source ||
       constructor.parameterTypes != std::vector<SemanticType>{*element} ||
       constructor.parameterBindings.size() != 1 ||

@@ -1749,7 +1749,9 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   }
   if (candidateProbe == nullptr && !isCompilerTrustedRequester(paren) &&
       typeRequiresThreads(constructedType) &&
-      !validateConcurrentSurfaceAvailability(paren, "This concurrent value")) {
+      !validateConcurrentSurfaceAvailability(
+          paren, "This concurrent value",
+          typeRequiresThreads(constructedType, false))) {
     currentType = SemanticType::Unknown;
     return;
   }

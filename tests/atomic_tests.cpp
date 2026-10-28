@@ -356,12 +356,8 @@ int main() {
   single.executionProfile = lang::ExecutionProfile::SingleThreaded;
   const lang::FrontendResult singleResult =
       analyze("atomic-single-profile.gti", use, single);
-  expect(!singleResult.canGenerateCode() &&
-             hasCode(singleResult, "GTI-S2084") &&
-             hasMessage(singleResult, "concurrent execution profile") &&
-             !hasCode(singleResult, "GTI-B0001"),
-         "atomic use should fail before lowering in the single-threaded "
-         "profile");
+  expect(singleResult.canGenerateCode(),
+         "scalar atomic use is available in the single-threaded profile");
 
   const lang::FrontendResult unsupported =
       analyze("atomic-unsupported-target.gti", use, concurrentTarget(false));

@@ -926,6 +926,12 @@ and additional clocks remain outside this first observation slice.
 
 ## Managed Concurrency Boundary
 
+Scalar atomic storage and operations are available in both execution profiles.
+Blocking wait/notification retains the concurrent-profile requirement, carried
+through the existing transitive thread-runtime call-effect analysis. This
+separates a general atomic mechanism from permission to create or coordinate
+workers; reference-count algorithms can remain ordinary source in either profile.
+
 The public managed-thread type is the ordinary source-defined `std::thread`
 class in `<std/thread>`. The compiler does not recognize that class, its
 constructors, `join`, or its destructor by qualified spelling. Its move-only

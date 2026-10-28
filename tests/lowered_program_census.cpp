@@ -73,6 +73,10 @@ int main(int argc, char **argv) {
       target.executionProfile = lang::ExecutionProfile::Concurrent;
       target.runtimeCapabilities.threads = true;
     }
+    // This example uses the packaged scalar atomic mechanism without opting
+    // into the concurrent execution profile.
+    if (name == "176-profile-independent-atomics.gti")
+      target.runtimeCapabilities.threads = true;
     lang::FrontendOptions options;
     options.target = target;
     // The census guards the inventory that artifact builds produce.

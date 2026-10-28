@@ -2767,11 +2767,27 @@
         "concrete_instance_adapter": 99,
         "thread_local_storage": 3
       }
+    },
+    "176-profile-independent-atomics.gti": {
+      "declarations": 513,
+      "bodies": 26,
+      "generated_items": 6,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 5,
+        "thread_local_storage": 0
+      }
     }
   },
   "totals": {
-    "declarations": 187243,
-    "bodies": 24132,
-    "generated_items": 15143
+    "declarations": 187756,
+    "bodies": 24158,
+    "generated_items": 15149
   }
 }

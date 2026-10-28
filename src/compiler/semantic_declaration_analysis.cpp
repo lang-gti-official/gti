@@ -10142,7 +10142,10 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .cThreadOperation = declaration.cThreadOperation,
       .processMemoryOperation = declaration.processMemoryOperation,
       .requiresCThreadRuntime =
-          requiresCThreadConcurrency(declaration.cThreadOperation),
+          requiresCThreadConcurrency(declaration.cThreadOperation) ||
+          declaration.intrinsic == IntrinsicKind::AtomicWait ||
+          declaration.intrinsic == IntrinsicKind::AtomicNotifyOne ||
+          declaration.intrinsic == IntrinsicKind::AtomicNotifyAll,
       .returnedTextReference = declaration.returnedTextReference,
       .linkage = declaration.linkage,
       .externalSymbol = declaration.externalSymbol,
@@ -10332,9 +10335,10 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
         declaration->externalSymbol, declaration->returnType,
         declaration->parameterTypes);
   }
-  requestSession.hasCThreadRequirements |=
-      requiresCThreadConcurrency(declaration->cThreadOperation);
   FunctionInfo projected = projectCallableDeclaration(*declaration);
+  // Blocking atomic operations share the existing transitive thread-runtime
+  // requirement. Scalar atomic storage and arithmetic need no profile opt-in.
+  requestSession.hasCThreadRequirements |= projected.requiresCThreadRuntime;
   projected.ownedPointeeProjection = ownedPointeeReturnProjection(projected);
   semanticModel.record(function, std::move(projected));
 }
