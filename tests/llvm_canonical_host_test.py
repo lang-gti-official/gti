@@ -40,7 +40,13 @@ def main() -> None:
     selected = ["registered-llvm-evidence:llvm_scalar_execution:scalars",
                 "registered-llvm-evidence:llvm_memory_execution:address-conversion",
                 "registered-llvm-evidence:llvm_callable_execution:llvm_callable_pointer"]
-    evidence = Path(tempfile.mkdtemp(prefix="gti_llvm_canonical_host_", dir=build))
+    # The collector refuses run directories inside the source tree, where a
+    # conventional build directory such as build-release/ lives. Retain the
+    # evidence beside an out-of-tree build, and in the system temporary
+    # directory otherwise, resolved like the build path so recorded commands
+    # compare exactly.
+    retained = None if build.is_relative_to(root) else build
+    evidence = Path(tempfile.mkdtemp(prefix="gti_llvm_canonical_host_", dir=retained)).resolve()
     run = evidence / "collection"
     summary = collector.collect_host(run, root, plan, helper, report, selected,
                                      ["single-threaded"], ["O0", "O3"], resume=False,
