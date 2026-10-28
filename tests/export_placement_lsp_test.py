@@ -50,10 +50,11 @@ def main():
                     "textDocument": {"uri": uri, "version": version}, "contentChanges": [{"text": text}]}})
                 return diagnostics(version)
 
-            def action_for(diagnostic, request_id):
+            def action_for(diagnostic, request_id, automatic=False):
                 session.send({"jsonrpc": "2.0", "id": request_id, "method": "textDocument/codeAction", "params": {
                     "textDocument": {"uri": uri}, "range": diagnostic["range"],
-                    "context": {"diagnostics": [diagnostic], "only": ["quickfix"]}}})
+                    "context": {"diagnostics": [diagnostic], "only": ["quickfix"],
+                                "triggerKind": 2 if automatic else 1}}})
                 return session.receive_until(lambda message: message.get("id") == request_id)["result"]
 
             errors = diagnostics(1)
@@ -65,8 +66,10 @@ def main():
             assert error["range"] == {"start": lsp_position(misplaced, keyword),
                                       "end": lsp_position(misplaced, keyword + 6)}, error
 
+            assert [fix["applicability"] for fix in error["data"]["fixes"]] == ["requiresReview"]
+            assert not action_for(error, 6, automatic=True), "export repair requires explicit review"
             actions = action_for(error, 2)
-            assert len(actions) == 1 and actions[0]["isPreferred"], actions
+            assert len(actions) == 1 and actions[0]["isPreferred"] is False, actions
             edit = actions[0]["edit"]["documentChanges"][0]
             assert edit["textDocument"] == {"uri": uri, "version": 1}, edit
             prefix = misplaced.index("[[track_caller]]")

@@ -76,16 +76,19 @@ def main():
                     "textDocument": {"uri": uri, "version": version}, "contentChanges": [{"text": text}]}})
                 return diagnostics(version)
 
-            def action_for(diagnostic, request_id):
+            def action_for(diagnostic, request_id, automatic=False):
                 session.send({"jsonrpc": "2.0", "id": request_id, "method": "textDocument/codeAction", "params": {
                     "textDocument": {"uri": uri}, "range": diagnostic["range"],
-                    "context": {"diagnostics": [diagnostic], "only": ["quickfix"]}}})
+                    "context": {"diagnostics": [diagnostic], "only": ["quickfix"],
+                                "triggerKind": 2 if automatic else 1}}})
                 return session.receive_until(lambda message: message.get("id") == request_id)["result"]
 
             obsolete = valid.replace("unsafe int32_t", "[[unsafe]] int32_t")
             migration = next(d for d in change(obsolete, 3) if d["code"] == "GTI-P0001")
+            assert [fix["applicability"] for fix in migration["data"]["fixes"]] == ["requiresReview"]
+            assert not action_for(migration, 30, automatic=True), "unsafe migration requires explicit review"
             actions = action_for(migration, 4)
-            assert len(actions) == 1, actions
+            assert len(actions) == 1 and actions[0]["isPreferred"] is False, actions
             edit = actions[0]["edit"]["documentChanges"][0]
             assert edit["textDocument"] == {"uri": uri, "version": 3}, edit
             offset = obsolete.index("[[unsafe]]")
@@ -102,8 +105,10 @@ def main():
             assert warning["data"]["group"] == "unused-unsafe", warning
             assert warning["range"] == {"start": lsp_position(unused, offset),
                                         "end": lsp_position(unused, offset + 6)}, warning
+            assert [fix["applicability"] for fix in warning["data"]["fixes"]] == ["requiresReview"]
+            assert not action_for(warning, 31, automatic=True), "unsafe removal requires explicit review"
             actions = action_for(warning, 6)
-            assert len(actions) == 1 and actions[0]["isPreferred"], actions
+            assert len(actions) == 1 and actions[0]["isPreferred"] is False, actions
             edit = actions[0]["edit"]["documentChanges"][0]
             assert edit["textDocument"] == {"uri": uri, "version": 5}, edit
             assert edit["edits"] == [{"range": warning["range"], "newText": ""}], edit
@@ -112,8 +117,10 @@ def main():
 
             adjacent = valid.replace("unsafe int32_t", "[[unsafe]]int32_t")
             migration = next(d for d in change(adjacent, 7) if d["code"] == "GTI-P0001")
+            assert [fix["applicability"] for fix in migration["data"]["fixes"]] == ["requiresReview"]
+            assert not action_for(migration, 32, automatic=True), "unspaced migration requires explicit review"
             actions = action_for(migration, 9)
-            assert len(actions) == 1, actions
+            assert len(actions) == 1 and actions[0]["isPreferred"] is False, actions
             edit = actions[0]["edit"]["documentChanges"][0]
             assert edit["textDocument"] == {"uri": uri, "version": 7}, edit
             assert edit["edits"] == [{"range": migration["range"], "newText": "unsafe "}], edit
