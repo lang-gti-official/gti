@@ -38,7 +38,7 @@ void testLoadedLexicalUnitCacheBoundary() {
       lang::LoadedLexicalUnitLoader(&metrics, cache).load(request);
   expect(!first.cacheHit && !first.hadError && first.diagnostics.empty() &&
              first.source == source && first.sourceDigest != 0 &&
-             !first.tokens.empty(),
+             first.tokens != nullptr && !first.tokens->empty(),
          "a first exact-source request should own bytes, digest, tokens, and "
          "lexical status without a cache hit");
   expect(
@@ -51,9 +51,10 @@ void testLoadedLexicalUnitCacheBoundary() {
   const lang::LoadedLexicalUnit second =
       lang::LoadedLexicalUnitLoader(&metrics, cache).load(request);
   const bool sameTokens =
-      second.tokens.size() == first.tokens.size() &&
+      second.tokens != nullptr &&
+      second.tokens->size() == first.tokens->size() &&
       std::equal(
-          second.tokens.begin(), second.tokens.end(), first.tokens.begin(),
+          second.tokens->begin(), second.tokens->end(), first.tokens->begin(),
           [](const lang::Token &left, const lang::Token &right) {
             return left.kind == right.kind && left.position == right.position &&
                    left.line == right.line && left.lexeme == right.lexeme;
