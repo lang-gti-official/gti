@@ -4127,8 +4127,9 @@ private:
         }
         for (LspDiagnostic &diagnostic : analysis.diagnostics) {
           affected.insert(diagnostic.uri);
-          diagnostic.repairSnapshot =
-              request.uri + ":" + std::to_string(request.generation);
+          if (!diagnostic.fixes.empty())
+            diagnostic.repairSnapshot =
+                request.uri + ":" + std::to_string(request.generation);
         }
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         dependenciesByRoot[request.uri] = std::move(analysis.dependencies);

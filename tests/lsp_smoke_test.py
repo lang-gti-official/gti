@@ -6228,6 +6228,8 @@ def test_missing_standard_library_include_code_action(
                 },
                 "replacement": include,
                 "message": f"Add #include <{header}>",
+                "repairId": "singleton:0",
+                "applicability": "requiresReview",
             }
         ], diagnostic
 

@@ -102,6 +102,15 @@ def run(executable, root):
                       "  inner() /* adjacent */\n); return 0; }\n").replace("\n", newline)
             repair(source, "GTI-S2009", source.replace("/*\U0001f600 before*/ outer(",
                                                        "/*\U0001f600 before*/ [[discard]] outer("))
+        source = ("#macro int identity(int value) { return value; }\n"
+                  "int main() { /* call site */ identity(7); return 0; }\n")
+        repair(source, "GTI-S2009", source.replace("/* call site */ identity(7)",
+                                                  "/* call site */ [[discard]] identity(7)"))
+        (root / "calls.gti").write_text("int calculate(int value) { return value; }\n")
+        source = ('#include "calls.gti"\n'
+                  'int main() { calculate(calculate(1)); return 0; }\n')
+        repair(source, "GTI-S2009", source.replace("{ calculate(calculate(1))",
+                                                  "{ [[discard]] calculate(calculate(1))"))
         (root / "api.gti").write_text("namespace api { int value() { return 7; } }\n")
         source = "// \U0001f600\r\nint main() { return api::value(); }\r\n"
         repair(source, "GTI-S2089", '#include "api.gti"\r\n' + source)
@@ -116,6 +125,12 @@ def run(executable, root):
         for action in offered:
             assert len(action["edit"]["documentChanges"][0]["edits"]) == 1
         assert actions(diagnostic, automatic=True) == []
+        for index in range(2):
+            diagnostic = next(d for d in change(source) if d.get("data", {}).get("fixes"))
+            changed = apply_action(actions(diagnostic)[index], uri, version, source)
+            remaining = change(changed)
+            assert not [d for d in remaining if d.get("severity") == 1], remaining
+            assert actions(diagnostic) == []
         # Type/ownership changes are not synthesized from explanations.
         diagnostics = change('int main() { int value = "wrong"; return 0; }\n')
         assert any(d.get("severity") == 1 for d in diagnostics)
