@@ -1,0 +1,123 @@
+#include <std/mutex>
+#include <std/thread>
+// A guard locked through a stored reference to a mutex depends on that
+// reference's referent, not on the carrier holding the reference: through
+// `this`, a reference formal, a by-value formal, read-only or mutable.
+class Fill {
+  mut std::mutex<int64_t>& slot;
+  int64_t value;
+public:
+  Fill(mut std::mutex<int64_t>& slot, int64_t value) : slot(slot), value(value) {}
+  int64_t peek() {
+    auto guard = this.slot.lock();
+    return guard.get();
+  }
+  void operator()() mut {
+    mut auto guard = this.slot.lock();
+    guard.get() = this.value;
+  }
+};
+class Cell {
+public:
+  mut std::mutex<int64_t>& slot;
+  mut int64_t writes;
+  Cell(mut std::mutex<int64_t>& slot) : slot(slot), writes(int64_t(0)) {}
+};
+class View {
+public:
+  std::mutex<int64_t>& slot;
+  mut int64_t writes;
+  View(std::mutex<int64_t>& slot) : slot(slot), writes(int64_t(0)) {}
+};
+class Account {
+public:
+  std::mutex<int64_t> balance;
+  Account(int64_t start) : balance(std::mutex<int64_t>(start)) {}
+};
+class Teller {
+public:
+  mut Account& account;
+  mut int64_t visits;
+  Teller(mut Account& account) : account(account), visits(int64_t(0)) {}
+};
+class Auditor {
+public:
+  Account& account;
+  mut int64_t visits;
+  Auditor(Account& account) : account(account), visits(int64_t(0)) {}
+};
+
+void put(mut Cell& cell, int64_t value) {
+  mut auto guard = cell.slot.lock();
+  cell.writes += int64_t(1);
+  guard.get() = value;
+}
+void put_value(mut Cell cell, int64_t value) {
+  mut auto guard = cell.slot.lock();
+  guard.get() = value;
+}
+void put_shared(View& view, int64_t value) {
+  mut auto guard = view.slot.lock();
+  guard.get() = value;
+}
+void put_counted(mut View& view, int64_t value) {
+  mut auto guard = view.slot.lock();
+  view.writes += int64_t(1);
+  guard.get() = value;
+}
+void deposit(mut Teller& teller, int64_t amount) {
+  mut auto guard = teller.account.balance.lock();
+  teller.visits += int64_t(1);
+  guard.get() += amount;
+}
+int64_t balance(Teller& teller) {
+  auto guard = teller.account.balance.lock();
+  return guard.get();
+}
+void audit(mut Auditor& auditor, int64_t amount) {
+  auditor.visits += int64_t(1);
+  mut auto guard = auditor.account.balance.lock();
+  guard.get() += amount;
+}
+
+int main() {
+  mut std::mutex<int64_t> first{int64_t(3)};
+  mut std::mutex<int64_t> second{int64_t(0)};
+  std::println(Fill(first, int64_t(0)).peek());
+  if (!std::parallel_invoke(Fill(first, int64_t(5)), Fill(second, int64_t(6))))
+    return 9;
+  std::println(Fill(first, int64_t(0)).peek() * int64_t(10) + Fill(second, int64_t(0)).peek());
+  {
+    mut Cell cell = Cell(first);
+    put(cell, int64_t(7));
+    put(cell, int64_t(8));
+    std::println(cell.writes);
+  }
+  put_value(Cell(second), int64_t(9));
+  {
+    mut View view = View(first);
+    put_shared(view, int64_t(11));
+    put_counted(view, int64_t(12));
+    std::println(view.writes);
+  }
+  {
+    auto a = first.lock();
+    auto b = second.lock();
+    std::println(a.get() * int64_t(100) + b.get());
+  }
+  mut Account account = Account(int64_t(10));
+  {
+    mut Teller teller = Teller(account);
+    deposit(teller, int64_t(5));
+    deposit(teller, int64_t(7));
+    std::println(balance(teller) * int64_t(10) + teller.visits);
+  }
+  {
+    mut Auditor auditor = Auditor(account);
+    audit(auditor, int64_t(100));
+    std::println(auditor.visits);
+  }
+  auto guard = account.balance.lock();
+  std::println(guard.get());
+  return 0;
+}

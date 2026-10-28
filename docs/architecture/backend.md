@@ -4636,15 +4636,18 @@ outcome. A scope borrows each consumed task in its verified caller slot, passes
 stack descriptors and scratch to `gti_rt_thread_scope_v1`, treats a worker
 envelope as terminal, then cleans every task in reverse order on the caller.
 A task holding hierarchy storage (a polymorphic object, an inline polymorphic
-slot or an erased transferable callable) uses the same paths
-(`NativeHierarchyThreadTask`). The moved owned binding waits in its own value
-storage until the spawn relocates it with the generated relocation, which
-rebuilds its dispatch state, and takes over its value obligation; task cleanup
-runs its exact hierarchy recipe. A scoped hierarchy task runs in place. A
+slot, an erased transferable callable or a closure whose init-captures moved
+hierarchy objects) uses the same paths (`NativeHierarchyThreadTask`). The
+moved owned binding, or the by-value closure parameter of
+`std::thread_result<T>::start`, waits in its own value storage until the spawn
+relocates it with the generated relocation, which rebuilds its dispatch state,
+and takes over its value obligation; task cleanup runs its exact hierarchy
+recipe. A scoped hierarchy task runs in place. A
 result holding hierarchy storage still crosses `std::expected` by value and
 stays a `PolymorphicTransfer` refusal. `threads.hierarchy-tasks` compares
-user-defined polymorphic and inline-slot tasks, `transfer_function_threads`
-and `scoped_parallel_threads` with the C++ oracle at O0-O3.
+user-defined polymorphic, inline-slot and capturing-closure tasks,
+`transfer_function_threads` and `scoped_parallel_threads` with the C++ oracle
+at O0-O3.
 The first failing worker supplies the primary record; otherwise the first task
 cleanup failure does, and later cleanup inherits it like any failure chain.
 
@@ -5151,10 +5154,10 @@ exchange result initializes, as a taken thread result is. As for replacement,
 each polymorphic place must be a complete object. Inside the generic
 `std::exchange` and `std::swap` bodies a place is the referent of a reference
 parameter, which is complete only when nothing in the sealed program derives
-from its class. Exchanging or swapping an object of a class with derived
-classes, including a base view inside a larger object, stays
-`PolymorphicTransfer`. Semantics currently accepts such a base view, and the
-C++ backend cannot represent it (`GTI-B0001`). `dispatch.exchanged-transfers`
+from its class. Semantics rejects exchanging or swapping a polymorphic class
+that another class derives from (`GTI-S2018`), so a valid program never reaches
+an exchange of such a class; the backend still refuses it as
+`PolymorphicTransfer` as a second line of defence. `dispatch.exchanged-transfers`
 compares vector elements, fields and inline slots of user-defined hierarchy
 classes, and erased transferable callables holding owned state, with the C++
 oracle at O0-O3.
@@ -5206,6 +5209,60 @@ nor hierarchy storage. Its one `Borrow` must relay that value's own loan, and
 MIR verification rejects any forged relay. Semantics still refuses a view that
 would outlive its owner, and an owner changed while the view lives.
 
+A call can select a result that is not hierarchy storage out of hierarchy
+storage it borrows: a reference to a scalar or to an ordinary record, or a
+view such as a span returned by value. That result is the callee's own checked
+result, not a view of the storage (`NativeBorrowedDispatchView`). The rule is
+the same for static, virtual and interface calls, and for storage borrowed as
+the receiver or as an argument; an argument must borrow the loan's own source
+place or forward a loan of it, such as a reference parameter's entry loan. The
+call must be a GTI call with no intrinsic, and the result type must not be
+hierarchy storage. A body that returns such a result relays it with one
+`Borrow` of the selecting call's loan into its escaping `Return` loan on the
+same source, and that relay, its `Return` loan and their operands carry the
+same witness. A base or derived view of the storage is still proved as a base
+subobject.
+
+`NativeHierarchyCapture` admits closures whose environments hold hierarchy
+storage. An init-capture such as `[held = std::move(local)]` moves an object
+of a derived class, a polymorphic class or an interface implementation into
+its slot of the environment. The move's one publication is that slot, as an
+element of a fresh array or payload alternative is. The transfer planner
+relocates the object there with its generated relocation, which rebuilds its
+dispatch state, and the closure construction stores only its other captures.
+The closure itself publishes into a whole local, or into a by-value argument's
+prepared storage. A call borrows the whole environment, and the closure's body
+selects each by-value capture in place as a complete object. Moving the
+closure relocates every capture through the closure's generated relocation;
+this covers a whole closure binding moved into a fresh local and a by-value
+closure parameter moved into a managed-thread spawn. The closure's cleanup
+ends its captures in reverse declaration order.
+
+A moved closure binding also relocates into a by-value argument's prepared
+storage, through a return into its caller's destination, and into its slot of
+another closure, whose body calls it in place as an owned capture. Each
+publication must take the moved value's drop obligation: the prepared
+parameter's, the return's transfer-out, or the outer aggregate's.
+
+Copies of hierarchy storage use the generated copy and never transport bytes.
+A by-copy capture `[leaf]` of a complete object reads a checked source. If the
+class has a generated inert copy, the generated logical-field copy writes the
+capture slot and installs the copy's own dispatch state. A closure copies
+capture by capture: hierarchy captures with that copy, borrowing captures as
+addresses, and other captures as passive bits. A closure with a capture that
+needs active cleanup is move-only, so it never copies. The same copy publishes
+in the following places:
+- a whole closure binding or owned closure capture copied into a fresh local;
+- a class or closure copied from a checked object into a by-value argument's
+  prepared storage;
+- a closure captured by copy into another closure;
+- an element of a fresh array copied from a checked object.
+
+A constructor field initialized from an inert by-value parameter has no
+rollback obligation. MIR records no drop and no lifecycle transition for it,
+so the planner publishes it without one. Before this change, admission passed
+it and the planner raised an internal error.
+
 Hierarchy metadata also covers classes that hold borrowed state, such as a
 reference field beside an inline polymorphic object. A reference or view is an
 address, and its loans are MIR facts with no runtime state beside the dispatch
@@ -5227,16 +5284,47 @@ still excludes carriers. Variant A, letting carriers satisfy
 `std::relocatable`, would be a language change and was deliberately not taken.
 An inert relocation stays borrow-free.
 
-A carrier borrowed through an upcast interface view stays refused. Its MIR
-operand names the carrier's `Stored` loan instead of a `Local` loan on the
-carrier itself, and semantics then lets the carrier move while the view
-lives. That is a soundness defect, reported to the MIR owner on 2026-10-28.
-Those `Loan` operands wait for its fix.
+A base or interface view of a carrier borrows the carrier object: MIR gives
+it a `Local` loan on the carrier whose stored dependency is the carrier's own
+`Stored` record of the external owner it borrows (fixed in MIR on 2026-10-28).
+That dependency is provenance only, like a parameter's entry dependency, so
+admission accepts a non-escaping `Local` loan of a whole carrier binding whose
+stored dependency is a `Stored` loan that binding carries, and an escaping
+`Return` loan whose one `Borrow` relays a supported loan with the same source
+and stored dependency. Any other stored dependency stays refused. A free call
+that relays such a view to a non-hierarchy base, as `pickBase(plain)` does,
+returns the callee's checked address, not a dispatch view. Returning a
+non-hierarchy base reference to a carrier parameter (`Base& up(Plain&)`)
+stays refused. `dispatch.upcast-carriers` and `carrier_reference_runtime`
+run these forms at O0-O3.
+
+A base or interface view of a carrier now takes a `Local` loan on the
+carrier itself, with the carrier's `Stored` loan as its dependency, so the
+carrier cannot move while the view lives (fixed in MIR on 2026-10-28). Native
+lowering runs an upcast argument and an interface relay such as
+`Gauge& view = pick(carrier)`. A local view bound directly to the carrier, an
+upcast return and a relay through a base-class reference stay refused
+(O-LLVM-05), as their same-class forms are.
 
 `NativeProgramHierarchyStorage` admits a hierarchy object in namespace or
 static-field storage that its program initialization step constructs in
 place. Code borrows that complete object through its symbol. Program storage
-carries no source or owning cleanup. Thread-local hierarchy storage stays
+carries no source or owning cleanup.
+
+`NativeThreadLocalHierarchyStorage` admits a hierarchy object in thread-local
+storage. Each thread's dynamic initializer constructs it directly in that
+thread's slot as a fresh construction or by-value result, so every thread's
+object installs its own dispatch state. Code borrows it through its symbol as
+a complete object. At thread exit, its cleanup runs each destructor under the
+lifecycle phase of that destructor's own class, as any other complete cleanup
+does. A thread-local initialized by copying program storage is a generated
+copy made in the slot.
+
+A copy may read program storage in place: a namespace object, a static field
+or a thread-local, named by its symbol. It may also read a class field of any
+checked source, because a by-value field is a complete object of its declared
+class. Moves out of either still take their own planned paths. A copied
+fixed-array element, selected through a checked index, stays
 `PolymorphicTransfer`.
 
 A shared owner of a polymorphic object keeps one control block across clones
@@ -5254,7 +5342,7 @@ closure's relocation moves exactly its captures.
 - replacement of base views;
 - captures and non-generated wrappers;
 - whole-array transport;
-- thread-local and other nonlocal destinations;
+- copied array elements and nonlocal destinations;
 - callback, native and thread combinations, including a moved erased callable
   consumed by a thread spawn.
 
@@ -5635,8 +5723,9 @@ address, counted extent where present, ordered readonly owner witness and
 checked loan identity. Native owner representation admits passive witnesses or
 the same class boundary as raw references: a unique concrete class or struct
 instance without compiler capability or foreign ABI layout, including a
-complete polymorphic one through its exact dispatch metadata. An interface view
-of the owner is not a witness. The owner address is an independent lifetime
+complete polymorphic one through its exact dispatch metadata, or an interface or
+abstract view of an owner with dispatch metadata. Mutex storage is not a
+witness. The owner address is an independent lifetime
 witness; no owner bytes are read or copied. An unrelated owning user class
 checks both text forms, selected-owner identity and exact resource
 destruction; source escape, movement and mutation and unsupported witness

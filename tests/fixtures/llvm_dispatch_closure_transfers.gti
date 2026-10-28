@@ -1,0 +1,138 @@
+// Copies and moves of hierarchy storage through closures. A by-copy capture
+// of a complete object, a whole-closure copy, a by-value argument copied from
+// a checked object and an array element copied from one are generated
+// logical-field copies that install each copy's own dispatch state; a
+// closure copies capture by capture, including a closure it captured. A
+// constructor field takes a by-value parameter without a rollback obligation
+// when its class is inert. A moved closure relocates into a by-value
+// parameter, through a return into its caller's destination, or into its
+// slot of another closure, which invokes it in place. Destructors record
+// explicit IDs.
+#include <std/utility>
+
+mut int events = 0;
+mut int expected_cleanup = 0;
+
+void record(int value) { events = events * 10 + value; }
+
+interface Gauge { int read(); };
+
+class Dial : public Gauge {
+public:
+  mut int scale;
+  Dial(int scale) : scale(scale) {}
+  int read() override { return this.scale * 3; }
+};
+
+class Base {
+public:
+  mut int seed;
+  Base(int seed) : seed(seed) {}
+  virtual int value() { return this.seed; }
+};
+
+class Twice : public Base {
+public:
+  Twice(int seed) : Base(seed) {}
+  int value() override { return this.seed * 2; }
+};
+
+// A polymorphic object with a destructor: moved only.
+class Meter : public Gauge {
+  int scale;
+public:
+  Meter(int scale) : scale(scale) {}
+  Meter(Meter& other) = delete;
+  Meter(Meter&& other) = default;
+  ~Meter() { record(this.scale); }
+  int read() override { return this.scale * 10; }
+};
+
+int run<F>(F callable) { return callable(); }
+int measured(Twice value) {
+  Base& base = value;
+  return base.value();
+}
+
+class Holder {
+public:
+  Twice held;
+  Holder(Twice held) : held(std::move(held)) {}
+  int value() {
+    Base& base = this.held;
+    return base.value();
+  }
+};
+F pass<F>(F callable) { return std::move(callable); }
+F keep<F>(mut F callable) { return std::move(callable); }
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    // A wrong trace creates a SECOND failure while unwinding. The harness
+    // requires only the original division failure and rejects GTI-R0014.
+    int checked_cleanup = 1 / (events == expected_cleanup ? 1 : 0);
+  }
+};
+
+int nested(int divisor) {
+  Meter meter = Meter(4);
+  auto first = [held = std::move(meter)]() -> int { return held.read(); };
+  auto second = [inner = std::move(first)](int d) -> int { return inner() / d; };
+  return second(divisor);
+}
+
+// TRANSFERS_MAIN
+int main() {
+  // By-copy captures: later changes to the sources are not seen.
+  mut Dial dial = Dial(2);
+  mut Twice twice = Twice(5);
+  auto copied = [dial, twice]() -> int {
+    Base& base = twice;
+    return dial.read() * 100 + base.value();
+  };
+  dial.scale = 7;
+  twice.seed = 9;
+  if (copied() != 610) { return 1; }
+  // A closure copy is independent of its source and dispatches the same way.
+  auto again = copied;
+  if (again() != 610 || copied() != 610) { return 2; }
+  // Copies into by-value arguments, another closure and a field.
+  if (run(again) != 610 || measured(twice) != 18) { return 8; }
+  auto outer = [again]() -> int {
+    auto inner = again;
+    return inner() + 1;
+  };
+  Holder holder = Holder(twice);
+  Twice taken = holder.held;
+  Base& taken_base = taken;
+  if (outer() != 611 || again() != 610 || holder.value() != 18 ||
+      taken_base.value() != 18) {
+    return 9;
+  }
+  // Array elements copied from a checked object, independent of it.
+  Twice pair[2] = {twice, twice};
+  twice.seed = 1;
+  Base& second_element = pair[1];
+  if (second_element.value() != 18 || twice.value() != 2) { return 10; }
+  // Moved closures with an active capture: passed on, returned, captured.
+  {
+    Meter meter = Meter(3);
+    auto reader = [held = std::move(meter)]() -> int { return held.read(); };
+    if (run(std::move(reader)) != 30 || events != 3) { return 3; }
+  }
+  if (events != 3) { return 4; }
+  events = 0;
+  {
+    Meter meter = Meter(5);
+    auto reader = [held = std::move(meter)]() -> int { return held.read(); };
+    auto returned = pass(std::move(reader));
+    auto kept = keep(std::move(returned));
+    if (kept() != 50 || events != 0) { return 5; }
+  }
+  if (events != 5) { return 6; }
+  events = 0;
+  if (nested(2) != 20 || events != 4) { return 7; }
+  return 0;
+}

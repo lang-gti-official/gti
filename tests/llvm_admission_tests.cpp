@@ -702,6 +702,140 @@ int main() { Field value{}; return value.read() - 17; }
          "closure cleanup rejects an identity/type mismatch");
 }
 
+// An init-capture relocates a moved hierarchy object into its slot of the
+// closure environment: the move's only publication is that slot, and the
+// generated relocation rebuilds its dispatch state. A capture that does not
+// move the object, mutated or written in source, has no typed relocation and
+// stays PolymorphicTransfer.
+void testHierarchyCapturePlan() {
+  using namespace lang;
+  const auto verified = lower(R"(
+class Root {
+public:
+  int seed;
+  Root(int seed) : seed(seed) {}
+  Root(Root& other) = delete;
+  Root(Root&& other) = default;
+  virtual int value() { return this.seed; }
+};
+class Leaf : public Root {
+public:
+  Leaf(int seed) : Root(seed) {}
+  int value() override { return this.seed + 1; }
+};
+int main() {
+  mut Leaf leaf = Leaf(4);
+  auto reader = [held = std::move(leaf)]() -> int { return held.value(); };
+  return reader() - 5;
+}
+)",
+                              true);
+  const auto plan = planLlvmAdmission(verified);
+  const auto implemented = [&](std::string_view name) {
+    return std::any_of(plan.requirements().begin(), plan.requirements().end(),
+                       [&](const auto &use) {
+                         return use.required && use.implementedShape &&
+                                use.implementedShape->name == name;
+                       });
+  };
+  expect(plan.admitted() && implemented("NativeHierarchyCapture") &&
+             implemented("NativeFreshHierarchyTransfer"),
+         "a moved hierarchy capture relocates into its closure slot: " +
+             plan.limitation());
+
+  const auto &mir = verified.program().mir();
+  const MirFunctionInstance *entry = nullptr;
+  const MirInstruction *moved = nullptr;
+  const MirInstruction *closure = nullptr;
+  for (const auto &function : mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions)
+        if (stage.operation == MirOperation::Closure &&
+            stage.operands.size() == 1) {
+          entry = &function;
+          closure = &stage;
+        }
+  if (entry)
+    for (const auto &block : entry->body.blocks)
+      for (const auto &stage : block.instructions)
+        if (closure && stage.result &&
+            stage.result == closure->operands.front().value)
+          moved = &stage;
+  expect(entry && moved && closure && moved->kind == MirInstructionKind::Move,
+         "the capture is the closure's moved operand");
+  if (!entry || !moved || !closure)
+    return;
+  const auto transfer =
+      native_llvm::planFreshHierarchyTransfer(mir, entry->body, *moved);
+  const native_llvm::Placement placement(mir, entry->body);
+  const auto *slot = placement.target(*moved->result);
+  expect(transfer.publishes ==
+                 native_llvm::FreshHierarchyPublication::Element &&
+             transfer.publication == closure && transfer.element == 0 && slot &&
+             slot->aggregate == *closure->result && slot->element == 0,
+         "the moved object's only publication is its closure slot");
+
+  // A capture recorded as a copy is not relocated into its slot: the move
+  // gains no placement authority and its plan fails closed.
+  MirProgram copied = mir;
+  auto &function = const_cast<MirFunctionInstance &>(
+      *copied.findFunctionInstance(entry->id));
+  for (auto &block : function.body.blocks)
+    for (auto &stage : block.instructions)
+      if (stage.operation == MirOperation::Closure &&
+          stage.result == closure->result)
+        stage.closureCaptureModes.front() = LambdaCaptureMode::Copy;
+  const MirInstruction *copiedMove = nullptr;
+  for (const auto &block : function.body.blocks)
+    for (const auto &stage : block.instructions)
+      if (stage.id == moved->id)
+        copiedMove = &stage;
+  bool refused = false;
+  try {
+    static_cast<void>(native_llvm::planFreshHierarchyTransfer(
+        copied, function.body, *copiedMove));
+  } catch (const BackendUnsupportedError &) {
+    refused = true;
+  }
+  const native_llvm::Placement copiedPlacement(copied, function.body);
+  expect(refused && !copiedPlacement.target(*moved->result),
+         "a capture that is not a move has no typed relocation authority");
+
+  // In source: a by-copy capture of the same hierarchy object, copied with
+  // its generated logical-field copy, and a copy of that whole closure.
+  const auto byCopy = planLlvmAdmission(lower(R"(
+class Root {
+public:
+  int seed;
+  Root(int seed) : seed(seed) {}
+  virtual int value() { return this.seed; }
+};
+class Leaf : public Root {
+public:
+  Leaf(int seed) : Root(seed) {}
+  int value() override { return this.seed + 1; }
+};
+int main() {
+  Leaf leaf = Leaf(4);
+  auto reader = [leaf]() -> int { return leaf.value(); };
+  auto again = reader;
+  return again() - 5;
+}
+)"));
+  expect(byCopy.admitted() &&
+             std::none_of(
+                 byCopy.requirements().begin(), byCopy.requirements().end(),
+                 [](const auto &use) {
+                   return use.required &&
+                          use.entry->key() == "Shape.PolymorphicTransfer" &&
+                          !use.implementedShape;
+                 }),
+         "a by-copy hierarchy capture and a closure copy are generated "
+         "copies: " +
+             byCopy.limitation());
+
+}
+
 void testUnstagedConstructorFieldPublicationPlan() {
   using namespace lang;
   using native_llvm::UnstagedConstructorFieldPublicationTransport;
@@ -3019,6 +3153,162 @@ int main() {
          "a virtual call's returned view has the static call's witness");
 }
 
+// A reference, span or record reference that a call selects out of
+// hierarchy storage it borrows is that call's checked result, relayed alike
+// by static, virtual and interface calls and through a receiver or an
+// argument. A forged relay or selection never grants that admission.
+void testSelectedResultRelays() {
+  using namespace lang;
+  struct Result {
+    const char *type;
+    const char *member;
+    const char *use;
+  };
+  const Result results[] = {
+      {"int32_t&", "return this.value;", "relay(owner) == 5"},
+      {"std::span<int32_t>", "return this.values.as_span();",
+       "relay(owner).size() == std::size_t(1)"},
+      {"Record&", "return this.record;",
+       "relay(owner).name.size() == std::size_t(6)"},
+  };
+  const auto program = [](const Result &result, int call) {
+    const bool interface = call == 2;
+    const std::string member = std::string(result.type) + " select()" +
+                               (interface ? " override" : "") + " { " +
+                               result.member + " }";
+    return std::string(R"(
+#include <std/span>
+#include <std/string>
+#include <std/vector>
+class Record {
+public:
+  std::string name;
+  Record() : name(std::string("record")) {}
+};
+)") +
+           (interface ? std::string("interface Picker {\n  ") + result.type +
+                            " select();\n};\n"
+                      : std::string()) +
+           "class Base" + (interface ? " : public Picker" : "") + R"( {
+public:
+  int32_t value;
+  mut std::vector<int32_t> values;
+  Record record;
+  Base() : value(5), record(Record()) {}
+  virtual void poke() {}
+  )" + (call == 1 ? "virtual " : "") +
+           member + "\n};\n" + result.type + " relay(" +
+           (interface ? "Picker" : "Base") +
+           "& item) { return item.select(); }\n" + R"(int main() {
+  mut Base owner{};
+  owner.values.push_back(1);
+  return )" +
+           result.use + " ? 0 : 1;\n}\n";
+  };
+  const std::set<std::string_view> relayed{
+      "MirLoanKind.CallResult", "MirLoanKind.Return",
+      "MirInstructionKind.Borrow", "MirOperandKind.Loan"};
+  for (const auto &result : results) {
+    std::vector<std::string> witnesses[3];
+    for (const int call : {0, 1, 2}) {
+      const auto plan = planLlvmAdmission(lower(program(result, call), true));
+      expect(plan.admitted(), std::string("a ") +
+                                  (call == 0   ? "static"
+                                   : call == 1 ? "virtual"
+                                               : "interface") +
+                                  " call's selected " + result.type +
+                                  " relays on LLVM");
+      for (const auto &use : plan.requirements())
+        if (use.required && relayed.contains(use.entry->key()))
+          witnesses[call].push_back(
+              use.entry->key() + "=" +
+              (use.implementedShape ? std::string(use.implementedShape->name)
+                                    : std::string("<none>")));
+      std::sort(witnesses[call].begin(), witnesses[call].end());
+    }
+    expect(!witnesses[0].empty() && witnesses[0] == witnesses[1],
+           std::string("a virtual call's selected ") + result.type +
+               " has the static call's witnesses");
+  }
+
+  // Forged selections and relays never grant admission, whichever stage
+  // refuses them: the relayed loan must be the selecting call's own result,
+  // and the selecting input must borrow that result's source.
+  const auto source = std::string(R"(
+class Base {
+public:
+  int32_t value;
+  Base() : value(5) {}
+  virtual int32_t& slot() { return this.value; }
+};
+int32_t& relay(Base& base) { return base.slot(); }
+int main() {
+  Base owner{};
+  Base other{};
+  return relay(owner) == 5 && other.value == 5 ? 0 : 1;
+}
+)");
+  const auto frontend = Frontend().analyze("selected-relay.gti", source);
+  expect(frontend.canGenerateCode() &&
+             planLlvmAdmission(lower(source)).admitted(),
+         "the unforged selected relay is admitted");
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto mir = frontend.mir;
+    bool forged = false;
+    for (auto &function : const_cast<std::vector<MirFunctionInstance> &>(
+             mir.functionInstances())) {
+      auto &body = function.body;
+      for (auto &block : body.blocks)
+        for (auto &stage : block.instructions) {
+          if (forged || stage.tombstone)
+            continue;
+          const auto *loan = stage.loan ? body.findLoan(*stage.loan) : nullptr;
+          if (mutation == 0 && stage.kind == MirInstructionKind::Borrow &&
+              stage.operands.size() == 1 &&
+              stage.operands.front().kind == MirOperandKind::Loan) {
+            // Relay the parameter's entry loan instead of the call's result.
+            for (const auto &entry : body.loans)
+              if (entry.kind == MirLoanKind::Parameter && entry.entry) {
+                stage.operands.front().loan = entry.id;
+                forged = true;
+              }
+          } else if (mutation == 1 && loan &&
+                     loan->kind == MirLoanKind::CallResult &&
+                     stage.kind == MirInstructionKind::Call &&
+                     !stage.receiver) {
+            // Name a hierarchy local the call never borrowed.
+            for (const auto &place : body.places)
+              if (place.id != loan->source &&
+                  place.type == body.findPlace(loan->source)->type) {
+                const_cast<MirLoan *>(loan)->source = place.id;
+                forged = true;
+                break;
+              }
+          } else if (mutation == 2 && loan &&
+                     loan->kind == MirLoanKind::CallResult &&
+                     stage.kind == MirInstructionKind::Call &&
+                     !stage.receiver) {
+            // A selection with no borrowed input.
+            stage.operands.clear();
+            stage.parameterTypes.clear();
+            forged = true;
+          }
+        }
+    }
+    auto build = LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir, mir, mir, {},
+        TargetInfo::host());
+    bool refused = !build.valid();
+    if (build.valid()) {
+      std::vector<LoweredProgramIssue> issues;
+      auto verified = verifiedLoweredProgram(std::move(*build.program), issues);
+      refused = !verified || !planLlvmAdmission(*verified).admitted();
+    }
+    expect(forged && refused, "forged selection " + std::to_string(mutation) +
+                                  " never grants admission");
+  }
+}
+
 void testHierarchyReferenceReturns() {
   using namespace lang;
   const auto plan = planLlvmAdmission(lower(R"(
@@ -3577,22 +3867,54 @@ void testDispatchPerUseWitnesses() {
          "a namespace hierarchy object constructed in place by its "
          "initialization step carries its program-storage witness: " +
              global.limitation());
-  const auto threadLocal = planLlvmAdmission(lower(R"(
-    class P { public: P() {} virtual int read() { return 1; } };
-    thread_local P value{};
+  // Each thread's dynamic initializer constructs a thread-local object in
+  // that thread's slot; its thread-exit cleanup runs each destructor under
+  // its own phase. A copy of program storage is not constructed in place.
+  const auto threadLocal = [&](const char *declarations) {
+    return planLlvmAdmission(lower(std::string(R"(
+    class P { public: P() {} virtual int read() { return 1; } )") +
+                                   declarations + R"(
     int main() { return value.read(); }
   )"));
-  expect(!threadLocal.admitted() &&
-             std::any_of(threadLocal.requirements().begin(),
-                         threadLocal.requirements().end(),
+  };
+  for (const auto *declarations :
+       {"};\n thread_local P value{};",
+        "~P() {} };\n thread_local P value{};"}) {
+    const auto plan = threadLocal(declarations);
+    expect(plan.admitted() &&
+               std::any_of(plan.requirements().begin(),
+                           plan.requirements().end(),
+                           [](const auto &use) {
+                             return use.required &&
+                                    use.entry->key() ==
+                                        "Shape.PolymorphicTransfer" &&
+                                    use.implementedShape &&
+                                    use.implementedShape->name ==
+                                        "NativeThreadLocalHierarchyStorage";
+                           }),
+           "a thread-local hierarchy object constructed in its thread's slot "
+           "carries its thread-storage witness: " +
+               plan.limitation());
+  }
+  // A copy of program storage reads that complete object in place, into a
+  // thread's slot as into a local; a copied array element stays refused.
+  const auto copiedThreadLocal =
+      threadLocal("};\n P global{};\n thread_local P value = global;");
+  expect(copiedThreadLocal.admitted(),
+         "a thread-local copy of program storage is a generated copy: " +
+             copiedThreadLocal.limitation());
+  const auto copiedElement = threadLocal(
+      "};\n P values[2] = {P(), P()};\n P value = values[1];");
+  expect(!copiedElement.admitted() &&
+             std::any_of(copiedElement.requirements().begin(),
+                         copiedElement.requirements().end(),
                          [](const auto &use) {
                            return use.required &&
                                   use.entry->key() ==
                                       "Shape.PolymorphicTransfer" &&
                                   !use.implementedShape;
                          }),
-         "thread-local storage keeps an explicit transfer exclusion even "
-         "when an unsupported receiver has the preferred diagnostic span");
+         "a copied array element keeps an explicit transfer exclusion");
 }
 
 } // namespace
@@ -3603,6 +3925,7 @@ int main() {
     testConcreteParameterAliases();
     testVerifiedConcretePackOwners();
     testClosureEnvironmentPlan();
+    testHierarchyCapturePlan();
     testVerifiedRestorationRelay();
     testUnstagedConstructorFieldPublicationPlan();
     testStoredFieldPublicationPlan();
@@ -3620,6 +3943,7 @@ int main() {
     testVirtualCallDependencies();
     testHierarchyReferenceReturns();
     testVirtualTextRelayReturns();
+    testSelectedResultRelays();
     testConservativeClassWitnesses();
     testDispatchPerUseWitnesses();
   } catch (const std::exception &error) {

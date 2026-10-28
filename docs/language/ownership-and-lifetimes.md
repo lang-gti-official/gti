@@ -1075,8 +1075,9 @@ their separately checked lifecycle/representation contracts are unaffected.
 
 Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only
-and mutable receiver overloads, while semantic analysis records the selected
-method and returned access mode. `operator->` performs exactly one checked
+and mutable receiver overloads, selected from the use of the result as for any
+accessor pair, while semantic analysis records the selected method and
+returned access mode. `operator->` performs exactly one checked
 reference step; recursive C++ proxy behavior is not exposed. `x->m` then names
 member `m` of the place that reference designates, looked up on the referenced
 type exactly as `.` looks it up on that place. The referent need not be a
@@ -2055,6 +2056,17 @@ explicitly; a named move-only replacement requires `std::move`.
 of the same structurally relocatable type. The ordinary exclusive-reference
 contract applies: self-aliasing, overlapping places, and conflicting live loans
 are rejected. Neither operation requires copying or move assignment.
+
+For now, neither operation accepts a polymorphic class that another class in
+the program derives from, directly or through a generic class whose base
+names it (owner decision, 2026-10-28). A reference of such a type may name the
+base part of a derived object, and relocating a whole object there would
+replace the dispatch state of the object around it. The exchange is rejected
+with `GTI-S2018` at the call, whatever its operands, including two complete
+locals. A polymorphic class nothing derives from, every non-polymorphic class,
+and the checked indexed swaps below are unaffected. The language may later
+relax this rule once complete-object provenance shows an operand is a whole
+object.
 
 Argument evaluation and replacement construction finish before transfer begins.
 Failure there leaves the destination unchanged. The sealed transfer itself

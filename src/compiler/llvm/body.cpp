@@ -1,4 +1,5 @@
 #include "body.h"
+#include "closure_environment.h"
 #include "atomics.h"
 #include "../mir_verification_queries.h"
 #include "callables.h"
@@ -390,20 +391,9 @@ private:
         stage = outer;
         auto *storage = destination(target->aggregate);
         stage = element;
-        if (target->variant)
-          return payloadFieldAddress(ir, session.layouts().payload(type),
-                                     storage, *target->variant,
-                                     target->element);
-        return ir.CreateGEP(session.layouts().get(type).storage, storage,
-                            {ir.getInt64(0), ir.getInt64(target->element)});
+        return aggregateSlot(type, storage, *target);
       }
-      if (target->variant)
-        return payloadFieldAddress(ir, session.layouts().payload(type),
-                                   destination(target->aggregate),
-                                   *target->variant, target->element);
-      return ir.CreateGEP(session.layouts().get(type).storage,
-                          destination(target->aggregate),
-                          {ir.getInt64(0), ir.getInt64(target->element)});
+      return aggregateSlot(type, destination(target->aggregate), *target);
     }
     if (const auto found = temporaries.find(value); found != temporaries.end())
       return found->second;
@@ -604,6 +594,20 @@ private:
         session.layouts().get(owner->type).storage, thisAddress,
         session.layouts().fieldIndex(owner->type, initializer.field));
   }
+  // The address of one element slot of a fresh aggregate's storage: an array
+  // element, one field of a payload alternative or one closure capture.
+  [[nodiscard]] llvm::Value *aggregateSlot(const SemanticType &type,
+                                           llvm::Value *storage,
+                                           const Placement::Target &target) {
+    if (target.variant)
+      return payloadFieldAddress(ir, session.layouts().payload(type), storage,
+                                 *target.variant, target.element);
+    if (type.kind == SemanticType::Lambda)
+      return ir.CreateStructGEP(session.layouts().get(type).storage, storage,
+                                static_cast<unsigned>(target.element));
+    return ir.CreateGEP(session.layouts().get(type).storage, storage,
+                        {ir.getInt64(0), ir.getInt64(target.element)});
+  }
   [[nodiscard]] llvm::Value *freshTransfer(const MirInstruction &instruction) {
     const auto transfer = Lifetimes::preflightFreshTransfer(session, dispatch,
                                                             input, instruction);
@@ -647,13 +651,7 @@ private:
       stage = transfer.publication;
       auto *storage = destination(target->aggregate);
       stage = element;
-      auto *address =
-          target->variant
-              ? payloadFieldAddress(ir, session.layouts().payload(type),
-                                    storage, *target->variant,
-                                    target->element)
-              : ir.CreateGEP(session.layouts().get(type).storage, storage,
-                             {ir.getInt64(0), ir.getInt64(target->element)});
+      auto *address = aggregateSlot(type, storage, *target);
       lifetimes.freshTransfer(ir, address, memory.selected(transfer.source),
                               input, instruction);
       return address;
@@ -955,6 +953,59 @@ private:
     return resultSlot ? load(resultSlot, callable.result) : nullptr;
 #endif
   }
+  // The place-category Load copying a whole closure binding that this value
+  // names, if any.
+  [[nodiscard]] const MirInstruction *closureCopyLoad(const MirOperand &value) {
+    const auto *defined = input.findValue(value.value);
+    const auto *block = defined ? input.findBlock(defined->definitionBlock)
+                                : nullptr;
+    if (!block)
+      return nullptr;
+    for (const auto &producer : block->instructions)
+      if (!producer.tombstone && producer.id == defined->definition)
+        return producer.kind == MirInstructionKind::Load &&
+                       producer.info.category == ValueCategory::Place &&
+                       producer.operands.size() == 1 &&
+                       producer.operands.front().kind == MirOperandKind::Copy &&
+                       producer.operands.front().place
+                   ? &producer
+                   : nullptr;
+    return nullptr;
+  }
+  // Copies one complete object of hierarchy storage into fresh storage: a
+  // class by its generated logical-field copy, a closure capture by capture.
+  // Either installs the copy's own dispatch state.
+  void copyHierarchy(llvm::Value *destination, llvm::Value *source,
+                     const SemanticType &type) {
+    if (type.kind == SemanticType::Lambda)
+      copyClosure(destination, source, type);
+    else
+      lifetimes.generatedCopy(ir, destination, source, type);
+  }
+  // Copies one closure environment into fresh storage capture by capture.
+  void copyClosure(llvm::Value *destination, llvm::Value *source,
+                   const SemanticType &type) {
+    const auto environment =
+        closureEnvironmentLayout(session.program().mir(), type);
+    if (!environment || destination == source)
+      throw std::logic_error("LLVM closure copy lost its environment layout");
+    auto *storage = session.layouts().get(type).storage;
+    for (std::size_t index = 0; index < environment->captureTypes.size();
+         ++index) {
+      const auto &capture = environment->captureTypes[index];
+      auto *from = ir.CreateStructGEP(storage, source,
+                                      static_cast<unsigned>(index));
+      auto *to = ir.CreateStructGEP(storage, destination,
+                                    static_cast<unsigned>(index));
+      if (!isBorrowingCapture(environment->captureModes[index]) &&
+          containsHierarchyStorage(session.program().mir(), capture)) {
+        copyHierarchy(to, from, capture);
+        continue;
+      }
+      auto *slot = storage->getStructElementType(static_cast<unsigned>(index));
+      ir.CreateStore(ir.CreateLoad(slot, from), to);
+    }
+  }
   [[nodiscard]] llvm::Value *
   constructClosure(const MirInstruction &instruction) {
     if (!instruction.result || !instruction.lambdaTarget)
@@ -973,11 +1024,29 @@ private:
                      ir.CreateStructGEP(storage, environment, 0));
       return environment;
     }
-    for (std::size_t index = 0; index < target.captureTypes.size(); ++index)
-      store(operand(instruction.operands[index]),
-            ir.CreateStructGEP(storage, environment,
-                               static_cast<unsigned>(index)),
-            target.captureTypes[index]);
+    for (std::size_t index = 0; index < target.captureTypes.size(); ++index) {
+      // A moved hierarchy capture was relocated into its slot by its own
+      // planned transfer; storing its value would copy dispatch state.
+      const auto &source = instruction.operands[index];
+      if (source.kind == MirOperandKind::Value)
+        if (const auto *slot = placement.target(source.value);
+            slot && slot->aggregate == *instruction.result && !slot->variant &&
+            slot->element == index)
+          continue;
+      auto *slot = ir.CreateStructGEP(storage, environment,
+                                      static_cast<unsigned>(index));
+      // A by-copy hierarchy capture is a generated logical-field copy that
+      // installs the copy's own dispatch state, never a byte transport.
+      if (source.kind == MirOperandKind::Copy && source.place &&
+          target.captureModes[index] == LambdaCaptureMode::Copy &&
+          containsHierarchyStorage(session.program().mir(),
+                                   target.captureTypes[index])) {
+        copyHierarchy(slot, memory.address(source.place),
+                      target.captureTypes[index]);
+        continue;
+      }
+      store(operand(source), slot, target.captureTypes[index]);
+    }
     return environment;
   }
   [[nodiscard]] llvm::Value *call(const MirInstruction &instruction,
@@ -1740,6 +1809,17 @@ private:
             auto *slot =
                 ir.CreateGEP(session.layouts().get(type).storage, result,
                              {ir.getInt64(0), ir.getInt64(index)});
+            // An element copied from a checked object is a generated copy
+            // that installs the element's own dispatch state.
+            if (const auto *value = source.kind == MirOperandKind::Value
+                                        ? input.findValue(source.value)
+                                        : nullptr;
+                value && value->info.category == ValueCategory::Place &&
+                containsHierarchyStorage(session.program().mir(),
+                                         type.arguments.at(0))) {
+              copyHierarchy(slot, operand(source), type.arguments.at(0));
+              continue;
+            }
             store(aggregateElement(source, type.arguments.at(0)), slot,
                   type.arguments.at(0));
           }
@@ -1823,6 +1903,22 @@ private:
         guard(ir.CreateICmpSLT(result, ir.getInt64(0)),
               {DefinedFailureCode::HostedRuntimeContractFailure,
                DefinedFailureDetail::NegativeArgumentCount});
+        break;
+      }
+      // A by-value argument copied from a checked place is a generated copy
+      // into its prepared slot, never a byte transport of dispatch state.
+      if (instruction.kind == MirInstructionKind::CallInput &&
+          instruction.callInputKind == HirCallInputKind::CopyValue &&
+          instruction.destination && instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Copy &&
+          instruction.operands.front().place &&
+          containsHierarchyStorage(session.program().mir(),
+                                   instruction.info.type)) {
+        auto *destination = memory.address(*instruction.destination);
+        copyHierarchy(destination,
+                      memory.address(instruction.operands.front().place),
+                      instruction.info.type);
+        result = destination;
         break;
       }
       {
@@ -1910,6 +2006,20 @@ private:
               "LLVM data initialization lost its sealed global");
         break;
       }
+      // A copied closure holding hierarchy storage is copied capture by
+      // capture into the fresh local; owned hierarchy captures install their
+      // own dispatch state through the generated logical-field copy.
+      if (instruction.kind == MirInstructionKind::Initialize &&
+          place.type.kind == SemanticType::Lambda &&
+          instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Value &&
+          containsHierarchyStorage(session.program().mir(), place.type))
+        if (const auto *copied = closureCopyLoad(instruction.operands.front())) {
+          copyClosure(memory.address(place.id),
+                      memory.address(copied->operands.front().place),
+                      place.type);
+          break;
+        }
       if (instruction.kind == MirInstructionKind::Initialize &&
           place.type.kind == SemanticType::Reference &&
           place.type.arguments.at(0).kind == SemanticType::Class) {

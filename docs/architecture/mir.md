@@ -743,7 +743,9 @@ binding to the carrier list grants no authority.
 A lifecycle-bound stored result may obtain exclusive owner dependency from
 its verified callee while accepting a shared address. Its incoming carrier
 parent supplies the selected address permission and lifetime; it does not
-supply mutable referent permission. For this sole-origin publication, body
+supply mutable referent permission. A mutable parent therefore qualifies as
+well as a read-only one, and the result's own designated field is provenance,
+not a second dependency. For this sole-origin publication, body
 verification retains the exact staged input, live parent, source containment,
 Mutable result exclusion and cleanup endpoint. Program verification reconstructs
 the parent from independently checked stored entry paths and binds publication
@@ -804,6 +806,34 @@ argument place identical to the child's recorded origin. A different field,
 carrier shell, read-only authority for a mutable child, or merely overlapping
 place cannot satisfy the proof. This rule applies equally to ordinary methods
 and nested scoped jobs; it does not grant the parent any cleanup ownership.
+A call result borrowed from a receiver behind a stored reference field records
+that exact selected receiver place as its source, as a `this` field receiver
+does. The field may belong to a formal, a local carrier, a local reference
+alias, or a holder that another call returned by reference
+(`holder.box.slot()`, `teller.account.balance.lock()`,
+`outer.inner().box.slot()`). The carrier's own loan source
+would name the object that holds the reference, or another of its referents,
+instead. A formal's alias loan parents such a result only while its access
+reaches the receiver through every stored reference on the way; behind a
+read-only stored reference, that reference's abstract entry is the parent, as
+exclusive publication requires. The alias that selects the receiver through
+the stored reference its parent entry describes is that input's path, not a
+competing sibling; every other overlapping loan still conflicts. Semantics
+records a carrier with one stored reference path as a compact sole-origin loan;
+MIR lowering names that path in the loan's designated fields when the
+reference's referent type is the loan source's type, so canonicalization
+resolves a borrow through the field to its referent rather than the carrier
+shell. The path is named only while every carrier is a value of that one
+class. When a carrier of another type joins, such as a view of the referent
+copied out of the holder, the loan returns to the compact form. A named path
+is still a single origin. An input that is the inner object holding the
+reference reaches the same referent: lowering selects through the input's own
+path, and program verification accepts the input's path as the tail of the
+carrier's. A result behind one field of a mapped carrier depends only on that
+field's dependency: lowering does not copy the carrier's other owners onto it,
+and program verification expects only that dependency. A derived loan is
+contained when it lies in any place its parent protects, as a direct reborrow
+already is.
 For a composed result's additional dependencies, a projection through the exact
 reference field of a borrowed carrier retains that carrier's abstract external
 entry, not its temporary physical reference. Canonicalization keeps the formal's
@@ -1989,6 +2019,23 @@ loan's pointer local; re-borrowing the provenance place would re-point the
 published reference at the receiver's storage instead of the returned
 element.
 
+A reference bound to a field or element of a call's returned reference, such
+as `std::vector<int32_t>& v = holder.get().items`, `root->items` or
+`(*root).items` through an overloaded `operator->` or `operator*`, or the hidden
+range of `for (auto& x : root->items)`, retains that call's result loan, as a
+reference bound to the returned reference itself does. Its address is the
+projected place rooted at that loan. Lowering does this when the place's only
+projections are fields and elements and the call's loan has the binding's
+semantic parent: none for a local owner, the entry loan of a reference
+parameter such as `std::unique_ptr<Dir>&`. A Local loan on the projected
+place would leave the call's owner unborrowed, and one on the semantic origin
+could not name the address; `referenceAddressRetainsLoan` rejects both.
+
+A read-only binding through a mutable owner's smart pointer retains a
+read-only call-result loan: semantics selects the read-only `operator->` or
+`operator*` step from the binding's use (static semantics, accessor pairs), so
+two such bindings, or a binding and a later read of the owner, coexist.
+
 A reference to a borrowed carrier, of the carrier's own type or a base or
 interface type, is initialized from a loan on the carrier object, as a `Borrow`
 of a same-class reference publishes it. `verifyMirBorrowProducers` rejects one
@@ -1999,14 +2046,18 @@ upcast call argument borrows the carrier's place, a call relaying it borrows
 the carrier's shell, and an upcast reference return publishes the parameter's
 exact referent.
 
-MIR does not yet check that a call returning text by value under a loan
-carries borrowed state in its result. Lowering keeps a conservative loan on
-the argument of a call that relays ownerless text, as `relay(text)` does over
-a literal-backed `text`, and semantics correctly gives that result no borrowed
-state, so requiring borrowed state of every such result rejects valid
-programs. The precise rule is open: it needs `TextContracts`' ownerless
-provenance, so that a text call result must carry borrowed state only when its
-loan's source holds owner-dependent text.
+A call returning text by value under a loan must carry borrowed state in its
+result when the loan's source may hold owner-dependent text
+(`text call result keeps a loan on owner-dependent text but carries no
+borrowed state`). `TextContracts` decides that from the source's ownerless
+provenance: the source is ownerless only when its text is known to hold no
+formal's text and no formal's text field, such as a literal-backed local,
+static text storage or an ownerless text field. An owner such as a
+`std::string`, a text formal and any text of unknown origin are dependent.
+Lowering keeps a conservative loan on the argument of a call that relays
+ownerless text, as `relay(text)` does over a literal-backed `text`, and
+semantics correctly gives that result no borrowed state; the provenance test
+keeps that relay valid while a dependent relay without borrowed state fails.
 
 A dynamic-text return summary is an upper bound on dependent alternatives,
 not a requirement to invent an owner for static storage. A read-only summarized
@@ -2281,8 +2332,16 @@ dependency the caller's value holds in that field:
 - In the callee no loan derives the result from the origin. Lowering seeds no
   return-origin loan on a by-value formal; a reference formal keeps its
   ordinary entry loan, ended at the return. A return is the exact stored-field
-  load or another field result's call, and `TextContracts` requires every
-  return to read exactly the declared field or ownerless text.
+  load, another field result's call, or a by-value text relay of the field
+  such as `relay(label.text)`. `TextContracts` requires every return to read
+  exactly the declared field or ownerless text.
+- A by-value text call relaying a formal's or the receiver's text field
+  (`L-OWN-02`) keeps its result loan on that field place, never on the whole
+  referent the formal's entry loan names (`formalTextFieldPlace`), so the
+  relay is a use of that one field, which the field contract tracks, and its
+  return publishes exactly the declared source field. Program verification
+  admits a call-result loan that names a text field of the selected argument
+  source for a by-value text result.
 - At a call, `TextContracts` analyzes the callee under its field contracts and
   maps each returned field source onto the argument or receiver:
   `heldFieldSources` gives that formal's field here, unknown text for a
@@ -2863,7 +2922,14 @@ A `MirBody` owns:
   binding. An argument carrying owned transport must be the exact moved
   parameter operand. An exact-return transport may coexist with a confined
   boundary only when the parameter has repeatable signatures and no forwarding
-  edges. The callee must either return that exact moved binding as a single-use
+  edges. A fresh borrowing closure passed to such a parameter (`std::for_each`
+  returning its visitor) carries its capture group out under the call's own
+  result loan: the result must be that closure type, borrowed by value from
+  exactly that argument, as the callee's return borrow summary states. An owned
+  parameter returned by value leaves the same way, whether its transport is
+  exact-return or an owned value: owned-value transport may carry borrowed
+  state only when that return summary names the parameter, and a mutable owned
+  parameter may use exact-return transport. The callee must either return that exact moved binding as a single-use
   result transferred out of local cleanup, or return the exact owner
   construction whose declared field and constructor initializer prove the
   corresponding parameter-to-field move. Direct result/field materialization

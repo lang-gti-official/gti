@@ -1,0 +1,33 @@
+#include <std/string>
+
+// A by-value text relay of a formal's or the receiver's text field holds that
+// field's text, which the function's field contract tracks (L-OWN-02), as a
+// direct return of the field does: the function is a text field result and
+// its caller resolves the owner the caller's value holds in that field.
+std::string_view relay(std::string_view value) { return value; }
+
+class Label {
+public:
+  std::string_view text;
+  Label() : text("label") {}
+  Label(std::string_view text) : text(text) {}
+  std::string_view relayed() { return relay(this.text); }
+};
+
+std::string_view field_relay(Label& label) { return relay(label.text); }
+std::string_view direct(Label& label) { return label.text; }
+std::string_view chained(Label& label) { return field_relay(label); }
+
+int main() {
+  Label fixed{};
+  std::string owner{"dynamic"};
+  Label held{owner.view()};
+  std::string_view first = field_relay(held);
+  std::string_view second = chained(held);
+  if (first != "dynamic" || second != "dynamic" || direct(held) != "dynamic")
+    return 1;
+  if (field_relay(fixed) != "label" || fixed.relayed() != "label" ||
+      held.relayed() != "dynamic")
+    return 2;
+  return 0;
+}

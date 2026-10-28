@@ -1,0 +1,40 @@
+// A holder's stored reference reached through an inner holder that an
+// accessor returns by reference: `outer.inner().box` selects the referent
+// within the returned holder, and a borrow from it keeps that place.
+class Box {
+public:
+  mut int64_t value;
+  Box(int64_t value) : value(value) {}
+  mut int64_t& slot() mut { return this.value; }
+  int64_t read() { return this.value; }
+};
+
+class Grip {
+public:
+  mut Box& box;
+  Grip(mut Box& box) : box(box) {}
+  mut int64_t& value() mut { return this.box.value; }
+};
+
+class Outer {
+public:
+  mut Grip grip;
+  Outer(mut Box& box) : grip(Grip(box)) {}
+  mut Grip& inner() mut { return this.grip; }
+  mut Grip& operator->() mut { return this.grip; }
+};
+
+int main() {
+  mut Box box = Box(int64_t(1));
+  {
+    mut Outer outer = Outer(box);
+    outer.inner().box.slot() = int64_t(4);
+    std::println(outer.inner().box.read());
+    int64_t current = outer.inner().value();
+    outer->box.slot() = current + int64_t(2);
+    int64_t scaled = outer->box.read() * int64_t(10);
+    outer.inner().box.value = scaled;
+  }
+  std::println(box.value);
+  return 0;
+}
