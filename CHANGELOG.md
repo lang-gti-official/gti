@@ -9,6 +9,19 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.5 - Native relays of selected references, spans and records
+
+- The native backend now builds programs that relay a reference, a span or a
+  record reference selected out of a polymorphic object, which previously
+  failed with `GTI-B0003`, and matches the C++ backend. This covers:
+  - a function returning what a virtual or interface call returns, such as
+    `int32_t& relay(Base& b) { return b.slot(); }`, a `std::span<int32_t>`
+    returned by value, or `Record& relay(Base& b) { return b.get(); }`;
+  - a function selecting a field of a polymorphic object passed as an
+    argument, such as `int32_t& field(Base& b) { return b.value; }`, and a
+    function relaying such a function's result;
+  - writes through a relayed mutable reference.
+
 ## 0.484.4 - Native virtual text relays, returned siblings and exchanges
 
 - The native backend now builds these programs, which previously failed with

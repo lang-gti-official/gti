@@ -78,6 +78,7 @@ SUCCESS_FILES = {
     "borrowed-carriers": "tests/fixtures/llvm_dispatch_borrowed_carriers.gti",
     "moved-carriers": "tests/fixtures/llvm_dispatch_moved_carriers.gti",
     "virtual-text-relays": "tests/fixtures/llvm_dispatch_virtual_text_relays.gti",
+    "selected-relays": "tests/fixtures/llvm_dispatch_selected_relays.gti",
     "returned-siblings": "tests/fixtures/llvm_dispatch_returned_siblings.gti",
     "exchanged-transfers": "tests/fixtures/llvm_dispatch_exchanged_transfers.gti",
 }
@@ -1743,7 +1744,7 @@ def dispatch_cases(root: Path) -> dict[str, DispatchCase]:
     for name, relative in SUCCESS_FILES.items():
         add(name, (root / relative).read_text(encoding="utf-8"), origin=relative,
             cpp_limitation=CPP_LIMITATIONS.get(name),
-            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers", "owned-base-arguments", "reference-base-arguments", "virtual-text-relays", "returned-siblings", "exchanged-transfers"} else ENDPOINTS)
+            endpoints=TRANSFER_ENDPOINTS if name.startswith("fresh-hierarchy-") or name in {"inline-hierarchy-fields", "hierarchy-reference-results", "nested-hierarchy-transfer", "polymorphic-owners", "virtual-signatures", "fresh-publication", "inline-slots", "owned-transfers", "consuming-receivers", "closure-models", "abstract-phases", "temporary-receivers", "replacements", "hierarchy-arrays", "field-default-closure-former-reject", "program-storage", "shared-polymorphic-owners", "lifecycle-phases", "generated-empty-former-reject", "hierarchy-payloads", "payload-moves", "borrowed-carriers", "moved-carriers", "owned-base-arguments", "reference-base-arguments", "virtual-text-relays", "selected-relays", "returned-siblings", "exchanged-transfers"} else ENDPOINTS)
     for name, source in SUCCESS_SOURCES.items():
         add(name, source)
     for name, (source, expected_exit) in TRANSFER_SUCCESS_SOURCES.items():
@@ -2297,14 +2298,14 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
                                   "hierarchy-reference-results", "owner-reference-failure",
                                   "owner-reference-wrong-cleanup", "shared-owner-reference",
                                   "owner-failure-before-reference", "replacements",
-                                  "borrowed-carriers"),
+                                  "borrowed-carriers", "selected-relays"),
         "virtual-invocation": ("fresh-local-virtual-call", "scalar-state-virtual-control",
                                "static-dispatch", "dispatch-cost-correctness",
                                "virtual-signatures", "virtual-signature-failure",
                                "virtual-signature-wrong-cleanup", "temporary-receivers",
                                "temporary-receiver-failure",
                                "temporary-receiver-wrong-cleanup",
-                               "virtual-text-relays"),
+                               "virtual-text-relays", "selected-relays"),
         "dispatch-lifecycle": ("virtual-failure-cleanup", "constructor-rollback",
                                "cleanup-oracle-wrong-trace", "nonobserving-cleanup-helper-cycle"),
         "fresh-local-generated-transfers": (

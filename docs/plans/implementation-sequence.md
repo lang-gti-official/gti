@@ -11744,6 +11744,14 @@ last two also have failure and wrong-trace variants:
   erased transferable callable with owned state in a vector element or a
   field.
 
+The remaining relay gaps also closed on 2026-10-28. A reference, span or
+record reference selected out of hierarchy storage now relays through static,
+virtual and interface calls, and through a free function borrowing the storage
+as an argument. The `selected-relays` case of `llvm_dispatch_execution` covers
+them, with mutation through a relayed mutable reference and overrides that
+select different storage. `llvm_admission` checks that static and virtual
+calls get the same witnesses and that forged selections never gain admission.
+
 Base-view replacement, exchange and swap, enum copies, enums moved into
 arguments or returns, payload values returned by value, thread-local
 hierarchy objects and observable pure phases stay `PolymorphicTransfer` or

@@ -2950,6 +2950,162 @@ int main() {
          "a virtual call's returned view has the static call's witness");
 }
 
+// A reference, span or record reference that a call selects out of
+// hierarchy storage it borrows is that call's checked result, relayed alike
+// by static, virtual and interface calls and through a receiver or an
+// argument. A forged relay or selection never grants that admission.
+void testSelectedResultRelays() {
+  using namespace lang;
+  struct Result {
+    const char *type;
+    const char *member;
+    const char *use;
+  };
+  const Result results[] = {
+      {"int32_t&", "return this.value;", "relay(owner) == 5"},
+      {"std::span<int32_t>", "return this.values.as_span();",
+       "relay(owner).size() == std::size_t(1)"},
+      {"Record&", "return this.record;",
+       "relay(owner).name.size() == std::size_t(6)"},
+  };
+  const auto program = [](const Result &result, int call) {
+    const bool interface = call == 2;
+    const std::string member = std::string(result.type) + " select()" +
+                               (interface ? " override" : "") + " { " +
+                               result.member + " }";
+    return std::string(R"(
+#include <std/span>
+#include <std/string>
+#include <std/vector>
+class Record {
+public:
+  std::string name;
+  Record() : name(std::string("record")) {}
+};
+)") +
+           (interface ? std::string("interface Picker {\n  ") + result.type +
+                            " select();\n};\n"
+                      : std::string()) +
+           "class Base" + (interface ? " : public Picker" : "") + R"( {
+public:
+  int32_t value;
+  mut std::vector<int32_t> values;
+  Record record;
+  Base() : value(5), record(Record()) {}
+  virtual void poke() {}
+  )" + (call == 1 ? "virtual " : "") +
+           member + "\n};\n" + result.type + " relay(" +
+           (interface ? "Picker" : "Base") +
+           "& item) { return item.select(); }\n" + R"(int main() {
+  mut Base owner{};
+  owner.values.push_back(1);
+  return )" +
+           result.use + " ? 0 : 1;\n}\n";
+  };
+  const std::set<std::string_view> relayed{
+      "MirLoanKind.CallResult", "MirLoanKind.Return",
+      "MirInstructionKind.Borrow", "MirOperandKind.Loan"};
+  for (const auto &result : results) {
+    std::vector<std::string> witnesses[3];
+    for (const int call : {0, 1, 2}) {
+      const auto plan = planLlvmAdmission(lower(program(result, call), true));
+      expect(plan.admitted(), std::string("a ") +
+                                  (call == 0   ? "static"
+                                   : call == 1 ? "virtual"
+                                               : "interface") +
+                                  " call's selected " + result.type +
+                                  " relays on LLVM");
+      for (const auto &use : plan.requirements())
+        if (use.required && relayed.contains(use.entry->key()))
+          witnesses[call].push_back(
+              use.entry->key() + "=" +
+              (use.implementedShape ? std::string(use.implementedShape->name)
+                                    : std::string("<none>")));
+      std::sort(witnesses[call].begin(), witnesses[call].end());
+    }
+    expect(!witnesses[0].empty() && witnesses[0] == witnesses[1],
+           std::string("a virtual call's selected ") + result.type +
+               " has the static call's witnesses");
+  }
+
+  // Forged selections and relays never grant admission, whichever stage
+  // refuses them: the relayed loan must be the selecting call's own result,
+  // and the selecting input must borrow that result's source.
+  const auto source = std::string(R"(
+class Base {
+public:
+  int32_t value;
+  Base() : value(5) {}
+  virtual int32_t& slot() { return this.value; }
+};
+int32_t& relay(Base& base) { return base.slot(); }
+int main() {
+  Base owner{};
+  Base other{};
+  return relay(owner) == 5 && other.value == 5 ? 0 : 1;
+}
+)");
+  const auto frontend = Frontend().analyze("selected-relay.gti", source);
+  expect(frontend.canGenerateCode() &&
+             planLlvmAdmission(lower(source)).admitted(),
+         "the unforged selected relay is admitted");
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto mir = frontend.mir;
+    bool forged = false;
+    for (auto &function : const_cast<std::vector<MirFunctionInstance> &>(
+             mir.functionInstances())) {
+      auto &body = function.body;
+      for (auto &block : body.blocks)
+        for (auto &stage : block.instructions) {
+          if (forged || stage.tombstone)
+            continue;
+          const auto *loan = stage.loan ? body.findLoan(*stage.loan) : nullptr;
+          if (mutation == 0 && stage.kind == MirInstructionKind::Borrow &&
+              stage.operands.size() == 1 &&
+              stage.operands.front().kind == MirOperandKind::Loan) {
+            // Relay the parameter's entry loan instead of the call's result.
+            for (const auto &entry : body.loans)
+              if (entry.kind == MirLoanKind::Parameter && entry.entry) {
+                stage.operands.front().loan = entry.id;
+                forged = true;
+              }
+          } else if (mutation == 1 && loan &&
+                     loan->kind == MirLoanKind::CallResult &&
+                     stage.kind == MirInstructionKind::Call &&
+                     !stage.receiver) {
+            // Name a hierarchy local the call never borrowed.
+            for (const auto &place : body.places)
+              if (place.id != loan->source &&
+                  place.type == body.findPlace(loan->source)->type) {
+                const_cast<MirLoan *>(loan)->source = place.id;
+                forged = true;
+                break;
+              }
+          } else if (mutation == 2 && loan &&
+                     loan->kind == MirLoanKind::CallResult &&
+                     stage.kind == MirInstructionKind::Call &&
+                     !stage.receiver) {
+            // A selection with no borrowed input.
+            stage.operands.clear();
+            stage.parameterTypes.clear();
+            forged = true;
+          }
+        }
+    }
+    auto build = LoweredProgramBuilder().build(
+        frontend.program, frontend.semantics, frontend.hir, mir, mir, {},
+        TargetInfo::host());
+    bool refused = !build.valid();
+    if (build.valid()) {
+      std::vector<LoweredProgramIssue> issues;
+      auto verified = verifiedLoweredProgram(std::move(*build.program), issues);
+      refused = !verified || !planLlvmAdmission(*verified).admitted();
+    }
+    expect(forged && refused, "forged selection " + std::to_string(mutation) +
+                                  " never grants admission");
+  }
+}
+
 void testHierarchyReferenceReturns() {
   using namespace lang;
   const auto plan = planLlvmAdmission(lower(R"(
@@ -3550,6 +3706,7 @@ int main() {
     testVirtualCallDependencies();
     testHierarchyReferenceReturns();
     testVirtualTextRelayReturns();
+    testSelectedResultRelays();
     testConservativeClassWitnesses();
     testDispatchPerUseWitnesses();
   } catch (const std::exception &error) {
