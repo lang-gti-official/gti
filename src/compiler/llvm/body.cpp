@@ -2458,26 +2458,61 @@ private:
     // failure chain. A chain that executes no instruction and only moves the
     // record onward (propagation, containment, plain edges) cannot observe
     // it, so such a body neither enters nor leaves it.
-    const auto observesCleanup = [](const MirBlock &block) {
+    const auto observesCleanup = [&](const MirBlock &block) {
       if (block.activeFailure == 0)
         return false;
-      if (std::any_of(block.instructions.begin(), block.instructions.end(),
-                      [](const MirInstruction &stage) {
-                        if (stage.tombstone)
-                          return false;
-                        if (!stage.lifecycle.empty())
-                          return true;
-                        switch (stage.kind) {
-                        case MirInstructionKind::Lifecycle:
-                        case MirInstructionKind::EndBorrow:
-                        case MirInstructionKind::ActivateBorrow:
-                        case MirInstructionKind::ParkRangeCursor:
-                        case MirInstructionKind::RestoreRangeCursor:
-                          return false;
-                        default:
-                          return true;
-                        }
-                      }))
+      if (std::any_of(
+              block.instructions.begin(), block.instructions.end(),
+              [&](const MirInstruction &stage) {
+                if (stage.tombstone)
+                  return false;
+                if (stage.kind == MirInstructionKind::Drop &&
+                    !stage.replacementCleanup) {
+                  for (const auto &event : stage.lifecycle) {
+                    if (event.kind != MirLifecycleEventKind::Drop)
+                      continue;
+                    const auto *obligation =
+                        input.findDropObligation(event.source);
+                    if (!obligation ||
+                        obligation->kind != MirDropObligationKind::Binding)
+                      break;
+                    const auto &recipe = obligation->dropType;
+                    // Retiring an inert binding only clears compiler
+                    // activation state. No user cleanup, resource
+                    // release, child schedule or dispatch observes TLS.
+                    if (!event.target && !recipe.requiresActiveCleanup &&
+                        !recipe.destructor && recipe.aggregate.empty() &&
+                        !recipe.fixedArray && !recipe.recursiveCleanup &&
+                        !recipe.polymorphicCleanup &&
+                        recipe.type.kind != SemanticType::UniqueOwner &&
+                        std::all_of(stage.lifecycle.begin(),
+                                    stage.lifecycle.end(),
+                                    [&](const MirLifecycleEvent &other) {
+                                      return (!other.source && !other.target) ||
+                                             (other.kind ==
+                                                  MirLifecycleEventKind::Drop &&
+                                              other.source == event.source &&
+                                              !other.target);
+                                    }))
+                      return false;
+                  }
+                }
+                if (std::any_of(stage.lifecycle.begin(), stage.lifecycle.end(),
+                                [](const MirLifecycleEvent &event) {
+                                  return event.source || event.target;
+                                }))
+                  return true;
+                switch (stage.kind) {
+                case MirInstructionKind::Lifecycle:
+                case MirInstructionKind::EndBorrow:
+                case MirInstructionKind::ActivateBorrow:
+                case MirInstructionKind::ParkRangeCursor:
+                case MirInstructionKind::RestoreRangeCursor:
+                  return false;
+                default:
+                  return true;
+                }
+              }))
         return true;
       switch (block.terminator.kind) {
       case MirTerminatorKind::Goto:
@@ -2659,8 +2694,20 @@ private:
           const auto &place = *input.findPlace(local.place);
           debug->local(ir, place, memory.address(place.id));
         }
-    for (const auto &record : input.failureRecords)
+    for (const auto &record : input.failureRecords) {
+#if !defined(GTI_LLVM_C04_NATIVE_UNWIND)
+      // A propagation-only body has no local cleanup that can observe or
+      // retain distinct records. Write directly into the caller's failure
+      // destination; all successful paths ignore it, and failed paths retain
+      // the incoming-secondary-failure check before returning. Bodies with
+      // cleanup keep independent channels for primary/secondary failures.
+      if (failureDestination && !cleanupToken) {
+        channels.at(record.id) = failureDestination;
+        continue;
+      }
+#endif
       channels.at(record.id) = ir.CreateAlloca(session.abi().failureChannel());
+    }
     if (constructor && owner &&
         owner->compilerCapability ==
             CompilerCapabilityTypeKind::PolymorphicStorage) {

@@ -27,7 +27,16 @@ int drive(int seed, int rounds) {
   for (mut int round = 0; round < rounds; round++) { value = step(value, round % 127); }
   return value;
 }
+void retire(int value) { auto checked = value + 1; }
+struct Observe {
+  Observe() = default;
+  ~Observe() { retire(2); }
+};
+int guarded(int value) { Observe cleanup{}; return checked(value, 1); }
+struct Inert { int tag = 0; Inert() = default; };
+int passive(int value) { Inert local{}; return checked(value, 1); }
 int main() {
+  if (guarded(1) != 2 || passive(1) != 2) { return 4; }
   if (promote(7) != 7 || checked(1, 2) != 3) { return 1; }
   if (drive(1, 3) != 4932) { return 3; }
   if (strict(2.0d, 3.0d, 4.0d) != 10.0d || divide(4.0d, 2.0d) != 2.0d) { return 2; }
@@ -60,7 +69,8 @@ int main() {
     Session session(*input, options);
     lowerScalarProgram(session, admission);
     llvm::Function *promote = nullptr, *checked = nullptr, *strict = nullptr,
-                   *step = nullptr, *drive = nullptr;
+                   *step = nullptr, *drive = nullptr, *guarded = nullptr,
+                   *passive = nullptr;
     std::string privateName, entryName;
     for (const auto &function : input->program().mir().functionInstances()) {
       const auto *declaration =
@@ -77,6 +87,10 @@ int main() {
         step = session.abi().declareFunction(function.id);
       if (declaration->qualifiedName == "drive")
         drive = session.abi().declareFunction(function.id);
+      if (declaration->qualifiedName == "guarded")
+        guarded = session.abi().declareFunction(function.id);
+      if (declaration->qualifiedName == "passive")
+        passive = session.abi().declareFunction(function.id);
       if (declaration->qualifiedName == "divide")
         privateName =
             session.abi().declareFunction(function.id)->getName().str();
@@ -96,6 +110,31 @@ int main() {
     };
     if (allocas(*promote) == 0)
       throw std::runtime_error("pipeline fixture lost its source storage");
+#if !defined(GTI_LLVM_C04_NATIVE_UNWIND)
+    const auto failureBuffers = [&](const llvm::Function &function) {
+      unsigned count = 0;
+      for (const auto &block : function)
+        for (const auto &row : block)
+          if (const auto *allocation = llvm::dyn_cast<llvm::AllocaInst>(&row))
+            count += allocation->getAllocatedType() ==
+                     session.abi().failureChannel();
+      return count;
+    };
+    if (!guarded || !passive || failureBuffers(*step) != 0 ||
+        failureBuffers(*drive) != 0 || failureBuffers(*guarded) == 0)
+      throw std::runtime_error(
+          "failure destination reuse crossed its cleanup boundary");
+    // An inert drop may still have an unused scratch destination before
+    // LLVM folds its helper, but it must not establish a cleanup context.
+    for (const auto &block : *passive)
+      for (const auto &row : block)
+        if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&row))
+          if (const auto *callee = call->getCalledFunction())
+            if (callee->getName() == "gti_rt_failure_cleanup_enter_v1" ||
+                callee->getName() == "gti_rt_failure_cleanup_leave_v1")
+              throw std::runtime_error(
+                  "inert binding retirement entered a cleanup context");
+#endif
     const auto floating = [&] {
       unsigned multiply = 0, addition = 0;
       for (const auto &block : *strict)

@@ -9005,7 +9005,9 @@ prerequisite checkpoints as full acceptance.
   checked borrowing, function pointers and defined failure remain compiler
   mechanisms. Private strong-owner operations are retained but no longer used
   by public shared ownership. A source aggregate co-allocates payload and control,
-  with generated field rollback and a process lease. Full platform, failure, corpus and performance
+  with generated field rollback and a process lease. The owner explicitly
+  accepted the measured 24-byte source handle versus the 16-byte private handle
+  on 2026-10-28; allocation count falls from two to one. Full platform, failure, corpus and performance
   acceptance remains required before delivery. A separate weak-owner prototype
   passed clone/lock/expiry and borrow-rejection probes; production weak ownership
   remains unimplemented and needs race, overflow, rollback and performance gates.

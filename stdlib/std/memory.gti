@@ -1765,8 +1765,8 @@ public:
     if (this.object != nullptr) { unsafe { std::destroy_at(this.object); } }
   }
 };
-// The erased thunk owns complete final retirement. The guard destroys the
-// carrier through its verified field cleanup; the lease releases bytes on failure.
+// The erased thunk retires the carrier through its verified field cleanup;
+// the lease releases its bytes even when payload cleanup fails.
 unsafe void destroy_shared_block<std::storage_element T>(void* address) {
   unsafe {
     auto block = std::typed_address<shared_control>(address);

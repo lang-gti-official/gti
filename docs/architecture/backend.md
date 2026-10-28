@@ -5519,7 +5519,18 @@ no runtime operation. A generated terminal source-destructor recipe without
 children or allocation release likewise returns its first failure without
 entering a scope that no subsequent cleanup could observe. Both paths retain
 the incoming-secondary-failure check and exact record propagation. Aggregate,
-recursive, allocation-releasing and native-unwind cleanup retain their scopes. Nested scopes cannot
+recursive, allocation-releasing and native-unwind cleanup retain their scopes.
+A binding drop with an exact inert recipe (no active cleanup, destructor,
+children, array/recursive/dynamic cleanup or owner release) only retires local
+activation state and also needs no scope. Additional lifecycle transfers keep
+it outside this case. In the status ABI, a body with no observable failure
+cleanup reuses its caller's failure destination for propagation records.
+Successful paths never consume that output; a failed path still performs the
+incoming-secondary-failure check. Bodies that run cleanup retain independent
+primary/secondary buffers, as do native-unwind bodies. This removes fixed-size
+stack buffers and copies from ordinary forwarding helpers without changing
+failure identity, order, diagnostics or the ABI signature.
+ Nested scopes cannot
 replace the earliest record/artifact, and a secondary failure takes the existing
 emergency protocol immediately. The runtime borrows the record only for that
 synchronous scope; no allocation, public type recognition or successful-call

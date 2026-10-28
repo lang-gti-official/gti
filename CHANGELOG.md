@@ -9,6 +9,24 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.489.0 - Source-defined shared ownership and general atomic capabilities
+
+- `std::shared_ptr` now implements its handle, explicit cloning, reference
+  counts, final release, upcasts and allocation policy in GTI source. The
+  factory constructs the payload and control in one allocation, preserving
+  read-only borrowing, constructor rollback and last-owner cleanup.
+- Scalar atomics are available in both execution profiles and no longer
+  require a host thread runtime. Thread creation and atomic wait/notification
+  retain their separate restrictions.
+- Unsafe transfer/share declarations accept bounded capability predicates,
+  including conjunctions needed by owners whose last release can run on
+  another thread. False predicates preserve local usability.
+- Explicit wrapping atomic add/subtract operations are available on LLVM.
+  Existing checked operations retain their arithmetic contract. Consequently,
+  the source shared owner now requires LLVM; C++ reports `GTI-B0003` for its
+  wrapping atomic operation. This backend support change is deliberate.
+- Production `std::weak_ptr` remains unimplemented.
+
 ## 0.488.1 - Native global copies, function-pointer fields, base returns and nested holders
 
 ### Native function-pointer fields, base returns and mutex text witnesses

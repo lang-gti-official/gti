@@ -1677,6 +1677,12 @@ establishing a live strong credit. General compiler facilities still supply
 object layout/lifetime, borrow checking, capability predicates, function-pointer
 calls, atomic target instructions and defined failure. Public shared ownership
 no longer uses the private `shared_owner` capability.
+On the measured 64-bit native ABI, the ordinary source destructor's activation
+state makes the handle 24 bytes, compared with the legacy handle's 16 bytes.
+The owner accepted this representation cost on 2026-10-28. The factory uses one
+allocation instead of the legacy two; these are implementation measurements,
+not a frozen public layout or a claim about every target.
+
 
 This source implementation requires the LLVM backend because wrapping atomic
 operations are LLVM-only. C++ compilation reports `GTI-B0003`; this is an explicit
