@@ -12,11 +12,38 @@
 #include "gti/semantic_model.h"
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace lang {
+
+// Diagnostic-only witnesses, owned by the current semantic analysis. Joins
+// retain a bounded, deterministic sample, not a second ownership analysis.
+struct SemanticMoveOrigins {
+  std::vector<SourceSpan> sites;
+  std::size_t omittedLowerBound = 0;
+
+  SemanticMoveOrigins() = default;
+  SemanticMoveOrigins(SourceSpan origin) : sites{std::move(origin)} {}
+  void clear() {
+    sites.clear();
+    omittedLowerBound = 0;
+  }
+  static SemanticMoveOrigins merge(const SemanticMoveOrigins &left,
+                                   const SemanticMoveOrigins &right);
+  void appendTo(Diagnostic &diagnostic) const;
+};
+
+// Identity is the shared record, not its message or position in a mutable
+// diagnostics vector. Only diagnosed failures receive one; an incomplete or
+// dependent Unknown type is not itself evidence of an error.
+struct SemanticRecoveryCause {
+  SourceSpan origin;
+  std::string code;
+};
+using SemanticRecoveryIdentity = std::shared_ptr<const SemanticRecoveryCause>;
 
 enum class MemberRequirementFailureKind {
   None,

@@ -994,6 +994,12 @@ def test_newer_edit_cancels_running_analysis(executable, root):
     # stopped run is traced as cancelled rather than completed.
     path = root / "cancel-burst.gti"
     source = "".join(f"int cancel_{index} = {index};\n" for index in range(8000))
+    # The intermediate erroneous snapshot skips later lowering and can finish
+    # much faster than the valid snapshots. Give its frontend enough work for
+    # the next edit to reach cancellation, rather than timing valid lowering.
+    intermediate_source = source + "".join(
+        f"int intermediate_{index} = {index};\n" for index in range(32000)
+    )
     path.write_text(source, encoding="utf-8")
     uri = path.resolve().as_uri()
     trace_path = root / "cancel-trace.jsonl"
@@ -1020,7 +1026,7 @@ def test_newer_edit_cancels_running_analysis(executable, root):
         session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         open_document(session, uri, source)
         for version, text in (
-            (2, source + "int cancel_error = cancel_missing;\n"),
+            (2, intermediate_source + "int cancel_error = cancel_missing;\n"),
             (3, source),
         ):
             session.send(
@@ -5775,7 +5781,7 @@ def test_diagnostic_code_actions(executable, root):
         action = actions[0]
         assert action["title"] == fix["message"]
         assert action["kind"] == "quickfix"
-        assert action["isPreferred"] is True
+        assert action["isPreferred"] is False
         assert action["diagnostics"][0]["code"] == diagnostic["code"]
         document_edit = action["edit"]["documentChanges"][0]
         assert document_edit["textDocument"] == {"uri": uri, "version": 1}
@@ -5928,7 +5934,7 @@ def test_advisory_diagnostics_and_actions(executable, root):
             "result"
         ]
         assert len(actions) == 1, actions
-        assert actions[0]["isPreferred"] is True
+        assert actions[0]["isPreferred"] is False
         assert actions[0]["edit"]["documentChanges"][0]["edits"][0][
             "newText"
         ] == ""
@@ -6228,6 +6234,8 @@ def test_missing_standard_library_include_code_action(
                 },
                 "replacement": include,
                 "message": f"Add #include <{header}>",
+                "repairId": "singleton:0",
+                "applicability": "requiresReview",
             }
         ], diagnostic
 
@@ -6253,7 +6261,7 @@ def test_missing_standard_library_include_code_action(
         action = actions[0]
         assert action["title"] == f"Add #include <{header}>", action
         assert action["kind"] == "quickfix", action
-        assert action["isPreferred"] is True, action
+        assert action["isPreferred"] is False, action
         assert action["edit"]["documentChanges"] == [
             {
                 "textDocument": {"uri": uri, "version": 1},
