@@ -9,6 +9,10 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+The proposed [diagnostic-quality campaign](../plans/diagnostic-quality.md)
+builds on this infrastructure. Its causal-evidence, recovery and repair-group
+extensions are planned work, not additional implemented contracts.
+
 Fixed-array initialization checks ownership for every element separately.
 `GTI-S2003` identifies an unavailable copy or move at the written element,
 rather than reporting equal types as incompatible. Fresh exact construction
