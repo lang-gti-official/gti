@@ -2565,6 +2565,45 @@ int main() {
 )gti");
   expect(rejectedAtSource(mutated, "GTI-S2017"),
          "a relayed field's owner stays borrowed while its view lives");
+
+  // A by-value formal is a local copy whose cleanup leaves the caller's text
+  // alone: its relayed field returns no loan into that copy, and the caller
+  // still keeps the owner borrowed.
+  const std::string byValue =
+      declarations +
+      "std::string_view by_value(Label label) { return relay(label.text); }\n";
+  const auto copied = analyzeText(byValue + R"gti(
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view kept = by_value(Label(owner.view()));
+  return kept.size() == uint64_t(7) && by_value(Label()).size() == uint64_t(5)
+             ? 0
+             : 1;
+}
+)gti");
+  if (!copied.canGenerateCode())
+    printDiagnostics(copied);
+  expect(copied.canGenerateCode() && lang::verifyMirProgram(copied.mir).valid(),
+         "a relayed by-value formal text field verifies");
+  expect(rejectedAtSource(analyzeText(byValue + R"gti(
+std::string_view leak() {
+  std::string owner{"dynamic"};
+  return by_value(Label(owner.view()));
+}
+int main() { return int(leak().size()); }
+)gti"),
+                          "GTI-S2045"),
+         "a by-value relay of a local owner's view cannot escape");
+  expect(rejectedAtSource(analyzeText(byValue + R"gti(
+int main() {
+  mut std::string owner{"dynamic"};
+  std::string_view kept = by_value(Label(owner.view()));
+  owner.append("!");
+  return int(kept.size());
+}
+)gti"),
+                          "GTI-S2017"),
+         "a by-value relay keeps its owner borrowed while its view lives");
 }
 
 // An invocation pointer's text result is ownerless (owner decision
