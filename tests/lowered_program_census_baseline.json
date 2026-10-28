@@ -642,8 +642,8 @@
     },
     "042-exclusive-reborrows.gti": {
       "declarations": 879,
-      "bodies": 55,
-      "generated_items": 18,
+      "bodies": 56,
+      "generated_items": 19,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -652,7 +652,7 @@
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 4,
+        "concrete_instance_adapter": 5,
         "thread_local_storage": 0
       }
     },
@@ -2322,8 +2322,8 @@
     },
     "149-interface-static-factories.gti": {
       "declarations": 896,
-      "bodies": 92,
-      "generated_items": 33,
+      "bodies": 93,
+      "generated_items": 34,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -2332,7 +2332,7 @@
         "lifecycle_cleanup": 1,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 19,
+        "concrete_instance_adapter": 20,
         "thread_local_storage": 0
       }
     },
@@ -2720,22 +2720,6 @@
         "thread_local_storage": 0
       }
     },
-    "175-thread-local-storage.gti": {
-      "declarations": 1704,
-      "bodies": 275,
-      "generated_items": 155,
-      "generated_kinds": {
-        "program_initialization": 1,
-        "hosted_entry": 1,
-        "structural_operator_adapter": 26,
-        "callable_adapter": 19,
-        "lifecycle_cleanup": 5,
-        "native_interop_adapter": 0,
-        "thread_task_adapter": 1,
-        "concrete_instance_adapter": 99,
-        "thread_local_storage": 3
-      }
-    },
     "173-general-requires.gti": {
       "declarations": 1601,
       "bodies": 174,
@@ -2767,11 +2751,27 @@
         "concrete_instance_adapter": 66,
         "thread_local_storage": 0
       }
+    },
+    "175-thread-local-storage.gti": {
+      "declarations": 1704,
+      "bodies": 275,
+      "generated_items": 155,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 26,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 5,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 1,
+        "concrete_instance_adapter": 99,
+        "thread_local_storage": 3
+      }
     }
   },
   "totals": {
     "declarations": 187243,
-    "bodies": 24130,
-    "generated_items": 15141
+    "bodies": 24132,
+    "generated_items": 15143
   }
 }
