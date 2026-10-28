@@ -515,4 +515,16 @@ constexpr bool is_same<T, U>() { return gti_internal::meta_type_relation<T, U, 0
 constexpr bool is_enum_underlying<E, U>() { return gti_internal::meta_type_relation<E, U, 1>(); }
 
 }
+
+/// The first declared name matching an integral enum value, or "<unknown>".
+/// Returned text has static lifetime; payload enums are excluded.
+std::string_view enum_name<E>(E value)
+  requires std::meta::is_integral_enum<E>() {
+  constexpr for (auto enumerator : std::meta::enumerators_of<E>()) {
+    if (value == enumerator.value()) {
+      return enumerator.name();
+    }
+  }
+  return "<unknown>";
+}
 }

@@ -244,6 +244,16 @@ The current implemented foundation includes:
   `constexpr for`; see
   [compile-time iteration and reflection](static-semantics.md#312-compile-time-iteration-and-reflection); and
 
+- `<std/meta>` also provides source-defined `std::enum_name(value)` at namespace
+  `std` scope. It accepts integral enums and returns a literal-backed
+  `std::string_view` with static lifetime: the unqualified enumerator name,
+  or `"<unknown>"` when no value matches. Aliases return the first matching
+  name in declaration order. Payload enums and non-enum arguments fail the
+  ordinary integral-enum constraint. Reflection expands the comparisons at
+  compile time; lookup allocates no memory and performs at most one comparison
+  per enumerator. See [the Expected example](../../examples/169-source-expected.gti)
+  for naming enum errors without a separate conversion helper.
+
 - `<std/panic>` source-defined raw and formatted terminal reporting through
   `std::panic`, with caller attribution and bounded message capture before
   deterministic cleanup. Formatting and stdout convenience APIs use the same
