@@ -3977,6 +3977,13 @@ private:
       const SemanticType &parameter, const SemanticType &argument,
       const ExprPtr &expression, bool deferred) const;
 
+  // A constructor call's value parameters infer unambiguous function items as
+  // direct braces do: analyze the deferred value tail exactly once, in source
+  // order. Returns whether an array brace or callable-result tail still waits
+  // for the selected constructor's contextual parameter types.
+  bool resumeDeferredConstructorArguments(const Call &expr,
+                                          ContextualCallArguments &analysis);
+
   bool finishContextualCallArguments(
       const std::vector<SemanticType> &parameterTypes,
       const ExprList &arguments, ContextualCallArguments &analysis,
