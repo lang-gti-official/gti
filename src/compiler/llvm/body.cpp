@@ -2445,8 +2445,30 @@ private:
     auto *entry =
         llvm::BasicBlock::Create(session.context(), "entry", &function);
     ir.SetInsertPoint(entry);
+    // The incoming-cleanup context is read only by code that runs inside a
+    // failure chain. A chain that executes no instruction and only moves the
+    // record onward (propagation, containment, plain edges) cannot observe
+    // it, so such a body neither enters nor leaves it.
+    const auto observesCleanup = [](const MirBlock &block) {
+      if (block.activeFailure == 0)
+        return false;
+      if (std::any_of(
+              block.instructions.begin(), block.instructions.end(),
+              [](const MirInstruction &stage) { return !stage.tombstone; }))
+        return true;
+      switch (block.terminator.kind) {
+      case MirTerminatorKind::Goto:
+      case MirTerminatorKind::ContinueFailure:
+      case MirTerminatorKind::PropagateFailure:
+      case MirTerminatorKind::ContainFailure:
+      case MirTerminatorKind::Unreachable:
+        return false;
+      default:
+        return true;
+      }
+    };
     if (std::any_of(input.blocks.begin(), input.blocks.end(),
-                    [](const MirBlock &block) { return block.activeFailure != 0; })) {
+                    observesCleanup)) {
       // A defined-failure chain cannot rejoin normal execution. One token
       // spans that invocation's cleanup, with no TLS work on successful paths.
       cleanupToken = ir.CreateAlloca(session.layouts().pointer());
