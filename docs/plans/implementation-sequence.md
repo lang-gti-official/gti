@@ -11780,8 +11780,15 @@ backend fails on all of these, so the `closure-transfers` and
 `thread-local-hierarchy-storage` cases of `llvm_dispatch_execution` check
 their own results natively. Before this change, a constructor field taking an
 inert hierarchy parameter raised an LLVM internal error; it now runs.
-Copies of program storage stay refused, including a thread-local initialized
-from a global, and `reject-thread-local-copy` pins that refusal.
+Copies of program storage and of class fields closed afterwards, again on
+2026-10-28. Examples are `Square c = global;`, a static field, a
+thread-local initialized from a global, and `Twice t = holder.held;`. C++ ran
+them, so they were parity gaps. The `program-storage` and `closure-transfers`
+cases cover them. A copied fixed-array element stays refused on both
+backends, and `reject-element-copy` pins that refusal. MIR now also keeps
+the selected referent place of a borrow through an inner holder an accessor
+returns, as in `outer.inner().box.slot()`. That used to be an internal error
+on both backends, and LLVM now runs it (`nested_holder_accessors`).
 The 18 wrong-code matrices at `--jobs 2`, before and after this change, have
 809 cells each. Neither run has a `PolymorphicTransfer` refusal, wrong code or
 a new refusal; three unrelated refusals are parity gaps in both. None of the
@@ -11790,8 +11797,8 @@ these cases went from 14 `PolymorphicTransfer` refusals and 5 internal errors
 to all running natively.
 
 Base-view replacement, exchange and swap, enum copies, enums moved into
-arguments or returns, payload values returned by value, copies of program
-storage and observable pure phases stay `PolymorphicTransfer` or
+arguments or returns, payload values returned by value, copied array
+elements and observable pure phases stay `PolymorphicTransfer` or
 `PureDispatchState`.
 Exchange and swap of a polymorphic class with derived classes are a semantic
 error for now (`GTI-S2018`, owner decision 2026-10-28), even for complete

@@ -2,7 +2,9 @@
 // constructs its own object directly in that thread's slot from a fresh
 // construction or a by-value result, which installs the object's dispatch
 // state there; code borrows it through its symbol as a complete object. At
-// thread exit, an object's destructors each observe their own class.
+// thread exit, an object's destructors each observe their own class. A
+// thread-local copied from program storage is a generated copy made in the
+// slot when that thread first uses it.
 #include <std/atomic>
 #include <std/thread>
 
@@ -48,7 +50,10 @@ public:
   }
 };
 
+Square seed = Square(4);
+
 thread_local mut Square square = Square(3);
+thread_local mut Square copied = seed;
 thread_local Badge badge = Badge();
 thread_local Square made = scaled(3);
 
@@ -59,6 +64,8 @@ int main() {
   }
   square.grow();
   if (square.area() != 16 || square.code() != 14) { return 2; }
+  copied.grow();
+  if (copied.area() != 25 || seed.area() != 16) { return 7; }
   auto started = std::thread::start([]() -> void {
     // This thread's own objects, constructed in its own slots.
     if (square.area() != 9 || made.area() != 16) {
@@ -67,7 +74,10 @@ int main() {
     }
     square.grow();
     square.grow();
-    worker_result.store(square.code() == 15 && badge.id == 7 ? 0 : 2);
+    worker_result.store(square.code() == 15 && badge.id == 7 &&
+                                copied.area() == 16
+                            ? 0
+                            : 2);
   });
   if (!started.has_value()) { return 3; }
   mut auto worker = std::move(started).value();

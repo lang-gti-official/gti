@@ -5317,9 +5317,15 @@ thread's slot as a fresh construction or by-value result, so every thread's
 object installs its own dispatch state. Code borrows it through its symbol as
 a complete object. At thread exit, its cleanup runs each destructor under the
 lifecycle phase of that destructor's own class, as any other complete cleanup
-does. A thread-local initialized by copying program storage stays
-`PolymorphicTransfer`, because the transfer planner has no source view of a
-symbol.
+does. A thread-local initialized by copying program storage is a generated
+copy made in the slot.
+
+A copy may read program storage in place: a namespace object, a static field
+or a thread-local, named by its symbol. It may also read a class field of any
+checked source, because a by-value field is a complete object of its declared
+class. Moves out of either still take their own planned paths. A copied
+fixed-array element, selected through a checked index, stays
+`PolymorphicTransfer`.
 
 A shared owner of a polymorphic object keeps one control block across clones
 and verified upcasts. An upcast moves only the handle's view to the static
@@ -5336,8 +5342,7 @@ closure's relocation moves exactly its captures.
 - replacement of base views;
 - captures and non-generated wrappers;
 - whole-array transport;
-- copies of program storage, including into thread-local storage, and other
-  nonlocal destinations;
+- copied array elements and nonlocal destinations;
 - callback, native and thread combinations, including a moved erased callable
   consumed by a thread spawn.
 

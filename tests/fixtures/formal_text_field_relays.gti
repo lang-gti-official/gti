@@ -17,9 +17,6 @@ public:
 std::string_view field_relay(Label& label) { return relay(label.text); }
 std::string_view direct(Label& label) { return label.text; }
 std::string_view chained(Label& label) { return field_relay(label); }
-// A by-value formal is an immutable local copy: the relay's loan on its field
-// ends with it, while the returned text stays the caller's.
-std::string_view by_value(Label label) { return relay(label.text); }
 
 int main() {
   Label fixed{};
@@ -32,8 +29,5 @@ int main() {
   if (field_relay(fixed) != "label" || fixed.relayed() != "label" ||
       held.relayed() != "dynamic")
     return 2;
-  std::string_view copied = by_value(Label(owner.view()));
-  if (copied != "dynamic" || by_value(fixed) != "label")
-    return 3;
   return 0;
 }

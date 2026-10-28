@@ -992,9 +992,11 @@ public:
          (!relocating &&
           !value->borrowDependencies->possibleAlternatives.empty())))
       unsupported("LLVM fresh hierarchy transfer excludes borrowed values");
+    // A thread-local initializer returns into its thread's storage slot.
     if (identity.kind != MirBodyKind::Function &&
         identity.kind != MirBodyKind::Constructor &&
-        identity.kind != MirBodyKind::Destructor)
+        identity.kind != MirBodyKind::Destructor &&
+        identity.kind != MirBodyKind::ThreadLocalInitializer)
       unsupported("LLVM fresh hierarchy transfer requires a local body");
     if (producer.destination || producer.receiver || producer.loan ||
         producer.functionTarget || producer.bodyTarget ||
@@ -1068,17 +1070,26 @@ public:
     if ((source.place && place->id != source.place) ||
         (!source.place && place->id != loan->source))
       malformed("LLVM transfer source place has repeated identity");
+    // Program storage (a namespace or thread-local object or a static
+    // field) is a complete object its symbol names; a copy reads it in place
+    // and never moves out of it.
+    const bool programSource = place->root == MirPlaceRootKind::Symbol &&
+                               result.kind == ConstructorKind::Copy;
     if (unreference(place->type) != owner.type || place->foreignStorage ||
         place->capture ||
         (place->root != MirPlaceRootKind::Binding &&
          place->root != MirPlaceRootKind::This &&
-         place->root != MirPlaceRootKind::Loan) ||
+         place->root != MirPlaceRootKind::Loan && !programSource) ||
         (!packElement(*place) &&
          std::any_of(place->projections.begin(), place->projections.end(),
-                     [](const auto &projection) {
+                     [&](const auto &projection) {
+                       // A copy also reads a class field in place: the field
+                       // is a complete object of its declared class.
                        return projection.kind != MirProjectionKind::Base &&
                               projection.kind !=
-                                  MirProjectionKind::Dereference;
+                                  MirProjectionKind::Dereference &&
+                              !(projection.kind == MirProjectionKind::Field &&
+                                result.kind == ConstructorKind::Copy);
                      })))
       unsupported("LLVM transfer source is not a selected ordinary class view");
     if (place->root == MirPlaceRootKind::Loan) {
@@ -1224,7 +1235,8 @@ public:
             block.terminator.value->kind != MirOperandKind::Value ||
             block.terminator.value->type != owner.type ||
             body.returnType != owner.type ||
-            identity.kind != MirBodyKind::Function)
+            (identity.kind != MirBodyKind::Function &&
+             identity.kind != MirBodyKind::ThreadLocalInitializer))
           unsupported("LLVM transfer requires one direct consumer");
         consumed = true;
         result.publishes = FreshHierarchyPublication::Returned;
