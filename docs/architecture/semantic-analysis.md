@@ -272,9 +272,14 @@ a member call, an operator, or a `Bind` to declared target types such as each
 candidate's parameter at an argument's position), and the access the
 outermost use needs. Only the forms that can be or pass on an accessor result
 consult it (`consultsResultUse`): calls, field reads, subscripts, groupings,
-conditionals, unary operators and the comma. `accessorResultUse` walks the
+conditionals, unary operators and the comma. An `operator->` step evaluates
+the use of `p->m` over its referent: a field read prepends that field to the
+read's own use, and a member call keys its use, which already begins with
+the member, to the arrow callee (`ResultUse::arrowCallee`). An assignment
+through the arrow supplies no use and keeps the `mut` step. `accessorResultUse` walks the
 steps over the referent type: a member or operator whose overloads all have
-read-only receivers decides `ReadOnly`, one with only `mut` receivers decides
+read-only receivers decides `ReadOnly` unless one returns an exclusive
+(non-copyable) borrow carrier, which stays `Unknown`, one with only `mut` receivers decides
 `Mutable`, and another accessor pair continues to its own use. An unresolved
 step or a use no construct supplies is `Unknown`, which keeps the mutable
 preference, so a missing context can only reject a program the rule would

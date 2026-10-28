@@ -886,6 +886,20 @@ auto SemanticVisitor::Impl::analyzeContextualCallArguments(
   return result;
 }
 
+bool SemanticVisitor::Impl::resumeDeferredConstructorArguments(
+    const Call &expr, ContextualCallArguments &analysis) {
+  bool contextualArrayTail = false;
+  for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
+    contextualArrayTail =
+        contextualArrayTail ||
+        isContextualArrayArgument(expr.arguments()[index]) ||
+        isContextualCallableResultArgument(expr.arguments()[index]);
+    if (!contextualArrayTail && analysis.deferred[index])
+      analysis.types[index] = analyze(expr.arguments()[index]);
+  }
+  return contextualArrayTail;
+}
+
 auto SemanticVisitor::Impl::contextualCallArgumentPotentiallyMatches(
     const SemanticType &parameter, const SemanticType &argument,
     const ExprPtr &expression, bool deferred) const -> bool {

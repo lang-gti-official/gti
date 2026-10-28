@@ -1368,9 +1368,10 @@ void ownerPointerMetadata(LlvmCodegenOptimization optimization) {
                 .lowerLibraryReachableOnly = true,
                 .trustedBodies = TrustedBodyAnalysis::Reachable,
                 .sourceDebugProfile = SourceDebugProfile::LexicalV1})
-          .analyze(root / "tests/fixtures/llvm_optimization/native_debug_owner.gti",
-                   std::nullopt, {root / "stdlib/prelude.gti"}, {},
-                   {root / "stdlib"});
+          .analyze(
+              root / "tests/fixtures/llvm_optimization/native_debug_owner.gti",
+              std::nullopt, {root / "stdlib/prelude.gti"}, {},
+              {root / "stdlib"});
   if (!frontend.canGenerateCode())
     throw std::runtime_error("owner debug source failed analysis");
   auto lowered = LoweredProgramBuilder().build(
@@ -1404,11 +1405,14 @@ void ownerPointerMetadata(LlvmCodegenOptimization optimization) {
       const auto *pointer =
           llvm::dyn_cast_or_null<llvm::DIDerivedType>(member->getBaseType());
       if (!pointer || pointer->getTag() != llvm::dwarf::DW_TAG_pointer_type ||
-          !pointer->getBaseType() || pointer->getBaseType()->getName() != "Node")
+          !pointer->getBaseType() ||
+          pointer->getBaseType()->getName() != "Node")
         continue;
-      if (pointer->getSizeInBits() != session.dataLayout().getPointerSizeInBits() ||
+      if (pointer->getSizeInBits() !=
+              session.dataLayout().getPointerSizeInBits() ||
           member->getSizeInBits() != pointer->getSizeInBits())
-        throw std::runtime_error("owner metadata changed its pointer storage size");
+        throw std::runtime_error(
+            "owner metadata changed its pointer storage size");
       ++typedOwners;
     }
   }
@@ -1428,7 +1432,8 @@ void ownerPointerMetadata(LlvmCodegenOptimization optimization) {
           throw std::runtime_error("owner debug changed ABI attributes");
       if (function.getAttributes().getAsString(
               llvm::AttributeList::FunctionIndex) !=
-          other->getAttributes().getAsString(llvm::AttributeList::FunctionIndex))
+          other->getAttributes().getAsString(
+              llvm::AttributeList::FunctionIndex))
         throw std::runtime_error("owner debug changed function attributes");
       auto otherBlock = other->begin();
       for (const auto &block : function) {

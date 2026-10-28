@@ -238,7 +238,8 @@ private:
       }
       if (const auto *storage =
               std::get_if<LoweredStorageDeclaration>(&declaration.payload);
-          storage != nullptr && !storage->externalSymbol.empty() && !program.embeddingPlan()) {
+          storage != nullptr && !storage->externalSymbol.empty() &&
+          !program.embeddingPlan()) {
         variables.push_back({.declaration = &declaration, .info = storage});
         continue;
       }
@@ -254,13 +255,15 @@ private:
   void assignCNames() {
     std::unordered_set<std::string> used;
     if (program.embeddingPlan()) {
-      used = {"gti_context_v1", "gti_embed_status_v1", "gti_export_descriptor_v1",
-              "gti_module_descriptor_v1", "gti_failure_record_v1",
-              "gti_failure_artifact_descriptor_v1", "gti_failure_observer_v1",
-              "gti_c_string_view"};
+      used = {"gti_context_v1",           "gti_embed_status_v1",
+              "gti_export_descriptor_v1", "gti_module_descriptor_v1",
+              "gti_failure_record_v1",    "gti_failure_artifact_descriptor_v1",
+              "gti_failure_observer_v1",  "gti_c_string_view"};
       for (const auto &selected : program.embeddingPlan()->exports) {
         if (!used.insert(selected.symbol).second)
-          throw BackendUnsupportedError("embedding export collides with a public ABI type: " + selected.symbol);
+          throw BackendUnsupportedError(
+              "embedding export collides with a public ABI type: " +
+              selected.symbol);
       }
     }
     const auto assignRoots = [&](auto &types) {
@@ -624,13 +627,15 @@ private:
   }
 
   void emitCCallbackAlias(std::ostream &output,
-                          const NativeCallbackAlias &alias, bool cpp = false) const {
+                          const NativeCallbackAlias &alias,
+                          bool cpp = false) const {
     const SemanticType *returnType =
         alias.info->type.nativeFunctionReturnType();
     if (returnType == nullptr) {
       throw std::logic_error("checked native callback alias is malformed");
     }
-    output << "typedef " << cType(*returnType, cpp) << " (*" << alias.cName << ")(";
+    output << "typedef " << cType(*returnType, cpp) << " (*" << alias.cName
+           << ")(";
     const std::span<const SemanticType> parameters =
         alias.info->type.nativeFunctionParameterTypes();
     if (parameters.empty()) {
@@ -865,20 +870,21 @@ private:
       for (const MirCAbiRecordFieldLayout &field :
            record.info->cAbiLayout->fields) {
         output << "  "
-               << fieldDeclaration(
-                      field,
-                      [this, cpp](const SemanticType &type) { return cType(type, cpp); })
+               << fieldDeclaration(field,
+                                   [this, cpp](const SemanticType &type) {
+                                     return cType(type, cpp);
+                                   })
                << ";\n";
       }
       output << "};\n\n";
     }
     for (const NativeRecord &record : records) {
       const MirCAbiRecordLayout &layout = *record.info->cAbiLayout;
-      output << (cpp ? "static_assert(sizeof(" : "_Static_assert(sizeof(") << record.cName
-             << ") == " << layout.sizeBytes
+      output << (cpp ? "static_assert(sizeof(" : "_Static_assert(sizeof(")
+             << record.cName << ") == " << layout.sizeBytes
              << ", \"GTI native record size mismatch\");\n"
-             << (cpp ? "static_assert(alignof(" : "_Static_assert(_Alignof(") << record.cName
-             << ") == " << layout.abiAlignmentBytes
+             << (cpp ? "static_assert(alignof(" : "_Static_assert(_Alignof(")
+             << record.cName << ") == " << layout.abiAlignmentBytes
              << ", \"GTI native record alignment mismatch\");\n";
       for (const MirCAbiRecordFieldLayout &field : layout.fields) {
         const LoweredSymbol *symbol = program.findSymbol(field.field);
@@ -886,8 +892,9 @@ private:
           throw std::logic_error(
               "checked C ABI field symbol is unavailable to native header");
         }
-        output << (cpp ? "static_assert(offsetof(" : "_Static_assert(offsetof(") << record.cName << ", "
-               << symbol->name << ") == " << field.offsetBytes
+        output << (cpp ? "static_assert(offsetof(" : "_Static_assert(offsetof(")
+               << record.cName << ", " << symbol->name
+               << ") == " << field.offsetBytes
                << ", \"GTI native record field offset mismatch\");\n";
       }
     }
@@ -951,8 +958,8 @@ private:
 
 } // namespace
 
-std::string nativeEmbeddingSignature(
-    const LoweredProgram &program, const LoweredEmbeddingExport &selected) {
+std::string nativeEmbeddingSignature(const LoweredProgram &program,
+                                     const LoweredEmbeddingExport &selected) {
   return NativeHeaderEmitter(program).signature(selected);
 }
 

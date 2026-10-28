@@ -267,7 +267,7 @@ int run(const char *mode) {
           return 99;
         gti_rt_failure_cleanup_leave_v1(nested);
         gti_rt_failure_cleanup_check_v1(&emergency.secondary,
-                                         &secondary.artifact);
+                                        &secondary.artifact);
         return 98;
       }
       if (std::strcmp(mode, "panic_terminal_cleanup") == 0) {

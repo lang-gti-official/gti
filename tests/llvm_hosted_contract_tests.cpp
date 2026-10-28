@@ -904,9 +904,9 @@ int main() {
         issues);
     require(admitted && planLlvmAdmission(*admitted).admitted(),
             "text construction admits a complete polymorphic class witness");
-    // An interface view of the owner is outside the witness boundary.
-    const auto unsupported =
-        analyze("unsupported-text-owner-layout.gti", std::string(R"(
+    // An interface view of the owner is an address too: the selected view
+    // carries the owner's dispatch metadata, never its bytes.
+    const auto viewed = analyze("interface-text-owner.gti", std::string(R"(
 #include <std/memory>
 #include <std/string_view>
 interface Observed {
@@ -921,16 +921,39 @@ int main() {
   Owner concrete{};
   Observed& owner = concrete;
   char bytes[3] = {'a', '\0', 'b'};
-)") + type + " result = unsafe { " + construct + " }; return " +
-                                                         use + "; }");
+)") + type + " result = unsafe { " + construct + " }; return " + use +
+                                                                "; }");
+    require(viewed.canGenerateCode(),
+            "interface-view text witness is valid source");
+    const auto viewedProgram = verifiedLoweredProgram(
+        gti_test::lowerProgram(viewed, viewed.mir, viewed.mir), issues);
+    require(viewedProgram && planLlvmAdmission(*viewedProgram).admitted(),
+            "text construction admits an interface view of its owner");
+    // Mutex storage is outside the witness boundary.
+    FrontendOptions concurrent = options;
+    concurrent.target.executionProfile = ExecutionProfile::Concurrent;
+    concurrent.target.runtimeCapabilities.threads = true;
+    const auto unsupported = Frontend(concurrent)
+                                 .analyze("unsupported-text-owner-layout.gti",
+                                          std::string(R"(
+#include <std/memory>
+#include <std/mutex>
+#include <std/string_view>
+int main() {
+  std::mutex<int> owner{1};
+  char bytes[3] = {'a', '\0', 'b'};
+)") + type + " result = unsafe { " + construct +
+                                              " }; return " + use + "; }",
+                                          {repository / "stdlib/prelude.gti"},
+                                          {}, {repository / "stdlib"});
     require(unsupported.canGenerateCode(),
             "unsupported text witness layout is valid source");
     const auto pending = verifiedLoweredProgram(
-        gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir),
+        gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir,
+                               concurrent.target),
         issues);
-    require(
-        pending && !planLlvmAdmission(*pending).admitted(),
-        "text construction does not admit an interface view as its witness");
+    require(pending && !planLlvmAdmission(*pending).admitted(),
+            "text construction does not admit mutex storage as its witness");
   }
 }
 
@@ -1266,26 +1289,26 @@ void hostedArgumentsContract(const std::filesystem::path &repository) {
   const auto &startup = *frontend.mir.hostedStartupPlan();
   const auto nextIndex = std::find_if(
       startup.operations.begin(), startup.operations.end(), [](const auto &op) {
-        return op.kind == MirHostedStartupOperationKind::ComputeNextArgumentIndex;
+        return op.kind ==
+               MirHostedStartupOperationKind::ComputeNextArgumentIndex;
       });
   const auto advance = std::find_if(
       startup.operations.begin(), startup.operations.end(), [](const auto &op) {
         return op.kind == MirHostedStartupOperationKind::AdvanceArgumentIndex;
       });
-  require(nextIndex != startup.operations.end() && advance != startup.operations.end(),
+  require(nextIndex != startup.operations.end() &&
+              advance != startup.operations.end(),
           "hosted index arithmetic and commit have separate sealed identities");
   for (unsigned mutation = 0; mutation != 4; ++mutation) {
     auto invalid = frontend.mir;
     auto &invalidBody = *const_cast<MirBody *>(invalid.hostedStartup());
     auto &block = invalidBody.blocks[nextIndex->block - 1];
     auto &compute = *std::find_if(
-        block.instructions.begin(), block.instructions.end(), [&](const auto &op) {
-          return op.id == nextIndex->instruction;
-        });
+        block.instructions.begin(), block.instructions.end(),
+        [&](const auto &op) { return op.id == nextIndex->instruction; });
     auto &commit = *std::find_if(
-        block.instructions.begin(), block.instructions.end(), [&](const auto &op) {
-          return op.id == advance->instruction;
-        });
+        block.instructions.begin(), block.instructions.end(),
+        [&](const auto &op) { return op.id == advance->instruction; });
     if (mutation == 0)
       compute.operands[1].literal = Literal{std::uint64_t{2}};
     else if (mutation == 1)
@@ -1298,7 +1321,8 @@ void hostedArgumentsContract(const std::filesystem::path &repository) {
       commit.operation = MirOperation::PreIncrement;
     }
     require(!verifyMirProgram(invalid).valid(),
-            "hosted index cannot change step, direction, commit or use legacy mutation");
+            "hosted index cannot change step, direction, commit or use legacy "
+            "mutation");
   }
   std::array<bool, 3> seen{};
   for (const auto &block : body.blocks)
@@ -1405,7 +1429,8 @@ void hostedArgumentsBoundary(const std::filesystem::path &repository,
   // Rename only the external entry so a C caller can exercise zero/negative
   // argc. All source bodies, guards, cleanup and runtime calls are unchanged.
   entry->setName("gti_hosted_entry");
-  const auto directory = scratch / "arguments-boundary" /
+  const auto directory =
+      scratch / "arguments-boundary" /
       (optimization == LlvmCodegenOptimization::None ? "O0" : "O3");
   std::filesystem::create_directories(directory);
   const auto object = directory / "program.o";
@@ -1413,14 +1438,14 @@ void hostedArgumentsBoundary(const std::filesystem::path &repository,
               driver::ArtifactWriteStatus::Success,
           "owned-argument object publishes through normal emission");
   const auto shim = directory / "caller.c";
-  require(driver::writeArtifact(shim,
-      "#include <stddef.h>\n"
-      "extern int gti_hosted_entry(int, char **);\n"
-      "int main(int argc, char **argv) {\n"
-      "  (void)argv;\n"
-      "  return gti_hosted_entry(argc == 1 ? 0 : -1, NULL);\n"
-      "}\n") == driver::ArtifactWriteStatus::Success,
-      "write hosted C boundary caller");
+  require(driver::writeArtifact(
+              shim, "#include <stddef.h>\n"
+                    "extern int gti_hosted_entry(int, char **);\n"
+                    "int main(int argc, char **argv) {\n"
+                    "  (void)argv;\n"
+                    "  return gti_hosted_entry(argc == 1 ? 0 : -1, NULL);\n"
+                    "}\n") == driver::ArtifactWriteStatus::Success,
+          "write hosted C boundary caller");
   const auto layout = driver::discoverToolchainLayout(nullptr);
   driver::NativeToolchain toolchain;
   const auto callerObject = directory / "caller.o";
@@ -1438,15 +1463,21 @@ void hostedArgumentsBoundary(const std::filesystem::path &repository,
   require(linked.succeeded(), "real owned startup links to its runtime");
   const auto zero = driver::invokeProcess({executable.string()});
   require(zero.succeeded() && zero.output.empty(),
-          "zero count constructs and drops an empty owner without reading null argv");
-  const auto negative = driver::invokeProcess({executable.string(), "negative"});
+          "zero count constructs and drops an empty owner without reading null "
+          "argv");
+  const auto negative =
+      driver::invokeProcess({executable.string(), "negative"});
   if (negative.exitCode != 70)
     std::cerr << negative.output;
   require(negative.exitCode == 70 && !negative.signal && !negative.timedOut &&
-              negative.output.find("hosted_runtime_contract_failure") != std::string::npos &&
-              negative.output.find("negative_argument_count") != std::string::npos &&
-              negative.output.find("llvm_hosted_arguments.gti:4:") != std::string::npos,
-          "negative argc terminates with the original hosted failure and main anchor");
+              negative.output.find("hosted_runtime_contract_failure") !=
+                  std::string::npos &&
+              negative.output.find("negative_argument_count") !=
+                  std::string::npos &&
+              negative.output.find("llvm_hosted_arguments.gti:4:") !=
+                  std::string::npos,
+          "negative argc terminates with the original hosted failure and main "
+          "anchor");
 }
 
 void sourceMetadataContract(const std::filesystem::path &repository) {

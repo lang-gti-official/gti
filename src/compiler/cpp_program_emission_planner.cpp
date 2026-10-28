@@ -848,7 +848,8 @@ public:
     moduleRuntimeMayRaise = cppMirModuleMayRaiseDefinedFailure(mir);
     const CppMirInitializerScheduleText schedule =
         generalMirInitializerSchedule(moduleAddress);
-    if (!moduleRuntimeMayRaise && schedule.supported && !hasNativeProgramRetirement()) {
+    if (!moduleRuntimeMayRaise && schedule.supported &&
+        !hasNativeProgramRetirement()) {
       moduleGeneralSupported = true;
       for (const CppMirFieldInitializerSpelling &field : schedule.fields) {
         moduleGeneralInitializers.emplace(field.field, field.spelling);
@@ -9178,9 +9179,10 @@ public:
   }
 
   bool hasNativeProgramRetirement() const {
-    return std::any_of(mir.programInitializationPlan().steps.begin(),
-                       mir.programInitializationPlan().steps.end(),
-                       [](const auto &step) { return step.nativeRetirement.has_value(); });
+    return std::any_of(
+        mir.programInitializationPlan().steps.begin(),
+        mir.programInitializationPlan().steps.end(),
+        [](const auto &step) { return step.nativeRetirement.has_value(); });
   }
 
   void emitNativeProgramRetirementDefinition() {
@@ -9188,28 +9190,32 @@ public:
       return;
     output << "void __gti_program_retire_native() noexcept {\n";
     ++indentation;
-    output << "if (!::gti_rt_thread_program_storage_retirement_ready_v1()) return;\n";
+    output << "if (!::gti_rt_thread_program_storage_retirement_ready_v1()) "
+              "return;\n";
     output << "::gti_failure_record_v2 failure{};\n";
     for (auto step = mir.programInitializationPlan().steps.rbegin();
          step != mir.programInitializationPlan().steps.rend(); ++step) {
       if (!step->nativeRetirement)
         continue;
-      const auto row = std::find_if(generalEmissionMap->symbols().begin(),
-                                    generalEmissionMap->symbols().end(),
-                                    [&](const auto &symbol) {
-        return symbol.kind == CppMirSymbolRepresentationKind::Storage &&
-               symbol.symbol == step->symbol && symbol.owner == step->ownerClass &&
-               symbol.ordinal == 0 && symbol.runtimeLifetimeSlot;
-      });
+      const auto row = std::find_if(
+          generalEmissionMap->symbols().begin(),
+          generalEmissionMap->symbols().end(), [&](const auto &symbol) {
+            return symbol.kind == CppMirSymbolRepresentationKind::Storage &&
+                   symbol.symbol == step->symbol &&
+                   symbol.owner == step->ownerClass && symbol.ordinal == 0 &&
+                   symbol.runtimeLifetimeSlot;
+          });
       if (row == generalEmissionMap->symbols().end() ||
           !mirDropIsNativeRetirement(mir, *step->nativeRetirement))
-        throw std::logic_error("C++ native retirement lost exact program storage");
+        throw std::logic_error(
+            "C++ native retirement lost exact program storage");
       writeIndent();
       output << "if (!" << row->spelling
              << ".destroy_cleanup_with_failure(&failure, true, false, "
-                "[](auto &value, ::gti_failure_record_v2 *record, bool unwinding) { return "
+                "[](auto &value, ::gti_failure_record_v2 *record, bool "
+                "unwinding) { return "
              << cppMirCleanupValueExpression(mir, *step->nativeRetirement,
-                                              "value", "record", "unwinding")
+                                             "value", "record", "unwinding")
              << "; })) std::terminate();\n";
     }
     --indentation;
@@ -9355,17 +9361,22 @@ public:
 
   void emitHostedCThreadBoundary(bool begin) {
     const auto &hosted = mir.hostedStartupPlan();
-    const auto targetId = !hosted ? 0 : begin ? hosted->cThreadBegin : hosted->cThreadEnd;
+    const auto targetId = !hosted ? 0
+                          : begin ? hosted->cThreadBegin
+                                  : hosted->cThreadEnd;
     if (targetId == 0)
       return;
     const auto *target = mir.findFunctionInstance(targetId);
-    if (!target || target->cThreadOperation != (begin ? CThreadRuntimeOperation::Begin
-                                                     : CThreadRuntimeOperation::End))
+    if (!target ||
+        target->cThreadOperation != (begin ? CThreadRuntimeOperation::Begin
+                                           : CThreadRuntimeOperation::End))
       throw std::logic_error("hosted C-thread boundary lost its exact target");
-    const auto *declaration = loweredProgram.findFunctionDeclaration(target->declaration);
+    const auto *declaration =
+        loweredProgram.findFunctionDeclaration(target->declaration);
     const auto *row = loweredFunctionRow(target->declaration);
     if (!declaration || !row)
-      throw std::logic_error("hosted C-thread boundary lost its declaration identity");
+      throw std::logic_error(
+          "hosted C-thread boundary lost its declaration identity");
     const bool guardedEnd = hasNativeProgramRetirement() && !begin;
     if (guardedEnd) {
       writeIndent();
@@ -9377,7 +9388,8 @@ public:
     output << "();\n";
     if (hasNativeProgramRetirement()) {
       writeIndent();
-      output << "__gti_cthread_started = " << (begin ? "true" : "false") << ";\n";
+      output << "__gti_cthread_started = " << (begin ? "true" : "false")
+             << ";\n";
     }
     if (guardedEnd) {
       --indentation;

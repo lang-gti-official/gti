@@ -348,10 +348,11 @@ int main() {
     const std::string prefix =
         "#include <std/mutex>\n"
         "void see(std::mutex<int32_t>& value) {}\n" +
-        (nested ? std::string("class Holder { public:\n"
-                              "  std::mutex<int32_t>& owner;\n"
-                              "  Holder(std::mutex<int32_t>& owner) : owner(owner) {}\n"
-                              "};\n")
+        (nested ? std::string(
+                      "class Holder { public:\n"
+                      "  std::mutex<int32_t>& owner;\n"
+                      "  Holder(std::mutex<int32_t>& owner) : owner(owner) {}\n"
+                      "};\n")
                 : std::string{}) +
         "class User {\n" +
         (nested ? "  Holder& holder;\npublic:\n"
@@ -361,48 +362,56 @@ int main() {
         "  void use() {\n";
     const std::string publication = "auto guard = " + receiver + ".lock();";
     for (bool secondPublication : {false, true}) {
-      const std::string conflict = secondPublication
-          ? "auto second = " + receiver + ".lock();"
-          : "see(" + receiver + ");";
+      const std::string conflict =
+          secondPublication ? "auto second = " + receiver + ".lock();"
+                            : "see(" + receiver + ");";
       const std::string source = prefix + "    " + publication + "\n    " +
-                                 conflict + "\n  }\n};\nint main() { return 0; }\n";
+                                 conflict +
+                                 "\n  }\n};\nint main() { return 0; }\n";
       const auto analyzeStored = [&](const std::string &text) {
-        return lang::Frontend(concurrentOptions).analyze(
-            "stored-guard-explanations.gti", text, {standardLibraryPrelude()},
-            {}, {standardLibraryRoot()});
+        return lang::Frontend(concurrentOptions)
+            .analyze("stored-guard-explanations.gti", text,
+                     {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
       };
       const auto rejected = analyzeStored(source);
-      const auto *error = findDiagnosticByCode(rejected.diagnostics, "GTI-S2017");
-      const auto count = std::count_if(
-          rejected.diagnostics.begin(), rejected.diagnostics.end(),
-          [](const auto &diagnostic) { return diagnostic.code == "GTI-S2017"; });
+      const auto *error =
+          findDiagnosticByCode(rejected.diagnostics, "GTI-S2017");
+      const auto count =
+          std::count_if(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(), [](const auto &diagnostic) {
+                          return diagnostic.code == "GTI-S2017";
+                        });
       const auto use = secondPublication
-          ? source.find("();", source.find(conflict)) + 1
-          : source.find("owner", source.find(conflict));
+                           ? source.find("();", source.find(conflict)) + 1
+                           : source.find("owner", source.find(conflict));
       const auto origin = source.find("();", source.find(publication)) + 1;
       expect(!rejected.semanticValid && count == 1 && error &&
                  !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
              "a stored shared ancestor conflicts once with its live exclusive "
              "result in semantics");
-      expect(error && !error->primary.source.empty() && error->primary.start == use &&
+      expect(error && !error->primary.source.empty() &&
+                 error->primary.start == use &&
                  error->primary.end == use + (secondPublication ? 1 : 5) &&
                  error->related.size() == 1 &&
                  error->related[0].span.source == error->primary.source &&
                  error->related[0].span.start == origin &&
                  error->related[0].span.end == origin + 1 &&
                  error->related[0].message.find("borrow originates here") !=
-                     std::string::npos && error->fixes.empty(),
+                     std::string::npos &&
+                 error->fixes.empty(),
              "stored ancestor conflicts identify the exact access and first "
              "publication without an effect-reordering fix");
-      expect(hasDiagnosticHint(rejected.diagnostics,
-                               "until its carrier is destroyed") &&
-                 !hasDiagnosticHint(rejected.diagnostics, "Finish using"),
-             "an unused exclusive result keeps its resource alive until cleanup");
+      expect(
+          hasDiagnosticHint(rejected.diagnostics,
+                            "until its carrier is destroyed") &&
+              !hasDiagnosticHint(rejected.diagnostics, "Finish using"),
+          "an unused exclusive result keeps its resource alive until cleanup");
       auto ended = source;
       ended.replace(ended.find(publication), publication.size(),
                     "{ " + publication + " }");
       expect(analyzeStored(ended).canGenerateCode(),
-             "ending a stored result scope permits ancestor read or reacquisition");
+             "ending a stored result scope permits ancestor read or "
+             "reacquisition");
     }
   }
   const auto globalWrite =

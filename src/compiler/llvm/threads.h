@@ -45,12 +45,12 @@ nativeThreadHandle(const MirProgram &program, const SemanticType &type);
 // Runtime C records exchanged with `runtime_thread.h`. They are private
 // lowering types matching the versioned C declarations exactly.
 struct ThreadRuntimeTypes final {
-  llvm::StructType *spawnResult = nullptr;   // gti_thread_spawn_result_v1
-  llvm::StructType *joinResult = nullptr;    // gti_thread_join_result_v2
-  llvm::StructType *valueJoin = nullptr;     // gti_thread_value_join_result_v2
-  llvm::StructType *scopeResult = nullptr;   // gti_thread_scope_result_v1
-  llvm::StructType *scopedTask = nullptr;    // gti_thread_scoped_task_v1
-  llvm::StructType *failureView = nullptr;   // gti_thread_failure_view_v1
+  llvm::StructType *spawnResult = nullptr; // gti_thread_spawn_result_v1
+  llvm::StructType *joinResult = nullptr;  // gti_thread_join_result_v2
+  llvm::StructType *valueJoin = nullptr;   // gti_thread_value_join_result_v2
+  llvm::StructType *scopeResult = nullptr; // gti_thread_scope_result_v1
+  llvm::StructType *scopedTask = nullptr;  // gti_thread_scoped_task_v1
+  llvm::StructType *failureView = nullptr; // gti_thread_failure_view_v1
 };
 [[nodiscard]] ThreadRuntimeTypes threadRuntimeTypes(Session &session);
 
@@ -115,10 +115,10 @@ private:
   void emitEntry(Adapter &adapter);
   void emitValueCallbacks(Adapter &adapter);
   void emitDestroy(Adapter &adapter);
-  [[nodiscard]] llvm::Function *runtimeService(const char *name,
-                                               llvm::Type *result,
-                                               llvm::ArrayRef<llvm::Type *> parameters,
-                                               llvm::Type *sret = nullptr);
+  [[nodiscard]] llvm::Function *
+  runtimeService(const char *name, llvm::Type *result,
+                 llvm::ArrayRef<llvm::Type *> parameters,
+                 llvm::Type *sret = nullptr);
   // Task/result cleanup at a task boundary, following the runtime's task
   // cleanup state like the worker entry boundary. Returns i1: true when a
   // terminal emergency abandoned the remaining task state (no box release).

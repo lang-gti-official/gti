@@ -1,0 +1,6 @@
+#include <std/meta>
+enum message { empty, number(int value) };
+int main() {
+  std::enum_name(message::number(42));
+  return 0;
+}

@@ -653,6 +653,98 @@ int main() { auto value = Box(work); return 0; }
          "not as an unresolved MIR value");
 }
 
+// A type alias of a class constructs as the class's own name does: a bare
+// function name argument is resumed as a function item before constructor
+// selection, so HIR names the function and targets the constructor, and an
+// ambiguous name reports the class name's diagnostic.
+void testAliasConstructorValueArguments() {
+  const std::string declarations = R"(
+#include <std/functional>
+class Tag {
+  int64_t value;
+public:
+  Tag<F>(F item) : value(int64_t(7)) {}
+  int64_t read() { return this.value; }
+};
+using T = Tag;
+using C = std::function_ptr<int64_t(int64_t)>;
+int64_t triple(int64_t x) { return x * 3; }
+)";
+  const auto valid = analyze("alias-constructor-item.gti", declarations + R"(
+T make_tag() { return T(triple); }
+C make_pointer() { return C(triple); }
+int main() {
+  T tag = T(triple);
+  C pointer = C(triple);
+  return int(make_tag().read() + tag.read() + make_pointer()(int64_t(1)) +
+             pointer(int64_t(1))) - 20;
+}
+)");
+  if (!valid.canGenerateCode())
+    printDiagnostics(valid);
+  expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid(),
+         "alias construction from a function name lowers through MIR");
+  std::size_t targeted = 0;
+  bool unresolved = false;
+  for (const auto &function : valid.hir.functionInstances()) {
+    const auto find = [&](lang::HirValueId id) -> const lang::HirValue * {
+      for (const auto &value : function.body.values)
+        if (value.id == id)
+          return &value;
+      return nullptr;
+    };
+    for (const auto &value : function.body.values) {
+      unresolved |= value.kind == lang::HirValueKind::Variable &&
+                    value.symbol == 0 &&
+                    value.info.type.kind == lang::SemanticType::Unknown;
+      if (value.kind != lang::HirValueKind::Call || !value.constructorTarget ||
+          value.operands.empty())
+        continue;
+      const auto *argument = find(value.operands.back());
+      if (argument && argument->kind == lang::HirValueKind::FunctionItem &&
+          argument->symbol != 0 &&
+          argument->info.type.kind == lang::SemanticType::FunctionItem)
+        ++targeted;
+    }
+  }
+  expect(!unresolved && targeted >= 4,
+         "each alias construction targets its constructor with a resolved "
+         "function-item argument");
+
+  const std::string ambiguous = R"(
+class Tag {
+public:
+  Tag<F>(F item) {}
+};
+using T = Tag;
+void work(int value) {}
+void work(bool value) {}
+)";
+  const auto direct =
+      analyze("ambiguous-class-item.gti",
+              ambiguous + "int main() { auto value = Tag(work); return 0; }\n");
+  const auto aliased =
+      analyze("ambiguous-alias-item.gti",
+              ambiguous + "int main() { auto value = T(work); return 0; }\n");
+  const auto first =
+      [](const lang::FrontendResult &result) -> const lang::Diagnostic * {
+    for (const auto &diagnostic : result.diagnostics)
+      if (diagnostic.code == "GTI-S2090")
+        return &diagnostic;
+    return nullptr;
+  };
+  const auto *directDiagnostic = first(direct);
+  const auto *aliasDiagnostic = first(aliased);
+  expect(!aliased.canGenerateCode() && aliasDiagnostic && directDiagnostic &&
+             !hasCode(aliased, "GTI-B0001") &&
+             aliasDiagnostic->message == directDiagnostic->message &&
+             aliasDiagnostic->related.size() ==
+                 directDiagnostic->related.size() &&
+             aliasDiagnostic->hints == directDiagnostic->hints,
+         "an ambiguous function name through an alias reports the class "
+         "name's diagnostic");
+}
+
 void testForwardedContextualSignatures() {
   const std::string declarations = R"(
 int selected(int value) { return value + 1; }
@@ -1050,6 +1142,7 @@ int main() {
   testGenericAndManagedPipeline();
   testContextualDiagnosticsAndBoundaries();
   testConstructorValueArguments();
+  testAliasConstructorValueArguments();
   testForwardedContextualSignatures();
   testPackInvocationContracts();
   testDerivedReferenceArguments();

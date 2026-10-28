@@ -1,0 +1,49 @@
+// An `operator->` step is selected from the use of `p->m`, as an accessor
+// pair is: reads, read-only bindings, the hidden range and read-only member
+// calls take the read-only step; `push_back`, field assignment, a `mut`
+// binding and a mutating member call take the `mut` step, which counts.
+#include <std/vector>
+class Dir {
+public:
+  mut std::vector<int32_t> items = std::vector<int32_t>();
+  mut int32_t value = 0;
+  Dir() = default;
+  int32_t count() { return int32_t(this.items.size()); }
+  void bump() mut { this.value = this.value + 1; }
+};
+class Counted {
+public:
+  mut Dir target;
+  mut int32_t mutable_steps = 0;
+  Counted() : target(Dir()) {}
+  Dir& operator->() { return this.target; }
+  mut Dir& operator->() mut {
+    this.mutable_steps = this.mutable_steps + 1;
+    return this.target;
+  }
+};
+int main() {
+  mut Counted p{};
+  p->items.push_back(1);
+  if (p.mutable_steps != 1) return 1;
+  uint64_t n = p->items.size();
+  mut uint64_t bound = 0;
+  {
+    std::vector<int32_t>& read = p->items;
+    bound = read.size();
+  }
+  mut int32_t total = 0;
+  for (auto& item : p->items) total += item;
+  int32_t counted = p->count();
+  if (p.mutable_steps != 1 || n != uint64_t(1) || bound != uint64_t(1) || total != 1 || counted != 1) return 2;
+  p->value = 3;
+  if (p.mutable_steps != 2) return 3;
+  {
+    mut std::vector<int32_t>& written = p->items;
+    written.push_back(2);
+  }
+  if (p.mutable_steps != 3) return 4;
+  p->bump();
+  if (p.mutable_steps != 4 || p->value != 4) return 5;
+  return 0;
+}

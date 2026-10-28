@@ -5460,6 +5460,18 @@ auto SemanticVisitor::Impl::accessorResultUse(const ResultUse &use,
     };
     if (has(ReceiverMutability::Consuming))
       return ResultUseAccess::Unknown;
+    // An exclusive borrow carrier, such as a mutex guard, may hold mutable
+    // capability over the receiver's state through a read-only member, so
+    // its use is not classified.
+    if (std::any_of(candidates.begin(), candidates.end(),
+                    [&](const CallableCandidate &candidate) {
+                      if (candidate.returnType.kind == SemanticType::Reference)
+                        return false;
+                      const SemanticTypeTraits traits =
+                          typeTraits(candidate.returnType);
+                      return traits.containsBorrowedState && !traits.copyable;
+                    }))
+      return ResultUseAccess::Unknown;
     if (!has(ReceiverMutability::Mutable))
       return ResultUseAccess::ReadOnly;
     if (!has(ReceiverMutability::ReadOnly))
@@ -6880,7 +6892,8 @@ auto SemanticVisitor::Impl::analyzeExplicitConversion(
 auto SemanticVisitor::Impl::arrowTargetType(const Expr &site,
                                             const ExprPtr &receiver,
                                             const SemanticType &receiverType,
-                                            const Token &token, bool projection)
+                                            const Token &token, bool projection,
+                                            bool preferReadOnlyStep)
     -> SemanticType {
   if (receiverType.kind == SemanticType::RawPointer) {
     if (rejectCOpaquePointeeOperation(receiverType, token,
@@ -6907,9 +6920,11 @@ auto SemanticVisitor::Impl::arrowTargetType(const Expr &site,
     return receiverType.arguments.front();
   }
   if (receiverType.kind == SemanticType::Class) {
+    // A step whose result is only read selects a read-only and mutable
+    // `operator->` pair's read-only form, as an accessor call does.
     const std::optional<CallableCandidate> selected = resolveOperator(
         site, OverloadedOperator::Arrow, receiver, receiverType, token, {}, {},
-        false, std::nullopt, std::nullopt, projection);
+        false, std::nullopt, std::nullopt, projection, preferReadOnlyStep);
     if (!selected || selected->returnType.kind != SemanticType::Reference ||
         selected->returnType.arguments.size() != 1) {
       return SemanticType::Unknown;

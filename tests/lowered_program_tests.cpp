@@ -133,8 +133,7 @@ void testSourceDebugRecordOwnership() {
          "copy-assigned table contents remain independent");
   const auto *owned = assigned.tables.get();
   Record moved(std::move(assigned));
-  expect(moved.tables.get() == owned &&
-             lang::isValidSourceDebugRecord(moved) &&
+  expect(moved.tables.get() == owned && lang::isValidSourceDebugRecord(moved) &&
              lang::isValidSourceDebugRecord(assigned) && !assigned.tables,
          "move construction transfers tables and leaves a valid empty source");
   Record moveAssigned;
@@ -1064,7 +1063,8 @@ int main() { Receiver value{}; return packed(value.read(), 9, 11) - 4; }
           });
       expect(local != locals.end() && local->place == place->id &&
                  local->declaration.name == "this" &&
-                 local->declaration.declaration == lang::SourceSpan{.line = 0} &&
+                 local->declaration.declaration ==
+                     lang::SourceSpan{.line = 0} &&
                  !local->declaration.binding && !local->declaration.symbol,
              "implicit receiver keeps accepted identity without a fake source "
              "token");

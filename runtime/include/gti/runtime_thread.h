@@ -147,9 +147,9 @@ extern "C" {
 /* Generated adapters catch their private GTI transport before calling publish.
  * The runtime installs a worker sink around entry, task/result cleanup and TLS
  * drain. A generated caller installs its own sink around synchronous launch
- * rollback or post-join take/abandon. A nested caller sink takes precedence over
- * the worker sink; publishing does not perform a control transfer. Missing,
- * malformed, cross-thread or reentrant use terminates. */
+ * rollback or post-join take/abandon. A nested caller sink takes precedence
+ * over the worker sink; publishing does not perform a control transfer.
+ * Missing, malformed, cross-thread or reentrant use terminates. */
 void gti_rt_thread_failure_sink_enter_v1(
     gti_thread_failure_sink_v1 *sink, gti_thread_failure_publish_v1 publish,
     void *context) GTI_THREAD_SINK_NOEXCEPT;
@@ -162,19 +162,21 @@ void gti_rt_thread_failure_publish_v1(const gti_thread_failure_view_v1 *failure)
  * worker sink. Outside that exact phase they return NONE/0 and do not modify
  * output storage. A nested caller sink does not inherit worker publication.
  * Successful copy preserves the original record and pinned artifact exactly. */
-gti_thread_worker_failure_kind_v1 gti_rt_thread_cleanup_failure_kind_v1(void)
-    GTI_THREAD_SINK_NOEXCEPT;
+gti_thread_worker_failure_kind_v1
+gti_rt_thread_cleanup_failure_kind_v1(void) GTI_THREAD_SINK_NOEXCEPT;
 uint32_t gti_rt_thread_cleanup_primary_copy_v2(
     gti_failure_record_v2 *record,
-    const gti_failure_artifact_descriptor_v1 **artifact) GTI_THREAD_SINK_NOEXCEPT;
+    const gti_failure_artifact_descriptor_v1 **artifact)
+    GTI_THREAD_SINK_NOEXCEPT;
 
 /* Only terminal automatic-join failure may transfer a coherent joinable state
- * here. This clears the owned handle, but neither joins nor detaches the worker.
- * A quarantined worker can still access process storage: retirement readiness
- * becomes permanently false, including after that worker finishes. Hosted
- * terminal failure must leave native roots live; a host must reject unload or
- * context shutdown while readiness is false. Readiness is not a substitute for
- * the host's ordinary quiescence obligation for foreign/manual callers. */
+ * here. This clears the owned handle, but neither joins nor detaches the
+ * worker. A quarantined worker can still access process storage: retirement
+ * readiness becomes permanently false, including after that worker finishes.
+ * Hosted terminal failure must leave native roots live; a host must reject
+ * unload or context shutdown while readiness is false. Readiness is not a
+ * substitute for the host's ordinary quiescence obligation for foreign/manual
+ * callers. */
 void gti_rt_thread_quarantine_v1(gti_thread_state_v1 **state)
     GTI_THREAD_SINK_NOEXCEPT;
 uint32_t gti_rt_thread_program_storage_retirement_ready_v1(void)

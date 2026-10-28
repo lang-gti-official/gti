@@ -1,12 +1,13 @@
 #include "body.h"
-#include "atomics.h"
 #include "../mir_verification_queries.h"
+#include "atomics.h"
 #include "callables.h"
+#include "closure_environment.h"
 #include "constructor_field_publication.h"
-#include "dispatch.h"
 #include "debug_info.h"
-#include "failure.h"
+#include "dispatch.h"
 #include "embedding.h"
+#include "failure.h"
 #include "hosted.h"
 #include "lifetimes.h"
 #include "memory.h"
@@ -22,13 +23,13 @@
 #include "scalar.h"
 #include "simd.h"
 #include "text.h"
-#include "thread_locals.h"
 #include "thread_lifecycle.h"
+#include "thread_locals.h"
 #include "threads.h"
 
 #include <algorithm>
-#include <llvm/IR/Intrinsics.h>
 #include <array>
+#include <llvm/IR/Intrinsics.h>
 #include <map>
 #include <set>
 #include <tuple>
@@ -101,7 +102,8 @@ public:
   }
   void lower(const LlvmAdmissionPlan &admission);
 #if defined(GTI_LLVM_C04_MIR_EVALUATION)
-  void lowerEvaluation(std::span<const MirBodyAddress> bodies, bool fixedCallBoundaries);
+  void lowerEvaluation(std::span<const MirBodyAddress> bodies,
+                       bool fixedCallBoundaries);
 #endif
 
 private:
@@ -271,8 +273,8 @@ private:
         llvm::FunctionType::get(
             ir.getVoidTy(),
             {session.layouts().pointer(), session.layouts().pointer()}, false));
-    auto *copy = ir.CreateCall(
-        transfer, {channels.at(term.failureRecord), ir.CreateExtractValue(landing, 0)});
+    auto *copy = ir.CreateCall(transfer, {channels.at(term.failureRecord),
+                                          ir.CreateExtractValue(landing, 0)});
     copy->setDoesNotThrow();
     failedOperation();
     ir.SetInsertPoint(normal);
@@ -335,14 +337,13 @@ private:
       if (target->place) {
         if (hierarchy) {
           bool exactProducer =
-              stage &&
-              (freshConstructionDestination(session.program().mir(), address,
-                                            input, placement,
-                                            *stage) == target->place ||
-               (stage->result == value &&
-                freshObjectStorage(session.program().mir(), address, input,
-                                   placement, *stage) ==
-                    FreshObjectStorage::Argument));
+              stage && (freshConstructionDestination(session.program().mir(),
+                                                     address, input, placement,
+                                                     *stage) == target->place ||
+                        (stage->result == value &&
+                         freshObjectStorage(session.program().mir(), address,
+                                            input, placement, *stage) ==
+                             FreshObjectStorage::Argument));
           if (stage && isFreshHierarchyTransferProducer(*stage)) {
             const auto transfer = planFreshHierarchyTransfer(
                 session.program().mir(), input, *stage);
@@ -375,8 +376,8 @@ private:
         // field of a payload alternative.
         if (!stage || stage->result != value ||
             freshObjectStorage(session.program().mir(), address, input,
-                               placement, *stage) !=
-                FreshObjectStorage::Element)
+                               placement,
+                               *stage) != FreshObjectStorage::Element)
           throw BackendUnsupportedError(
               "LLVM nested hierarchy destination is not admitted");
         const MirInstruction *outer = nullptr;
@@ -390,20 +391,9 @@ private:
         stage = outer;
         auto *storage = destination(target->aggregate);
         stage = element;
-        if (target->variant)
-          return payloadFieldAddress(ir, session.layouts().payload(type),
-                                     storage, *target->variant,
-                                     target->element);
-        return ir.CreateGEP(session.layouts().get(type).storage, storage,
-                            {ir.getInt64(0), ir.getInt64(target->element)});
+        return aggregateSlot(type, storage, *target);
       }
-      if (target->variant)
-        return payloadFieldAddress(ir, session.layouts().payload(type),
-                                   destination(target->aggregate),
-                                   *target->variant, target->element);
-      return ir.CreateGEP(session.layouts().get(type).storage,
-                          destination(target->aggregate),
-                          {ir.getInt64(0), ir.getInt64(target->element)});
+      return aggregateSlot(type, destination(target->aggregate), *target);
     }
     if (const auto found = temporaries.find(value); found != temporaries.end())
       return found->second;
@@ -439,7 +429,8 @@ private:
   // A by-value call input formed from a place observation. The parameter is
   // the callee's own object, which it may move from or mutate, so the input
   // needs its own copy rather than the observed place's address.
-  [[nodiscard]] bool observedParameter(const MirInstruction &instruction) const {
+  [[nodiscard]] bool
+  observedParameter(const MirInstruction &instruction) const {
     if (instruction.kind != MirInstructionKind::CallInput ||
         instruction.destination || instruction.operands.size() != 1 ||
         instruction.info.category != ValueCategory::Value ||
@@ -604,6 +595,20 @@ private:
         session.layouts().get(owner->type).storage, thisAddress,
         session.layouts().fieldIndex(owner->type, initializer.field));
   }
+  // The address of one element slot of a fresh aggregate's storage: an array
+  // element, one field of a payload alternative or one closure capture.
+  [[nodiscard]] llvm::Value *aggregateSlot(const SemanticType &type,
+                                           llvm::Value *storage,
+                                           const Placement::Target &target) {
+    if (target.variant)
+      return payloadFieldAddress(ir, session.layouts().payload(type), storage,
+                                 *target.variant, target.element);
+    if (type.kind == SemanticType::Lambda)
+      return ir.CreateStructGEP(session.layouts().get(type).storage, storage,
+                                static_cast<unsigned>(target.element));
+    return ir.CreateGEP(session.layouts().get(type).storage, storage,
+                        {ir.getInt64(0), ir.getInt64(target.element)});
+  }
   [[nodiscard]] llvm::Value *freshTransfer(const MirInstruction &instruction) {
     const auto transfer = Lifetimes::preflightFreshTransfer(session, dispatch,
                                                             input, instruction);
@@ -647,13 +652,7 @@ private:
       stage = transfer.publication;
       auto *storage = destination(target->aggregate);
       stage = element;
-      auto *address =
-          target->variant
-              ? payloadFieldAddress(ir, session.layouts().payload(type),
-                                    storage, *target->variant,
-                                    target->element)
-              : ir.CreateGEP(session.layouts().get(type).storage, storage,
-                             {ir.getInt64(0), ir.getInt64(target->element)});
+      auto *address = aggregateSlot(type, storage, *target);
       lifetimes.freshTransfer(ir, address, memory.selected(transfer.source),
                               input, instruction);
       return address;
@@ -665,22 +664,21 @@ private:
         transfer.source != instruction.operands.front())
       throw BackendUnsupportedError("LLVM hierarchy transfer lost its exact "
                                     "source/publication placement");
-    auto *address = returned ? returnDestination
-                             : destination(*instruction.result);
+    auto *address =
+        returned ? returnDestination : destination(*instruction.result);
     if (!address)
       throw std::logic_error("LLVM returned transfer lost its ABI destination");
     // Selecting the sealed source view does not materialize an object snapshot
     // or suppress its cleanup. The typed transfer commits source state last.
     // A field moved out of a payload alternative starts at that field.
-    auto *source =
-        transfer.sourceVariant
-            ? payloadFieldAddress(
-                  ir,
-                  session.layouts().payload(
-                      input.findPlace(transfer.source.place)->type),
-                  memory.address(transfer.source.place),
-                  *transfer.sourceVariant, transfer.sourceField)
-            : memory.selected(transfer.source);
+    auto *source = transfer.sourceVariant
+                       ? payloadFieldAddress(
+                             ir,
+                             session.layouts().payload(
+                                 input.findPlace(transfer.source.place)->type),
+                             memory.address(transfer.source.place),
+                             *transfer.sourceVariant, transfer.sourceField)
+                       : memory.selected(transfer.source);
     lifetimes.freshTransfer(ir, address, source, input, instruction);
     return address;
   }
@@ -773,8 +771,8 @@ private:
   void abandonIfRequested() {
     if (!failures.workerContainment())
       return;
-    auto *abandon =
-        llvm::BasicBlock::Create(session.context(), "worker.abandon", &function);
+    auto *abandon = llvm::BasicBlock::Create(session.context(),
+                                             "worker.abandon", &function);
     auto *resume = llvm::BasicBlock::Create(session.context(),
                                             "worker.continue", &function);
     ir.CreateCondBr(failures.abandoning(ir), abandon, resume);
@@ -939,8 +937,9 @@ private:
 #if defined(GTI_LLVM_C04_NATIVE_UNWIND)
     auto *result = evaluationCall(signature.type, callee, arguments);
     signature.applyTo(*result);
-    return resultSlot ? load(resultSlot, callable.result)
-           : result->getType()->isVoidTy() ? nullptr : result;
+    return resultSlot                      ? load(resultSlot, callable.result)
+           : result->getType()->isVoidTy() ? nullptr
+                                           : result;
 #else
     auto *status = ir.CreateCall(signature.type, callee, arguments);
     signature.applyTo(*status);
@@ -954,6 +953,59 @@ private:
     ir.SetInsertPoint(normal);
     return resultSlot ? load(resultSlot, callable.result) : nullptr;
 #endif
+  }
+  // The place-category Load copying a whole closure binding that this value
+  // names, if any.
+  [[nodiscard]] const MirInstruction *closureCopyLoad(const MirOperand &value) {
+    const auto *defined = input.findValue(value.value);
+    const auto *block =
+        defined ? input.findBlock(defined->definitionBlock) : nullptr;
+    if (!block)
+      return nullptr;
+    for (const auto &producer : block->instructions)
+      if (!producer.tombstone && producer.id == defined->definition)
+        return producer.kind == MirInstructionKind::Load &&
+                       producer.info.category == ValueCategory::Place &&
+                       producer.operands.size() == 1 &&
+                       producer.operands.front().kind == MirOperandKind::Copy &&
+                       producer.operands.front().place
+                   ? &producer
+                   : nullptr;
+    return nullptr;
+  }
+  // Copies one complete object of hierarchy storage into fresh storage: a
+  // class by its generated logical-field copy, a closure capture by capture.
+  // Either installs the copy's own dispatch state.
+  void copyHierarchy(llvm::Value *destination, llvm::Value *source,
+                     const SemanticType &type) {
+    if (type.kind == SemanticType::Lambda)
+      copyClosure(destination, source, type);
+    else
+      lifetimes.generatedCopy(ir, destination, source, type);
+  }
+  // Copies one closure environment into fresh storage capture by capture.
+  void copyClosure(llvm::Value *destination, llvm::Value *source,
+                   const SemanticType &type) {
+    const auto environment =
+        closureEnvironmentLayout(session.program().mir(), type);
+    if (!environment || destination == source)
+      throw std::logic_error("LLVM closure copy lost its environment layout");
+    auto *storage = session.layouts().get(type).storage;
+    for (std::size_t index = 0; index < environment->captureTypes.size();
+         ++index) {
+      const auto &capture = environment->captureTypes[index];
+      auto *from =
+          ir.CreateStructGEP(storage, source, static_cast<unsigned>(index));
+      auto *to = ir.CreateStructGEP(storage, destination,
+                                    static_cast<unsigned>(index));
+      if (!isBorrowingCapture(environment->captureModes[index]) &&
+          containsHierarchyStorage(session.program().mir(), capture)) {
+        copyHierarchy(to, from, capture);
+        continue;
+      }
+      auto *slot = storage->getStructElementType(static_cast<unsigned>(index));
+      ir.CreateStore(ir.CreateLoad(slot, from), to);
+    }
   }
   [[nodiscard]] llvm::Value *
   constructClosure(const MirInstruction &instruction) {
@@ -973,11 +1025,29 @@ private:
                      ir.CreateStructGEP(storage, environment, 0));
       return environment;
     }
-    for (std::size_t index = 0; index < target.captureTypes.size(); ++index)
-      store(operand(instruction.operands[index]),
-            ir.CreateStructGEP(storage, environment,
-                               static_cast<unsigned>(index)),
-            target.captureTypes[index]);
+    for (std::size_t index = 0; index < target.captureTypes.size(); ++index) {
+      // A moved hierarchy capture was relocated into its slot by its own
+      // planned transfer; storing its value would copy dispatch state.
+      const auto &source = instruction.operands[index];
+      if (source.kind == MirOperandKind::Value)
+        if (const auto *slot = placement.target(source.value);
+            slot && slot->aggregate == *instruction.result && !slot->variant &&
+            slot->element == index)
+          continue;
+      auto *slot = ir.CreateStructGEP(storage, environment,
+                                      static_cast<unsigned>(index));
+      // A by-copy hierarchy capture is a generated logical-field copy that
+      // installs the copy's own dispatch state, never a byte transport.
+      if (source.kind == MirOperandKind::Copy && source.place &&
+          target.captureModes[index] == LambdaCaptureMode::Copy &&
+          containsHierarchyStorage(session.program().mir(),
+                                   target.captureTypes[index])) {
+        copyHierarchy(slot, memory.address(source.place),
+                      target.captureTypes[index]);
+        continue;
+      }
+      store(operand(source), slot, target.captureTypes[index]);
+    }
     return environment;
   }
   [[nodiscard]] llvm::Value *call(const MirInstruction &instruction,
@@ -1105,15 +1175,20 @@ private:
       if (instruction.intrinsic == IntrinsicKind::ThreadScope) {
         if (current->terminator.kind != MirTerminatorKind::Invoke ||
             current->terminator.invokeInstruction != instruction.id)
-          throw BackendUnsupportedError("C04 worker scope lost its MIR failure edge");
+          throw BackendUnsupportedError(
+              "C04 worker scope lost its MIR failure edge");
         std::vector<llvm::Value *> inputs;
         for (const auto &value : instruction.operands)
           inputs.push_back(operand(value));
-        auto *outcome = emitC04Scope(session, ir, address, instruction, inputs,
-                                    channels.at(current->terminator.failureRecord), lifetimes);
-        auto *normal = llvm::BasicBlock::Create(session.context(), "c04.joined", &function);
-        auto *failed = llvm::BasicBlock::Create(session.context(), "c04.worker.failed", &function);
-        ir.CreateCondBr(ir.CreateICmpSLT(outcome, ir.getInt32(0)), failed, normal);
+        auto *outcome = emitC04Scope(
+            session, ir, address, instruction, inputs,
+            channels.at(current->terminator.failureRecord), lifetimes);
+        auto *normal = llvm::BasicBlock::Create(session.context(), "c04.joined",
+                                                &function);
+        auto *failed = llvm::BasicBlock::Create(session.context(),
+                                                "c04.worker.failed", &function);
+        ir.CreateCondBr(ir.CreateICmpSLT(outcome, ir.getInt32(0)), failed,
+                        normal);
         ir.SetInsertPoint(failed);
         failedOperation();
         ir.SetInsertPoint(normal);
@@ -1145,10 +1220,9 @@ private:
             .instruction = instruction,
             .inputs = inputs,
             .failure = checked ? channels.at(term.failureRecord) : nullptr,
-            .failed = checked ? std::function<void()>([this] {
-              failedOperation();
-            })
-                              : std::function<void()>{},
+            .failed = checked
+                          ? std::function<void()>([this] { failedOperation(); })
+                          : std::function<void()>{},
             .destination =
                 [&] {
                   if (!instruction.result)
@@ -1156,13 +1230,15 @@ private:
                         "LLVM managed-thread result lost its value");
                   return destination(*instruction.result);
                 },
-            .store = [this](llvm::Value *target, llvm::Value *value,
-                            const SemanticType &type) {
-              store(value, target, type);
-            },
-            .load = [this](llvm::Value *source, const SemanticType &type) {
-              return load(source, type);
-            }};
+            .store =
+                [this](llvm::Value *target, llvm::Value *value,
+                       const SemanticType &type) {
+                  store(value, target, type);
+                },
+            .load =
+                [this](llvm::Value *source, const SemanticType &type) {
+                  return load(source, type);
+                }};
         return threads.emit(ir, threadStage);
       }
       if (instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem)
@@ -1204,8 +1280,8 @@ private:
       }
       switch (instruction.intrinsic) {
       case IntrinsicKind::StringViewSize:
-        return ir.CreateExtractValue(
-            countedTextValue(*instruction.receiver), 1);
+        return ir.CreateExtractValue(countedTextValue(*instruction.receiver),
+                                     1);
       case IntrinsicKind::StringViewEmpty:
         return ir.CreateICmpEQ(
             ir.CreateExtractValue(countedTextValue(*instruction.receiver), 1),
@@ -1291,8 +1367,8 @@ private:
     const auto constructor = instruction.constructorTarget;
     if (instruction.nativeCalleeType) {
       if (!nativeCIndirectCallContract(session.program().mir(),
-                                             session.program().target(), input,
-                                             instruction))
+                                       session.program().target(), input,
+                                       instruction))
         throw BackendUnsupportedError(
             "LLVM indirect C call requires its exact staged native signature");
       auto *callee = operand(*instruction.receiver);
@@ -1312,7 +1388,8 @@ private:
           "LLVM scalar call requires an exact direct target");
     if (target && (target->cThreadOperation == CThreadRuntimeOperation::Begin ||
                    target->cThreadOperation == CThreadRuntimeOperation::End)) {
-      if (!nativeCThreadLifecycleCall(session.program().mir(), input, instruction))
+      if (!nativeCThreadLifecycleCall(session.program().mir(), input,
+                                      instruction))
         throw BackendUnsupportedError(
             "LLVM C-thread lifecycle lost its sealed startup operation");
       ir.CreateCall(declareRuntimeService(
@@ -1568,9 +1645,10 @@ private:
     case MirInstructionKind::Compute: {
       if (instruction.operation == MirOperation::NativeCallback) {
         if (!nativeCCallbackStageContract(session.program().mir(),
-                                         session.program().target(), input,
-                                         instruction))
-          throw std::logic_error("LLVM callback lost its exact conversion stage");
+                                          session.program().target(), input,
+                                          instruction))
+          throw std::logic_error(
+              "LLVM callback lost its exact conversion stage");
         result = nativeCCallbackAddress(session, ir,
                                         *instruction.nativeCallbackAdapter);
         break;
@@ -1740,6 +1818,17 @@ private:
             auto *slot =
                 ir.CreateGEP(session.layouts().get(type).storage, result,
                              {ir.getInt64(0), ir.getInt64(index)});
+            // An element copied from a checked object is a generated copy
+            // that installs the element's own dispatch state.
+            if (const auto *value = source.kind == MirOperandKind::Value
+                                        ? input.findValue(source.value)
+                                        : nullptr;
+                value && value->info.category == ValueCategory::Place &&
+                containsHierarchyStorage(session.program().mir(),
+                                         type.arguments.at(0))) {
+              copyHierarchy(slot, operand(source), type.arguments.at(0));
+              continue;
+            }
             store(aggregateElement(source, type.arguments.at(0)), slot,
                   type.arguments.at(0));
           }
@@ -1749,8 +1838,8 @@ private:
             llvm::Constant::getNullValue(session.layouts().get(type).value);
         for (std::size_t index = 0; index < instruction.operands.size();
              ++index) {
-          auto *element =
-              aggregateElement(instruction.operands[index], type.arguments.at(0));
+          auto *element = aggregateElement(instruction.operands[index],
+                                           type.arguments.at(0));
           if (type.arguments.at(0) == SemanticType::Bool)
             element = ir.CreateZExt(element, ir.getInt8Ty());
           if (type.arguments.at(0).kind == SemanticType::Class)
@@ -1825,6 +1914,22 @@ private:
                DefinedFailureDetail::NegativeArgumentCount});
         break;
       }
+      // A by-value argument copied from a checked place is a generated copy
+      // into its prepared slot, never a byte transport of dispatch state.
+      if (instruction.kind == MirInstructionKind::CallInput &&
+          instruction.callInputKind == HirCallInputKind::CopyValue &&
+          instruction.destination && instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Copy &&
+          instruction.operands.front().place &&
+          containsHierarchyStorage(session.program().mir(),
+                                   instruction.info.type)) {
+        auto *destination = memory.address(*instruction.destination);
+        copyHierarchy(destination,
+                      memory.address(instruction.operands.front().place),
+                      instruction.info.type);
+        result = destination;
+        break;
+      }
       {
         // A Move into a destination publishes the moved object there, and
         // that object is the Move's value: one live object, not a copy.
@@ -1838,9 +1943,8 @@ private:
                          moveDestination ? moveDestination : publishedAddress);
       }
       if (observedParameter(instruction)) {
-        auto *copy = publishedAddress
-                         ? publishedAddress
-                         : memory.temporary(instruction.info.type);
+        auto *copy = publishedAddress ? publishedAddress
+                                      : memory.temporary(instruction.info.type);
         store(result, copy, instruction.info.type);
         result = copy;
       }
@@ -1910,6 +2014,21 @@ private:
               "LLVM data initialization lost its sealed global");
         break;
       }
+      // A copied closure holding hierarchy storage is copied capture by
+      // capture into the fresh local; owned hierarchy captures install their
+      // own dispatch state through the generated logical-field copy.
+      if (instruction.kind == MirInstructionKind::Initialize &&
+          place.type.kind == SemanticType::Lambda &&
+          instruction.operands.size() == 1 &&
+          instruction.operands.front().kind == MirOperandKind::Value &&
+          containsHierarchyStorage(session.program().mir(), place.type))
+        if (const auto *copied =
+                closureCopyLoad(instruction.operands.front())) {
+          copyClosure(memory.address(place.id),
+                      memory.address(copied->operands.front().place),
+                      place.type);
+          break;
+        }
       if (instruction.kind == MirInstructionKind::Initialize &&
           place.type.kind == SemanticType::Reference &&
           place.type.arguments.at(0).kind == SemanticType::Class) {
@@ -2218,9 +2337,9 @@ private:
       for (const auto &target : term.switchTargets)
         if (target.value) {
           const auto &constant = target.value->value;
-          auto *bits = integerConstant(
-              llvm::cast<llvm::IntegerType>(value->getType()),
-              constant.negative, constant.magnitude);
+          auto *bits =
+              integerConstant(llvm::cast<llvm::IntegerType>(value->getType()),
+                              constant.negative, constant.magnitude);
           output->addCase(bits, edge(target.target, target.arguments));
         }
       break;
@@ -2298,7 +2417,7 @@ private:
       if (!failureDestination)
         throw std::logic_error("LLVM failure propagation has no destination");
       failures.copyChannel(ir, failureDestination,
-                            channels.at(term.failureRecord));
+                           channels.at(term.failureRecord));
       leaveFailureCleanup();
       ir.CreateRet(ir.getFalse());
       break;
@@ -2362,8 +2481,9 @@ private:
       // A defined-failure chain cannot rejoin normal execution. One token
       // spans that invocation's cleanup, with no TLS work on successful paths.
       cleanupToken = ir.CreateAlloca(session.layouts().pointer());
-      ir.CreateStore(llvm::ConstantPointerNull::get(session.layouts().pointer()),
-                     cleanupToken);
+      ir.CreateStore(
+          llvm::ConstantPointerNull::get(session.layouts().pointer()),
+          cleanupToken);
     }
     if (auto *debug = session.debugInfo())
       debug->location(ir, address, 0, 0);
@@ -2477,13 +2597,17 @@ private:
     }
     if (input.kind == MirBodyKind::Constructor && owner &&
         owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage) {
-      const auto *constructor = session.program().mir().findConstructorInstance(address.owner);
-      const auto payload = constructor ? nativeMutexConstructor(session.program().mir(), *constructor)
-                                       : std::nullopt;
+      const auto *constructor =
+          session.program().mir().findConstructorInstance(address.owner);
+      const auto payload =
+          constructor
+              ? nativeMutexConstructor(session.program().mir(), *constructor)
+              : std::nullopt;
       if (!payload || !thisAddress || parameters.size() != 1 ||
           parameters[0].binding != constructor->parameterBindings[0] ||
           parameters[0].type != *payload || !parameters[0].materialized)
-        throw BackendUnsupportedError("LLVM mutex initialization lost its sealed payload constructor");
+        throw BackendUnsupportedError(
+            "LLVM mutex initialization lost its sealed payload constructor");
       const auto layout = session.layouts().mutexStorage(owner->type);
       auto *source = memory.address(input.places.front().id);
       Mutexes(session, ir).initializeShell(thisAddress, owner->type);
@@ -2500,8 +2624,10 @@ private:
         store(load(source, *payload), destination, *payload);
       }
       lifetimes.moved(ir, source, *payload);
-      ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive | MutexStorageLayout::payloadLive),
-                     ir.CreateStructGEP(layout.object.storage, thisAddress, layout.payloadActiveIndex));
+      ir.CreateStore(ir.getInt8(MutexStorageLayout::shellLive |
+                                MutexStorageLayout::payloadLive),
+                     ir.CreateStructGEP(layout.object.storage, thisAddress,
+                                        layout.payloadActiveIndex));
     }
     if (input.kind == MirBodyKind::HostedStartup &&
         session.program().mir().hostedStartupPlan()->kind ==
@@ -2526,7 +2652,7 @@ private:
             CompilerCapabilityTypeKind::PolymorphicStorage) {
       // Initialize private representation without replacing the source body.
       polymorphicStorage.initializeDefaultConstructor(ir, *constructor,
-                                                       thisAddress);
+                                                      thisAddress);
     }
     if (constructor && constructor->dispatchState &&
         constructor->dispatchState->afterBaseInitialization == 0)
@@ -2727,10 +2853,10 @@ void Bodies::body(MirBodyAddress address) {
   if (auto *debug = session.debugInfo())
     debug->begin(address, *output);
   Body emission(
-      session, failures, dispatch, lifetimes, threadLocals, *output,
-      address, input, plan, parameters.concrete.lanes,
-      parameters.concrete.packs, parameters.sourceBindings, globals, callables,
-      threads, [&](MirBodyAddress target) { return function(target); },
+      session, failures, dispatch, lifetimes, threadLocals, *output, address,
+      input, plan, parameters.concrete.lanes, parameters.concrete.packs,
+      parameters.sourceBindings, globals, callables, threads,
+      [&](MirBodyAddress target) { return function(target); },
       [&](MirBodyAddress target) { return signature(target); }, classOwner,
       address.kind == MirBodyKind::Constructor
           ? session.program().mir().findConstructorInstance(address.owner)
@@ -2808,7 +2934,8 @@ void lowerC04Evaluation(Session &session, const LlvmAdmissionPlan &admission,
                         std::span<const HirFunctionInstanceId> functions,
                         bool fixedCallBoundaries,
                         C04EvaluationProfile profile) {
-  const auto bodies = validateC04Evaluation(session, admission, functions, profile);
+  const auto bodies =
+      validateC04Evaluation(session, admission, functions, profile);
   Bodies(session, admission).lowerEvaluation(bodies, fixedCallBoundaries);
 }
 #endif

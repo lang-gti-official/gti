@@ -1,5 +1,5 @@
-#include "gti/runtime_mutex.h"
 #include "gti/runtime_failure.h"
+#include "gti/runtime_mutex.h"
 #include "gti/runtime_thread.h"
 
 #include <assert.h>
@@ -84,14 +84,15 @@ int32_t gti_test_program_gate(int32_t stage) {
   return fail ? 0 : 1;
 }
 
-_Noreturn void gti_test_real_failure_terminate_v2(
-    const gti_failure_record_v2 *, const gti_failure_artifact_descriptor_v1 *,
-    gti_failure_observer_v2, void *);
+_Noreturn void
+gti_test_real_failure_terminate_v2(const gti_failure_record_v2 *,
+                                   const gti_failure_artifact_descriptor_v1 *,
+                                   gti_failure_observer_v2, void *);
 
-_Noreturn void gti_rt_failure_terminate_v2(
-    const gti_failure_record_v2 *record,
-    const gti_failure_artifact_descriptor_v1 *artifact,
-    gti_failure_observer_v2 observer, void *context) {
+_Noreturn void
+gti_rt_failure_terminate_v2(const gti_failure_record_v2 *record,
+                            const gti_failure_artifact_descriptor_v1 *artifact,
+                            gti_failure_observer_v2 observer, void *context) {
   const char *mode = getenv("GTI_O13_PROCESS_FAILURE");
   assert(mode);
   if (strcmp(mode, "quarantine") == 0) {

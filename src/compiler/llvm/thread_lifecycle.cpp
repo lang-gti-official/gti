@@ -94,38 +94,65 @@ bool nativeCThreadOperationBinding(const MirProgram &program,
     std::vector<SemanticType> parameters;
   };
   const std::array<Row, 14> rows{{
-      {CThreadRuntimeOperation::Create, "gti_rt_cthread_create_v1", i32,
+      {CThreadRuntimeOperation::Create,
+       "gti_rt_cthread_create_v1",
+       i32,
        {SemanticType::rawPointerTo(u64),
         SemanticType::nativeFunctionType(i32, std::array{context}), context}},
-      {CThreadRuntimeOperation::Join, "gti_rt_cthread_join_v1", i32,
+      {CThreadRuntimeOperation::Join,
+       "gti_rt_cthread_join_v1",
+       i32,
        {u64, SemanticType::rawPointerTo(i32)}},
-      {CThreadRuntimeOperation::InvokeOnceInitializer, "gti_rt_once_invoke_v1",
+      {CThreadRuntimeOperation::InvokeOnceInitializer,
+       "gti_rt_once_invoke_v1",
        SemanticType::Void,
        {SemanticType::nativeFunctionType(SemanticType::Void, {})}},
-      {CThreadRuntimeOperation::MutexInit, "gti_rt_mtx_init_v1", i32,
+      {CThreadRuntimeOperation::MutexInit,
+       "gti_rt_mtx_init_v1",
+       i32,
        {SemanticType::rawPointerTo(u64), i32}},
-      {CThreadRuntimeOperation::MutexDestroy, "gti_rt_mtx_destroy_v1",
-       SemanticType::Void, {u64}},
+      {CThreadRuntimeOperation::MutexDestroy,
+       "gti_rt_mtx_destroy_v1",
+       SemanticType::Void,
+       {u64}},
       {CThreadRuntimeOperation::MutexLock, "gti_rt_mtx_lock_v1", i32, {u64}},
-      {CThreadRuntimeOperation::MutexTryLock, "gti_rt_mtx_trylock_v1", i32,
+      {CThreadRuntimeOperation::MutexTryLock,
+       "gti_rt_mtx_trylock_v1",
+       i32,
        {u64}},
-      {CThreadRuntimeOperation::MutexTimedLock, "gti_rt_mtx_timedlock_v1", i32,
+      {CThreadRuntimeOperation::MutexTimedLock,
+       "gti_rt_mtx_timedlock_v1",
+       i32,
        {u64, i64, i64}},
-      {CThreadRuntimeOperation::MutexUnlock, "gti_rt_mtx_unlock_v1", i32,
+      {CThreadRuntimeOperation::MutexUnlock,
+       "gti_rt_mtx_unlock_v1",
+       i32,
        {u64}},
-      {CThreadRuntimeOperation::ConditionInit, "gti_rt_cnd_init_v1", i32,
+      {CThreadRuntimeOperation::ConditionInit,
+       "gti_rt_cnd_init_v1",
+       i32,
        {SemanticType::rawPointerTo(u64)}},
-      {CThreadRuntimeOperation::ConditionDestroy, "gti_rt_cnd_destroy_v1",
-       SemanticType::Void, {u64}},
-      {CThreadRuntimeOperation::ConditionSignal, "gti_rt_cnd_signal_v1", i32,
+      {CThreadRuntimeOperation::ConditionDestroy,
+       "gti_rt_cnd_destroy_v1",
+       SemanticType::Void,
        {u64}},
-      {CThreadRuntimeOperation::ConditionBroadcast, "gti_rt_cnd_broadcast_v1",
-       i32, {u64}},
-      {CThreadRuntimeOperation::ConditionWait, "gti_rt_cnd_wait_v1", i32,
+      {CThreadRuntimeOperation::ConditionSignal,
+       "gti_rt_cnd_signal_v1",
+       i32,
+       {u64}},
+      {CThreadRuntimeOperation::ConditionBroadcast,
+       "gti_rt_cnd_broadcast_v1",
+       i32,
+       {u64}},
+      {CThreadRuntimeOperation::ConditionWait,
+       "gti_rt_cnd_wait_v1",
+       i32,
        {u64, u64}},
   }};
   const Row timedWait{CThreadRuntimeOperation::ConditionTimedWait,
-                      "gti_rt_cnd_timedwait_v1", i32, {u64, u64, i64, i64}};
+                      "gti_rt_cnd_timedwait_v1",
+                      i32,
+                      {u64, u64, i64, i64}};
   const auto matches = [&](const Row &row) {
     return function.cThreadOperation == row.operation &&
            function.externalSymbol == row.symbol &&
@@ -145,8 +172,7 @@ bool nativeCThreadOperationBinding(const MirProgram &program,
          function.callableParameters.empty() &&
          function.processMemoryOperation ==
              ProcessMemoryRuntimeOperation::None &&
-         (std::any_of(rows.begin(), rows.end(), matches) ||
-          matches(timedWait));
+         (std::any_of(rows.begin(), rows.end(), matches) || matches(timedWait));
 }
 
 SynchronizationOperationKind

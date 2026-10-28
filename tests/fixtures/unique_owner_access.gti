@@ -50,6 +50,8 @@ int32_t exercise(int32_t mode) {
     return read_cell(empty);
   }
   if (mode == 4) {
+    // A read through a mutable owner selects the read-only `operator->`, so
+    // GTI-S2096 also notes that this binding never needs `mut`.
     mut std::unique_ptr<cell> empty = std::unique_ptr<cell>();
     return empty->value;
   }

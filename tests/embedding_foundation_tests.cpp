@@ -530,7 +530,8 @@ void testDormantDriverModel() {
       {.dormantLibraryTargets = false});
   expect(!disabledOverlay.succeeded() &&
              hasCode(disabledOverlay.diagnostics, "GTI-B2000"),
-         "a manifest overlay cannot override an explicitly disabled library policy");
+         "a manifest overlay cannot override an explicitly disabled library "
+         "policy");
 
   const lang::driver::ProjectResolutionResult resolved =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(

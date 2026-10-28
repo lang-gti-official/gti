@@ -12,7 +12,8 @@ extern uint32_t gti_test_mutex_real_lock_v1(gti_mutex_slot_v1 *);
 extern void gti_test_mutex_real_unlock_v1(gti_mutex_slot_v1 *);
 
 static gti_mutex_slot_v1 *live[32], *locked;
-static unsigned live_count, initialized, destroyed, attempts, locks, unlocks, drops;
+static unsigned live_count, initialized, destroyed, attempts, locks, unlocks,
+    drops;
 static bool started;
 
 static bool mode(const char *expected) {
@@ -79,18 +80,20 @@ void gti_test_guard_begin(void) {
   assert(atexit(complete) == 0);
 }
 
-_Noreturn void gti_test_real_failure_terminate_v2(
-    const gti_failure_record_v2 *, const gti_failure_artifact_descriptor_v1 *,
-    gti_failure_observer_v2, void *);
+_Noreturn void
+gti_test_real_failure_terminate_v2(const gti_failure_record_v2 *,
+                                   const gti_failure_artifact_descriptor_v1 *,
+                                   gti_failure_observer_v2, void *);
 
-_Noreturn void gti_rt_failure_terminate_v2(
-    const gti_failure_record_v2 *record,
-    const gti_failure_artifact_descriptor_v1 *artifact,
-    gti_failure_observer_v2 observer, void *context) {
+_Noreturn void
+gti_rt_failure_terminate_v2(const gti_failure_record_v2 *record,
+                            const gti_failure_artifact_descriptor_v1 *artifact,
+                            gti_failure_observer_v2 observer, void *context) {
   complete();
   assert(record->abi_version == GTI_FAILURE_ABI_VERSION_V2 && artifact);
   if (mode("guard-lock")) {
-    assert(record->code == GTI_FAILURE_CODE_INFALLIBLE_HOST_OPERATION_FAILED_V1 &&
+    assert(record->code ==
+               GTI_FAILURE_CODE_INFALLIBLE_HOST_OPERATION_FAILED_V1 &&
            record->detail == GTI_FAILURE_DETAIL_MUTEX_LOCK_V1 && locks == 0);
   } else {
     assert(mode("guard-body") && locks == 1 &&

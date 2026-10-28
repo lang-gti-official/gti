@@ -884,7 +884,11 @@ arithmetic/bitwise value operators admit read-only and consuming forms.
 
 An accessor pair is the exception to the mutable preference: a read-only
 overload returning `T&` and an otherwise exact `mut` overload returning
-`mut T&` to the same referent, as a method, `operator[]` or `operator*`. On a
+`mut T&` to the same referent, as a method, `operator[]`, `operator*` or
+`operator->`. The `operator->` step of `p->m` is used through member `m`: a
+field read, a read-only member call or a read-only reference binding selects
+the read-only step, while assigning the field, binding it as `mut`, or calling
+a mutating member selects the `mut` step. On a
 mutable receiver the pair selects its `mut` form only when the use of its
 result may need mutable access; otherwise it selects the read-only form, which
 borrows the receiver as shared. A use is read-only when the result, or a field
@@ -897,8 +901,10 @@ or fixed-array element reached from it, is only read:
 - it is a condition, an operand of `!`, `&&` or `||`, or an operand of a
   built-in operator;
 - it is the receiver of a member or operator whose overloads all have
-  read-only receivers, or the argument of an operator whose parameters all
-  read it.
+  read-only receivers, unless one returns an exclusive (non-copyable) borrow
+  carrier such as a mutex guard, which may hold mutable capability over the
+  receiver's state; or the argument of an operator whose parameters all read
+  it.
 
 A use through another accessor pair is that pair's own use, and a range-for
 loop uses its range as its element binding requests. Every other use selects

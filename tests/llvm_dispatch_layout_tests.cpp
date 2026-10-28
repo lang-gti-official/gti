@@ -4112,6 +4112,74 @@ void testExchangedAndReturnedTransferPlanning() {
   expect(reparented >= 2, "both returned siblings reparent at the return");
 }
 
+// A carrier view's loan may depend on the carrier's own stored loans, which
+// record the external owners the carrier borrows. A forged dependency -- a
+// stored loan another binding carries, a non-stored loan, or a returned
+// relay of a different dependency -- refuses.
+void testCarrierLoanDependencies() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+  const auto frontend =
+      Frontend({.requireEntryPoint = true,
+                .lowerReachableOnly = true,
+                .lowerLibraryReachableOnly = true,
+                .trustedBodies = TrustedBodyAnalysis::Reachable})
+          .analyze(root / "tests/fixtures/carrier_upcast_references.gti",
+                   std::nullopt, {root / "stdlib/prelude.gti"}, {},
+                   {root / "stdlib"});
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("carrier upcast fixture lost valid source");
+  const auto &program = frontend.mir;
+  const auto supported = [](const MirLoan &) { return true; };
+  const auto returned = [](const MirTerminator &) { return true; };
+  std::size_t locals = 0, returns = 0;
+  for (const auto address : enumerateMirBodyAddresses(program)) {
+    const auto &body = *findMirBody(program, address);
+    for (const auto &loan : body.loans) {
+      if (!loan.storedDependency ||
+          (loan.kind != MirLoanKind::Local &&
+           loan.kind != MirLoanKind::Return) ||
+          !carrierLoanDependency(body, loan, supported, returned))
+        continue;
+      (loan.kind == MirLoanKind::Local ? locals : returns) += 1;
+      for (unsigned mutation = 0; mutation != 3; ++mutation) {
+        auto changed = program;
+        auto &changedBody = *findMirBody(changed, address);
+        MirLoan *forged = nullptr;
+        for (auto &candidate : changedBody.loans)
+          if (candidate.id == loan.id)
+            forged = &candidate;
+        if (loan.kind == MirLoanKind::Local) {
+          for (auto &candidate : changedBody.loans)
+            if (candidate.id == loan.storedDependency) {
+              if (mutation == 0)
+                candidate.carriers.clear();
+              else
+                candidate.kind = MirLoanKind::Local;
+            }
+          if (mutation == 2)
+            forged->escapes = true;
+        } else {
+          if (mutation == 0)
+            forged->storedDependency = forged->id;
+          else if (mutation == 1)
+            forged->escapes = false;
+          else
+            for (auto &block : changedBody.blocks)
+              for (auto &stage : block.instructions)
+                if (stage.kind == MirInstructionKind::Borrow &&
+                    stage.loan == loan.id)
+                  stage.operands.front().loan = loan.id;
+        }
+        expect(
+            !carrierLoanDependency(changedBody, *forged, supported, returned),
+            "a forged carrier loan dependency refuses");
+      }
+    }
+  }
+  expect(locals >= 2 && returns >= 1,
+         "local views and an upcast return depend on carrier stored loans");
+}
+
 void testInertRelocation() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto frontend =
@@ -4796,6 +4864,7 @@ int main() { return 0; }
   testNestedFreshTransferPlanning();
   testFreshCopyViewPlanning();
   testExchangedAndReturnedTransferPlanning();
+  testCarrierLoanDependencies();
   testInertRelocation();
   testGeneratedEmpty();
   testDeclarationInitializers();
