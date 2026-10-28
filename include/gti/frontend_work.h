@@ -19,6 +19,8 @@ struct FrontendWorkMetrics {
   std::vector<std::string> parseCacheHits;
   std::size_t sourceBytes = 0;
   std::size_t sourceLoadMicroseconds = 0;
+  // Units loaded from their cached flag-independent processed form.
+  std::size_t processedSourceUnitReplays = 0;
   std::size_t lexMicroseconds = 0;
   std::size_t parseMicroseconds = 0;
   std::size_t semanticMicroseconds = 0;
@@ -92,6 +94,7 @@ struct FrontendWorkMetrics {
     parseCacheHits.clear();
     sourceBytes = 0;
     sourceLoadMicroseconds = 0;
+    processedSourceUnitReplays = 0;
     lexMicroseconds = 0;
     parseMicroseconds = 0;
     semanticMicroseconds = 0;

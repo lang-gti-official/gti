@@ -546,6 +546,116 @@ void testDefinitionClosureReanalyzedWithWarmSyntax() {
 
 } // namespace
 
+void testProcessedSourceUnitReplay() {
+  TemporaryProject project;
+  const std::filesystem::path entry = project.path("replay-main.gti");
+  const std::string sharedKey = canonicalKey(project.path("shared.gti"));
+  TemporaryProject::write(project.path("shared.gti"),
+                          "int shared_value() { return 2; }\n");
+  // Conditionals that test only the target keep a processed form; one that
+  // tests a flag (`configured.gti`) does not.
+  TemporaryProject::write(project.path("targeted.gti"),
+                          "#if target.os == \"plan9\"\n"
+                          "int targeted_value() { return 1; }\n"
+                          "#else\n"
+                          "int targeted_value() { return 4; }\n"
+                          "#endif\n");
+  TemporaryProject::write(project.path("helper.gti"),
+                          "#include \"shared.gti\"\n"
+                          "#include \"targeted.gti\"\n"
+                          "int helper_value() {\n"
+                          "  return shared_value() + targeted_value();\n"
+                          "}\n");
+  // Both interfaces include `helper.gti`, so the second replays it, and its
+  // nested includes, in another configuration domain.
+  TemporaryProject::write(project.path("left.gti"),
+                          "export module left;\n"
+                          "export #include \"helper.gti\"\n"
+                          "export int left_value() { return 1; }\n");
+  TemporaryProject::write(project.path("right.gti"),
+                          "export module right;\n"
+                          "#include \"helper.gti\"\n"
+                          "export int right_value() {\n"
+                          "  return helper_value() + 1;\n"
+                          "}\n");
+  TemporaryProject::write(project.path("configured.gti"),
+                          "#if defined(FEATURE)\n"
+                          "int configured_value() { return 1; }\n"
+                          "#else\n"
+                          "int configured_value() { return 3; }\n"
+                          "#endif\n");
+  // Loading diagnostics: including a module interface depends on the
+  // included unit and is re-established by replay; a plain `include` is a
+  // token-level diagnostic and keeps its unit out of the processed form.
+  TemporaryProject::write(project.path("wrong.gti"), "#include \"left.gti\"\n");
+  TemporaryProject::write(project.path("legacy.gti"),
+                          "include \"shared.gti\"\n");
+  const std::string entrySource = "import \"left.gti\";\n"
+                                  "import \"right.gti\";\n"
+                                  "#include \"configured.gti\"\n"
+                                  "#include \"wrong.gti\"\n"
+                                  "#include \"legacy.gti\"\n"
+                                  "int entry_value() {\n"
+                                  "  return left_value() + right_value() +\n"
+                                  "         configured_value();\n"
+                                  "}\n";
+  TemporaryProject::write(entry, entrySource);
+
+  lang::lsp::FrontendSnapshotState state;
+  lang::lsp::FrontendSourceSnapshot snapshot = state.capture();
+  const AnalysisRun cold = analyze(entry, entrySource, snapshot);
+  publishIdentities(state, snapshot, cold.result);
+  snapshot = state.capture();
+  const AnalysisRun warm = analyze(entry, entrySource, snapshot);
+  const AnalysisRun uncached =
+      analyze(entry, entrySource, snapshot, {}, {}, false);
+  const auto hasCode = [](const lang::FrontendResult &result,
+                          std::string_view code) {
+    return std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                       [&](const lang::Diagnostic &diagnostic) {
+                         return diagnostic.code == code;
+                       });
+  };
+  expect(hasCode(warm.result, "GTI-I0012") && hasCode(warm.result, "GTI-I0009"),
+         "replayed directives should re-report their loading diagnostics");
+  expect(contains(warm.metrics.lexCacheHits, sharedKey) &&
+             warm.metrics.processedSourceUnitReplays >
+                 cold.metrics.processedSourceUnitReplays,
+         "unchanged flag-independent units should load from their processed "
+         "form");
+  const auto configuration = [](const lang::FrontendResult &result) {
+    std::ostringstream output;
+    for (const lang::SourceUnit &unit : result.sourceGraph.sourceUnits()) {
+      output << unit.path.string() << ':';
+      for (const lang::SourceSpan &span : unit.inactiveSpans) {
+        appendSpan(output, span);
+        output << ';';
+      }
+      for (const lang::ConfigurationToken &token : unit.configurationTokens) {
+        output << static_cast<int>(token.kind) << '@';
+        appendSpan(output, token.span);
+        output << ';';
+      }
+      output << '\n';
+    }
+    return output.str();
+  };
+  const lang::SourceUnit *targeted =
+      std::as_const(warm.result.sourceGraph)
+          .findUnit(warm.result.sourceGraph.sourceUnitForPath(
+              canonicalKey(project.path("targeted.gti"))));
+  expect(targeted != nullptr && !targeted->inactiveSpans.empty() &&
+             configuration(cold.result) == configuration(warm.result) &&
+             configuration(warm.result) == configuration(uncached.result),
+         "a replayed target conditional should keep its inactive spans and "
+         "configuration tokens");
+  expect(resultFingerprint(cold.result) == resultFingerprint(warm.result) &&
+             resultFingerprint(warm.result) ==
+                 resultFingerprint(uncached.result),
+         "processed-form replay should select the same graph, syntax, "
+         "diagnostics and semantics as processing the units again");
+}
+
 int main() {
   testBoundedLruAndSnapshotIdentity();
   testFrontendReuseInvalidationAndEquivalence();
@@ -553,6 +663,7 @@ int main() {
   testDependencyConfigurationChangesParsedIdentity();
   testDeclaredInactiveConfigurationFlags();
   testDefinitionClosureReanalyzedWithWarmSyntax();
+  testProcessedSourceUnitReplay();
 
   if (failures != 0) {
     std::cerr << failures << " frontend cache test(s) failed\n";
