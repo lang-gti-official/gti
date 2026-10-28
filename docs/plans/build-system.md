@@ -435,22 +435,21 @@ identity and from a future native ABI identity.
 
 ### Target
 
-The released target kinds are `executable` and `test`. Each has exactly one
-entry `.gti` source and therefore one existing whole-program source graph. A
-test target differs in project intent and command selection, not in language
-semantics or native representation.
+The released target kinds are `executable`, `test` and bounded LLVM
+`library`. Each has one entry `.gti` source and one whole-program source graph.
+A test target changes command selection, not source semantics. A library target
+requires `linkage = "shared"` and explicit manifest-selected C exports; it
+builds an infallible module on macOS arm64/Linux x86_64 with an adjacent generated
+header in a new immutable generation directory. Ordinary `run`/`test` commands
+and the C++ backend reject library targets. The default manifest policy enables
+library requests; the older disabled `GTI-B2000` checkpoint is historical.
 
-The driver now retains a dormant, non-default `library`/`shared` target and its
-manifest-selected export request through project, cache, and compiler facts.
-Released manifest loading still rejects that target with `GTI-B2000`, and no
-shared object or wrapper is generated, so current releases must not claim
-native libraries. Activation remains the shared, host-embedded gameplay-module
-campaign in
-[`implementation-sequence.md`](implementation-sequence.md#engine-embedding-delivery-campaign).
-It activates `kind = "library"` only together with explicit `linkage =
-"shared"`, manifest-selected generated C exports, contained lifecycle/failure,
-and a dynamically loaded host gate. It does not add separately compiled GTI
-dependencies or a stable ABI for ordinary GTI values. Source dependencies can
+The project workflow reuses the existing compiler/native pipeline, caches the
+object/header pair, reports both published artifacts and cleans managed
+generations. It does not add separately compiled GTI dependencies or a stable
+ABI for ordinary GTI values. Full fallible containment, editor and installed
+acceptance remain in the
+[embedding campaign](implementation-sequence.md#engine-embedding-delivery-campaign). Source dependencies can
 arrive before compiled-library targets.
 
 ### Profile
@@ -1590,7 +1589,9 @@ The build system needs tests at four boundaries:
    by basename outside the repository and discovers runtime/stdlib resources
    beside the installed executable.
 
-Release CI currently exercises Linux x64 and Apple Silicon, not Windows.
+Gitea release CI publishes Linux x64. Apple Silicon archives use the manual
+macOS packaging/validation/upload contract; there is no macOS Actions runner.
+Windows publication is not implemented.
 Applicable host/path behavior needs focused evidence on those supported release
 platforms; Windows publication/execution needs its own implementation and
 validation before claiming support. Filesystem tests must avoid assuming case
