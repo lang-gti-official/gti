@@ -9,6 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.5 - Function items through class aliases
+
+- Constructing a class through an alias now treats a function-name argument
+  exactly as constructing it through the class name does. With
+  `using T = Tag;` or `using C = std::function_ptr<int64_t(int64_t)>;`,
+  `T(work)` and `C(work)` in a return or an initializer previously failed with
+  the internal error `GTI-B0001`. They now compile on both backends, and an
+  ambiguous overloaded name reports `GTI-S2090` with the same candidates as
+  `Tag(work)`.
+
 ## 0.484.6 - Borrows through reference fields and returned closures
 
 - Calling a method through a reference field of a parameter now compiles

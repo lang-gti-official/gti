@@ -7323,7 +7323,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         analyzeContextualCallArguments(expr.arguments());
     std::vector<SemanticType> &argumentTypes = argumentAnalysis.types;
     if (alias->type.kind == SemanticType::Class) {
-      if (expr.arguments().size() == 1 &&
+      // An alias constructs exactly as its class's own name does.
+      const bool contextualArrayTail =
+          resumeDeferredConstructorArguments(expr, argumentAnalysis);
+      if (expr.arguments().size() == 1 && !contextualArrayTail &&
           analyzeExplicitConversion(expr, expr.arguments().front(),
                                     argumentTypes.front(), alias->type,
                                     expr.paren())) {
@@ -7593,18 +7596,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       currentType = analyze(alias);
       return;
     }
-    // Constructor value parameters infer unambiguous function items as direct
-    // braces do. Resume the deferred value tail exactly once, in source order.
-    // Array braces still need the selected constructor's contextual type.
-    bool contextualArrayTail = false;
-    for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
-      contextualArrayTail =
-          contextualArrayTail ||
-          isContextualArrayArgument(expr.arguments()[index]) ||
-          isContextualCallableResultArgument(expr.arguments()[index]);
-      if (!contextualArrayTail && argumentAnalysis.deferred[index])
-        argumentTypes[index] = analyze(expr.arguments()[index]);
-    }
+    const bool contextualArrayTail =
+        resumeDeferredConstructorArguments(expr, argumentAnalysis);
     // `Target(source)` converts through a conversion operator of the source
     // when it declares one to exactly the target.
     if (expr.arguments().size() == 1 && !contextualArrayTail &&
