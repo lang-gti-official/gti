@@ -994,6 +994,12 @@ def test_newer_edit_cancels_running_analysis(executable, root):
     # stopped run is traced as cancelled rather than completed.
     path = root / "cancel-burst.gti"
     source = "".join(f"int cancel_{index} = {index};\n" for index in range(8000))
+    # The intermediate erroneous snapshot skips later lowering and can finish
+    # much faster than the valid snapshots. Give its frontend enough work for
+    # the next edit to reach cancellation, rather than timing valid lowering.
+    intermediate_source = source + "".join(
+        f"int intermediate_{index} = {index};\n" for index in range(32000)
+    )
     path.write_text(source, encoding="utf-8")
     uri = path.resolve().as_uri()
     trace_path = root / "cancel-trace.jsonl"
@@ -1020,7 +1026,7 @@ def test_newer_edit_cancels_running_analysis(executable, root):
         session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         open_document(session, uri, source)
         for version, text in (
-            (2, source + "int cancel_error = cancel_missing;\n"),
+            (2, intermediate_source + "int cancel_error = cancel_missing;\n"),
             (3, source),
         ):
             session.send(
