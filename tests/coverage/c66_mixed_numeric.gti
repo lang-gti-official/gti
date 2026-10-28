@@ -1,6 +1,6 @@
 // Mixed-width arithmetic, explicit conversions and float/integer boundaries.
 #include <std/cmath>
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 int main() {
   int32_t i = 7;

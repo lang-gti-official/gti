@@ -23,14 +23,20 @@ public:
 class Order {
 public:
   bool operator()(Key& left, Key& right) { return left.value() < right.value(); }
+public:
+  Order() = default;
 };
 class Hash {
 public:
   std::size_t operator()(Key& value) { return std::size_t(value.value()); }
+public:
+  Hash() = default;
 };
 class Equal {
 public:
   bool operator()(Key& left, Key& right) { return left.value() == right.value(); }
+public:
+  Equal() = default;
 };
 
 int main() {

@@ -30,12 +30,14 @@ public:
 
 class Boxes {
 public:
+  Boxes() = default;
   mut Box left = Box(1);
   mut Box right = Box(2);
 };
 
 class Outer {
 public:
+  Outer() = default;
   mut Boxes inner = Boxes();
 };
 """

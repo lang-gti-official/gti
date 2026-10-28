@@ -13,6 +13,8 @@ struct Square {
   int32_t edge = 1;
   int32_t area() { return this.edge * this.edge; }
   int32_t sides() { return 4; }
+public:
+  Square() = default;
 };
 
 struct Triangle {
@@ -20,11 +22,15 @@ struct Triangle {
   int32_t height = 2;
   int32_t area() { return this.base * this.height / 2; }
   int32_t sides() { return 3; }
+public:
+  Triangle() = default;
 };
 
 struct Blob {
   int32_t size = 9;
   int32_t area() { return this.size; }
+public:
+  Blob() = default;
 };
 
 int32_t total_area<T>(std::vector<T>& shapes) requires stored_shape<T> {

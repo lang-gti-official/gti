@@ -27,6 +27,8 @@ public:
     output.append(value.text.view());
     return;
   }
+public:
+  formatter() = default;
 };
 
 class std::formatter<app::Identifier> {
@@ -36,6 +38,8 @@ public:
     std::formatter<uint64_t> numeric{};
     return numeric.format(value.value, output, spec);
   }
+public:
+  formatter() = default;
 };
 
 class std::formatter<app::Record> {
@@ -48,6 +52,8 @@ public:
     }
     return std::try_format_to(output, "Record({})", value.count);
   }
+public:
+  formatter() = default;
 };
 
 int main() {

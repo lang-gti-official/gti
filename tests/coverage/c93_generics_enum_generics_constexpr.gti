@@ -9,12 +9,16 @@ namespace meta {
 class enum_info<E> {
 public:
   uint64_t count() { return 0; }
+public:
+  enum_info() = default;
 };
 }
 
 class meta::enum_info<Color> {
 public:
   uint64_t count() { return 4; }
+public:
+  enum_info() = default;
 };
 
 U raw<U, E>(E value) requires std::integral_enum<E> && std::enum_underlying<E, U> {

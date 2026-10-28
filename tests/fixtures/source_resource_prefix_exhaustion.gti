@@ -14,6 +14,8 @@ public:
   }
   unsafe void release(std::raw_allocation allocation) { std::println(77); }
   ~FailingResource() { std::println(91); }
+public:
+  FailingResource() = default;
 };
 
 class Item {

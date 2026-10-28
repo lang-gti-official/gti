@@ -4,6 +4,8 @@
 class consume_once {
 public:
   bool operator()(int32_t& value) && { return value > 0; }
+public:
+  consume_once() = default;
 };
 
 int main() {

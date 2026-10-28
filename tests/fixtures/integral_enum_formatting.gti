@@ -21,6 +21,8 @@ public:
     output.append("named");
     return;
   }
+public:
+  formatter() = default;
 };
 
 class std::formatter<Payload> {
@@ -30,6 +32,8 @@ public:
     output.append("payload");
     return;
   }
+public:
+  formatter() = default;
 };
 
 mut int sequence = 0;

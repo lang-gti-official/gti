@@ -16,6 +16,8 @@ public:
     std::println(100);
     return input.value / divisor;
   }
+public:
+  Target() = default;
 };
 
 class MutableTarget {
@@ -24,11 +26,15 @@ public:
     std::println(200);
     return input.value / divisor;
   }
+public:
+  MutableTarget() = default;
 };
 
 class Caller {
 public:
   ~Caller() { std::println(9); }
+public:
+  Caller() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

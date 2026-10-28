@@ -680,7 +680,7 @@ void testStoragePayloadMirAdmission() {
       "storage-payload-mir-admission.gti", R"(
 #include <std/optional>
 #include <std/vector>
-struct Payload { int value = 7; };
+struct Payload { int value = 7;  public: Payload() = default; };
 int main() {
   std::optional<Payload> optional{};
   std::vector<Payload> prefix{};

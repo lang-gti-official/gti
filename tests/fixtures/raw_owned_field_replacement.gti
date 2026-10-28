@@ -3,7 +3,7 @@
 
 mut int stage = 0;
 union Bits { mut int integer; mut float real; };
-struct UnionHolder { mut Bits bits{}; };
+struct UnionHolder { mut Bits bits{};  public: UnionHolder() = default; };
 void SetUnion(UnionHolder* value) { unsafe { value->bits.integer = 7; } }
 class Payload {
   int id;
@@ -24,8 +24,8 @@ public:
   }
   bool Valid() { return this.id == 2 && this.text.view() == "new"; }
 };
-struct Result { mut bool changed = false; mut Payload message{1, "old"}; };
-struct Nested { mut Result inner{}; };
+struct Result { mut bool changed = false; mut Payload message{1, "old"};  public: Result() = default; };
+struct Nested { mut Result inner{};  public: Nested() = default; };
 Result* Get(Result* result) {
   int divisor = stage == 5 ? 0 : 1;
   int checked = 3 / divisor;

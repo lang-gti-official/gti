@@ -14,6 +14,8 @@ namespace native {
 class Cleanup {
 public:
   ~Cleanup() { std::println("cleanup"); }
+public:
+  Cleanup() = default;
 };
 
 class Holder {
@@ -26,6 +28,8 @@ public:
       return native::mesh(this.value, uint32_t(index));
     }
   }
+public:
+  Holder() = default;
 };
 
 const native::Mesh* forward(Holder& holder, int index) {

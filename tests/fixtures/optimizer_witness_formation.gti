@@ -17,6 +17,8 @@ public:
   int& read_other() {
     unsafe { return *(&this.other); }
   }
+public:
+  Witness() = default;
 };
 
 int formed(mut Witness& witness) {

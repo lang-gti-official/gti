@@ -8,7 +8,7 @@ public:
   ~Owner() { std::println(9); }
   int& get() { std::println(2); return this.value; }
 };
-class Passive { int value = 3; public: int& get() { return this.value; } };
+class Passive { int value = 3; public: int& get() { return this.value; }  public: Passive() = default; };
 Passive passive() { return Passive(); }
 int read(int& value) { return value; }
 Owner produce() { return Owner(); }

@@ -13,7 +13,7 @@ extern "C" {
   void library_report(int32_t first, int32_t second);
   void library_cleanup();
 }
-struct Guard { ~Guard() { library_cleanup(); } };
+struct Guard { ~Guard() { library_cleanup(); }  public: Guard() = default; };
 int main() {
   Guard guard{};
   unsafe {

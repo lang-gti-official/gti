@@ -5,6 +5,8 @@ class Item {
 public:
   int read() { return this.value; }
   void increment() mut { this.value = this.value + 1; }
+public:
+  Item() = default;
 };
 
 int main() {

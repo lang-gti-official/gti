@@ -115,6 +115,7 @@ public:
 /// A non-owning adapter for process standard input.
 class stdin_reader {
 public:
+  stdin_reader() = default;
   expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
     if (output.empty()) { return size_t(0); }
     size_t capacity = output.size();
@@ -130,6 +131,7 @@ public:
 
 class stdout_writer {
 public:
+  stdout_writer() = default;
   expected<size_t, io_errc> write_some(span<uint8_t>& input) mut {
     if (input.empty()) { return size_t(0); }
     size_t length = input.size();
@@ -146,6 +148,7 @@ public:
 
 class stderr_writer {
 public:
+  stderr_writer() = default;
   expected<size_t, io_errc> write_some(span<uint8_t>& input) mut {
     if (input.empty()) { return size_t(0); }
     size_t length = input.size();

@@ -1,5 +1,5 @@
 #define FEATURE_FAST
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 int32_t pick() {
 #ifdef FEATURE_FAST
   return 1;

@@ -18,6 +18,8 @@ public:
 struct user_record {
   uint64_t id = 0;
   std::string login = std::string("");
+public:
+  user_record() = default;
 };
 
 class std::json::codec<User> {
@@ -32,11 +34,15 @@ public:
     user_record record = ?std::json::decode<user_record>(text);
     return User(record.id, std::string(record.login.view()));
   }
+public:
+  codec() = default;
 };
 
 struct team {
   std::string name = std::string("");
   std::vector<User> members = std::vector<User>();
+public:
+  team() = default;
 };
 
 int main() {

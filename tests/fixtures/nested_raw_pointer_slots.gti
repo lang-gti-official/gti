@@ -19,10 +19,14 @@ int32_t* identity(int32_t* value) { return value; }
 
 struct Holder {
   mut int32_t* value = nullptr;
+public:
+  Holder() = default;
 };
 
 struct Snapshot {
   mut int32_t* values[2] = {};
+public:
+  Snapshot() = default;
 };
 
 int main() {

@@ -19,13 +19,15 @@ public:
   }
 };
 
-struct Coordinate { mut int32_t x = 0; };
+struct Coordinate { mut int32_t x = 0;  public: Coordinate() = default; };
 union NativeWord { mut int32_t integer; mut float real; };
-struct Samples { mut int values[2] = {5, 8}; };
+struct Samples { mut int values[2] = {5, 8};  public: Samples() = default; };
 class Coordinates {
   Coordinate values[2] = {};
 public:
   int first_x() { return this.values[0].x; }
+public:
+  Coordinates() = default;
 };
 
 int main() {

@@ -11,6 +11,8 @@ public:
     ~Token() { std::println(std::to_string(identity).view()); }
   };
   ~Scope() { std::println("unexpected outer object"); }
+public:
+  Scope() = default;
 };
 
 class FlatToken {

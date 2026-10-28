@@ -15,6 +15,8 @@ interface Sink { void put(int value) mut; };
 class TraceSink : public Sink {
 public:
   void put(int value) mut override { events = events * 10 + value; }
+public:
+  TraceSink() = default;
 };
 
 // Destructors report through a virtual call on a separate object; none hands

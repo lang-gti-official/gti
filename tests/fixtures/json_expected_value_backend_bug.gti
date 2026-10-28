@@ -2,6 +2,8 @@
 
 class json_error_repro {
   std::string path = std::string("");
+public:
+  json_error_repro() = default;
 };
 
 int main() {

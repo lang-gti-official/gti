@@ -368,6 +368,8 @@ public:
   Box(int32_t value) {}
   ~Box() {}
   int32_t read() { return 1; }
+public:
+  Box() = default;
 };
 
 int main() {
@@ -584,6 +586,8 @@ void testLegacyStaticExecutionDoesNotInferMergedThunk() {
 class Registry {
 public:
   static constexpr int32_t value = 1;
+public:
+  Registry() = default;
 };
 int main() { return Registry::value - 1; }
 )");

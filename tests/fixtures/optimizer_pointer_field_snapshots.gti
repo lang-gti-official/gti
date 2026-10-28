@@ -15,6 +15,8 @@ public:
   void maybe_retarget(bool choose, int* pointer) mut {
     if (choose) this.pointer = pointer;
   }
+public:
+  Box() = default;
 };
 
 int local_snapshot() {

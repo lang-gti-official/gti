@@ -1,6 +1,6 @@
 #include <std/format>
 #include <std/string>
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 int main() {
   mut auto text = std::try_format("a={} b={}", int32_t(1), int32_t(2));
   if (text.has_value()) { std::println(text.value()); } else { std::println("format failed"); }

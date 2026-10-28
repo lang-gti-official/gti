@@ -673,7 +673,7 @@ int main() { return 0; }
 
   const lang::FrontendResult ordinaryHostNames =
       analyze("ordinary-host-name-namespaces.gti", R"(
-namespace FILE { struct Local { int32_t value = 0; }; }
+namespace FILE { struct Local { int32_t value = 0;  public: Local() = default; }; }
 namespace EOF { int32_t value = 1; }
 int main() { return EOF::value; }
 )");
@@ -790,11 +790,11 @@ int main() {
       "opaque-generic.gti",
       "[[c_opaque]] struct Bad<T>; int main() { return 0; }",
       "cannot declare generic");
-  expectOpaqueHandleFailure(
-      "opaque-base.gti",
-      "struct Base {}; [[c_opaque]] struct Bad : public Base; "
-      "int main() { return 0; }",
-      "cannot declare base");
+  expectOpaqueHandleFailure("opaque-base.gti",
+                            "struct Base { public: Base() = default; }; "
+                            "[[c_opaque]] struct Bad : public Base; "
+                            "int main() { return 0; }",
+                            "cannot declare base");
   expectOpaqueHandleFailure(
       "opaque-by-value.gti",
       "[[c_opaque]] struct Bad; Bad value; int main() { return 0; }",

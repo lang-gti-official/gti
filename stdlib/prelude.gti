@@ -401,6 +401,7 @@ concept expected_result<R, Error> { typename value_type; };
 // function item's signature is checked where the combinator is called.
 class expected_mapping<R, E> {
 public:
+  expected_mapping() = default;
   expected<R, E> invoke<F>(F& mapper) {
     R mapped = mapper();
     return expected<R, E>(std::move(mapped));
@@ -412,6 +413,7 @@ public:
 };
 class expected_mapping<void, E> {
 public:
+  expected_mapping() = default;
   expected<void, E> invoke<F>(F& mapper) {
     mapper();
     return expected<void, E>();

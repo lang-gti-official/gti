@@ -852,12 +852,16 @@ public:
   static int static_inspect(expected<Owned, errc> value) {
     return value ? value.value().id : 0;
   }
+public:
+  Sink() = default;
 };
 class UnrelatedSink {
   mut int count = 0;
 public:
   void accept(expected<Owned, errc> value) mut { ++this.count; }
   int inspect(expected<Owned, errc> value) { return value ? value.value().id : 0; }
+public:
+  UnrelatedSink() = default;
 };
 mut Sink& alias(mut Sink& sink) { return sink; }
 int main() {
@@ -1094,6 +1098,8 @@ interface Channel<T> { T read(T value); };
 class IntegerChannel : public Channel<int> {
 public:
   int read(int value) override { return value; }
+public:
+  IntegerChannel() = default;
 };
 int plain(int value) { return value; }
 int main() {
@@ -1145,6 +1151,8 @@ class Payload {
   int value = 9;
 public:
   ~Payload() {}
+public:
+  Payload() = default;
 };
 class BoundMove {
   mut int& target;
@@ -1400,8 +1408,10 @@ class Resource {
   int value = 4;
 public:
   ~Resource() {}
+public:
+  Resource() = default;
 };
-class Holder { Resource value{}; };
+class Holder { Resource value{};  public: Holder() = default; };
 int main() { Holder holder{}; return 0; }
 )");
   expect(frontend.canGenerateCode(),
@@ -1442,9 +1452,11 @@ void testPassiveStatusDefaultField() {
     const std::string source =
         "class Base { public: int stamp = 5; Base() {} " +
         std::string(abstract ? "virtual int read() = 0;" : "") +
-        "}; class Derived : public Base { public: int read() " +
+        "}; class Derived : public Base { public: Derived() = default; int "
+        "read() " +
         std::string(abstract ? "override " : "") +
-        "{ return this.stamp; } }; struct Holder { Derived value; }; "
+        "{ return this.stamp; } }; struct Holder { Derived value; Holder() = "
+        "default; }; "
         "int main() { Holder owner{}; return owner.value.read() - 5; }";
     const auto frontend = analyze("passive-status-default.gti", source);
     expect(frontend.canGenerateCode(), "selected base defaults verify");
@@ -2329,11 +2341,13 @@ public:
   Reading(int32_t initial) : value(initial) {}
 };
 
-struct Marker {};
+struct Marker { public: Marker() = default; };
 
 struct Component {
   mut uint64_t offset = 0;
   mut uint64_t length = 0;
+public:
+  Component() = default;
 };
 
 class Dashboard {
@@ -2343,6 +2357,8 @@ class Dashboard {
   int32_t samples[2] = {2, 3};
   Marker marker{};
   Component component{};
+public:
+  Dashboard() = default;
 };
 
 int main() {
@@ -2421,12 +2437,13 @@ int main() {
 
   for (const bool explicitConstructor : {false, true}) {
     const auto mixed = analyze("array-empty-field-schedule.gti", std::string(R"(
-struct Empty {};
+struct Empty { Empty() = default; };
 class Holder {
   int32_t samples[2] = {2, 3};
   Empty empty{};
 public:
-)") + (explicitConstructor ? "  Holder() {}\n" : "") + R"(
+)") + (explicitConstructor ? "  Holder() {}\n" : "  Holder() = default;\n") +
+                                                                     R"(
 };
 int main() { Holder holder{}; return 0; }
 )");
@@ -2495,10 +2512,14 @@ void testDependentFieldInitializerSchedule() {
       analyze("cpp-mir-body-dependent-field-initializers.gti", R"(
 class StaticArray<T, uint64_t N> {
   T values[N] = {};
+public:
+  StaticArray() = default;
 };
 
 class WrappedArray<T, uint64_t N> {
   StaticArray<T, N> value = StaticArray<T, N>();
+public:
+  WrappedArray() = default;
 };
 
 int main() {
@@ -2739,7 +2760,7 @@ class Payload {
 public:
   Payload(int32_t value) : data(std::make_unique<int32_t>(value)) {}
 };
-struct Holder { mut Payload value = Payload(1); };
+struct Holder { mut Payload value = Payload(1);  public: Holder() = default; };
 void replace(mut std::unique_ptr<Holder>& owner) {
   owner->value = Payload(2);
 }
@@ -2951,6 +2972,8 @@ void testConstructorBorrowedInputReborrowReplacement() {
 struct Source {
   std::string text{"new"};
   std::string& get() { return this.text; }
+public:
+  Source() = default;
 };
 struct Item {
   mut std::string text;
@@ -3311,6 +3334,8 @@ class Holder {
   Cleanup cleanup = Cleanup();
 public:
   int operator()(int amount) mut { return amount; }
+public:
+  Holder() = default;
 };
 interface Marker { int marker(); };
 class Passive : public Marker {
@@ -3485,6 +3510,8 @@ class Box<T> {
   int marker = 1;
 public:
   Box(int value) : marker(value) {}
+public:
+  Box() = default;
 };
 int main() { Box<int> first{}; Box<bool> second{2}; return 0; }
 )gti");
@@ -3544,7 +3571,7 @@ int main() { Box<int> first{}; Box<bool> second{2}; return 0; }
       "detached declarations independently retain unused default obligations");
 
   const auto direct = analyze("generated-default-target-erasure.gti", R"gti(
-struct Only { int value = 1; };
+struct Only { int value = 1;  public: Only() = default; };
 int main() { Only value{}; return 0; }
 )gti");
   expect(direct.canGenerateCode() &&
@@ -3583,7 +3610,7 @@ int main() { Only value{}; return 0; }
          "default construction");
   const std::string inPlaceSource = R"gti(
 #include <std/memory>
-struct Element { int value = 1; };
+struct Element { int value = 1;  public: Element() = default; };
 int main() {
   unsafe {
     Element* address = nullptr;
@@ -3631,7 +3658,7 @@ int main() {
   }
 
   const auto bases = analyze("source-constructor-default-obligation.gti", R"gti(
-class Base { int value = 1; };
+class Base { int value = 1;  public: Base() = default; };
 class Derived : public Base {
 public:
   Derived() : Base() {}
@@ -3737,6 +3764,8 @@ struct RawHolder {
   void* address = nullptr;
   c_string text = nullptr;
   Callback callback = nullptr;
+public:
+  RawHolder() = default;
 };
 int main() { RawHolder holder{}; return 0; }
 )gti");
@@ -3753,6 +3782,8 @@ struct ScalarDefaults {
   uint8_t typed_literal = 1;
   int8_t signed_literal = -1;
   uint8_t grouped_literal = (1);
+public:
+  ScalarDefaults() = default;
 };
 int main() { ScalarDefaults value{}; return 0; }
 )gti");
@@ -3784,11 +3815,13 @@ int main() { ScalarDefaults value{}; return 0; }
   }
   const auto expectedDefaults =
       analyzeWithStandardLibrary("generated-expected-default.gti", R"gti(
-class Payload<T> { int marker = 1; public: ~Payload() {} };
+class Payload<T> { int marker = 1; public: ~Payload() {}  public: Payload() = default; };
 class Wrapped<T> {
   expected<Payload<T>, int> success = Payload<T>();
   expected<int, Payload<T>> error = unexpected(Payload<T>());
   expected<int, Payload<T>> passive = 1;
+public:
+  Wrapped() = default;
 };
 int main() { Wrapped<int> value{}; return 0; }
 )gti");
@@ -3887,7 +3920,7 @@ int main() { Wrapped<int> value{}; return 0; }
   const auto genericDefaults =
       analyzeWithStandardLibrary("generated-generic-default.gti", R"gti(
 #include <std/memory>
-class GenericPointer<T> { std::unique_ptr<T> value = std::unique_ptr<T>(); };
+class GenericPointer<T> { std::unique_ptr<T> value = std::unique_ptr<T>();  public: GenericPointer() = default; };
 int main() { GenericPointer<int> first{}; GenericPointer<bool> second{}; return 0; }
 )gti");
   expect(genericDefaults.canGenerateCode(),
@@ -3970,6 +4003,8 @@ class Outer {
   Failing second = Failing();
 public:
   ~Outer() {}
+public:
+  Outer() = default;
 };
 int main() { Outer object{}; return 0; }
 )gti");
@@ -4080,6 +4115,8 @@ class Derived : public Base {
   int value = 3;
 public:
   ~Derived() {}
+public:
+  Derived() = default;
 };
 int main() { Derived value{}; return 0; }
 )gti");
@@ -4126,6 +4163,8 @@ public:
 private:
   mut std::string text = std::string("");
   mut std::string shadow = std::string("");
+public:
+  StringHolder() = default;
 };
 
 int main() {
@@ -4330,6 +4369,8 @@ public:
 private:
   mut std::string first = std::string("");
   mut std::string second = std::string("");
+public:
+  OrderedPath() = default;
 };
 
 int main() {
@@ -4797,15 +4838,15 @@ void testRawOwnedFieldReplacement() {
          "raw owning field replacement reaches native emission");
   for (const auto &invalid : {
            R"(#include <std/string>
-struct State { mut std::string text{}; };
+struct State { mut std::string text{};  public: State() = default; };
 void Set(State* state) { state->text = std::string("new"); }
 int main() { return 0; })",
            R"(#include <std/string>
-struct State { mut std::string text{}; };
+struct State { mut std::string text{};  public: State() = default; };
 void Set(const State* state) { unsafe { state->text = std::string("new"); } }
 int main() { return 0; })",
            R"(#include <std/string>
-struct State { std::string text{}; };
+struct State { std::string text{};  public: State() = default; };
 void Set(State* state) { unsafe { state->text = std::string("new"); } }
 int main() { return 0; })"})
     expect(!analyzeWithStandardLibrary("/tmp/raw-field-rejected.gti", invalid)
@@ -6306,6 +6347,8 @@ class ResetOwner {
   mut std::unique_ptr<int32_t> value = std::unique_ptr<int32_t>();
 public:
   void reset() mut { this.value = std::unique_ptr<int32_t>(); }
+public:
+  ResetOwner() = default;
 };
 
 int main() {
@@ -6657,6 +6700,8 @@ void testNestedReceiverFieldProjection() {
 struct Component {
   mut std::size_t offset = 0;
   mut std::size_t length = 0;
+public:
+  Component() = default;
 };
 
 class Path {
@@ -6670,6 +6715,8 @@ public:
 private:
   mut std::string text = std::string("");
   mut Component component{};
+public:
+  Path() = default;
 };
 
 int main() {
@@ -7008,6 +7055,8 @@ void testDefaultConstructionPreparedParameterStaging() {
 mut int observed = 0;
 struct Scalar {
   int value = 0;
+public:
+  Scalar() = default;
 };
 struct Explicit {
   int value;
@@ -7241,8 +7290,8 @@ void testCheckedPassiveExpectedConstruction() {
 mut int observed = 0;
 int checked(int divisor) { return 24 / divisor; }
 void mark() { observed = 1; }
-struct Scalar { int value = checked(3); };
-struct Other { int value = 7; };
+struct Scalar { int value = checked(3);  public: Scalar() = default; };
+struct Other { int value = 7;  public: Other() = default; };
 int main() {
   Other other = Other();
   expected<Scalar, int> result = Scalar();
@@ -7465,6 +7514,8 @@ public:
     this.total += amount;
     return this.total;
   }
+public:
+  tally() = default;
 };
 
 int main() {
@@ -7756,6 +7807,8 @@ class dashboard {
 
 public:
   int read() { return this.initial.read(); }
+public:
+  dashboard() = default;
 };
 
 int main() {
@@ -9457,6 +9510,8 @@ public:
   virtual bool advance() mut = 0;
   void stop() mut { this.state = 9; }
   bool run() mut { return this.advance(); }
+public:
+  Base() = default;
 };
 
 class Derived : public Base {
@@ -10540,6 +10595,8 @@ struct Factory {
     int value = 6 / divisor;
     return Product(value);
   }
+public:
+  Factory() = default;
 };
 int main() {
   Factory factory{};
@@ -13398,7 +13455,7 @@ void testBorrowedFieldCompoundAssignment() {
   const std::pair<std::string, std::string> sources[] = {
       {fixture.string(), source},
       {"unrelated-borrowed-field-compound.gti", R"(
-struct Counter { mut int value = 30; };
+struct Counter { mut int value = 30;  public: Counter() = default; };
 int main() {
   mut Counter owner{};
   mut Counter& entry = owner;
@@ -14927,7 +14984,7 @@ int32_t main() { return plain_t().value - 7; }
   // through the slot and the prefix spells nothing.
   const lang::FrontendResult nested =
       analyze("cpp-mir-constructor-temporary-nested-field.gti", R"(
-struct inner_t { int32_t value = 7; };
+struct inner_t { int32_t value = 7;  public: inner_t() = default; };
 class outer_t {
 public:
   outer_t() {}
@@ -15055,6 +15112,8 @@ class defaulted {
 public:
   mut int32_t number = 5;
   ~defaulted() { drops += 1; }
+public:
+  defaulted() = default;
 };
 
 class box {
@@ -16783,7 +16842,7 @@ int main() {
 // returns the constructor to the ordinary body route.
 void testOwnedPrologueFormalEntryLoanEnd() {
   const auto frontend = analyzeWithStandardLibrary("text-view-owned.gti", R"(
-struct Player { std::string_view name = ""; uint32_t health = 100; };
+struct Player { std::string_view name = ""; uint32_t health = 100;  public: Player() = default; };
 uint32_t read(Player& value) { return value.health; }
 int main() {
   Player hero = {.health = uint32_t(7)};

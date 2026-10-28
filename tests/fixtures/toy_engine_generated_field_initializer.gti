@@ -21,6 +21,8 @@ public:
 class Application {
   std::unique_ptr<Resource> first = std::make_unique<Resource>(3);
   std::unique_ptr<Resource> second = std::make_unique<Resource>(7);
+public:
+  Application() = default;
 };
 
 int main() {

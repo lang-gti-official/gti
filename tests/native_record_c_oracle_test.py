@@ -291,6 +291,8 @@ public:
 
 private:
   const Packet* value = nullptr;
+public:
+  PacketReader() = default;
 };
 """
 

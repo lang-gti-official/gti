@@ -11,6 +11,8 @@ public:
 
 struct box {
   mut std::unique_ptr<token> value = std::unique_ptr<token>();
+public:
+  box() = default;
 };
 
 class checked_box {

@@ -32,9 +32,9 @@ if __name__ == "__main__":
                           f"expected_passive_publication_failure.gti:{line}: "
                           f"runtime error[{code}]: {detail}\n"))
              for arguments, line, code, detail in (
-                 ((), 22, "GTI-R0009", "invalid_expected_access in value_on_error"),
-                 (("error",), 27, "GTI-R0009", "invalid_expected_access in error_on_value"),
-                 (("producer", "failure"), 16, "GTI-R0002",
+                 ((), 24, "GTI-R0009", "invalid_expected_access in value_on_error"),
+                 (("error",), 29, "GTI-R0009", "invalid_expected_access in error_on_value"),
+                 (("producer", "failure"), 18, "GTI-R0002",
                   "division_by_zero in integer_division"))],
                 "expected_generated_passive_construction": [
                     ((), (0, "1\n2\n3\npublished\ncaller cleaned\n", "")),

@@ -23,6 +23,8 @@ public:
 class Producer {
 public:
   expected<Leaf, int> make() { return Leaf(std::string("token")); }
+public:
+  Producer() = default;
 };
 
 std::string later(int divisor) {

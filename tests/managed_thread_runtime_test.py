@@ -24,6 +24,7 @@ public:
 
 class class_task {
 public:
+  class_task() = default;
   void operator()() { std::println("class read task"); }
   void operator()() mut { std::println("class mutable task"); }
   void operator()() && { std::println("class once task"); }
@@ -31,6 +32,7 @@ public:
 
 class fresh_task {
 public:
+  fresh_task() = default;
   void operator()() { std::println("fresh class task"); }
 };
 
@@ -167,6 +169,8 @@ public:
 class result_task {
 public:
   result_value operator()() && { return result_value(9); }
+public:
+  result_task() = default;
 };
 
 int main() {
@@ -190,6 +194,8 @@ public:
     int32_t zero = 0;
     return 1 / zero;
   }
+public:
+  failing_result_task() = default;
 };
 
 int main() {
@@ -211,6 +217,8 @@ public:
     int32_t zero = 0;
     int32_t value = 1 / zero;
   }
+public:
+  failing_task() = default;
 };
 
 int main() {
@@ -244,11 +252,15 @@ CLEANUP_SOURCE = """\
 class first_cleanup {
 public:
   ~first_cleanup() { std::println("first cleanup"); }
+public:
+  first_cleanup() = default;
 };
 
 class second_cleanup {
 public:
   ~second_cleanup() { std::println("second cleanup"); }
+public:
+  second_cleanup() = default;
 };
 
 int main() {
@@ -274,6 +286,8 @@ public:
     int32_t zero = 0;
     int32_t secondary = 1 / zero;
   }
+public:
+  cleanup_failure() = default;
 };
 
 int main() {
@@ -298,6 +312,8 @@ public:
     int32_t zero = 0;
     int32_t secondary = 1 / zero;
   }
+public:
+  task_cleanup_failure() = default;
 };
 
 int main() {
@@ -323,6 +339,8 @@ public:
     int32_t zero = 0;
     int32_t value = 1 / zero;
   }
+public:
+  task_cleanup_failure() = default;
 };
 
 int main() {
@@ -345,6 +363,8 @@ public:
     int32_t zero = 0;
     int32_t secondary = 1 / zero;
   }
+public:
+  secondary_cleanup_failure() = default;
 };
 
 [[unsafe_transfer]] class task_internal_cleanup_failure {
@@ -354,6 +374,8 @@ public:
     int32_t zero = 0;
     int32_t primary = 1 % zero;
   }
+public:
+  task_internal_cleanup_failure() = default;
 };
 
 int main() {
@@ -399,6 +421,8 @@ public:
     auto held = process_value.lock();
     gti_test_expect_native_storage_pinned(held.get());
   }
+public:
+  CleanupProbe() = default;
 };
 
 int main() {

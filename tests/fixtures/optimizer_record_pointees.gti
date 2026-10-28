@@ -6,7 +6,7 @@ struct Reading {
   mut int narrow;
   Reading() : broad(2147483647), narrow(7) {}
 };
-class Witness { public: int unrelated = 2147483647; };
+class Witness { public: int unrelated = 2147483647;  public: Witness() = default; };
 
 unsafe void publish_record(Reading* pointer) {
   Reading value{};

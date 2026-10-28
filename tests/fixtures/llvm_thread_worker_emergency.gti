@@ -9,11 +9,15 @@ public:
     int32_t zero = 0;
     int32_t value = 1 / zero;
   }
+public:
+  fails_on_cleanup() = default;
 };
 
 [[unsafe_transfer]] class witness {
 public:
   ~witness() { std::println("abandoned witness must not print"); }
+public:
+  witness() = default;
 };
 
 void body() {

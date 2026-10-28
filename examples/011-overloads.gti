@@ -16,6 +16,8 @@ struct Label {
   std::string_view for_value(float value) {
     return "float overload";
   }
+public:
+  Label() = default;
 };
 
 int main() {

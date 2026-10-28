@@ -86,7 +86,7 @@ int main() {
 }
 )");
   positive("disjoint-captures", R"(
-struct State { mut int left = 2; mut int right = 3; };
+struct State { mut int left = 2; mut int right = 3;  public: State() = default; };
 int main() {
   mut State state{};
   mut auto& left = state.left;
@@ -388,7 +388,7 @@ int main() {
            "GTI-S2058");
   negative("erased-referent-cannot-be-a-base", R"(
 #include <std/memory>
-class Derived : public std::erased_object {};
+class Derived : public std::erased_object { public: Derived() = default; };
 int main() { Derived forged{}; return 0; }
 )",
            "GTI-S2040");

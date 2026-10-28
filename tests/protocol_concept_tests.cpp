@@ -723,7 +723,7 @@ adds_to<L, R>::sum_type total<L, R>(L& left, R& right)
   requires adds_to<L, R> {
   return adds_to<L, R>::add(left, right);
 }
-struct Apples {};
+struct Apples { public: Apples() = default; };
 int main() {
   Meters length{2};
   Centimeters extra{35};
@@ -744,8 +744,8 @@ int main() {
            "argument, including repeated parameters");
   // The same kind on both sides is required by the repeated parameter.
   rejected(adds + R"gti(
-struct Apples {};
-struct Pears {};
+struct Apples { public: Apples() = default; };
+struct Pears { public: Pears() = default; };
 int main() {
   Tally<Apples> apples{1};
   Tally<Pears> pears{2};
@@ -1370,7 +1370,7 @@ int main() { return 0; }
            "GTI-S2123", "Calling 'measurable<T>::is_empty' requires");
   rejected(measurable + blocks + R"gti(
 int sized<T>(T& item) requires measurable<T> { return 0; }
-class Plank {};
+class Plank { public: Plank() = default; };
 int main() {
   Plank plank{};
   return sized(plank);
@@ -1389,7 +1389,7 @@ int main() {
   int read(T& item);
 };
 int sample<T>(T& item) requires gauge<T> { return 0; }
-class Plank {};
+class Plank { public: Plank() = default; };
 int main() {
   Plank plank{};
   return sample(plank);

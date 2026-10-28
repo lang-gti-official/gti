@@ -1,6 +1,6 @@
 #include <std/panic>
 
-struct Missing {};
+struct Missing { public: Missing() = default; };
 enum ViewState<T> { reference(T& value), absent };
 class View<T> {
   mut ViewState<T> state;

@@ -16,11 +16,13 @@ class Counter {
   mut int value = 40;
 public:
   int operator()() mut { this.value += 1; return this.value; }
+public:
+  Counter() = default;
 };
 
-struct VoidRead { void operator()() {} };
-struct VoidMut { void operator()() mut {} };
-struct VoidOnce { void operator()() && {} };
+struct VoidRead { void operator()() {}  public: VoidRead() = default; };
+struct VoidMut { void operator()() mut {}  public: VoidMut() = default; };
+struct VoidOnce { void operator()() && {}  public: VoidOnce() = default; };
 
 int main() {
   // Generic result erasure retains a uniform failure ABI even for void.

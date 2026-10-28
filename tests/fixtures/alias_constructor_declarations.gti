@@ -1,4 +1,4 @@
-struct Cursor<T> {};
+struct Cursor<T> { public: Cursor() = default; };
 
 struct Packet<T> {
   using cursor = Cursor<T>;

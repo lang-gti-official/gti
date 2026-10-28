@@ -1,5 +1,24 @@
 # Compiler Verification
 
+## Explicit default construction (0.485.0)
+
+`explicit_default_constructors` rejects undeclared defaults for empty records,
+initialized fields, argument-taking constructors, generic factories, omitted
+nominal fields and bases. It also checks access and default-initializable
+constraints. Positive programs run on LLVM and the existing C++ backend at O0
+and O3, covering structural defaults, constructor bodies/default arguments,
+protected base construction, named-field construction, attribute records,
+constant records, copy/move preservation and exactly-once owning cleanup.
+Example 005 demonstrates the source opt-in and a type that requires arguments.
+
+`explicit_default_constructors_lsp` checks the construction span, related type
+span, actionable hint, absence of an automatic opt-in edit, and diagnostic
+clearing. Existing lifecycle, constexpr, generic, stdlib, example, MIR census,
+and editor suites retain their coverage with explicitly declared fixture
+defaults. Generated constant-constructor roots must select the generated HIR
+field schedule despite retaining an explicit source constructor identity.
+
+
 ## Thread-local storage (0.473.0)
 
 The TLS slice has distinct source, independent MIR, runtime and native gates:

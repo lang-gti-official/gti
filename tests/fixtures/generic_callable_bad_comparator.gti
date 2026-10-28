@@ -6,6 +6,8 @@ public:
   int32_t operator()(int32_t& left, int32_t& right) {
     return left - right;
   }
+public:
+  difference() = default;
 };
 
 int main() {

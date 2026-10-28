@@ -8,6 +8,8 @@ public:
     int32_t zero = 0;
     int32_t value = 7 / zero;
   }
+public:
+  fails_on_cleanup() = default;
 };
 
 int main() {

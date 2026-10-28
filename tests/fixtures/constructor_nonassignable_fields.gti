@@ -33,6 +33,8 @@ public:
     std::println(12 / divisor);
     std::println(3);
   }
+public:
+  OwningHolder() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

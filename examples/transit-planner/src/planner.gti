@@ -32,6 +32,8 @@ public:
   uint64_t total_minutes() {
     return this.travel_minutes;
   }
+public:
+  RouteResult() = default;
 };
 
 class RoutePlanner {

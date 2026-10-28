@@ -6,6 +6,8 @@ struct ByteCopy {
   unsafe ByteCopy(const char* address) {
     unsafe { this.value = *address; }
   }
+public:
+  ByteCopy() = default;
 };
 
 int main() {

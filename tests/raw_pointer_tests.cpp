@@ -178,7 +178,7 @@ void testNestedPointerTypes() {
 using Pointer = int*;
 using Slot = Pointer*;
 [[c_abi]] struct NativeSlots { mut Slot slot; };
-struct Holder { mut Slot slot = nullptr; };
+struct Holder { mut Slot slot = nullptr;  public: Holder() = default; };
 extern "C" {
   void native_write(Slot slot, Pointer value);
   Slot native_return();
@@ -248,10 +248,14 @@ struct Cell {
   void set(int32_t next) mut {
     this.value = next;
   }
+public:
+  Cell() = default;
 };
 
 struct PointerHolder {
   mut int32_t* pointer = nullptr;
+public:
+  PointerHolder() = default;
 };
 
 class Box<T> {
@@ -742,7 +746,7 @@ int main() {
 
   const lang::FrontendResult fieldCompoundOutside =
       lang::Frontend().analyze("raw-pointer-field-compound-outside.gti", R"(
-struct Holder { mut int32_t* pointer = nullptr; };
+struct Holder { mut int32_t* pointer = nullptr;  public: Holder() = default; };
 int main() {
   mut Holder holder{};
   holder.pointer += 1;
@@ -768,7 +772,7 @@ int main() {
 
   const lang::FrontendResult immutableCompound =
       lang::Frontend().analyze("immutable-raw-pointer-compound.gti", R"(
-struct Holder { mut int32_t* pointer = nullptr; };
+struct Holder { mut int32_t* pointer = nullptr;  public: Holder() = default; };
 int main() {
   Holder holder{};
   int32_t* pointers[1] = {};
@@ -791,17 +795,23 @@ class PointerChoice {
 public:
   PointerChoice(int32_t* value) {}
   PointerChoice(const int32_t* value) {}
+public:
+  PointerChoice() = default;
 };
 
 class PointerBase {
 public:
   PointerBase(int32_t* value) {}
   PointerBase(const int32_t* value) {}
+public:
+  PointerBase() = default;
 };
 
 class PointerDerived : public PointerBase {
 public:
   PointerDerived(int32_t* value) : PointerBase(value) {}
+public:
+  PointerDerived() = default;
 };
 
 int main() {
@@ -882,6 +892,8 @@ class PointerBase {
 public:
   PointerBase(int32_t* value) {}
   PointerBase(const int32_t* value) {}
+public:
+  PointerBase() = default;
 };
 
 class PointerDerived : public PointerBase {
@@ -916,6 +928,8 @@ public:
                  const int32_t* third) { return 1; }
   int32_t select(const int32_t* first, int32_t* second,
                  int32_t* third) { return 2; }
+public:
+  Selector() = default;
 };
 
 class PointerChoice {
@@ -924,6 +938,8 @@ public:
                 const int32_t* third) {}
   PointerChoice(const int32_t* first, int32_t* second,
                 int32_t* third) {}
+public:
+  PointerChoice() = default;
 };
 
 class PointerBase {
@@ -932,11 +948,15 @@ public:
               const int32_t* third) {}
   PointerBase(const int32_t* first, int32_t* second,
               int32_t* third) {}
+public:
+  PointerBase() = default;
 };
 
 class PointerDerived : public PointerBase {
 public:
   PointerDerived(int32_t* value) : PointerBase(value, value, value) {}
+public:
+  PointerDerived() = default;
 };
 
 int main() {
@@ -1012,7 +1032,7 @@ int main() { int32_t value = scalar(); void* handle = open(); return value; }
 
   const lang::FrontendResult invalidLeaf =
       lang::Frontend().analyze("invalid-raw-pointer-c-abi.gti", R"(
-struct NativeRecord { int32_t value = 0; };
+struct NativeRecord { int32_t value = 0;  public: NativeRecord() = default; };
 extern "C" { NativeRecord* acquire(); }
 int main() { return 0; }
 )");
@@ -1126,6 +1146,8 @@ int main() {
 struct Value {
   mut int count = 0;
   void change() mut { this.count = 1; }
+public:
+  Value() = default;
 };
 int main() {
   mut Value value{};
@@ -1218,8 +1240,8 @@ Node& escape(NodeCarrier carrier) { return carrier.referent.next; }
          "recursive checked-reference carriers must retain their ordinary "
          "escape diagnostic");
   const std::string prefix = R"(
-struct Address { mut const int* pointer = nullptr; };
-struct Pair { mut Address first{}; mut Address second{}; };
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
+struct Pair { mut Address first{}; mut Address second{};  public: Pair() = default; };
 )";
   const std::vector<std::pair<std::string, std::string>> expiredPrograms = {
       {"field-copy", R"(
@@ -1254,7 +1276,7 @@ int main() {
   }
 })"},
       {"raw-alias-chain-write", R"(
-struct Link { mut Address* address = nullptr; };
+struct Link { mut Address* address = nullptr;  public: Link() = default; };
 int main() {
   mut Address address{};
   mut Link link = {.address = &address};
@@ -1275,7 +1297,7 @@ int main() {
   }
 })"},
       {"raw-alias-chain-read", R"(
-struct Link { mut Address* address = nullptr; };
+struct Link { mut Address* address = nullptr;  public: Link() = default; };
 int main() {
   mut Address address{};
   mut Link link = {.address = &address};
@@ -1429,7 +1451,7 @@ int main() { return 0; }
   expect(unknownDestination.canGenerateCode(),
          "unknown raw destinations retain the caller's unsafe proof boundary");
   const auto conflict = auditFrontend().analyze("raw-field-conflict.gti", R"(
-struct Address { mut int* pointer = nullptr; };
+struct Address { mut int* pointer = nullptr;  public: Address() = default; };
 int main() {
   mut int value = 7;
   unsafe {
@@ -1444,7 +1466,7 @@ int main() {
          "raw pointer fields must preserve conflicts with checked loans");
   const auto aliasConflict =
       auditFrontend().analyze("raw-alias-field-conflict.gti", R"(
-struct Address { mut int* pointer = nullptr; };
+struct Address { mut int* pointer = nullptr;  public: Address() = default; };
 int main() {
   mut int value = 7;
   mut Address address{};
@@ -1532,6 +1554,8 @@ void testRawPointerCallTransport() {
 struct Address {
   const int* pointer = nullptr;
   Address(const int* input) : pointer(input) {}
+public:
+  Address() = default;
 };
 int main() {
   mut const int* pointer = nullptr;
@@ -1552,6 +1576,8 @@ const int* identity(const int* input) { return input; }
 struct Address {
   mut const int* pointer = nullptr;
   void set(const int* input) mut { this.pointer = input; }
+public:
+  Address() = default;
 };
 int main() {
   mut Address address{};
@@ -1559,7 +1585,7 @@ int main() {
   unsafe { return *address.pointer; }
 })",
       R"(
-struct Address { mut const int* pointer = nullptr; };
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
 void set(mut Address& address, const int* input) { address.pointer = input; }
 int main() {
   mut Address address{};
@@ -1578,7 +1604,7 @@ int main() {
   }
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto replaced = auditFrontend().analyze("raw-replaced.gti", R"(
-struct Owner { int value = 1; };
+struct Owner { int value = 1;  public: Owner() = default; };
 int main() {
   mut Owner original{};
   const int* pointer = &original.value;
@@ -1611,13 +1637,13 @@ const int* middle() { return dangling(); }
 const int* dangling() { int local = 1; return &local; }
 )"},
       {"aggregate-field", R"(
-struct Address { const int* pointer = nullptr; };
+struct Address { const int* pointer = nullptr;  public: Address() = default; };
 int main() { auto address = dangling(); unsafe { return *address.pointer; } }
 Address dangling() { int local = 1; return {.pointer = &local}; }
 )"},
       {"nested-aggregate-field", R"(
-struct Address { const int* pointer = nullptr; };
-struct Pair { Address first{}; Address second{}; };
+struct Address { const int* pointer = nullptr;  public: Address() = default; };
+struct Pair { Address first{}; Address second{};  public: Pair() = default; };
 int main() { auto pair = dangling(); unsafe { return *pair.second.pointer; } }
 Pair dangling() { int local = 1; return {.first = Address(), .second = {.pointer = &local}}; }
 )"},
@@ -1638,6 +1664,8 @@ class Address<T> {
 public:
   mut const T* pointer = nullptr;
   Address(T input) { this.pointer = &input; }
+public:
+  Address() = default;
 };
 int main() { Address<int> address{1}; unsafe { return *address.pointer; } }
 )"},
@@ -1652,7 +1680,7 @@ int main() { Address address{}; unsafe { return *address.pointer; } }
 )"},
       {"generated-constructor-default-field", R"(
 const int* dangling() { int local = 1; return &local; }
-struct Address { const int* pointer = dangling(); };
+struct Address { const int* pointer = dangling();  public: Address() = default; };
 int main() { Address address{}; unsafe { return *address.pointer; } }
 )"},
       {"cached-global-pointer-input", R"(
@@ -1673,7 +1701,7 @@ int main() { auto pointer = source(); unsafe { return *pointer; } }
 )"},
       {"cached-global-field-input", R"(
 int global = 1;
-struct Address { mut const int* pointer = nullptr; };
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
 mut Address address{.pointer = &global};
 const int* source() { return address.pointer; }
 int main() {
@@ -1693,7 +1721,7 @@ const int32_t* source(bool choose) {
 }
 )"},
       {"returned-global-alias-write", R"(
-struct Address { mut const int* pointer = nullptr; };
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
 mut Address address{};
 int main() {
   Address* alias = destination();
@@ -1751,6 +1779,8 @@ class Address {
 public:
   const int* pointer = nullptr;
   Address(int& source) : pointer(&source) {}
+public:
+  Address() = default;
 };
 int main() { int live = 7; Address address{live}; unsafe { return *address.pointer; } }
 )"},
@@ -1762,7 +1792,7 @@ const T* source<T>(T& input) { return &input; }
 )"},
       {"separate-result-fields", R"(
 int global = 7;
-struct Pair { const int* live = nullptr; const int* dead = nullptr; };
+struct Pair { const int* live = nullptr; const int* dead = nullptr;  public: Pair() = default; };
 int main() { auto pair = source(); unsafe { return *pair.live; } }
 Pair source() { int local = 1; return {.live = &global, .dead = &local}; }
 )"},
@@ -1798,10 +1828,10 @@ const int* recursive(bool again) { if (again) { return recursive(false); } retur
       const auto &source : {
           R"(int main() { auto source = []() -> const int* { int gone = 1; return &gone; };
   auto pointer = source(); unsafe { return *pointer; } })",
-          R"(struct Address { const int* pointer = nullptr; };
+          R"(struct Address { const int* pointer = nullptr;  public: Address() = default; };
 int main() { auto source = []() -> Address { int gone = 1; return {.pointer = &gone}; };
   auto value = source(); unsafe { return *value.pointer; } })",
-          R"(struct Address { mut const int* pointer = nullptr; };
+          R"(struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
 class Carrier { public: Address& value; Carrier(Address& source) : value(source) {} };
 const int* source(Carrier& input) { return input.value.pointer; }
 int main() { mut Address address{}; { int gone = 1; address.pointer = &gone; }
@@ -1829,7 +1859,7 @@ int* source() { return &global; }
          "callee-produced global origins must enter normal caller loan checks");
   const auto replaced =
       auditFrontend().analyze("raw-produced-replaced-input.gti", R"(
-struct Box { mut int value = 1; };
+struct Box { mut int value = 1;  public: Box() = default; };
 int main() { mut Box box{}; auto pointer = source(box); unsafe { return *pointer; } }
 const int* source(mut Box& box) {
   const int* pointer = &box.value;
@@ -1874,7 +1904,7 @@ int main() {
 
 void testSafeRawAddressFormation() {
   const auto valid = lang::Frontend().analyze("safe-raw-address.gti", R"(
-struct Value { mut int field = 2; };
+struct Value { mut int field = 2;  public: Value() = default; };
 int main() {
   mut int scalar = 1;
   mut Value object{};
@@ -1901,7 +1931,8 @@ int main() {
   const std::vector<std::string> invalid = {
       "int* projection(int* pointer) { return &*pointer; }",
       "int* projection(int* pointer) { return &pointer[0]; }",
-      "struct Value { mut int field = 1; }; int* projection(Value* pointer) { "
+      "struct Value { mut int field = 1;  public: Value() = default; }; int* "
+      "projection(Value* pointer) { "
       "return &pointer->field; }"};
   for (const auto &program : invalid) {
     const auto result =
@@ -1973,7 +2004,7 @@ int main() {
         "aggregate mutation calls conservatively invalidate old raw addresses");
   }
   const auto loop = auditFrontend().analyze("raw-mutation-backedge.gti", R"(
-struct Owner { mut int value = 1; };
+struct Owner { mut int value = 1;  public: Owner() = default; };
 void replace(mut Owner& owner) { owner = Owner(); }
 int main() {
   mut Owner owner{};
@@ -1990,7 +2021,7 @@ int main() {
       "loop substitution must apply mutation before use to backedge origins");
 
   const auto valid = auditFrontend().analyze("raw-mutation-reacquire.gti", R"(
-struct Owner { mut int value = 1; };
+struct Owner { mut int value = 1;  public: Owner() = default; };
 void replace(mut Owner& owner) { owner = Owner(); }
 void increment(mut int& value) { value++; }
 int main() {
@@ -2013,7 +2044,7 @@ int main() {
       "scalar mutation, fresh reacquisition and inert stale copies stay valid");
 
   const auto bridge = auditFrontend().analyze("raw-inert-source-bridge.gti", R"(
-struct Owner { mut int value = 1; };
+struct Owner { mut int value = 1;  public: Owner() = default; };
 int main() {
   mut Owner owner{};
   int* address = &owner.value;
@@ -2034,8 +2065,8 @@ unsafe mut int& borrow(int* address, mut Owner& owner) {
          "direct assertion is lifetime-inert independent of declaration order");
   const auto cleanupBridge =
       auditFrontend().analyze("raw-source-bridge-cleanup.gti", R"(
-struct Owner { mut int value = 1; };
-struct Cleanup { ~Cleanup() {} };
+struct Owner { mut int value = 1;  public: Owner() = default; };
+struct Cleanup { ~Cleanup() {}  public: Cleanup() = default; };
 [[borrowed_from(owner)]]
 unsafe mut int& borrow(int* address, mut Owner& owner, Cleanup cleanup) {
   return *address;

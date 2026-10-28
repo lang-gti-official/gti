@@ -65,6 +65,8 @@ struct Pair {
   int first = 0;
   int second = 0;
   Pair(int left, int right) : first(left), second(right) {}
+public:
+  Pair() = default;
 };
 
 // A read-only reference parameter borrows the initializer for the call only.
@@ -82,6 +84,8 @@ Celsius freezing = 0;
 
 struct Thermostat {
   static Celsius baseline = 18;
+public:
+  Thermostat() = default;
 };
 
 class Report {

@@ -33,6 +33,8 @@ public:
     case slot<T>::empty: std::panic("empty holder");
     }
   }
+public:
+  holder() = default;
 };
 
 int32_t radius(shape value) {

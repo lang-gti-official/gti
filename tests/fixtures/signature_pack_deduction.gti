@@ -1,7 +1,9 @@
-class Tag<S> {};
+class Tag<S> { public: Tag() = default; };
 class Types<Args...> {
 public:
   int value() { return 7; }
+public:
+  Types() = default;
 };
 
 int unpack<R, Args...>(Tag<R(Args...)>& tag) {

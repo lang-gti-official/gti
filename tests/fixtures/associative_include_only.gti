@@ -8,6 +8,8 @@ class UnusedOwner<T> {
 public:
   SignatureValue<int> result();
   void accept(SignatureValue<bool> value);
+public:
+  UnusedOwner() = default;
 };
 
 int main() { return 0; }

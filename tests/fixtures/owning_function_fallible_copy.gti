@@ -6,6 +6,8 @@ mut int copy_divisor = 1;
 class Caller {
 public:
   ~Caller() { std::println(9); }
+public:
+  Caller() = default;
 };
 
 class Target {

@@ -6,6 +6,8 @@ class Particle {
 public:
   Particle(int32_t id) : id(id) {}
   int32_t value() { return this.id; }
+public:
+  Particle() = default;
 };
 
 int main() {

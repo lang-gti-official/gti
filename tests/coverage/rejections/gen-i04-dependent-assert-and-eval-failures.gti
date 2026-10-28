@@ -5,6 +5,8 @@ class Packet<uint64_t Capacity> {
   static_assert(Capacity > 0, "a packet needs storage");
 public:
   uint64_t capacity() { return Capacity; }
+public:
+  Packet() = default;
 };
 
 int32_t only_small<T>() {

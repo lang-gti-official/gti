@@ -700,6 +700,12 @@ set_tests_properties(out_of_class_runtime PROPERTIES TIMEOUT 600)
 add_test(NAME out_of_class_cleanup
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_cleanup_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(out_of_class_cleanup PROPERTIES TIMEOUT 600)
+add_test(NAME explicit_default_constructors
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/explicit_default_constructors_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(explicit_default_constructors PROPERTIES TIMEOUT 600)
+add_test(NAME explicit_default_constructors_lsp
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/explicit_default_constructors_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+set_tests_properties(explicit_default_constructors_lsp PROPERTIES TIMEOUT 120)
 add_test(NAME out_of_class_performance
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_performance_test.py" $<TARGET_FILE:gti>
           "${PROJECT_BINARY_DIR}/Testing/out-of-class-performance")

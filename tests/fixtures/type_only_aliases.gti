@@ -1,6 +1,6 @@
 #include <std/optional>
 
-struct Option { int value = 0; };
+struct Option { int value = 0;  public: Option() = default; };
 class Options {
   using option_type = std::optional<Option>;
 public:
@@ -9,7 +9,7 @@ public:
 
 namespace independent {
 struct Box<T> { T value; };
-struct Data { int value = 0; };
+struct Data { int value = 0;  public: Data() = default; };
 using Nested = Box<Box<Data>>;
 class Catalog {
   using Entry = Box<Data>;
@@ -19,6 +19,8 @@ public:
 class Chain<T> {
   using Next = Chain<Chain<T>>;
   using Entry = Box<Data>;
+public:
+  Chain() = default;
 };
 struct ShelfItem<T, uint64_t N> { T value; };
 class Shelf<T, uint64_t N> {

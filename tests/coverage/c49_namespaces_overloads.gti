@@ -15,7 +15,7 @@ namespace app {
   }
 }
 
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 int main() {
   std::print(app::math::scale(4)); std::print(" ");

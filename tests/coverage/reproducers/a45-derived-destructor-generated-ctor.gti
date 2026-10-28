@@ -6,6 +6,8 @@ public:
 class Middle : public Base {
 public:
   ~Middle() { std::println(2); }
+public:
+  Middle() = default;
 };
 int main() {
   Middle d = Middle();

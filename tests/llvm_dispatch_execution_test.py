@@ -123,7 +123,7 @@ CPP_DIVERGENCES = {
 SUCCESS_SOURCES = {
     # Verbatim former llvm_scalar_execution_test.py "polymorphic-owner"
     # rejection. Its removal there follows actual native O0/O3 success here.
-    "fresh-local-virtual-call": "class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }",
+    "fresh-local-virtual-call": "class Owner { public: virtual int read() { return 0; }  public: Owner() = default; }; int main() { Owner value{}; return value.read(); }",
     "nonobserving-cleanup-helper-cycle": """mut int observed = 0;
 class Numeric {
   int value = 7;
@@ -195,8 +195,8 @@ TRANSFER_SUCCESS_SOURCES = {
     # these source contracts, not a failed runtime check or a rewritten oracle.
     "generated-copy-former-reject": (PLAIN + "int main() { Plain first{}; Plain second = first; return second.read(); }\n", 1),
     "generated-move-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second = std::move(first); return second.read(); }\n", 1),
-    "fresh-copy-former-cli-control": ("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", 0),
-    "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain(); };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
+    "fresh-copy-former-cli-control": ("class Owner { public: virtual int read() { return 0; }  public: Owner() = default; }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", 0),
+    "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain();  public: Wrapper() = default; };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
     "fresh-value-argument-former-reject": (PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n", 0),
     "fresh-return-former-reject": (PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n", 1),
     # Verbatim former rejection: a moved borrow carrier relocates as the
@@ -575,6 +575,8 @@ public:
   ~Guard() {
     if (events != EXPECTED_TRACE || live != 0) { int zero = 0; int checked_cleanup = 1 / zero; }
   }
+public:
+  Guard() = default;
 };
 """
 
@@ -702,7 +704,7 @@ def owned_base_wrong_cleanup(name: str) -> str:
 
 REJECTIONS = {
     "reject-move-construction": PLAIN + "int main() { mut Plain first{}; Plain second = Plain(std::move(first)); return second.read(); }\n",
-    "reject-base-assignment": PLAIN + """class Derived : public Plain {};
+    "reject-base-assignment": PLAIN + """class Derived : public Plain { public: Derived() = default; };
 void replace(mut Plain& destination, Plain& source) { destination = source; }
 int main() { mut Derived first{}; Derived second{}; replace(first, second); return first.read(); }
 """,
@@ -865,11 +867,11 @@ int main() { NoCopy first{}; NoCopy second{first}; return second.read(); }
 }
 """,
     "reject-source-virtual-signature-mismatch": """interface Reader { int read(); };
-class Wrong : public Reader { public: bool read() override { return true; } };
+class Wrong : public Reader { public: bool read() override { return true; }  public: Wrong() = default; };
 int main() { Wrong value{}; return 0; }
 """,
     "reject-source-unresolved-override": """interface Reader { int read(); };
-class Missing : public Reader { public: int read() override; };
+class Missing : public Reader { public: int read() override;  public: Missing() = default; };
 int main() { Missing value{}; return value.read(); }
 """,
     # A relocated carrier never holds a live borrow of its own storage: a
@@ -1200,6 +1202,8 @@ class Seven : public Step {
 public:
   int exact(int value) { return value + 7; }
   int apply(int value) override { return this.exact(value); }
+public:
+  Seven() = default;
 };
 int direct_offset_sum(Offset& step, int count) {
   mut int total = 0;
@@ -1845,6 +1849,8 @@ public:
   ~Guard() {
     if (events != 321) { int zero = 0; int checked_cleanup = 1 / zero; }
   }
+public:
+  Guard() = default;
 };
 """).replace("int main() {", "int main() { Guard guard{};").replace(
         "read(last.inner.second) != 2) { return 2; }",
@@ -1883,6 +1889,8 @@ public:
   ~Guard() {
     if (events != 1234) { int divisor = 0; int checked_cleanup = 1 / divisor; }
   }
+public:
+  Guard() = default;
 };
 int main() {
   Guard guard{};
@@ -1923,7 +1931,7 @@ int main() {
         "defined-failure", expected_exit=70, failure_needle="quotient(12 / divisor)")
     prefix = lifecycle.split(marker, 1)[0]
     add("inline-field-virtual-failure", prefix + """
-struct Holder { mut Leaf leaf{7}; };
+struct Holder { mut Leaf leaf{7};  public: Holder() = default; };
 int main() {
   Guard guard{};
   Holder holder{};

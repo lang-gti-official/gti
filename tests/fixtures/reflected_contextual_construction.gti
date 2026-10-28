@@ -13,6 +13,8 @@ public:
 struct Point {
   uint32_t x = 1;
   bool visible = true;
+public:
+  Point() = default;
 };
 
 Wrap<std::meta::field_type<T, I>> produce<T, uint64_t I>(

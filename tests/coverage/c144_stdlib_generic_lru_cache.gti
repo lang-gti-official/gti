@@ -15,7 +15,9 @@ class LruCache<std::integral K, std::movable V> {
   mut std::size_t evictions;
 public:
   LruCache(std::size_t capacity)
-      requires std::read_callable<std::hash<K>, K, std::size_t> &&
+      requires std::default_initializable<std::hash<K>> &&
+               std::default_initializable<std::equal_to<K>> &&
+               std::read_callable<std::hash<K>, K, std::size_t> &&
                std::read_binary_callable<std::equal_to<K>, K, K, bool>
       : entries(std::unordered_map<K, V>()), recency(std::list<K>()),
         capacity(capacity), evictions(0) {}

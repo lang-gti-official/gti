@@ -2,6 +2,8 @@
 
 struct UserNode {
   mut std::unique_ptr<int32_t> next{};
+public:
+  UserNode() = default;
 };
 
 class UserField {
@@ -10,10 +12,14 @@ public:
   int32_t read() { return this.value; }
   void update(int32_t value) mut { this.value = value; }
   bool operator==(int32_t value) { return this.value == value; }
+public:
+  UserField() = default;
 };
 
 struct UserContainer {
   mut UserField field{};
+public:
+  UserContainer() = default;
 };
 
 int main() {

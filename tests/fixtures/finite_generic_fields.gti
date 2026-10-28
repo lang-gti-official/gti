@@ -1,12 +1,14 @@
 namespace shapes {
-  struct Layer<uint64_t N> { Layer<N - 1> inner; int value = int(N); };
+  struct Layer<uint64_t N> { Layer<N - 1> inner; int value = int(N);  public: Layer() = default; };
 }
-struct shapes::Layer<0> { int value = 100; };
+struct shapes::Layer<0> { int value = 100;  public: Layer() = default; };
 
 struct Box<uint64_t N = 2, uint64_t Extent = N + 1> {
   using Previous = shapes::Layer<N - 1>;
   Previous inner;
   int values[Extent] = {};
+public:
+  Box() = default;
 };
 
 int main() {

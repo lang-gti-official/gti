@@ -32,6 +32,8 @@ public:
                   std::chrono::system_time_point& right) {
     return left.before(right);
   }
+public:
+  Earliest() = default;
 };
 
 int main() {

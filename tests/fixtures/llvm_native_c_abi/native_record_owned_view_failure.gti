@@ -8,7 +8,7 @@ extern "C" {
   int32_t native_record_mark(int32_t value);
   int32_t native_record_zero();
 }
-struct Guard { ~Guard() { [[discard]] native_record_mark(99); } };
+struct Guard { ~Guard() { [[discard]] native_record_mark(99); }  public: Guard() = default; };
 std::string_view marked_view(std::string& owner) {
   [[discard]] native_record_mark(2);
   return owner.view();

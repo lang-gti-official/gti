@@ -138,6 +138,8 @@ int main() {
 struct Group {
   Pinned values[2][2] = {{Pinned(1), make(2)}, {relay(3), Pinned(4)}};
   bool stable() { return this.values[0][0].stable() && this.values[1][1].stable(); }
+public:
+  Group() = default;
 };
 int main() {
   { Group value{}; if (!value.stable()) { return 1; } }
@@ -177,7 +179,7 @@ int main() {
 }
 ''',
     "projected-reference-publication": r'''
-struct Input { mut int first = 5; mut int second = 7; };
+struct Input { mut int first = 5; mut int second = 7;  public: Input() = default; };
 mut int visits = 0;
 mut int& selected_field(mut Input& input) { visits += 1; return input.second; }
 class View {
@@ -232,6 +234,8 @@ struct Record {
   Pinned first = relay(1);
   Pinned second = Pinned(2);
   bool stable() { return this.first.stable() && this.second.stable(); }
+public:
+  Record() = default;
 };
 int main() {
   { Record value{}; if (!value.stable()) { return 1; } }
@@ -239,7 +243,7 @@ int main() {
 }
 ''',
     "return-cleanup": r'''
-class Local { public: ~Local() { destroyed = destroyed * 10 + 4; } };
+class Local { public: ~Local() { destroyed = destroyed * 10 + 4; }  public: Local() = default; };
 Pinned prepared() { Local guard{}; return relay(1); }
 int main() {
   { Pinned result = prepared();
@@ -276,6 +280,8 @@ public:
     destroyed = destroyed * 10 + 2;
     std::panic("return cleanup failure");
   }
+public:
+  FailingLocal() = default;
 };
 ReferenceResult make_view(mut int& source) {
   FailingLocal local{};
@@ -286,6 +292,8 @@ public:
   ~Observer() {
     if (destroyed != 21) { std::panic("incorrect return cleanup"); }
   }
+public:
+  Observer() = default;
 };
 int main() {
   mut int source = 0;

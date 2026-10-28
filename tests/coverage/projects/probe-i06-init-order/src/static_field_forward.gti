@@ -2,6 +2,8 @@ class Table {
 public:
   static int doubled = twice_capacity();
   static int capacity = 8;
+public:
+  Table() = default;
 };
 
 int twice_capacity() { return Table::capacity * 2; }

@@ -3,6 +3,8 @@ public:
   ~First() {
     std::println("drop:first");
   }
+public:
+  First() = default;
 };
 
 class Second {
@@ -10,6 +12,8 @@ public:
   ~Second() {
     std::println("drop:second");
   }
+public:
+  Second() = default;
 };
 
 int main() {

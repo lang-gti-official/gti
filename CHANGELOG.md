@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.487.1 - Native global copies, function-pointer fields, base returns and nested holders
+## 0.488.1 - Native global copies, function-pointer fields, base returns and nested holders
 
 ### Native function-pointer fields, base returns and mutex text witnesses
 
@@ -34,6 +34,20 @@ for what minor and patch releases mean.
   in `outer.inner().box.slot() = 4;` or `outer->box.slot()`, no longer fails
   with an internal compiler error (`GTI-B0001`). It runs on the native
   backend. The C++ backend still fails on it.
+
+## 0.488.0 - Explicit default construction
+
+- Classes and structs require a declared constructor callable without arguments
+  before they can be default-constructed. Empty fields and field initializers
+  no longer create an implicit construction API. Declare `Type() = default;`
+  when structural default construction is intended, or write a constructor body.
+- Generic factories and default-initializability queries follow the same rule.
+  Missing constructor diagnostics point to the type and explain the opt-in.
+- Copy, move and destruction inference remain unchanged. Eligible structs retain
+  named-field construction alongside an explicit structural default. The standard
+  library explicitly preserves its intended empty owners, containers and policies.
+- Explicit structural defaults now select the correct generated constructor body
+  during constant evaluation.
 
 ## 0.487.0 - Source-defined UTF-8 codecs
 

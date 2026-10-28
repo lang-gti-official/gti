@@ -29,7 +29,7 @@ def main():
         "copy-owner": 'int main() { std::vector<std::string> x = {std::string("a")}; mut std::vector<std::string> y = {std::string("b")}; std::copy_n(x.begin(), std::size_t(1), y.begin_mut()); return 0; }',
         "overlapping-copy": 'int main() { mut std::vector<int> x = {1}; std::copy_n(x.begin(), std::size_t(1), x.begin_mut()); return 0; }',
         "immutable-keys": 'int main() { mut std::set<int> x = {1}; int old = 1; int replacement = 2; std::replace(x, old, replacement); return 0; }',
-        "bad-comparison": 'struct Item { int x = 0; }; int main() { std::vector<Item> x = {Item()}; return std::equal(x.begin(), x.end(), x.begin(), x.end()) ? 1 : 0; }',
+        "bad-comparison": 'struct Item { int x = 0;  public: Item() = default; }; int main() { std::vector<Item> x = {Item()}; return std::equal(x.begin(), x.end(), x.begin(), x.end()) ? 1 : 0; }',
     }
     for container in ("list", "deque", "array"):
         init = f'mut std::{container}<int> x = {{1, 2}};' if container != "array" else 'mut std::array<int, 2> x{};'

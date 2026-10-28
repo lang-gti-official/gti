@@ -20,7 +20,7 @@ namespace lib {
     int first = 0;
     int last = 0;
     int width() { return last - first; }
-  };
+   public: Range() = default; };
 
   export class Window {
     int size;

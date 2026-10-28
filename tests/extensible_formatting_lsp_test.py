@@ -10,7 +10,7 @@ from lsp_smoke_test import LspSession, has_error_diagnostics, lsp_position
 def main():
     with tempfile.TemporaryDirectory(prefix="gti-format-lsp-") as temporary:
         source = ('#include <std/format>\n#include <std/string>\n'
-                  'struct AssetId { uint64_t value = uint64_t(42); };\n'
+                  'struct AssetId { AssetId() = default; uint64_t value = uint64_t(42); };\n'
                   'int main() { AssetId id{}; std::println("{}", /* 😀 */ id); return 0; }\n')
         path = pathlib.Path(temporary) / "formatter.gti"
         path.write_text(source)
@@ -41,6 +41,7 @@ def main():
             assert any("format" in note["message"] for note in diagnostic["relatedInformation"]), diagnostic
             specialization = '''class std::formatter<AssetId> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(AssetId& value, mut std::string& output, std::format_spec& spec) {
     std::formatter<uint64_t> numeric{};
     return numeric.format(value.value, output, spec);

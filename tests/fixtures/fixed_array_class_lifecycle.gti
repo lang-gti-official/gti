@@ -14,6 +14,8 @@ public:
 class implicit_leaf {
 public:
   mut int32_t value = 11;
+public:
+  implicit_leaf() = default;
 };
 
 class empty {

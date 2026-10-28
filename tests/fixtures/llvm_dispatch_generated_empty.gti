@@ -6,12 +6,16 @@ class Solo {
 public:
   virtual int read() { return 3; }
   ~Solo() { int observed = this.read(); }
+public:
+  Solo() = default;
 };
 
 class Impl : public Reader, public Extra {
 public:
   int read() override { return 4; }
   int extra() override { return 6; }
+public:
+  Impl() = default;
 };
 
 class Leaf : public Reader, public Solo {
@@ -32,9 +36,11 @@ class Scheduled {
   int value = 8;
 public:
   virtual int read() { return this.value; }
+public:
+  Scheduled() = default;
 };
 
-class Stateful : public Solo {};
+class Stateful : public Solo { public: Stateful() = default; };
 
 int evaluate(int divisor) {
   Solo first{};

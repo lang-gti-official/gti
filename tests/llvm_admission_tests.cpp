@@ -321,6 +321,8 @@ enum class Tag { value };
 void receive<Args...>(int prefix, Args... args) {}
 struct Box {
   Box<Args...>(Tag tag, Args... args) {}
+public:
+  Box() = default;
 };
 int invoke<Args...>(Args... args) {
   auto callback = [](int prefix, Args... forwarded) -> int { return prefix; };
@@ -620,6 +622,8 @@ class Field {
   int value = invoke([]() -> int { return 17; });
 public:
   int read() { return this.value; }
+public:
+  Field() = default;
 };
 int main() { Field value{}; return value.read() - 17; }
 )");
@@ -1484,10 +1488,10 @@ void testHierarchyStorageExclusion() {
   expect(rejects(unknown, repeated),
          "unknown nested storage cannot be cached as an ordinary sibling");
   const auto sealed = lower(R"(
-    struct Plain { int value = 1; };
-    class P { public: virtual int read() { return 1; } };
-    struct Pair { Plain left = Plain(); Plain right = Plain(); };
-    struct Wrapper { P value = P(); };
+    struct Plain { int value = 1;  public: Plain() = default; };
+    class P { public: virtual int read() { return 1; }  public: P() = default; };
+    struct Pair { Plain left = Plain(); Plain right = Plain();  public: Pair() = default; };
+    struct Wrapper { P value = P();  public: Wrapper() = default; };
     int main() { Pair pair{}; Wrapper wrapper{}; return 0; }
   )");
   bool foundPair = false, foundWrapper = false;
@@ -2328,7 +2332,7 @@ int main() {
   }
 
   const auto addressConversion = lang::planLlvmAdmission(lower(R"(
-struct Reading { int value = 42; };
+struct Reading { int value = 42;  public: Reading() = default; };
 using Erased = void*;
 using Typed = Reading*;
 int main() {
@@ -2369,7 +2373,7 @@ int main() { return widen(int8_t(0)); }
          "witness");
 
   const auto directConsuming = lang::planLlvmAdmission(lower(R"(
-class Value { public: int read() && { return 42; } };
+class Value { public: int read() && { return 42; }  public: Value() = default; };
 int main() { return Value().read() - 42; }
 )"));
   expect(
@@ -2493,7 +2497,7 @@ int main() { Grid grid = Grid(Phase::idle, Phase::running); return 0; }
   // address; an element-count difference remains a separate operation.
   const auto payloadDifference = lang::planLlvmAdmission(lower(R"(
 enum Plain { none, pair(int first, int second) };
-struct Window { mut Plain values[2] = {Plain::none, Plain::pair(1, 2)}; };
+struct Window { mut Plain values[2] = {Plain::none, Plain::pair(1, 2)};  public: Window() = default; };
 int main() {
   mut Window window{};
   unsafe {
@@ -2570,8 +2574,8 @@ int main() { unsafe { return identity(0); } }
   expect(unsafeScalar.admitted(),
          "exact unsafe source calls keep ordinary body admission");
   const auto unsafeOwner = lang::planLlvmAdmission(lower(R"(
-class Owner { public: virtual int read() { return 0; } };
-class Derived : public Owner {};
+class Owner { public: virtual int read() { return 0; }  public: Owner() = default; };
+class Derived : public Owner { public: Derived() = default; };
 unsafe int create(mut Owner& value, Owner& other) { value = other; return 0; }
 int main() { mut Derived first{}; Derived second{}; unsafe { return create(first, second); } }
 )"));
@@ -2621,7 +2625,7 @@ int main() { Pinned value{}; return 0; }
 void testRawFieldWitnesses() {
   for (const auto qualifier : {"const ", "mut "}) {
     const auto pointerInput = lang::planLlvmAdmission(lower(std::string(R"(
-struct Slot { mut int value = 7; };
+struct Slot { mut int value = 7; Slot() = default; };
 unsafe int consume(const Slot* pointer) { unsafe { return pointer->value; } }
 int main() {
   mut Slot object{};
@@ -2638,7 +2642,7 @@ int main() {
   }
   expect(!lang::Frontend()
               .analyze("unsafe-pointer-input.gti", R"(
-struct Slot { mut int value = 7; };
+struct Slot { mut int value = 7;  public: Slot() = default; };
 unsafe int consume(const Slot* pointer) { unsafe { return pointer->value; } }
 int main() {
   mut Slot object{};
@@ -2649,7 +2653,7 @@ int main() {
               .canGenerateCode(),
          "transport admission does not authorize arithmetic outside unsafe");
   const std::string source = R"(
-class Slot { public: mut int value = 0; int read() { return this.value; } };
+class Slot { public: mut int value = 0; int read() { return this.value; }  public: Slot() = default; };
 int main() {
   mut Slot object{};
   unsafe { Slot* pointer = &object; pointer->value = 7; return pointer->value - 7; }
@@ -2668,17 +2672,22 @@ int main() {
   expect(plan.admitted() && witnessed,
          "ordinary mutable raw field access is admitted");
   for (const auto &valid :
-       {"class Readonly { public: int value = 7; }; int main() { Readonly "
+       {"class Readonly { public: int value = 7;  public: Readonly() = "
+        "default; }; int main() { Readonly "
         "object{}; unsafe { const Readonly* pointer = &object; return "
         "pointer->value - 7; } }",
         "class Padded { public: int8_t tag = int8_t(1); double tail = "
-        "double(42.5); }; int main() { Padded object{}; unsafe { const Padded* "
+        "double(42.5);  public: Padded() = default; }; int main() { Padded "
+        "object{}; unsafe { const Padded* "
         "pointer = &object; return pointer->tail == double(42.5) ? 0 : 1; } }",
-        "class Nested { public: mut int values[3] = {1, 2, 3}; }; int main() { "
+        "class Nested { public: mut int values[3] = {1, 2, 3};  public: "
+        "Nested() = default; }; int main() { "
         "mut Nested object{}; unsafe { Nested* pointer = &object; "
         "pointer->values[1] = 9; return pointer->values[1] - 9; } }",
-        "class Parent { public: int value = 7; }; class Child : public Parent "
-        "{ public: int extra = 2; }; int main() { Child object{}; unsafe { "
+        "class Parent { public: int value = 7;  public: Parent() = default; }; "
+        "class Child : public Parent "
+        "{ public: int extra = 2;  public: Child() = default; }; int main() { "
+        "Child object{}; unsafe { "
         "const Child* pointer = &object; return pointer->value - 7; } }"}) {
     const auto frontend =
         lang::Frontend().analyze("valid-raw-field.gti", valid);
@@ -2688,7 +2697,7 @@ int main() {
            "nested-array and base fields");
   }
   const auto method = lang::planLlvmAdmission(lower(R"(
-class Slot { public: int value = 7; int read() { return this.value; } };
+class Slot { public: int value = 7; int read() { return this.value; }  public: Slot() = default; };
 int main() { Slot object{}; unsafe { const Slot* pointer = &object; return pointer->read(); } }
 )"));
   bool methodWitnessed = false;
@@ -2704,7 +2713,7 @@ int main() { Slot object{}; unsafe { const Slot* pointer = &object; return point
          "a method reached through a raw pointer to a native class is the "
          "same raw member access as a field");
   const auto virtualMethod = lang::planLlvmAdmission(lower(R"(
-class Dynamic { public: int value = 7; virtual int read() { return this.value; } };
+class Dynamic { public: int value = 7; virtual int read() { return this.value; }  public: Dynamic() = default; };
 int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->read(); } }
 )"));
   // The pointee of a raw class pointer is a checked dispatch view under the
@@ -2720,7 +2729,7 @@ int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return
          "a virtual method reached through a raw pointer dispatches through "
          "the pointee's checked view");
   const auto unsupported = lang::planLlvmAdmission(lower(R"(
-class Dynamic { public: int value = 7; virtual int read() { return this.value; } };
+class Dynamic { public: int value = 7; virtual int read() { return this.value; }  public: Dynamic() = default; };
 int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->value; } }
 )"));
   // Exact hierarchy metadata now supplies the static field layout of the
@@ -2736,10 +2745,12 @@ int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return
          "layout: " +
              unsupported.limitation());
   for (const auto &invalid :
-       {"class Slot { public: mut int value = 0; }; int main() { Slot "
+       {"class Slot { public: mut int value = 0;  public: Slot() = default; }; "
+        "int main() { Slot "
         "object{}; unsafe { const Slot* pointer = &object; pointer->value = 1; "
         "} return 0; }",
-        "class Slot { public: int value = 0; }; int main() { Slot object{}; "
+        "class Slot { public: int value = 0;  public: Slot() = default; }; int "
+        "main() { Slot object{}; "
         "unsafe { const Slot* pointer = &object; return pointer->missing; } }"})
     expect(
         !lang::Frontend()
@@ -2871,6 +2882,8 @@ class Generated {
 public:
   virtual int read() { return selected_helper(); }
   int unused() { return unused_helper(); }
+public:
+  Generated() = default;
 };
 class Source {
 public:
@@ -2888,8 +2901,8 @@ public:
   int phase() override { return 2; }
   ~Derived() {}
 };
-class Dormant { public: virtual int read() { return unused_helper(); } };
-class EmptyBase { public: virtual int phase() { return 3; } };
+class Dormant { public: virtual int read() { return unused_helper(); }  public: Dormant() = default; };
+class EmptyBase { public: virtual int phase() { return 3; }  public: EmptyBase() = default; };
 class EmptyLeaf : public EmptyBase {
 public:
   EmptyLeaf() : EmptyBase() {}
@@ -2963,7 +2976,7 @@ int main() {
          "dispatch-state closure is deterministic in sealed inventory order");
   const auto unsupported = planLlvmAdmission(lower(R"(
 int unsupported_helper() { auto call = []() -> int { return 9; }; return call(); }
-class Value { public: virtual int read() { return unsupported_helper(); } };
+class Value { public: virtual int read() { return unsupported_helper(); }  public: Value() = default; };
 int main() { Value value{}; return 0; }
 )"));
   const auto unsupportedRequired = [&](MirBodyAddress address) {
@@ -3006,12 +3019,14 @@ void testVirtualCallDependencies() {
   const auto verified = lower(R"(
 int alternate_helper() { return 2; }
 int unrelated_helper() { return 3; }
-class Base { public: virtual int read() { return 1; } };
+class Base { public: virtual int read() { return 1; }  public: Base() = default; };
 class Alternative : public Base {
 public:
   int read() override { return alternate_helper(); }
+public:
+  Alternative() = default;
 };
-class Unrelated { public: virtual int read() { return unrelated_helper(); } };
+class Unrelated { public: virtual int read() { return unrelated_helper(); }  public: Unrelated() = default; };
 void retain_alternative_type(Alternative& value) {}
 void retain_unrelated_type(Unrelated& value) {}
 int invoke(Base& value) { return value.read(); }
@@ -3047,11 +3062,13 @@ int main() { Base value{}; return invoke(value); }
                     repeated.requiredBodies().end()),
          "virtual dependency order is deterministic in sealed inventory order");
   const auto unsupported = planLlvmAdmission(lower(R"(
-class Base { public: virtual int read() { return 1; } };
+class Base { public: virtual int read() { return 1; }  public: Base() = default; };
 int unsupported_helper() { Base values[1] = {Base()}; Base copied[1] = values; return copied[0].read(); }
 class Alternative : public Base {
 public:
   int read() override { return unsupported_helper(); }
+public:
+  Alternative() = default;
 };
 void retain_type(Alternative& value) {}
 int invoke(Base& value) { return value.read(); }
@@ -3314,14 +3331,18 @@ void testHierarchyReferenceReturns() {
   using namespace lang;
   const auto plan = planLlvmAdmission(lower(R"(
 interface Reader { int read(); };
-class Root { public: virtual int other() { return 0; } };
+class Root { public: virtual int other() { return 0; }  public: Root() = default; };
 class Leaf : public Root, public Reader {
 public:
   int read() override { return 7; }
+public:
+  Leaf() = default;
 };
 struct Record {
   mut Leaf leaf{};
   Reader& view() { return this.leaf; }
+public:
+  Record() = default;
 };
 Reader& forward(Reader& value) { return value; }
 int main() { Record value{}; return forward(value.view()).read(); }
@@ -3448,6 +3469,8 @@ class Value {
   int data = 1;
 public:
   int unsupported() { auto call = [](int value)->int{return value;}; return call(this.data); }
+public:
+  Value() = default;
 };
 int inspect(Value& value) { return value.unsupported(); }
 )"));
@@ -3477,7 +3500,7 @@ void inspect() { Value value{}; }
          "after class storage is proved");
   const auto itemCall = planLlvmAdmission(lower(R"(
 int identity(int value) { return value; }
-class Value { public: int read(){auto callback=identity; return callback(1);} };
+class Value { public: int read(){auto callback=identity; return callback(1);}  public: Value() = default; };
 int inspect(Value& value) { return value.read(); }
 )"));
   expect(itemCall.admitted() && classesProved(itemCall) &&
@@ -3505,7 +3528,7 @@ int inspect(Value& value) { return value.read(); }
            "representation witnesses");
   }
   const auto nestedHierarchy = planLlvmAdmission(lower(
-      R"(class Poly {public: virtual int read(){return 1;}}; class Outer {public: Poly value;}; void accept(Outer& value){})"));
+      R"(class Poly {public: virtual int read(){return 1;} public: Poly() = default; }; class Outer {public: Poly value; public: Outer() = default; }; void accept(Outer& value){})"));
   expect(nestedHierarchy.admitted() &&
              std::any_of(nestedHierarchy.requirements().begin(),
                          nestedHierarchy.requirements().end(),
@@ -3525,7 +3548,7 @@ int inspect(Value& value) { return value.read(); }
   for (
       const auto control :
       {NestedNegative{
-           R"(enum class Choice { empty, held(int value) }; class Outer {public: Choice value=Choice::empty;}; void accept(Outer& value){})",
+           R"(enum class Choice { empty, held(int value) }; class Outer {public: Choice value=Choice::empty; public: Outer() = default; }; void accept(Outer& value){})",
            "Shape.PayloadEnum"},
        NestedNegative{
            R"(union Payload { int value; bool flag; }; void accept(Payload& value){})",
@@ -3642,7 +3665,7 @@ void testDispatchPerUseWitnesses() {
       P() : value(1) {}
       virtual int read() { return this.value; }
     };
-    class Q : public P {};
+    class Q : public P { public: Q() = default; };
     void take(P value) {}
     void assign(mut P& target, P& source) { target = source; }
     int main() {
@@ -3792,7 +3815,7 @@ void testDispatchPerUseWitnesses() {
       P() : value(1) {}
       virtual int read() { return this.value; }
     };
-    class Q : public P {};
+    class Q : public P { public: Q() = default; };
     int poke(mut P& view, P& source) {
       mut P first{};
       first.value = 5;

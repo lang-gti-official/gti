@@ -76,6 +76,8 @@ struct step_counter {
     this.value += 1;
     return this.value;
   }
+public:
+  step_counter() = default;
 };
 
 void owners() {

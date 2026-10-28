@@ -18,6 +18,8 @@ void accept_shared_access<std::shareable T>(T& value) {}
 
 [[no_transfer, no_share]] struct ThreadAffine {
   int id = 7;
+public:
+  ThreadAffine() = default;
 };
 
 int main() {

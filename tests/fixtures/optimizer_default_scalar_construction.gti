@@ -24,6 +24,8 @@ public:
   unsafe void clobber() mut {
     unsafe { opaque_pointer_effect(this.pointer); }
   }
+public:
+  ZeroSequence() = default;
 };
 
 unsafe int default_sequence(ZeroSequence& sequence) {

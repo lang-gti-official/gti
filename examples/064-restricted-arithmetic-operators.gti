@@ -12,6 +12,8 @@ public:
   void operator--() mut { this.value--; }
 
   int get() { return this.value; }
+public:
+  Number() = default;
 };
 
 int main() {

@@ -6,6 +6,8 @@ class Invoke {
 public:
   ~Invoke() { std::println(9); }
   int operator()(int value) { return value; }
+public:
+  Invoke() = default;
 };
 
 int invoke<Callable>(Callable callback, int first_divisor, int second_divisor) {

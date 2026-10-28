@@ -24,11 +24,13 @@ public:
 class final_task {
 public:
   void operator()() { std::println("autojoin task"); }
+public:
+  final_task() = default;
 };
 
 // Scoped jobs can borrow existing engine data instead of allocating owners
 // for it. These two jobs write disjoint fields of the same parent object.
-struct positions { mut int left = 0; mut int right = 0; };
+struct positions { mut int left = 0; mut int right = 0;  public: positions() = default; };
 class advance_position {
   mut int& position;
 public:

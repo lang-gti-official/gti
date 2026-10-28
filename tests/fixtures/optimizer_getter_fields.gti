@@ -25,6 +25,8 @@ public:
   void step() mut {
     if (this.count < uint64_t(4)) { this.count++; }
   }
+public:
+  Counter() = default;
 };
 
 class Envelope {

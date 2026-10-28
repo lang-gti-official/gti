@@ -19,6 +19,8 @@ public:
     trace = trace * 10 + 2;
     return int(value);
   }
+public:
+  Narrow() = default;
 };
 
 class Owner {
@@ -33,6 +35,8 @@ public:
 class Advance {
 public:
   Owner operator()(Owner value) { return Owner(value.read() + 1); }
+public:
+  Advance() = default;
 };
 
 T twice_owned<T, Operation>(T value, Operation operation) {

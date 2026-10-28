@@ -477,7 +477,7 @@ int main() { return 0; }
 
   const lang::FrontendResult ordinaryPositions =
       analyze("c-array-ordinary-nested.gti", R"(
-class NestedField { int32_t** value = nullptr; };
+class NestedField { int32_t** value = nullptr;  public: NestedField() = default; };
 void consume(int32_t** value) {}
 int main() {
   int32_t** local = nullptr;

@@ -22,6 +22,8 @@ public:
   int add(int amount) mut { this.value += amount; return this.value; }
   int read() { return this.value; }
   ~Resource() { std::println(900); }
+public:
+  Resource() = default;
 };
 
 class AuthService {
@@ -61,6 +63,8 @@ public:
   RepositoryService repositories() mut { return RepositoryService(this.resource); }
   Inspector inspect() { return Inspector(this.resource); }
   int read() { return this.resource.read(); }
+public:
+  Client() = default;
 };
 
 int fail_argument() { checked(0); return 0; }

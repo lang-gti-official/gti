@@ -95,7 +95,7 @@ def main():
                 "end": lsp_position(designated, offset + 1)}, errors
             assert "destination struct type" in errors[0]["message"], errors
             assert "explicit struct type" in errors[0]["message"], errors
-            assert "no declared constructors" not in errors[0]["message"], errors
+            assert "Designated construction requires" not in errors[0]["message"], errors
             session.send({"jsonrpc": "2.0", "id": 4, "method": "textDocument/codeAction", "params": {
                 "textDocument": {"uri": uri}, "range": errors[0]["range"],
                 "context": {"diagnostics": errors, "only": ["quickfix"]}}})

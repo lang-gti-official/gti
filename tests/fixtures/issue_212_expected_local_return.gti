@@ -6,6 +6,8 @@ struct pair_value {
   int32_t a = 0;
   int32_t b = 0;
   pair_value(int32_t a) : a(a), b(a + 1) {}
+public:
+  pair_value() = default;
 };
 
 expected<pair_value, int32_t> make(bool ok) {

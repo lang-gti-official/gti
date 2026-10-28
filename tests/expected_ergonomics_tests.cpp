@@ -169,7 +169,8 @@ void testDiagnostics() {
   // type; it is rejected once, before any library instance is formed.
   for (const std::string member : {"transform", "transform_error"}) {
     rejectOnly(producer +
-                   "struct Mapper { int operator()(int value) { return value; "
+                   "struct Mapper { Mapper() = default; int operator()(int "
+                   "value) { return value; "
                    "} };\n"
                    "int main() { Mapper mapper{}; [[discard]] read()." +
                    member + "(mapper); return 0; }\n",
@@ -213,12 +214,12 @@ void testDiagnostics() {
          "GTI-S2005", "transform", "expects 1 argument");
   // expected<T, E> is an ordinary source class, so an owning payload enum is
   // an admitted mapping result rather than a carrier containment error.
-  const auto payloadResult =
-      analyze("struct Resource { ~Resource() {} };\n"
-              "enum class Packet { item(Resource value), idle };\n"
-              "expected<int, int> read() { return 7; }\n"
-              "Packet map(int input) { return Packet::item(Resource()); }\n"
-              "int main() { [[discard]] read().transform(map); return 0; }\n");
+  const auto payloadResult = analyze(
+      "struct Resource { ~Resource() {}  public: Resource() = default; };\n"
+      "enum class Packet { item(Resource value), idle };\n"
+      "expected<int, int> read() { return 7; }\n"
+      "Packet map(int input) { return Packet::item(Resource()); }\n"
+      "int main() { [[discard]] read().transform(map); return 0; }\n");
   if (!payloadResult.canGenerateCode())
     diagnostics(payloadResult);
   check(payloadResult.canGenerateCode() &&

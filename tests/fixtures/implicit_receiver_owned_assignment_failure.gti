@@ -2,9 +2,13 @@
 
 struct Details {
   mut std::string title = std::string("initial");
+public:
+  Details() = default;
 };
 struct Marker {
   ~Marker() { std::println("cleaned"); }
+public:
+  Marker() = default;
 };
 class Owner {
   mut Marker marker{};
@@ -14,6 +18,8 @@ public:
     details.title = std::string(title);
     int result = 10 / divisor;
   }
+public:
+  Owner() = default;
 };
 int main() {
   Owner owner{"replacement", 0};

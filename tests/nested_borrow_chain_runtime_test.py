@@ -68,12 +68,14 @@ public:
 
 class Pair {
 public:
+  Pair() = default;
   mut Middle left = Middle();
   mut Middle right = Middle();
 };
 
 class Top {
 public:
+  Top() = default;
   mut Pair pair = Pair();
 };
 

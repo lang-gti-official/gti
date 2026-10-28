@@ -9,6 +9,8 @@ void trace(std::string_view label) {
 
 struct OuterGuard {
   ~OuterGuard() { trace("outer\n"); }
+public:
+  OuterGuard() = default;
 };
 
 class Resource {

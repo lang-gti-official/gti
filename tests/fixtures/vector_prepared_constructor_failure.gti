@@ -15,6 +15,8 @@ public:
 class Guard {
 public:
   ~Guard() { std::println(900); }
+public:
+  Guard() = default;
 };
 class QuietEntry {
   Token payload;
@@ -28,6 +30,8 @@ public:
   int read() {
     unsafe { return this.pointer == nullptr ? 0 : *this.pointer; }
   }
+public:
+  PointerEntry() = default;
 };
 class Entry {
   Token payload;

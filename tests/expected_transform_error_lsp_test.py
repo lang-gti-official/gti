@@ -169,7 +169,7 @@ int main() {
             assert "std::string_view" in error["message"], error
             change(13, ergonomic)
             assert not diagnostics(13)
-            owning_enum = """struct Resource { ~Resource() {} };
+            owning_enum = """struct Resource { Resource() = default; ~Resource() {} };
 enum class Packet { item(Resource value), idle };
 expected<int, int> read() { return 7; }
 Packet map(int input) { return Packet::item(Resource()); }

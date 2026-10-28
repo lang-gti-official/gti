@@ -16,7 +16,7 @@ struct Envelope {
     }
   }
 };
-struct Guard { ~Guard() { std::println(9); } };
+struct Guard { ~Guard() { std::println(9); }  public: Guard() = default; };
 int main(int argc, std::vector<std::string> args) {
   Guard guard{};
   Content first = Content::value(plain());

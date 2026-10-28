@@ -6,6 +6,8 @@ class Resource {
 public:
   int value = 7;
   ~Resource() { std::println(99); }
+public:
+  Resource() = default;
 };
 class Cell<T> {
   Resource& resource;
@@ -18,6 +20,8 @@ public:
 class Trace {
 public:
   ~Trace() { std::println(41); }
+public:
+  Trace() = default;
 };
 class Observer<T> {
   Cell<T>& owner;

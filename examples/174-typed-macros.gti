@@ -6,6 +6,8 @@
 
 struct Sample {
   int value = 7;
+public:
+  Sample() = default;
 };
 
 struct Observations {
@@ -13,6 +15,8 @@ struct Observations {
   static mut int text_values = 0;
   static mut int bounds = 0;
   static mut int steps = 0;
+public:
+  Observations() = default;
 };
 
 namespace application {
@@ -104,6 +108,8 @@ namespace application {
 int initial_value = application::twice_once(3);
 struct Settings {
   int attempts = application::twice_once(2);
+public:
+  Settings() = default;
 };
 
 int main() {

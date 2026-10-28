@@ -54,7 +54,7 @@ private:
   static int helper(int value) { return value; }
 };
 static_assert(Rules::twice(3) == 6);
-class InheritedRules : public Rules {};
+class InheritedRules : public Rules { public: InheritedRules() = default; };
 
 int main(int argc, std::vector<std::string> argv) {
   if (InheritedRules::identity<int>(InheritedRules::seed()) != 7) { return 2; }

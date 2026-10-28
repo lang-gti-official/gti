@@ -51,6 +51,8 @@ public:
   ~CompatibilityDefaultField() {
     close_bits = close_bits | this.bit;
   }
+public:
+  CompatibilityDefaultField() = default;
 };
 
 int32_t compatibility_default_field() {
@@ -87,6 +89,8 @@ private:
   mut std::string first = std::string("");
   mut std::string second = std::string("");
   int32_t preserved = body_ordered_seed;
+public:
+  BodyOrderedOwner() = default;
 };
 
 int32_t body_ordered_owner() {

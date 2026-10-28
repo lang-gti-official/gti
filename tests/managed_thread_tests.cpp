@@ -94,11 +94,15 @@ public:
   void operator()() { std::println("class read task"); }
   void operator()() mut { std::println("class mutable task"); }
   void operator()() && { std::println("class once task"); }
+public:
+  class_task() = default;
 };
 
 class fresh_task {
 public:
   void operator()() { std::println("fresh class task"); }
+public:
+  fresh_task() = default;
 };
 
 int main() {
@@ -695,7 +699,7 @@ int main() {
                         "transfer-safe exact void() task", true, true);
   expectThreadRejection("nontransfer-thread-capture.gti", R"(
 #include <std/thread>
-[[no_transfer, no_share]] class local_only { int32_t value = 0; };
+[[no_transfer, no_share]] class local_only { int32_t value = 0;  public: local_only() = default; };
 int main() {
   local_only state = local_only();
   auto task = [state]() -> void {};
@@ -839,6 +843,8 @@ void testTransferQualifiedCallables() {
 #include <std/thread>
 struct PackedTask<Args...> {
   int operator()(Args... arguments) { return 42; }
+public:
+  PackedTask() = default;
 };
 int main() {
   mut std::thread_result<int> worker{};
@@ -856,6 +862,8 @@ int main() {
 #include <std/thread>
 struct PackedTask<Args...> {
   int operator()(Args... arguments) { return 42; }
+public:
+  PackedTask() = default;
 };
 int main() {
   mut std::thread_result<int> worker{};
@@ -868,7 +876,7 @@ int main() {
     const auto frontend = analyze(
         "transfer-function.gti",
         "#include <std/functional>\n#include <std/thread>\n" + std::string(R"(
-struct Task { int operator()())") +
+struct Task { Task() = default; int operator()())") +
             suffix + R"( { return 42; } };
 int main() {
   std::transfer_function<int())" +
@@ -909,13 +917,15 @@ int main() {
            "repeatable transfer wrappers should exercise inline storage");
   }
   for (const std::string suffix : {"", " mut", " &&"}) {
-    const auto rejected = analyze("affine-erased-task.gti",
-                                  "#include <std/functional>\n[[no_transfer]] "
-                                  "struct Task { int operator()()" +
-                                      suffix + R"( { return 42; } };
+    const auto rejected =
+        analyze("affine-erased-task.gti",
+                "#include <std/functional>\n[[no_transfer]] "
+                "struct Task { Task() = default; int operator()()" +
+                    suffix + R"( { return 42; } };
 int main() {
-  std::transfer_function<int())" + suffix +
-                                      R"(> callback{Task()};
+  std::transfer_function<int())" +
+                    suffix +
+                    R"(> callback{Task()};
   return 0;
 }
 )");
@@ -924,7 +934,8 @@ int main() {
            "erasure must reject a non-transferable target at construction");
     const auto replacement =
         analyze("affine-erased-replacement.gti",
-                "#include <std/functional>\n[[no_transfer]] struct Task { int "
+                "#include <std/functional>\n[[no_transfer]] struct Task { "
+                "Task() = default; int "
                 "operator()()" +
                     suffix + R"( { return 42; } };
 int main() {
@@ -942,20 +953,20 @@ int main() {
         suffix == " &&" ? "std::move(first)()" : "first()";
     const std::string secondCall =
         suffix == " &&" ? "std::move(second)()" : "second()";
-    const auto local =
-        analyze("local-erased-affine-target.gti",
-                "#include <std/functional>\n[[no_transfer]] struct Task { int "
-                "operator()()" +
-                    suffix + R"( { return 42; } };
+    const auto local = analyze("local-erased-affine-target.gti",
+                               "#include <std/functional>\n[[no_transfer]] "
+                               "struct Task { Task() = default; int "
+                               "operator()()" +
+                                   suffix + R"( { return 42; } };
 int main() {
-  mut std::function<int())" +
-                    suffix + R"(> first{Task()};
+  mut std::function<int())" + suffix +
+                                   R"(> first{Task()};
   mut std::move_only_function<int())" +
-                    suffix + R"(> second{Task()};
+                                   suffix + R"(> second{Task()};
   first.replace(Task());
   second.replace(Task());
-  return )" + firstCall +
-                    " + " + secondCall + " - 84;\n}\n");
+  return )" + firstCall + " + " + secondCall +
+                                   " - 84;\n}\n");
     if (!local.canGenerateCode())
       printDiagnostics(local);
     expect(local.canGenerateCode(),
@@ -967,7 +978,7 @@ int main() {
 #include <std/memory>
 #include <std/thread>
 [[transfer]] interface Job { int perform(); };
-class Work : public Job { public: int perform() override { return 42; } };
+class Work : public Job { public: int perform() override { return 42; }  public: Work() = default; };
 class Runner {
   std::unique_ptr<Job> job;
 public:

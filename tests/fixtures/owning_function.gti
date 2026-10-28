@@ -14,6 +14,8 @@ public:
 struct Add {
   int offset = 3;
   int operator()(int value) { return value + this.offset; }
+public:
+  Add() = default;
 };
 
 class Authentication {
@@ -27,6 +29,8 @@ public:
     this.login_callback.replace(std::move(callback));
   }
   int login(int value) { return this.login_callback(value); }
+public:
+  Authentication() = default;
 };
 
 void configure(mut Authentication& auth) {

@@ -13,6 +13,8 @@ std::string compiled_name(std::string& source) {
 class HighestPriority {
 public:
   bool operator()(int& left, int& right) { return left > right; }
+public:
+  HighestPriority() = default;
 };
 
 int main() {

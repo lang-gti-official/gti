@@ -11,6 +11,8 @@ public:
 
   const int32_t*& get() { return this.current; }
   mut const int32_t*& get() mut { return this.current; }
+public:
+  Cursor() = default;
 };
 
 class Slot<T> {
@@ -35,6 +37,8 @@ class Picker {
 
 public:
   std::size_t& index() { return this.selected; }
+public:
+  Picker() = default;
 };
 
 void point(mut const int32_t*& slot, int32_t& target) { slot = &target; }

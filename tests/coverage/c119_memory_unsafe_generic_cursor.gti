@@ -36,6 +36,8 @@ public:
 // unsafe static helper lives on a non-generic struct.
 struct RawOps {
   unsafe static int64_t first_of(const int64_t* address) { unsafe { return address[0]; } }
+public:
+  RawOps() = default;
 };
 
 unsafe T sum_window<C, std::numeric T>(C& cursor, int64_t width) requires raw_readable<C, T> {

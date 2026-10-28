@@ -3,6 +3,8 @@
 class Item {
 public:
   int value = 7;
+public:
+  Item() = default;
 };
 
 int main() {

@@ -4,11 +4,15 @@ struct Cell {
   int32_t sentinel = 71;
   int32_t selected = 29;
   int32_t& operator[](std::size_t index) { return this.selected; }
+public:
+  Cell() = default;
 };
 
 struct Table {
   int32_t sentinel = 83;
   Cell cell{};
+public:
+  Table() = default;
 };
 
 expected<int32_t&, errc> relay(Table& table, bool present) {

@@ -1,6 +1,6 @@
 #include <std/functional>
 
-struct Tag { int marker = 11; };
+struct Tag { int marker = 11;  public: Tag() = default; };
 
 struct Packet {
   Tag tag{};

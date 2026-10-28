@@ -25,6 +25,8 @@ public:
   int32_t operator()(int32_t left, int32_t& right) {
     return left + right;
   }
+public:
+  add() = default;
 };
 
 class multiply {
@@ -32,6 +34,8 @@ public:
   int32_t operator()(int32_t& left, int32_t& right) {
     return left * right;
   }
+public:
+  multiply() = default;
 };
 
 class square {
@@ -39,6 +43,8 @@ public:
   int32_t operator()(int32_t& value) {
     return value * value;
   }
+public:
+  square() = default;
 };
 
 int main() {

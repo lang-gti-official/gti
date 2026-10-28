@@ -8,18 +8,24 @@
 struct Vec2 {
   uint16_t x = 0;
   uint16_t y = 0;
+public:
+  Vec2() = default;
 };
 
 struct Entity {
   uint32_t id = 0;
   bool alive = false;
   Vec2 position;
+public:
+  Entity() = default;
 };
 
 struct binary_writer {
   mut {
     std::vector<uint8_t> bytes;
   }
+public:
+  binary_writer() = default;
 };
 
 void write_integral<std::integral U>(mut binary_writer& out, U value, uint64_t width) {

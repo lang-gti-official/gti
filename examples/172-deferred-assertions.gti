@@ -5,6 +5,8 @@
 
 struct Observations {
   static mut int message_calls = 0;
+public:
+  Observations() = default;
 };
 
 std::string explain_failure() {

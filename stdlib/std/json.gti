@@ -406,6 +406,7 @@ constexpr bool is_owned_string<T>() {
 
 /// Whitespace policy shared by compact and pretty output.
 struct layout {
+  layout() = default;
   bool pretty = false;
   uint8_t indentation = 2;
 };

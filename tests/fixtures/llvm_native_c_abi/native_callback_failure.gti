@@ -3,7 +3,7 @@ extern "C" {
   int32_t native_callback_failure_invoke(Operation operation);
   void native_callback_cleanup();
 }
-struct Guard { ~Guard() { native_callback_cleanup(); } };
+struct Guard { ~Guard() { native_callback_cleanup(); }  public: Guard() = default; };
 int32_t fail(int32_t value) { Guard guard{}; return 100 / value; }
 int main() {
   Operation operation = fail;

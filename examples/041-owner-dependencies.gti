@@ -53,6 +53,8 @@ public:
   static ReadingView<int> open(Reading& owner) {
     return make_reading_view(owner);
   }
+public:
+  ReadingViewFactory() = default;
 };
 
 WritableReadingView make_writable_view(mut Reading& owner) {

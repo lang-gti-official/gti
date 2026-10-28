@@ -7,6 +7,8 @@ Function illegal_store<Function>(mut Function function) {
 class operation {
 public:
   void operator()() {}
+public:
+  operation() = default;
 };
 
 int main() {

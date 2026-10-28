@@ -8,9 +8,11 @@ class Value : public Reader {
 public:
   int read() override { return this.payload; }
   void write(int value) mut { this.payload = value; }
+public:
+  Value() = default;
 };
-struct CopyRecord { mut Value value{}; };
-struct CopyEnvelope { mut CopyRecord inner{}; };
+struct CopyRecord { mut Value value{};  public: CopyRecord() = default; };
+struct CopyEnvelope { mut CopyRecord inner{};  public: CopyEnvelope() = default; };
 
 class OwnedValue : public Reader {
   int payload;
@@ -23,8 +25,10 @@ struct MoveRecord {
   mut OwnedValue first{1};
   mut OwnedValue second{2};
   ~MoveRecord() { record(3); }
+public:
+  MoveRecord() = default;
 };
-struct MoveEnvelope { mut MoveRecord inner{}; };
+struct MoveEnvelope { mut MoveRecord inner{};  public: MoveEnvelope() = default; };
 
 int read(Reader& value) { return value.read(); }
 // NESTED_TRANSFER_MAIN

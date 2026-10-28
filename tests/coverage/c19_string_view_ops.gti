@@ -1,5 +1,5 @@
 #include <std/string>
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 int32_t count_char(std::string_view text, char target) {
   mut int32_t seen = 0;
   for (mut std::size_t i = std::size_t(0); i < text.size(); i++) {

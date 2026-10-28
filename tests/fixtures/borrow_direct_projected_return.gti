@@ -3,11 +3,15 @@ enum class lookup_errc { missing };
 struct Record {
   mut int32_t sentinel = 71;
   mut int32_t selected = 29;
+public:
+  Record() = default;
 };
 
 struct Table {
   mut int32_t sentinel = 83;
   mut Record record{};
+public:
+  Table() = default;
 };
 
 int32_t& plain(Table& table) {

@@ -3605,6 +3605,8 @@ class Box {
 public:
   Box(int value) { int checked = value + 1; }
   int operator()() { return 1; }
+public:
+  Box() = default;
 };
 
 interface Reader {
@@ -3614,6 +3616,8 @@ interface Reader {
 class ReaderBox : public Reader {
 public:
   int read() override { return 2; }
+public:
+  ReaderBox() = default;
 };
 
 int relay(int value) { return value; }
@@ -3958,6 +3962,8 @@ public:
   static int32_t value = 9;
   static int32_t stable_static_read() { return value; }
   static int32_t checked_static_add(int32_t offset) { return value + offset; }
+public:
+  StableStaticState() = default;
 };
 
 int32_t cycle_left(int32_t value) { return cycle_right(value); }
@@ -4350,6 +4356,8 @@ public:
 class Stamp {
 public:
   int32_t number = 0;
+public:
+  Stamp() = default;
 };
 
 class Holder {
@@ -4992,10 +5000,14 @@ void testAbstractStoredReferentReborrow() {
 struct Leaf {
   mut int value = 4;
   mut int& get() mut { return this.value; }
+public:
+  Leaf() = default;
 };
 struct Box {
   mut Leaf leaf{};
   mut Leaf& get() mut { return this.leaf; }
+public:
+  Box() = default;
 };
 class Cursor {
   mut Box& box;
@@ -5738,6 +5750,8 @@ public:
     int checked = this.right + 0;
     return this.left;
   }
+public:
+  Pair() = default;
 };
 
 class PairOwner {
@@ -5749,6 +5763,8 @@ public:
     int checked = this.other + 0;
     return this.inner;
   }
+public:
+  PairOwner() = default;
 };
 
 int nested(mut Pair& parent) {
@@ -6856,6 +6872,8 @@ public:
 
   int& operator[](uint64_t index) { return this.values[index]; }
   mut int& operator[](uint64_t index) mut { return this.values[index]; }
+public:
+  Box() = default;
 };
 
 void update(mut Box& box) {
@@ -7002,6 +7020,8 @@ public:
 
   int& read() { return this.value; }
   mut int& get() mut { return this.value; }
+public:
+  Leaf() = default;
 };
 
 class Middle {
@@ -7009,6 +7029,8 @@ public:
   mut Leaf leaf = Leaf();
 
   mut Leaf& next() mut { return this.leaf; }
+public:
+  Middle() = default;
 };
 
 class Root {
@@ -7017,12 +7039,16 @@ public:
 
   mut Middle& next() mut { return this.middle; }
   mut int& chained() mut { return this.next().next().get(); }
+public:
+  Root() = default;
 };
 
 class Split {
 public:
   mut Leaf left = Leaf();
   mut Leaf right = Leaf();
+public:
+  Split() = default;
 };
 
 class View {
@@ -7039,6 +7065,8 @@ public:
 
   int& read() { return this.value; }
   void bump() mut { this.value += 1; }
+public:
+  Owner() = default;
 };
 
 int& observe(int& source) { return source; }
@@ -7730,6 +7758,8 @@ void run_stateful<Operation>(mut Operation operation) {
 class Stateful {
 public:
   void operator()() mut {}
+public:
+  Stateful() = default;
 };
 
 int main() {
@@ -9244,7 +9274,7 @@ void testRecordPublishedInitializerRetained() {
       lang::Frontend({.target = lang::TargetInfo::host()})
           .analyze("record-published-initializer.gti", R"gti(
 #include <std/string>
-struct P { std::string_view name = "Ada"; uint32_t health = 7; };
+struct P { std::string_view name = "Ada"; uint32_t health = 7;  public: P() = default; };
 int main() {
   P p{};
   std::print(p.name);

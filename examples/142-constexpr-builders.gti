@@ -92,6 +92,8 @@ struct slot {
 
 struct defaults {
   expected<budgets, config_error> limits = configure(6);
+public:
+  defaults() = default;
 };
 
 constexpr int reserve_slots() {

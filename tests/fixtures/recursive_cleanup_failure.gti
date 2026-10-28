@@ -8,6 +8,8 @@ mut int32_t zero = 0;
 
 struct Trace {
   ~Trace() { std::println(9); }
+public:
+  Trace() = default;
 };
 
 struct Value {
@@ -70,6 +72,8 @@ struct Right {
       int32_t right_failure = 37 / zero;
     }
   }
+public:
+  Right() = default;
 };
 
 int32_t run() {

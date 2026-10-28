@@ -9,6 +9,15 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+`GTI-S2012` rejects zero-argument class/struct construction when no constructor
+was explicitly declared for it. The construction site is primary; a related
+span names the type declaration, and the hint suggests supplying required
+arguments or deliberately declaring `Type() = default;`. Field initializers do
+not imply permission to default-construct. Existing inaccessible, ambiguous,
+and constrained-out constructor diagnostics retain their own selection rules.
+There is no automatic opt-in fix: an empty/default state may violate the type's
+intended invariants. CLI and LSP publish the same diagnostic.
+
 The proposed [diagnostic-quality campaign](../plans/diagnostic-quality.md)
 builds on this infrastructure. Its causal-evidence, recovery and repair-group
 extensions are planned work, not additional implemented contracts.

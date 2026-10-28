@@ -262,7 +262,7 @@ int main() {
 
 ERASED_REFERENCES = r'''
 #include <std/memory>
-struct Record { mut int value = 7; };
+struct Record { mut int value = 7;  public: Record() = default; };
 int main() {
   mut Record object{};
   {
@@ -283,6 +283,8 @@ mut int destroyed = 0;
 struct Record {
   mut int value = 7;
   ~Record() { destroyed += this.value; }
+public:
+  Record() = default;
 };
 int main() {
   {
@@ -636,6 +638,8 @@ C_STRING_RETURNS = r'''
 struct Slots {
   c_string* items = nullptr;
   int32_t count = 0;
+public:
+  Slots() = default;
 };
 void put(c_string* items, int32_t at, c_string value) { unsafe { items[at] = value; } }
 c_string second(c_string* items) { unsafe { c_string* next = items + 1; return *next; } }

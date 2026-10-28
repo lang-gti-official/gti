@@ -18,12 +18,16 @@ struct editor_ui {
   std::string ini_path = std::string("config://imgui.ini");
   [[std::json::ignore]]
   std::vector<int32_t> recent = {1, 2};
+public:
+  editor_ui() = default;
 };
 
 struct window {
   uint32_t width = 1280;
   uint32_t height = 720;
   std::optional<std::string> title = std::optional<std::string>();
+public:
+  window() = default;
 };
 
 int main() {

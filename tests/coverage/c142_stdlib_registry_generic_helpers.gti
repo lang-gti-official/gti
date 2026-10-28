@@ -91,6 +91,8 @@ int sum_range<Range>(Range& values) requires std::range_of<Range, int> {
 class Small {
 public:
   bool operator()(int& area) { return area < 10; }
+public:
+  Small() = default;
 };
 
 int main() {

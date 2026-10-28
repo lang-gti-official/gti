@@ -5,10 +5,14 @@ using Failure = () -> void;
 class TargetGuard {
 public:
   ~TargetGuard() { std::println("target cleanup"); }
+public:
+  TargetGuard() = default;
 };
 class CallerGuard {
 public:
   ~CallerGuard() { std::println("caller cleanup"); }
+public:
+  CallerGuard() = default;
 };
 void fail_inside_callback() {
   TargetGuard guard{};

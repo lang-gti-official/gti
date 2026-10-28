@@ -28,6 +28,8 @@ public:
   uint64_t link_count() {
     return this.stored_links;
   }
+public:
+  TransitNetwork() = default;
 };
 
 class EdgeRecord {
@@ -99,6 +101,8 @@ public:
     this.reset();
     return true;
   }
+public:
+  EdgeRecord() = default;
 };
 
 expected<uint64_t, NetworkLoadError> load_network(std::string_view path, mut TransitNetwork & network) {

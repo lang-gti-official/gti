@@ -24,6 +24,8 @@ struct Item {
 struct Spec {
   mut Item item{1};
   mut std::string name{"old"};
+public:
+  Spec() = default;
 };
 class Config {
   mut Spec spec{};

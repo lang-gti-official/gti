@@ -47,6 +47,8 @@ class Holder {
 public:
   using Member = Policy<Key>;
   Member item{};
+public:
+  Holder() = default;
 };
 int main() { Alias a{}; Holder h{}; return 0; }
 )gti");

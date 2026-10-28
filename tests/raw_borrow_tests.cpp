@@ -153,6 +153,8 @@ struct Slot {
     return previous;
   }
   void clear() mut { this.pointer = nullptr; }
+public:
+  Slot() = default;
 };
 int main() {
   int owner = 7;
@@ -175,12 +177,16 @@ struct Wrapper {
 struct Holder {
   const int* pointer = nullptr;
   Holder(const int* input) : pointer(input) {}
+public:
+  Holder() = default;
 };
 )"},
       {"scalar receiver mutation with a retained address", R"(
 struct Box {
   mut int value = 7;
   void bump() mut { this.value += 1; }
+public:
+  Box() = default;
 };
 int main() {
   mut Box box{};
@@ -399,7 +405,7 @@ int main() {
 void bridge() {
   const auto result = analyze(R"(
 #include <std/memory>
-struct Witness { mut int value = 42; };
+struct Witness { mut int value = 42;  public: Witness() = default; };
 unsafe int& relay(const int* address, Witness& witness) {
   const int* alias = address;
   unsafe { return std::assume_ref(alias, witness); }
@@ -539,7 +545,7 @@ const int* source() { return &global; }
   auditNegative("callee-produced aggregate field cannot hide an expired origin",
                 R"(
 #include <std/memory>
-struct Address { const int* pointer = nullptr; };
+struct Address { const int* pointer = nullptr;  public: Address() = default; };
 int main() {
   int witness = 9;
   auto address = source();
@@ -601,7 +607,7 @@ void nestedQuerySymbols() {
       "nested source queries preserve repeated and inherited symbol identities",
       R"(
 #include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 int main() { mut Holder out{}; outer(out);
   unsafe { return std::assume_ref(out.pointer, out); } }
 void outer(mut Holder& out) { middle(out); middle(out); }
@@ -624,13 +630,13 @@ int main() { auto wrapped = dangling(); if (wrapped) { return 1; }
   unsafe { return *wrapped.error(); } })",
                              R"(
 #include <std/memory>
-struct Address { const int* pointer = nullptr; };
+struct Address { const int* pointer = nullptr;  public: Address() = default; };
 expected<Address, int> dangling() { int dead = 7; Address result{.pointer = &dead}; return result; }
 int main() { auto wrapped = dangling(); if (!wrapped) { return 1; }
   unsafe { return std::assume_ref(wrapped.value().pointer, wrapped); } })",
                              R"(
 #include <std/memory>
-struct Address { const int* pointer = nullptr; };
+struct Address { const int* pointer = nullptr;  public: Address() = default; };
 enum class Event { address(Address value), empty };
 Event dangling() { int dead = 7; Address result{.pointer = &dead}; return Event::address(result); }
 int main() { auto event = dangling(); switch (event) {
@@ -638,8 +644,8 @@ int main() { auto event = dangling(); switch (event) {
   case Event::empty: return 0; } })",
                              R"(
 #include <std/memory>
-class Base { public: mut const int* pointer = nullptr; };
-class Derived : public Base {};
+class Base { public: mut const int* pointer = nullptr;  public: Base() = default; };
+class Derived : public Base { public: Derived() = default; };
 Derived dangling() { int dead = 7; mut Derived result{}; result.pointer = &dead; return result; }
 int main() { auto wrapped = dangling(); unsafe { return *wrapped.pointer; } })"})
     auditNegative("tagged and inherited raw fields preserve callee expiry",
@@ -667,8 +673,8 @@ int main() { int live = 7; auto event = address_of(live); switch (event) {
   case Event::empty: return 0; } })",
                              R"(
 #include <std/memory>
-class Base { public: mut const int* pointer = nullptr; };
-class Derived : public Base {};
+class Base { public: mut const int* pointer = nullptr;  public: Base() = default; };
+class Derived : public Base { public: Derived() = default; };
 Derived address_of(int& owner) { mut Derived result{}; result.pointer = &owner; return result; }
 int main() { int live = 7; auto wrapped = address_of(live);
   unsafe { return std::assume_ref(wrapped.pointer, live); } })",
@@ -729,8 +735,8 @@ int main() { return probe(2); })",
                   "scope has ended");
   auditNegative("abstract source dispatch cannot become foreign unknown writes",
                 globals + R"(
-class Writer { public: virtual void write() = 0; };
-class Bad : public Writer { public: void write() override { bad(); } };
+class Writer { public: virtual void write() = 0;  public: Writer() = default; };
+class Bad : public Writer { public: void write() override { bad(); }  public: Bad() = default; };
 int probe(Writer& writer) { writer.write();
   unsafe { return std::assume_ref(pointer, witness); } }
 int main() { Bad writer{}; return probe(writer); })",
@@ -738,10 +744,10 @@ int main() { Bad writer{}; return probe(writer); })",
   auditNegative(
       "readonly virtual receivers preserve stored mutable raw aliases",
       R"(#include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 class Writer { public: Holder* out = nullptr;
   Writer(Holder* value) : out(value) {}
-  virtual void write() { int gone = 1; unsafe { out->pointer = &gone; } } };
+  virtual void write() { int gone = 1; unsafe { out->pointer = &gone; } }  public: Writer() = default; };
 int main() { mut Holder out{}; Writer writer{&out}; writer.write();
   unsafe { return std::assume_ref(out.pointer, out); } })",
       "completed source-result");
@@ -757,6 +763,8 @@ struct Holder {
   static mut const int* slot = &witness;
   static void keep(const int* address) { slot = address; }
   static const int* current() { return slot; }
+public:
+  Holder() = default;
 };
 )";
   const std::string setter =
@@ -818,16 +826,16 @@ int main() { set(); auto address = get();
                   "scope has ended");
   for (const auto &source : {
            R"(#include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 int main() { mut Holder out{}; set(out); unsafe { return std::assume_ref(out.pointer, out); } }
 void set(mut Holder& out) { int gone = 1; out.pointer = &gone; })",
            R"(#include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 mut Holder out{};
 int main() { set(out); unsafe { return std::assume_ref(out.pointer, out); } }
 void set(mut Holder& out) { int gone = 1; out.pointer = &gone; })",
            R"(#include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 int main() { mut Holder out{}; unsafe { set(&out); return std::assume_ref(out.pointer, out); } }
 unsafe void set(Holder* out) { int gone = 1; unsafe { out->pointer = &gone; } })",
            R"(#include <std/memory>
@@ -844,11 +852,11 @@ void set() { int gone = 1; pointer = &gone; })"})
           R"(int main() { set(); reset(); auto address = get(); unsafe { return std::assume_ref(address, witness); } })" +
           setter + getter + "void reset() { pointer = &witness; }",
       R"(#include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 int main() { int value = 7; mut Holder out{}; set(out, value); unsafe { return std::assume_ref(out.pointer, value); } }
 void set(mut Holder& out, int& input) { out.pointer = &input; })",
       R"(#include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 int main() { int value = 7; mut Holder out{}; unsafe { set(&out, value); return std::assume_ref(out.pointer, value); } }
 unsafe void set(Holder* out, int& input) { unsafe { out->pointer = &input; } })"};
   for (const auto &source : valid) {
@@ -869,7 +877,7 @@ unsafe void set(Holder* out, int& input) { unsafe { out->pointer = &input; } })"
        {std::string(
             "struct Writer { Writer() { int gone = 1; pointer = &gone; } };"),
         std::string("struct Writer { ~Writer() { int gone = 1; pointer = "
-                    "&gone; } };")}) {
+                    "&gone; }  public: Writer() = default; };")}) {
     const auto result = auditAnalyze(
         globals + body +
         "int main() { unsafe { return std::assume_ref(pointer, witness); } }");
@@ -896,6 +904,8 @@ int main() { Writer writer{}; unsafe { return std::assume_ref(pointer, witness);
 struct Factory {
   Factory(int unused) { int gone = 1; pointer = &gone; }
   Factory(bool unused) { pointer = &witness; }
+public:
+  Factory() = default;
 };
 struct Outer { Factory field;
   Outer(bool choose) : field(choose ? Factory(0) : Factory(true)) {} };
@@ -903,8 +913,8 @@ int main() { Outer value{true}; unsafe { return std::assume_ref(pointer, witness
       "scope has ended");
   auditNegative("selected constructor imports mapped formal writes", R"(
 #include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
-struct Writer { Writer(mut Holder& out) { int gone = 1; out.pointer = &gone; } };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+struct Writer { Writer(mut Holder& out) { int gone = 1; out.pointer = &gone; }  public: Writer() = default; };
 int main() { mut Holder out{}; Writer writer{out}; unsafe { return std::assume_ref(out.pointer, out); } })",
                 "scope has ended");
   auditNegative("called lambda writer retains unresolved source facts",
@@ -914,12 +924,12 @@ int main() { auto writer = []() -> void { int gone = 1; pointer = &gone; }; writ
                 "completed source-result");
   auditNegative("source destructor cleanup retains unresolved global writes",
                 globals + R"(
-struct Writer { ~Writer() { int gone = 1; pointer = &gone; } };
+struct Writer { ~Writer() { int gone = 1; pointer = &gone; }  public: Writer() = default; };
 int main() { { Writer writer{}; } unsafe { return std::assume_ref(pointer, witness); } })",
                 "completed source-result");
   auditNegative("source raw formal relay preserves callee expiry", R"(
 #include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 unsafe void set(Holder* out) { int gone = 1; unsafe { out->pointer = &gone; } }
 unsafe void relay(Holder* out) { unsafe { set(out); } }
 int main() { mut Holder out{}; unsafe { relay(&out); return std::assume_ref(out.pointer, out); } })",
@@ -927,23 +937,23 @@ int main() { mut Holder out{}; unsafe { relay(&out); return std::assume_ref(out.
   auditNegative(
       "captured raw alias writer retains unresolved destination facts", R"(
 #include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 int main() { mut Holder out{}; auto address = &out;
   auto writer = [address]() -> void { int gone = 1; unsafe { address->pointer = &gone; } };
   writer(); unsafe { return std::assume_ref(out.pointer, out); } })",
       "completed source-result");
   auditNegative("source destructor follows stored raw aliases", R"(
 #include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 struct Writer { Holder* address = nullptr;
   Writer(Holder* input) : address(input) {}
-  ~Writer() { int gone = 1; unsafe { this.address->pointer = &gone; } } };
+  ~Writer() { int gone = 1; unsafe { this.address->pointer = &gone; } }  public: Writer() = default; };
 int main() { mut Holder out{}; { Writer writer{&out}; }
   unsafe { return std::assume_ref(out.pointer, out); } })",
                 "completed source-result");
   const auto exactCaptures = auditAnalyze(R"(
 #include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 int main() { int witness = 7; mut Holder changed{}; mut Holder untouched{.pointer = &witness};
   mut auto address = &changed;
   auto writer = [address]() -> void { int gone = 1; unsafe { address->pointer = &gone; } };
@@ -956,16 +966,16 @@ int main() { int witness = 7; mut Holder changed{}; mut Holder untouched{.pointe
          "unrelated holders");
   for (const auto &source : {R"(
 #include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
-struct Alias { Holder* value = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+struct Alias { Holder* value = nullptr;  public: Alias() = default; };
 void set(Alias alias) { int gone = 1; unsafe { alias.value->pointer = &gone; } }
 int main() { mut Holder out{}; Alias alias{.value = &out}; set(alias);
   unsafe { return std::assume_ref(out.pointer, out); } })",
                              R"(
 #include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 struct Alias { Holder* value = nullptr;
-  void set() { int gone = 1; unsafe { this.value->pointer = &gone; } } };
+  void set() { int gone = 1; unsafe { this.value->pointer = &gone; } }  public: Alias() = default; };
 int main() { mut Holder out{}; Alias alias{.value = &out}; alias.set();
   unsafe { return std::assume_ref(out.pointer, out); } })"})
     auditNegative(
@@ -975,15 +985,15 @@ int main() { mut Holder out{}; Alias alias{.value = &out}; alias.set();
                 R"(
 #include <std/memory>
 #include <std/functional>
-struct Holder { mut const int* pointer = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
 int main() { mut Holder out{}; auto address = &out;
   auto writer = [address]() -> void { int gone = 1; unsafe { address->pointer = &gone; } };
   std::invoke_once(writer); unsafe { return std::assume_ref(out.pointer, out); } })",
                 "completed source-result");
   const auto validStoredAlias = auditAnalyze(R"(
 #include <std/memory>
-struct Holder { mut const int* pointer = nullptr; };
-struct Alias { Holder* value = nullptr; };
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+struct Alias { Holder* value = nullptr;  public: Alias() = default; };
 void set(Alias alias, int& witness) { unsafe { alias.value->pointer = &witness; } }
 int main() { int witness = 7; mut Holder out{}; Alias alias{.value = &out}; set(alias, witness);
   unsafe { return std::assume_ref(out.pointer, witness); } })");
@@ -995,11 +1005,13 @@ int main() { int witness = 7; mut Holder out{}; Alias alias{.value = &out}; set(
 void rawInvocationBoundaries() {
   auditNegative("derived raw fields cannot disappear behind a base reference",
                 R"(
-class Base { public: virtual int read() = 0; };
+class Base { public: virtual int read() = 0;  public: Base() = default; };
 class Derived : public Base {
 public:
   mut const int* pointer = nullptr;
   int read() override { unsafe { return *this.pointer; } }
+public:
+  Derived() = default;
 };
 int main() {
   mut Derived value{};
@@ -1031,6 +1043,8 @@ int main() {
 struct Holder {
   mut const int* chosen = nullptr;
   mut const int* other = nullptr;
+public:
+  Holder() = default;
 };
 struct Relay {
   mut Holder inner = Holder();
@@ -1039,6 +1053,8 @@ struct Relay {
     this.inner.other = other;
   }
   Holder& operator->() { return this.inner; }
+public:
+  Relay() = default;
 };
 Relay make(const int* live) { int dead = 7; return Relay(live, &dead); }
 )";
@@ -1069,6 +1085,8 @@ struct Receiver {
   mut void* handle = nullptr;
   void scalar(int value, int& read, mut int& write) mut { write = value + read; }
   void close() mut { unsafe { close_native(this.handle); } }
+public:
+  Receiver() = default;
 };
 int main() { mut Receiver value{}; int read = 1; mut int write = 0;
   value.scalar(1, read, write); value.close(); return write - 2; }
@@ -1087,7 +1105,7 @@ int main() { int live = 9; Relay value = make(&live);
       "scope has ended");
   const auto passive = auditAnalyze(R"(
 #include <std/utility>
-struct Passive { mut const int* pointer = nullptr; };
+struct Passive { mut const int* pointer = nullptr;  public: Passive() = default; };
 int main() {
   mut Passive first{};
   mut Passive second{};
@@ -1105,6 +1123,8 @@ int main() {
 struct Dropping {
   mut const int* pointer = nullptr;
   ~Dropping() { unsafe { int observed = *this.pointer; } }
+public:
+  Dropping() = default;
 };
 int main() {
   mut Dropping first{};
@@ -1130,7 +1150,7 @@ int main() {
   repeatedSemanticRequest();
   producedResults();
   const auto publicBridge = analyze(R"(
-struct Witness { mut int value = 42; };
+struct Witness { mut int value = 42;  public: Witness() = default; };
 [[borrowed_from(witness)]]
 unsafe int& observe(const int* address, Witness& witness) {
   unsafe { return *address; }
@@ -1158,6 +1178,8 @@ struct Reading {
   mut int value = 42;
   mut const int* address = nullptr;
   [[borrowed_from(this)]] int& read() { unsafe { return *this.address; } }
+public:
+  Reading() = default;
 };
 int main() {
   mut Reading owner{};
@@ -1171,7 +1193,7 @@ int main() {
          "receiver contract transports the known owner of a raw field");
   const auto retainedOwner = analyze(R"(
 #include <std/memory>
-struct Reading { int value = 42; };
+struct Reading { int value = 42;  public: Reading() = default; };
 class View {
   const int* address = nullptr;
   Reading& owner;
@@ -1192,6 +1214,8 @@ int main() { Reading owner{}; View view{owner}; return view.get() - 42; }
 struct Reading {
   mut const int* address = nullptr;
   [[borrowed_from(this)]] int& read() { unsafe { return *this.address; } }
+public:
+  Reading() = default;
 };
 int main() {
   int unrelated = 42;
@@ -1203,7 +1227,7 @@ int main() {
       "known origin");
   auditNegative("raw assertion wrapper preserves aggregate field provenance",
                 R"(
-struct Address { const int* value = nullptr; };
+struct Address { const int* value = nullptr;  public: Address() = default; };
 [[borrowed_from(owner)]]
 int& read(Address address, int& owner) { unsafe { return *address.value; } }
 int main() {
@@ -1222,6 +1246,8 @@ public:
   virtual int& read(const int* address, int& owner) {
     unsafe { return *address; }
   }
+public:
+  Provider() = default;
 };
 int main() { return 0; }
 )",

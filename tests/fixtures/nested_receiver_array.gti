@@ -20,7 +20,7 @@ struct Matrix {
   }
 };
 
-struct Grid { mut int values[2][3] = {{1, 2, 3}, {4, 5, 6}}; };
+struct Grid { mut int values[2][3] = {{1, 2, 3}, {4, 5, 6}};  public: Grid() = default; };
 struct Holder {
   mut Grid storage;
   Holder(Grid value) : storage(value) {}

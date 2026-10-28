@@ -37,6 +37,8 @@ public:
   Ticket(int input) : value(input) { events = events * 10 + 1; }
   ~Ticket() { events = events * 10 + 2; }
   int read() { return this.value; }
+public:
+  Ticket() = default;
 };
 int main() {
   { Ticket ticket{7}; if (ticket.read() != 7) { return 1; } }
@@ -44,7 +46,7 @@ int main() {
 }
 ''',
     "default-and-generic": r'''
-struct Plain { int value = 7; };
+struct Plain { int value = 7;  public: Plain() = default; };
 class Cell<T> {
   mut T value;
 public:
@@ -138,7 +140,7 @@ int main() {
 }
 ''',
     "static-storage": r'''
-struct Plain { int value = 7; };
+struct Plain { int value = 7;  public: Plain() = default; };
 mut int initialized = 0;
 Plain make_plain() { initialized += 1; return Plain(); }
 Plain global{};
@@ -148,6 +150,8 @@ public:
   static mut int value = 3;
   static Plain plain{};
   static Plain dynamic = make_plain();
+public:
+  Counter() = default;
 };
 int main() {
   Counter::value += 4;
@@ -162,7 +166,7 @@ int initialize() { initialized += 1; return 4; }
 thread_local mut int passive = 3;
 thread_local bool enabled = true;
 thread_local mut int dynamic = initialize();
-class State { public: static thread_local mut int count = initialize(); };
+class State { public: static thread_local mut int count = initialize();  public: State() = default; };
 int main() {
   if (initialized != 0 || !enabled || passive != 3 || dynamic != 4 || dynamic != 4) { return 1; }
   if (State::count != 4 || State::count != 4) { return 2; }
@@ -202,7 +206,7 @@ int main() {
 }
 ''',
     "designated-and-overloaded": r'''
-struct Point { int x = 1; int y = 2; };
+struct Point { int x = 1; int y = 2;  public: Point() = default; };
 class Cell {
   int value;
 public:
@@ -707,6 +711,8 @@ public:
 class Consumer {
 public:
   Consumer(Ticket ticket, int other) { std::panic("incorrect constructor entry"); }
+public:
+  Consumer() = default;
 };
 int fail() { std::panic("constructor argument failure"); return 0; }
 int main() {
@@ -792,8 +798,8 @@ public:
   Item(int id) : id(id) {}
   ~Item() { destroyed = destroyed * 10 + this.id; }
 };
-struct Envelope { mut Item items[2] = {Item(1), Item(2)}; };
-struct Grid { mut Item items[2][2] = {{Item(1), Item(2)}, {Item(3), Item(4)}}; };
+struct Envelope { mut Item items[2] = {Item(1), Item(2)};  public: Envelope() = default; };
+struct Grid { mut Item items[2][2] = {{Item(1), Item(2)}, {Item(3), Item(4)}};  public: Grid() = default; };
 int main() {
   { mut Envelope envelope{}; { Item moved[2] = std::move(envelope.items); } }
   if (destroyed != 21) { return 1; }

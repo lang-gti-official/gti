@@ -12,8 +12,8 @@ SOURCE = """#include <std/functional>
 #include <std/memory>
 #include <std/mutex>
 #include <std/thread>
-[[no_transfer]] struct LocalOnly { int operator()() { return 7; } };
-[[no_share]] struct State { mut int total = 42; };
+[[no_transfer]] struct LocalOnly { LocalOnly() = default; int operator()() { return 7; } };
+[[no_share]] struct State { State() = default; mut int total = 42; };
 class Write {
   mut int& target;
 public:

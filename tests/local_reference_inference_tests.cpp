@@ -32,7 +32,7 @@ std::string substitute(std::string text, std::string_view type) {
 }
 
 const std::string declarations = R"(
-struct Record { mut int count = 1; };
+struct Record { mut int count = 1;  public: Record() = default; };
 class Owner {
   mut int count = 7;
 public:

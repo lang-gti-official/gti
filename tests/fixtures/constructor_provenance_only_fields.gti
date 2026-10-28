@@ -1,4 +1,4 @@
-struct Resource { int value = 42; };
+struct Resource { int value = 42;  public: Resource() = default; };
 class View {
   Resource& owner;
 public:

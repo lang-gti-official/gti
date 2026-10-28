@@ -12,6 +12,8 @@ public:
 class Guard {
 public:
   ~Guard() { std::println("caller cleaned"); }
+public:
+  Guard() = default;
 };
 expected<Item, item_error> produce() { return Item(); }
 int checked(int index) { return 12 / (2 - index); }
@@ -19,6 +21,8 @@ void consume(Item value, int number) {}
 class Sink {
 public:
   void accept(Item value, int number) mut {}
+public:
+  Sink() = default;
 };
 expected<void, item_error> run(bool member) {
   mut Sink sink = Sink();

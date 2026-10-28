@@ -62,6 +62,8 @@ struct reader {
       this.number = make_item(ok).error();
     }
   }
+public:
+  reader() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

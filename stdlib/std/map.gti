@@ -16,7 +16,10 @@ struct map_node<K, V> {
       : entry(map_entry<K, V>(std::move(key), std::move(value))), parent(ancestor) {}
 };
 
-class map_sentinel {};
+class map_sentinel {
+public:
+  map_sentinel() = default;
+};
 
 class map_iterator<K, V, uint64_t Reverse = 0> {
   vector<unique_ptr<map_node<K, V>>>& nodes;

@@ -4,6 +4,8 @@ public:
   virtual bool advance() mut = 0;
   void stop() mut { this.state = 9; }
   bool run() mut { return this.advance(); }
+public:
+  AbstractCounter() = default;
 };
 
 class Counter : public AbstractCounter {

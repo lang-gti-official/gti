@@ -28,6 +28,7 @@ mut int32_t stamp = 0;
 
 class GlobalSlot {
 public:
+  GlobalSlot() = default;
   mut int32_t value = 0;
 
   int32_t& operator[](std::size_t index) { return this.value; }
@@ -38,6 +39,7 @@ mut GlobalSlot global_slot = GlobalSlot();
 
 class MutableValue {
 public:
+  MutableValue() = default;
   mut int32_t value = 0;
 
   void bump() mut { this.value++; }
@@ -46,6 +48,7 @@ public:
 
 class MutableHandle {
 public:
+  MutableHandle() = default;
   mut MutableValue value = MutableValue();
 
   MutableValue& operator->() { return this.value; }
@@ -54,6 +57,7 @@ public:
 
 class MutableSlots {
 public:
+  MutableSlots() = default;
   mut MutableHandle value = MutableHandle();
 
   MutableHandle& operator[](std::size_t index) { return this.value; }

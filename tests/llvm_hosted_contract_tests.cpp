@@ -55,7 +55,7 @@ constexpr std::array cases{
          "union first-field initialization failure", 15},
     Case{"llvm_hosted_generated_default.gti", 33333, "", 0},
     Case{"llvm_hosted_generated_default_failure.gti", 321,
-         "generated default argument failure", 17},
+         "generated default argument failure", 19},
     Case{"llvm_hosted_success.gti", 12354, "", 0},
     Case{"llvm_hosted_startup_failure.gti", 321, "hosted startup failure", 16},
     Case{"llvm_hosted_entry_failure.gti", 321, "hosted entry failure", 16},
@@ -709,6 +709,8 @@ struct Owner {
   int value = 7;
   virtual int observe() { return this.value; }
   ~Owner() {}
+public:
+  Owner() = default;
 };
 int main() {
   mut Owner owner{};
@@ -740,8 +742,10 @@ Slot fill() { return Slot::held(Square(3)); }
 struct Referent {
   int value = 7;
   Slot slot = fill();
+public:
+  Referent() = default;
 };
-struct Owner { int marker = 11; };
+struct Owner { int marker = 11;  public: Owner() = default; };
 int main() {
   Referent referent{};
   Owner owner{};
@@ -884,6 +888,7 @@ struct Owner {
 #include <std/memory>
 #include <std/string_view>
 struct Owner {
+  Owner() = default;
   int tag = 22;
   virtual int observe() { return this.tag; }
   ~Owner() {}
@@ -908,6 +913,7 @@ interface Observed {
   int observe();
 };
 struct Owner : public Observed {
+  Owner() = default;
   int tag = 22;
   int observe() override { return this.tag; }
   ~Owner() {}

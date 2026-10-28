@@ -2,6 +2,8 @@
 union Payload { mut int32_t i; mut float f; };
 struct Value {
   Payload data{};
+public:
+  Value() = default;
 };
 int main() {
   Value arr[2] = {};

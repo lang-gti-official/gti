@@ -18,6 +18,8 @@ public:
   }
 
   ~Session() {}
+public:
+  Session() = default;
 };
 
 int main() {

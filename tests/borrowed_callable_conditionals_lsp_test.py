@@ -9,7 +9,7 @@ from lsp_smoke_test import LspSession, lsp_position
 
 
 SOURCE = """class Counter {
-public:
+public: Counter() = default;
   mut int count = 0;
   int operator()(int n) mut { this.count += n; return this.count; }
 };

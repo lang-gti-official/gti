@@ -7,6 +7,8 @@ public:
   value_type identity(value_type value) {
     return value;
   }
+public:
+  NumericTraits() = default;
 };
 
 class Box<T> {

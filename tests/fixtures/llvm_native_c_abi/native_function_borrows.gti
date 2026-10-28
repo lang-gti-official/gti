@@ -6,6 +6,8 @@ int32_t clear(mut Unary& callback) { callback = nullptr; return 31; }
 void replace(mut Unary& callback, Unary replacement) { callback = replacement; }
 struct Cleanup {
   ~Cleanup() { std::println("borrow-cleanup"); }
+public:
+  Cleanup() = default;
 };
 
 int main() {

@@ -3,6 +3,8 @@
 struct Counter {
   mut int value = 41;
   void increment() mut { this.value += 1; }
+public:
+  Counter() = default;
 };
 
 int main() {

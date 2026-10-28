@@ -129,6 +129,8 @@ int main(int argc, char **argv) {
 struct Key {
   bool operator==(Key& other) { return true; }
   bool operator!=(Key& other) { return false; }
+public:
+  Key() = default;
 };
 #macro inspect<T>(T value) requires std::equality_comparable<T> {
   if (value == value) {}
@@ -141,16 +143,16 @@ int main() { Key key{}; inspect(key); return 0; }
 #include <std/meta>
 constexpr bool accepts<T>() { bool result = std::meta::is_integral<T>(); return result; }
 concept integer_type<T> = accepts<T>();
-class Box<integer_type T> {};
+class Box<integer_type T> { public: Box() = default; };
 using IntBox = Box<int>;
-class Holder { public: using Value = Box<int>; };
+class Holder { public: using Value = Box<int>;  public: Holder() = default; };
 int main() { IntBox value{}; return 0; }
 )GTI"),
            "aliases evaluate source predicates after preceding definitions");
   rejected(check(root, directory, "predicate_unused_alias_rejection", R"GTI(
 constexpr bool accepts<T>() { return false; }
 concept rejected_type<T> = accepts<T>();
-class Box<rejected_type T> {};
+class Box<rejected_type T> { public: Box() = default; };
 using Unused = Box<int>;
 int main() { return 0; }
 )GTI"),
@@ -158,7 +160,7 @@ int main() { return 0; }
   rejected(check(root, directory, "predicate_alias_later_definition", R"GTI(
 constexpr bool accepts<T>();
 concept accepted_type<T> = accepts<T>();
-class Box<accepted_type T> {};
+class Box<accepted_type T> { public: Box() = default; };
 using TooSoon = Box<int>;
 constexpr bool accepts<T>() { return true; }
 int main() { return 0; }
@@ -205,8 +207,8 @@ int main() { Cell<int> value{1}; return forward(value) - 1; }
       "symbolic declaration metadata and existing expression proofs compose");
   accepted(check(root, directory, "symbolic_identity_predicate", R"GTI(
 #include <std/meta>
-struct Cell<T> {};
-struct End {};
+struct Cell<T> { public: Cell() = default; };
+struct End { public: End() = default; };
 constexpr bool identities<T>() {
   return std::meta::is_same<Cell<T>&, Cell<T>&>() &&
          !std::meta::is_same<Cell<T>&, End&>() &&
@@ -259,7 +261,7 @@ int main() {
 namespace shapes {
 struct Cell<T> { T value; T& operator*() { return value; } };
 }
-struct shapes::Cell<bool> {};
+struct shapes::Cell<bool> { public: Cell() = default; };
 constexpr bool readable<T>() {
   mut bool found = false;
   constexpr for (auto member : std::meta::lookup_operators_of<T>()) {
@@ -284,9 +286,11 @@ struct Cell {
   mut int value = 1;
   int& operator*() { return this.value; }
   mut int& operator*() mut { return this.value; }
+public:
+  Cell() = default;
 };
-struct Value { int operator*() { return 2; } };
-struct Empty {};
+struct Value { int operator*() { return 2; }  public: Value() = default; };
+struct Empty { public: Empty() = default; };
 T read<I,T>(I& cursor) requires observes<I> { return *cursor; }
 void write<I,T>(mut I& cursor, T value) requires edits<I> { *cursor = value; }
 bool same<I>(I& cursor, int value) requires observes<I> { return *cursor == value; }
@@ -318,8 +322,8 @@ int main() {
 
   rejected(check(root, directory, "inferred_comparison_rechecked", R"GTI(
 concept observes<I> = requires(I& cursor) { { *cursor }; };
-struct Uncomparable {};
-struct Reader { Uncomparable operator*() { return Uncomparable(); } };
+struct Uncomparable { public: Uncomparable() = default; };
+struct Reader { Uncomparable operator*() { return Uncomparable(); }  public: Reader() = default; };
 bool same<I>(I& cursor, int value) requires observes<I> { return *cursor == value; }
 int main() { Reader reader{}; return same(reader, 2) ? 0 : 1; }
 )GTI"),
@@ -329,15 +333,17 @@ int main() { Reader reader{}; return same(reader, 2) ? 0 : 1; }
   accepted(check(root, directory, "iteration_binding_checks", R"GTI(
 #include <std/algorithm>
 #include <std/string_view>
-struct End {};
+struct End { public: End() = default; };
 struct Cursor {
   int operator*() { return 3; }
   void operator++() mut {}
   bool operator!=(End& end) { return false; }
+public:
+  Cursor() = default;
 };
-struct Values { Cursor begin() { return Cursor(); } End end() { return End(); } };
+struct Values { Cursor begin() { return Cursor(); } End end() { return End(); }  public: Values() = default; };
 bool positive(int& value) { return value > 0; }
-struct Count { void operator()(char& value) mut {} };
+struct Count { void operator()(char& value) mut {}  public: Count() = default; };
 concept bound_call<F, R, Result> = requires(mut F& function, R& range) {
   for (auto& element : range) {
     static_assert(requires { { function(element) } -> Result; });
@@ -421,7 +427,7 @@ int sum<R>(R& range) requires ints<R> {
 void clear<R>(mut R& range) requires editable<R> {
   for (mut int& element : range) { element = 0; }
 }
-struct Empty {};
+struct Empty { public: Empty() = default; };
 int main() {
   static_assert(requires(int[3]& range) { for (auto& element : range) {} });
   static_assert(requires(mut int[3]& range) { for (mut int& element : range) {} });
@@ -449,16 +455,22 @@ struct Cursor {
   int& operator*() { return this.value; }
   void operator++() mut {}
   bool operator!=(Cursor& other) { return false; }
+public:
+  Cursor() = default;
 };
 struct WrongSize {
   Cursor begin() { return Cursor(); }
   Cursor end() { return Cursor(); }
   int size() { return 1; }
+public:
+  WrongSize() = default;
 };
 struct MutableSize {
   Cursor begin() { return Cursor(); }
   Cursor end() { return Cursor(); }
   std::size_t size() mut { return std::size_t(1); }
+public:
+  MutableSize() = default;
 };
 int main() {
   static_assert(!(requires(WrongSize& range) { { measured(range) } -> std::size_t; }));
@@ -474,7 +486,7 @@ int main() {
   accepted(
       check(root, directory, "dependent_borrowed_query_result", R"GTI(
 #include <std/meta>
-struct Reader { int value = 1; int& operator*() { return this.value; } };
+struct Reader { int value = 1; int& operator*() { return this.value; }  public: Reader() = default; };
 constexpr bool result_matches<I, R>(std::meta::type<I> owner, std::meta::type<R> result) {
   if constexpr (std::meta::type<R>().is_reference()) {
     return requires(I& input) { { *input } -> R [[borrowed_from(input)]]; };
@@ -497,21 +509,25 @@ int main() { static_assert(inspect<Reader>()); return 0; }
 #include <std/functional>
 #include <std/algorithm>
 #include <std/meta>
-struct End {};
+struct End { public: End() = default; };
 struct Cursor {
   int value = 1;
   int& operator*() { return this.value; }
   void operator++() mut {}
   bool operator!=(End& end) { return false; }
+public:
+  Cursor() = default;
 };
 struct Range {
   Cursor begin() { return Cursor(); }
   End end() { return End(); }
   bool operator[](std::size_t index) { return false; }
+public:
+  Range() = default;
 };
-struct WantsInt { bool operator()(int& value) { return value > 0; } };
-struct WantsBool { bool operator()(bool& value) { return value; } };
-struct Consumes { bool operator()(int& value) && { return true; } };
+struct WantsInt { bool operator()(int& value) { return value > 0; }  public: WantsInt() = default; };
+struct WantsBool { bool operator()(bool& value) { return value; }  public: WantsBool() = default; };
+struct Consumes { bool operator()(int& value) && { return true; }  public: Consumes() = default; };
 int main() {
   static_assert(std::meta::is_array<int[3]>());
   static_assert(std::meta::type<int[0]>().is_array());
@@ -539,25 +555,33 @@ int main() { return pick(3); }
 
   accepted(check(root, directory, "source_sentinel_policy", R"GTI(
 #include <std/iterator>
-struct End { int position = 8; };
+struct End { int position = 8;  public: End() = default; };
 struct Cursor {
   int position = 3;
   bool operator!=(End& end) { return this.position != end.position; }
   std::ptrdiff_t operator-(End& end) { return std::ptrdiff_t(this.position - end.position); }
+public:
+  Cursor() = default;
 };
 struct CopiedEnd {
   bool operator!=(End end) { return true; }
   std::ptrdiff_t operator-(End end) { return std::ptrdiff_t(-1); }
+public:
+  CopiedEnd() = default;
 };
 struct Ambiguous {
   bool operator!=(End& end) { return true; }
   bool operator!=(End end) { return true; }
+public:
+  Ambiguous() = default;
 };
 struct WrongDistance {
   bool operator!=(End& end) { return true; }
   uint64_t operator-(End& end) { return uint64_t(1); }
+public:
+  WrongDistance() = default;
 };
-class Hidden { bool operator!=(End& end) { return true; } };
+class Hidden { bool operator!=(End& end) { return true; }  public: Hidden() = default; };
 bool differs<I, S>(I& position, S& end) requires std::sentinel_for<S, I> {
   return position != end;
 }
@@ -594,7 +618,7 @@ T load_truth<T>(std::atomic<T>& value) requires truth_type<T>() {
   return value.load();
 }
 T increment<T>(T value) requires signed_or_unsigned<T> { return value + 1; }
-struct Record { int value = 0; };
+struct Record { int value = 0;  public: Record() = default; };
 concept public_record<T> = std::meta::is_reflectable<T>();
 uint64_t fields<T>() requires public_record<T> {
   return std::meta::type<T>().field_count();
@@ -627,7 +651,7 @@ int main() { return 0; }
   accepted(check(root, directory, "source_storage_policy", R"(
 #include <std/memory>
 #include <std/meta>
-struct Payload { int value = 0; };
+struct Payload { int value = 0;  public: Payload() = default; };
 struct Borrowed {
   int& value;
   Borrowed(int& source) : value(source) {}
@@ -676,6 +700,8 @@ concept adds_to<L, R, V> = requires(L& left, R& right) {
 struct Count {
   int value = 0;
   int operator+(Count& other) { return this.value + other.value; }
+public:
+  Count() = default;
 };
 V add<L, R, V>(L& left, R& right) requires adds_to<L, R, V> {
   return left + right;
@@ -701,12 +727,16 @@ struct Counter {
   int value = 4;
   int read() { return this.value; }
   int operator+(Counter& other) { return this.value + other.value; }
+public:
+  Counter() = default;
 };
 int read<reads T>(T& value) { return value.read(); }
 int sum<sums T = Counter>(T& left, T& right) { return left + right; }
 class Reader {
 public:
   int read<reads T>(T& value) { return value.read(); }
+public:
+  Reader() = default;
 };
 int main() {
   Counter a{}; Counter b{}; Reader reader{};
@@ -717,7 +747,7 @@ int main() {
 
   rejected(check(root, directory, "inline_source_requirement_rejection", R"(
 concept reads<T> = requires(T& value) { { value.read() } -> int; };
-struct Wrong { bool read() { return true; } };
+struct Wrong { bool read() { return true; }  public: Wrong() = default; };
 int read<reads T>(T& value) { return value.read(); }
 int main() { Wrong value; return read(value); }
 )"),
@@ -733,6 +763,8 @@ struct Key {
   bool operator<=(Key& other) { return this.value <= other.value; }
   bool operator>(Key& other) { return this.value > other.value; }
   bool operator>=(Key& other) { return this.value >= other.value; }
+public:
+  Key() = default;
 };
 bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
 bool before<std::totally_ordered T>(T& a, T& b) { return a < b; }
@@ -749,6 +781,8 @@ struct Contracts {
   unsafe int raw() { return 0; }
   int operator()() && { return 0; }
   int checked<T>(T& value) requires std::integral<T> { return 0; }
+public:
+  Contracts() = default;
 };
 int main() {
   static_assert(!std::meta::method<Contracts, 0>().is_consuming());
@@ -772,6 +806,8 @@ int main() {
 struct ValueParameter {
   bool operator==(ValueParameter other) { return true; }
   bool operator!=(ValueParameter other) { return false; }
+public:
+  ValueParameter() = default;
 };
 bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
 int main() { ValueParameter value{}; return same(value, value) ? 0 : 1; }
@@ -791,6 +827,8 @@ int main() { return 0; }
 class Hidden {
   bool operator==(Hidden& other) { return true; }
   bool operator!=(Hidden& other) { return false; }
+public:
+  Hidden() = default;
 };
 bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
 int main() {
@@ -818,8 +856,10 @@ struct Counter {
   void operator--() mut { this.value -= 1; }
   void operator+=(int amount) mut { this.value += amount; }
   void operator-=(int amount) mut { this.value -= amount; }
+public:
+  Counter() = default;
 };
-struct Inherited : public Counter {};
+struct Inherited : public Counter { public: Inherited() = default; };
 struct CursorBase<T> {
   mut int position = 0;
   int operator*() { return this.position; }
@@ -827,8 +867,10 @@ struct CursorBase<T> {
   void operator--() mut { this.position -= 1; }
   void operator+=(std::ptrdiff_t amount) mut { this.position += int(amount); }
   void operator-=(std::ptrdiff_t amount) mut { this.position -= int(amount); }
+public:
+  CursorBase() = default;
 };
-struct Cursor : public CursorBase<int> {};
+struct Cursor : public CursorBase<int> { public: Cursor() = default; };
 void jump<std::random_access_cursor I>(mut I& iterator, std::ptrdiff_t amount) {
   iterator += amount;
   --iterator;
@@ -860,13 +902,13 @@ void run<F>(F action) requires task<F> { std::move(action)(); }
 void forward<F>(F action) requires std::once_action<F> {
   std::invoke_once(std::move(action));
 }
-struct Once { void operator()() && {} };
-struct Read { void operator()() {} };
-struct Mutable { void operator()() mut {} };
-struct Wrong { int operator()() && { return 1; } };
-struct NeedsArgument { void operator()(int value) {} };
+struct Once { void operator()() && {}  public: Once() = default; };
+struct Read { void operator()() {}  public: Read() = default; };
+struct Mutable { void operator()() mut {}  public: Mutable() = default; };
+struct Wrong { int operator()() && { return 1; }  public: Wrong() = default; };
+struct NeedsArgument { void operator()(int value) {}  public: NeedsArgument() = default; };
 unsafe void unsafe_action() {}
-class Hidden { void operator()() {} };
+class Hidden { void operator()() {}  public: Hidden() = default; };
 int main() {
   run(Once());
   forward(Once());
@@ -885,14 +927,14 @@ int main() {
 
   rejected(check(root, directory, "source_once_action_rejects_arity", R"(
 #include <std/functional>
-struct NeedsArgument { void operator()(int value) {} };
+struct NeedsArgument { void operator()(int value) {}  public: NeedsArgument() = default; };
 int main() { std::invoke_once(NeedsArgument()); return 0; }
 )"),
            "source once_action does not invent a missing argument");
 
   rejected(check(root, directory, "source_once_action_rejects_result", R"(
 #include <std/functional>
-struct Wrong { int operator()() && { return 1; } };
+struct Wrong { int operator()() && { return 1; }  public: Wrong() = default; };
 int main() { std::invoke_once(Wrong()); return 0; }
 )"),
            "source once_action requires exactly void");
@@ -903,10 +945,14 @@ class Parent<T> {
 public:
   virtual int sample() { return 1; }
   T identity(T& value) { return value; }
+public:
+  Parent() = default;
 };
 class Child : public Parent<int> {
 public:
   int sample() override { return 2; }
+public:
+  Child() = default;
 };
 constexpr bool exact_lookup<T>() {
   mut int samples = 0;
@@ -973,6 +1019,8 @@ struct Box {
   mut int& edit() mut { return this.value; }
   int& operator*() { return this.value; }
   mut int& operator[](int index) mut { return this.value; }
+public:
+  Box() = default;
 };
 [[borrowed_from(left)]] int& select(int& left, int& right) { return left; }
 concept readable<C, T> = requires(C& owner) {
@@ -1042,6 +1090,8 @@ struct Cursor {
   mut int& operator*() mut { return this.value; }
   mut int& operator[](std::ptrdiff_t offset) mut { return this.value; }
   int operator()() { return this.value; }
+public:
+  Cursor() = default;
 };
 constexpr bool paired_operator_names() {
   mut bool index = false;
@@ -1085,7 +1135,7 @@ public:
   ~Noisy() {}
   int read() override { return 8; }
 };
-struct Owning { std::string text; };
+struct Owning { std::string text;  public: Owning() = default; };
 int main() {
   static_assert(std::meta::is_polymorphic<Measure>());
   static_assert(std::meta::type<Point>().is_polymorphic());
@@ -1130,6 +1180,8 @@ int main() { return 0; }
 struct Cursor {
   mut int value = 0;
   mut int& operator[](std::ptrdiff_t& offset) mut { return this.value; }
+public:
+  Cursor() = default;
 };
 void require_cursor<I>() requires std::subscripts_to_mut<I, int> {}
 int main() { require_cursor<Cursor>(); return 0; }
@@ -1229,6 +1281,8 @@ public:
   [[borrowed_from(input)]] int& operator()(int& input) { return input; }
   int& operator*() { return this.value; }
   int& operator[](int index) { return this.value; }
+public:
+  Borrower() = default;
 };
 int main() {
   static_assert(!(requires(int& input) { { reference(input) } -> int; }));
@@ -1350,6 +1404,8 @@ class Mutable {
 public:
   int read() mut { return 1; }
   unsafe int raw() { return 2; }
+public:
+  Mutable() = default;
 };
 int main() {
   static_assert(!(requires { { Hidden() } -> Hidden; }));
@@ -1371,6 +1427,8 @@ public:
     static_assert(requires(Vault& other) { { (other.secret()) } -> int; });
     return this.secret();
   }
+public:
+  Vault() = default;
 };
 int main() { Vault value{}; return value.probe() - 7; }
 )"),
@@ -1383,6 +1441,8 @@ class Vault {
   int secret() { return 7; }
 public:
   int probe() { return select<Vault>(); }
+public:
+  Vault() = default;
 };
 int main() { Vault value{}; return value.probe(); }
 )"),
@@ -1406,7 +1466,7 @@ int main() { return twice(4) == 8 && identity(3.0) == 3.0 && sized<int>() == 1 ?
   accepted(check(root, directory, "explicit_query_arguments", R"(
 int number<T>() requires std::integral<T> { return 1; }
 int combine<A, B>(int left, int right) { return left + right; }
-struct Record<T> { int read() { return 1; } };
+struct Record<T> { int read() { return 1; }  public: Record() = default; };
 Record<T> make_record<T>() { return Record<T>(); }
 concept produces_int<T> = requires {
   { number<T>() } -> int;
@@ -1444,6 +1504,8 @@ int invoke_int<F>(F& function, int& argument) requires invokes<F, int, int> {
 }
 struct AddOne {
   int operator()(int& value) { return value + 1; }
+public:
+  AddOne() = default;
 };
 int main() {
   int value = 4;
@@ -1462,7 +1524,7 @@ concept invokes<F, A, R> = requires(F& function, A& argument) {
 int invoke_int<F>(F& function, int& argument) requires invokes<F, int, int> {
   return function(argument);
 }
-struct WrongResult { bool operator()(int& value) { return value != 0; } };
+struct WrongResult { bool operator()(int& value) { return value != 0; }  public: WrongResult() = default; };
 int main() {
   int value = 4;
   WrongResult function{};
@@ -1489,7 +1551,7 @@ int main() {
 
   accepted(
       check(root, directory, "consuming_query_filter", R"(
-struct Once { int operator()(int& value) && { return value; } };
+struct Once { int operator()(int& value) && { return value; }  public: Once() = default; };
 int main() {
   static_assert(requires(Once function, int& argument) {
     { std::move(function)(argument) } -> int;
@@ -1510,7 +1572,7 @@ int borrowed<F>(F& function, int& argument)
     requires owns_invocation<F, int, int> {
   return std::move(function)(argument);
 }
-struct Once { int operator()(int& value) && { return value; } };
+struct Once { int operator()(int& value) && { return value; }  public: Once() = default; };
 int main() {
   Once function{};
   int argument = 3;
@@ -1562,7 +1624,7 @@ concept readable_second<L, R> = requires(L& unused, R& receiver) {
   { receiver.read() } -> int;
 };
 int use<L, R>(L& left, R& right) requires readable_second<L, R> { return 0; }
-struct Missing {};
+struct Missing { public: Missing() = default; };
 int main() { int left = 1; Missing right{}; return use(left, right); }
 )";
   const auto multiOrigin =
@@ -1613,7 +1675,7 @@ int main() { int value = 1; return use(value); }
   const std::string independentResultSource = R"(
 concept reads_as<T, R> = requires(T& receiver) { { (receiver.read()) } -> R; };
 int use<T, R>(T& receiver, R& result) requires reads_as<T, R> { return 0; }
-struct Reader { int read() { return 1; } };
+struct Reader { int read() { return 1; }  public: Reader() = default; };
 int main() { Reader receiver{}; bool result = false; return use(receiver, result); }
 )";
   const auto independentResult = check(
@@ -1683,7 +1745,7 @@ int main() { return selected<int>(); }
 concept raw_read<T> = requires(T& value) {
   { unsafe { value.raw() } } -> int;
 };
-struct Device { unsafe int raw() { return 9; } };
+struct Device { unsafe int raw() { return 9; }  public: Device() = default; };
 int read<T>(T& value) requires raw_read<T> { return unsafe { value.raw() }; }
 int main() { Device value{}; return read(value) == 9 ? 0 : 1; }
 )"),

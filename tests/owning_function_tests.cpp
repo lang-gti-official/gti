@@ -6,7 +6,7 @@ void checkConsumingWrapperSemantics() {
       "#include <std/functional>\n#include <std/memory>\n";
   const auto positive =
       analyzeTrustedPreludeFixture("consuming-wrappers.gti", prefix + R"gti(
-class Increment { public: int operator()(int value) && { return value + 1; } };
+class Increment { public: int operator()(int value) && { return value + 1; }  public: Increment() = default; };
 int main() {
   std::function<int(int) &&> callback{Increment()};
   auto copy = callback.clone();
@@ -330,7 +330,7 @@ int main() {
 
   const auto wrongBorrow = analyzeTrustedPreludeFixture("wrong-borrow.gti", R"(
 #include <std/functional>
-struct MutableTarget { void operator()(mut int& value) { value++; } };
+struct MutableTarget { void operator()(mut int& value) { value++; }  public: MutableTarget() = default; };
 int main() {
   MutableTarget callable{};
   std::function<void(int&)> callback{std::move(callable)};
@@ -354,8 +354,8 @@ int main() { int local = 4; return escape<int&>(local); }
       "a borrowed parameter pack cannot authorize returning a local reference");
 
   const std::string nominalPack = R"(
-struct Nullary { int operator()() { return 4; } };
-struct Binary { int operator()(int value, bool enabled) { return enabled ? value : 0; } };
+struct Nullary { int operator()() { return 4; }  public: Nullary() = default; };
+struct Binary { int operator()(int value, bool enabled) { return enabled ? value : 0; }  public: Binary() = default; };
 int forward<Callable, Args...>(Callable callable, Args... args) {
   return callable(args...);
 }

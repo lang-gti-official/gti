@@ -1,5 +1,5 @@
 mut int* global_slots[2] = {};
-struct Table { mut int* slots[2] = {}; };
+struct Table { mut int* slots[2] = {};  public: Table() = default; };
 struct Cell {
   mut int value;
   Cell(int number) : value(number) {}

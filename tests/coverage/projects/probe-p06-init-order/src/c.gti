@@ -11,6 +11,8 @@ public:
   static int first = trace::record(4);
   static mut int hits = 0;
   static int count() { return hits; }
+public:
+  Registry() = default;
 };
 
 #ifdef OFF

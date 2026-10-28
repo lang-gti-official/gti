@@ -11,9 +11,15 @@ extern "C" {
 }
 }
 class unique_owner<T> {};
-class shared_owner<T> {};
+class shared_owner<T> {
+public:
+  shared_owner() = default;
+};
 // Layout-only capability: no engagement bit and no automatic payload drop.
-class uninitialized_storage<T> {};
+class uninitialized_storage<T> {
+public:
+  uninitialized_storage() = default;
+};
 // An opaque referent identity, never an object GTI source may construct/read.
 class erased_object {};
 erased_object& erase_reference<T>(T& object);
@@ -240,6 +246,7 @@ class unique_ptr<T> {
   mut gti_internal::unique_owner<T> owner = nullptr;
 
 public:
+  unique_ptr() = default;
   constexpr unique_ptr(nullptr_t empty) : owner(nullptr) {}
 
   constexpr unique_ptr(gti_internal::unique_owner<T> value)

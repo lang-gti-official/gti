@@ -45,6 +45,8 @@ struct Counter {
     this.calls++;
     return this.calls;
   }
+public:
+  Counter() = default;
 };
 
 struct Flag {
@@ -56,6 +58,8 @@ struct Flag {
 struct Plain {
   int raw = 9;
   implicit operator int() { return this.raw; }
+public:
+  Plain() = default;
 };
 
 struct Box<T> {
