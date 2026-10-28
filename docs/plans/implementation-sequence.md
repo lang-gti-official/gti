@@ -9004,8 +9004,8 @@ prerequisite checkpoints as full acceptance.
   ownership support regression. General raw layout/lifetime, allocation leases,
   checked borrowing, function pointers and defined failure remain compiler
   mechanisms. Private strong-owner operations are retained but no longer used
-  by public shared ownership. A source aggregate co-allocates payload and control,
-  with generated field rollback and a process lease. The owner explicitly
+  by public shared ownership. One allocation contains independently constructed
+  payload and control objects; source guards and a process lease handle rollback. The owner explicitly
   accepted the measured 24-byte source handle versus the 16-byte private handle
   on 2026-10-28; allocation count falls from two to one. Full platform, failure, corpus and performance
   acceptance remains required before delivery. The owner expanded this run to production weak ownership. Source weak handles
@@ -9014,6 +9014,13 @@ prerequisite checkpoints as full acceptance.
   being validated before integration. On 2026-10-28 the owner also accepted
   documented unavoidable overhead versus the private implementation; correctness
   and platform validation remain mandatory.
+  Full-suite validation exposed a remaining composition prerequisite: an
+  owning local callback rejects a source owner whose payload is not transferable,
+  because raw implementation encapsulation is currently tied to a valid unsafe
+  thread-transfer assertion. A general independent ownership assertion is under
+  owner review. Acceptance requires preserving single-thread-only payloads,
+  rejecting hidden borrowed/raw lifetime dependencies, and proving the rule on
+  unrelated source owners; this must not grant thread capabilities implicitly.
 
 - **State/role:** the requested strong-ownership and borrowing-composition
   slice is implemented in 0.354.0 (2026-09-30), with explicit cloning and

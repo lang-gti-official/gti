@@ -15,10 +15,16 @@ def main():
     fixtures = pathlib.Path(__file__).parent / "coverage/reproducers"
     with tempfile.TemporaryDirectory(prefix="gti-missing-definition-") as directory:
         root = pathlib.Path(directory)
-        for name in ("f7-undefined-user-function", "f7-declaration-only-weak-ptr"):
+        # Keep a generic missing-member witness now that std::weak_ptr is implemented.
+        bodyless = root / "declaration-only-owner.gti"
+        bodyless.write_text("class Observer<T> { public: Observer() = default; "
+                            "bool expired(); }; int main() { Observer<int> value{}; "
+                            "return value.expired() ? 0 : 1; }\n")
+        for source_path in (fixtures / "f7-undefined-user-function.gti", bodyless):
+            name = source_path.stem
             for mode in ([], ["--emit-cpp"]):
                 rejected = subprocess.run(
-                    [compiler, str(fixtures / f"{name}.gti"), *mode, "--cxx",
+                    [compiler, str(source_path), *mode, "--cxx",
                      str(root / "no-native-compiler"), "--progress=never",
                      "--color=never", "-o", str(root / name)],
                     capture_output=True, text=True, timeout=90)

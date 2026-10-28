@@ -5870,6 +5870,7 @@
         "tests/process_resource_policy_test.py",
         "tests/process_provider_target_tests.cpp",
         "tests/fixtures/process_resource_policy.gti",
+        "tests/fixtures/process_resource_policy_limit.gti",
         "examples/libc-region-provider/src/main.gti"
       ]
     },

@@ -561,7 +561,8 @@ add_executable("gti_driver_tests" "${PROJECT_SOURCE_DIR}/tests/driver_tests.cpp"
 target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
 add_test(NAME driver_pipeline COMMAND gti_driver_tests)
 add_executable(gti_llvm_instrumented_source llvm_instrumented_source.cpp)
-target_link_libraries(gti_llvm_instrumented_source PRIVATE gti_driver)
+target_include_directories(gti_llvm_instrumented_source SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(gti_llvm_instrumented_source PRIVATE gti_driver gti_llvm_backend)
 add_executable(gti_llvm_cache_tests llvm_cache_tests.cpp)
 target_link_libraries(gti_llvm_cache_tests PRIVATE gti_driver)
 target_compile_definitions(gti_llvm_cache_tests PRIVATE
@@ -5503,6 +5504,8 @@ if(Python3_Interpreter_FOUND)
                 "$<TARGET_FILE:gti>"
                 "${PROJECT_SOURCE_DIR}/tests/fixtures/${fixture}.gti"
                 "${CMAKE_CXX_COMPILER}"
+                "$<TARGET_FILE:gti_llvm_instrumented_source>"
+                "${LLVM_TOOLS_BINARY_DIR}/clang++"
       )
       set_tests_properties(${fixture}_tsan PROPERTIES TIMEOUT 300)
     endforeach()

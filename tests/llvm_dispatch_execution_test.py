@@ -1076,8 +1076,13 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
         if cpp_limitation and endpoint.backend == "cpp":
             match = re.search(r"backend diagnostics saved at ([^\n]+)", result.stderr)
             detail = Path(match[1]).read_text(encoding="utf-8") if match else ""
-            if (result.compile_returncode != 65 or "GTI-B0001" not in result.stderr
-                    or cpp_limitation not in detail):
+            if cpp_limitation == "wrapping atomic read-modify-write":
+                supported_rejection = ("GTI-B0003" in result.stderr
+                                       and cpp_limitation in result.stderr)
+            else:
+                supported_rejection = ("GTI-B0001" in result.stderr
+                                       and cpp_limitation in detail)
+            if result.compile_returncode != 65 or not supported_rejection:
                 raise AssertionError(f"{name}: C++ comparator status changed; review coverage: {result}")
             print(f"{name} {endpoint.standard}: C++ comparator REJECTED (not execution evidence)", flush=True)
             print(f"command: {result.command}\n{result.stderr}\n{detail}", flush=True)
@@ -2644,6 +2649,12 @@ def main() -> None:
                     case = work / f"{name}-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard or 'native'}"
                     result = execute(gti, root, case, source, endpoint, env,
                                      concurrent=name in CONCURRENT_CASES)
+                    if (endpoint.backend == "cpp" and specification.cpp_limitation
+                            == "wrapping atomic read-modify-write"):
+                        if (result.compile_returncode != 65 or "GTI-B0003" not in result.stderr
+                                or specification.cpp_limitation not in result.stderr):
+                            raise AssertionError(f"{name}: C++ wrapping rejection changed: {result}")
+                        continue
                     divergence = specification.cpp_divergence
                     if divergence and endpoint.backend == "cpp":
                         if (result.error or result.returncode != divergence[0]

@@ -19,10 +19,11 @@ struct Owner {
 };
 
 interface View { int read(); void write(int value) mut; };
-class Abstract { public: virtual int other() = 0; };
+class Abstract { public: Abstract() = default; virtual int other() = 0; };
 class Concrete : public Abstract, public View {
   mut int value = 17;
 public:
+  Concrete() = default;
   int read() override { return this.value; }
   void write(int value) mut override { this.value = value; }
   int other() override { return this.value + 1; }
