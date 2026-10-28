@@ -1,0 +1,21 @@
+#include <std/memory>
+#include <std/vector>
+
+// Known-failing control (docs/architecture/mir.md, projected reference
+// bindings). A mutable owner selects the mutable `operator->` step, whose
+// call-result loan a read-only binding retains; a second read of the owner
+// while that binding lives then conflicts in MIR although semantics accepts
+// it. This must keep failing with exactly this internal error until the open
+// item is resolved.
+class Dir {
+public:
+  mut std::vector<int32_t> items = std::vector<int32_t>();
+  Dir() = default;
+};
+
+int main() {
+  mut std::unique_ptr<Dir> root = std::make_unique<Dir>();
+  std::vector<int32_t>& viewed = root->items;
+  std::vector<int32_t>& starred = (*root).items;
+  return viewed.size() + starred.size() == std::size_t(0) ? 0 : 1;
+}

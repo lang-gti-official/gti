@@ -12178,6 +12178,42 @@ private:
         }
       }
 
+      // A field or element of a call's returned reference is a subobject of
+      // that call's checked referent, whether the call is a method, an
+      // overloaded `operator->` or an overloaded `operator*`. Retain the
+      // root call-result loan, as a reference bound to the returned
+      // reference itself does, and keep the projected place as the address.
+      // A Local loan on the semantic origin could not name that address, and
+      // one on the projected place would leave the call's owner unborrowed.
+      // Through a reference carrier the call reborrows the same semantic
+      // parent the binding names, so it retains that link too.
+      if (existing == 0)
+        if (const MirPlace *projected =
+                output.findPlace(placeForValue(valueId));
+            projected != nullptr && projected->root == MirPlaceRootKind::Loan &&
+            !projected->projections.empty() &&
+            std::all_of(projected->projections.begin(),
+                        projected->projections.end(),
+                        [](const MirPlaceProjection &projection) {
+                          return projection.kind == MirProjectionKind::Field ||
+                                 projection.kind == MirProjectionKind::Index;
+                        })) {
+          const MirLoan *selected = output.findLoan(projected->loan);
+          if (selected != nullptr &&
+              selected->kind == MirLoanKind::CallResult &&
+              selected->parent == parent && selected->carriers.empty() &&
+              !selected->escapes && selected->producedBy != 0 &&
+              loanIsActive(scopes, selected->id) &&
+              (desired->access == AccessMode::ReadOnly ||
+               selected->access == AccessMode::Mutable)) {
+            recordLoanIdentity(selected->id, *desired, binding);
+            return {.kind = MirOperandKind::Loan,
+                    .place = projected->id,
+                    .loan = selected->id,
+                    .type = value->info.type};
+          }
+        }
+
       // Prefer the expression's concrete MIR place when it carries the exact
       // semantic loan identity. In particular, a dynamic fixed-array element
       // records its index as a MIR value while the semantic PlaceKey records

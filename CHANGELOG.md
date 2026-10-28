@@ -9,6 +9,21 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.484.5 - References to fields of returned references
+
+- A reference bound to a field of a call's returned reference now compiles
+  instead of failing with the internal error `GTI-B0001`. This covers
+  `for (auto& x : root->items)` with `root` a `std::unique_ptr` held locally or
+  by reference, recursive folds over child smart pointers, and
+  `std::vector<int32_t>& v = root->items`, `(*root).items` or
+  `holder.get().items`. A mutable range such as
+  `for (mut auto& x : dir->items)` through a `mut std::unique_ptr<Dir>&`
+  parameter builds on the native backend; the C++ backend still reports
+  `GTI-B0001` for it.
+- Two read-only references bound through the same mutable smart pointer while
+  both live, such as `root->items` and `(*root).items` on a `mut` root, still
+  report `GTI-B0001`.
+
 ## 0.484.4 - Native virtual text relays, returned siblings and exchanges
 
 - The native backend now builds these programs, which previously failed with

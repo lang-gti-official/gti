@@ -3801,6 +3801,37 @@ dispatch or imply a persistent worker pool.
   `r = make(7);`, still reports `GTI-B0001` for a source function and a
   lambda alike when the success class has no default constructor.
 
+## Projected reference bindings (0.484.5)
+
+- **Defects.** A reference bound to a field of a call's returned reference
+  failed MIR verification with `GTI-B0001` ("instruction has an invalid shape
+  or reference") on both backends: `for (auto& x : root->items)` with `root` a
+  `std::unique_ptr<Dir>` local or reference parameter, recursive n-ary folds
+  over child smart pointers, `std::vector<int32_t>& v = root->items`,
+  `(*root).items` and `holder.get().items`.
+- **Cause and rule.** Lowering gave the binding a Local loan on the projected
+  place, with no parent, or on the coarser semantic owner. Neither retains the
+  call's referent, so `referenceAddressRetainsLoan` refused the
+  initialization. The binding now retains the call's result loan itself, with
+  the projected place as its address (`mir.md`). Semantics, the verifier and
+  both backends are unchanged.
+- **Regression tests.** `projected_reference_bindings_runtime` runs
+  `projected_reference_bindings.gti` under C++20 and natively at O0 and O2. It
+  covers a local and a reference-parameter `std::unique_ptr`, `operator*`, an
+  accessor, a user-defined pointer-like class and an n-ary fold.
+  `projected_reference_mutation.gti`, a mutable range through a
+  `mut std::unique_ptr<Dir>&` parameter, runs natively at O0 and O2.
+- **Recorded C++ limitation.** The C++ backend rejects
+  `projected_reference_mutation.gti` with `GTI-B0001` ("outside the complete
+  C++ text vocabulary"): its vocabulary lacks the retained call-result loan
+  below a reference parameter's entry loan. That program failed in MIR before
+  on both backends; under the bug-fix-only C++ policy the test pins the C++
+  failure and requires native execution instead.
+- **Out of scope.** A mutable owner's second read while a read-only binding
+  through its mutable `operator->` step lives still fails in MIR, pinned by
+  `projected_reference_mut_owner_control.gti` with its exact message; see the
+  open item in `mir.md`.
+
 ## Expected returns across scope cleanup (0.402.4)
 
 - **Defects.** Three verified programs stopped at the C++ backend with

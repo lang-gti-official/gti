@@ -1989,6 +1989,35 @@ loan's pointer local; re-borrowing the provenance place would re-point the
 published reference at the receiver's storage instead of the returned
 element.
 
+A reference bound to a field or element of a call's returned reference, such
+as `std::vector<int32_t>& v = holder.get().items`, `root->items` or
+`(*root).items` through an overloaded `operator->` or `operator*`, or the hidden
+range of `for (auto& x : root->items)`, retains that call's result loan, as a
+reference bound to the returned reference itself does. Its address is the
+projected place rooted at that loan. Lowering does this when the place's only
+projections are fields and elements and the call's loan has the binding's
+semantic parent: none for a local owner, the entry loan of a reference
+parameter such as `std::unique_ptr<Dir>&`. A Local loan on the projected
+place would leave the call's owner unborrowed, and one on the semantic origin
+could not name the address; `referenceAddressRetainsLoan` rejects both.
+
+Open: a mutable owner selects the mutable `operator->` or `operator*` step, so
+a read-only binding through it retains a mutable call-result loan. Semantics
+treats that call as transient and gives the binding a read-only loan, so a
+second read of the owner while the binding lives, as in
+`std::vector<int32_t>& a = root->items; std::vector<int32_t>& b =
+(*root).items;` on a `mut` root, still fails in MIR with `read of a place
+conflicts with active mutable loan`. `projected_reference_mut_owner_control`
+pins that failure. Two resolutions are open:
+- (a) semantics selects the read-only step when the result is only read, as
+  an ordinary accessor's overload already follows the binding's access. This
+  changes the documented rule that a mutable object selects the mutable step.
+- (b) a read-only binding takes a parallel read-only loan on the call's owner
+  while the transient mutable call result ends with its full-expression. That
+  requires the parallel-loan rule of `referenceAddressRetainsLoan`, which now
+  admits only a read-only call result, to admit a mutable one when the
+  retained loan and the bound reference are read-only.
+
 A reference to a borrowed carrier, of the carrier's own type or a base or
 interface type, is initialized from a loan on the carrier object, as a `Borrow`
 of a same-class reference publishes it. `verifyMirBorrowProducers` rejects one
