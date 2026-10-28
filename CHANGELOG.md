@@ -9,7 +9,9 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.486.1 - Native function-pointer fields, base returns and mutex text witnesses
+## 0.486.1 - Native global copies, function-pointer fields, base returns and nested holders
+
+### Native function-pointer fields, base returns and mutex text witnesses
 
 - The native backend now builds these programs, which previously failed with
   `GTI-B0003`, and matches the C++ backend:
@@ -20,7 +22,7 @@ for what minor and patch releases mean.
   - text built with `std::assume_string_view` or `std::assume_c_string` whose
     owner is a `std::mutex`.
 
-## 0.486.1 - Native copies of global objects and nested holder borrows
+### Native copies of global objects and nested holder borrows
 
 - The native backend now copies objects of derived, polymorphic and
   interface-implementing classes out of global storage and out of fields.
