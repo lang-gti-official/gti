@@ -4741,7 +4741,18 @@ are rejected, not silently approximated.
 The machine selects generic CPU features and PIC relocations, verifies the
 sealed scalar allocation sizes, ABI/preferred alignment, pointer width and
 endianness, then supplies the module's triple/data layout. Later verification
-rejects mutations of either. O0/O1/O2/O3 map explicitly to LLVM's corresponding
+rejects mutations of either. Before optimization every defined body is tuned
+for one processor per target, `tuneCpu`: macOS arm64 tunes for `apple-m1`, the
+platform C++ compiler's default and the oldest Apple silicon macOS supports;
+Linux x86_64 keeps the machine CPU. Tuning steers only cost-model and
+scheduling decisions (vectorizer interleaving, unrolling, instruction
+selection costs). Effective features stay at the generic baseline, so no body
+can execute an instruction the generic target lacks; M1's LSE atomics were
+measured slower than the baseline sequences for uncontended scalar atomics.
+The tuning processor is part of the LLVM object cache identity. On macOS arm64
+it vectorizes counted loops with M1's interleaving, and, as clang does by
+default, it partially unrolls short latency-bound recurrences, which costs
+those loops a few percent. O0/O1/O2/O3 map explicitly to LLVM's corresponding
 module pipeline and target code-generation level. Floating contraction is
 disabled and no fast-math assumptions are supplied. The module is verified
 before and after optimization; LLVM error diagnostics prevent publication and
