@@ -178,17 +178,51 @@ void Failures::copyChannel(llvm::IRBuilder<> &ir, llvm::Value *destination,
                    session.dataLayout().getTypeAllocSize(type).getFixedValue());
 }
 
+llvm::Function *Failures::originator() {
+  if (originator_)
+    return originator_;
+  auto &c = session.context();
+  auto *pointer = session.layouts().pointer();
+  auto *i16 = llvm::Type::getInt16Ty(c);
+  auto *i32 = llvm::Type::getInt32Ty(c);
+  auto *function = llvm::Function::Create(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(c),
+                              {pointer, i16, i16, i32, pointer}, false),
+      llvm::GlobalValue::InternalLinkage, "__gti_failure_originate_v1",
+      session.module());
+  // Every checked operation in a body originates its record on a cold edge.
+  // Building the record here keeps its fixed-size fill (the zeroed message
+  // buffer and the folded artifact identity) out of every caller, so a
+  // checked scalar helper stays small enough for ordinary inlining.
+  function->addFnAttr(llvm::Attribute::Cold);
+  function->addFnAttr(llvm::Attribute::NoInline);
+  function->addFnAttr(llvm::Attribute::NoUnwind);
+  originator_ = function;
+  llvm::IRBuilder<> ir(llvm::BasicBlock::Create(c, "entry", function));
+  auto *channel = function->getArg(0);
+  auto *origin = function->getArg(4);
+  auto *type = session.abi().failureRecord();
+  llvm::Value *value = llvm::Constant::getNullValue(type);
+  value = ir.CreateInsertValue(value, ir.getInt32(2), 0);
+  value = ir.CreateInsertValue(value, function->getArg(1), 1);
+  value = ir.CreateInsertValue(value, function->getArg(2), 2);
+  value = ir.CreateInsertValue(value, function->getArg(3), 3);
+  auto *identityType = type->getElementType(5);
+  auto *identity = ir.CreateLoad(
+      identityType,
+      ir.CreateStructGEP(session.abi().failureArtifact(), origin, 2));
+  value = ir.CreateInsertValue(value, identity, 5);
+  ir.CreateStore(value, record(ir, channel));
+  ir.CreateStore(
+      origin, ir.CreateStructGEP(session.abi().failureChannel(), channel, 1));
+  ir.CreateRetVoid();
+  return function;
+}
+
 void Failures::originate(llvm::IRBuilder<> &ir, llvm::Value *channel,
                          const MirInstruction &instruction,
                          DefinedFailureOutcome outcome, llvm::Value *callerSite,
                          llvm::Value *callerArtifact, llvm::Value *message) {
-  auto *type = session.abi().failureRecord();
-  llvm::Value *value = llvm::Constant::getNullValue(type);
-  value = ir.CreateInsertValue(value, ir.getInt32(2), 0);
-  value = ir.CreateInsertValue(
-      value, ir.getInt16(static_cast<unsigned>(outcome.code)), 1);
-  value = ir.CreateInsertValue(
-      value, ir.getInt16(static_cast<unsigned>(outcome.detail)), 2);
   FailureSiteId site = 0;
   for (std::size_t index = 0;
        index < instruction.definedFailure.localOrigins.size(); ++index)
@@ -208,15 +242,11 @@ void Failures::originate(llvm::IRBuilder<> &ir, llvm::Value *channel,
     if (!siteValue || !origin)
       throw std::logic_error("LLVM tracked failure lost caller attribution");
   }
-  value = ir.CreateInsertValue(value, siteValue, 3);
-  auto *identityType = type->getElementType(5);
-  auto *identity = ir.CreateLoad(
-      identityType,
-      ir.CreateStructGEP(session.abi().failureArtifact(), origin, 2));
-  value = ir.CreateInsertValue(value, identity, 5);
-  ir.CreateStore(value, record(ir, channel));
-  ir.CreateStore(
-      origin, ir.CreateStructGEP(session.abi().failureChannel(), channel, 1));
+  auto *call = ir.CreateCall(
+      originator(),
+      {channel, ir.getInt16(static_cast<unsigned>(outcome.code)),
+       ir.getInt16(static_cast<unsigned>(outcome.detail)), siteValue, origin});
+  call->setDoesNotThrow();
   if (message) {
     ir.CreateCall(declareRuntimeService(session, RuntimeService::CapturePanic),
                   {record(ir, channel), ir.CreateExtractValue(message, 0),

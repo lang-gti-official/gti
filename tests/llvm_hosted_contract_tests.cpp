@@ -899,9 +899,9 @@ int main() {
         issues);
     require(admitted && planLlvmAdmission(*admitted).admitted(),
             "text construction admits a complete polymorphic class witness");
-    // An interface view of the owner is outside the witness boundary.
-    const auto unsupported =
-        analyze("unsupported-text-owner-layout.gti", std::string(R"(
+    // An interface view of the owner is an address too: the selected view
+    // carries the owner's dispatch metadata, never its bytes.
+    const auto viewed = analyze("interface-text-owner.gti", std::string(R"(
 #include <std/memory>
 #include <std/string_view>
 interface Observed {
@@ -916,16 +916,39 @@ int main() {
   Owner concrete{};
   Observed& owner = concrete;
   char bytes[3] = {'a', '\0', 'b'};
-)") + type + " result = unsafe { " + construct + " }; return " +
-                                                         use + "; }");
+)") + type + " result = unsafe { " + construct + " }; return " + use +
+                                                                "; }");
+    require(viewed.canGenerateCode(),
+            "interface-view text witness is valid source");
+    const auto viewedProgram = verifiedLoweredProgram(
+        gti_test::lowerProgram(viewed, viewed.mir, viewed.mir), issues);
+    require(viewedProgram && planLlvmAdmission(*viewedProgram).admitted(),
+            "text construction admits an interface view of its owner");
+    // Mutex storage is outside the witness boundary.
+    FrontendOptions concurrent = options;
+    concurrent.target.executionProfile = ExecutionProfile::Concurrent;
+    concurrent.target.runtimeCapabilities.threads = true;
+    const auto unsupported = Frontend(concurrent)
+                                 .analyze("unsupported-text-owner-layout.gti",
+                                          std::string(R"(
+#include <std/memory>
+#include <std/mutex>
+#include <std/string_view>
+int main() {
+  std::mutex<int> owner{1};
+  char bytes[3] = {'a', '\0', 'b'};
+)") + type + " result = unsafe { " + construct +
+                                              " }; return " + use + "; }",
+                                          {repository / "stdlib/prelude.gti"},
+                                          {}, {repository / "stdlib"});
     require(unsupported.canGenerateCode(),
             "unsupported text witness layout is valid source");
     const auto pending = verifiedLoweredProgram(
-        gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir),
+        gti_test::lowerProgram(unsupported, unsupported.mir, unsupported.mir,
+                               concurrent.target),
         issues);
-    require(
-        pending && !planLlvmAdmission(*pending).admitted(),
-        "text construction does not admit an interface view as its witness");
+    require(pending && !planLlvmAdmission(*pending).admitted(),
+            "text construction does not admit mutex storage as its witness");
   }
 }
 

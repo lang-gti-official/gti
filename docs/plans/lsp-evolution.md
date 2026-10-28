@@ -222,6 +222,12 @@ or distributed infrastructure.
 
 ## Incomplete Source
 
+The cross-phase [diagnostic-quality campaign](diagnostic-quality.md) owns
+producer evidence, causal recovery, repair applicability and explanation
+acceptance (Q-DIAG-02 through Q-DIAG-08). This plan owns editor scheduling and
+snapshot/protocol integration; it must not create a second semantic diagnostic
+engine. Existing explanation and repair support remains the baseline.
+
 Continue parser recovery and completion-marker analysis. Represent unknown/error
 facts honestly. Do not use an AST with changed source offsets, and do not grow a
 second declaration parser in semantic-token or completion handlers. Bounded

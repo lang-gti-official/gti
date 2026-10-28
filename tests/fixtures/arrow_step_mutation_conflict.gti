@@ -1,0 +1,15 @@
+// A mutation through `->` still selects the `mut` step, which conflicts with
+// a live read-only reference through the same owner (GTI-S2017).
+#include <std/memory>
+#include <std/vector>
+class Dir {
+public:
+  mut std::vector<int32_t> items = std::vector<int32_t>();
+  Dir() = default;
+};
+int main() {
+  mut std::unique_ptr<Dir> root = std::make_unique<Dir>();
+  std::vector<int32_t>& viewed = root->items;
+  root->items.push_back(1);
+  return viewed.size() == std::size_t(1) ? 0 : 1;
+}

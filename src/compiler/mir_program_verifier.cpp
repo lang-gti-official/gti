@@ -1318,9 +1318,15 @@ ownedTransportFailure(const MirProgram &program,
         return "owned pack transport lacks its concrete element traits";
       traits = *elementTraits;
     }
+    // Borrowed state may enter an owned value only when the function's
+    // checked return summary carries it back out through that very value.
+    const bool returnedBorrows =
+        instance.returnType == callableType &&
+        instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
+        instance.returnBorrowParameter == parameter.parameterIndex;
     if (place == nullptr || (!packElement && place->type != callableType) ||
         !place->initiallyAvailable || !traits.movable ||
-        traits.containsBorrowedState)
+        (traits.containsBorrowedState && !returnedBorrows))
       return "owned value transport lacks an available owning parameter place";
     if (traits.drop == DropKind::Lexical &&
         std::count_if(
@@ -2192,6 +2198,34 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           // This is a synchronous transfer of a fresh environment, not an
           // escaping owned callback. Its capture group is independently checked
           // at construction and remains live through the exact confined call.
+          // A confined callable may also return as the call's exact result,
+          // as `for_each` returns its visitor: the result is the same closure
+          // type, borrowed from this very argument, so it carries the same
+          // capture group out under the call's own result loan, exactly as a
+          // borrow-carrying class passed by value and returned does.
+          // An owned parameter that its callee returns by value, explicitly
+          // moved or not, leaves the call the same way: the transported value
+          // is the result and its borrows are the result loan's borrows.
+          const bool exactReturn =
+              functionTarget &&
+              contract != functionTarget->callableParameters.end() &&
+              contract->ownedTransport &&
+              (contract->ownedTransport->kind ==
+                   CallableOwnedTransportKind::ExactReturn ||
+               (contract->ownedTransport->kind ==
+                    CallableOwnedTransportKind::Value &&
+                contract->boundary == CallableBoundary::Owned)) &&
+              contract->ownedTransport->destinationType ==
+                  argumentInput->info.type &&
+              functionTarget->returnType == argumentInput->info.type &&
+              functionTarget->returnBorrowOrigin ==
+                  BorrowOriginKind::Argument &&
+              functionTarget->returnBorrowParameter == index &&
+              instruction.result && instruction.loan &&
+              instruction.info.type == argumentInput->info.type &&
+              instruction.info.category == ValueCategory::Value &&
+              instruction.borrowOrigin == BorrowOriginKind::Argument &&
+              instruction.borrowArgument == index;
           if (!functionTarget ||
               functionTarget->definitionKind != MirDefinitionKind::Source ||
               functionTarget->linkage != LanguageLinkage::Gti ||
@@ -2199,11 +2233,13 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               functionTarget->parameterTypes[index] !=
                   argumentInput->info.type ||
               contract == functionTarget->callableParameters.end() ||
-              contract->boundary != CallableBoundary::Confined ||
-              contract->ownedTransport ||
-              functionTarget->returnType.kind == SemanticType::Reference ||
-              functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
-              instruction.info.traits.containsBorrowedState) {
+              (contract->boundary != CallableBoundary::Confined &&
+               !exactReturn) ||
+              (!exactReturn &&
+               (contract->ownedTransport ||
+                functionTarget->returnType.kind == SemanticType::Reference ||
+                functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
+                instruction.info.traits.containsBorrowedState))) {
             return verificationFailure(
                 body, owner,
                 "fresh borrowing callable transfer requires its exact confined "
@@ -2997,6 +3033,34 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                   selected->projections.size());
           return false;
         });
+      }
+      // A place behind one of the carrier's stored reference fields depends
+      // only on that field's referent, never on the carrier's other owners.
+      // Name the selected place itself; canonicalization resolves it through
+      // the exact field to that referent.
+      if (selected != nullptr && result.size() > 1 &&
+          selected->root == MirPlaceRootKind::Binding) {
+        std::size_t prefix = 0;
+        while (prefix < selected->projections.size() &&
+               selected->projections[prefix].kind == MirProjectionKind::Field)
+          ++prefix;
+        if (prefix != 0 && prefix < selected->projections.size() &&
+            selected->projections[prefix].kind ==
+                MirProjectionKind::Dereference) {
+          const auto field = std::find_if(
+              result.begin(), result.end(), [&](const auto &dependency) {
+                return dependency.designatedFields.size() == prefix &&
+                       std::equal(dependency.designatedFields.begin(),
+                                  dependency.designatedFields.end(),
+                                  selected->projections.begin(),
+                                  [](SymbolId designated,
+                                     const MirPlaceProjection &projection) {
+                                    return projection.field == designated;
+                                  });
+              });
+          if (field != result.end())
+            return {{.source = selected->id, .access = field->access}};
+        }
       }
       return result;
     }
@@ -4408,6 +4472,20 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             }
           }
         }
+        // A single dependency that names its carrier's one stored reference
+        // also covers an input that is the subobject holding that reference:
+        // the input's own sole path is the tail of the carrier's path.
+        if (selected == sources.end() && sources.size() == 1 &&
+            inputPaths.size() == 1 && !inputPaths.front().fields.empty() &&
+            inputPaths.front().fields.size() <
+                sources.front().designatedFields.size() &&
+            std::equal(inputPaths.front().fields.rbegin(),
+                       inputPaths.front().fields.rend(),
+                       sources.front().designatedFields.rbegin()) &&
+            prefixOf(inputPaths.front().fields, mapping.sourceFields)) {
+          selected = sources.begin();
+          prefixLength = inputPaths.front().fields.size();
+        }
         if (selected == sources.end() || selected->source == 0)
           return verificationFailure(
               body, owner, "returned field loses its selected input field",
@@ -4646,7 +4724,36 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             "place rather than flattening it into its dependency origin",
             block.id, instruction.id);
       }
-      if (!exactSource && !sameCanonicalPlace(expectedPlace, actualPlace)) {
+      // A text view returned by value from a formal's text field names that
+      // field of the selected source (L-OWN-02), as one relayed from the
+      // receiver's text field does: the function's field contract tracks the
+      // field, not the whole referent.
+      const auto selectedTextField = [&] {
+        const auto text = [](const SemanticType &type) {
+          return type.kind == SemanticType::StringView ||
+                 type.kind == SemanticType::CString;
+        };
+        const auto *field = body.findPlace(loan->source);
+        if (field == nullptr || !text(field->type) ||
+            !text(instruction.info.type) ||
+            instruction.info.category != ValueCategory::Value ||
+            !instruction.borrowFields.empty() || field->projections.empty() ||
+            field->projections.back().kind != MirProjectionKind::Field ||
+            actualPlace.projections.empty() ||
+            actualPlace.projections.back().kind != MirProjectionKind::Field)
+          return false;
+        CanonicalPlace base = actualPlace;
+        base.projections.pop_back();
+        if (sameCanonicalPlace(expectedPlace, base))
+          return true;
+        if (base.projections.empty() ||
+            base.projections.back().kind != MirProjectionKind::Dereference)
+          return false;
+        base.projections.pop_back();
+        return sameCanonicalPlace(expectedPlace, base);
+      };
+      if (!exactSource && !sameCanonicalPlace(expectedPlace, actualPlace) &&
+          !selectedTextField()) {
         const std::string expected =
             expectedSource ? std::to_string(*expectedSource) : "unresolved";
         return verificationFailure(
@@ -6741,6 +6848,56 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           !returned->info.traits.containsBorrowedState &&
           definition->result == returned->id && !definition->loan &&
           !definition->info.traits.containsBorrowedState;
+      // So is a by-value text relay of the declared field of a by-value
+      // formal (L-OWN-02): its argument is the exact load of that field,
+      // which the caller's dependency covers as it covers the load itself,
+      // and its own loan on the formal's local copy does not escape.
+      const bool relayedFormalField = [&] {
+        if (!textFieldResult || !definition || !returned ||
+            definition->kind != MirInstructionKind::Call ||
+            definition->result != returned->id ||
+            returned->info.type != instance.returnType ||
+            definition->borrowOrigin != BorrowOriginKind::Argument ||
+            !definition->borrowFields.empty() ||
+            definition->borrowArgument >= definition->operands.size() ||
+            instance.returnBorrowFields.size() != 1 ||
+            instance.returnBorrowFields.front().sourceFields.size() != 1 ||
+            instance.returnBorrowParameter >=
+                instance.parameterBindings.size() ||
+            instance.returnBorrowParameter >= instance.parameterTypes.size() ||
+            instance.parameterTypes[instance.returnBorrowParameter].kind !=
+                SemanticType::Class)
+          return false;
+        // The call's own loan, if any, names the formal's local copy and
+        // stays in the body; it never escapes as this return's dependency.
+        if (definition->loan) {
+          const auto *own = body.findLoan(*definition->loan);
+          if (own == nullptr || own->escapes ||
+              own->kind == MirLoanKind::Return)
+            return false;
+        }
+        const MirOperand *input =
+            &definition->operands[definition->borrowArgument];
+        for (std::size_t depth = 0;
+             depth < 2 && input->kind == MirOperandKind::Value; ++depth) {
+          const auto *stage = definitionFor(body, input->value);
+          if (stage == nullptr || stage->operands.size() != 1 ||
+              (stage->kind != MirInstructionKind::CallInput &&
+               stage->kind != MirInstructionKind::Load))
+            return false;
+          input = &stage->operands.front();
+        }
+        const auto *place = body.findPlace(input->place);
+        return input->kind == MirOperandKind::Copy && place != nullptr &&
+               place->root == MirPlaceRootKind::Binding &&
+               place->binding ==
+                   instance.parameterBindings[instance.returnBorrowParameter] &&
+               place->projections.size() == 1 &&
+               place->projections.front().kind == MirProjectionKind::Field &&
+               place->projections.front().field ==
+                   instance.returnBorrowFields.front().sourceFields.front() &&
+               place->type == instance.returnType;
+      }();
       // A dependent text result may return an ownerless value of its type
       // on another path, as a view relay may return a literal: a
       // construction or call that publishes no text and carries no loan,
@@ -6788,7 +6945,8 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           !definition->dependentTextPublication &&
           !definition->info.traits.containsBorrowedState;
       if (independentTextLiteral || independentStoredText ||
-          ownerlessFieldText || ownerlessDependentResult || ownerlessTextCall ||
+          ownerlessFieldText || relayedFormalField ||
+          ownerlessDependentResult || ownerlessTextCall ||
           ((instance.returnType.kind == SemanticType::Enum ||
             instance.returnType.kind == SemanticType::Class) &&
            emptyReturn && emptyReturn(block.id))) {
@@ -19594,9 +19752,12 @@ verifyMirProgramContracts(const MirProgram &program) {
                      SemanticType::Unknown ||
                  !parameter.signatures.empty() ||
                  !parameter.forwardings.empty() ||
+                 // A mutable owned value leaves as a value or as the exact
+                 // result; either way the caller receives what it owned.
                  (parameter.access != AccessMode::ReadOnly &&
                   parameter.ownedTransport->kind !=
-                      CallableOwnedTransportKind::Value)) {
+                      CallableOwnedTransportKind::Value &&
+                  !exactReturn)) {
         rejectCallableContract("owned parameter contract is invalid");
       }
       if (parameter.ownedTransport) {

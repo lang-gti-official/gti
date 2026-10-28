@@ -1,0 +1,114 @@
+#include <std/string>
+#include <std/span>
+#include <std/vector>
+
+// A call that selects a reference, a span or a record reference out of
+// hierarchy storage it borrows returns its own checked result, whether it is
+// a static, virtual or interface call and whether it borrows the storage as
+// its receiver or as an argument. Relaying that result keeps the storage
+// borrowed exactly as the selecting call does, and each caller uses it while
+// its owner still lives.
+class Record {
+public:
+  std::string name;
+  Record(std::string_view name) : name(name) {}
+};
+
+class Base {
+public:
+  mut int32_t value;
+  mut int32_t spare;
+  mut std::vector<int32_t> values;
+  Record record;
+  Record other;
+  Base(int32_t value)
+      : value(value), spare(value * 10),
+        record(Record("base record")), other(Record("other record")) {}
+  virtual int32_t& slot() { return this.value; }
+  virtual mut int32_t& slot_mut() mut { return this.value; }
+  virtual std::span<int32_t> view() { return this.values.as_span(); }
+  virtual Record& entry() { return this.record; }
+};
+
+// Each override selects different storage than the base member.
+class Derived : public Base {
+public:
+  Derived(int32_t value) : Base(value) {}
+  int32_t& slot() override { return this.spare; }
+  mut int32_t& slot_mut() mut override { return this.spare; }
+  Record& entry() override { return this.other; }
+};
+
+interface Source {
+  int32_t& reading();
+  std::span<int32_t> items();
+  Record& title();
+};
+
+class Holder : public Source {
+public:
+  int32_t value;
+  mut std::vector<int32_t> values;
+  Record record;
+  Holder(int32_t value)
+      : value(value), record(Record("holder record")) {}
+  int32_t& reading() override { return this.value; }
+  std::span<int32_t> items() override { return this.values.as_span(); }
+  Record& title() override { return this.record; }
+};
+
+// Virtual relays through the receiver.
+int32_t& relay_slot(Base& base) { return base.slot(); }
+mut int32_t& relay_slot_mut(mut Base& base) { return base.slot_mut(); }
+std::span<int32_t> relay_view(Base& base) { return base.view(); }
+Record& relay_entry(Base& base) { return base.entry(); }
+
+// A relay of a relay: the inner call selects through its argument.
+int32_t& outer_slot(Base& base) { return relay_slot(base); }
+Record& outer_entry(Base& base) { return relay_entry(base); }
+
+// Interface relays.
+int32_t& relay_reading(Source& source) { return source.reading(); }
+std::span<int32_t> relay_items(Source& source) { return source.items(); }
+Record& relay_title(Source& source) { return source.title(); }
+
+// A static selection of a field through an argument.
+int32_t& field(Base& base) { return base.value; }
+
+int32_t total(std::span<int32_t> items) {
+  mut int32_t sum = 0;
+  for (int32_t item : items)
+    sum = sum + item;
+  return sum;
+}
+
+int main() {
+  mut Base base{3};
+  base.values.push_back(1);
+  base.values.push_back(2);
+  mut Derived derived{4};
+  derived.values.push_back(5);
+  mut Holder holder{6};
+  holder.values.push_back(7);
+  holder.values.push_back(8);
+
+  if (relay_slot(base) != 3 || relay_slot(derived) != 40)
+    return 1;
+  relay_slot_mut(base) = 9;
+  relay_slot_mut(derived) = 41;
+  if (base.value != 9 || derived.spare != 41 || derived.value != 4)
+    return 2;
+  if (total(relay_view(base)) != 3 || total(relay_view(derived)) != 5)
+    return 3;
+  if (relay_entry(base).name != "base record" ||
+      relay_entry(derived).name != "other record")
+    return 4;
+  if (outer_slot(derived) != 41 || outer_entry(base).name != "base record")
+    return 5;
+  if (relay_reading(holder) != 6 || total(relay_items(holder)) != 15 ||
+      relay_title(holder).name != "holder record")
+    return 6;
+  if (field(derived) != 4)
+    return 7;
+  return 0;
+}

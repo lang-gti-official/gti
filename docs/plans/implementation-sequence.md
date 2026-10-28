@@ -11731,9 +11731,26 @@ Hierarchy storage beside borrowed state is admitted. It is constructed in
 place, borrowed by reference and destroyed. It also moves, including scoped
 thread tasks passed by value. A carrier's generated value move relocates it
 under `mirTypeMoveRelocationKind`, while `std::relocatable` is unchanged
-(owner decision 2026-10-28). A carrier borrowed through an upcast interface
-view waits on a MIR soundness fix: such a borrow takes no `Local` loan on the
-carrier.
+(owner decision 2026-10-28). Base and interface views of a carrier, an upcast
+return and a relay through a base reference run natively once MIR records the
+view's `Local` loan on the carrier; returning a non-hierarchy base reference
+to a carrier parameter stays refused.
+
+(owner decision 2026-10-28). A base or interface view of a carrier takes a
+`Local` loan on the carrier since the MIR fix of 2026-10-28; upcast arguments
+and interface relays run natively, while local upcast views, upcast returns and
+base-class relays stay O-LLVM-05 refusals like their same-class forms.
+
+Closures holding hierarchy storage are admitted (`NativeHierarchyCapture`). An
+init-capture relocates a moved derived, polymorphic or interface-implementing
+object into its environment slot, the closure publishes into a whole local or
+a prepared by-value argument, and a by-value closure parameter moves into a
+managed-thread spawn as a hierarchy task. The 21 cells the 2026-10-28 wrong-code
+matrices found C++ running and LLVM refusing, locally called and joined-thread
+init-captures, now run natively at O0-O3 with checked results and destruction
+order. The `hierarchy-captures` dispatch profile is native-only because the C++
+backend does not represent these closures; `threads.hierarchy-tasks` compares
+the thread form with the C++ oracle.
 
 Three C++/LLVM parity gaps found by the wrong-code matrices closed on
 2026-10-28. Each has a user-defined `llvm_dispatch_execution` case, and the
@@ -11744,12 +11761,43 @@ last two also have failure and wrong-trace variants:
   erased transferable callable with owned state in a vector element or a
   field.
 
+The remaining relay gaps also closed on 2026-10-28. A reference, span or
+record reference selected out of hierarchy storage now relays through static,
+virtual and interface calls, and through a free function borrowing the storage
+as an argument. The `selected-relays` case of `llvm_dispatch_execution` covers
+them, with mutation through a relayed mutable reference and overrides that
+select different storage. `llvm_admission` checks that static and virtual
+calls get the same witnesses and that forged selections never gain admission.
+
+Copies and moved closures of hierarchy storage beyond C++ parity closed on
+2026-10-28. By-copy captures, closure copies and class copies into by-value
+arguments or array elements now use the generated logical-field copy, which
+installs each copy's own dispatch state. A moved closure relocates into a
+by-value argument, through a return or into another closure. Thread-local
+hierarchy objects are built in each thread's slot, and their destructors run
+at thread exit, each observing its own class. The C++
+backend fails on all of these, so the `closure-transfers` and
+`thread-local-hierarchy-storage` cases of `llvm_dispatch_execution` check
+their own results natively. Before this change, a constructor field taking an
+inert hierarchy parameter raised an LLVM internal error; it now runs.
+Copies of program storage stay refused, including a thread-local initialized
+from a global, and `reject-thread-local-copy` pins that refusal.
+The 18 wrong-code matrices at `--jobs 2`, before and after this change, have
+809 cells each. Neither run has a `PolymorphicTransfer` refusal, wrong code or
+a new refusal; three unrelated refusals are parity gaps in both. None of the
+matrices' axes exercises these shapes. The 19 user-defined probes behind
+these cases went from 14 `PolymorphicTransfer` refusals and 5 internal errors
+to all running natively.
+
 Base-view replacement, exchange and swap, enum copies, enums moved into
-arguments or returns, payload values returned by value, thread-local
-hierarchy objects and observable pure phases stay `PolymorphicTransfer` or
-`PureDispatchState`. Exchange and swap of a polymorphic class with derived
-classes are refused even for complete objects, because the generic bodies
-cannot tell them from base views.
+arguments or returns, payload values returned by value, copies of program
+storage and observable pure phases stay `PolymorphicTransfer` or
+`PureDispatchState`.
+Exchange and swap of a polymorphic class with derived classes are a semantic
+error for now (`GTI-S2018`, owner decision 2026-10-28), even for complete
+objects, because the generic bodies cannot tell them from base views;
+complete-object provenance could later relax it. The LLVM refusal of such
+exchanges remains as a second line of defence.
 A derived constructor passing an owned value to its base constructor, moved
 in or created in place, now runs natively: MIR stages each owned argument as a
 prepared parameter that `InitializeBase` hands to the base constructor. A
@@ -12460,6 +12508,13 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | ID | State | Scope and gate |
 | --- | --- | --- |
 | `Q-DIAG-01` | foundation complete; migration active | One checked JSON source now generates the private typed diagnostic identity/default-severity/group/format table and rejects duplicate identities or invalid placeholder contracts. The first semantic/source producers (`GTI-S2009`, `GTI-S2075`, `GTI-S2095`, and `GTI-S2096`) use it; remaining subsystems migrate in bounded slices while preserving current spans/messages unless intentionally changed. |
+| `Q-DIAG-02` | planned; entry slice | Establish the [diagnostic-quality baseline](diagnostic-quality.md#acceptance-and-measurement): application-derived corpus, per-case correctness/actionability rubric, CLI/LSP parity and analysis-cost budgets. Existing structured and bounded causal explanations are the starting point, not missing infrastructure. |
+| `Q-DIAG-03` | planned; after 02 | Extend producer-owned ownership/borrow witnesses and snapshot-safe causal links; prove accurate joins, projections, captures and endpoints without a second flow analysis. See the [facility contract](diagnostic-quality.md#general-facilities). |
+| `Q-DIAG-04` | planned; after 02 and 03 evidence contract | Extend existing overload/concept and constexpr failure evidence; bounded nested traces explain exact requirements without changing resolution or adding a diagnostic evaluator. |
+| `Q-DIAG-05` | planned; after 02 and 03 cause identity | Causal recovery suppresses only proven dependent errors, retains independent errors and keeps invalid results out of executable lowering; coordinate A-REC-01. |
+| `Q-DIAG-06` | planned; after 02 and source-identity contract | Applicability-aware atomic repair groups, starting with discard and missing-include pilots; exact-snapshot apply/reanalysis/idempotence and stale-edit negatives. No automatic ownership-changing advice. |
+| `Q-DIAG-07` | planned; alongside family rollout after 03/06 contracts | Shared CLI/LSP explanations, multi-location presentation and tested explain-code material; no message parsing or duplicate semantic decisions. |
+| `Q-DIAG-08` | planned; after 03-07 | Close the selected diagnostic corpus against every applicable quality dimension, cross-phase regression and cost gate; adopt ongoing per-feature explanation tests. Not a claim of universal Rust parity. |
 | `Q-FAIL-01` | hosted consumer, same-thread native-callback firewall, and managed-task handoff/re-raise complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, terminal arbitration, callback termination adapter, and worker ordinary/`GTI-R0014` containment are implemented and focused tests pass. Embedding, foreign-thread callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |
 | `Q-EMBED-01` | blocked | After T-EMBED-01, run the dynamically loaded engine-host acceptance matrix before activating native libraries and generated embedding. |
 | `Q-DEPRECATION-01` | planned | `D-COMPAT-01` is done. After `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |

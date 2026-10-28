@@ -9,6 +9,205 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.486.1 - Faster editor updates with large imports
+
+- `gti_lsp` updates diagnostics sooner after an edit in a file whose imports
+  load much of the standard library, such as `import std;`. Each edit
+  re-copied and rescanned every loaded source unit's tokens. Units whose
+  syntax cannot depend on configuration flags now replay a cached processed
+  form and only re-resolve their imports and includes. On Apple silicon, an
+  edit in a small project with `import std;` shows or clears its error in
+  about 0.35 s instead of 0.55–0.85 s.
+- Include suggestions for an unknown name no longer reload the whole program
+  to probe the edited file itself, so an edit that introduces such an error
+  is no slower than one that clears it.
+
+## 0.486.0 - Read-only arrow steps, closure copies, projected references and capture ranges
+
+### Text relays of a by-value formal's text field
+
+- A function that returns a text field of a by-value class parameter through a
+  call that relays text, such as
+  `std::string_view f(Label label) { return relay(label.text); }`, now
+  compiles instead of failing with the internal error `GTI-B0001`. The result
+  is the caller's text, as for `return label.text;`: a caller passing a
+  `Label` that holds an owner's view keeps that owner borrowed while the
+  result lives (`GTI-S2017`) and cannot return the result past the owner
+  (`GTI-S2045`).
+
+### Native views of borrow carriers and interface text witnesses
+
+- The native backend now builds these programs, which previously failed with
+  `GTI-B0003`, and matches the C++ backend:
+  - an interface or base-class reference bound to a class that holds a
+    reference, such as `Gauge& view = direct;`, an interface view returned
+    from a function, and such a class passed through a function returning a
+    base-class reference, such as `pickBase(plain)`;
+  - text built with `std::assume_string_view` or `std::assume_c_string` whose
+    owner is passed as an interface view.
+
+### Native copies and moved closures of hierarchy objects
+
+- The native backend now builds by-copy lambda captures of derived,
+  polymorphic and interface-implementing objects, such as `[dial, twice]`,
+  and copies of such closures (`auto again = reader;`). Each copy gets its own
+  dispatch state, so later changes to the source are not seen. Copies passed
+  by value, captured by another closure or placed in a fixed array now build
+  too. These previously failed with `GTI-B0003`, and the C++ backend fails on
+  them as well.
+- A closure holding a moved object can now be passed on by value, returned,
+  or captured again by another closure. Its captures are destroyed exactly
+  once.
+- `thread_local` objects of such classes now build natively, and each thread
+  constructs its own. Their destructors run at thread exit, and each
+  destructor sees its own class. A `thread_local` initialized by copying a
+  global object is still refused with `GTI-B0003`.
+- A constructor that stores a by-value parameter of such a class in a field,
+  as in `Box(Plain held) : held(std::move(held))`, no longer fails with an
+  internal compiler error (`GTI-B0001`) on the native backend.
+
+### Text relays of a formal's text field
+
+- A function that returns a text field of a reference parameter through a call
+  that relays text, such as
+  `std::string_view f(Label& label) { return relay(label.text); }`, now
+  compiles instead of failing with the internal error `GTI-B0001`. It is a
+  text field result exactly as `return label.text;` is: a caller passing a
+  `Label` that holds an owner's view keeps that owner borrowed while the
+  result lives (`GTI-S2017`), and cannot return the result past the owner
+  (`GTI-S2045`).
+
+
+### References to fields of returned references
+
+- A reference bound to a field of a call's returned reference now compiles
+  instead of failing with the internal error `GTI-B0001`. This covers
+  `for (auto& x : root->items)` with `root` a `std::unique_ptr` held locally or
+  by reference, recursive folds over child smart pointers, and
+  `std::vector<int32_t>& v = root->items`, `(*root).items` or
+  `holder.get().items`. A mutable range such as
+  `for (mut auto& x : dir->items)` through a `mut std::unique_ptr<Dir>&`
+  parameter builds on the native backend; the C++ backend still reports
+  `GTI-B0001` for it.
+- An overloaded `operator->` with read-only and `mut` forms now selects its
+  form from the use of `p->member`, as other accessor pairs already do: a
+  read, a read-only reference binding, a range-for over the member or a
+  read-only member call takes the read-only form even on a `mut` object.
+  Assigning the member, binding it as `mut` or calling a mutating member still
+  takes the `mut` form, and still conflicts with a live read-only reference
+  (`GTI-S2017`). Two read-only references bound through the same mutable smart
+  pointer, such as `root->items` and `(*root).items`, now coexist.
+- A call returning an exclusive borrow carrier, such as `lock()` returning a
+  mutex guard, keeps selecting the `mut` form of an accessor pair or
+  `operator->` it is called through, so `holder.get().lock()` on a mutable
+  reference parameter now compiles instead of failing with `GTI-B0001`.
+
+### Range-for over by-reference lambda captures
+
+- A range-for loop over a container captured by reference in a lambda, such
+  as `[&values]() { for (auto& v : values) ... }` or a mutable loop through
+  `[mut &values]`, now compiles instead of failing with an internal compiler
+  error (`GTI-B0001`). This also covers user-defined ranges. Modifying the
+  captured container inside the loop is still rejected with `GTI-S2017`. The
+  language is unchanged.
+
+## 0.485.0 - Polymorphic swap rule and LLVM parity follow-ups
+
+### Restoring exchanges of polymorphic bases rejected
+
+- `std::swap` and `std::exchange` of a polymorphic class that another class
+  derives from are now a compile-time error (`GTI-S2018`), on every backend.
+  Through a `mut Base&` that named part of a derived object, the native
+  backend before 0.484.4 replaced that object's dispatch state, so its later
+  virtual calls ran the base methods, and the C++ backend failed with an
+  internal error. The rule is
+  conservative for now and also rejects two complete objects of such a class.
+  Classes nothing derives from, non-polymorphic classes, and element swaps
+  such as `swap_elements`, `sort` and `reverse` are unaffected.
+
+### Native closures over hierarchy objects
+
+- The native backend now builds lambdas whose init-capture moves an object of
+  a derived class, a polymorphic class or an interface implementation into the
+  closure, which previously failed with `GTI-B0003`. This covers a closure such
+  as `auto reader = [held = std::move(local)]() -> int64_t { return
+  held.check(); };` called in place, moved to another local, or passed to
+  `std::thread_result<T>::start` and joined. Each captured object keeps its own
+  dispatch state, and the closure's cleanup ends its captures in reverse
+  declaration order, once each. A by-copy capture of such an object and a copy
+  of such a closure still report `GTI-B0003`.
+
+### Native relays of selected references, spans and records
+
+- The native backend now builds programs that relay a reference, a span or a
+  record reference selected out of a polymorphic object, which previously
+  failed with `GTI-B0003`, and matches the C++ backend. This covers:
+  - a function returning what a virtual or interface call returns, such as
+    `int32_t& relay(Base& b) { return b.slot(); }`, a `std::span<int32_t>`
+    returned by value, or `Record& relay(Base& b) { return b.get(); }`;
+  - a function selecting a field of a polymorphic object passed as an
+    argument, such as `int32_t& field(Base& b) { return b.value; }`, and a
+    function relaying such a function's result;
+  - writes through a relayed mutable reference.
+
+### Borrows through reference fields and returned closures
+
+- Calling a method through a reference field of a parameter now compiles
+  instead of failing with an internal compiler error (`GTI-B0001`). This covers
+  a method that returns a reference or a borrowing object, as in
+  `holder.box.slot() = value;` where `holder` is a `mut Holder&` or `Holder&`
+  parameter, a by-value `Holder` parameter or a local `mut Holder&` alias, and
+  `box` is a `mut Box&` field. It also covers locking a `std::mutex` through a
+  reference field, `mut` or read-only, as in `teller.account.balance.lock()` or
+  `fill.slot.lock()`, and `this.slot.lock()` on a `mut std::mutex<T>&` field in
+  a read-only method. Both backends run these programs.
+- `std::for_each` with a closure that captures by mutable reference, such as
+  `[mut &got]`, now compiles and runs on the LLVM backend. So does a generic
+  function that calls a closure and returns it, as in
+  `F apply<F>(mut F f) { f(); return std::move(f); }`. The C++ backend still
+  reports `GTI-B0001` for most of these.
+- A borrow through a reference field of a local holder that is not itself a
+  reference, such as `holder.box.slot()` or `mut int64_t& v = holder.box.value;`
+  with a local `Holder holder`, still reports an internal compiler error. The
+  language is unchanged.
+
+### Borrows through a local object's reference fields
+
+- A borrow through a reference field of a local object now compiles instead
+  of failing with an internal compiler error (`GTI-B0001`). This covers
+  `holder.box.slot() = value;`, `mut int64_t& v = holder.box.value;` and
+  `mut Box& b = holder.box;` where `holder` is a local `Holder` with a
+  `mut Box&` field, including a holder with several reference fields. It also
+  covers a reference inside one of the holder's fields, a view copied out of
+  the holder, and the inner holder returned by an accessor such as
+  `operator->`.
+- A generic function that returns a closure it received by value now compiles
+  when the closure borrows a local, as in `F identity<F>(F f) { return f; }`
+  called with `[&s]`, and also when written `return std::move(f);`, including
+  with a `mut F` parameter. The language is unchanged.
+
+### Function items through class aliases
+
+- Constructing a class through an alias now treats a function-name argument
+  exactly as constructing it through the class name does. With
+  `using T = Tag;` or `using C = std::function_ptr<int64_t(int64_t)>;`,
+  `T(work)` and `C(work)` in a return or an initializer previously failed with
+  the internal error `GTI-B0001`. They now compile on both backends, and an
+  ambiguous overloaded name reports `GTI-S2090` with the same candidates as
+  `Tag(work)`.
+
+## 0.484.5 - Faster checked calls on the native backend
+
+- Small functions that use checked arithmetic, such as
+  `int32_t step(int32_t v, int32_t b) { return (v * 17 + b) % 65521; }`, are
+  now inlined into their callers by the native backend at `-O2`/`-O3`. Before
+  this, each failure check carried enough cold code to keep the function out
+  of line. Overflow failures, their diagnostics and cleanup are unchanged.
+  On an Apple M-series host, compared with 0.484.4 at `-O2`:
+  `interface-exact-dispatch` runs in 0.52 of the time, and the
+  `payload-optional-string`, `payload-borrowed-result` and `game-update-stage`
+  workloads run in 0.74 to 0.93 of the time.
+
 ## 0.484.4 - Native virtual text relays, returned siblings and exchanges
 
 - The native backend now builds these programs, which previously failed with

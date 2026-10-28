@@ -40,9 +40,11 @@ LoadedLexicalUnitLoader::load(const LexicalUnitRequest &request) const {
     return {.source = std::move(cached->source),
             .sourceDigest = cached->sourceDigest,
             .tokens = std::move(cached->tokens),
+            .processed = std::move(cached->processed),
             .diagnostics = std::move(cached->diagnostics),
             .hadError = cached->hadError,
-            .cacheHit = true};
+            .cacheHit = true,
+            .cacheKey = std::move(cacheKey)};
   }
 
   if (workMetrics != nullptr) {
@@ -51,17 +53,19 @@ LoadedLexicalUnitLoader::load(const LexicalUnitRequest &request) const {
   }
   Lexer lexer;
   const auto lexStart = std::chrono::steady_clock::now();
-  std::vector<Token> tokens;
+  std::vector<Token> scanned;
   if (request.exactSource) {
-    tokens = request.completionOffset
-                 ? lexer.scanForCompletion(std::string(*request.exactSource),
-                                           *request.completionOffset,
-                                           request.canonicalPath)
-                 : lexer.scan(std::string(*request.exactSource),
-                              request.canonicalPath);
+    scanned = request.completionOffset
+                  ? lexer.scanForCompletion(std::string(*request.exactSource),
+                                            *request.completionOffset,
+                                            request.canonicalPath)
+                  : lexer.scan(std::string(*request.exactSource),
+                               request.canonicalPath);
   } else {
-    tokens = lexer.consume(request.path);
+    scanned = lexer.consume(request.path);
   }
+  std::shared_ptr<const std::vector<Token>> tokens =
+      std::make_shared<std::vector<Token>>(std::move(scanned));
   if (workMetrics != nullptr) {
     workMetrics->lexMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
@@ -76,8 +80,8 @@ LoadedLexicalUnitLoader::load(const LexicalUnitRequest &request) const {
   if (workMetrics != nullptr) {
     workMetrics->sourceBytes += source.size();
   }
+  cacheKey.sourceDigest = loadedDigest;
   if (cache != nullptr) {
-    cacheKey.sourceDigest = loadedDigest;
     cache->storeLexed(cacheKey, {.source = source,
                                  .sourceDigest = loadedDigest,
                                  .tokens = tokens,
@@ -88,7 +92,8 @@ LoadedLexicalUnitLoader::load(const LexicalUnitRequest &request) const {
           .sourceDigest = loadedDigest,
           .tokens = std::move(tokens),
           .diagnostics = std::move(diagnostics),
-          .hadError = hadError};
+          .hadError = hadError,
+          .cacheKey = std::move(cacheKey)};
 }
 
 } // namespace lang

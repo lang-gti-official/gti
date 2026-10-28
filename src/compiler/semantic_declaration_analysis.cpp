@@ -4834,6 +4834,27 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
         typeOf(definition->returnType(), definition->returnMutability(),
                owner.namespaceScope);
     currentClass = previousOwner;
+    const auto reportSignatureTypeErrors = [&] {
+      // An unmatched definition never reaches visitFunctionDecl. Diagnose its
+      // written types before falling back to a signature mismatch: an invisible
+      // or unknown type is not evidence of a different declared signature.
+      const auto previousNamespace = currentNamespace;
+      const auto previousUnit = currentSourceUnit;
+      const std::size_t diagnosticStart = diagnostics.size();
+      enterDeclarationContext(owner.namespaceScope, previousUnit, owner.id);
+      validateType(definition->returnType());
+      for (const auto &parameter : definition->parameters())
+        validateType(parameter.type);
+      exitDeclarationContext(owner.id);
+      currentNamespace = previousNamespace;
+      currentSourceUnit = previousUnit;
+      currentClass = previousOwner;
+      return std::any_of(diagnostics.begin() + diagnosticStart,
+                         diagnostics.end(), [](const Diagnostic &diagnostic) {
+                           return diagnostic.severity ==
+                                  DiagnosticSeverity::Error;
+                         });
+    };
     auto member = owner.members.find(definition->name().lexeme);
     CallableCandidate *selected = nullptr;
     if (member != owner.members.end()) {
@@ -4851,6 +4872,8 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
       }
     }
     if (selected == nullptr) {
+      if (reportSignatureTypeErrors())
+        continue;
       fail("No declared method matches this definition's parameters and "
            "receiver qualifier.",
            &owner.name);
@@ -4874,6 +4897,8 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
         declaration.isConstexpr() != definition->isConstexpr() ||
         declaration.unsafeKeyword().has_value() !=
             definition->unsafeKeyword().has_value()) {
+      if (reportSignatureTypeErrors())
+        continue;
       fail("The definition must match its declaration's return type, constexpr "
            "and unsafe qualifiers.",
            &declaration.name());

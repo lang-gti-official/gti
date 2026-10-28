@@ -2,7 +2,10 @@
 
 #include "gti/mir.h"
 
+#include <cstddef>
+#include <functional>
 #include <map>
+#include <memory>
 #include <set>
 
 namespace lang::native_llvm {
@@ -43,6 +46,28 @@ namespace lang::native_llvm {
 // This does not establish layout, borrowing, fresh placement or admission.
 [[nodiscard]] bool containsHierarchyStorage(const MirProgram &program,
                                             const SemanticType &type);
+
+// While open on a thread, containsHierarchyStorage computes each type's
+// outcome for this exact immutable program once: the answer, or the rejection
+// it replays with the same message. A nested scope for the same program
+// reuses the open outcomes. Queries about any other program, and every query
+// outside a scope, compute the same answers directly.
+class HierarchyStorageScope final {
+public:
+  explicit HierarchyStorageScope(const MirProgram &program);
+  ~HierarchyStorageScope();
+  HierarchyStorageScope(const HierarchyStorageScope &) = delete;
+  HierarchyStorageScope &operator=(const HierarchyStorageScope &) = delete;
+
+  // The number of distinct types whose outcome this scope holds.
+  [[nodiscard]] std::size_t cachedTypes() const;
+
+  struct Outcomes;
+
+private:
+  std::unique_ptr<Outcomes> outcomes;
+  Outcomes *previous = nullptr;
+};
 
 // A candidate is not permission to transfer. The complete pure-MIR plan below
 // binds its exact source, generated policy, ownership and fresh publication.
@@ -168,5 +193,17 @@ enum class FreshObjectStorage { Local, Returned, Temporary, Argument, Element };
 freshObjectStorage(const MirProgram &program, MirBodyAddress address,
                    const MirBody &body, const Placement &placement,
                    const MirInstruction &producer);
+
+// A borrow of a carrier, such as an interface or base view of it, depends on
+// the carrier's own stored loans: provenance for the external owners the
+// carrier borrows, with no representation of its own. Either a non-escaping
+// Local loan of a whole carrier binding whose stored dependency is a Stored
+// loan that binding carries, or an escaping Return loan whose one Borrow
+// relays a supported loan of the same source and stored dependency, returned
+// as a reference.
+[[nodiscard]] bool carrierLoanDependency(
+    const MirBody &body, const MirLoan &loan,
+    const std::function<bool(const MirLoan &)> &supported,
+    const std::function<bool(const MirTerminator &)> &referenceReturn);
 
 } // namespace lang::native_llvm
