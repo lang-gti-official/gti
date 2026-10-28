@@ -5201,6 +5201,20 @@ nor hierarchy storage. Its one `Borrow` must relay that value's own loan, and
 MIR verification rejects any forged relay. Semantics still refuses a view that
 would outlive its owner, and an owner changed while the view lives.
 
+A call can select a result that is not hierarchy storage out of hierarchy
+storage it borrows: a reference to a scalar or to an ordinary record, or a
+view such as a span returned by value. That result is the callee's own checked
+result, not a view of the storage (`NativeBorrowedDispatchView`). The rule is
+the same for static, virtual and interface calls, and for storage borrowed as
+the receiver or as an argument; an argument must borrow the loan's own source
+place or forward a loan of it, such as a reference parameter's entry loan. The
+call must be a GTI call with no intrinsic, and the result type must not be
+hierarchy storage. A body that returns such a result relays it with one
+`Borrow` of the selecting call's loan into its escaping `Return` loan on the
+same source, and that relay, its `Return` loan and their operands carry the
+same witness. A base or derived view of the storage is still proved as a base
+subobject.
+
 `NativeHierarchyCapture` admits closures whose environments hold hierarchy
 storage. An init-capture such as `[held = std::move(local)]` moves an object
 of a derived class, a polymorphic class or an interface implementation into

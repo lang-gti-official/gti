@@ -987,7 +987,18 @@ public:
       return related(value->info.type);
     return false;
   }
+  // A use of a selected result's loan names the selecting call's result,
+  // not a view of the storage the call borrowed.
+  bool selectedOperand(const MirBody &body, const MirOperand &operand) {
+    const auto *loan = operand.kind == MirOperandKind::Loan
+                           ? body.findLoan(operand.loan)
+                           : nullptr;
+    return loan && !related(operand.type) &&
+           (selection(body, *loan) || relayedSelection(body, *loan));
+  }
   std::optional<Shape> loan(const MirBody &body, const MirLoan &loan) {
+    if (relayedSelection(body, loan))
+      return Shape::NativeBorrowedDispatchView;
     if (!supportedLoan(body, loan))
       return {};
     const auto *source = body.findPlace(loan.source);
@@ -995,11 +1006,11 @@ public:
       return {};
     auto type = unreference(source->type);
     if (const auto *producer = callResult(body, loan)) {
-      // A member call on a proved dispatch view selected this non-hierarchy
-      // referent; the address is the callee's checked result, not a view.
+      // A call on a proved dispatch view, as receiver or argument, selected
+      // this non-hierarchy referent; the address is the callee's checked
+      // result, not a view.
       if (!related(producer->info.type))
-        return producer->receiver && borrowedUse(body, *producer->receiver) &&
-                       borrowed(body, *producer->receiver)
+        return selectingInput(body, *producer, loan)
                    ? std::optional(Shape::NativeBorrowedDispatchView)
                    : std::nullopt;
       type = producer->info.type;
@@ -1921,21 +1932,115 @@ private:
                 stage.intrinsic == IntrinsicKind::RawBorrowMut) &&
                mir_detail::rawBorrowResultLoan(body, stage) == loan));
     }
+    const auto *target = gtiCallee(stage);
+    return target && target->returnType == SemanticType::referenceTo(
+                                               stage.info.type, loan->access);
+  }
+  // The GTI function a call runs. A virtual call names its sealed root
+  // member, which may be a pure declaration; the selected source
+  // implementation produces the result. Its dispatch plan is proved with the
+  // call stage itself.
+  const MirFunctionInstance *gtiCallee(const MirInstruction &stage) const {
     const auto *target =
         stage.functionTarget
             ? program.findFunctionInstance(*stage.functionTarget)
             : nullptr;
-    // A virtual call names its sealed root member, which may be a pure
-    // declaration; the selected source implementation returns the address.
-    // Its dispatch plan is proved with the call stage itself.
     return target &&
-           (stage.dispatch == CallDispatch::Virtual
-                ? target->virtualMethod && target->owner &&
-                      !target->staticMember
-                : target->definitionKind == MirDefinitionKind::Source) &&
-           target->linkage == LanguageLinkage::Gti &&
-           target->returnType ==
-               SemanticType::referenceTo(stage.info.type, loan->access);
+                   (stage.dispatch == CallDispatch::Virtual
+                        ? target->virtualMethod && target->owner &&
+                              !target->staticMember
+                        : target->definitionKind ==
+                              MirDefinitionKind::Source) &&
+                   target->linkage == LanguageLinkage::Gti
+               ? target
+               : nullptr;
+  }
+  // The hierarchy storage a call selected its result from: its receiver, or
+  // an argument borrowed from the loan's own source, as a proved dispatch
+  // view. Static, virtual and interface calls select alike.
+  bool selectingInput(const MirBody &body, const MirInstruction &call,
+                      const MirLoan &loan) {
+    if (call.receiver && borrowedUse(body, *call.receiver) &&
+        borrowed(body, *call.receiver))
+      return true;
+    return std::any_of(
+        call.operands.begin(), call.operands.end(), [&](const auto &operand) {
+          const auto *staged = stagedBorrow(body, operand);
+          if (!staged || staged->callInputRole != MirCallInputRole::Argument)
+            return false;
+          // The argument borrows the source place itself, or forwards a loan
+          // of it, such as a reference parameter's entry loan.
+          const auto &input = staged->operands.front();
+          const auto *forwarded = input.kind == MirOperandKind::Loan
+                                      ? body.findLoan(input.loan)
+                                      : nullptr;
+          return (forwarded ? forwarded->source == loan.source
+                            : input.place == loan.source) &&
+                 borrowedUse(body, operand) && borrowed(body, operand);
+        });
+  }
+  // A call that selected a non-hierarchy result out of hierarchy storage it
+  // borrowed: a checked address, or a view returned by value whose Stored
+  // loan names that storage. The result is the callee's own, not a view of
+  // the storage, whichever way the call dispatched.
+  const MirInstruction *selection(const MirBody &body, const MirLoan &loan) {
+    const MirInstruction *call = callResult(body, loan);
+    if (!call && loan.kind == MirLoanKind::Stored && !loan.entry &&
+        !loan.escapes && !loan.storedDependency && !loan.storedField &&
+        !loan.referenceSelection && loan.additionalDependencies.empty() &&
+        loan.conditions.empty() && !loan.twoPhase && !loan.lifecycleBound)
+      for (const auto &block : body.blocks)
+        for (const auto &stage : block.instructions)
+          if (!stage.tombstone && stage.loan == loan.id &&
+              stage.kind == MirInstructionKind::Call) {
+            if (call)
+              return nullptr;
+            call = &stage;
+          }
+    if (!call || call->tombstone || call->kind != MirInstructionKind::Call ||
+        call->intrinsic != IntrinsicKind::None ||
+        call->info.type.kind == SemanticType::Reference ||
+        loan.producedBy != call->hirValue || related(call->info.type) ||
+        !gtiCallee(*call) || !selectingInput(body, *call, loan))
+      return nullptr;
+    return call;
+  }
+  // The Return loan of a relayed selection is the selecting call's result.
+  bool relayedSelection(const MirBody &body, const MirLoan &loan) {
+    if (loan.kind != MirLoanKind::Return)
+      return false;
+    for (const auto &block : body.blocks)
+      for (const auto &stage : block.instructions)
+        if (!stage.tombstone && stage.loan == loan.id &&
+            stage.kind == MirInstructionKind::Borrow)
+          return selectedRelay(body, stage);
+    return false;
+  }
+  // A Borrow relaying a selected result into the Return loan of the value or
+  // reference this body returns. It names the same storage the selecting
+  // call borrowed and is the callee's result, as the selection is.
+  bool selectedRelay(const MirBody &body, const MirInstruction &stage) {
+    if (stage.tombstone || stage.kind != MirInstructionKind::Borrow ||
+        !stage.loan || stage.operands.size() != 1 ||
+        stage.operands.front().kind != MirOperandKind::Loan ||
+        related(stage.info.type) || related(stage.operands.front().type))
+      return false;
+    const auto *relay = body.findLoan(*stage.loan);
+    const auto *selected = body.findLoan(stage.operands.front().loan);
+    if (!relay || !selected || relay->kind != MirLoanKind::Return ||
+        !relay->escapes || relay->entry || relay->twoPhase ||
+        relay->lifecycleBound || relay->referenceSelection ||
+        !relay->additionalDependencies.empty() || !relay->conditions.empty() ||
+        relay->source != selected->source || !selection(body, *selected))
+      return false;
+    bool returned = false;
+    for (const auto &block : body.blocks)
+      if (block.terminator.returnLoan == relay->id) {
+        if (block.terminator.kind != MirTerminatorKind::Return)
+          return false;
+        returned = true;
+      }
+    return returned;
   }
   const MirInstruction *callResult(const MirBody &body,
                                    const MirLoan &loan) const {
@@ -2473,6 +2578,8 @@ private:
           return {};
         return Shape::NativeConsumingHierarchyReceiver;
       }
+      if (selectedRelay(body, stage))
+        return Shape::NativeBorrowedDispatchView;
       if ((stage.kind == MirInstructionKind::Borrow ||
            stage.kind == MirInstructionKind::CallInput) &&
           stage.operands.size() == 1 &&
@@ -4527,14 +4634,16 @@ public:
     const auto view = currentBody
                           ? dispatchProofs.borrowed(*currentBody, operand)
                           : std::nullopt;
-    add(operand.kind, nativeFunctionBorrow
-                          ? std::optional(Shape::NativeCFunctionBorrow)
-                      : selectedReference ? std::optional(Shape::PassiveReference)
-                      : borrowedUse     ? view
-                      : operand.kind == MirOperandKind::Address && place &&
-                              scalarArrayProjection(*currentBody, *place)
-                          ? std::optional(Shape::CheckedArrayProjection)
-                          : representationShape(operand.type));
+    add(operand.kind,
+        nativeFunctionBorrow ? std::optional(Shape::NativeCFunctionBorrow)
+        : selectedReference  ? std::optional(Shape::PassiveReference)
+        : borrowedUse && dispatchProofs.selectedOperand(*currentBody, operand)
+            ? std::optional(Shape::NativeBorrowedDispatchView)
+        : borrowedUse ? view
+        : operand.kind == MirOperandKind::Address && place &&
+                scalarArrayProjection(*currentBody, *place)
+            ? std::optional(Shape::CheckedArrayProjection)
+            : representationShape(operand.type));
     type(operand.type);
   }
 
