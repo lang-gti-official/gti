@@ -5,6 +5,7 @@
 #include "gti/native_header.h"
 #include "gti/target.h"
 #include "llvm/body.h"
+#include "llvm/placement.h"
 #include "llvm/session.h"
 #include <llvm/Config/llvm-config.h>
 #include <llvm/Support/FileSystem.h>
@@ -96,6 +97,9 @@ BackendArtifact LlvmBackend::generate(LoweredProgram program) {
         "the LLVM backend foundation currently accepts only the host target");
   }
 
+  // Admission, lowering and emission share one immutable program snapshot.
+  const native_llvm::HierarchyStorageScope hierarchyStorage(
+      verified->program().mir());
   const LlvmAdmissionPlan admission = planLlvmAdmission(*verified, options);
   if (const auto *unsupported = admission.firstUnsupported()) {
     if (!unsupported->source.source.empty()) {
