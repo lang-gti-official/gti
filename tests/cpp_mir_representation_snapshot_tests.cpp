@@ -91,16 +91,11 @@ struct NativeValue {
 
 [[c_opaque]] struct UnusedHandle;
 
-class UnusedTemplate<T> {
-public:
-  UnusedTemplate() = default;
-};
+class UnusedTemplate<T> {};
 
 class Constants {
 public:
   static constexpr int32_t answer = 42;
-public:
-  Constants() = default;
 };
 
 constexpr int32_t seed = 1;
@@ -447,8 +442,6 @@ T unused_free<T>(T value) { return value; }
 class UnusedOperators<T> {
 public:
   bool operator==(UnusedOperators<T>& other) { return true; }
-public:
-  UnusedOperators() = default;
 };
 
 class UnusedMembers {
@@ -2563,7 +2556,7 @@ void testCleanupFreeConstructorArguments() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   for (const bool fallible : {false, true}) {
     std::string source = R"(
-struct Owner { ~Owner() {} };
+struct Owner { Owner() = default; ~Owner() {} };
 struct Item {
   int value;
   Item(int input) : value(input) {

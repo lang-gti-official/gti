@@ -888,6 +888,7 @@ struct Owner {
 #include <std/memory>
 #include <std/string_view>
 struct Owner {
+  Owner() = default;
   int tag = 22;
   virtual int observe() { return this.tag; }
   ~Owner() {}

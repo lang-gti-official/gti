@@ -17,6 +17,7 @@ std::string source(std::string_view destructor) {
 #include <std/string>
 class Token {
 public:
+  Token() = default;
   ~Token() { std::println(7); }
   int read() { return 1; }
 };
@@ -277,6 +278,7 @@ void checkDestructorCannotConsumeFieldAgain() {
     const std::string program = R"gti(
 class Callback {
 public:
+  Callback() = default;
   ~Callback() {}
   int operator()() && { return 1; }
 };
@@ -328,10 +330,9 @@ int main() {
       analyzeWithStandardLibrary("destructor-local-move.gti", R"gti(
 class Callback {
 public:
+  Callback() = default;
   ~Callback() {}
   int operator()() && { return 1; }
-public:
-  Callback() = default;
 };
 class Owner {
 public:

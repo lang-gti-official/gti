@@ -2491,7 +2491,7 @@ int main() { Pinned value{}; return 0; }
 void testRawFieldWitnesses() {
   for (const auto qualifier : {"const ", "mut "}) {
     const auto pointerInput = lang::planLlvmAdmission(lower(std::string(R"(
-struct Slot { mut int value = 7; };
+struct Slot { mut int value = 7; Slot() = default; };
 unsafe int consume(const Slot* pointer) { unsafe { return pointer->value; } }
 int main() {
   mut Slot object{};

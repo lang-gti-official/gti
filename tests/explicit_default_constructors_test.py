@@ -21,7 +21,9 @@ def main():
         missing = {
             "interface": "interface Value {}; int main() { Value value{}; return 0; }",
             "empty": "struct Value {}; int main() { Value value{}; return 0; }",
-            "initialized": "struct Value { int value = 7; }; int main() { Value value{}; return 0; }",
+            "initialized": "class Value { int value = 7; }; int main() { Value value{}; return 0; }",
+            "empty_list": "struct Value { int value = 7; }; int main() { Value value = {}; return 0; }",
+            "expression": "struct Value {}; int main() { auto value = Value(); return 0; }",
             "required": "struct Value { int value = 7; Value(int input) : value(input) {} }; "
                         "int main() { Value value{}; return 0; }",
             "factory": "#include <std/memory>\n"
@@ -44,7 +46,7 @@ def main():
             path.write_text(source)
             result = run([compiler, str(path), "--emit-mir", "-o", str(root / f"{name}.mir")],
                          success=False)
-            if name in ("empty", "initialized", "required", "factory"):
+            if name in ("empty", "initialized", "expression", "required", "factory"):
                 assert "GTI-S2012" in result.stderr, result.stderr
                 assert "explicitly declared constructor" in result.stderr, result.stderr
                 assert "Type declared here" in result.stderr, result.stderr
@@ -52,6 +54,7 @@ def main():
 
         source = root / "available.gti"
         source.write_text('''#include <std/memory>
+#include <std/functional>
 #include <std/meta>
 mut int drops = 0;
 class Ready {
@@ -89,6 +92,8 @@ namespace tags { [[attribute]] struct Label { int value = 4; Label() = default; 
 constexpr Record constant{};
 static_assert(constant.value == 5);
 static_assert(!std::meta::is_default_initializable<Required>());
+static_assert(std::meta::is_default_initializable<std::unique_ptr<Required>>());
+static_assert(std::meta::is_default_initializable<std::less<int>>());
 static_assert(std::meta::is_default_initializable<Record>());
 static_assert(std::meta::is_default_initializable<DefaultArgument>());
 T make<std::default_initializable T>() { return T(); }

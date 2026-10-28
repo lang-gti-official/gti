@@ -49,7 +49,7 @@ def main():
                  "--", str(native), "-fsanitize=address,undefined", "-fno-elide-constructors"])
             run([str(executable)])
         prefix = ("class Guard{public:Guard(){}~Guard(){std::println(\"guard dropped\");}};"
-                  "struct Frame{mut int slots[2]={1,2};};int outside(){return 2;}"
+                  "struct Frame{mut int slots[2]={1,2};Frame() = default;};int outside(){return 2;}"
                   "int main(){Guard guard{};mut Frame frame{};Frame* pointer=&frame;unsafe{")
         bounds_cases = [(name, prefix + operation + "}}") for name, operation in (
             ("read", "return pointer->slots[outside()];"),

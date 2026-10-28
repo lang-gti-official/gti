@@ -96,7 +96,7 @@ void checkFixtures(const std::filesystem::path &root) {
   const std::string genericLibrary =
       "int unused_broken() { return missing_unused; }\n"
       "int leaf() { return 42; }\n"
-      "class Producer { public: int operator()(int n) { return leaf() + n; } "
+      "class Producer { public: Producer() = default; int operator()(int n) { return leaf() + n; } "
       "};\n"
       "int value_of<T>(T& value) { return value(0); }\n";
   const std::string consumer =
@@ -206,7 +206,7 @@ void checkFixtures(const std::filesystem::path &root) {
   };
   const std::string lateLibrary =
       "int leaf() { return 42; }\n"
-      "class Producer { public: int operator()(int n) { return leaf() + n; } "
+      "class Producer { public: Producer() = default; int operator()(int n) { return leaf() + n; } "
       "};\n"
       "int value_of<T>(T& value) { return value(0); }\n";
   editorCase("late demand", lateLibrary,
@@ -217,7 +217,7 @@ void checkFixtures(const std::filesystem::path &root) {
   // the request falls back to analysing the body in a repeated pass.
   editorCase("late demand reporting an error",
              "int leaf() { return missing_late; }\n"
-             "class Producer { public: int operator()(int n) { return leaf() + "
+             "class Producer { public: Producer() = default; int operator()(int n) { return leaf() + "
              "n; } };\n"
              "int value_of<T>(T& value) { return value(0); }\n",
              "#include <std/cmath>\n"
@@ -237,7 +237,7 @@ void checkFixtures(const std::filesystem::path &root) {
   // when reached from a function instead of a persistent initializer.
   editorCase("late demand reporting an error behind a global initializer",
              "int leaf() { return missing_late; }\n"
-             "class Producer { public: int operator()(int n) { return leaf() + "
+             "class Producer { public: Producer() = default; int operator()(int n) { return leaf() + "
              "n; } };\n"
              "int value_of<T>(T& value) { return value(0); }\n",
              "#include <std/cmath>\n"
@@ -320,7 +320,7 @@ void checkLibraryOnlyOmission(const std::filesystem::path &root) {
   const auto library = root / "stdlib/std/cmath.gti";
   // Probe<T> and checked<T> fail for every argument wider than a byte.
   const std::string declarations =
-      "class Probe<T> {\n"
+      "class Probe<T> { public: Probe() = default;\n"
       "  static_assert(sizeof(T) == uint64_t(1), \"needs a byte\");\n"
       "};\n"
       "int inner<T>(T& value) { Probe<T> probe{}; return 0; }\n"

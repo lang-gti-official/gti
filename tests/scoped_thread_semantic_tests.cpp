@@ -50,9 +50,9 @@ public:
   Read(int& target) : target(target) {}
   void operator()() {}
 };
-struct Data { mut int left = 0; mut int right = 0; };
-struct Record { int number = 7; };
-struct RawRecord { int* address = nullptr; };
+struct Data { Data() = default; mut int left = 0; mut int right = 0; };
+struct Record { Record() = default; int number = 7; };
+struct RawRecord { RawRecord() = default; int* address = nullptr; };
 class Pair {
   int& input;
   mut int& output;
@@ -66,8 +66,8 @@ public:
   Nested(int& input, mut int& output) : task(Pair(input, output)) {}
   void operator()() mut { this.task(); }
 };
-struct Once { void operator()() && {} };
-[[no_transfer, no_share]] struct Affine { int value = 0; };
+struct Once { Once() = default; void operator()() && {} };
+[[no_transfer, no_share]] struct Affine { Affine() = default; int value = 0; };
 class AffineRead {
   Affine& value;
 public:
@@ -634,7 +634,7 @@ public:
 };
 [[no_share]] struct ExclusiveOnly { mut int value = 0;  public: ExclusiveOnly() = default; };
 [[no_transfer]] struct SharedOnly { int value = 0;  public: SharedOnly() = default; };
-[[no_transfer, no_share]] struct Affine { int value = 0;  public: Affine() = default; };
+[[no_transfer, no_share]] struct Affine { Affine() = default; int value = 0;  public: Affine() = default; };
 [[no_transfer]] class LocalJob {
   int& value;
 public:

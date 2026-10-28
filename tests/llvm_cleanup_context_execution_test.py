@@ -80,8 +80,8 @@ int main() { Marker local{'O'}; middle(); return 0; }
         secondary_message = message[::-1]
         nested = scratch / "copied-secondary.gti"
         nested.write_text('''#include <std/panic>
-class Outer { public: ~Outer() { std::print('O'); } };
-class Failing { public: ~Failing() {
+class Outer { public: Outer() = default; ~Outer() { std::print('O'); } };
+class Failing { public: Failing() = default; ~Failing() {
   std::print('D');
   std::panic("''' + secondary_message + r'''\0tail");
 } };

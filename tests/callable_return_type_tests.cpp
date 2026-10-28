@@ -221,8 +221,9 @@ int main() { return 0; }
            "GTI-S2023", "does not select an overloaded operator()");
   rejected(R"(
 #include <std/meta>
-struct Holder<F> { std::meta::callable_return_type<F> value;  public: Holder() = default; };
-int main() { Holder<int> holder{}; return 0; }
+struct Holder<F> { std::meta::callable_return_type<F> value; };
+void inspect(Holder<int>& holder) {}
+int main() { return 0; }
 )",
            "GTI-S2023", "Callable return-type reflection requires");
   {

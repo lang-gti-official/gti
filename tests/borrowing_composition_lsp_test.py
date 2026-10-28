@@ -97,7 +97,7 @@ int main() {
             assert not diagnostics(8)
             ordered = """class Box {
   mut int value = 1;
-public:
+public: Box() = default;
   int& read() { return this.value; }
   int bump() mut { this.value += 1; return this.value; }
 };

@@ -169,7 +169,7 @@ void testDiagnostics() {
   // type; it is rejected once, before any library instance is formed.
   for (const std::string member : {"transform", "transform_error"}) {
     rejectOnly(producer +
-                   "struct Mapper { int operator()(int value) { return value; "
+                   "struct Mapper { Mapper() = default; int operator()(int value) { return value; "
                    "} };\n"
                    "int main() { Mapper mapper{}; [[discard]] read()." +
                    member + "(mapper); return 0; }\n",

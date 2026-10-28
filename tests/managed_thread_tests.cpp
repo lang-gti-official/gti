@@ -876,7 +876,7 @@ int main() {
     const auto frontend = analyze(
         "transfer-function.gti",
         "#include <std/functional>\n#include <std/thread>\n" + std::string(R"(
-struct Task { int operator()())") +
+struct Task { Task() = default; int operator()())") +
             suffix + R"( { return 42; } };
 int main() {
   std::transfer_function<int())" +
@@ -919,7 +919,7 @@ int main() {
   for (const std::string suffix : {"", " mut", " &&"}) {
     const auto rejected = analyze("affine-erased-task.gti",
                                   "#include <std/functional>\n[[no_transfer]] "
-                                  "struct Task { int operator()()" +
+                                  "struct Task { Task() = default; int operator()()" +
                                       suffix + R"( { return 42; } };
 int main() {
   std::transfer_function<int())" + suffix +
@@ -932,7 +932,7 @@ int main() {
            "erasure must reject a non-transferable target at construction");
     const auto replacement =
         analyze("affine-erased-replacement.gti",
-                "#include <std/functional>\n[[no_transfer]] struct Task { int "
+                "#include <std/functional>\n[[no_transfer]] struct Task { Task() = default; int "
                 "operator()()" +
                     suffix + R"( { return 42; } };
 int main() {
@@ -952,7 +952,7 @@ int main() {
         suffix == " &&" ? "std::move(second)()" : "second()";
     const auto local =
         analyze("local-erased-affine-target.gti",
-                "#include <std/functional>\n[[no_transfer]] struct Task { int "
+                "#include <std/functional>\n[[no_transfer]] struct Task { Task() = default; int "
                 "operator()()" +
                     suffix + R"( { return 42; } };
 int main() {

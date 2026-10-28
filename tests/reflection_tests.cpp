@@ -432,14 +432,12 @@ void checkAttributeFormatter() {
   const std::string source = R"(namespace tags {
   [[attribute]] struct key {
     std::string_view name = "";
-   public: key() = default; };
+  };
 }
 
 [[tags::key("player")]] struct Player {
   [[tags::key("display"), tags::skip]] std::string_view name = "";
   [[tags::key(.name = "hp")]] uint32_t health = 100;
-public:
-  Player() = default;
 };
 )";
   const lang::Formatter formatter;

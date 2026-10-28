@@ -65,8 +65,6 @@ public:
 private:
   /// This must not be published.
   int secret = 1;
-public:
-  widget() = default;
 };
 
 /// A move-only documented owner.
@@ -74,8 +72,6 @@ class owner {
 public:
   owner(owner& other) = delete;
   owner(owner&& other) = default;
-public:
-  owner() = default;
 };
 
 /// Doubles a value.

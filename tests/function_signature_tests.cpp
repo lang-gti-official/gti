@@ -118,7 +118,7 @@ void classSignaturePatternSyntax() {
   }
 
   const std::string source =
-      "struct Callback<R(Args...)> { R call(Args... args);  public: Callback() = default; };";
+      "struct Callback<R(Args...)> { R call(Args... args); };";
   lang::Lexer lexer;
   lang::Parser parser(lexer.scan(source));
   const auto program = parser.parse();

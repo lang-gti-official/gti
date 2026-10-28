@@ -121,6 +121,7 @@ int main() { shapes::Layer<64> stack{}; return stack.value - 1; }
         "GTI-S2105");
   check(std::string(layers) + R"gti(
 struct Box<uint64_t N = 2, uint64_t Extent = N + 1> {
+  Box() = default;
   using Previous = shapes::Layer<N - 1>;
   Previous inner;
   int values[Extent] = {};

@@ -13,7 +13,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:839: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
+          "stderr": "<std/memory>:846: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
           "stdout": "target 1\nsource 1\nsource 0\nouter guard\n"
         },
         {
@@ -21,7 +21,7 @@
             "a"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:838: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
+          "stderr": "<std/memory>:845: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
           "stdout": "source 1\nsource 0\nouter guard\n"
         },
         {
@@ -30,7 +30,7 @@
             "b"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:836: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
+          "stderr": "<std/memory>:843: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
           "stdout": "source 2\nsource 1\nsource 0\nouter guard\n"
         }
       ]
@@ -39,7 +39,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:804: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:811: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -47,7 +47,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:805: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
+          "stderr": "<std/memory>:812: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -56,7 +56,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:1574: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:1581: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\nconstruct 10\ndrop 10\ndrop 0\n"
         },
         {
@@ -66,7 +66,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:824: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
+          "stderr": "<std/memory>:831: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
           "stdout": "construct 0\nconstruct 10\nconstruct 20\ndrop 20\ndrop 10\ndrop 0\n"
         }
       ]
@@ -85,7 +85,7 @@
       "cases": [
         {
           "exit": "abort",
-          "stderr": "<std/memory>:383: runtime error\\[GTI-R0011\\]: allocation_failure in private_storage\\n",
+          "stderr": "<std/memory>:390: runtime error\\[GTI-R0011\\]: allocation_failure in private_storage\\n",
           "stdout": "full\n"
         }
       ]
@@ -129,7 +129,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:42: runtime error\\[GTI-R0001\\]: integer_overflow in multiplication\\n",
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:44: runtime error\\[GTI-R0001\\]: integer_overflow in multiplication\\n",
           "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
         },
         {
@@ -137,7 +137,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:43: runtime error\\[GTI-R0006\\]: numeric_conversion_out_of_range in numeric_cast\\n",
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:45: runtime error\\[GTI-R0006\\]: numeric_conversion_out_of_range in numeric_cast\\n",
           "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
         },
         {
@@ -146,7 +146,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:48: runtime error\\[GTI-R0007\\]: index_out_of_bounds in fixed_array\\n",
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:50: runtime error\\[GTI-R0007\\]: index_out_of_bounds in fixed_array\\n",
           "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
         },
         {
@@ -156,7 +156,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:50: runtime error\\[GTI-R0005\\]: shift_count_out_of_range in left_shift\\n",
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:52: runtime error\\[GTI-R0005\\]: shift_count_out_of_range in left_shift\\n",
           "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
         },
         {
@@ -167,19 +167,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:51: runtime error\\[GTI-R0002\\]: division_by_zero in integer_division\\n",
-          "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
-        },
-        {
-          "args": [
-            "x",
-            "x",
-            "x",
-            "x",
-            "x"
-          ],
-          "exit": 70,
-          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:52: runtime error\\[GTI-R0003\\]: modulo_by_zero in integer_modulo\\n",
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:53: runtime error\\[GTI-R0002\\]: division_by_zero in integer_division\\n",
           "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
         },
         {
@@ -188,11 +176,10 @@
             "x",
             "x",
             "x",
-            "x",
             "x"
           ],
           "exit": 70,
-          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:53: runtime error\\[GTI-R0001\\]: integer_overflow in negation\\n",
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:54: runtime error\\[GTI-R0003\\]: modulo_by_zero in integer_modulo\\n",
           "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
         },
         {
@@ -202,11 +189,24 @@
             "x",
             "x",
             "x",
+            "x"
+          ],
+          "exit": 70,
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:55: runtime error\\[GTI-R0001\\]: integer_overflow in negation\\n",
+          "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
+        },
+        {
+          "args": [
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
             "x",
             "x"
           ],
           "exit": 70,
-          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:58: runtime error\\[GTI-R0007\\]: index_out_of_bounds in fixed_array\\n",
+          "stderr": "c122_memory_checked_ops_in_unsafe\\.gti:60: runtime error\\[GTI-R0007\\]: index_out_of_bounds in fixed_array\\n",
           "stdout": "nested local\nhelper local\nowned parameter\ncaller local\nouter guard\n"
         }
       ]
@@ -285,7 +285,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:271: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
+          "stderr": "<std/memory>:278: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
           "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
         },
         {
@@ -293,7 +293,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:283: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
+          "stderr": "<std/memory>:290: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
           "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
         }
       ]
