@@ -8,13 +8,13 @@ typedef void (*Notify)(const void *);
 typedef void (*Store)(void *, uint64_t);
 typedef uint64_t (*Load)(const void *);
 
-#define DECLARE(Bits) \
-  extern void gti_test_wait_u##Bits##_wait_0(const void *, uint64_t); \
-  extern void gti_test_wait_u##Bits##_wait_1(const void *, uint64_t); \
-  extern void gti_test_wait_u##Bits##_wait_4(const void *, uint64_t); \
-  extern void gti_test_wait_u##Bits##_one(const void *); \
-  extern void gti_test_wait_u##Bits##_all(const void *); \
-  extern void gti_test_llvm_store##Bits(void *, uint64_t); \
+#define DECLARE(Bits)                                                          \
+  extern void gti_test_wait_u##Bits##_wait_0(const void *, uint64_t);          \
+  extern void gti_test_wait_u##Bits##_wait_1(const void *, uint64_t);          \
+  extern void gti_test_wait_u##Bits##_wait_4(const void *, uint64_t);          \
+  extern void gti_test_wait_u##Bits##_one(const void *);                       \
+  extern void gti_test_wait_u##Bits##_all(const void *);                       \
+  extern void gti_test_llvm_store##Bits(void *, uint64_t);                     \
   extern uint64_t gti_test_llvm_load##Bits(const void *);
 DECLARE(8)
 DECLARE(16)
@@ -28,13 +28,15 @@ struct Case {
   Load load;
   unsigned width;
 };
-#define CASE(Bits, Order, Notification) \
-  {gti_test_wait_u##Bits##_wait_##Order, gti_test_wait_u##Bits##_##Notification, \
-   gti_test_llvm_store##Bits, gti_test_llvm_load##Bits, Bits / 8}
-#define ORDERS(Bits) \
-  CASE(Bits, 0, one), CASE(Bits, 1, one), CASE(Bits, 4, one), \
-  CASE(Bits, 0, all), CASE(Bits, 1, all), CASE(Bits, 4, all)
-static const struct Case cases[] = {ORDERS(8), ORDERS(16), ORDERS(32), ORDERS(64)};
+#define CASE(Bits, Order, Notification)                                        \
+  {gti_test_wait_u##Bits##_wait_##Order,                                       \
+   gti_test_wait_u##Bits##_##Notification, gti_test_llvm_store##Bits,          \
+   gti_test_llvm_load##Bits, Bits / 8}
+#define ORDERS(Bits)                                                           \
+  CASE(Bits, 0, one), CASE(Bits, 1, one), CASE(Bits, 4, one),                  \
+      CASE(Bits, 0, all), CASE(Bits, 1, all), CASE(Bits, 4, all)
+static const struct Case cases[] = {ORDERS(8), ORDERS(16), ORDERS(32),
+                                    ORDERS(64)};
 
 static pthread_mutex_t gate = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t ready = PTHREAD_COND_INITIALIZER;
@@ -74,6 +76,7 @@ int main(void) {
       assert(pthread_join(worker, 0) == 0);
     }
   }
-  puts("generated wait/notify: four widths, three orders, one/all publication passed");
+  puts("generated wait/notify: four widths, three orders, one/all publication "
+       "passed");
   return 0;
 }

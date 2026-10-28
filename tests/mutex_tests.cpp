@@ -339,9 +339,10 @@ int main() {
          "unrelated wrappers and static fields admit only native retirement");
   if (!frontend.canGenerateCode())
     return;
-  expect(lang::verifyHirProgramPlans(frontend.semantics, frontend.hir).valid() &&
-             lang::verifyMirProgram(frontend.mir).valid(),
-         "native process retirement preserves phase authority");
+  expect(
+      lang::verifyHirProgramPlans(frontend.semantics, frontend.hir).valid() &&
+          lang::verifyMirProgram(frontend.mir).valid(),
+      "native process retirement preserves phase authority");
   std::size_t roots = 0;
   for (const auto &step : frontend.mir.programInitializationPlan().steps) {
     if (!step.nativeRetirement)
@@ -349,12 +350,13 @@ int main() {
     ++roots;
     expect(step.requiresActiveCleanup &&
                lang::mirDropIsNativeRetirement(frontend.mir,
-                                                *step.nativeRetirement),
+                                               *step.nativeRetirement),
            "each active process root retains its exact native-only recipe");
     for (int mutation = 0; mutation != 3; ++mutation) {
       auto changed = frontend.mir;
       auto &steps = const_cast<lang::MirProgramInitializationPlan &>(
-                        changed.programInitializationPlan()).steps;
+                        changed.programInitializationPlan())
+                        .steps;
       auto &recipe = steps[step.id - 1].nativeRetirement;
       if (mutation == 0)
         recipe.reset();
@@ -362,11 +364,13 @@ int main() {
         recipe->aggregate.clear();
       if (mutation == 2)
         recipe->type = lang::SemanticType::Int32;
-      expect(!lang::verifyMirProgram(changed).valid(),
-             "native process recipes reject erasure, truncation and wrong type");
+      expect(
+          !lang::verifyMirProgram(changed).valid(),
+          "native process recipes reject erasure, truncation and wrong type");
     }
   }
-  expect(roots == 2, "global and static wrapper each publish one retirement root");
+  expect(roots == 2,
+         "global and static wrapper each publish one retirement root");
   const auto *hosted = frontend.mir.hostedStartup();
   expect(hosted != nullptr, "native retirement has a hosted endpoint");
   if (!hosted)
@@ -374,7 +378,8 @@ int main() {
   std::size_t normal = 0, failure = 0;
   for (const auto &block : hosted->blocks) {
     const auto retirement = std::find_if(
-        block.instructions.begin(), block.instructions.end(), [](const auto &i) {
+        block.instructions.begin(), block.instructions.end(),
+        [](const auto &i) {
           return i.kind == lang::MirInstructionKind::RetireProgramStorage;
         });
     if (retirement == block.instructions.end())
@@ -384,8 +389,8 @@ int main() {
       auto changed = frontend.mir;
       auto &body = *const_cast<lang::MirBody *>(changed.hostedStartup());
       auto &instructions = body.blocks[block.id - 1].instructions;
-      const auto index = static_cast<std::size_t>(
-          retirement - block.instructions.begin());
+      const auto index =
+          static_cast<std::size_t>(retirement - block.instructions.begin());
       if (mutation == 0)
         instructions.erase(instructions.begin() + index);
       if (mutation == 1) {
@@ -394,8 +399,8 @@ int main() {
         std::swap(instructions[index], instructions[index - 1]);
       }
       if (mutation == 2) {
-        if (index == 0 || instructions[index - 1].kind !=
-                              lang::MirInstructionKind::Call)
+        if (index == 0 ||
+            instructions[index - 1].kind != lang::MirInstructionKind::Call)
           continue;
         instructions[index - 1].functionTarget =
             changed.hostedStartupPlan()->cThreadBegin;
@@ -407,29 +412,32 @@ int main() {
   }
   expect(normal == 1 && failure != 0,
          "normal and ordinary failure exits both contain native retirement");
-  for (const std::string declaration : {
-           "class Owned { public: ~Owned() {} }; Owned global{};",
-           "class Owned { public: ~Owned() {} }; "
-           "std::mutex<Owned> global{Owned()};"}) {
-    const std::string source = "#include <std/mutex>\n" + declaration +
-                               "\nint main() { return 0; }\n";
+  for (const std::string declaration :
+       {"class Owned { public: ~Owned() {} }; Owned global{};",
+        "class Owned { public: ~Owned() {} }; "
+        "std::mutex<Owned> global{Owned()};"}) {
+    const std::string source =
+        "#include <std/mutex>\n" + declaration + "\nint main() { return 0; }\n";
     const auto denied = analyze("source-process-cleanup-rejected.gti", source);
-    expect(!denied.canGenerateCode() && hasCode(denied, "GTI-S2061"),
-           "even infallible source destructors remain outside native retirement");
-    const auto diagnostic = std::find_if(
-        denied.diagnostics.begin(), denied.diagnostics.end(), [](const auto &d) {
-          return d.code == "GTI-S2061";
-        });
-    expect(diagnostic != denied.diagnostics.end() &&
-               diagnostic->primary.source ==
-                   std::filesystem::absolute("source-process-cleanup-rejected.gti").string() &&
-               diagnostic->primary.start == source.rfind("global") &&
-               diagnostic->primary.end == source.rfind("global") + 6 &&
-               diagnostic->message.find("source or owning cleanup") != std::string::npos &&
-               !diagnostic->related.empty() && !diagnostic->hints.empty() &&
-               diagnostic->fixes.empty(),
-           "process cleanup rejection retains an exact binding span, cause, "
-           "actionable hint and no mechanical fix");
+    expect(
+        !denied.canGenerateCode() && hasCode(denied, "GTI-S2061"),
+        "even infallible source destructors remain outside native retirement");
+    const auto diagnostic =
+        std::find_if(denied.diagnostics.begin(), denied.diagnostics.end(),
+                     [](const auto &d) { return d.code == "GTI-S2061"; });
+    expect(
+        diagnostic != denied.diagnostics.end() &&
+            diagnostic->primary.source ==
+                std::filesystem::absolute("source-process-cleanup-rejected.gti")
+                    .string() &&
+            diagnostic->primary.start == source.rfind("global") &&
+            diagnostic->primary.end == source.rfind("global") + 6 &&
+            diagnostic->message.find("source or owning cleanup") !=
+                std::string::npos &&
+            !diagnostic->related.empty() && !diagnostic->hints.empty() &&
+            diagnostic->fixes.empty(),
+        "process cleanup rejection retains an exact binding span, cause, "
+        "actionable hint and no mechanical fix");
   }
 }
 
@@ -921,15 +929,15 @@ int main() {
       if (auto *shell = findMutexDropRecipe(malformed, obligation.dropType)) {
         found = true;
         expect(shell->requiresActiveCleanup && shell->aggregate.empty(),
-               "sealed passive mutex cleanup names the shell, not a fake payload drop");
+               "sealed passive mutex cleanup names the shell, not a fake "
+               "payload drop");
         if (mutation == 0)
           shell->requiresActiveCleanup = false;
         if (mutation == 1)
           shell->classInstance.reset();
         if (mutation == 2)
-          shell->aggregate.push_back(
-              {.type = lang::SemanticType::Int32,
-               .requiresActiveCleanup = true});
+          shell->aggregate.push_back({.type = lang::SemanticType::Int32,
+                                      .requiresActiveCleanup = true});
       }
     });
     expect(found && !lang::verifyMirProgram(malformed).valid(),
@@ -1574,9 +1582,10 @@ int main() { return 0; }
 )gti");
   if (!disjoint.canGenerateCode())
     printDiagnostics(disjoint);
-  expect(disjoint.canGenerateCode() &&
-             lang::verifyMirProgram(disjoint.mir).valid(),
-         "exclusive external permission does not freeze a disjoint stored field");
+  expect(
+      disjoint.canGenerateCode() &&
+          lang::verifyMirProgram(disjoint.mir).valid(),
+      "exclusive external permission does not freeze a disjoint stored field");
   const auto sharedCarrier = analyze("ordinary-shared-carrier.gti", R"gti(
 class Lease {
   int& value;
@@ -1617,7 +1626,8 @@ void testSynchronizedGuardsThroughFormals() {
     const auto result = analyze(name, std::move(source));
     if (!result.canGenerateCode())
       printDiagnostics(result);
-    expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
+    expect(result.canGenerateCode() &&
+               lang::verifyMirProgram(result.mir).valid(),
            std::string(name) + " lowers to verified MIR");
     if (result.canGenerateCode())
       inspect(result.mir);
@@ -1674,14 +1684,14 @@ int main() {
           bool root = false;
           for (const auto &function : program.functionInstances())
             for (const auto *loan : guardLoans(function.body))
-              root = root || (loan->parent == 0 &&
-                              std::any_of(function.body.loans.begin(),
-                                          function.body.loans.end(),
-                                          [](const auto &entry) {
-                                            return entry.entry &&
-                                                   entry.kind ==
-                                                       lang::MirLoanKind::Parameter;
-                                          }));
+              root = root ||
+                     (loan->parent == 0 &&
+                      std::any_of(
+                          function.body.loans.begin(),
+                          function.body.loans.end(), [](const auto &entry) {
+                            return entry.entry &&
+                                   entry.kind == lang::MirLoanKind::Parameter;
+                          }));
           expect(root, "a guard through a shared entry formal is a root loan");
         });
   check("guard-through-mutable-owner-accessor", R"(
@@ -1716,10 +1726,10 @@ int main() {
               const auto *accessor = function.body.findLoan(loan->parent);
               const auto *owner =
                   accessor ? function.body.findLoan(accessor->parent) : nullptr;
-              chained = chained ||
-                        (accessor &&
-                         accessor->kind == lang::MirLoanKind::CallResult &&
-                         owner && owner->entry);
+              chained =
+                  chained || (accessor &&
+                              accessor->kind == lang::MirLoanKind::CallResult &&
+                              owner && owner->entry);
             }
           expect(chained, "an accessor-held guard keeps its accessor chain");
         });

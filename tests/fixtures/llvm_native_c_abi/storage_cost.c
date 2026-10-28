@@ -2,7 +2,8 @@
 uint64_t native_cost_counter;
 static uint64_t calls;
 uint64_t native_cost_storage_step(uint64_t value) {
-  if (native_cost_counter != value) return UINT64_MAX;
+  if (native_cost_counter != value)
+    return UINT64_MAX;
   ++calls;
   native_cost_counter = value + 3;
   return value + 5;

@@ -7400,9 +7400,9 @@ auto SemanticVisitor::Impl::predeclaredPlace(const Expr *expression,
            ++index)
         if (parameters[index].name.lexeme == variable->name().lexeme)
           return PredeclaredPlace{.type = function.parameterTypes[index]};
-      return receiver ? field(PredeclaredPlace{.type = ownerType},
-                              variable->name())
-                      : std::nullopt;
+      return receiver
+                 ? field(PredeclaredPlace{.type = ownerType}, variable->name())
+                 : std::nullopt;
     }
     if (const auto *member = exprAs<Get>(current)) {
       const auto object = self(self, member->object().get());
@@ -7601,11 +7601,10 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     const auto place = predeclaredPlace(object.get(), function, ownerType);
     if (!place)
       return false;
-    const SemanticType &pointer =
-        place->type.kind == SemanticType::Reference &&
-                place->type.arguments.size() == 1
-            ? place->type.arguments.front()
-            : place->type;
+    const SemanticType &pointer = place->type.kind == SemanticType::Reference &&
+                                          place->type.arguments.size() == 1
+                                      ? place->type.arguments.front()
+                                      : place->type;
     return pointer.kind == SemanticType::RawPointer;
   };
   if (const auto *member = exprAs<Get>(expression.get())) {

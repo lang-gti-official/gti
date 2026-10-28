@@ -1,7 +1,6 @@
 #include "reachability.h"
 #include "gti/mir_effects.h"
 #include "native_c_contract.h"
-#include "gti/mir_effects.h"
 
 #include <algorithm>
 #include <stdexcept>

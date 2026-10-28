@@ -5465,8 +5465,7 @@ auto SemanticVisitor::Impl::accessorResultUse(const ResultUse &use,
     // its use is not classified.
     if (std::any_of(candidates.begin(), candidates.end(),
                     [&](const CallableCandidate &candidate) {
-                      if (candidate.returnType.kind ==
-                          SemanticType::Reference)
+                      if (candidate.returnType.kind == SemanticType::Reference)
                         return false;
                       const SemanticTypeTraits traits =
                           typeTraits(candidate.returnType);

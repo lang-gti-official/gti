@@ -232,8 +232,8 @@ SemanticType reduceComputedTypeProjections(SemanticType type,
       !type.valueArguments.empty())
     return type;
   const auto *info = semantics.findClassType(type.classId);
-  if (info == nullptr ||
-      info->computedTypeProjection != ComputedTypeProjectionKind::CallableReturn)
+  if (info == nullptr || info->computedTypeProjection !=
+                             ComputedTypeProjectionKind::CallableReturn)
     return type;
   // The result names a subobject of type; copy it before returning.
   if (const auto *result = type.arguments.front().callableReturnType())
@@ -1652,7 +1652,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto sameLambda = [&](const Lambda *creator) {
         if (creator == written)
           return creator != nullptr;
-        const auto *selected = written ? semantics.findLambda(*written) : nullptr;
+        const auto *selected =
+            written ? semantics.findLambda(*written) : nullptr;
         const auto *source = creator ? semantics.findLambda(*creator) : nullptr;
         return selected != nullptr && source != nullptr &&
                selected->id == source->id;
@@ -1794,10 +1795,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             unique = false;
           owner = &candidate;
         }
-        const bool exactOwner = owner != nullptr && unique &&
-                                !containsUnresolvedGeneric(selectedType) &&
-                                sameFamilySelection(selectedType, owner->type,
-                                                    semantics);
+        const bool exactOwner =
+            owner != nullptr && unique &&
+            !containsUnresolvedGeneric(selectedType) &&
+            sameFamilySelection(selectedType, owner->type, semantics);
         if (!exactOwner ||
             owner->defaultConstructor != SpecialMemberStatus::Generated ||
             owner->generatedDefaultRequiresSchedule ||
@@ -3082,7 +3083,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         step.kind != semantic.kind || step.role != semantic.role ||
         step.source != semantic.declaration || step.symbol != semantic.symbol ||
         step.requiresActiveCleanup != semantic.requiresActiveCleanup ||
-        step.nativeRetirement.has_value() != semantic.requiresNativeRetirement ||
+        step.nativeRetirement.has_value() !=
+            semantic.requiresNativeRetirement ||
         (step.nativeRetirement &&
          (semanticBinding == nullptr ||
           step.nativeRetirement->type != semanticBinding->type ||

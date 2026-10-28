@@ -60,8 +60,7 @@ const lang::MirInstruction *receiverStage(const lang::MirBody &body,
 // root carrier: some field projection is immediately dereferenced.
 bool behindStoredReference(const lang::MirPlace &place) {
   for (std::size_t index = 1; index < place.projections.size(); ++index)
-    if (place.projections[index].kind ==
-            lang::MirProjectionKind::Dereference &&
+    if (place.projections[index].kind == lang::MirProjectionKind::Dereference &&
         place.projections[index - 1].kind == lang::MirProjectionKind::Field)
       return true;
   return false;
@@ -102,8 +101,7 @@ lang::MirFunctionInstance &mutableFunction(lang::MirProgram &program,
 // user carrier. Flattening it onto the binding that holds the reference
 // names the wrong storage and is rejected.
 void storedReferenceReceivers() {
-  const auto frontend =
-      analyzeFixture("stored_reference_receivers.gti", false);
+  const auto frontend = analyzeFixture("stored_reference_receivers.gti", false);
   expect(frontend.canGenerateCode(),
          "results borrowed through stored reference fields construct MIR");
   if (!frontend.canGenerateCode())
@@ -190,8 +188,7 @@ void synchronizedReferenceFields() {
         expect(guard.parent != 0 && body.loans[guard.parent - 1].entry,
                "a guard behind a stored reference depends on an entry loan");
         if (place->root == lang::MirPlaceRootKind::This) {
-          expect(body.loans[guard.parent - 1].kind ==
-                     lang::MirLoanKind::Stored,
+          expect(body.loans[guard.parent - 1].kind == lang::MirLoanKind::Stored,
                  "a guard behind a `this` reference depends on its stored "
                  "entry");
           ++throughThis;
@@ -239,8 +236,8 @@ void synchronizedReferenceFields() {
         // mutex through that alias does not make the alias a competing
         // sibling of the guard either.
         auto throughAlias = frontend.mir;
-        auto &aliased =
-            mutableFunction(throughAlias, function.id).body.loans[*call.loan - 1];
+        auto &aliased = mutableFunction(throughAlias, function.id)
+                            .body.loans[*call.loan - 1];
         aliased.parent = formal.alias->id;
         aliased.storedDependency = formal.alias->storedDependency;
         expect(!lang::verifyMirProgram(throughAlias).valid(),
@@ -293,8 +290,8 @@ void returnedConfinedCallables() {
                 lang::CallableOwnedTransportKind::ExactReturn)
           continue;
         ++returned;
-        const auto contractIndex =
-            static_cast<std::size_t>(contract - target->callableParameters.begin());
+        const auto contractIndex = static_cast<std::size_t>(
+            contract - target->callableParameters.begin());
         for (int mutation = 0; mutation != 3; ++mutation) {
           auto malformed = frontend.mir;
           auto &callee = mutableFunction(malformed, target->id);
@@ -321,8 +318,7 @@ void returnedConfinedCallables() {
 // stored loan, so a borrow through the field is contained in the referent.
 // Without the field, the borrow would only overlap the holder shell.
 void localHolderFields() {
-  const auto frontend =
-      analyzeFixture("stored_reference_receivers.gti", false);
+  const auto frontend = analyzeFixture("stored_reference_receivers.gti", false);
   if (!frontend.canGenerateCode())
     return;
   std::size_t named = 0;
@@ -376,15 +372,13 @@ void returnedOwnedClosures() {
         const auto *target =
             frontend.mir.findFunctionInstance(*call.functionTarget);
         if (target == nullptr ||
-            std::none_of(target->callableParameters.begin(),
-                         target->callableParameters.end(),
-                         [&](const auto &parameter) {
-                           return parameter.parameterIndex ==
-                                      call.borrowArgument &&
-                                  parameter.boundary ==
-                                      lang::CallableBoundary::Owned &&
-                                  parameter.ownedTransport;
-                         }))
+            std::none_of(
+                target->callableParameters.begin(),
+                target->callableParameters.end(), [&](const auto &parameter) {
+                  return parameter.parameterIndex == call.borrowArgument &&
+                         parameter.boundary == lang::CallableBoundary::Owned &&
+                         parameter.ownedTransport;
+                }))
           continue;
         ++returned;
         auto escaped = frontend.mir;
