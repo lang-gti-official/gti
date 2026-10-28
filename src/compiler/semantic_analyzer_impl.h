@@ -4650,8 +4650,9 @@ private:
       const std::vector<GenericParameterInfo> &parameters = {},
       const std::vector<std::string> &scope = {});
 
-  [[nodiscard]] std::optional<CapabilityCondition> resolveCapabilityCondition(
-      const RequiresClause &clause, const std::vector<std::string> &scope);
+  [[nodiscard]] std::optional<CapabilityCondition>
+  resolveCapabilityCondition(const RequiresClause &clause,
+                             const std::vector<std::string> &scope);
 
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope,
@@ -5731,7 +5732,8 @@ private:
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isSimdLibraryUnit(SourceUnitId sourceUnit) const;
 
-  [[nodiscard]] bool isFunctionPointerLibraryUnit(SourceUnitId sourceUnit) const;
+  [[nodiscard]] bool
+  isFunctionPointerLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool
   isDefaultLibraryStorageBorrowCarrier(const ClassInfo &owner) const;

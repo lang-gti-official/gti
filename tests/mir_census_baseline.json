@@ -64,7 +64,7 @@
     "063-random-engine.gti": 53,
     "064-restricted-arithmetic-operators.gti": 14,
     "065-mutable-ranges.gti": 136,
-    "066-managed-threads.gti": 245,
+    "066-managed-threads.gti": 310,
     "067-forward-iterators.gti": 122,
     "068-static-assertions.gti": 8,
     "069-mutable-field-groups.gti": 10,
@@ -94,7 +94,7 @@
     "095-explicit-cloning.gti": 217,
     "096-error-mapping.gti": 43,
     "097-constexpr-tables.gti": 58,
-    "098-shared-ownership.gti": 146,
+    "098-shared-ownership.gti": 208,
     "099-borrowed-expected.gti": 181,
     "100-owned-error-pipelines.gti": 444,
     "101-owned-algorithm-results.gti": 299,
@@ -174,7 +174,8 @@
     "174-typed-macros.gti": 211,
     "175-thread-local-storage.gti": 274,
     "176-profile-independent-atomics.gti": 25,
-    "177-capability-predicates.gti": 17
+    "177-capability-predicates.gti": 17,
+    "178-wrapping-atomic-counters.gti": 25
   },
-  "total": 24164
+  "total": 24316
 }

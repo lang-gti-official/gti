@@ -468,7 +468,8 @@ private:
     const auto concreteCondition =
         [&](const std::optional<CapabilityCondition> &condition)
         -> std::optional<CapabilityCondition> {
-      if (!condition) return std::nullopt;
+      if (!condition)
+        return std::nullopt;
       auto concrete = *condition;
       for (auto &node : concrete.nodes)
         if (node.kind == CapabilityConditionNode::Kind::Transfer ||
@@ -6851,8 +6852,10 @@ private:
                    resolved->intrinsic == IntrinsicKind::AtomicNotifyAll ||
                    resolved->intrinsic == IntrinsicKind::AtomicStore ||
                    resolved->intrinsic == IntrinsicKind::AtomicExchange ||
-                   resolved->intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
-                   resolved->intrinsic == IntrinsicKind::AtomicFetchSubWrapping ||
+                   resolved->intrinsic ==
+                       IntrinsicKind::AtomicFetchAddWrapping ||
+                   resolved->intrinsic ==
+                       IntrinsicKind::AtomicFetchSubWrapping ||
                    resolved->intrinsic ==
                        IntrinsicKind::AtomicCompareExchange) {
           value.synchronization = resolved->synchronization;
@@ -6867,8 +6870,10 @@ private:
               : resolved->intrinsic == IntrinsicKind::AtomicStore
                   ? SynchronizationOperationKind::AtomicStore
               : resolved->intrinsic == IntrinsicKind::AtomicExchange ||
-                      resolved->intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
-                      resolved->intrinsic == IntrinsicKind::AtomicFetchSubWrapping
+                      resolved->intrinsic ==
+                          IntrinsicKind::AtomicFetchAddWrapping ||
+                      resolved->intrinsic ==
+                          IntrinsicKind::AtomicFetchSubWrapping
                   ? SynchronizationOperationKind::AtomicReadModifyWrite
                   : SynchronizationOperationKind::AtomicCompareExchange;
           if (value.synchronization.kind != expected ||

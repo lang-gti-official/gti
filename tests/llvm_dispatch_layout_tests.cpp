@@ -43,6 +43,19 @@ static_assert(
 namespace {
 using namespace lang;
 using namespace lang::native_llvm;
+
+// These two mechanism probes deliberately inject a trusted test prelude;
+// ordinary application source remains unable to name the legacy capability.
+FrontendResult analyzeLegacyOwner(const std::filesystem::path &root,
+                                  const std::string &name,
+                                  const std::string &source) {
+  const auto library = root / "stdlib";
+  const auto entry = library / name;
+  return Frontend().analyze(
+      entry, source, {library / "prelude.gti", entry},
+      {{std::filesystem::weakly_canonical(entry).string(), source}}, {library});
+}
+
 int failures = 0;
 void expect(bool value, std::string_view message) {
   if (!value) {
@@ -1468,7 +1481,8 @@ public:
   Token() {}
   Token(Token& other) = delete;
   Token(Token&& other) = default;
-  ~Token() {}
+  int value = 0;
+  ~Token() { auto checked = this.value + 1; }
 };
 int invoke<F>(F callable) { return callable(); }
 int owned() {
@@ -1532,6 +1546,27 @@ int main() { Field value{}; return value.read() + owned() - 34; }
   };
   Lifetimes lambdaLifetimes(lambdaSession, lambdaFailures, lambdaDispatch,
                             findLambdaDestructorBody);
+#if !defined(GTI_LLVM_C04_NATIVE_UNWIND)
+  const auto tokenRecipe =
+      mirUniqueCleanupType(lambdaSession.program().mir(),
+                           named(lambdaInput->program(), "Token").type);
+  if (!tokenRecipe)
+    throw std::runtime_error("terminal destructor fixture lost its recipe");
+  auto *terminalCleanup = lambdaLifetimes.cleanup(*tokenRecipe);
+  unsigned emergencyChecks = 0;
+  for (const auto &block : *terminalCleanup)
+    for (const auto &instruction : block)
+      if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction))
+        if (const auto *callee = call->getCalledFunction()) {
+          const auto name = callee->getName();
+          emergencyChecks += name == "gti_rt_failure_cleanup_check_v1";
+          expect(name != "gti_rt_failure_cleanup_enter_v1" &&
+                     name != "gti_rt_failure_cleanup_leave_v1",
+                 "terminal destructor has no unobservable cleanup context");
+        }
+  expect(emergencyChecks == 1,
+         "terminal destructor retains the incoming secondary-failure check");
+#endif
   const MirLambdaInstance *first = nullptr;
   const MirLambdaInstance *second = nullptr;
   const MirLambdaInstance *owned = nullptr;
@@ -1626,7 +1661,7 @@ int main() { Field value{}; return value.read() + owned() - 34; }
   // Retained private-token cleanup machinery; public source-owner execution
   // is covered independently by the ownership and dispatch native matrices.
   const auto hierarchyOwnerFrontend =
-      Frontend().analyze("llvm-cleanup-hierarchy-owner.gti", R"(
+      analyzeLegacyOwner(root, "llvm-cleanup-hierarchy-owner.gti", R"(
 #include <std/memory>
 class Base {
 public:
@@ -1666,8 +1701,7 @@ struct ActiveOwners {
 int main() {
   UniqueNest unique{}; SharedNest shared{}; ActiveOwners active{}; return 0;
 }
-)",
-                         {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+)");
   expect(hierarchyOwnerFrontend.canGenerateCode(),
          "hierarchy owner cleanup source verifies");
   if (!hierarchyOwnerFrontend.canGenerateCode())
@@ -4171,7 +4205,7 @@ void testCarrierLoanDependencies() {
 void testInertRelocation() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto frontend =
-      Frontend().analyze(root / "inert-relocation.gti", std::string(R"(
+      analyzeLegacyOwner(root, "inert-relocation.gti", std::string(R"(
 #include <std/memory>
 interface First {};
 interface Second {};
@@ -4204,8 +4238,7 @@ int main() {
   NonRelocatable custom{};
   return 0;
 }
-)"),
-                         {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+)"));
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -4594,8 +4627,6 @@ int main(void) { return gti_relocation_probe(); }
     const auto ownerStorage = session.layouts().get(owners.type).storage;
     const auto &uniqueWrapper =
         session.layouts().instance(owners.declaredFields[0].type);
-    const auto &sharedWrapper =
-        session.layouts().instance(owners.declaredFields[1].type);
     const auto shared = session.layouts().sharedOwner();
     const auto ownerField = [&](llvm::Value *address, unsigned index) {
       return ir.CreateStructGEP(
@@ -4629,8 +4660,8 @@ int main(void) { return gti_relocation_probe(); }
       ir.CreateStore(llvm::Constant::getNullValue(ownerStorage), to);
       auto *uniqueFrom = handleField(ownerField(from, 0), uniqueWrapper);
       auto *uniqueTo = handleField(ownerField(to, 0), uniqueWrapper);
-      auto *sharedFrom = handleField(ownerField(from, 1), sharedWrapper);
-      auto *sharedTo = handleField(ownerField(to, 1), sharedWrapper);
+      auto *sharedFrom = ownerField(from, 1);
+      auto *sharedTo = ownerField(to, 1);
       ir.CreateStore(payloadAddress, uniqueFrom);
       ir.CreateStore(payloadAddress,
                      ir.CreateStructGEP(shared.handle.storage, sharedFrom,

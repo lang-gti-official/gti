@@ -5506,8 +5506,13 @@ it when propagating or containing that failure. Failed-operation edges check the
 incoming primary before any callee-local cleanup; generated aggregate cleanup
 sequences retain the same scope after their first failure. A body whose every
 failure chain executes no instruction and only propagates, contains, continues
-or jumps enters no scope: nothing inside such a chain can observe the context,
-and its failed-operation edges still check the incoming primary. Nested scopes cannot
+or jumps enters no scope: nothing inside such a chain can observe the context.
+Permission-only instructions without lifecycle transfers also qualify; they emit
+no runtime operation. A generated terminal source-destructor recipe without
+children or allocation release likewise returns its first failure without
+entering a scope that no subsequent cleanup could observe. Both paths retain
+the incoming-secondary-failure check and exact record propagation. Aggregate,
+recursive, allocation-releasing and native-unwind cleanup retain their scopes. Nested scopes cannot
 replace the earliest record/artifact, and a secondary failure takes the existing
 emergency protocol immediately. The runtime borrows the record only for that
 synchronous scope; no allocation, public type recognition or successful-call

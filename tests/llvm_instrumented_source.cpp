@@ -21,9 +21,12 @@ int main(int argc, char **argv) {
   target.executionProfile = ExecutionProfile::Concurrent;
   target.runtimeCapabilities.threads = true;
   auto request = CompilationRequest(argv[2], toolchain.standardLibrary, target,
-      level == "O0" ? OptimizationLevel::O0 : OptimizationLevel::O3,
-      CppStandard::Cpp23).withBackend(BackendKind::Llvm)
-      .withLlvmInstrumentation(LlvmInstrumentationMode::AddressAndUndefinedMemory);
+                                    level == "O0" ? OptimizationLevel::O0
+                                                  : OptimizationLevel::O3,
+                                    CppStandard::Cpp23)
+                     .withBackend(BackendKind::Llvm)
+                     .withLlvmInstrumentation(
+                         LlvmInstrumentationMode::AddressAndUndefinedMemory);
   const std::filesystem::path output(argv[3]);
   auto object = output;
   object += ".o";

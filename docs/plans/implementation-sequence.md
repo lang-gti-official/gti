@@ -1316,7 +1316,7 @@ and select an independent row.
 | --- | --- | --- |
 | Broader callback inline storage / borrowed `function_ref` | Repeatable read/mut wrappers already use source `inline_polymorphic` policy: small cleanup-inert relocatable models inline, others boxed; consuming wrappers remain unique-owned. Measure allocation, registration, clone/reset and invocation separately when extending these profiles. | Inline consuming projection and cleanup-bearing relocation need general lifetime/ownership proofs. Borrowed erasure additionally needs exact origin/escape proof. Existing exact-receiver optimization does not automatically devirtualize owning models. |
 | Bulk byte I/O / response filling | Allocation/copied-byte and throughput evidence for [`cstdio.gti`](../../stdlib/std/cstdio.gti)'s bounded stack-buffer/per-byte append path and real HTTP clients. | Writable capacity, initialized length, native write bounds and success-only prefix publication must be represented; no exposing untracked storage or losing TLS/error policy. |
-| Flat/pool container representations and shared-owner co-allocation | Allocation/cache/lookup measurements against current AVL/bucket implementations and separate shared object/control-block allocation. | Stable entry addresses, immovable elements, borrow invalidation, last-owner cleanup and future weak-owner lifetime remain authoritative. Indexed links are not inherently a language workaround. |
+| Flat/pool container representations | Allocation/cache/lookup measurements against current AVL/bucket implementations. Source shared-owner co-allocation is now implemented in the active L-OWN-01 replacement and is undergoing acceptance. | Stable entry addresses, immovable elements, borrow invalidation, last-owner cleanup and future weak-owner lifetime remain authoritative. Indexed links are not inherently a language workaround. |
 | Cached/preparsed formatting and lower-cost source locations | Measure repeated pattern parsing/argument scans and owned location construction; separate runtime cost from compiler latency. | One parser, bounded CTFE profile and source-owned representation; literal descriptor lifetime/pinning is not interchangeable with owned `source_location` or hidden caller tokens. |
 | Further numeric/SIMD, coroutine/async, module linkage or concurrency breadth | A real client plus existing row prerequisites, not C++ API parity or LLVM availability. | Keep exact arithmetic/failure, target support, ownership and published concurrency contracts; the existing scoped-thread/weak-owner/freestanding gaps are not closed by adoption. |
 
@@ -8941,7 +8941,8 @@ prerequisite checkpoints as full acceptance.
   ownership support regression. General raw layout/lifetime, allocation leases,
   checked borrowing, function pointers and defined failure remain compiler
   mechanisms. Private strong-owner operations are retained but no longer used
-  by public shared ownership. Full platform, failure, corpus and performance
+  by public shared ownership. A source aggregate co-allocates payload and control,
+  with generated field rollback and a process lease. Full platform, failure, corpus and performance
   acceptance remains required before delivery. A separate weak-owner prototype
   passed clone/lock/expiry and borrow-rejection probes; production weak ownership
   remains unimplemented and needs race, overflow, rollback and performance gates.

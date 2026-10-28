@@ -1,7 +1,7 @@
 #include "gti/frontend.h"
+#include "gti/lowered_program_builder.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
-#include "gti/lowered_program_builder.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -22,9 +22,9 @@ analyze(const std::string &source,
   options.stopAfter = phase;
   options.target = lang::TargetInfo::host();
   options.target.runtimeCapabilities.threads = true;
-  return lang::Frontend(options)
-      .analyze("shared-owner-check.gti", "#include <std/memory>\n" + source,
-               {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  return lang::Frontend(options).analyze(
+      "shared-owner-check.gti", "#include <std/memory>\n" + source,
+      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
 }
 
 void require(bool condition, const char *message) {
@@ -66,7 +66,8 @@ int main() {
   require(frontend.hirValid, "shared-owner source policy must concretize");
   std::size_t owners = 0;
   for (const auto &instance : frontend.hir.classInstances()) {
-    require(instance.compilerCapability != lang::CompilerCapabilityTypeKind::SharedOwner,
+    require(instance.compilerCapability !=
+                lang::CompilerCapabilityTypeKind::SharedOwner,
             "the public source owner must not instantiate the private owner");
     if (!instance.source || instance.source->name().lexeme != "shared_ptr")
       continue;
@@ -233,7 +234,8 @@ int main() {
   lang::HirClassInstanceId sourceOwnerInstance = 0;
   std::size_t sourceOwners = 0;
   for (const auto &instance : frontend.hir.classInstances()) {
-    require(instance.compilerCapability != lang::CompilerCapabilityTypeKind::SharedOwner,
+    require(instance.compilerCapability !=
+                lang::CompilerCapabilityTypeKind::SharedOwner,
             "upcasting must use ordinary source ownership");
     if (instance.source && instance.source->name().lexeme == "shared_ptr") {
       ++sourceOwners;
@@ -302,23 +304,29 @@ int main() {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
         require(instruction.intrinsic < lang::IntrinsicKind::SharedOwnerEmpty ||
-                    instruction.intrinsic > lang::IntrinsicKind::SharedOwnerUpcast,
+                    instruction.intrinsic >
+                        lang::IntrinsicKind::SharedOwnerUpcast,
                 "source policy cannot call specialized owner intrinsics");
-        sawConstruction |= instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct;
+        sawConstruction |=
+            instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct;
         sawAtomic |= instruction.synchronization.kind ==
                      lang::SynchronizationOperationKind::AtomicCompareExchange;
-        const bool borrow = instruction.intrinsic == lang::IntrinsicKind::RawBorrow;
-        const bool empty = instruction.intrinsic == lang::IntrinsicKind::FailEmptyOwner;
-        const bool allocation = instruction.intrinsic == lang::IntrinsicKind::RequireAllocation;
+        const bool borrow =
+            instruction.intrinsic == lang::IntrinsicKind::RawBorrow;
+        const bool empty =
+            instruction.intrinsic == lang::IntrinsicKind::FailEmptyOwner;
+        const bool allocation =
+            instruction.intrinsic == lang::IntrinsicKind::RequireAllocation;
         sawBorrow |= borrow;
         sawEmptyFailure |= empty;
         sawAllocationFailure |= allocation;
         if (!borrow && !empty && !allocation)
           continue;
         if (empty || allocation) {
-          require(instruction.definedFailure.mayUnwind() == empty &&
-                      instruction.definedFailure.mayAbortAllocation() == allocation,
-                  "empty access unwinds while count/allocation exhaustion aborts");
+          require(
+              instruction.definedFailure.mayUnwind() == empty &&
+                  instruction.definedFailure.mayAbortAllocation() == allocation,
+              "empty access unwinds while count/allocation exhaustion aborts");
         }
         for (int mutation = 0; mutation != 2; ++mutation) {
           auto malformed = frontend.mir;
@@ -327,13 +335,19 @@ int main() {
           auto &changed = *std::find_if(
               target->body.blocks[block.id - 1].instructions.begin(),
               target->body.blocks[block.id - 1].instructions.end(),
-              [&](const auto &candidate) { return candidate.id == instruction.id; });
+              [&](const auto &candidate) {
+                return candidate.id == instruction.id;
+              });
           if (borrow) {
-            if (mutation == 0) changed.parameterTypes.clear();
-            else changed.borrowAccess = lang::AccessMode::Mutable;
+            if (mutation == 0)
+              changed.parameterTypes.clear();
+            else
+              changed.borrowAccess = lang::AccessMode::Mutable;
           } else {
-            if (mutation == 0) changed.localFailureSites.clear();
-            else changed.definedFailure = {};
+            if (mutation == 0)
+              changed.localFailureSites.clear();
+            else
+              changed.definedFailure = {};
           }
           require(!lang::verifyMirProgram(malformed).valid(),
                   "general borrow and failure witnesses remain mandatory");
@@ -341,8 +355,10 @@ int main() {
       }
     }
   }
-  require(sawConstruction && sawAtomic && sawBorrow && sawEmptyFailure && sawAllocationFailure,
-          "source ownership exercises lifetime, atomic, checked borrow and failure facilities");
+  require(sawConstruction && sawAtomic && sawBorrow && sawEmptyFailure &&
+              sawAllocationFailure,
+          "source ownership exercises lifetime, atomic, checked borrow and "
+          "failure facilities");
   for (const auto &source : frontend.hir.classInstances()) {
     if (!source.source || source.source->name().lexeme != "shared_ptr")
       continue;
@@ -350,13 +366,15 @@ int main() {
       auto malformed = frontend.mir;
       auto *changed = const_cast<lang::MirClassInstance *>(
           malformed.findClassInstance(source.id));
-      if (mutation == 0) changed->requiresActiveCleanup = false;
-      else changed->traits.copyable = true;
+      if (mutation == 0)
+        changed->requiresActiveCleanup = false;
+      else
+        changed->traits.copyable = true;
       const auto sealed = lang::LoweredProgramBuilder().build(
           frontend.program, frontend.semantics, frontend.hir, malformed,
           malformed, {}, frontend.mir.target());
-      require(!sealed.valid(),
-              "source owner cleanup and explicit-clone policy retain their frontend provenance");
+      require(!sealed.valid(), "source owner cleanup and explicit-clone policy "
+                               "retain their frontend provenance");
     }
   }
 }

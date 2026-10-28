@@ -194,7 +194,7 @@ public:
         return true;
       if (selected.kind == SemanticType::NativeFunction)
         return native_llvm::nativeCFunctionValueContract(program, nativeTarget,
-                                                        selected);
+                                                         selected);
       if (selected.kind == SemanticType::Lambda) {
         const auto environment =
             native_llvm::closureEnvironmentLayout(program, selected);
@@ -431,19 +431,18 @@ public:
           const bool fresh = freshConstruction(address, body, placement, stage);
           const bool published =
               freshStorage(address, body, placement, stage).has_value();
-          const bool transfer = freshTransfer(body, stage) &&
-                                publishedElement(address, body, placement,
-                                                 stage);
+          const bool transfer =
+              freshTransfer(body, stage) &&
+              publishedElement(address, body, placement, stage);
           const bool initialization =
               freshInitialization(address, body, placement, stage);
           const bool declaration = declarationOnlyField(address, body, stage);
           const bool materialization = materializedTemporary(body, stage);
           // An assignment replacing a whole hierarchy object and its paired
           // cleanup are one proved operation, not a byte transport.
-          const bool replaced =
-              replacement(address, body, placement, stage) ||
-              replacement(address, body, placement,
-                          pairedAssignment(body, stage));
+          const bool replaced = replacement(address, body, placement, stage) ||
+                                replacement(address, body, placement,
+                                            pairedAssignment(body, stage));
           if (contains(stage.info.type)) {
             if ((stage.kind == MirInstructionKind::Construct && !fresh &&
                  !published && !transfer) ||
@@ -501,8 +500,9 @@ public:
               stage.operation == MirOperation::PayloadExtract &&
               !contains(stage.info.type);
           if (!placeObservation(body, stage) && !materialization && !replaced &&
-              !replacementCopy(address, body, placement, stage) && !plainField &&
-              !closureCopySource(body, stage) && !copiedArgument(body, stage) &&
+              !replacementCopy(address, body, placement, stage) &&
+              !plainField && !closureCopySource(body, stage) &&
+              !copiedArgument(body, stage) &&
               !copiedElement(address, body, placement, stage))
             for (std::size_t index = 0; index < stage.operands.size(); ++index)
               proof.transfer |=
@@ -781,9 +781,9 @@ public:
         !function.pureVirtual || !function.virtualMethod ||
         function.staticMember || function.linkage != LanguageLinkage::Gti ||
         !function.owner ||
-        std::any_of(function.parameterTypes.begin(),
-                    function.parameterTypes.end(),
-                    [](const auto &type) { return type == SemanticType::Void; }) ||
+        std::any_of(
+            function.parameterTypes.begin(), function.parameterTypes.end(),
+            [](const auto &type) { return type == SemanticType::Void; }) ||
         !row || row->role != LoweredBodyRole::AbiDeclaration ||
         std::find(plan.requiredBodies().begin(), plan.requiredBodies().end(),
                   address) != plan.requiredBodies().end())
@@ -871,8 +871,8 @@ public:
       const auto *place = body.findPlace(operand.place);
       // A closure owned by value as another closure's capture is selected
       // in place in that closure's own body.
-      const bool captured = place && ownedCapture(body, *place) &&
-                            place->projections.empty();
+      const bool captured =
+          place && ownedCapture(body, *place) && place->projections.empty();
       if (!place || place->type != target || place->foreignStorage ||
           (place->capture && !captured) || !place->projections.empty() ||
           (place->root != MirPlaceRootKind::Binding &&
@@ -899,8 +899,8 @@ public:
         unreference(operand.type).kind == SemanticType::Enum) {
       const auto &target = unreference(operand.type);
       const auto *place = body.findPlace(operand.place);
-      if (!program.findPayloadEnum(target) || !place ||
-          place->type != target || place->foreignStorage || place->capture ||
+      if (!program.findPayloadEnum(target) || !place || place->type != target ||
+          place->foreignStorage || place->capture ||
           !payloadPlace(body, *place))
         return {};
       const bool mut = operand.kind == MirOperandKind::BorrowWrite ||
@@ -913,8 +913,7 @@ public:
     if (operand.kind == MirOperandKind::Value &&
         unreference(operand.type).kind == SemanticType::Enum) {
       const auto *staged = stagedBorrow(body, operand);
-      return staged ? borrowed(body, staged->operands.front())
-                    : std::nullopt;
+      return staged ? borrowed(body, staged->operands.front()) : std::nullopt;
     }
     // The checked address of a hierarchy array place names that storage;
     // its elements are selected by their own checked projections.
@@ -1160,10 +1159,11 @@ private:
       return false;
     pointeeVisits.push_back(pointee);
     const bool result =
-        native_llvm::mutexComposition(
-            program, pointee, [this](const SemanticType &leaf) {
-              return natives(leaf) || metadata(leaf).has_value();
-            })
+        native_llvm::mutexComposition(program, pointee,
+                                      [this](const SemanticType &leaf) {
+                                        return natives(leaf) ||
+                                               metadata(leaf).has_value();
+                                      })
             .has_value();
     pointeeVisits.pop_back();
     return result;
@@ -1213,14 +1213,13 @@ private:
     // field uses its ordinary native value representation. Borrowed state
     // is such a field: a reference or view is an address, and its loans are
     // MIR facts with no runtime state beside the dispatch metadata.
-    bool valid =
-        std::all_of(owner.declaredFields.begin(), owner.declaredFields.end(),
-                    [&](const auto &field) {
-                      if (contains(field.type))
-                        return metadataStorage(field.type, path);
-                      return field.type != SemanticType::Void &&
-                             natives(field.type);
-                    });
+    bool valid = std::all_of(
+        owner.declaredFields.begin(), owner.declaredFields.end(),
+        [&](const auto &field) {
+          if (contains(field.type))
+            return metadataStorage(field.type, path);
+          return field.type != SemanticType::Void && natives(field.type);
+        });
     if (owner.kind == ClassKind::Interface)
       valid &= owner.declaredFields.empty() && !owner.destructor &&
                !owner.requiresActiveCleanup && !owner.requiresActiveDropState;
@@ -1250,8 +1249,7 @@ private:
         return false;
       for (const auto &variant : payload->variants)
         for (const auto &field : variant.payloadTypes)
-          if (contains(field) ? !metadataStorage(field, path)
-                              : !natives(field))
+          if (contains(field) ? !metadataStorage(field, path) : !natives(field))
             return false;
       return true;
     }
@@ -1322,12 +1320,11 @@ private:
         return false;
       if (view(view, loan->source))
         return true;
-      return std::any_of(loan->additionalDependencies.begin(),
-                         loan->additionalDependencies.end(),
-                         [&](const auto &dependency) {
-                           return dependency.source &&
-                                  view(view, dependency.source);
-                         });
+      return std::any_of(
+          loan->additionalDependencies.begin(),
+          loan->additionalDependencies.end(), [&](const auto &dependency) {
+            return dependency.source && view(view, dependency.source);
+          });
     };
     const auto input = [&](const MirOperand &operand) {
       return (operand.place && view(view, operand.place)) ||
@@ -1552,15 +1549,14 @@ private:
                    const native_llvm::Placement &placement,
                    const MirInstruction &stage) {
     if (stage.kind != MirInstructionKind::Assign || !stage.destination ||
-        stage.operation != MirOperation::Assign ||
-        stage.operands.size() != 1 || stage.receiver || stage.loan)
+        stage.operation != MirOperation::Assign || stage.operands.size() != 1 ||
+        stage.receiver || stage.loan)
       return false;
     const auto *place = body.findPlace(*stage.destination);
     const auto *payload = place && place->type.kind == SemanticType::Enum
                               ? program.findPayloadEnum(place->type)
                               : nullptr;
-    if (!place ||
-        (place->type.kind != SemanticType::Class && !payload) ||
+    if (!place || (place->type.kind != SemanticType::Class && !payload) ||
         place->type != stage.info.type || !contains(place->type))
       return false;
     // Structural only: this also runs while exclusions are gathered, before
@@ -1653,10 +1649,9 @@ private:
     }
     const auto *from = body.findPlace(producer.operands.front().place);
     return from && from->type == type &&
-           borrowedSource(body,
-                          {.kind = MirOperandKind::Address,
-                           .place = from->id,
-                           .type = SemanticType::referenceTo(type)})
+           borrowedSource(body, {.kind = MirOperandKind::Address,
+                                 .place = from->id,
+                                 .type = SemanticType::referenceTo(type)})
                .has_value();
   }
   // A complete object of hierarchy storage that copies without transporting
@@ -1686,8 +1681,7 @@ private:
     const auto &operand = stage.operands.front();
     const auto &type = stage.info.type;
     const auto *to = body.findPlace(*stage.destination);
-    const auto *from =
-        operand.place ? body.findPlace(operand.place) : nullptr;
+    const auto *from = operand.place ? body.findPlace(operand.place) : nullptr;
     if (operand.kind != MirOperandKind::Copy || operand.type != type || !to ||
         !from || to->type != type || from->type != type ||
         to->root != MirPlaceRootKind::Temporary || !to->projections.empty() ||
@@ -1742,7 +1736,8 @@ private:
   bool copyableClosure(const SemanticType &type) {
     if (type.kind != SemanticType::Lambda || !contains(type))
       return false;
-    const auto environment = native_llvm::closureEnvironmentLayout(program, type);
+    const auto environment =
+        native_llvm::closureEnvironmentLayout(program, type);
     if (!environment ||
         environment->captureModes.size() != environment->captureTypes.size() ||
         environment->captureRequiresActiveCleanup.size() !=
@@ -1873,8 +1868,7 @@ private:
         if (!producer.tombstone &&
             producer.result == stage.operands.front().value) {
           const auto planned = plannedTransfer(body, producer);
-          return (planned ==
-                      native_llvm::FreshHierarchyPublication::Receiver ||
+          return (planned == native_llvm::FreshHierarchyPublication::Receiver ||
                   (planned ==
                        native_llvm::FreshHierarchyPublication::Argument &&
                    stage.destination)) &&
@@ -1892,8 +1886,7 @@ private:
     for (const auto &block : body.blocks)
       for (const auto &stage : block.instructions)
         if (!stage.tombstone && stage.result == receiver.value)
-          return stage.kind == MirInstructionKind::CallInput ? &stage
-                                                             : nullptr;
+          return stage.kind == MirInstructionKind::CallInput ? &stage : nullptr;
     return nullptr;
   }
   bool freshReturns(MirBodyAddress address, const MirBody &body,
@@ -2121,12 +2114,11 @@ private:
         stage.info.type.kind == SemanticType::Void ||
         (stage.dispatch != CallDispatch::Static &&
          stage.dispatch != CallDispatch::Virtual) ||
-        stage.destination ||
-        stage.successResultDrop || stage.successResultDestination ||
-        stage.constructorTarget || stage.lambdaTarget || stage.bodyTarget ||
-        stage.nativeCalleeType || stage.nativeCallbackAdapter ||
-        stage.threadTaskAdapter || stage.callableInvocation ||
-        !stage.scopedThreadTasks.empty())
+        stage.destination || stage.successResultDrop ||
+        stage.successResultDestination || stage.constructorTarget ||
+        stage.lambdaTarget || stage.bodyTarget || stage.nativeCalleeType ||
+        stage.nativeCallbackAdapter || stage.threadTaskAdapter ||
+        stage.callableInvocation || !stage.scopedThreadTasks.empty())
       return false;
     const auto *loan = body.findLoan(*stage.loan);
     const auto *value = body.findValue(*stage.result);
@@ -2143,8 +2135,7 @@ private:
     if (stage.intrinsic != IntrinsicKind::None) {
       // Verified MIR owns the capability's exact owner, access and failure
       // contract. Its result is a checked address, never pointee object bytes.
-      return !stage.functionTarget &&
-             stage.dispatch == CallDispatch::Static &&
+      return !stage.functionTarget && stage.dispatch == CallDispatch::Static &&
              stage.info.type.kind == SemanticType::Class &&
              (stage.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
               stage.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
@@ -2305,8 +2296,8 @@ private:
       return true;
     // A constructor publishing a reference field stores the borrowed address
     // itself; the field's Stored loan is that publication's provenance.
-    if (loan.kind == MirLoanKind::Stored && loan.storedField &&
-        loan.escapes && !loan.storedDependency)
+    if (loan.kind == MirLoanKind::Stored && loan.storedField && loan.escapes &&
+        !loan.storedDependency)
       return true;
     // A borrow of a carrier, such as an interface or base view of it,
     // depends on the carrier's own stored loans: provenance for the external
@@ -2380,8 +2371,8 @@ private:
              !retained && !temporaryBorrow(body, stage)) ||
             stage.destination || stage.preparedParameterDrop ||
             (stage.retainedOwnerPlace && !retained) ||
-            stage.successResultDrop ||
-            stage.successResultDestination || stage.operands.size() != 1 ||
+            stage.successResultDrop || stage.successResultDestination ||
+            stage.operands.size() != 1 ||
             stage.operands.front().kind == MirOperandKind::Value ||
             unreference(stage.info.type) != unreference(operand.type) ||
             unreference(stage.operands.front().type) !=
@@ -2441,8 +2432,8 @@ private:
       const bool raw = rawView(*place);
       // A hidden temporary is the exact storage MIR materialized for one
       // object; its producer and drops carry their own proofs.
-      const bool hidden = place->root == MirPlaceRootKind::Temporary &&
-                          !place->capture;
+      const bool hidden =
+          place->root == MirPlaceRootKind::Temporary && !place->capture;
       if (place->foreignStorage ||
           (place->root != MirPlaceRootKind::Binding &&
            place->root != MirPlaceRootKind::This &&
@@ -2561,8 +2552,7 @@ private:
           native_llvm::PolymorphicStorage::handles(stage.intrinsic))
         return inlineSlot(body, stage);
       if (borrowedCallResult(body, stage) &&
-          stage.dispatch == CallDispatch::Static &&
-          metadata(stage.info.type) &&
+          stage.dispatch == CallDispatch::Static && metadata(stage.info.type) &&
           (!stage.receiver || !borrowedUse(body, *stage.receiver) ||
            borrowed(body, *stage.receiver)))
         return Shape::NativeBorrowedDispatchView;
@@ -2576,7 +2566,8 @@ private:
             *session, *dispatch, body, stage);
         // A task the spawn relocates into its runtime box is proved with
         // that exact native thread operation and adapter.
-        if (transfer.publishes == native_llvm::FreshHierarchyPublication::Task) {
+        if (transfer.publishes ==
+            native_llvm::FreshHierarchyPublication::Task) {
           const auto &spawn = *transfer.publication;
           const auto *adapter =
               spawn.threadTaskAdapter
@@ -2877,16 +2868,14 @@ private:
         // and are inventoried independently, including hierarchy transfer.
         const auto *target =
             program.findFunctionInstance(*stage.functionTarget);
-        const bool consuming =
-            target &&
-            target->receiverMutability == ReceiverMutability::Consuming;
+        const bool consuming = target && target->receiverMutability ==
+                                             ReceiverMutability::Consuming;
         if (!target || target->linkage != LanguageLinkage::Gti ||
             (consuming ? !(moved || retained || temporary)
                        : moved || retained) ||
-            std::any_of(target->parameterTypes.begin(),
-                        target->parameterTypes.end(), [](const auto &type) {
-                          return type == SemanticType::Void;
-                        }))
+            std::any_of(
+                target->parameterTypes.begin(), target->parameterTypes.end(),
+                [](const auto &type) { return type == SemanticType::Void; }))
           return {};
         if (!target->owner ||
             (contains(program.findClassInstance(*target->owner)->type) &&
@@ -2932,7 +2921,8 @@ private:
 class Inventory final {
 public:
   Inventory(std::vector<LlvmCoverageUse> &uses, const MirProgram &program,
-            StaticDispatchProofs &dispatchProofs, const TargetInfo &nativeTarget)
+            StaticDispatchProofs &dispatchProofs,
+            const TargetInfo &nativeTarget)
       : uses(uses), program(program), dispatchProofs(dispatchProofs),
         nativeTarget(nativeTarget),
         natives(program, nativeTarget, [this](const SemanticType &pointee) {
@@ -3038,9 +3028,9 @@ public:
   // that integer's representation. A payload enum carries a tag and stays
   // outside this rule.
   bool integralEnumPointee(const SemanticType &type) const {
-    const auto *sealed =
-        type.kind == SemanticType::Enum ? program.findIntegralEnum(type)
-                                        : nullptr;
+    const auto *sealed = type.kind == SemanticType::Enum
+                             ? program.findIntegralEnum(type)
+                             : nullptr;
     return sealed && !program.findPayloadEnum(type) &&
            constantIntegerDomain(sealed->underlyingType).has_value();
   }
@@ -3102,9 +3092,10 @@ public:
   bool scalarArrayProjection(const MirBody &body, const MirPlace &place) const {
     if (arrayProjection(body, place))
       return true;
-    const auto root = std::find_if(
-        body.places.begin(), body.places.end(),
-        [&](const auto &candidate) { return sameStorageRoot(candidate, place); });
+    const auto root = std::find_if(body.places.begin(), body.places.end(),
+                                   [&](const auto &candidate) {
+                                     return sameStorageRoot(candidate, place);
+                                   });
     if (root == body.places.end())
       return false;
     auto type = root->type;
@@ -3151,8 +3142,7 @@ public:
   // admitted value shape and, when that relocation is structural, a complete
   // layout the generated relocation accepts.
   bool restoringRelocation(const MirInstruction &stage) {
-    const bool indexed =
-        stage.intrinsic == IntrinsicKind::RestoringIndexedSwap;
+    const bool indexed = stage.intrinsic == IntrinsicKind::RestoringIndexedSwap;
     if ((stage.intrinsic != IntrinsicKind::RestoringSwap &&
          stage.intrinsic != IntrinsicKind::RestoringExchange && !indexed) ||
         stage.kind != MirInstructionKind::Call || stage.receiver ||
@@ -3679,8 +3669,9 @@ public:
            constantIntegerDomain(stage.operands[reversed ? 0 : 1].type)
                .has_value();
   }
-  std::optional<Shape> pointerArithmeticInput(const MirBlock &block,
-                                              const MirInstruction &stage) const {
+  std::optional<Shape>
+  pointerArithmeticInput(const MirBlock &block,
+                         const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
         stage.callInputRole != MirCallInputRole::Argument ||
         stage.callInputKind != HirCallInputKind::Value || !stage.callSite ||
@@ -3770,9 +3761,9 @@ public:
           (input.callInputKind != HirCallInputKind::ReadBorrow &&
            !mutableInput) ||
           input.operands.size() != 1 ||
-          input.operands.front().kind !=
-              (mutableInput ? MirOperandKind::BorrowWrite
-                            : MirOperandKind::BorrowRead))
+          input.operands.front().kind != (mutableInput
+                                              ? MirOperandKind::BorrowWrite
+                                              : MirOperandKind::BorrowRead))
         return false;
       // The receiver is the pointee or a field or element reached from it;
       // nativeRawPlace proves the whole path, including its raw step.
@@ -3790,12 +3781,12 @@ public:
     const auto *block = value ? mir.findBlock(value->definitionBlock) : nullptr;
     if (!block)
       return false;
-    const auto input = std::find_if(
-        block->instructions.begin(), block->instructions.end(),
-        [&](const MirInstruction &candidate) {
-          return candidate.id == value->definition &&
-                 candidate.result == stage.receiver->value;
-        });
+    const auto input =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const MirInstruction &candidate) {
+                       return candidate.id == value->definition &&
+                              candidate.result == stage.receiver->value;
+                     });
     // The staged receiver carries the raw access whatever the call's own
     // marker: none for an ordinary method on a field reached through the
     // pointer, the same access for a method on the pointee itself, or the
@@ -3858,15 +3849,15 @@ public:
   }
   bool nativeRetirement(const MirHostedStartupOperation &operation) const {
     const auto &plan = program.hostedStartupPlan();
-    if (!plan || operation.kind !=
-                     MirHostedStartupOperationKind::RetireProgramStorage ||
+    if (!plan ||
+        operation.kind != MirHostedStartupOperationKind::RetireProgramStorage ||
         operation.failureBehavior != MirHostedStartupFailureBehavior::None ||
         operation.terminator || operation.place || operation.value ||
         operation.dropObligation || operation.failureRecord ||
         operation.cleanupBoundary)
       return false;
-    const auto *startup = findMirBody(
-        program, {MirBodyKind::HostedStartup, plan->entry});
+    const auto *startup =
+        findMirBody(program, {MirBodyKind::HostedStartup, plan->entry});
     const auto *owner = startup ? startup->findBlock(operation.block) : nullptr;
     const MirInstruction *stage = nullptr;
     if (owner)
@@ -4101,8 +4092,8 @@ public:
           return false;
         owner = &candidate;
       }
-    if (owner && (owner->kind == ClassKind::Class ||
-                  owner->kind == ClassKind::Struct) &&
+    if (owner &&
+        (owner->kind == ClassKind::Class || owner->kind == ClassKind::Struct) &&
         owner->compilerCapability == CompilerCapabilityTypeKind::None &&
         !owner->abstract && dispatchProofs.contains(type))
       // The exact referent's own hierarchy storage: the reference is that
@@ -4357,14 +4348,12 @@ public:
     const auto requiredAccess =
         mutableInput ? AccessMode::Mutable : AccessMode::ReadOnly;
     const bool stagedType =
-        receiverStage
-            ? stage.info.type.kind == SemanticType::Class
-            : stage.info.type.kind == SemanticType::Reference &&
-                  stage.info.type.arguments.size() == 1 &&
-                  stage.info.type.referenceAccess == requiredAccess;
+        receiverStage ? stage.info.type.kind == SemanticType::Class
+                      : stage.info.type.kind == SemanticType::Reference &&
+                            stage.info.type.arguments.size() == 1 &&
+                            stage.info.type.referenceAccess == requiredAccess;
     if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
-        (stage.callInputRole != MirCallInputRole::Argument &&
-         !receiverStage) ||
+        (stage.callInputRole != MirCallInputRole::Argument && !receiverStage) ||
         (stage.callInputKind != HirCallInputKind::ReadBorrow &&
          !mutableInput) ||
         stage.callSite == 0 || stage.hirValue == 0 || stage.defaultArgument ||
@@ -4397,11 +4386,11 @@ public:
         !input.place || input.value || input.literal ||
         input.type != stage.info.type)
       return false;
-    const auto &referent = receiverStage ? stage.info.type
-                                         : stage.info.type.arguments.front();
+    const auto &referent =
+        receiverStage ? stage.info.type : stage.info.type.arguments.front();
     const auto *place = body.findPlace(input.place);
-    const auto selected = borrowedReceiver ? (place ? place->loan : 0)
-                                           : input.loan;
+    const auto selected =
+        borrowedReceiver ? (place ? place->loan : 0) : input.loan;
     const auto *loan = selected ? body.findLoan(selected) : nullptr;
     // The explicit loan place carries the returned runtime address. Its
     // possible owner origin is never a substitute, including during call-input
@@ -4470,38 +4459,36 @@ public:
          !mutableInput) ||
         stage.hirValue == 0 || stage.rawMemoryAccess ||
         stage.unsafeOperation != UnsafeOperationKind::DeclaredUnsafeCall ||
-        stage.intrinsic != IntrinsicKind::None ||
-        stage.operands.size() != 1 || stage.destination || stage.receiver ||
-        stage.loan || stage.functionTarget || stage.constructorTarget ||
-        stage.lambdaTarget || stage.bodyTarget || stage.nativeCalleeType ||
-        stage.callableInvocation)
+        stage.intrinsic != IntrinsicKind::None || stage.operands.size() != 1 ||
+        stage.destination || stage.receiver || stage.loan ||
+        stage.functionTarget || stage.constructorTarget || stage.lambdaTarget ||
+        stage.bodyTarget || stage.nativeCalleeType || stage.callableInvocation)
       return false;
     const auto &input = stage.operands.front();
     const auto *place = body.findPlace(input.place);
     if (input.kind != (mutableInput ? MirOperandKind::BorrowWrite
                                     : MirOperandKind::BorrowRead) ||
         input.loan || input.value || !place ||
-        place->root != MirPlaceRootKind::Value ||
-        !place->projections.empty() || place->value == 0 ||
-        place->type != stage.info.type)
+        place->root != MirPlaceRootKind::Value || !place->projections.empty() ||
+        place->value == 0 || place->type != stage.info.type)
       return false;
     const auto *value = body.findValue(place->value);
-    const auto *block = value ? body.findBlock(value->definitionBlock) : nullptr;
+    const auto *block =
+        value ? body.findBlock(value->definitionBlock) : nullptr;
     if (!block)
       return false;
-    const auto producer = std::find_if(
-        block->instructions.begin(), block->instructions.end(),
-        [&](const MirInstruction &candidate) {
-          return candidate.id == value->definition;
-        });
+    const auto producer =
+        std::find_if(block->instructions.begin(), block->instructions.end(),
+                     [&](const MirInstruction &candidate) {
+                       return candidate.id == value->definition;
+                     });
     if (producer == block->instructions.end())
       return false;
     const auto *target =
         producer->functionTarget
             ? program.findFunctionInstance(*producer->functionTarget)
             : nullptr;
-    return !producer->tombstone &&
-           producer->kind == MirInstructionKind::Call &&
+    return !producer->tombstone && producer->kind == MirInstructionKind::Call &&
            producer->result == place->value &&
            producer->hirValue == stage.hirValue &&
            producer->unsafeOperation ==
@@ -4806,14 +4793,16 @@ public:
       add(type.kind,
           opaqueReferent(type) ? std::optional(Shape::ErasedReference)
           : address            ? std::optional(Shape::PassiveAddressValue)
-          : type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
-                    native_llvm::nativeCFunctionValueContract(
-                        program, nativeTarget, type.arguments.front())
+          : type.kind == SemanticType::Reference &&
+                  type.arguments.size() == 1 &&
+                  native_llvm::nativeCFunctionValueContract(
+                      program, nativeTarget, type.arguments.front())
               ? std::optional(Shape::NativeCFunctionBorrow)
           : native_llvm::nativeCScalarFunctionValueContract(program,
                                                             nativeTarget, type)
               ? std::optional(Shape::NativeCFunctionValue)
-          : native_llvm::nativeCFunctionValueContract(program, nativeTarget, type)
+          : native_llvm::nativeCFunctionValueContract(program, nativeTarget,
+                                                      type)
               ? std::optional(Shape::NativeCSignature)
           : passiveArray ? std::optional(Shape::PassiveArrayValue)
           : enumArray    ? std::optional(Shape::IntegralEnumArrayValue)
@@ -4892,9 +4881,8 @@ public:
                            operand.kind == MirOperandKind::Loan &&
                            !dispatchProofs.related(operand.type) &&
                            mutexShellLoan(*currentBody, operand.loan);
-    const bool borrowedUse =
-        currentBody && !shellLoan &&
-        dispatchProofs.borrowedUse(*currentBody, operand);
+    const bool borrowedUse = currentBody && !shellLoan &&
+                             dispatchProofs.borrowedUse(*currentBody, operand);
     const auto view = currentBody
                           ? dispatchProofs.borrowed(*currentBody, operand)
                           : std::nullopt;
@@ -5046,8 +5034,8 @@ public:
             native_llvm::nativeAtomicConstructor(program, *constructor)
                 ? std::optional(Shape::NativeAtomicStorage)
                 : std::nullopt);
-      if (owner && owner->compilerCapability ==
-                       CompilerCapabilityTypeKind::MutexStorage)
+      if (owner &&
+          owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage)
         add(Shape::MutexInitialization,
             native_llvm::nativeMutexConstructor(program, *constructor) &&
                     mutexShape(owner->type)
@@ -5102,11 +5090,10 @@ public:
                 ? std::optional(Shape::PassiveReference)
                 : placeClassShape(place));
       if (place.foreignStorage)
-        add(Shape::NativeCall,
-            native_llvm::nativeCStoragePlaceContract(program, nativeTarget, mir,
-                                                    place)
-                ? std::optional(Shape::NativeCStorage)
-                : std::nullopt);
+        add(Shape::NativeCall, native_llvm::nativeCStoragePlaceContract(
+                                   program, nativeTarget, mir, place)
+                                   ? std::optional(Shape::NativeCStorage)
+                                   : std::nullopt);
     }
     for (const auto &loan : mir.loans) {
       const auto *origin = mir.findPlace(loan.source);
@@ -5166,19 +5153,18 @@ public:
                             ? origin->type.arguments.front()
                             : origin->type)
               .has_value();
-      const auto view =
-          storedRecord || viewReturn
-              ? std::optional(Shape::NativeBorrowMetadata)
-          : hierarchy ? dispatchProofs.loan(mir, loan)
-                      : std::nullopt;
-      add(loan.kind, hierarchy     ? (view || !mutexShellLoan(mir, loan.id)
-                                          ? view
-                                          : std::optional(
-                                                Shape::NativeHierarchyMutexStorage))
-                     : borrowShape ? borrowShape
-                     : selected    ? std::optional(Shape::PassiveReference)
-                     : origin      ? placeClassShape(*origin)
-                                   : std::nullopt);
+      const auto view = storedRecord || viewReturn
+                            ? std::optional(Shape::NativeBorrowMetadata)
+                        : hierarchy ? dispatchProofs.loan(mir, loan)
+                                    : std::nullopt;
+      add(loan.kind,
+          hierarchy ? (view || !mutexShellLoan(mir, loan.id)
+                           ? view
+                           : std::optional(Shape::NativeHierarchyMutexStorage))
+          : borrowShape ? borrowShape
+          : selected    ? std::optional(Shape::PassiveReference)
+          : origin      ? placeClassShape(*origin)
+                        : std::nullopt);
       add(loan.access);
       if (loan.referenceSelection)
         add(Shape::SelectedReferenceAddress, borrowShape);
@@ -5344,15 +5330,15 @@ public:
                        dispatchProofs.borrowedUse(mir, stage.operands.front()))
                   ? (dispatchOperation ? dispatchOperation->shape
                                        : std::nullopt)
-                  : native_llvm::nativeCScalarReceiverInputContract(
-                        program, nativeTarget, mir, stage)
-                      ? std::optional(Shape::NativeCScalarIndirect)
-                  : native_llvm::nativeCReceiverInputContract(
-                        program, nativeTarget, mir, stage)
-                      ? std::optional(Shape::NativeCSignature)
-                  : nativeFunctionBorrow
-                      ? std::optional(Shape::NativeCFunctionBorrow)
-                      : classShape(stage.info.type);
+              : native_llvm::nativeCScalarReceiverInputContract(
+                    program, nativeTarget, mir, stage)
+                  ? std::optional(Shape::NativeCScalarIndirect)
+              : native_llvm::nativeCReceiverInputContract(program, nativeTarget,
+                                                          mir, stage)
+                  ? std::optional(Shape::NativeCSignature)
+              : nativeFunctionBorrow
+                  ? std::optional(Shape::NativeCFunctionBorrow)
+                  : classShape(stage.info.type);
           add(*stage.callInputRole, inputShape);
           add(stage.callInputKind,
               passiveReference(stage.info.type) &&
@@ -5460,11 +5446,11 @@ public:
               callableIntrinsic = classShape(receiver.arguments.front());
           }
           add(stage.intrinsic,
-              atomic              ? std::optional(Shape::NativeAtomicOperation)
+              atomic ? std::optional(Shape::NativeAtomicOperation)
               : atomicWaiting
                   ? std::optional(Shape::NativeAtomicWaitingOperation)
-              : mutex ? std::optional(Shape::NativeMutexOperation)
-              : thread ? std::optional(Shape::NativeThreadOperation)
+              : mutex             ? std::optional(Shape::NativeMutexOperation)
+              : thread            ? std::optional(Shape::NativeThreadOperation)
               : callableIntrinsic ? callableIntrinsic
               : typedMemory || restoring
                   ? std::optional(Shape::NativeMemoryOperation)
@@ -5521,7 +5507,7 @@ public:
                   program, nativeTarget, mir, stage)
                   ? std::optional(Shape::NativeCScalarIndirect)
               : native_llvm::nativeCIndirectCallContract(program, nativeTarget,
-                                                        mir, stage)
+                                                         mir, stage)
                   ? std::optional(Shape::NativeCSignature)
                   : std::nullopt;
           add(Shape::NativeCall, nativeIndirect);
@@ -5544,11 +5530,10 @@ public:
             stage.functionPointerLambdaTarget)
           add(Shape::IndirectCall);
         if (stage.nativeCallbackAdapter)
-          add(Shape::NativeCallback,
-              native_llvm::nativeCCallbackStageContract(program, nativeTarget,
-                                                       mir, stage)
-                  ? std::optional(Shape::NativeCCallback)
-                  : std::nullopt);
+          add(Shape::NativeCallback, native_llvm::nativeCCallbackStageContract(
+                                         program, nativeTarget, mir, stage)
+                                         ? std::optional(Shape::NativeCCallback)
+                                         : std::nullopt);
         const auto taskShape = [&](MirThreadTaskAdapterId id) {
           const auto *adapter = program.findThreadTaskAdapter(id);
           return !thread || !adapter ? std::nullopt
@@ -5563,10 +5548,9 @@ public:
         if (stage.preparedParameterDrop) {
           const auto &prepared =
               mir.findDropObligation(*stage.preparedParameterDrop)->dropType;
-          add(Shape::PreparedOwnerInput,
-              dispatchProofs.contains(prepared.type)
-                  ? dispatchProofs.cleanup(prepared)
-                  : classShape(prepared.type));
+          add(Shape::PreparedOwnerInput, dispatchProofs.contains(prepared.type)
+                                             ? dispatchProofs.cleanup(prepared)
+                                             : classShape(prepared.type));
         }
         if (stage.successResultDrop || stage.successResultDestination)
           add(Shape::SuccessResultPublication, classShape(stage.info.type));
@@ -5583,8 +5567,8 @@ public:
         const bool nativeStorage =
             native_llvm::nativeCStorageAccessContract(program, nativeTarget,
                                                       mir, stage) ||
-            native_llvm::nativeCStorageUnionAccessContract(program, nativeTarget,
-                                                           mir, stage);
+            native_llvm::nativeCStorageUnionAccessContract(
+                program, nativeTarget, mir, stage);
         if (stage.rawMemoryAccess)
           add(Shape::RawMemory,
               nativeStorage ? std::optional(Shape::NativeCStorage)
@@ -5645,124 +5629,125 @@ public:
                stage.unsafeOperation == UnsafeOperationKind::UnionMember) &&
                       nativeStorage
                   ? std::optional(Shape::NativeCStorage)
-              : stage.unsafeOperation == UnsafeOperationKind::UnionMember
-                  ? classShape(stage.info.type).has_value() ? classShape(stage.info.type)
-                    : [&]() -> std::optional<Shape> {
-                        if (stage.destination)
-                          return placeClassShape(*mir.findPlace(*stage.destination));
-                        for (const auto &operand : stage.operands)
-                          if (const auto *place = mir.findPlace(operand.place))
-                            if (auto shape = placeClassShape(*place)) return shape;
-                        return {};
-                      }()
+                  : stage.unsafeOperation == UnsafeOperationKind::UnionMember
+                  ? classShape(stage.info.type).has_value()
+                        ? classShape(stage.info.type)
+                        : [&]() -> std::optional<Shape> {
+                if (stage.destination)
+                  return placeClassShape(*mir.findPlace(*stage.destination));
+                for (const auto &operand : stage.operands)
+                  if (const auto *place = mir.findPlace(operand.place))
+                    if (auto shape = placeClassShape(*place))
+                      return shape;
+                return {};
+              }()
               : stage.unsafeOperation ==
-                            UnsafeOperationKind::ForeignPointerCall &&
-                        native_llvm::nativeCResultInputContract(
-                            program, nativeTarget, mir, stage)
-                  ? std::optional(Shape::NativeCResultInput)
-              : stage.unsafeOperation ==
-                          UnsafeOperationKind::ForeignPointerCall &&
-                      native_llvm::nativeProcessMemoryCall(program, stage)
-                  ? std::optional(Shape::NativeProcessMemory)
-              : stage.unsafeOperation ==
-                            UnsafeOperationKind::ForeignPointerCall &&
-                        native_llvm::nativeCScalarIndirectCallContract(
-                            program, nativeTarget, mir, stage)
-                  ? std::optional(Shape::NativeCScalarIndirect)
-              : stage.unsafeOperation ==
-                            UnsafeOperationKind::ForeignPointerCall &&
-                        callee &&
-                        (native_llvm::nativeCScalarImportContract(
-                             program, nativeTarget, *callee) ||
-                         native_llvm::nativeCCountedInputContract(
-                             program, nativeTarget, *callee) ||
-                         native_llvm::nativeCScalarFunctionImportContract(
-                             program, nativeTarget, *callee) ||
-                         native_llvm::nativeCAggregateImportContract(
-                             program, nativeTarget, *callee)) &&
-                        native_llvm::nativeCDirectCallContract(
-                            program, nativeTarget, mir, stage)
-                  ? std::optional(
-                        native_llvm::nativeCAggregateImportContract(
+                        UnsafeOperationKind::ForeignPointerCall &&
+                    native_llvm::nativeCResultInputContract(
+                        program, nativeTarget, mir, stage)
+                ? std::optional(Shape::NativeCResultInput)
+            : stage.unsafeOperation ==
+                        UnsafeOperationKind::ForeignPointerCall &&
+                    native_llvm::nativeProcessMemoryCall(program, stage)
+                ? std::optional(Shape::NativeProcessMemory)
+            : stage.unsafeOperation ==
+                        UnsafeOperationKind::ForeignPointerCall &&
+                    native_llvm::nativeCScalarIndirectCallContract(
+                        program, nativeTarget, mir, stage)
+                ? std::optional(Shape::NativeCScalarIndirect)
+            : stage.unsafeOperation ==
+                        UnsafeOperationKind::ForeignPointerCall &&
+                    callee &&
+                    (native_llvm::nativeCScalarImportContract(
+                         program, nativeTarget, *callee) ||
+                     native_llvm::nativeCCountedInputContract(
+                         program, nativeTarget, *callee) ||
+                     native_llvm::nativeCScalarFunctionImportContract(
+                         program, nativeTarget, *callee) ||
+                     native_llvm::nativeCAggregateImportContract(
+                         program, nativeTarget, *callee)) &&
+                    native_llvm::nativeCDirectCallContract(
+                        program, nativeTarget, mir, stage)
+                ? std::optional(
+                      native_llvm::nativeCAggregateImportContract(
+                          program, nativeTarget, *callee)
+                          ? Shape::NativeCAggregateImport
+                      : native_llvm::nativeCScalarFunctionImportContract(
                             program, nativeTarget, *callee)
-                            ? Shape::NativeCAggregateImport
-                        : native_llvm::nativeCScalarFunctionImportContract(
+                          ? Shape::NativeCFunctionImport
+                      : native_llvm::nativeCCountedInputContract(
                             program, nativeTarget, *callee)
-                            ? Shape::NativeCFunctionImport
-                        : native_llvm::nativeCCountedInputContract(
-                            program, nativeTarget, *callee)
-                            ? Shape::NativeCCountedInput
-                            : Shape::NativeCScalarImport)
-              : stage.unsafeOperation ==
-                            UnsafeOperationKind::ForeignPointerCall &&
-                      (native_llvm::nativeCIndirectCallContract(
-                           program, nativeTarget, mir, stage) ||
-                       native_llvm::nativeCDirectCallContract(
-                           program, nativeTarget, mir, stage))
-                  ? std::optional(Shape::NativeCSignature)
-              : rawReference && stage.unsafeOperation ==
-                                    UnsafeOperationKind::RawDereference
-                  ? rawReferenceShape
-              : stage.unsafeOperation == UnsafeOperationKind::RawMember &&
-                      ((rawClassStage && nativeRawFieldStage(mir, stage)) ||
-                       nativeRawReceiverStage(mir, stage))
-                  ? std::optional(Shape::NativeClassRawAccess)
-              : stagedPointerArithmetic ? stagedPointerArithmetic
-              : (rawClassStage || classArithmetic) &&
-                      (stage.unsafeOperation ==
-                           UnsafeOperationKind::RawDereference ||
-                       stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
-                       stage.unsafeOperation ==
-                           UnsafeOperationKind::PointerArithmetic)
-                  ? std::optional(Shape::NativeClassRawAccess)
-              : payloadPointerArithmetic(stage) &&
-                      stage.unsafeOperation ==
-                          UnsafeOperationKind::PointerArithmetic
-                  ? std::optional(Shape::NativePayloadRawAccess)
-              : typedMemory && stage.unsafeOperation ==
-                                   UnsafeOperationKind::ObjectLifetime
-                  ? std::optional(Shape::NativeMemoryOperation)
-              : (ordinaryUnsafe || unsafeCallResultLoad(mir, mirBlock, stage) ||
-                 unsafeCallResultInput(mir, mirBlock, stage) ||
-                 unsafeCallResultStaging(mir, stage) ||
-                 unsafeCallValueReceiver(mir, stage) ||
-                 unsafeCallResultReturn(mir, mirBlock, stage))
-                  ? std::optional(Shape::OrdinaryUnsafeInvocation)
-              : (stage.unsafeOperation ==
-                     UnsafeOperationKind::ErasedReferenceRestore ||
+                          ? Shape::NativeCCountedInput
+                          : Shape::NativeCScalarImport)
+            : stage.unsafeOperation ==
+                        UnsafeOperationKind::ForeignPointerCall &&
+                    (native_llvm::nativeCIndirectCallContract(
+                         program, nativeTarget, mir, stage) ||
+                     native_llvm::nativeCDirectCallContract(
+                         program, nativeTarget, mir, stage))
+                ? std::optional(Shape::NativeCSignature)
+            : rawReference &&
+                    stage.unsafeOperation == UnsafeOperationKind::RawDereference
+                ? rawReferenceShape
+            : stage.unsafeOperation == UnsafeOperationKind::RawMember &&
+                    ((rawClassStage && nativeRawFieldStage(mir, stage)) ||
+                     nativeRawReceiverStage(mir, stage))
+                ? std::optional(Shape::NativeClassRawAccess)
+            : stagedPointerArithmetic ? stagedPointerArithmetic
+            : (rawClassStage || classArithmetic) &&
+                    (stage.unsafeOperation ==
+                         UnsafeOperationKind::RawDereference ||
+                     stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
+                     stage.unsafeOperation ==
+                         UnsafeOperationKind::PointerArithmetic)
+                ? std::optional(Shape::NativeClassRawAccess)
+            : payloadPointerArithmetic(stage) &&
+                    stage.unsafeOperation ==
+                        UnsafeOperationKind::PointerArithmetic
+                ? std::optional(Shape::NativePayloadRawAccess)
+            : typedMemory &&
+                    stage.unsafeOperation == UnsafeOperationKind::ObjectLifetime
+                ? std::optional(Shape::NativeMemoryOperation)
+            : (ordinaryUnsafe || unsafeCallResultLoad(mir, mirBlock, stage) ||
+               unsafeCallResultInput(mir, mirBlock, stage) ||
+               unsafeCallResultStaging(mir, stage) ||
+               unsafeCallValueReceiver(mir, stage) ||
+               unsafeCallResultReturn(mir, mirBlock, stage))
+                ? std::optional(Shape::OrdinaryUnsafeInvocation)
+            : (stage.unsafeOperation ==
+                   UnsafeOperationKind::ErasedReferenceRestore ||
+               stage.unsafeOperation ==
+                   UnsafeOperationKind::DeclaredUnsafeCall) &&
+                    (erasedReference(stage) ||
+                     restoredLoanTransport(mir, stage))
+                ? std::optional(Shape::ErasedReference)
+            : ((stage.unsafeOperation == UnsafeOperationKind::RawDereference &&
+                (representedTextAddress(mir, stage) ||
+                 rawTextResultReturn(mir, mirBlock, stage))) ||
+               (stage.unsafeOperation ==
+                    UnsafeOperationKind::DeclaredUnsafeCall &&
+                rawReference) ||
+               (rawAccess &&
+                (stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
                  stage.unsafeOperation ==
-                     UnsafeOperationKind::DeclaredUnsafeCall) &&
-                      (erasedReference(stage) ||
-                       restoredLoanTransport(mir, stage))
-                  ? std::optional(Shape::ErasedReference)
-              : ((stage.unsafeOperation ==
-                      UnsafeOperationKind::RawDereference &&
-                  (representedTextAddress(mir, stage) ||
-                   rawTextResultReturn(mir, mirBlock, stage))) ||
-                 (stage.unsafeOperation ==
-                      UnsafeOperationKind::DeclaredUnsafeCall &&
-                  rawReference) ||
-                 (rawAccess &&
-                  (stage.unsafeOperation == UnsafeOperationKind::RawIndex ||
-                   stage.unsafeOperation ==
-                       UnsafeOperationKind::RawDereference)) ||
-                 ((scalarPointerArithmetic(stage) ||
-                   (stage.kind == MirInstructionKind::Assign &&
-                    primitiveAddress(stage.info.type))) &&
-                  stage.unsafeOperation ==
-                      UnsafeOperationKind::PointerArithmetic))
-                  ? std::optional(Shape::PrimitiveRawAccess)
-              // The marker records the caller's declared permission for a
-              // construction; the executable work is that construction's own
-              // selected constructor and storage, which is admitted on its
-              // own terms. Granting the construction's storage shape keeps
-              // one rule instead of a second permission vocabulary.
-              : stage.unsafeOperation ==
+                     UnsafeOperationKind::RawDereference)) ||
+               ((scalarPointerArithmetic(stage) ||
+                 (stage.kind == MirInstructionKind::Assign &&
+                  primitiveAddress(stage.info.type))) &&
+                stage.unsafeOperation ==
+                    UnsafeOperationKind::PointerArithmetic))
+                ? std::optional(Shape::PrimitiveRawAccess)
+            // The marker records the caller's declared permission for a
+            // construction; the executable work is that construction's own
+            // selected constructor and storage, which is admitted on its
+            // own terms. Granting the construction's storage shape keeps
+            // one rule instead of a second permission vocabulary.
+            : stage.unsafeOperation ==
                         UnsafeOperationKind::DeclaredUnsafeConstruction &&
                     stage.kind == MirInstructionKind::Construct &&
                     stage.constructorTarget
-                  ? classShape(stage.info.type)
-                  : std::nullopt);
+                ? classShape(stage.info.type)
+                : std::nullopt);
         }
         if (stage.payloadExtractionKind)
           add(*stage.payloadExtractionKind,
@@ -5783,17 +5768,14 @@ public:
                   : std::nullopt);
         }
         if (stage.synchronization.kind != SynchronizationOperationKind::None) {
-          const auto witness = atomic
-                                   ? std::optional(Shape::NativeAtomicOperation)
-                               : atomicWaiting
-                                   ? std::optional(Shape::NativeAtomicWaitingOperation)
-                               : mutex
-                                   ? std::optional(Shape::NativeMutexOperation)
-                               : thread
-                                   ? std::optional(Shape::NativeThreadOperation)
-                               : cthread
-                                   ? std::optional(Shape::NativeCThreadOperation)
-                                   : std::nullopt;
+          const auto witness =
+              atomic ? std::optional(Shape::NativeAtomicOperation)
+              : atomicWaiting
+                  ? std::optional(Shape::NativeAtomicWaitingOperation)
+              : mutex   ? std::optional(Shape::NativeMutexOperation)
+              : thread  ? std::optional(Shape::NativeThreadOperation)
+              : cthread ? std::optional(Shape::NativeCThreadOperation)
+                        : std::nullopt;
           add(stage.synchronization.kind, witness);
           if (stage.synchronization.order)
             add(*stage.synchronization.order, witness);
@@ -5938,8 +5920,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   Inventory inventory(plan.uses, mir, dispatchProofs, input.target());
   inventory.add(Shape::ObjectArtifact);
   inventory.add(input.programKind(),
-      input.embeddingPlan() && native_llvm::infallibleEmbeddingContract(input)
-          ? std::optional(Shape::InfallibleEmbedding) : std::nullopt);
+                input.embeddingPlan() &&
+                        native_llvm::infallibleEmbeddingContract(input)
+                    ? std::optional(Shape::InfallibleEmbedding)
+                    : std::nullopt);
   inventory.add(mir.executionProfile());
   for (const auto &body : input.bodies())
     inventory.inspect(body, *findMirBody(mir, body.identity.address),
@@ -6088,11 +6072,10 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
   inventory.executable = true;
   for (const auto &storage : mir.foreignStorageDeclarations()) {
     inventory.type(storage.type);
-    inventory.add(
-        Shape::NativeCall,
-        native_llvm::nativeCStorageImportContract(mir, input.target(), storage)
-            ? std::optional(Shape::NativeCStorage)
-            : std::nullopt);
+    inventory.add(Shape::NativeCall, native_llvm::nativeCStorageImportContract(
+                                         mir, input.target(), storage)
+                                         ? std::optional(Shape::NativeCStorage)
+                                         : std::nullopt);
   }
   for (const auto &payload : mir.payloadEnums()) {
     inventory.required = closure.conservative;
@@ -6110,13 +6093,13 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       inventory.source = row->identity.source;
     inventory.type(storage.type);
     if (dispatchProofs.contains(storage.type))
-      inventory.add(Shape::PolymorphicTransfer,
-                    dispatchProofs.threadLocal(storage.symbol) &&
-                            dispatchProofs.metadata(storage.type) ==
-                                Shape::NativeStaticDispatchStorage
-                        ? std::optional(
-                              Shape::NativeThreadLocalHierarchyStorage)
-                        : std::nullopt);
+      inventory.add(
+          Shape::PolymorphicTransfer,
+          dispatchProofs.threadLocal(storage.symbol) &&
+                  dispatchProofs.metadata(storage.type) ==
+                      Shape::NativeStaticDispatchStorage
+              ? std::optional(Shape::NativeThreadLocalHierarchyStorage)
+              : std::nullopt);
     inventory.add(storage.dataInitializer ? Shape::ThreadLocalPassive
                                           : Shape::ThreadLocalDynamic,
                   inventory.nativeValue(storage.type)
@@ -6144,12 +6127,13 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     if (const auto *module = findMirBody(mir, {MirBodyKind::Module, 0}))
       if (const auto *place = module->findPlace(step.storagePlace))
         if (dispatchProofs.contains(place->type))
-          inventory.add(Shape::PolymorphicTransfer,
-                        dispatchProofs.programStep(step) &&
-                                dispatchProofs.metadata(place->type) ==
-                                    Shape::NativeStaticDispatchStorage
-                            ? std::optional(Shape::NativeProgramHierarchyStorage)
-                            : std::nullopt);
+          inventory.add(
+              Shape::PolymorphicTransfer,
+              dispatchProofs.programStep(step) &&
+                      dispatchProofs.metadata(place->type) ==
+                          Shape::NativeStaticDispatchStorage
+                  ? std::optional(Shape::NativeProgramHierarchyStorage)
+                  : std::nullopt);
   }
   inventory.required = true;
   if (mir.hostedStartupPlan())
@@ -6164,8 +6148,9 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     }
   if (input.embeddingPlan())
     inventory.add(Shape::EmbeddingExports,
-        native_llvm::infallibleEmbeddingContract(input)
-            ? std::optional(Shape::InfallibleEmbedding) : std::nullopt);
+                  native_llvm::infallibleEmbeddingContract(input)
+                      ? std::optional(Shape::InfallibleEmbedding)
+                      : std::nullopt);
   for (const auto &callback : mir.nativeCallbackAdapters()) {
     inventory.required = closure.contains(LoweredGeneratedItemIdentity{
         .kind = LoweredGeneratedItemKind::NativeInteropAdapter,
@@ -6184,12 +6169,13 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     std::optional<Shape> shape;
     if (const auto *callback =
             std::get_if<LoweredNativeCallbackItem>(&item.payload))
-      if (item.identity.kind == LoweredGeneratedItemKind::NativeInteropAdapter &&
+      if (item.identity.kind ==
+              LoweredGeneratedItemKind::NativeInteropAdapter &&
           item.identity.owner == callback->adapter.id &&
           item.sourceBody ==
               MirBodyAddress{MirBodyKind::Function, callback->adapter.target} &&
           native_llvm::nativeCCallbackContract(mir, input.target(),
-                                             callback->adapter))
+                                               callback->adapter))
         shape = Shape::NativeCCallback;
     if (const auto *task =
             std::get_if<LoweredThreadTaskAdapterItem>(&item.payload))
@@ -6204,7 +6190,8 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
                     ? Shape::NativeHierarchyThreadTask
                     : Shape::NativeThreadTask;
     if (item.identity.kind == LoweredGeneratedItemKind::ThreadLocalStorage)
-      if (const auto *storage = mir.findThreadLocalStorage(item.identity.owner)) {
+      if (const auto *storage =
+              mir.findThreadLocalStorage(item.identity.owner)) {
         if (inventory.nativeValue(storage->type))
           shape = Shape::NativeThreadStorage;
         else if (dispatchProofs.threadLocal(storage->symbol))

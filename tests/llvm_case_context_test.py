@@ -122,6 +122,20 @@ def main() -> None:
 
     def fake_compiler(command, **options):
         source = selected[len(calls)]
+        if source.name in examples.LLVM_ONLY_EXAMPLES:
+            env = examples.environment(root, inherited)
+            assert options == {"capture_output": True, "text": True, "env": env, "timeout": 180}
+            if command[0] == "/controlled/gti_lowered_program_census":
+                assert command == ["/controlled/gti_lowered_program_census", str(root), source.name]
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0,
+                    "generated_kinds\n" + source.name + "\t9\t2\t0\n", "")
+            output = Path(command[-1])
+            assert command == ["/controlled/compiler", str(source), "--std", "c++23", "-O1",
+                               *(["--execution-profile", "concurrent"]
+                                 if source.name in PRE_EXTRACTION_CONCURRENT else []), "-o", str(output)]
+            assert output.read_bytes() == b"preserved unsupported output"
+            return subprocess.CompletedProcess(command, 65, "", "GTI-B0003: wrapping atomic read-modify-write")
         output = Path(command[-1])
         expected_command, expected_options = frozen_plan(
             source, Path(command[0]), root, output, inherited)

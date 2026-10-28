@@ -4013,8 +4013,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::AtomicNotifyAll:
         case IntrinsicKind::AtomicStore:
         case IntrinsicKind::AtomicFetchAddWrapping:
-  case IntrinsicKind::AtomicFetchSubWrapping:
-  case IntrinsicKind::AtomicExchange:
+        case IntrinsicKind::AtomicFetchSubWrapping:
+        case IntrinsicKind::AtomicExchange:
         case IntrinsicKind::AtomicCompareExchange:
         case IntrinsicKind::MutexLock:
         case IntrinsicKind::MutexUnlock:
@@ -9329,8 +9329,7 @@ auto SemanticVisitor::Impl::placeForSymbol(Symbol &symbol) -> SemanticPlace {
       symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
       symbol.bindingKind == SemanticBindingKind::StaticField ||
       (symbol.bindingKind == SemanticBindingKind::LambdaCapture &&
-       symbol.type.kind == SemanticType::Reference &&
-       !analyzingCaptureList)) {
+       symbol.type.kind == SemanticType::Reference && !analyzingCaptureList)) {
     return {.root = &symbol, .rootIdentity = toolingSymbolFor(symbol)};
   }
   if (symbol.bindingKind == SemanticBindingKind::Field &&

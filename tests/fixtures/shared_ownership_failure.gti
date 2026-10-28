@@ -12,9 +12,7 @@ public:
 class Item {
   int divisor;
 public:
-  Item(int fail_allocation, int divisor) : divisor(divisor) {
-    // The pointee has already been allocated; fail only control-block creation.
-    unsafe { gti_test_fail_scalar_allocation(fail_allocation); }
+  Item(int divisor) : divisor(divisor) {
     std::println(1);
   }
   ~Item() {
@@ -31,7 +29,10 @@ int main(int argc, std::vector<std::string> argv) {
   }
   int fail_allocation = argc == 2 || argc == 3 ? 1 : 0;
   int divisor = argc == 3 || argc == 4 ? 0 : 1;
-  mut auto first = std::make_shared<Item>(fail_allocation, divisor);
+  // A combined region is acquired before construction; exhaustion cannot
+  // begin the payload lifetime or run its destructor.
+  unsafe { gti_test_fail_scalar_allocation(fail_allocation); }
+  mut auto first = std::make_shared<Item>(divisor);
   mut auto second = first.clone();
   first.reset();
   std::println(2);

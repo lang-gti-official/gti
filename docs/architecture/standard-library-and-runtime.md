@@ -97,7 +97,7 @@ obtain metadata releases the object region before returning an error.
 | --- | --- |
 | Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in `stdlib/std/memory.gti`; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |
 | Prefix storage used by strings/vectors and related clients | Source raw-buffer/prefix state and matching process/resource leases in `<std/memory>`. Terminated string policy adds one initialized NUL slot. S-ALLOC-09 and its performance/regression acceptance are integrated in 0.397.0; the native engine, prelude declarations, semantic type/intrinsic family, construction-preflight instruction, representation and private optimizer facts are retired. General object-lifetime and checked-loan mechanisms remain. |
-| Unique ownership and generated allocation resources | `mir_object_allocation_v1` and scalar unique allocation in `cpp_failure_support_writer.cpp` still acquire native storage; verified MIR owns construction, publication, failure and cleanup. Shared ownership additionally uses its native control block. These are remaining migration clients, not reasons to put sparse allocation policy back in the backend. |
+| Unique ownership and generated allocation resources | `mir_object_allocation_v1` and scalar unique allocation in `cpp_failure_support_writer.cpp` still acquire native storage; verified MIR owns construction, publication, failure and cleanup. Legacy private shared ownership additionally uses its native control block; public shared ownership now allocates its source aggregate through process leases. These are remaining migration clients, not reasons to put sparse allocation policy back in the backend. |
 | Native service implementation state | Runtime file/process/HTTP/thread/synchronization and conversion implementations use native containers or host handles internally. Their buffer/handle lifetimes belong to their service boundaries; they do not supply sparse-storage metadata. |
 | Compiler and tool memory | C++ containers in compiler, driver, LSP and tooling are host implementation state, outside GTI-program allocation policy. |
 
@@ -548,8 +548,9 @@ existing unique owner, explicitly retain, borrow read-only, observe emptiness
 or count, swap, and explicitly consume one token into a public polymorphic-base
 view. Public `shared_ptr` no longer instantiates it: its source handle holds a
 control pointer and read-only view pointer, and its source control holds an
-atomic count, erased payload address and exact-type destruction thunk. Source
-allocation leases and lifetime guards own rollback and final cleanup. The
+atomic count, erased allocation address and exact-type destruction thunk. A
+source aggregate co-allocates this control and its payload field; generated
+field lifetime and a source process lease own rollback and final cleanup. The
 new wrapping atomic decrement is LLVM-only, so C++ rejects executable shared
 ownership with an explicit unsupported-operation diagnostic. The following
 private-token details describe the retained legacy mechanism.

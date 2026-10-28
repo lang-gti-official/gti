@@ -13,7 +13,8 @@ def main():
                UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     with tempfile.TemporaryDirectory(prefix="gti-source-owner-instrumented-") as directory:
         for name in ("shared_ownership", "shared_ownership_upcast", "shared_ownership_threads",
-                     "shared_mutex_threads", "transfer_function_threads", "mutex_owned_pointees"):
+                     "shared_mutex_threads", "transfer_function_threads", "mutex_owned_pointees",
+                     "shared_ownership_constructor_failure"):
             for level in ("O0", "O3"):
                 binary = Path(directory) / f"{name}-{level}"
                 built = subprocess.run([str(emitter), str(root / "stdlib"),
@@ -24,7 +25,12 @@ def main():
                                          capture_output=True, text=True, check=True).stdout
                 assert "__asan_report_" in symbols, "generated owner code must contain address checks"
                 result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60, env=env)
-                assert result.returncode == 0 and not result.stderr, (name, level, result)
+                if name == "shared_ownership_constructor_failure":
+                    assert result.returncode == 70 and result.stdout == "1\n7\n99\n", (name, level, result)
+                    assert "runtime error[GTI-R0002]" in result.stderr, (name, level, result)
+                    assert "Sanitizer" not in result.stderr and "misaligned" not in result.stderr, (name, level, result)
+                else:
+                    assert result.returncode == 0 and not result.stderr, (name, level, result)
                 print(f"PASS {name}/{level}: generated LLVM ASan and null/alignment checks", flush=True)
 
 

@@ -2163,8 +2163,8 @@ auto SemanticVisitor::Impl::resolveCapabilityCondition(
     -> std::optional<CapabilityCondition> {
   using Kind = CapabilityConditionNode::Kind;
   CapabilityCondition result;
-  const auto append = [&](CapabilityConditionNode node)
-      -> std::optional<std::size_t> {
+  const auto append =
+      [&](CapabilityConditionNode node) -> std::optional<std::size_t> {
     if (result.nodes.size() >= 256)
       return std::nullopt;
     result.nodes.push_back(std::move(node));
@@ -2172,11 +2172,13 @@ auto SemanticVisitor::Impl::resolveCapabilityCondition(
   };
   std::function<std::optional<std::size_t>(
       const ConstraintExpression &, std::span<const AppliedConceptRequirement>,
-      std::size_t, std::size_t)> expression;
+      std::size_t, std::size_t)>
+      expression;
   std::function<std::optional<std::size_t>(const AppliedConceptRequirement &,
-                                         std::size_t)> leaf;
-  leaf = [&](const AppliedConceptRequirement &requirement, std::size_t depth)
-      -> std::optional<std::size_t> {
+                                           std::size_t)>
+      leaf;
+  leaf = [&](const AppliedConceptRequirement &requirement,
+             std::size_t depth) -> std::optional<std::size_t> {
     if (depth > 64 || !requirement.syntax ||
         requirement.syntax->memberRequirement)
       return std::nullopt;
@@ -2189,7 +2191,8 @@ auto SemanticVisitor::Impl::resolveCapabilityCondition(
            fact->atomic != GenericConstraintKind::Shareable))
         return std::nullopt;
       return append({.kind = fact->atomic == GenericConstraintKind::Transferable
-                                 ? Kind::Transfer : Kind::Share,
+                                 ? Kind::Transfer
+                                 : Kind::Share,
                      .type = fact->arguments.front()});
     }
     if (!requirement.conceptId || requirement.conceptId > concepts.size())
@@ -2206,21 +2209,28 @@ auto SemanticVisitor::Impl::resolveCapabilityCondition(
       for (std::size_t index = 0;
            index < conceptInfo.parameterConstraints.size(); ++index) {
         const auto bits = conceptInfo.parameterConstraints[index];
-        const auto allowed = constraintBit(GenericConstraintKind::Transferable) |
-                             constraintBit(GenericConstraintKind::Shareable);
+        const auto allowed =
+            constraintBit(GenericConstraintKind::Transferable) |
+            constraintBit(GenericConstraintKind::Shareable);
         if (bits & ~allowed)
           return std::nullopt;
         for (const auto kind : {GenericConstraintKind::Transferable,
                                 GenericConstraintKind::Shareable}) {
           if (!(bits & constraintBit(kind)))
             continue;
-          const auto next = append({.kind = kind == GenericConstraintKind::Transferable
-                                               ? Kind::Transfer : Kind::Share,
-                                    .type = requirement.arguments[index]});
-          if (!next) return std::nullopt;
-          root = root ? append({.kind = Kind::Conjunction, .left = *root,
-                                .right = *next}) : next;
-          if (!root) return std::nullopt;
+          const auto next =
+              append({.kind = kind == GenericConstraintKind::Transferable
+                                  ? Kind::Transfer
+                                  : Kind::Share,
+                      .type = requirement.arguments[index]});
+          if (!next)
+            return std::nullopt;
+          root = root ? append({.kind = Kind::Conjunction,
+                                .left = *root,
+                                .right = *next})
+                      : next;
+          if (!root)
+            return std::nullopt;
         }
       }
       return root;
@@ -2232,14 +2242,16 @@ auto SemanticVisitor::Impl::resolveCapabilityCondition(
     std::vector<AppliedConceptRequirement> expanded;
     for (const auto &pattern : conceptInfo.definitionRequirements) {
       AppliedConceptRequirement next{
-          .conceptId = pattern.conceptId, .syntax = pattern.syntax,
+          .conceptId = pattern.conceptId,
+          .syntax = pattern.syntax,
           .expression = conceptInfo.definitionExpression,
           .expressionApplication = pattern.expressionApplication,
           .lookupScope = conceptInfo.namespaceScope};
       for (const auto &argument : pattern.arguments)
-        next.arguments.push_back(argument.parameter
-            ? requirement.arguments[*argument.parameter]
-            : substituteType(argument.concrete, substitution));
+        next.arguments.push_back(
+            argument.parameter
+                ? requirement.arguments[*argument.parameter]
+                : substituteType(argument.concrete, substitution));
       expanded.push_back(std::move(next));
     }
     return expression(*conceptInfo.definitionExpression, expanded,
@@ -2247,23 +2259,30 @@ auto SemanticVisitor::Impl::resolveCapabilityCondition(
   };
   expression = [&](const ConstraintExpression &syntax,
                    std::span<const AppliedConceptRequirement> requirements,
-                   std::size_t index, std::size_t depth)
-      -> std::optional<std::size_t> {
+                   std::size_t index,
+                   std::size_t depth) -> std::optional<std::size_t> {
     if (depth > 64 || index >= syntax.nodes.size())
       return std::nullopt;
     const auto &node = syntax.nodes[index];
     if (node.kind == ConstraintExpressionKind::Application) {
-      const auto found = std::find_if(requirements.begin(), requirements.end(),
-          [&](const auto &item) { return item.expressionApplication == node.application; });
-      return found == requirements.end() ? std::nullopt : leaf(*found, depth + 1);
+      const auto found = std::find_if(
+          requirements.begin(), requirements.end(), [&](const auto &item) {
+            return item.expressionApplication == node.application;
+          });
+      return found == requirements.end() ? std::nullopt
+                                         : leaf(*found, depth + 1);
     }
     const auto left = expression(syntax, requirements, node.left, depth + 1);
-    if (!left) return std::nullopt;
+    if (!left)
+      return std::nullopt;
     const auto right = expression(syntax, requirements, node.right, depth + 1);
-    if (!right) return std::nullopt;
+    if (!right)
+      return std::nullopt;
     return append({.kind = node.kind == ConstraintExpressionKind::Conjunction
-                              ? Kind::Conjunction : Kind::Disjunction,
-                   .left = *left, .right = *right});
+                               ? Kind::Conjunction
+                               : Kind::Disjunction,
+                   .left = *left,
+                   .right = *right});
   };
   const auto requirements = resolveRequirements(&clause, scope);
   if (!expression(clause.expression, requirements, clause.expression.root, 0))
@@ -2274,8 +2293,7 @@ auto SemanticVisitor::Impl::resolveCapabilityCondition(
 auto SemanticVisitor::Impl::registerClassAttributes(
     const ClassDecl &declaration,
     const std::vector<GenericParameterInfo> &parameters,
-    const std::vector<std::string> &scope)
-    -> CapabilityPolicyRegistration {
+    const std::vector<std::string> &scope) -> CapabilityPolicyRegistration {
   CapabilityPolicyRegistration result;
   const bool interface = declaration.kind() == ClassKind::Interface;
   const auto reportInvalid = [&](const Token &attribute, std::string message) {
@@ -2323,28 +2341,34 @@ auto SemanticVisitor::Impl::registerClassAttributes(
     if (syntax.capabilityPredicate) {
       if (interface || (attribute.lexeme != "unsafe_transfer" &&
                         attribute.lexeme != "unsafe_share")) {
-        reportInvalid(attribute, "Conditional unsafe assertions apply only to classes and structs.");
+        reportInvalid(
+            attribute,
+            "Conditional unsafe assertions apply only to classes and structs.");
         continue;
       }
       const bool transfer = attribute.lexeme == "unsafe_transfer";
       const bool duplicate = transfer ? result.transferSource.has_value()
                                       : result.shareSource.has_value();
-      setPolicy(attribute, transfer, ConcurrencyCapabilityPolicy::UnsafeConditional);
+      setPolicy(attribute, transfer,
+                ConcurrencyCapabilityPolicy::UnsafeConditional);
       typeParameterScopes.emplace_back();
       typePackScopes.emplace_back();
       for (const auto &parameter : parameters)
         if (!parameter.value && !parameter.pack)
-          typeParameterScopes.back().emplace(parameter.name.lexeme,
-                                             SemanticType::typeParameter(parameter.id));
+          typeParameterScopes.back().emplace(
+              parameter.name.lexeme, SemanticType::typeParameter(parameter.id));
       const RequiresClause clause{attribute, *syntax.capabilityPredicate};
       auto condition = resolveCapabilityCondition(clause, scope);
       typePackScopes.pop_back();
       typeParameterScopes.pop_back();
       if (!condition)
         reportInvalid(attribute,
-            "A capability condition must compose transfer/share concepts or transparent type-fact queries with &&, || and parentheses (at most 256 nodes). ");
+                      "A capability condition must compose transfer/share "
+                      "concepts or transparent type-fact queries with &&, || "
+                      "and parentheses (at most 256 nodes). ");
       else if (!duplicate)
-        (transfer ? result.transferCondition : result.shareCondition) = std::move(condition);
+        (transfer ? result.transferCondition : result.shareCondition) =
+            std::move(condition);
       continue;
     }
     if (syntax.capabilityParameter) {
@@ -2904,8 +2928,9 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       } else if (trustedMemoryCapabilityScope && generics.empty() &&
                  classDecl->name().lexeme == "erased_object") {
         compilerCapability = CompilerCapabilityTypeKind::ErasedObject;
-      } else if (trustedFunctionPointerCapabilityScope && generics.size() == 1 &&
-                 !generics.front().valueType && !generics.front().pack &&
+      } else if (trustedFunctionPointerCapabilityScope &&
+                 generics.size() == 1 && !generics.front().valueType &&
+                 !generics.front().pack &&
                  classDecl->name().lexeme == "function_pointer") {
         compilerCapability = CompilerCapabilityTypeKind::FunctionPointer;
       } else if (trustedOptionalCapabilityScope &&
@@ -7544,9 +7569,9 @@ auto SemanticVisitor::Impl::predeclaredPlace(const Expr *expression,
            ++index)
         if (parameters[index].name.lexeme == variable->name().lexeme)
           return PredeclaredPlace{.type = function.parameterTypes[index]};
-      return receiver ? field(PredeclaredPlace{.type = ownerType},
-                              variable->name())
-                      : std::nullopt;
+      return receiver
+                 ? field(PredeclaredPlace{.type = ownerType}, variable->name())
+                 : std::nullopt;
     }
     if (const auto *member = exprAs<Get>(current)) {
       const auto object = self(self, member->object().get());
@@ -7745,11 +7770,10 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     const auto place = predeclaredPlace(object.get(), function, ownerType);
     if (!place)
       return false;
-    const SemanticType &pointer =
-        place->type.kind == SemanticType::Reference &&
-                place->type.arguments.size() == 1
-            ? place->type.arguments.front()
-            : place->type;
+    const SemanticType &pointer = place->type.kind == SemanticType::Reference &&
+                                          place->type.arguments.size() == 1
+                                      ? place->type.arguments.front()
+                                      : place->type;
     return pointer.kind == SemanticType::RawPointer;
   };
   if (const auto *member = exprAs<Get>(expression.get())) {

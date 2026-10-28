@@ -31,16 +31,18 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
     if (row.role == LoweredBodyRole::DataOnly ||
         row.role == LoweredBodyRole::AbiDeclaration)
       continue;
-    const auto *body = findMirBody(verified->program().mir(), row.identity.address);
-    if (!body) continue;
+    const auto *body =
+        findMirBody(verified->program().mir(), row.identity.address);
+    if (!body)
+      continue;
     for (const auto &block : body->blocks)
       for (const auto &instruction : block.instructions)
         if (!instruction.tombstone &&
             (instruction.intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
              instruction.intrinsic == IntrinsicKind::AtomicFetchSubWrapping))
-          throw BackendUnsupportedError(
-              "wrapping atomic read-modify-write operations require the LLVM backend",
-              row.identity.source);
+          throw BackendUnsupportedError("wrapping atomic read-modify-write "
+                                        "operations require the LLVM backend",
+                                        row.identity.source);
   }
   const PhaseTimeScope timeScope("backend-emit");
   return {.kind = BackendArtifactKind::Source,

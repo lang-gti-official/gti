@@ -115,8 +115,9 @@ void emitWaitLanes(const std::filesystem::path &root,
               std::to_string(bits),
           session.module());
       if (!sanitizer.empty())
-        function->addFnAttr(sanitizer == "thread" ? llvm::Attribute::SanitizeThread
-                                                 : llvm::Attribute::SanitizeAddress);
+        function->addFnAttr(sanitizer == "thread"
+                                ? llvm::Attribute::SanitizeThread
+                                : llvm::Attribute::SanitizeAddress);
       llvm::IRBuilder<> ir(
           llvm::BasicBlock::Create(session.context(), "entry", function));
       Atomics atomics(session, ir);
@@ -387,11 +388,15 @@ void checkWrapping(const std::filesystem::path &root) {
   const auto frontend = Frontend(options).analyze(
       root / "tests/fixtures/llvm_atomic_wrapping.gti", std::nullopt,
       {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
-  if (!frontend.canGenerateCode()) throw std::runtime_error("wrapping fixture must reach MIR");
+  if (!frontend.canGenerateCode())
+    throw std::runtime_error("wrapping fixture must reach MIR");
   std::vector<LoweredProgramIssue> issues;
-  auto input = verifiedLoweredProgram(gti_test::lowerProgram(
-      frontend, frontend.mir, frontend.mir, options.target), issues);
-  if (!input) throw std::runtime_error("wrapping fixture must seal");
+  auto input = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
+                             options.target),
+      issues);
+  if (!input)
+    throw std::runtime_error("wrapping fixture must seal");
   const auto plan = planLlvmAdmission(*input);
   expect(plan.admitted(), "wrapping atomics need no thread runtime");
   const auto &program = input->program().mir();
@@ -399,27 +404,40 @@ void checkWrapping(const std::filesystem::path &root) {
   auto *function = llvm::Function::Create(
       llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()), false),
       llvm::GlobalValue::InternalLinkage, "wrapping_probe", session.module());
-  llvm::IRBuilder<> ir(llvm::BasicBlock::Create(session.context(), "entry", function));
-  std::set<std::tuple<IntrinsicKind, SemanticType::Kind, AtomicMemoryOrder>> seen;
+  llvm::IRBuilder<> ir(
+      llvm::BasicBlock::Create(session.context(), "entry", function));
+  std::set<std::tuple<IntrinsicKind, SemanticType::Kind, AtomicMemoryOrder>>
+      seen;
   for (const auto &owner : program.functionInstances())
     for (const auto &block : owner.body.blocks)
       for (const auto &operation : block.instructions) {
-        const bool add = operation.intrinsic == IntrinsicKind::AtomicFetchAddWrapping;
-        if (!add && operation.intrinsic != IntrinsicKind::AtomicFetchSubWrapping) continue;
-        expect(nativeAtomicCall(program, owner.body, operation), "exact wrapping RMW admits");
-        seen.emplace(operation.intrinsic, operation.info.type.kind, *operation.synchronization.order);
+        const bool add =
+            operation.intrinsic == IntrinsicKind::AtomicFetchAddWrapping;
+        if (!add &&
+            operation.intrinsic != IntrinsicKind::AtomicFetchSubWrapping)
+          continue;
+        expect(nativeAtomicCall(program, owner.body, operation),
+               "exact wrapping RMW admits");
+        seen.emplace(operation.intrinsic, operation.info.type.kind,
+                     *operation.synchronization.order);
         auto malformed = operation;
         malformed.info.type = SemanticType::Bool;
-        expect(!nativeAtomicCall(program, owner.body, malformed), "wrapping rejects a bool result");
-        auto *lane = llvm::cast<llvm::IntegerType>(session.layouts().get(operation.info.type).storage);
+        expect(!nativeAtomicCall(program, owner.body, malformed),
+               "wrapping rejects a bool result");
+        auto *lane = llvm::cast<llvm::IntegerType>(
+            session.layouts().get(operation.info.type).storage);
         auto *slot = ir.CreateAlloca(lane);
-        const std::array<llvm::Value *, 2> inputs{slot, llvm::ConstantInt::get(lane, 1)};
+        const std::array<llvm::Value *, 2> inputs{
+            slot, llvm::ConstantInt::get(lane, 1)};
         auto *result = Atomics(session, ir).emit(owner.body, operation, inputs);
         auto *rmw = llvm::dyn_cast<llvm::AtomicRMWInst>(result);
-        expect(rmw && rmw->getOperation() == (add ? llvm::AtomicRMWInst::Add : llvm::AtomicRMWInst::Sub),
-               "wrapping emits one native add/sub RMW, not a compare/exchange loop");
+        expect(rmw && rmw->getOperation() == (add ? llvm::AtomicRMWInst::Add
+                                                  : llvm::AtomicRMWInst::Sub),
+               "wrapping emits one native add/sub RMW, not a compare/exchange "
+               "loop");
       }
-  expect(seen.size() == 24, "eight integer widths and every order reach both operations");
+  expect(seen.size() == 24,
+         "eight integer widths and every order reach both operations");
   ir.CreateRetVoid();
   session.verify();
 }
@@ -444,10 +462,12 @@ void checkWaiting(const std::filesystem::path &root,
   }
   std::vector<LoweredProgramIssue> issues;
   auto input = verifiedLoweredProgram(
-      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, options.target),
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
+                             options.target),
       issues);
   if (!input)
-    throw std::runtime_error("wait fixture must seal before representation checks");
+    throw std::runtime_error(
+        "wait fixture must seal before representation checks");
   Session session(*input, {});
   const auto &program = input->program().mir();
   std::set<SemanticType::Kind> elements;
@@ -460,8 +480,9 @@ void checkWaiting(const std::filesystem::path &root,
         if (!wait && instruction.intrinsic != IntrinsicKind::AtomicNotifyOne &&
             instruction.intrinsic != IntrinsicKind::AtomicNotifyAll)
           continue;
-        expect(nativeAtomicWaitingCall(program, owner.body, instruction),
-               "wait.exact-plan: source uses exact storage, operands and order");
+        expect(
+            nativeAtomicWaitingCall(program, owner.body, instruction),
+            "wait.exact-plan: source uses exact storage, operands and order");
         expect(!nativeAtomicCall(program, owner.body, instruction),
                "wait.admission: scalar atomic evidence never admits blocking");
         const auto reject = [&](auto mutate) {
@@ -470,33 +491,46 @@ void checkWaiting(const std::filesystem::path &root,
           expect(!nativeAtomicWaitingCall(program, owner.body, changed),
                  "wait.near-miss: malformed protocol is not representable");
         };
-        reject([](auto &call) { call.operands[0].kind = MirOperandKind::Move; });
+        reject(
+            [](auto &call) { call.operands[0].kind = MirOperandKind::Move; });
         reject([](auto &call) { call.parameterTypes.clear(); });
         reject([](auto &call) { call.result = 1; });
         reject([](auto &call) { call.borrowAccess = AccessMode::Mutable; });
-        reject([](auto &call) { call.synchronization.kind = SynchronizationOperationKind::AtomicLoad; });
+        reject([](auto &call) {
+          call.synchronization.kind = SynchronizationOperationKind::AtomicLoad;
+        });
         if (wait) {
           ++waits;
           orders.insert(*instruction.synchronization.order);
-          reject([](auto &call) { call.synchronization.order = AtomicMemoryOrder::Release; });
+          reject([](auto &call) {
+            call.synchronization.order = AtomicMemoryOrder::Release;
+          });
           reject([](auto &call) { call.synchronization.order.reset(); });
           reject([](auto &call) { call.operands[1].value = 0; });
-          reject([](auto &call) { call.operands[1].type = SemanticType::Float; });
+          reject(
+              [](auto &call) { call.operands[1].type = SemanticType::Float; });
         } else {
           ++notifications;
-          reject([](auto &call) { call.synchronization.order = AtomicMemoryOrder::Acquire; });
+          reject([](auto &call) {
+            call.synchronization.order = AtomicMemoryOrder::Acquire;
+          });
         }
         const auto layout = session.layouts().atomicStorage(
             instruction.operands[0].type.arguments[0]);
         elements.insert(layout.element.kind);
         const auto domain = constantIntegerDomain(layout.element);
-        const std::string lane = layout.element == SemanticType::Bool
-                                     ? "bool"
-                                     : std::string(domain->signedValue ? "i" : "u") +
-                                           std::to_string(session.layouts().get(layout.element).storage->getIntegerBitWidth());
-        const std::string operation = wait
-            ? "wait_" + std::to_string(static_cast<unsigned>(*instruction.synchronization.order))
-            : instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ? "one" : "all";
+        const std::string lane =
+            layout.element == SemanticType::Bool
+                ? "bool"
+                : std::string(domain->signedValue ? "i" : "u") +
+                      std::to_string(session.layouts()
+                                         .get(layout.element)
+                                         .storage->getIntegerBitWidth());
+        const std::string operation =
+            wait ? "wait_" + std::to_string(static_cast<unsigned>(
+                                 *instruction.synchronization.order))
+            : instruction.intrinsic == IntrinsicKind::AtomicNotifyOne ? "one"
+                                                                      : "all";
         const auto name = "gti_test_wait_" + lane + "_" + operation;
         if (session.module().getFunction(name))
           continue;
@@ -506,35 +540,48 @@ void checkWaiting(const std::filesystem::path &root,
         auto *signature = llvm::FunctionType::get(
             llvm::Type::getVoidTy(session.context()), parameters, false);
         auto *function = llvm::Function::Create(
-            signature, llvm::GlobalValue::ExternalLinkage,
-            name, session.module());
+            signature, llvm::GlobalValue::ExternalLinkage, name,
+            session.module());
         if (!sanitizer.empty())
-          function->addFnAttr(sanitizer == "thread" ? llvm::Attribute::SanitizeThread
-                                                   : llvm::Attribute::SanitizeAddress);
-        llvm::IRBuilder<> ir(llvm::BasicBlock::Create(session.context(), "entry", function));
+          function->addFnAttr(sanitizer == "thread"
+                                  ? llvm::Attribute::SanitizeThread
+                                  : llvm::Attribute::SanitizeAddress);
+        llvm::IRBuilder<> ir(
+            llvm::BasicBlock::Create(session.context(), "entry", function));
         std::vector<llvm::Value *> inputs;
         inputs.push_back(function->getArg(0));
         if (wait)
           inputs.push_back(ir.CreateTruncOrBitCast(
-              function->getArg(1), session.layouts().get(layout.element).value));
-        expect(Atomics(session, ir).emit(owner.body, instruction, inputs) == nullptr,
-               "wait.result: no result publication or invented failure channel");
+              function->getArg(1),
+              session.layouts().get(layout.element).value));
+        expect(
+            Atomics(session, ir).emit(owner.body, instruction, inputs) ==
+                nullptr,
+            "wait.result: no result publication or invented failure channel");
         if (!wait && notifications == 1) {
-          auto *metadata = session.module().getNamedGlobal("gti_rt_atomic_wait_domain_v1");
+          auto *metadata =
+              session.module().getNamedGlobal("gti_rt_atomic_wait_domain_v1");
           for (int mutation = 0; mutation != 4; ++mutation) {
-            if (mutation == 0) metadata->setConstant(true);
-            if (mutation == 1) metadata->setThreadLocalMode(llvm::GlobalVariable::GeneralDynamicTLSModel);
-            if (mutation == 2) metadata->setAlignment(llvm::Align(32));
-            if (mutation == 3) metadata->setLinkage(llvm::GlobalValue::InternalLinkage);
+            if (mutation == 0)
+              metadata->setConstant(true);
+            if (mutation == 1)
+              metadata->setThreadLocalMode(
+                  llvm::GlobalVariable::GeneralDynamicTLSModel);
+            if (mutation == 2)
+              metadata->setAlignment(llvm::Align(32));
+            if (mutation == 3)
+              metadata->setLinkage(llvm::GlobalValue::InternalLinkage);
             const auto before = ir.GetInsertBlock()->size();
             bool rejected = false;
             try {
-              static_cast<void>(Atomics(session, ir).emit(owner.body, instruction, inputs));
+              static_cast<void>(
+                  Atomics(session, ir).emit(owner.body, instruction, inputs));
             } catch (const BackendUnsupportedError &) {
               rejected = true;
             }
             expect(rejected && ir.GetInsertBlock()->size() == before,
-                   "wait.domain: constant/TLS/under-aligned/private replacements reject before emission");
+                   "wait.domain: constant/TLS/under-aligned/private "
+                   "replacements reject before emission");
             metadata->setConstant(false);
             metadata->setThreadLocalMode(llvm::GlobalVariable::NotThreadLocal);
             metadata->setAlignment(llvm::Align(64));
@@ -543,19 +590,26 @@ void checkWaiting(const std::filesystem::path &root,
         }
         ir.CreateRetVoid();
       }
-  expect(elements.size() == 9 && orders.size() == 3 && waits >= 27 && notifications >= 18,
-         "wait.domain: bool and eight integers, all load orders and both notifications");
+  expect(elements.size() == 9 && orders.size() == 3 && waits >= 27 &&
+             notifications >= 18,
+         "wait.domain: bool and eight integers, all load orders and both "
+         "notifications");
   auto *wait = declareRuntimeService(session, RuntimeService::AtomicWait);
   auto *notify = declareRuntimeService(session, RuntimeService::AtomicNotify);
-  auto *registered = declareRuntimeService(session, RuntimeService::AtomicNotifyRegistered);
-  const auto *domain = session.module().getNamedGlobal("gti_rt_atomic_wait_domain_v1");
+  auto *registered =
+      declareRuntimeService(session, RuntimeService::AtomicNotifyRegistered);
+  const auto *domain =
+      session.module().getNamedGlobal("gti_rt_atomic_wait_domain_v1");
   expect(domain && domain->isDeclaration() && !domain->isConstant() &&
              domain->hasExternalLinkage() && !domain->isThreadLocal() &&
              domain->getAlign().valueOrOne() == llvm::Align(64) &&
-             session.module().getDataLayout().getTypeAllocSize(domain->getValueType()) == 32768 &&
-             notify->use_empty() && !registered->use_empty() && registered->doesNotThrow() &&
+             session.module().getDataLayout().getTypeAllocSize(
+                 domain->getValueType()) == 32768 &&
+             notify->use_empty() && !registered->use_empty() &&
+             registered->doesNotThrow() &&
              !registered->hasFnAttribute(llvm::Attribute::NoReturn),
-         "wait.domain: typed notification shares exact v1 metadata and only calls the slow service");
+         "wait.domain: typed notification shares exact v1 metadata and only "
+         "calls the slow service");
   expect(wait->arg_size() == 4 && wait->getReturnType()->isVoidTy() &&
              wait->getArg(0)->getType()->isPointerTy() &&
              wait->getArg(1)->getType()->isIntegerTy(64) &&
@@ -579,16 +633,18 @@ void checkWaiting(const std::filesystem::path &root,
 } // namespace
 
 int main(int argc, char **argv) {
-  if (argc != 2 &&
-      !((argc == 4 || argc == 5) && (std::string_view(argv[2]) == "--emit-wait-lanes" ||
-                     std::string_view(argv[2]) == "--emit-wait-services")))
+  if (argc != 2 && !((argc == 4 || argc == 5) &&
+                     (std::string_view(argv[2]) == "--emit-wait-lanes" ||
+                      std::string_view(argv[2]) == "--emit-wait-services")))
     return 2;
   const std::string_view sanitizer = argc == 5 ? argv[4] : "";
-  if (!sanitizer.empty() && sanitizer != "address,undefined" && sanitizer != "thread")
+  if (!sanitizer.empty() && sanitizer != "address,undefined" &&
+      sanitizer != "thread")
     return 2;
   try {
     if (argc >= 4 && std::string_view(argv[2]) == "--emit-wait-services")
-      checkWaiting(std::filesystem::path(argv[1]), std::filesystem::path(argv[3]), sanitizer);
+      checkWaiting(std::filesystem::path(argv[1]),
+                   std::filesystem::path(argv[3]), sanitizer);
     else if (argc >= 4)
       emitWaitLanes(std::filesystem::path(argv[1]),
                     std::filesystem::path(argv[3]), sanitizer);

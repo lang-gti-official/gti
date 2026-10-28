@@ -277,13 +277,15 @@ void testGeneralTextStepMatchesProductionEmission() {
         source.filename() == "178-wrapping-atomic-counters.gti") {
       bool unsupported = false;
       try {
-        static_cast<void>(gti_test::emitCpp(
-            frontend, frontend.mir, frontend.mir, optimizations));
+        static_cast<void>(gti_test::emitCpp(frontend, frontend.mir,
+                                            frontend.mir, optimizations));
       } catch (const lang::BackendUnsupportedError &error) {
-        unsupported = std::string(error.what()).find(
-                          "wrapping atomic read-modify-write") != std::string::npos;
+        unsupported =
+            std::string(error.what())
+                .find("wrapping atomic read-modify-write") != std::string::npos;
       }
-      expect(unsupported, "LLVM-only corpus source must report wrapping atomic support boundary");
+      expect(unsupported, "LLVM-only corpus source must report wrapping atomic "
+                          "support boundary");
       continue;
     }
     const lang::BackendArtifact artifact =

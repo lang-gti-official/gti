@@ -3,9 +3,9 @@
 #include <cstdio>
 #include <new>
 #ifndef _WIN32
-#include <sys/resource.h>
 #include <cerrno>
 #include <dlfcn.h>
+#include <sys/resource.h>
 #endif
 
 namespace {
@@ -62,9 +62,11 @@ extern "C" int posix_memalign(void **address, std::size_t alignment,
     noexcept
 #endif
 {
-  if (failScalarAllocation) return ENOMEM;
+  if (failScalarAllocation)
+    return ENOMEM;
   using Allocate = int (*)(void **, std::size_t, std::size_t);
-  static auto real = reinterpret_cast<Allocate>(dlsym(RTLD_NEXT, "posix_memalign"));
+  static auto real =
+      reinterpret_cast<Allocate>(dlsym(RTLD_NEXT, "posix_memalign"));
   return real ? real(address, alignment, bytes) : ENOMEM;
 }
 #endif

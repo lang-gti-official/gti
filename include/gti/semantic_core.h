@@ -751,8 +751,9 @@ evaluateCapabilityCondition(const CapabilityCondition &condition, Query query) {
       if (!facts)
         return std::nullopt;
       values.push_back(node.kind == Kind::Transfer ? facts->transferCapable
-                                                  : facts->shareCapable);
-    } else if (node.kind == Kind::Conjunction || node.kind == Kind::Disjunction) {
+                                                   : facts->shareCapable);
+    } else if (node.kind == Kind::Conjunction ||
+               node.kind == Kind::Disjunction) {
       if (node.type != SemanticType::Unknown || node.left >= values.size() ||
           node.right >= values.size())
         return std::nullopt;

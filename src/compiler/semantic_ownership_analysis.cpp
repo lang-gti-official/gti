@@ -575,10 +575,14 @@ auto SemanticVisitor::Impl::typeCapabilities(
              ConcurrencyCapabilityPolicy::UnsafeConditional) {
     result.transferCapable =
         owner.transferCondition &&
-        evaluateCapabilityCondition(*owner.transferCondition,
-            [&](const SemanticType &subject) -> std::optional<ConcurrencyCapabilities> {
-              return typeCapabilities(substituteType(subject, substitution), visiting);
-            }).value_or(false);
+        evaluateCapabilityCondition(
+            *owner.transferCondition,
+            [&](const SemanticType &subject)
+                -> std::optional<ConcurrencyCapabilities> {
+              return typeCapabilities(substituteType(subject, substitution),
+                                      visiting);
+            })
+            .value_or(false);
   }
   if (owner.sharePolicy == ConcurrencyCapabilityPolicy::Denied) {
     result.shareCapable = false;
@@ -588,10 +592,14 @@ auto SemanticVisitor::Impl::typeCapabilities(
              ConcurrencyCapabilityPolicy::UnsafeConditional) {
     result.shareCapable =
         owner.shareCondition &&
-        evaluateCapabilityCondition(*owner.shareCondition,
-            [&](const SemanticType &subject) -> std::optional<ConcurrencyCapabilities> {
-              return typeCapabilities(substituteType(subject, substitution), visiting);
-            }).value_or(false);
+        evaluateCapabilityCondition(
+            *owner.shareCondition,
+            [&](const SemanticType &subject)
+                -> std::optional<ConcurrencyCapabilities> {
+              return typeCapabilities(substituteType(subject, substitution),
+                                      visiting);
+            })
+            .value_or(false);
   }
   visiting.pop_back();
   return result;
@@ -966,9 +974,10 @@ auto SemanticVisitor::Impl::shareCapabilityDenial(
   }
   if (owner.sharePolicy == ConcurrencyCapabilityPolicy::UnsafeConditional &&
       owner.shareCondition && owner.sharePolicySource) {
-    return ShareCapabilityDenial{
-        .source = &*owner.sharePolicySource,
-        .message = "This unsafe sharing assertion requires its capability condition to hold."};
+    return ShareCapabilityDenial{.source = &*owner.sharePolicySource,
+                                 .message =
+                                     "This unsafe sharing assertion requires "
+                                     "its capability condition to hold."};
   }
   if (hasSourceDestructorBody(owner)) {
     return ShareCapabilityDenial{
@@ -1045,7 +1054,8 @@ auto SemanticVisitor::Impl::transferCapabilityDenial(
       owner.transferCondition && owner.transferPolicySource) {
     return TransferCapabilityDenial{
         .source = &*owner.transferPolicySource,
-        .message = "This unsafe transfer assertion requires its capability condition to hold."};
+        .message = "This unsafe transfer assertion requires its capability "
+                   "condition to hold."};
   }
   if (hasSourceDestructorBody(owner)) {
     return TransferCapabilityDenial{
@@ -7124,13 +7134,15 @@ auto SemanticVisitor::Impl::trustedSynchronizationOperation(
                             std::string_view("atomic_fetch_add_wrapping"),
                             std::string_view("atomic_fetch_sub_wrapping")}) {
     for (const auto &[suffix, order] :
-         {std::pair<std::string_view, AtomicMemoryOrder>{"", AtomicMemoryOrder::SequentiallyConsistent},
+         {std::pair<std::string_view, AtomicMemoryOrder>{
+              "", AtomicMemoryOrder::SequentiallyConsistent},
           {"_relaxed", AtomicMemoryOrder::Relaxed},
           {"_acquire", AtomicMemoryOrder::Acquire},
           {"_release", AtomicMemoryOrder::Release},
           {"_acq_rel", AtomicMemoryOrder::AcquireRelease}}) {
       if (name == std::string(prefix) + std::string(suffix))
-        return operation(SynchronizationOperationKind::AtomicReadModifyWrite, order);
+        return operation(SynchronizationOperationKind::AtomicReadModifyWrite,
+                         order);
     }
   }
   const auto compareExchange = [&](std::string_view candidate,
@@ -7330,7 +7342,8 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     }
     return IntrinsicKind::None;
   }
-  if (isFunctionPointerLibraryUnit(sourceUnit) && scope.front() == "gti_internal") {
+  if (isFunctionPointerLibraryUnit(sourceUnit) &&
+      scope.front() == "gti_internal") {
     if (name == "function_pointer_from_item")
       return IntrinsicKind::FunctionPointerFromItem;
     if (name == "function_pointer_invoke")
@@ -13445,7 +13458,8 @@ auto SemanticVisitor::Impl::analyzeAtomicIntrinsicCall(
                         intrinsic == IntrinsicKind::AtomicFetchSubWrapping;
   if (!elementType || !validScalar(*elementType) ||
       (wrapping && *elementType != SemanticType::Unknown &&
-       !satisfiesConstraint(*elementType, constraintBit(GenericConstraintKind::Integral)))) {
+       !satisfiesConstraint(*elementType,
+                            constraintBit(GenericConstraintKind::Integral)))) {
     report(expressionToken(expr.arguments().front()),
            "Atomic operations require the exact compiler-owned scalar "
            "atomic storage capability.",

@@ -588,22 +588,22 @@ private:
     if (value.transferCondition) {
       output << ";transfer-condition=";
       output << '[';
-        for (const auto &node : value.transferCondition->nodes) {
-          output << number(node.kind) << ':';
-          type(node.type);
-          output << ':' << node.left << ':' << node.right << ';';
-        }
-        output << ']';
+      for (const auto &node : value.transferCondition->nodes) {
+        output << number(node.kind) << ':';
+        type(node.type);
+        output << ':' << node.left << ':' << node.right << ';';
+      }
+      output << ']';
     }
     if (value.shareCondition) {
       output << ";share-condition=";
       output << '[';
-        for (const auto &node : value.shareCondition->nodes) {
-          output << number(node.kind) << ':';
-          type(node.type);
-          output << ':' << node.left << ':' << node.right << ';';
-        }
-        output << ']';
+      for (const auto &node : value.shareCondition->nodes) {
+        output << number(node.kind) << ':';
+        type(node.type);
+        output << ':' << node.left << ':' << node.right << ';';
+      }
+      output << ']';
     }
     output << ";transfer=" << number(value.transferPolicy)
            << ";share=" << number(value.sharePolicy)

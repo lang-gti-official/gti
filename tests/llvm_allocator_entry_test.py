@@ -214,7 +214,7 @@ def main():
                 assert facts["compiler_build"] == manifest["compiler_build"]
                 row = observe(binary, wanted)
                 if name == "shared-owner":
-                    assert row["posix_memalign"] == row["free"] == 2 * args.iterations, "shared owner must allocate/release exactly two regions; clones allocate nothing"
+                    assert row["posix_memalign"] == row["free"] == args.iterations, "shared owner must allocate/release exactly one combined region; clones allocate nothing"
                     assert all(row[entry] == 0 for entry in ("malloc", "calloc", "realloc")), "unexpected shared-owner allocator entry"
                 elif name == "process-provider":
                     assert row["posix_memalign"] == row["free"] == args.iterations, "production provider requests/releases were not observed exactly"

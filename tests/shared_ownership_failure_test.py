@@ -43,8 +43,8 @@ def main():
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             cases = [
                 (70, "99\n", "empty_owner_access in member_access"),
-                (ABORT_STATUS, "1\n", "allocation_failure in private_storage"),
-                (ABORT_STATUS, "1\n", "allocation_failure in private_storage"),
+                (ABORT_STATUS, "", "allocation_failure in private_storage"),
+                (ABORT_STATUS, "", "allocation_failure in private_storage"),
                 (70, "1\n2\n7\n99\n", "division_by_zero"),
                 (0, "1\n2\n7\n12\n99\n", ""),
             ]
@@ -62,6 +62,14 @@ def main():
                 if not diagnostic:
                     assert not result.stderr, (name, phase, result.stderr)
             print(f"shared ownership failure: {name} passed", flush=True)
+            constructor_binary = Path(temporary) / f"constructor-{name}"
+            built = run([str(compiler), str(fixtures / "shared_ownership_constructor_failure.gti"),
+                         *flags, "-o", str(constructor_binary)])
+            assert built.returncode == 0, (name, built.stdout, built.stderr)
+            result = run([str(constructor_binary)])
+            assert result.returncode == 70 and result.stdout == "1\n7\n99\n", (name, result)
+            assert "runtime error[GTI-R0002]" in result.stderr, (name, result)
+            print(f"shared ownership constructor rollback: {name} passed", flush=True)
             thread_binary = Path(temporary) / f"thread-{name}"
             built = run([str(compiler), str(fixtures / "shared_ownership_thread_cleanup_failure.gti"),
                          *flags, "--execution-profile", "concurrent", "-o", str(thread_binary),

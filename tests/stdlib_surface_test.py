@@ -111,6 +111,7 @@ def validate_manifest(manifest: dict[str, Any], repository: pathlib.Path) -> Non
         require(case_id not in case_ids, f"duplicate case id: {case_id}")
         case_ids.add(case_id)
         case_by_id[case_id] = case
+        require(case.get("backend") in {None, "cpp", "llvm"}, f"invalid backend for {case_id}")
         mode = case.get("mode")
         require(mode in CASE_MODES, f"invalid case mode for {case_id}: {mode}")
         require(
@@ -332,6 +333,8 @@ def case_plan(
             str(cxx),
             f"-{optimization}",
         ]
+        if case.get("backend") is not None:
+            command.extend(["--backend", case["backend"]])
         if case.get("execution_profile") is not None:
             command.extend(
                 ["--execution-profile", str(case["execution_profile"])]
@@ -373,7 +376,7 @@ def case_context(case: dict[str, Any], repository: pathlib.Path) -> dict:
         loading="stdlib-surface-native-fixture-with-compiler-overrides",
         observation=f"stdlib-surface-{case['mode']}",
         unresolved=("llvm-target-applicability", "native-fixture-build-contract",
-                    "implicit-shipped-backend"),
+                    *(("implicit-shipped-backend",) if not case.get("backend") else ())),
     )
     return {
         "context": context.record(), "role": case_role(case), "observed": "unrun",

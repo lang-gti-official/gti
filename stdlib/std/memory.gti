@@ -398,7 +398,11 @@ public:
         (request.alignment & (request.alignment - uint64_t(1))) != uint64_t(0)) {
       return unexpected(std::alloc_errc::invalid_alignment);
     }
-    uint64_t maximum = gti_internal::runtime::gti_rt_native_size_max_v1();
+    // The byte-provider ABI carries at most 64 bits; c_size_t retains the
+    // target C size type's exact layout. These bounds fold with target layout.
+    uint64_t size_bytes = std::layout_of<c_size_t>().bytes;
+    uint64_t maximum = uint64_t(18446744073709551615) >>
+        ((uint64_t(8) - size_bytes) * uint64_t(8));
     if (request.bytes > maximum or request.alignment > maximum) {
       return unexpected(std::alloc_errc::size_overflow);
     }
@@ -411,18 +415,21 @@ public:
           request.bytes, request.alignment);
 #else
       mut uint64_t selected = request.alignment;
-      uint64_t native_minimum = gti_internal::runtime::gti_rt_posix_pointer_size_v1();
+      uint64_t native_minimum = std::layout_of<void*>().bytes;
       if (selected < native_minimum) { selected = native_minimum; }
       mut int32_t status = 0;
       void* address = gti_internal::runtime::gti_rt_posix_memalign_v1(
           request.bytes, selected, &status);
-      if (status == gti_internal::runtime::gti_rt_posix_einval_v1()) {
-        return unexpected(std::alloc_errc::invalid_alignment);
+      // Platform error constants matter only on the failure path.
+      if (status != 0) {
+        if (status == gti_internal::runtime::gti_rt_posix_einval_v1()) {
+          return unexpected(std::alloc_errc::invalid_alignment);
+        }
+        if (status == gti_internal::runtime::gti_rt_posix_enomem_v1()) {
+          return unexpected(std::alloc_errc::resource_exhausted);
+        }
+        return unexpected(std::alloc_errc::invalid_region);
       }
-      if (status == gti_internal::runtime::gti_rt_posix_enomem_v1()) {
-        return unexpected(std::alloc_errc::resource_exhausted);
-      }
-      if (status != 0) { return unexpected(std::alloc_errc::invalid_region); }
 #endif
       if (address == nullptr) { return unexpected(std::alloc_errc::resource_exhausted); }
       return std::detail::raw_allocation(address, request.bytes, request.alignment, uint64_t(0));
@@ -1721,7 +1728,7 @@ try_make_pool<T>(size_t capacity) requires gti_internal::movable_sparse_element<
 
 namespace detail {
 // The block owns no automatic payload lifetime. Its last strong owner retires
-// both allocations, even when the selected payload destructor raises failure.
+// its allocation, even when the selected payload destructor raises failure.
 constexpr bool shared_upcast_capabilities<Base, Derived>() {
   return (!std::meta::is_transferable<Base>() || std::meta::is_transferable<Derived>()) &&
          (!std::meta::is_shareable<Base>() || std::meta::is_shareable<Derived>());
@@ -1734,14 +1741,13 @@ public:
   shared_control(void* object, std::function_ptr<void(void*)> destroy)
       : object(object), destroy(destroy) {}
 };
-class shared_construction_guard {
-  mut shared_control* block = nullptr;
+// Generated field lifetime constructs and retires the payload in place.
+class shared_allocation<std::storage_element T> {
 public:
-  unsafe shared_construction_guard(shared_control* block) : block(block) {}
-  void disarm() mut { this.block = nullptr; }
-  ~shared_construction_guard() {
-    if (this.block != nullptr) { unsafe { std::destroy_at(this.block); } }
-  }
+  mut shared_control control;
+  mut T value;
+  shared_allocation<Args...>(void* address, std::function_ptr<void(void*)> destroy, Args... args)
+      : control(shared_control(address, destroy)), value(T(args...)) {}
 };
 class shared_payload_guard<std::storage_element T> {
   mut T* object = nullptr;
@@ -1752,25 +1758,24 @@ public:
     if (this.object != nullptr) { unsafe { std::destroy_at(this.object); } }
   }
 };
-unsafe void destroy_shared_object<std::storage_element T>(void* object) {
-  mut std::detail::process_lease lease{};
-  auto layout = std::layout_of<T>();
+// The erased thunk owns complete final retirement. The guard destroys the
+// carrier through its verified field cleanup; the lease releases bytes on failure.
+unsafe void destroy_shared_block<std::storage_element T>(void* address) {
   unsafe {
-    lease.attach(std::detail::raw_allocation(object, layout.bytes, layout.alignment, uint64_t(0)));
-    std::destroy_at(std::typed_address<T>(object));
+    auto block = std::typed_address<shared_control>(address);
+    auto whole = std::typed_address<shared_allocation<T>>(block->object);
+    auto layout = std::layout_of<shared_allocation<T>>();
+    mut std::detail::process_lease lease{};
+    lease.attach(std::detail::raw_allocation(block->object, layout.bytes, layout.alignment, uint64_t(0)));
+    std::destroy_at(whole);
   }
 }
 unsafe void release_shared<Payload>(shared_control* block) {
   if (block == nullptr) { return; }
   unsafe {
     if (block->strong.fetch_sub_wrapping(uint64_t(1), std::memory_order_acq_rel()) == uint64_t(1)) {
-      mut std::detail::process_lease lease{};
-      auto layout = std::layout_of<shared_control>();
-      lease.attach(std::detail::raw_allocation(std::erase_address(block), layout.bytes, layout.alignment, uint64_t(0)));
-      void* object = block->object;
       auto destroy = block->destroy;
-      std::destroy_at(block);
-      destroy(object);
+      destroy(std::erase_address(block));
     }
   }
 }
@@ -1791,7 +1796,7 @@ public:
   /// Adopts an already retained block and its live adjusted read-only view.
   /// The caller transfers exactly one positive strong credit for this block.
   /// Both pointers must be null, or the block must own a live payload and view
-  /// into it, with the matching exact-type destruction thunk and process leases.
+  /// into it, with the matching exact-type destruction thunk and allocation lease.
   /// The payload must satisfy every transfer/share permission promised by T;
   /// adopting a more capable view must never launder thread-affine state.
   unsafe shared_ptr(std::detail::shared_control* block, const T* view)
@@ -1860,7 +1865,7 @@ public:
       }
     } else { gti_internal::panic("Invalid shared owner base"); }
   }
-  ~shared_ptr() { this.reset(); }
+  ~shared_ptr() { unsafe { std::detail::release_shared<T>(this.block); } }
 };
 
 /// Consumes one shared handle and preserves all existing aliases while
@@ -1883,34 +1888,25 @@ public:
 /// Constructs one owned object and its strong-reference control block.
 ///
 /// Construction requires a storage element and a valid construct_at call. Infallible
-/// object or control-block exhaustion reports allocation failure and aborts
+/// combined-allocation exhaustion reports allocation failure and aborts
 /// without cleanup. Ordinary constructor failure retains verified rollback.
 /// This factory is not recoverable.
 shared_ptr<T> make_shared<std::storage_element T, Args...>(Args... args) {
-  mut std::detail::process_lease object_lease{};
-  mut std::detail::process_lease block_lease{};
+  mut std::detail::process_lease lease{};
   unsafe {
-    auto object_result = object_lease.allocate(std::layout_of<T>());
-    if (!object_result) { gti_internal::fail_allocation(object_result.error()); }
-    auto object_region = object_result.value();
-    object_lease.attach(object_region);
-    T* view = std::typed_address<T>(object_region.address);
-    std::construct_at(view, args...);
-    mut std::detail::shared_payload_guard<T> payload_guard{view};
-    auto block_result = block_lease.allocate(std::layout_of<std::detail::shared_control>());
-    if (!block_result) { gti_internal::fail_allocation(block_result.error()); }
-    auto block_region = block_result.value();
-    block_lease.attach(block_region);
-    auto block = std::typed_address<std::detail::shared_control>(block_region.address);
-    auto destroy = [](void* address) -> void { unsafe { std::detail::destroy_shared_object<T>(address); } };
+    auto result = lease.allocate(std::layout_of<std::detail::shared_allocation<T>>());
+    if (!result) { gti_internal::fail_allocation(result.error()); }
+    auto region = result.value();
+    lease.attach(region);
+    auto whole = std::typed_address<std::detail::shared_allocation<T>>(region.address);
+    auto destroy = [](void* address) -> void { unsafe { std::detail::destroy_shared_block<T>(address); } };
     std::function_ptr<void(void*)> destructor{destroy};
-    std::construct_at(block, object_region.address, destructor);
-    mut std::detail::shared_construction_guard guard{block};
+    std::construct_at(whole, region.address, destructor, args...);
+    mut std::detail::shared_payload_guard<std::detail::shared_allocation<T>> guard{whole};
+    T* view = &whole->value;
     guard.disarm();
-    payload_guard.disarm();
-    auto detached_object = object_lease.take();
-    auto detached_block = block_lease.take();
-    return shared_ptr<T>(block, view);
+    auto detached = lease.take();
+    return shared_ptr<T>(&whole->control, view);
   }
 }
 }

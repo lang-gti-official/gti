@@ -1660,8 +1660,9 @@ object. `use_count()` is an observational snapshot, not exclusive-access proof.
 
 `std::make_shared<T>(args...)` constructs a `storage_element` at its final
 address using the general raw-region allocation and typed lifetime operations.
-The object and its control block are allocated separately. Source guards own
-construction rollback and allocation leases. Allocation failure raises the
+The object and its control block occupy one correctly aligned allocation.
+A source aggregate constructs the payload field at its final address; generated
+field cleanup and a source allocation lease own rollback and retirement. Allocation failure raises the
 aborting `allocation_failure` report in `private_storage`; no pointee,
 argument, local or managed-worker cleanup runs before process abort.
 Successful publication transfers exactly one strong credit. Last-owner release
