@@ -345,6 +345,29 @@ int main() {
   return again.area() == 25 && old.area() == 9 && old.code() == 4 ? 0 : 2;
 }
 """, 0),
+    # A function-pointer handle field is one code address: a polymorphic class
+    # holding one copies it as bytes into a unique owner of its interface.
+    "function-pointer-fields": ("""#include <std/memory>
+#include <std/functional>
+interface Action { int64_t fire(int64_t x); };
+using Callback = std::function_ptr<int64_t(int64_t)>;
+int64_t triple(int64_t x) { return x * 3; }
+int64_t square(int64_t x) { return x * x; }
+class Button : public Action {
+  Callback on_fire;
+  int64_t presses;
+public:
+  Button(Callback on_fire, int64_t presses) : on_fire(on_fire), presses(presses) {}
+  int64_t fire(int64_t x) override { return this.on_fire(x) + this.presses; }
+};
+int main() {
+  Button local = Button(Callback(triple), int64_t(1));
+  std::unique_ptr<Action> owner =
+      std::upcast_unique<Action, Button>(std::make_unique<Button>(Button(Callback(square), int64_t(2))));
+  std::unique_ptr<Action> moved = std::move(owner);
+  return local.fire(int64_t(2)) == 7 && moved->fire(int64_t(3)) == 11 ? 0 : 1;
+}
+""", 0),
     "heap-polymorphic-owner-former-reject": ("""#include <std/memory>
 mut int dropped = 0;
 class HeapValue {
@@ -2399,6 +2422,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "local-return-former-reject", "returned-owned-move",
             "hierarchy-arrays", "hierarchy-payloads", "moved-carriers",
             "moved-borrow-carrier-former-reject", "complete-polymorphic-swap",
+            "function-pointer-fields",
             "returned-siblings",
             "returned-sibling-failure", "returned-sibling-wrong-cleanup",
             "exchanged-transfers", "exchanged-transfer-failure",
