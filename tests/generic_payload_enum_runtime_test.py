@@ -241,6 +241,8 @@ int main() {
 class Sink<T> {
 public:
   Sink(T first, int32_t second) {}
+public:
+  Sink() = default;
 };
 int main() {
   Resource caller = Resource(9);

@@ -701,7 +701,7 @@ void testCallPlans(Session &session) {
 void testBodyCallHook() {
   const auto frontend =
       Frontend().analyze("llvm-dispatch-reference-body.gti", std::string(R"(
-class Reader { public: virtual int read() { return 1; } };
+class Reader { public: virtual int read() { return 1; }  public: Reader() = default; };
 int via(Reader& value) { return value.read(); }
 )"));
   expect(frontend.canGenerateCode(),
@@ -847,6 +847,8 @@ class Token {
 public:
   Token(int value) : divisor(value) {}
   ~Token() { int checked = 12 / this.divisor; }
+public:
+  Token() = default;
 };
 class Base {
 public:
@@ -856,6 +858,8 @@ public:
   }
   virtual int phase() { return 1; }
   ~Base() { int observed = this.phase(); }
+public:
+  Base() = default;
 };
 interface Side { int side(); };
 interface OtherSide { int other_side(); };
@@ -870,6 +874,8 @@ public:
   int side() override { return 6; }
   int other_side() override { return 7; }
   ~Derived() { int observed = this.phase(); }
+public:
+  Derived() = default;
 };
 class Trivial {
 public:
@@ -1498,6 +1504,8 @@ class Field {
   int value = invoke([]() -> int { return 17; });
 public:
   int read() { return this.value; }
+public:
+  Field() = default;
 };
 int main() { Field value{}; return value.read() + owned() - 34; }
 )",
@@ -1693,10 +1701,13 @@ public:
   ActiveHierarchy() : Base() {}
   ~ActiveHierarchy() {}
 };
-struct ActiveHierarchyValue { mut ActiveHierarchy value{}; };
+struct ActiveHierarchyValue { mut ActiveHierarchy value{};  public: ActiveHierarchyValue() = default; };
 struct ActiveOwners {
   mut std::unique_ptr<ActiveHierarchyValue> unique = nullptr;
   mut gti_internal::shared_owner<ActiveHierarchyValue> shared = gti_internal::shared_owner_empty<ActiveHierarchyValue>();
+public:
+  ActiveOwners() = default;
+
 };
 int main() {
   UniqueNest unique{}; SharedNest shared{}; ActiveOwners active{}; return 0;
@@ -1946,8 +1957,8 @@ int main() { std::mutex<int32_t> value{1}; return 0; }
 
 void testDispatchAdmissionBinding() {
   const auto frontend = Frontend().analyze("llvm-dispatch-demand.gti", R"(
-class Active { public: virtual int read() { return 7; } };
-class Dormant : public Active { public: virtual int extra() { return 8; } };
+class Active { public: virtual int read() { return 7; }  public: Active() = default; };
+class Dormant : public Active { public: virtual int extra() { return 8; }  public: Dormant() = default; };
 void dormant(Dormant& value) {}
 int main() { Active value{}; return 0; }
 )");
@@ -3697,6 +3708,8 @@ interface First { int read(); };
 interface Second { bool read(); };
 class Bad : public First, public Second {
 public: int read() override { return 1; }
+public:
+  Bad() = default;
 };
 int main() { Bad value{}; return 0; }
 )"));
@@ -3710,6 +3723,8 @@ class Both : public Transform<int>, public Transform<float> {
 public:
   int apply(int value) override { return value; }
   float apply(float value) override { return value; }
+public:
+  Both() = default;
 };
 int main() { return 0; }
 )"));
@@ -4209,18 +4224,23 @@ void testInertRelocation() {
 #include <std/memory>
 interface First {};
 interface Second {};
-class Parent : public First { public: mut int number = 17; };
-class Item : public Second, public Parent { public: mut int extra = 25; };
-struct Items { mut Item values[2] = {}; };
+class Parent : public First { public: mut int number = 17;  public: Parent() = default; };
+class Item : public Second, public Parent { public: mut int extra = 25;  public: Item() = default; };
+struct Items { mut Item values[2] = {};  public: Items() = default; };
 struct StaticOwners {
   mut std::unique_ptr<Items> unique = nullptr;
   mut gti_internal::shared_owner<Items> shared = gti_internal::shared_owner_empty<Items>();
+public:
+  StaticOwners() = default;
+
 };
-struct Active { mut int marker = 113; ~Active() {} };
+struct Active { mut int marker = 113; ~Active() {}  public: Active() = default; };
 struct Owners {
   mut std::unique_ptr<int> unique = nullptr;
   mut gti_internal::shared_owner<int> shared = gti_internal::shared_owner_empty<int>();
   mut Active state{};
+public:
+  Owners() = default;
 };
 struct NonRelocatable {
   NonRelocatable() {}
@@ -4231,6 +4251,8 @@ enum class ActiveChoice { held(Active value), empty };
 struct Choices {
   mut Choice choice = Choice::empty;
   mut ActiveChoice active = ActiveChoice::empty;
+public:
+  Choices() = default;
 };
 int main() {
   Items items{}; Active active{}; Choices choices{}; Owners owners{};

@@ -81,6 +81,8 @@ def main():
 #include <std/vector>
 struct Envelope {
   std::optional<std::string> payload{};
+public:
+  Envelope() = default;
 };
 """
     rejected = [

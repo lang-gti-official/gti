@@ -11,7 +11,7 @@ from lsp_smoke_test import LspSession, lsp_position
 def main():
     valid = ("#include <std/memory>\nclass Pinned {\npublic:\n"
              "  Pinned(Pinned& other) = delete;\n"
-             "  Pinned(Pinned&& other) = delete;\n};\n"
+             "  Pinned(Pinned&& other) = delete;\n public: Pinned() = default; };\n"
              "int main() { auto descriptor = std::layout_of<Pinned>(); return 0; }\n")
     with tempfile.TemporaryDirectory(prefix="gti-layout-lsp-") as directory:
         path = pathlib.Path(directory) / "layout.gti"

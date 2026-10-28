@@ -18,6 +18,8 @@ public:
     this.steps += 4;
     std::println(this.steps);
   }
+public:
+  stepping_task() = default;
 };
 
 class once_task {

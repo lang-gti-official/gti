@@ -251,12 +251,12 @@ concept sized_range<Range> =
     std::input_range<Range> &&
     requires(Range& range) { { (range.size()) } -> std::size_t; };
 
-struct input_iterator_tag {};
-struct output_iterator_tag {};
-struct forward_iterator_tag : public input_iterator_tag {};
-struct bidirectional_iterator_tag : public forward_iterator_tag {};
-struct random_access_iterator_tag : public bidirectional_iterator_tag {};
-struct contiguous_iterator_tag : public random_access_iterator_tag {};
+struct input_iterator_tag { input_iterator_tag() = default; };
+struct output_iterator_tag { output_iterator_tag() = default; };
+struct forward_iterator_tag : public input_iterator_tag { forward_iterator_tag() = default; };
+struct bidirectional_iterator_tag : public forward_iterator_tag { bidirectional_iterator_tag() = default; };
+struct random_access_iterator_tag : public bidirectional_iterator_tag { random_access_iterator_tag() = default; };
+struct contiguous_iterator_tag : public random_access_iterator_tag { contiguous_iterator_tag() = default; };
 
 // Forward-only utilities take an unsigned distance; the signed overload
 // requires bidirectional movement so a negative distance always has an exact

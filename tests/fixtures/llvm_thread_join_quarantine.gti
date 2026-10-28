@@ -17,6 +17,8 @@ public:
     auto held = process_value.lock();
     gti_test_expect_native_storage_pinned(held.get());
   }
+public:
+  pinned_probe() = default;
 };
 
 int main() {

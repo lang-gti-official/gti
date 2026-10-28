@@ -10,6 +10,8 @@ class Local {
 public:
   void touch() {}
   ~Local() { gti_test_program_tls_observe(); }
+public:
+  Local() = default;
 };
 thread_local Local local{};
 
@@ -27,6 +29,8 @@ Box first{};
 class Registry {
 public:
   static Box last{};
+public:
+  Registry() = default;
 };
 
 int32_t after = 12 / gti_test_program_gate(2);

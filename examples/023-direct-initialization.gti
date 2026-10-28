@@ -27,10 +27,14 @@ public:
   void replace(Reading<int> next) mut {
     this.initial = next;
   }
+public:
+  Dashboard() = default;
 };
 
 struct DefaultReading {
   int value = 7;
+public:
+  DefaultReading() = default;
 };
 
 class DefaultDashboard {
@@ -42,27 +46,35 @@ public:
 struct Settings {
   int port = 80;
   DefaultReading reading{};
+public:
+  Settings() = default;
 };
 
 struct Indicator {
   int level = 9;
+public:
+  Indicator() = default;
 };
 
 struct Panel {
   // This selects real construction, not an empty or nullable state.
   Indicator indicator;
+public:
+  Panel() = default;
 };
 
 namespace layers {
   struct Layer<uint64_t N> {
     Layer<N - 1> inner;
     int value = 1;
-  };
+   public: Layer() = default; };
 }
 
 // Exact concrete identities make this nested by-value layout finite.
 struct layers::Layer<0> {
   int value = 100;
+public:
+  Layer() = default;
 };
 
 int main() {

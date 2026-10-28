@@ -24,6 +24,8 @@ public:
 
 struct Tail {
   ~Tail() { std::println(99); }
+public:
+  Tail() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

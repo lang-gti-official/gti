@@ -4,6 +4,8 @@ struct Reading {
   int value = 0;
 
   Reading(int value) : value(value) {}
+public:
+  Reading() = default;
 };
 
 T preserve<T>(T value) {

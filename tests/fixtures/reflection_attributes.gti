@@ -8,18 +8,18 @@
 #include <std/vector>
 
 namespace enc {
-[[attribute]] struct key { std::string_view name = ""; };
-[[attribute]] struct skip {};
+[[attribute]] struct key { std::string_view name = "";  public: key() = default; };
+[[attribute]] struct skip { public: skip() = default; };
 }
 namespace xml {
-[[attribute]] struct attribute {};
+[[attribute]] struct attribute { public: attribute() = default; };
 }
 namespace binary {
-[[attribute]] struct skip {};
-[[attribute]] struct width { uint64_t bytes = 4; };
+[[attribute]] struct skip { public: skip() = default; };
+[[attribute]] struct width { uint64_t bytes = 4;  public: width() = default; };
 }
 namespace scene {
-[[attribute]] struct version { uint32_t major = 1; uint32_t minor = 0; };
+[[attribute]] struct version { uint32_t major = 1; uint32_t minor = 0;  public: version() = default; };
 }
 
 // Field defaults are the test values (`Player hero{}` below); text appears
@@ -34,6 +34,8 @@ struct Player {
   bool alive = true;
   [[enc::skip, binary::skip]]
   uint64_t session = 99;
+public:
+  Player() = default;
 };
 
 [[reflect_private]] class Account {
@@ -43,8 +45,8 @@ private:
   uint32_t hidden;
 };
 
-class Base { public: uint32_t base_field = 1; };
-class Derived : public Base { public: uint32_t own = 2; };
+class Base { public: uint32_t base_field = 1;  public: Base() = default; };
+class Derived : public Base { public: uint32_t own = 2;  public: Derived() = default; };
 
 enum class color { red = 1, green = 2, blue = 4 };
 enum class shape { dot, box(uint32_t width, uint32_t height) };

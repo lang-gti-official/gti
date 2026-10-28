@@ -4,7 +4,7 @@
 
 namespace std {
 /// The value representing an empty optional.
-struct nullopt_t {};
+struct nullopt_t { nullopt_t() = default; };
 nullopt_t nullopt{};
 
 namespace detail {

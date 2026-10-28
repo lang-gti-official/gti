@@ -124,7 +124,7 @@ CPP_DIVERGENCES = {
 SUCCESS_SOURCES = {
     # Verbatim former llvm_scalar_execution_test.py "polymorphic-owner"
     # rejection. Its removal there follows actual native O0/O3 success here.
-    "fresh-local-virtual-call": "class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; return value.read(); }",
+    "fresh-local-virtual-call": "class Owner { public: virtual int read() { return 0; }  public: Owner() = default; }; int main() { Owner value{}; return value.read(); }",
     "nonobserving-cleanup-helper-cycle": """mut int observed = 0;
 class Numeric {
   int value = 7;
@@ -196,8 +196,8 @@ TRANSFER_SUCCESS_SOURCES = {
     # these source contracts, not a failed runtime check or a rewritten oracle.
     "generated-copy-former-reject": (PLAIN + "int main() { Plain first{}; Plain second = first; return second.read(); }\n", 1),
     "generated-move-former-reject": (PLAIN + "int main() { mut Plain first{}; Plain second = std::move(first); return second.read(); }\n", 1),
-    "fresh-copy-former-cli-control": ("class Owner { public: virtual int read() { return 0; } }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", 0),
-    "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain(); };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
+    "fresh-copy-former-cli-control": ("class Owner { public: virtual int read() { return 0; }  public: Owner() = default; }; int main() { Owner value{}; Owner copied = value; return copied.read(); }\n", 0),
+    "nested-object-former-reject": (PLAIN + "struct Wrapper { Plain value = Plain();  public: Wrapper() = default; };\nint main() { Wrapper value{}; return value.value.read(); }\n", 1),
     "fresh-value-argument-former-reject": (PLAIN + "void take(Plain value) {}\nint main() { take(Plain()); return 0; }\n", 0),
     "fresh-return-former-reject": (PLAIN + "Plain make() { return Plain(); }\nint main() { Plain value = make(); return value.read(); }\n", 1),
     # Verbatim former rejection: a moved borrow carrier relocates as the
@@ -300,6 +300,32 @@ int main() {
     "array-former-reject": (PLAIN + "int main() { Plain values[1] = {Plain()}; return values[0].read(); }\n", 1),
     "global-former-reject": (PLAIN + "Plain value{};\nint main() { return value.read(); }\n", 1),
     "thread-local-former-reject": (PLAIN + "thread_local Plain value{};\nint main() { return value.read(); }\n", 1),
+    "thread-local-copy-former-reject": (PLAIN + "Plain global{};\nthread_local Plain copy = global;\nint main() { return copy.read(); }\n", 1),
+    # A function pointer field's generated copy is its code address: a
+    # polymorphic object holding one copies into a local, a unique owner and
+    # a by-copy capture with the generated logical-field copy.
+    "function-pointer-field-copies": ("""#include <std/functional>
+#include <std/memory>
+interface Action { int64_t fire(int64_t x); };
+using Step = std::function_ptr<int64_t(int64_t)>;
+int64_t triple(int64_t x) { return x * 3; }
+int64_t square(int64_t x) { return x * x; }
+class Button : public Action {
+  Step on_fire;
+public:
+  Button(Step on_fire) : on_fire(on_fire) {}
+  int64_t fire(int64_t x) override { return this.on_fire(x); }
+};
+int main() {
+  Button first = Button(Step(triple));
+  Button copied = first;
+  Action& view = copied;
+  std::unique_ptr<Action> owner = std::upcast_unique<Action, Button>(std::make_unique<Button>(Button(Step(square))));
+  auto captured = [first]() -> int64_t { return first.fire(int64_t(5)); };
+  return view.fire(int64_t(2)) == 6 && owner->fire(int64_t(3)) == 9 && captured() == 15 ? 0 : 1;
+}
+""", 0),
+    "global-copy-former-reject": (PLAIN + "Plain global{};\nint main() { Plain copy = global; return copy.read(); }\n", 1),
     # A moved owned local with active cleanup leaves through the return edge.
     "returned-owned-move": ("""mut int dropped = 0;
 class Owned {
@@ -344,6 +370,29 @@ int main() {
   Gauge old = std::exchange(first, Gauge(5));
   Shape& again = first;
   return again.area() == 25 && old.area() == 9 && old.code() == 4 ? 0 : 2;
+}
+""", 0),
+    # A function-pointer handle field is one code address: a polymorphic class
+    # holding one copies it as bytes into a unique owner of its interface.
+    "function-pointer-fields": ("""#include <std/memory>
+#include <std/functional>
+interface Action { int64_t fire(int64_t x); };
+using Callback = std::function_ptr<int64_t(int64_t)>;
+int64_t triple(int64_t x) { return x * 3; }
+int64_t square(int64_t x) { return x * x; }
+class Button : public Action {
+  Callback on_fire;
+  int64_t presses;
+public:
+  Button(Callback on_fire, int64_t presses) : on_fire(on_fire), presses(presses) {}
+  int64_t fire(int64_t x) override { return this.on_fire(x) + this.presses; }
+};
+int main() {
+  Button local = Button(Callback(triple), int64_t(1));
+  std::unique_ptr<Action> owner =
+      std::upcast_unique<Action, Button>(std::make_unique<Button>(Button(Callback(square), int64_t(2))));
+  std::unique_ptr<Action> moved = std::move(owner);
+  return local.fire(int64_t(2)) == 7 && moved->fire(int64_t(3)) == 11 ? 0 : 1;
 }
 """, 0),
     "heap-polymorphic-owner-former-reject": ("""#include <std/memory>
@@ -527,6 +576,8 @@ public:
   ~Guard() {
     if (events != EXPECTED_TRACE || live != 0) { int zero = 0; int checked_cleanup = 1 / zero; }
   }
+public:
+  Guard() = default;
 };
 """
 
@@ -654,7 +705,7 @@ def owned_base_wrong_cleanup(name: str) -> str:
 
 REJECTIONS = {
     "reject-move-construction": PLAIN + "int main() { mut Plain first{}; Plain second = Plain(std::move(first)); return second.read(); }\n",
-    "reject-base-assignment": PLAIN + """class Derived : public Plain {};
+    "reject-base-assignment": PLAIN + """class Derived : public Plain { public: Derived() = default; };
 void replace(mut Plain& destination, Plain& source) { destination = source; }
 int main() { mut Derived first{}; Derived second{}; replace(first, second); return first.read(); }
 """,
@@ -666,9 +717,9 @@ int main() { mut Derived first{}; Derived second{}; replace(first, second); retu
     # returning a payload value by value still transports its objects.
     "reject-payload-copy": PLAIN + "enum Mark { none, held(Plain value) };\nint main() { Mark first = Mark::held(Plain()); Mark second = first; switch (second) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
     "reject-payload-return": PLAIN + "enum Mark { none, held(Plain value) };\nMark make() { return Mark::held(Plain()); }\nint main() { Mark mark = make(); switch (mark) { case Mark::held(auto& value): return value.read(); case Mark::none: return 0; } }\n",
-    # A thread-local object copied from program storage is not a fresh
-    # construction in its slot, and a copy from a symbol has no planned source.
-    "reject-thread-local-copy": PLAIN + "Plain global{};\nthread_local Plain copy = global;\nint main() { return copy.read(); }\n",
+    # An element of a fixed array is selected through a checked index; a copy
+    # of it is not yet planned, on either backend.
+    "reject-element-copy": PLAIN + "Plain values[2] = {Plain(), Plain()};\nint main() { Plain copy = values[1]; return copy.read(); }\n",
     # MIR stages owned base arguments and forwarded class or enum references,
     # but still leaves these base initializers unstaged: an owned argument
     # beside a reference formal, a borrow carrier passed by value and an array
@@ -817,11 +868,11 @@ int main() { NoCopy first{}; NoCopy second{first}; return second.read(); }
 }
 """,
     "reject-source-virtual-signature-mismatch": """interface Reader { int read(); };
-class Wrong : public Reader { public: bool read() override { return true; } };
+class Wrong : public Reader { public: bool read() override { return true; }  public: Wrong() = default; };
 int main() { Wrong value{}; return 0; }
 """,
     "reject-source-unresolved-override": """interface Reader { int read(); };
-class Missing : public Reader { public: int read() override; };
+class Missing : public Reader { public: int read() override;  public: Missing() = default; };
 int main() { Missing value{}; return value.read(); }
 """,
     # A relocated carrier never holds a live borrow of its own storage: a
@@ -1152,6 +1203,8 @@ class Seven : public Step {
 public:
   int exact(int value) { return value + 7; }
   int apply(int value) override { return this.exact(value); }
+public:
+  Seven() = default;
 };
 int direct_offset_sum(Offset& step, int count) {
   mut int total = 0;
@@ -1797,6 +1850,8 @@ public:
   ~Guard() {
     if (events != 321) { int zero = 0; int checked_cleanup = 1 / zero; }
   }
+public:
+  Guard() = default;
 };
 """).replace("int main() {", "int main() { Guard guard{};").replace(
         "read(last.inner.second) != 2) { return 2; }",
@@ -1835,6 +1890,8 @@ public:
   ~Guard() {
     if (events != 1234) { int divisor = 0; int checked_cleanup = 1 / divisor; }
   }
+public:
+  Guard() = default;
 };
 int main() {
   Guard guard{};
@@ -1875,7 +1932,7 @@ int main() {
         "defined-failure", expected_exit=70, failure_needle="quotient(12 / divisor)")
     prefix = lifecycle.split(marker, 1)[0]
     add("inline-field-virtual-failure", prefix + """
-struct Holder { mut Leaf leaf{7}; };
+struct Holder { mut Leaf leaf{7};  public: Holder() = default; };
 int main() {
   Guard guard{};
   Holder holder{};
@@ -2401,6 +2458,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "local-return-former-reject", "returned-owned-move",
             "hierarchy-arrays", "hierarchy-payloads", "moved-carriers",
             "moved-borrow-carrier-former-reject", "complete-polymorphic-swap",
+            "function-pointer-fields",
             "returned-siblings",
             "returned-sibling-failure", "returned-sibling-wrong-cleanup",
             "exchanged-transfers", "exchanged-transfer-failure",
@@ -2425,7 +2483,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "array-former-reject"),
         "program-hierarchy-storage": (
             "program-storage", "program-storage-failure", "global-former-reject",
-            "thread-local-former-reject"),
+            "thread-local-former-reject", "thread-local-copy-former-reject",
+            "global-copy-former-reject"),
         "thread-local-hierarchy-storage": ("thread-local-hierarchy-storage",),
         "closure-transfers": (
             "closure-transfers", "closure-transfer-failure", "closure-transfer-wrong-cleanup"),
@@ -2441,7 +2500,8 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
             "cleanup-helper-cycle-base-phase-former-reject",
             "rollback-virtual-observation-former-reject"),
         "polymorphic-ownership": (
-            "polymorphic-owners", "heap-polymorphic-owner-former-reject",
+            "polymorphic-owners", "function-pointer-field-copies",
+            "heap-polymorphic-owner-former-reject",
             "polymorphic-owner-virtual-failure", "polymorphic-owner-wrong-cleanup",
             "polymorphic-owner-constructor-rollback", "closure-models",
             "closure-model-failure", "closure-model-wrong-cleanup",

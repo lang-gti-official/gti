@@ -7,6 +7,8 @@ int total<scorer T>(T& item) {
 
 struct Item {
   int score() { return 3; }
+public:
+  Item() = default;
 };
 
 int main() {

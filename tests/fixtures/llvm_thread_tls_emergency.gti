@@ -9,6 +9,8 @@ public:
     int32_t zero = 0;
     int32_t value = 9 / zero;
   }
+public:
+  fragile() = default;
 };
 
 thread_local fragile slot{};

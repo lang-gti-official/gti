@@ -10,12 +10,16 @@ struct repository {
   std::string name = std::string("");
   uint64_t stars = 0;
   std::optional<std::string> license = std::optional<std::string>();
+public:
+  repository() = default;
 };
 
 struct issue {
   std::string title = std::string("");
   bool open = true;
   std::vector<std::string> labels = std::vector<std::string>();
+public:
+  issue() = default;
 };
 
 int main() {

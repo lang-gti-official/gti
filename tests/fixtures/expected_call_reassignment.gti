@@ -23,6 +23,8 @@ struct point {
 struct tagged {
   int32_t code = 0;
   tagged(int32_t code) : code(code) {}
+public:
+  tagged() = default;
 };
 
 expected<tagged, errc> make_tagged(int32_t code) {

@@ -23,6 +23,8 @@ NativeAddress through_lambda(NativeAddress value) {
 class RecordSource {
 public:
   virtual NativeAddress read(NativeAddress value) = 0;
+public:
+  RecordSource() = default;
 };
 class RecordRelay : public RecordSource {
 public:
@@ -30,6 +32,8 @@ public:
     int check = 36 / value.code;
     return value;
   }
+public:
+  RecordRelay() = default;
 };
 NativeAddress virtual_relay(RecordSource& source, NativeAddress value) {
   return source.read(value);
@@ -60,6 +64,8 @@ public:
 class IntegerChannel : public GenericChannel<int> {
 public:
   int pass(int value) override { return value; }
+public:
+  IntegerChannel() = default;
 };
 T generic_virtual_relay<T, F>(T value, F callback) {
   GenericModel<T, F> model{std::move(callback)};
@@ -78,13 +84,17 @@ int multiply(int left, int right) { return left * right; }
 
 struct CallbackField {
   std::function<int(int, int)> calculate{};
+public:
+  CallbackField() = default;
 };
 
-struct Reading { int value = 7; };
+struct Reading { int value = 7;  public: Reading() = default; };
 interface ReadingSource<T> { T read(); };
 class ReadingFactory : public ReadingSource<Reading> {
 public:
   Reading read() override { return Reading(); }
+public:
+  ReadingFactory() = default;
 };
 int inspect_reading(Reading value) { return value.value; }
 

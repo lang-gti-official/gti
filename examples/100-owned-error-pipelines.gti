@@ -13,6 +13,8 @@ public:
 
 struct config {
   std::string name = std::string("");
+public:
+  config() = default;
 };
 
 ConfigError config_error(std::json::error error) {

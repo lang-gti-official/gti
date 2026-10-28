@@ -14,9 +14,11 @@ public:
 class Implicit {
 public:
   ~Implicit() { std::println(88); }
+public:
+  Implicit() = default;
 };
 
-struct Copyable { int32_t number = 12; };
+struct Copyable { int32_t number = 12;  public: Copyable() = default; };
 
 class Value {
   std::string text;

@@ -4,6 +4,8 @@ class Payload<T> {
 public:
   int marker = 1;
   ~Payload() { cleaned += this.marker; }
+public:
+  Payload() = default;
 };
 
 class DirectPayload {
@@ -17,12 +19,16 @@ struct GeneratedFields<T> {
   expected<Payload<T>, int> success = Payload<T>();
   expected<int, Payload<T>> error = unexpected(Payload<T>());
   expected<int, Payload<T>> passive = 1;
+public:
+  GeneratedFields() = default;
 };
 
 struct ExplicitFields {
   expected<DirectPayload, int> success = DirectPayload();
   expected<int, DirectPayload> error = unexpected(DirectPayload());
   expected<int, DirectPayload> passive = 1;
+public:
+  ExplicitFields() = default;
 };
 
 int main() {

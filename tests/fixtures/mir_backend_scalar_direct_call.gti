@@ -134,6 +134,8 @@ public:
   static int32_t checked_increment(int32_t value) {
     return value + 1;
   }
+public:
+  StaticTarget() = default;
 };
 
 int32_t compatibility_static_member(int32_t value) {

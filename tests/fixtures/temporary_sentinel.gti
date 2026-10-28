@@ -31,6 +31,8 @@ class Range {
 public:
   Cursor begin() { return Cursor(1); }
   End end() { return End(4); }
+public:
+  Range() = default;
 };
 std::ptrdiff_t position_difference<Iterator, Sentinel>(Iterator& first, Sentinel& last)
   requires std::sized_sentinel_for<Sentinel, Iterator> {

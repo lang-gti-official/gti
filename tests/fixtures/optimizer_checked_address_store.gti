@@ -1,7 +1,7 @@
 #include <std/memory>
 extern "C" { void opaque_pointer_effect(int* pointer); }
 
-class Owner {};
+class Owner { public: Owner() = default; };
 
 int checked_write(int* address, mut Owner& owner) {
   unsafe {

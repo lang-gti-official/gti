@@ -9,6 +9,8 @@ struct Counts {
   mut uint64_t attempts = 0;
   mut uint64_t allocations = 0;
   mut uint64_t releases = 0;
+public:
+  Counts() = default;
 };
 
 [[no_transfer, no_share]] class CountingResource<std::memory_resource R> {

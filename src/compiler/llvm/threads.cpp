@@ -61,11 +61,10 @@ bool threadCallMetadata(const MirProgram &program,
                         const MirInstruction &instruction) {
   return supportedTarget(program) &&
          instruction.kind == MirInstructionKind::Call &&
-         instruction.operation == MirOperation::None &&
-         !instruction.receiver && !instruction.functionTarget &&
-         !instruction.constructorTarget && !instruction.lambdaTarget &&
-         !instruction.bodyTarget && !instruction.nativeCalleeType &&
-         !instruction.nativeCallbackAdapter &&
+         instruction.operation == MirOperation::None && !instruction.receiver &&
+         !instruction.functionTarget && !instruction.constructorTarget &&
+         !instruction.lambdaTarget && !instruction.bodyTarget &&
+         !instruction.nativeCalleeType && !instruction.nativeCallbackAdapter &&
          !instruction.functionPointerFunctionTarget &&
          !instruction.functionPointerLambdaTarget &&
          instruction.closureCaptureTypes.empty() &&
@@ -74,12 +73,11 @@ bool threadCallMetadata(const MirProgram &program,
          !instruction.callableBoundary && !instruction.callableInvocation &&
          !instruction.destination && !instruction.callInputRole &&
          !instruction.retainedOwnerPlace &&
-         !instruction.preparedParameterDrop &&
-         !instruction.successResultDrop &&
-         !instruction.successResultDestination &&
-         !instruction.elementCleanup && !instruction.replacementCleanup &&
-         !instruction.replacementPair && !instruction.objectAllocation &&
-         !instruction.objectLayoutType && !instruction.rawMemoryAccess &&
+         !instruction.preparedParameterDrop && !instruction.successResultDrop &&
+         !instruction.successResultDestination && !instruction.elementCleanup &&
+         !instruction.replacementCleanup && !instruction.replacementPair &&
+         !instruction.objectAllocation && !instruction.objectLayoutType &&
+         !instruction.rawMemoryAccess &&
          instruction.unsafeOperation == UnsafeOperationKind::None &&
          instruction.dispatch == CallDispatch::Static &&
          instruction.dispatchOwner == SemanticType::Unknown &&
@@ -144,8 +142,8 @@ bool exactResult(const MirBody &body, const MirInstruction &instruction,
 bool invokePaired(const MirBody &body, const MirInstruction &instruction) {
   for (const auto &block : body.blocks)
     for (const auto &stage : block.instructions)
-      if (&stage == &instruction || (!stage.tombstone && stage.id ==
-                                                             instruction.id))
+      if (&stage == &instruction ||
+          (!stage.tombstone && stage.id == instruction.id))
         return block.terminator.kind == MirTerminatorKind::Invoke &&
                block.terminator.invokeInstruction == instruction.id &&
                block.terminator.failureRecord &&
@@ -155,20 +153,21 @@ bool invokePaired(const MirBody &body, const MirInstruction &instruction) {
 
 // A consumed task value's drop obligation transfers to the operation.
 bool transfersOut(const MirBody &body, const MirInstruction &instruction) {
-  return std::all_of(
-      instruction.lifecycle.begin(), instruction.lifecycle.end(),
-      [&](const MirLifecycleEvent &event) {
-        return event.kind == MirLifecycleEventKind::TransferOut &&
-               body.findDropObligation(event.source) && !event.target &&
-               !event.conditional && !event.failureCleanup;
-      });
+  return std::all_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                     [&](const MirLifecycleEvent &event) {
+                       return event.kind ==
+                                  MirLifecycleEventKind::TransferOut &&
+                              body.findDropObligation(event.source) &&
+                              !event.target && !event.conditional &&
+                              !event.failureCleanup;
+                     });
 }
 
 bool spawnAdapter(const MirProgram &program, MirBodyAddress address,
                   const MirInstruction &instruction,
-                  const MirThreadTaskAdapter &adapter,
-                  const SemanticType &task, const SemanticType &result,
-                  bool scoped, std::size_t argument) {
+                  const MirThreadTaskAdapter &adapter, const SemanticType &task,
+                  const SemanticType &result, bool scoped,
+                  std::size_t argument) {
   return adapter.scoped == scoped && adapter.scopeArgument == argument &&
          adapter.sourceBody == address &&
          adapter.spawnInstruction == instruction.id &&
@@ -179,8 +178,8 @@ bool spawnAdapter(const MirProgram &program, MirBodyAddress address,
 
 } // namespace
 
-std::optional<ThreadHandleShape>
-nativeThreadHandle(const MirProgram &program, const SemanticType &type) {
+std::optional<ThreadHandleShape> nativeThreadHandle(const MirProgram &program,
+                                                    const SemanticType &type) {
   if (!supportedTarget(program) || type.kind != SemanticType::Class ||
       type.arguments.size() > 1 || !type.valueArguments.empty())
     return {};
@@ -231,8 +230,7 @@ bool nativeThreadTaskAdapter(const MirProgram &program,
         target->linkage != LanguageLinkage::Gti ||
         target->returnType != adapter.resultType ||
         !target->parameterTypes.empty() || target->pureVirtual ||
-        target->virtualMethod || target->tracksCaller ||
-        target->requiresUnsafe)
+        target->virtualMethod || target->tracksCaller || target->requiresUnsafe)
       return false;
     if (adapter.taskType.hasFunctionItemShape()) {
       if (target->owner || adapter.taskType.functionId != target->declaration ||
@@ -300,8 +298,8 @@ bool nativeThreadCall(const MirProgram &program, MirBodyAddress address,
       !instruction.threadTaskAdapter && instruction.scopedThreadTasks.empty();
   switch (instruction.intrinsic) {
   case IntrinsicKind::ThreadHandleEmpty:
-    return instruction.operands.empty() && quiet && unsynchronized &&
-           noTasks && instruction.lifecycle.empty() &&
+    return instruction.operands.empty() && quiet && unsynchronized && noTasks &&
+           instruction.lifecycle.empty() &&
            nativeThreadHandle(program, instruction.info.type) &&
            exactResult(body, instruction, instruction.info.type);
   case IntrinsicKind::ThreadJoinable:
@@ -318,17 +316,15 @@ bool nativeThreadCall(const MirProgram &program, MirBodyAddress address,
     // A cleanup-owning result arms its exact obligation when taken.
     return handle && handle->resultBearing &&
            exactResult(body, instruction, handle->result) &&
-           std::all_of(instruction.lifecycle.begin(),
-                       instruction.lifecycle.end(),
-                       [&](const MirLifecycleEvent &event) {
-                         const auto *target =
-                             body.findDropObligation(event.target);
-                         return event.kind ==
-                                    MirLifecycleEventKind::Initialize &&
-                                !event.source && target &&
-                                target->dropType.type == handle->result &&
-                                !event.conditional && !event.failureCleanup;
-                       });
+           std::all_of(
+               instruction.lifecycle.begin(), instruction.lifecycle.end(),
+               [&](const MirLifecycleEvent &event) {
+                 const auto *target = body.findDropObligation(event.target);
+                 return event.kind == MirLifecycleEventKind::Initialize &&
+                        !event.source && target &&
+                        target->dropType.type == handle->result &&
+                        !event.conditional && !event.failureCleanup;
+               });
   }
   case IntrinsicKind::ThreadSpawn: {
     if (instruction.operands.size() != 2 || !quiet ||
@@ -336,7 +332,8 @@ bool nativeThreadCall(const MirProgram &program, MirBodyAddress address,
             SynchronizationOperationKind::ThreadSpawn ||
         !instruction.threadTaskAdapter ||
         !instruction.scopedThreadTasks.empty() ||
-        !transfersOut(body, instruction) || !valueOperand(body, instruction, 1) ||
+        !transfersOut(body, instruction) ||
+        !valueOperand(body, instruction, 1) ||
         !exactResult(body, instruction, SemanticType::Int32))
       return false;
     const auto handle =
@@ -352,7 +349,8 @@ bool nativeThreadCall(const MirProgram &program, MirBodyAddress address,
   }
   case IntrinsicKind::ThreadJoin:
   case IntrinsicKind::ThreadAutoJoin: {
-    const bool automatic = instruction.intrinsic == IntrinsicKind::ThreadAutoJoin;
+    const bool automatic =
+        instruction.intrinsic == IntrinsicKind::ThreadAutoJoin;
     if (instruction.operands.size() != 1 || !noTasks ||
         !instruction.lifecycle.empty() ||
         instruction.synchronization.kind !=
@@ -377,7 +375,8 @@ bool nativeThreadCall(const MirProgram &program, MirBodyAddress address,
     return failure.localOrigins.size() == 1 &&
            failure.localOrigins.front().outcomes ==
                std::vector<DefinedFailureOutcome>{outcome} &&
-           site && site->outcomes == std::vector<DefinedFailureOutcome>{outcome} &&
+           site &&
+           site->outcomes == std::vector<DefinedFailureOutcome>{outcome} &&
            program.failureMetadata().siteFor(failure.localOrigins.front()) ==
                instruction.localFailureSites.front();
   }
@@ -431,10 +430,10 @@ ThreadRuntimeTypes threadRuntimeTypes(Session &session) {
   ThreadRuntimeTypes types;
   types.spawnResult =
       named("gti.c.thread_spawn_result.v1", {i32, i32, pointer});
-  types.joinResult = named(
-      "gti.c.thread_join_result.v2",
-      {i32, i32, i32, i32, session.abi().failureRecord(),
-       session.abi().failureEmergency(), pointer, pointer});
+  types.joinResult =
+      named("gti.c.thread_join_result.v2",
+            {i32, i32, i32, i32, session.abi().failureRecord(),
+             session.abi().failureEmergency(), pointer, pointer});
   types.valueJoin = named("gti.c.thread_value_join_result.v2",
                           {types.joinResult, pointer, pointer, pointer});
   types.scopeResult = named("gti.c.thread_scope_result.v1",
@@ -463,9 +462,10 @@ ThreadTasks::ThreadTasks(Session &session, Failures &failures,
     : session(session), failures(failures), lifetimes(lifetimes),
       findBody(std::move(findBody)), findAbi(std::move(findAbi)) {}
 
-llvm::Function *ThreadTasks::runtimeService(
-    const char *name, llvm::Type *result,
-    llvm::ArrayRef<llvm::Type *> parameters, llvm::Type *sret) {
+llvm::Function *
+ThreadTasks::runtimeService(const char *name, llvm::Type *result,
+                            llvm::ArrayRef<llvm::Type *> parameters,
+                            llvm::Type *sret) {
   std::vector<llvm::Type *> lanes;
   if (sret)
     lanes.push_back(session.layouts().pointer());
@@ -595,8 +595,8 @@ llvm::Value *ThreadTasks::cleanupTaskValue(llvm::IRBuilder<> &ir,
   auto *status =
       ir.CreateCall(lifetimes.cleanup(*recipe), {address, scratch, unwinding});
   auto *ok = llvm::BasicBlock::Create(context, "task.cleanup.ok", function);
-  auto *failed = llvm::BasicBlock::Create(context, "task.cleanup.failed",
-                                          function);
+  auto *failed =
+      llvm::BasicBlock::Create(context, "task.cleanup.failed", function);
   ir.CreateCondBr(status, ok, failed);
   ir.SetInsertPoint(failed);
   auto *emergency =
@@ -649,25 +649,24 @@ llvm::Function *ThreadTasks::captureCallback() {
   llvm::IRBuilder<> ir(llvm::BasicBlock::Create(context, "entry", capture_));
   auto *buffer = capture_->getArg(0);
   auto *view = capture_->getArg(1);
-  auto *viewType = llvm::StructType::get(
-      context, {ir.getInt32Ty(), ir.getInt32Ty(), pointer, pointer, pointer,
-                pointer});
+  auto *viewType =
+      llvm::StructType::get(context, {ir.getInt32Ty(), ir.getInt32Ty(), pointer,
+                                      pointer, pointer, pointer});
   auto *type = captureBuffer();
-  auto *kind = ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(viewType, view, 1));
+  auto *kind =
+      ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(viewType, view, 1));
   ir.CreateStore(kind, ir.CreateStructGEP(type, buffer, 0));
-  ir.CreateStore(
-      ir.CreateLoad(pointer, ir.CreateStructGEP(viewType, view, 4)),
-      ir.CreateStructGEP(type, buffer, 4));
-  ir.CreateStore(
-      ir.CreateLoad(pointer, ir.CreateStructGEP(viewType, view, 5)),
-      ir.CreateStructGEP(type, buffer, 5));
+  ir.CreateStore(ir.CreateLoad(pointer, ir.CreateStructGEP(viewType, view, 4)),
+                 ir.CreateStructGEP(type, buffer, 4));
+  ir.CreateStore(ir.CreateLoad(pointer, ir.CreateStructGEP(viewType, view, 5)),
+                 ir.CreateStructGEP(type, buffer, 5));
   const auto copy = [&](unsigned source, unsigned target, llvm::Type *record) {
     const auto alignment = session.dataLayout().getABITypeAlign(record);
-    ir.CreateMemCpy(ir.CreateStructGEP(type, buffer, target), alignment,
-                    ir.CreateLoad(pointer,
-                                  ir.CreateStructGEP(viewType, view, source)),
-                    alignment,
-                    session.dataLayout().getTypeAllocSize(record).getFixedValue());
+    ir.CreateMemCpy(
+        ir.CreateStructGEP(type, buffer, target), alignment,
+        ir.CreateLoad(pointer, ir.CreateStructGEP(viewType, view, source)),
+        alignment,
+        session.dataLayout().getTypeAllocSize(record).getFixedValue());
   };
   auto *ordinary = llvm::BasicBlock::Create(context, "ordinary", capture_);
   auto *cleanup = llvm::BasicBlock::Create(context, "cleanup", capture_);
@@ -705,9 +704,9 @@ ThreadTasks::callerContained(llvm::IRBuilder<> &ir,
   ir.SetInsertPoint(guarded);
   llvm::IRBuilder<> entry(&function->getEntryBlock(),
                           function->getEntryBlock().begin());
-  auto *sinkType = llvm::StructType::get(
-      context, {ir.getInt32Ty(), ir.getInt32Ty(), pointer, pointer, pointer,
-                pointer});
+  auto *sinkType =
+      llvm::StructType::get(context, {ir.getInt32Ty(), ir.getInt32Ty(), pointer,
+                                      pointer, pointer, pointer});
   auto *sink = entry.CreateAlloca(sinkType);
   auto *buffer = entry.CreateAlloca(captureBuffer());
   ir.CreateStore(llvm::Constant::getNullValue(sinkType), sink);
@@ -732,11 +731,11 @@ ThreadTasks::callerContained(llvm::IRBuilder<> &ir,
   select->addCase(ir.getInt32(failureCleanup), cleanup);
   ir.SetInsertPoint(ordinary);
   auto *null = llvm::ConstantPointerNull::get(pointer);
-  ir.CreateCall(declareRuntimeService(session, RuntimeService::TerminateFailure),
-                {ir.CreateStructGEP(captureBuffer(), buffer, 2),
-                 ir.CreateLoad(pointer,
-                               ir.CreateStructGEP(captureBuffer(), buffer, 4)),
-                 null, null});
+  ir.CreateCall(
+      declareRuntimeService(session, RuntimeService::TerminateFailure),
+      {ir.CreateStructGEP(captureBuffer(), buffer, 2),
+       ir.CreateLoad(pointer, ir.CreateStructGEP(captureBuffer(), buffer, 4)),
+       null, null});
   ir.CreateUnreachable();
   ir.SetInsertPoint(cleanup);
   ir.CreateCall(
@@ -769,7 +768,8 @@ const ThreadTasks::Adapter &ThreadTasks::adapter(MirThreadTaskAdapterId id) {
   auto &result = adapters[id];
   result.facts = facts;
   auto &context = session.context();
-  std::vector<llvm::Type *> fields{session.layouts().get(facts->taskType).storage};
+  std::vector<llvm::Type *> fields{
+      session.layouts().get(facts->taskType).storage};
   if (facts->resultType != SemanticType::Void) {
     fields.push_back(session.layouts().get(facts->resultType).storage);
     fields.push_back(llvm::Type::getInt8Ty(context));
@@ -842,8 +842,8 @@ void ThreadTasks::emitEntry(Adapter &adapter) {
     ir.CreateCondBr(call, success, failed);
     ir.SetInsertPoint(failed);
     // An abandoned emergency was already published by the failing frame.
-    auto *abandoned = llvm::BasicBlock::Create(session.context(),
-                                               "task.abandoned", function);
+    auto *abandoned =
+        llvm::BasicBlock::Create(session.context(), "task.abandoned", function);
     auto *publish =
         llvm::BasicBlock::Create(session.context(), "task.publish", function);
     ir.CreateCondBr(failures.abandoning(ir), abandoned, publish);
@@ -950,8 +950,8 @@ void ThreadTasks::emitValueCallbacks(Adapter &adapter) {
         llvm::BasicBlock::Create(context, "entry", adapter.complete));
     auto *box = adapter.complete->getArg(0);
     static_cast<void>(unlessEmergency(ir, adapter.complete, box));
-    static_cast<void>(cleanupTaskValue(ir, facts.taskType,
-                                       ir.CreateStructGEP(adapter.box, box, 0)));
+    static_cast<void>(cleanupTaskValue(
+        ir, facts.taskType, ir.CreateStructGEP(adapter.box, box, 0)));
     ir.CreateRet(box);
   }
   {
@@ -978,7 +978,8 @@ void ThreadTasks::emitValueCallbacks(Adapter &adapter) {
     // The joining thread takes the owned result exactly once.
     adapter.take = create(llvm::Type::getVoidTy(context), {pointer, pointer},
                           "_take_result");
-    llvm::IRBuilder<> ir(llvm::BasicBlock::Create(context, "entry", adapter.take));
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(context, "entry", adapter.take));
     auto *box = adapter.take->getArg(0);
     auto *live = ir.CreateStructGEP(adapter.box, box, 2);
     require(ir, ir.CreateICmpNE(ir.CreateLoad(ir.getInt8Ty(), live),
@@ -1025,10 +1026,10 @@ llvm::Value *ThreadTasks::emit(llvm::IRBuilder<> &ir, const Stage &stage) {
   }
   case IntrinsicKind::ThreadJoinable: {
     const auto &type = instruction.operands[0].type.arguments[0];
-    auto *state = ir.CreateLoad(
-        session.layouts().pointer(),
-        ir.CreateStructGEP(session.layouts().get(type).storage,
-                           stage.inputs[0], 0));
+    auto *state =
+        ir.CreateLoad(session.layouts().pointer(),
+                      ir.CreateStructGEP(session.layouts().get(type).storage,
+                                         stage.inputs[0], 0));
     return ir.CreateIsNotNull(state);
   }
   case IntrinsicKind::ThreadSpawn:
@@ -1076,20 +1077,22 @@ llvm::Value *ThreadTasks::spawn(llvm::IRBuilder<> &ir, const Stage &stage) {
     status->addIncoming(ir.getInt32(code), ir.GetInsertBlock());
     ir.CreateBr(done);
   };
-  auto *occupied = llvm::BasicBlock::Create(context, "spawn.occupied", function);
-  auto *allocate = llvm::BasicBlock::Create(context, "spawn.allocate", function);
-  ir.CreateCondBr(
-      ir.CreateIsNotNull(ir.CreateLoad(session.layouts().pointer(), statePointer)),
-      occupied, allocate);
+  auto *occupied =
+      llvm::BasicBlock::Create(context, "spawn.occupied", function);
+  auto *allocate =
+      llvm::BasicBlock::Create(context, "spawn.allocate", function);
+  ir.CreateCondBr(ir.CreateIsNotNull(
+                      ir.CreateLoad(session.layouts().pointer(), statePointer)),
+                  occupied, allocate);
   ir.SetInsertPoint(occupied);
   discard(spawnOperationNotPermitted);
   ir.SetInsertPoint(allocate);
   const auto &layout = session.dataLayout();
-  auto *box = Memory(session, ir, {}, {}, {})
-                  .allocateStorage(
-                      layout.getTypeAllocSize(task.box).getFixedValue(),
-                      std::max<std::uint64_t>(
-                          layout.getABITypeAlign(task.box).value(), 1));
+  auto *box =
+      Memory(session, ir, {}, {}, {})
+          .allocateStorage(layout.getTypeAllocSize(task.box).getFixedValue(),
+                           std::max<std::uint64_t>(
+                               layout.getABITypeAlign(task.box).value(), 1));
   auto *exhausted =
       llvm::BasicBlock::Create(context, "spawn.exhausted", function);
   auto *start = llvm::BasicBlock::Create(context, "spawn.start", function);
@@ -1109,9 +1112,9 @@ llvm::Value *ThreadTasks::spawn(llvm::IRBuilder<> &ir, const Stage &stage) {
   auto *pointer = session.layouts().pointer();
   const bool arm64 = program.target().arch == "arm64";
   auto *returned =
-      arm64 ? static_cast<llvm::Type *>(
-                  llvm::ArrayType::get(ir.getInt64Ty(), 2))
-            : llvm::StructType::get(context, {ir.getInt64Ty(), pointer});
+      arm64
+          ? static_cast<llvm::Type *>(llvm::ArrayType::get(ir.getInt64Ty(), 2))
+          : llvm::StructType::get(context, {ir.getInt64Ty(), pointer});
   if (shape.resultBearing)
     ir.CreateStore(ir.getInt8(0), ir.CreateStructGEP(task.box, box, 2));
   // Native creation failure runs task cleanup synchronously on this thread.
@@ -1129,9 +1132,9 @@ llvm::Value *ThreadTasks::spawn(llvm::IRBuilder<> &ir, const Stage &stage) {
   llvm::Value *spawned =
       fallibleCleanup(taskType) ? callerContained(ir, call) : call();
   auto *header = ir.CreateExtractValue(spawned, 0);
-  auto *state = arm64 ? ir.CreateIntToPtr(ir.CreateExtractValue(spawned, 1),
-                                          pointer)
-                      : ir.CreateExtractValue(spawned, 1);
+  auto *state =
+      arm64 ? ir.CreateIntToPtr(ir.CreateExtractValue(spawned, 1), pointer)
+            : ir.CreateExtractValue(spawned, 1);
   auto *abiVersion = ir.CreateTrunc(header, ir.getInt32Ty());
   auto *code = ir.CreateTrunc(ir.CreateLShr(header, 32), ir.getInt32Ty());
   require(ir, ir.CreateAnd(
@@ -1156,9 +1159,12 @@ void ThreadTasks::workerFailure(llvm::IRBuilder<> &ir, const Stage &stage,
   auto &context = session.context();
   auto *function = ir.GetInsertBlock()->getParent();
   auto *type = runtime.joinResult;
-  auto *kind = ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(type, join, 2));
-  auto *cleanup = llvm::BasicBlock::Create(context, "worker.emergency", function);
-  auto *ordinary = llvm::BasicBlock::Create(context, "worker.failure", function);
+  auto *kind =
+      ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(type, join, 2));
+  auto *cleanup =
+      llvm::BasicBlock::Create(context, "worker.emergency", function);
+  auto *ordinary =
+      llvm::BasicBlock::Create(context, "worker.failure", function);
   auto *invalid = llvm::BasicBlock::Create(context, "worker.invalid", function);
   auto *select = ir.CreateSwitch(kind, invalid, 2);
   select->addCase(ir.getInt32(failureCleanup), cleanup);
@@ -1188,14 +1194,12 @@ void ThreadTasks::workerFailure(llvm::IRBuilder<> &ir, const Stage &stage,
                               llvm::Value *artifact) {
     auto *recordType = session.abi().failureRecord();
     const auto alignment = session.dataLayout().getABITypeAlign(recordType);
-    ir.CreateMemCpy(failures.record(ir, channel), alignment,
-                    ir.CreateStructGEP(emergencyType, envelope, field),
-                    alignment,
-                    session.dataLayout().getTypeAllocSize(recordType)
-                        .getFixedValue());
-    ir.CreateStore(artifact,
-                   ir.CreateStructGEP(session.abi().failureChannel(), channel,
-                                      1));
+    ir.CreateMemCpy(
+        failures.record(ir, channel), alignment,
+        ir.CreateStructGEP(emergencyType, envelope, field), alignment,
+        session.dataLayout().getTypeAllocSize(recordType).getFixedValue());
+    ir.CreateStore(artifact, ir.CreateStructGEP(session.abi().failureChannel(),
+                                                channel, 1));
   };
   copyRecord(primary, 2, primaryArtifact);
   copyRecord(secondary, 3, secondaryArtifact);
@@ -1209,13 +1213,13 @@ void ThreadTasks::workerFailure(llvm::IRBuilder<> &ir, const Stage &stage,
   {
     auto *recordType = session.abi().failureRecord();
     const auto alignment = session.dataLayout().getABITypeAlign(recordType);
-    ir.CreateMemCpy(failures.record(ir, stage.failure), alignment,
-                    ir.CreateStructGEP(type, join, 4), alignment,
-                    session.dataLayout().getTypeAllocSize(recordType)
-                        .getFixedValue());
-    ir.CreateStore(ir.CreateLoad(pointer, ir.CreateStructGEP(type, join, 6)),
-                   ir.CreateStructGEP(session.abi().failureChannel(),
-                                      stage.failure, 1));
+    ir.CreateMemCpy(
+        failures.record(ir, stage.failure), alignment,
+        ir.CreateStructGEP(type, join, 4), alignment,
+        session.dataLayout().getTypeAllocSize(recordType).getFixedValue());
+    ir.CreateStore(
+        ir.CreateLoad(pointer, ir.CreateStructGEP(type, join, 6)),
+        ir.CreateStructGEP(session.abi().failureChannel(), stage.failure, 1));
   }
   stage.failed();
 }
@@ -1233,21 +1237,19 @@ llvm::Value *ThreadTasks::join(llvm::IRBuilder<> &ir, const Stage &stage,
   auto *pointer = session.layouts().pointer();
   auto *handleStorage = session.layouts().get(handleType).storage;
   auto *statePointer = ir.CreateStructGEP(handleStorage, stage.inputs[0], 0);
-  auto *wasJoinable =
-      ir.CreateIsNotNull(ir.CreateLoad(pointer, statePointer));
+  auto *wasJoinable = ir.CreateIsNotNull(ir.CreateLoad(pointer, statePointer));
   llvm::IRBuilder<> entry(&function->getEntryBlock(),
                           function->getEntryBlock().begin());
   auto *result = entry.CreateAlloca(shape.resultBearing ? runtime.valueJoin
                                                         : runtime.joinResult);
   result->setAlignment(llvm::Align(8));
-  auto *joinService =
-      shape.resultBearing
-          ? runtimeService("gti_rt_thread_join_value_v2",
-                           llvm::Type::getVoidTy(context), {pointer},
-                           runtime.valueJoin)
-          : runtimeService("gti_rt_thread_join_v2",
-                           llvm::Type::getVoidTy(context), {pointer},
-                           runtime.joinResult);
+  auto *joinService = shape.resultBearing
+                          ? runtimeService("gti_rt_thread_join_value_v2",
+                                           llvm::Type::getVoidTy(context),
+                                           {pointer}, runtime.valueJoin)
+                          : runtimeService("gti_rt_thread_join_v2",
+                                           llvm::Type::getVoidTy(context),
+                                           {pointer}, runtime.joinResult);
   ir.CreateCall(joinService, {result, statePointer})
       ->setAttributes(joinService->getAttributes());
   auto *join = shape.resultBearing
@@ -1255,7 +1257,8 @@ llvm::Value *ThreadTasks::join(llvm::IRBuilder<> &ir, const Stage &stage,
                    : static_cast<llvm::Value *>(result);
   auto *type = runtime.joinResult;
   const auto field = [&](unsigned index) {
-    return ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(type, join, index));
+    return ir.CreateLoad(ir.getInt32Ty(),
+                         ir.CreateStructGEP(type, join, index));
   };
   auto *abiVersion = field(0);
   auto *status = field(1);
@@ -1265,7 +1268,8 @@ llvm::Value *ThreadTasks::join(llvm::IRBuilder<> &ir, const Stage &stage,
   const auto is = [&](llvm::Value *value, std::uint32_t expected) {
     return ir.CreateICmpEQ(value, ir.getInt32(expected));
   };
-  auto *consumed = ir.CreateOr(is(status, joinOk), is(status, joinWorkerFailure));
+  auto *consumed =
+      ir.CreateOr(is(status, joinOk), is(status, joinWorkerFailure));
   // The same ownership invariants as the C++ oracle: a non-joinable handle
   // reports not-joinable, and only success or worker failure consumes state.
   auto *coherent = ir.CreateSelect(
@@ -1288,24 +1292,26 @@ llvm::Value *ThreadTasks::join(llvm::IRBuilder<> &ir, const Stage &stage,
         pointer, ir.CreateStructGEP(runtime.valueJoin, result, 2));
     abandonResult = ir.CreateLoad(
         pointer, ir.CreateStructGEP(runtime.valueJoin, result, 3));
-    auto *owns = ir.CreateAnd(
-        ir.CreateAnd(ir.CreateIsNotNull(resultContext),
-                     ir.CreateIsNotNull(takeResult)),
-        ir.CreateIsNotNull(abandonResult));
-    auto *none = ir.CreateAnd(
-        ir.CreateAnd(ir.CreateIsNull(resultContext), ir.CreateIsNull(takeResult)),
-        ir.CreateIsNull(abandonResult));
+    auto *owns = ir.CreateAnd(ir.CreateAnd(ir.CreateIsNotNull(resultContext),
+                                           ir.CreateIsNotNull(takeResult)),
+                              ir.CreateIsNotNull(abandonResult));
+    auto *none = ir.CreateAnd(ir.CreateAnd(ir.CreateIsNull(resultContext),
+                                           ir.CreateIsNull(takeResult)),
+                              ir.CreateIsNull(abandonResult));
     require(ir, ir.CreateSelect(is(status, joinOk), owns, none));
   }
-  auto *failed = llvm::BasicBlock::Create(context, "join.worker.failed", function);
-  auto *continued = llvm::BasicBlock::Create(context, "join.continue", function);
+  auto *failed =
+      llvm::BasicBlock::Create(context, "join.worker.failed", function);
+  auto *continued =
+      llvm::BasicBlock::Create(context, "join.continue", function);
   ir.CreateCondBr(is(status, joinWorkerFailure), failed, continued);
   ir.SetInsertPoint(failed);
   workerFailure(ir, stage, join);
   ir.SetInsertPoint(continued);
   if (shape.resultBearing) {
     auto *joined = llvm::BasicBlock::Create(context, "join.result", function);
-    auto *after = llvm::BasicBlock::Create(context, "join.result.done", function);
+    auto *after =
+        llvm::BasicBlock::Create(context, "join.result.done", function);
     ir.CreateCondBr(is(status, joinOk), joined, after);
     ir.SetInsertPoint(joined);
     if (automatic) {
@@ -1342,19 +1348,19 @@ llvm::Value *ThreadTasks::join(llvm::IRBuilder<> &ir, const Stage &stage,
     auto *joined = llvm::BasicBlock::Create(context, "join.complete", function);
     ir.CreateCondBr(is(status, joinFailed), environmental, joined);
     ir.SetInsertPoint(environmental);
-    ir.CreateCall(declareRuntimeService(session, RuntimeService::QuarantineThread),
-                  {statePointer});
-    failures.originate(ir, stage.failure, instruction,
-                       instruction.definedFailure.localOrigins.front()
-                           .outcomes.front());
+    ir.CreateCall(
+        declareRuntimeService(session, RuntimeService::QuarantineThread),
+        {statePointer});
+    failures.originate(
+        ir, stage.failure, instruction,
+        instruction.definedFailure.localOrigins.front().outcomes.front());
     stage.failed();
     ir.SetInsertPoint(joined);
     return nullptr;
   }
-  return ir.CreateSelect(
-      is(status, joinOk), ir.getInt32(0),
-      ir.CreateSelect(is(status, joinNotJoinable), ir.getInt32(1),
-                      ir.getInt32(2)));
+  return ir.CreateSelect(is(status, joinOk), ir.getInt32(0),
+                         ir.CreateSelect(is(status, joinNotJoinable),
+                                         ir.getInt32(1), ir.getInt32(2)));
 }
 
 llvm::Value *ThreadTasks::take(llvm::IRBuilder<> &ir, const Stage &stage) {
@@ -1388,9 +1394,10 @@ llvm::Value *ThreadTasks::take(llvm::IRBuilder<> &ir, const Stage &stage) {
     slot->setAlignment(llvm::Align(layout.alignment));
     destination = slot;
   }
-  ir.CreateCall(llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
-                                        {pointer, pointer}, false),
-                takeResult, {resultContext, destination});
+  ir.CreateCall(
+      llvm::FunctionType::get(llvm::Type::getVoidTy(session.context()),
+                              {pointer, pointer}, false),
+      takeResult, {resultContext, destination});
   return address ? destination : stage.load(destination, shape.result);
 }
 
@@ -1425,38 +1432,37 @@ llvm::Value *ThreadTasks::scope(llvm::IRBuilder<> &ir, const Stage &stage) {
     ir.CreateStore(value, slot);
     slots.push_back(slot);
   }
-  auto *descriptors = entry.CreateAlloca(
-      llvm::ArrayType::get(runtime.scopedTask, count));
-  auto *scratch =
-      entry.CreateAlloca(llvm::ArrayType::get(pointer, count));
+  auto *descriptors =
+      entry.CreateAlloca(llvm::ArrayType::get(runtime.scopedTask, count));
+  auto *scratch = entry.CreateAlloca(llvm::ArrayType::get(pointer, count));
   auto *result = entry.CreateAlloca(runtime.scopeResult);
   result->setAlignment(llvm::Align(8));
   for (std::size_t index = 0; index < count; ++index) {
     const auto &task = adapter(instruction.scopedThreadTasks[index].adapter);
-    auto *descriptor = ir.CreateInBoundsGEP(
-        llvm::ArrayType::get(runtime.scopedTask, count), descriptors,
-        {ir.getInt64(0), ir.getInt64(index)});
+    auto *descriptor =
+        ir.CreateInBoundsGEP(llvm::ArrayType::get(runtime.scopedTask, count),
+                             descriptors, {ir.getInt64(0), ir.getInt64(index)});
     ir.CreateStore(task.entry,
                    ir.CreateStructGEP(runtime.scopedTask, descriptor, 0));
     ir.CreateStore(slots[index],
                    ir.CreateStructGEP(runtime.scopedTask, descriptor, 1));
   }
-  auto *scopeService = runtimeService("gti_rt_thread_scope_v1",
-                                      llvm::Type::getVoidTy(context),
-                                      {pointer, pointer, ir.getInt64Ty()},
-                                      runtime.scopeResult);
-  ir.CreateCall(scopeService, {result, descriptors, scratch, ir.getInt64(count)})
+  auto *scopeService =
+      runtimeService("gti_rt_thread_scope_v1", llvm::Type::getVoidTy(context),
+                     {pointer, pointer, ir.getInt64Ty()}, runtime.scopeResult);
+  ir.CreateCall(scopeService,
+                {result, descriptors, scratch, ir.getInt64(count)})
       ->setAttributes(scopeService->getAttributes());
   auto *scopeType = runtime.scopeResult;
   auto *joinType = runtime.joinResult;
-  auto *abiVersion = ir.CreateLoad(ir.getInt32Ty(),
-                                   ir.CreateStructGEP(scopeType, result, 0));
-  auto *spawnStatus = ir.CreateLoad(ir.getInt32Ty(),
-                                    ir.CreateStructGEP(scopeType, result, 1));
-  auto *started = ir.CreateLoad(ir.getInt64Ty(),
-                                ir.CreateStructGEP(scopeType, result, 2));
-  auto *failedWorker = ir.CreateLoad(ir.getInt64Ty(),
-                                     ir.CreateStructGEP(scopeType, result, 3));
+  auto *abiVersion =
+      ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(scopeType, result, 0));
+  auto *spawnStatus =
+      ir.CreateLoad(ir.getInt32Ty(), ir.CreateStructGEP(scopeType, result, 1));
+  auto *started =
+      ir.CreateLoad(ir.getInt64Ty(), ir.CreateStructGEP(scopeType, result, 2));
+  auto *failedWorker =
+      ir.CreateLoad(ir.getInt64Ty(), ir.CreateStructGEP(scopeType, result, 3));
   auto *worker = ir.CreateStructGEP(scopeType, result, 4);
   const auto workerField = [&](unsigned index) {
     return ir.CreateLoad(ir.getInt32Ty(),
@@ -1471,8 +1477,8 @@ llvm::Value *ThreadTasks::scope(llvm::IRBuilder<> &ir, const Stage &stage) {
   };
   auto *workerFailed = is(workerStatus, joinWorkerFailure);
   llvm::Value *valid = ir.CreateAnd(
-      ir.CreateAnd(is(abiVersion, 1), ir.CreateICmpULE(spawnStatus,
-                                                        ir.getInt32(2))),
+      ir.CreateAnd(is(abiVersion, 1),
+                   ir.CreateICmpULE(spawnStatus, ir.getInt32(2))),
       ir.CreateAnd(ir.CreateICmpULE(started, ir.getInt64(count)),
                    ir.CreateOr(ir.CreateNot(is(spawnStatus, spawnOk)),
                                ir.CreateICmpEQ(started, ir.getInt64(count)))));
@@ -1481,25 +1487,25 @@ llvm::Value *ThreadTasks::scope(llvm::IRBuilder<> &ir, const Stage &stage) {
                           ir.CreateOr(is(workerStatus, joinOk), workerFailed)));
   valid = ir.CreateAnd(
       valid,
-      ir.CreateSelect(workerFailed,
-                      ir.CreateAnd(ir.CreateICmpULT(failedWorker, started),
-                                   ir.CreateNot(is(workerKind, failureNone))),
-                      ir.CreateAnd(ir.CreateICmpEQ(failedWorker,
-                                                   ir.getInt64(UINT64_MAX)),
-                                   is(workerKind, failureNone))));
+      ir.CreateSelect(
+          workerFailed,
+          ir.CreateAnd(ir.CreateICmpULT(failedWorker, started),
+                       ir.CreateNot(is(workerKind, failureNone))),
+          ir.CreateAnd(ir.CreateICmpEQ(failedWorker, ir.getInt64(UINT64_MAX)),
+                       is(workerKind, failureNone))));
   for (std::size_t index = 0; index < count; ++index)
     valid = ir.CreateAnd(
         valid, ir.CreateIsNull(ir.CreateLoad(
-                   pointer,
-                   ir.CreateInBoundsGEP(llvm::ArrayType::get(pointer, count),
-                                        scratch,
-                                        {ir.getInt64(0), ir.getInt64(index)}))));
+                   pointer, ir.CreateInBoundsGEP(
+                                llvm::ArrayType::get(pointer, count), scratch,
+                                {ir.getInt64(0), ir.getInt64(index)}))));
   require(ir, valid);
   // A worker's exact GTI-R0014 envelope is terminal before task cleanup.
   {
     auto *emergency =
         llvm::BasicBlock::Create(context, "scope.emergency", function);
-    auto *ordinary = llvm::BasicBlock::Create(context, "scope.joined", function);
+    auto *ordinary =
+        llvm::BasicBlock::Create(context, "scope.joined", function);
     ir.CreateCondBr(is(workerKind, failureCleanup), emergency, ordinary);
     ir.SetInsertPoint(emergency);
     workerFailure(ir, stage, worker);
@@ -1520,10 +1526,10 @@ llvm::Value *ThreadTasks::scope(llvm::IRBuilder<> &ir, const Stage &stage) {
     ir.SetInsertPoint(propagate);
     auto *recordType = session.abi().failureRecord();
     const auto alignment = session.dataLayout().getABITypeAlign(recordType);
-    ir.CreateMemCpy(failures.record(ir, stage.failure), alignment,
-                    ir.CreateStructGEP(joinType, worker, 4), alignment,
-                    session.dataLayout().getTypeAllocSize(recordType)
-                        .getFixedValue());
+    ir.CreateMemCpy(
+        failures.record(ir, stage.failure), alignment,
+        ir.CreateStructGEP(joinType, worker, 4), alignment,
+        session.dataLayout().getTypeAllocSize(recordType).getFixedValue());
     ir.CreateStore(
         ir.CreateLoad(pointer, ir.CreateStructGEP(joinType, worker, 6)),
         ir.CreateStructGEP(session.abi().failureChannel(), stage.failure, 1));
@@ -1537,20 +1543,20 @@ llvm::Value *ThreadTasks::scope(llvm::IRBuilder<> &ir, const Stage &stage) {
     const auto recipe = mirUniqueCleanupType(program, type);
     if (!recipe || !recipe->requiresActiveCleanup)
       continue;
-    auto *status = ir.CreateCall(
-        lifetimes.cleanup(*recipe),
-        {slots[index - 1], scratchChannel, ir.CreateLoad(ir.getInt1Ty(), failing)});
+    auto *status = ir.CreateCall(lifetimes.cleanup(*recipe),
+                                 {slots[index - 1], scratchChannel,
+                                  ir.CreateLoad(ir.getInt1Ty(), failing)});
     auto *next = llvm::BasicBlock::Create(context, "scope.next", function);
-    auto *bad = llvm::BasicBlock::Create(context, "scope.cleanup.failed",
-                                         function);
+    auto *bad =
+        llvm::BasicBlock::Create(context, "scope.cleanup.failed", function);
     ir.CreateCondBr(status, next, bad);
     ir.SetInsertPoint(bad);
     // A published worker emergency leaves through the verified edge, whose
     // failed-operation path abandons this frame before reading any record.
-    auto *abandoned = llvm::BasicBlock::Create(context, "scope.abandoned",
-                                               function);
-    auto *retained = llvm::BasicBlock::Create(context, "scope.retained",
-                                              function);
+    auto *abandoned =
+        llvm::BasicBlock::Create(context, "scope.abandoned", function);
+    auto *retained =
+        llvm::BasicBlock::Create(context, "scope.retained", function);
     ir.CreateCondBr(failures.abandoning(ir), abandoned, retained);
     ir.SetInsertPoint(abandoned);
     stage.failed();

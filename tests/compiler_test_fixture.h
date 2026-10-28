@@ -401,6 +401,7 @@ findDirectLocal(const lang::FunctionDecl *function, const std::string &name) {
   return R"(
 struct Counter {
 public:
+  Counter() = default;
   mut int value = 0;
   void bump() mut { this.value += 1; }
 };

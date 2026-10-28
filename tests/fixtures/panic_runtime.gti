@@ -26,6 +26,8 @@ public:
       mut std::string& output, std::format_spec& spec) {
     return unexpected(std::format_errc::unsupported_argument);
   }
+public:
+  formatter() = default;
 };
 
 int argument(int value) {

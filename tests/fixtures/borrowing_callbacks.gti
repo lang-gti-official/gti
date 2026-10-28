@@ -4,6 +4,8 @@ void modify<F>(mut F& callback, int amount) { callback(amount); }
 struct State {
   mut int selected = 3;
   int size = 8;
+public:
+  State() = default;
 };
 
 int main() {

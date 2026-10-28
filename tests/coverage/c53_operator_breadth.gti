@@ -12,6 +12,8 @@ public:
   bool operator>=(Counter& o) { return this.n >= o.n; }
   Counter operator+(Counter& o) { return Counter(this.n + o.n); }
   int32_t operator()(int32_t scale) { return this.n * scale; }
+public:
+  Counter() = default;
 };
 
 class Table {

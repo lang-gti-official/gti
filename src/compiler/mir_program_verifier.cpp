@@ -6854,56 +6854,6 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           !returned->info.traits.containsBorrowedState &&
           definition->result == returned->id && !definition->loan &&
           !definition->info.traits.containsBorrowedState;
-      // So is a by-value text relay of the declared field of a by-value
-      // formal (L-OWN-02): its argument is the exact load of that field,
-      // which the caller's dependency covers as it covers the load itself,
-      // and its own loan on the formal's local copy does not escape.
-      const bool relayedFormalField = [&] {
-        if (!textFieldResult || !definition || !returned ||
-            definition->kind != MirInstructionKind::Call ||
-            definition->result != returned->id ||
-            returned->info.type != instance.returnType ||
-            definition->borrowOrigin != BorrowOriginKind::Argument ||
-            !definition->borrowFields.empty() ||
-            definition->borrowArgument >= definition->operands.size() ||
-            instance.returnBorrowFields.size() != 1 ||
-            instance.returnBorrowFields.front().sourceFields.size() != 1 ||
-            instance.returnBorrowParameter >=
-                instance.parameterBindings.size() ||
-            instance.returnBorrowParameter >= instance.parameterTypes.size() ||
-            instance.parameterTypes[instance.returnBorrowParameter].kind !=
-                SemanticType::Class)
-          return false;
-        // The call's own loan, if any, names the formal's local copy and
-        // stays in the body; it never escapes as this return's dependency.
-        if (definition->loan) {
-          const auto *own = body.findLoan(*definition->loan);
-          if (own == nullptr || own->escapes ||
-              own->kind == MirLoanKind::Return)
-            return false;
-        }
-        const MirOperand *input =
-            &definition->operands[definition->borrowArgument];
-        for (std::size_t depth = 0;
-             depth < 2 && input->kind == MirOperandKind::Value; ++depth) {
-          const auto *stage = definitionFor(body, input->value);
-          if (stage == nullptr || stage->operands.size() != 1 ||
-              (stage->kind != MirInstructionKind::CallInput &&
-               stage->kind != MirInstructionKind::Load))
-            return false;
-          input = &stage->operands.front();
-        }
-        const auto *place = body.findPlace(input->place);
-        return input->kind == MirOperandKind::Copy && place != nullptr &&
-               place->root == MirPlaceRootKind::Binding &&
-               place->binding ==
-                   instance.parameterBindings[instance.returnBorrowParameter] &&
-               place->projections.size() == 1 &&
-               place->projections.front().kind == MirProjectionKind::Field &&
-               place->projections.front().field ==
-                   instance.returnBorrowFields.front().sourceFields.front() &&
-               place->type == instance.returnType;
-      }();
       // A dependent text result may return an ownerless value of its type
       // on another path, as a view relay may return a literal: a
       // construction or call that publishes no text and carries no loan,
@@ -6951,8 +6901,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           !definition->dependentTextPublication &&
           !definition->info.traits.containsBorrowedState;
       if (independentTextLiteral || independentStoredText ||
-          ownerlessFieldText || relayedFormalField ||
-          ownerlessDependentResult || ownerlessTextCall ||
+          ownerlessFieldText || ownerlessDependentResult || ownerlessTextCall ||
           ((instance.returnType.kind == SemanticType::Enum ||
             instance.returnType.kind == SemanticType::Class) &&
            emptyReturn && emptyReturn(block.id))) {

@@ -4,6 +4,8 @@ mut int accesses = 0;
 
 struct Record {
   mut int value = 7;
+public:
+  Record() = default;
 };
 
 class Cursor {

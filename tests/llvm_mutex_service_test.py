@@ -139,7 +139,7 @@ def main():
         ):
             if name == "source-global-cleanup":
                 source.write_text("#include <std/mutex>\n"
-                    "class Owned { public: ~Owned() {} }; "
+                    "class Owned { public: ~Owned() {}  public: Owned() = default; }; "
                     "std::mutex<Owned> global{Owned()};\nint main() { return 0; }\n",
                     encoding="utf-8")
             artifact = output / f"rejected-{name}"

@@ -10,6 +10,8 @@ struct Marker {
 class Guard {
 public:
   ~Guard() { std::println(9); }
+public:
+  Guard() = default;
 };
 
 expected<Marker, int> value_result(int number, bool fail) {

@@ -12,6 +12,8 @@ struct Item {
 
 struct Passive {
   int value = 11;
+public:
+  Passive() = default;
 };
 
 struct ArrayOwner {
@@ -20,6 +22,8 @@ struct ArrayOwner {
     values[0] = source.clone();
     values[1] = source.clone();
   }
+public:
+  ArrayOwner() = default;
 };
 
 struct Node {

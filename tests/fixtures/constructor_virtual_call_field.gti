@@ -19,16 +19,22 @@ public:
 class Maker {
 public:
   virtual Tracked make() { return Tracked(1); }
+public:
+  Maker() = default;
 };
 
 class Doubling : public Maker {
 public:
   Tracked make() override { return Tracked(2); }
+public:
+  Doubling() = default;
 };
 
 class Tripling : public Maker {
 public:
   Tracked make() override { return Tracked(3); }
+public:
+  Tripling() = default;
 };
 
 Tripling shared_maker{};
@@ -37,6 +43,8 @@ Tripling shared_maker{};
 class Source {
 public:
   virtual Tracked split(int divisor) { return Tracked(3); }
+public:
+  Source() = default;
 };
 
 class Dividing : public Source {

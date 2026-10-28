@@ -8,8 +8,8 @@
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DiagnosticInfo.h>
-#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/DiagnosticPrinter.h>
+#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
@@ -262,10 +262,9 @@ llvm::GlobalVariable *Session::textLiteral(std::string_view text) {
   if (const auto found = textLiterals_.find(key); found != textLiterals_.end())
     return found->second;
   auto *data = llvm::ConstantDataArray::getString(context_, text, true);
-  auto *storage =
-      new llvm::GlobalVariable(module_, data->getType(), true,
-                               llvm::GlobalValue::PrivateLinkage, data,
-                               "gti.text");
+  auto *storage = new llvm::GlobalVariable(module_, data->getType(), true,
+                                           llvm::GlobalValue::PrivateLinkage,
+                                           data, "gti.text");
   // The address of a text literal is not source-observable beyond this shared
   // identity, so later constant merging may fold it with an equal constant.
   storage->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);

@@ -12,6 +12,8 @@ public:
   }
 
   mut int32_t value = 0;
+public:
+  tracked() = default;
 };
 
 int main() {

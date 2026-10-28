@@ -4,6 +4,8 @@ struct Value {
   void increment() mut {
     this.number += 1;
   }
+public:
+  Value() = default;
 };
 
 class Handle {
@@ -55,6 +57,8 @@ public:
   operator bool() {
     return true;
   }
+public:
+  Handle() = default;
 };
 
 // Returning a mutable row composes with another selected subscript. Each

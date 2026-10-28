@@ -13,6 +13,8 @@ public:
   Square(int32_t side) : side(side) {}
   int32_t area() override { return this.side * this.side; }
   int32_t sides() override { return 4; }
+public:
+  Square() = default;
 };
 
 class Rect : public Shape {
@@ -22,6 +24,8 @@ public:
   Rect(int32_t w, int32_t h) : w(w), h(h) {}
   int32_t area() override { return this.w * this.h; }
   int32_t sides() override { return 4; }
+public:
+  Rect() = default;
 };
 
 int32_t describe(Shape& s) { return s.area() + s.sides(); }

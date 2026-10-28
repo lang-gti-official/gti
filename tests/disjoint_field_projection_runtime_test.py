@@ -49,6 +49,7 @@ PROGRAMS = (
         + """\
 class Boxes {
 public:
+  Boxes() = default;
   mut Box left = Box(1);
   mut Box right = Box(2);
 };
@@ -71,6 +72,7 @@ int main() {
         + """\
 class Triple {
 public:
+  Triple() = default;
   mut Box left = Box(1);
   mut Box middle = Box(2);
   mut Box right = Box(3);
@@ -97,12 +99,14 @@ int main() {
         + """\
 class Inner {
 public:
+  Inner() = default;
   mut Box first = Box(1);
   mut Box second = Box(2);
 };
 
 class Outer {
 public:
+  Outer() = default;
   mut Inner left = Inner();
   mut Inner right = Inner();
 };

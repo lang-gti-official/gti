@@ -38,6 +38,7 @@ int32_t read_packet_value() {
 }
 
 struct Factory {
+  Factory() = default;
   Packet make(int32_t value) {
     return Packet(value);
   }

@@ -867,8 +867,8 @@ def focused_use_probes(evidence: Path, root: Path, report: dict) -> dict[str, di
         # Base-view replacement stays refused; move this control to another
         # refused construct as LLVM coverage grows.
         unsupported.write_text(
-            "class Owner { public: virtual int read() { return 0; } };\n"
-            "class Derived : public Owner {};\n"
+            "class Owner { public: virtual int read() { return 0; }  public: Owner() = default; };\n"
+            "class Derived : public Owner { public: Derived() = default; };\n"
             "unsafe int create(mut Owner& value, Owner& other) { "
             "value = other; return 0; }\n"
             "int main() { mut Derived first{}; Derived second{}; "

@@ -5,11 +5,15 @@
 class Reader<R, Args...> {
 public:
   virtual R probe_read(Args... args) = 0;
+public:
+  Reader() = default;
 };
 
 class Writer<R, Args...> {
 public:
   virtual R probe_mut(Args... args) mut = 0;
+public:
+  Writer() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

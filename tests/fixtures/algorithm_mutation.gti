@@ -10,6 +10,8 @@ mut int calls = 0;
 class odd {
 public:
   bool operator()(int& value) mut { calls++; return value % 2 != 0; }
+public:
+  odd() = default;
 };
 
 bool rewrite<R>(mut R& values)

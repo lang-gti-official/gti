@@ -59,7 +59,7 @@ void rejects(Action action, const char *message) {
 
 VerifiedLoweredProgram fixture() {
   const auto frontend = Frontend().analyze("llvm-session.gti", R"(
-struct Node { mut Node* next = nullptr; mut int32_t value = 0; };
+struct Node { mut Node* next = nullptr; mut int32_t value = 0;  public: Node() = default; };
 [[c_abi]] struct Packet { mut uint8_t tag; mut uint64_t value; };
 [[c_abi]] union Overlay { mut uint64_t bits; mut double value; };
 enum Data { empty, number(int value), pair(uint8_t tag, uint64_t value), node(Node value), flag(bool value) };
@@ -130,15 +130,18 @@ void testLayoutAndAbi(const VerifiedLoweredProgram &input) {
   expect(array.addressOnly && array.size == 10 && array.stride == 2 &&
              array.alignment == 2,
          "arrays retain their exact stride and aggregate storage");
-  const auto pointerSlots = layouts.get(SemanticType::arrayOf(
-      SemanticType::rawPointerTo(SemanticType::Void), 3));
-  expect(pointerSlots.addressOnly && pointerSlots.size == 24 &&
-             pointerSlots.stride == 8 && pointerSlots.alignment == 8 &&
-             llvm::cast<llvm::ArrayType>(pointerSlots.storage)
-                 ->getElementType()->isPointerTy(),
-         "pointer arrays store exact pointer-width values, not pointee layouts");
+  const auto pointerSlots = layouts.get(
+      SemanticType::arrayOf(SemanticType::rawPointerTo(SemanticType::Void), 3));
+  expect(
+      pointerSlots.addressOnly && pointerSlots.size == 24 &&
+          pointerSlots.stride == 8 && pointerSlots.alignment == 8 &&
+          llvm::cast<llvm::ArrayType>(pointerSlots.storage)
+              ->getElementType()
+              ->isPointerTy(),
+      "pointer arrays store exact pointer-width values, not pointee layouts");
   const auto pointerGrid = layouts.get(SemanticType::arrayOf(
-      SemanticType::arrayOf(SemanticType::rawPointerTo(SemanticType::Int32), 3), 2));
+      SemanticType::arrayOf(SemanticType::rawPointerTo(SemanticType::Int32), 3),
+      2));
   expect(pointerGrid.size == 48 && pointerGrid.stride == 24 &&
              pointerGrid.alignment == 8,
          "nested pointer arrays preserve row stride and natural alignment");
@@ -913,6 +916,8 @@ public:
   Ticket(int input) : value(input) { events = events * 10 + 1; }
   ~Ticket() { events = events * 10 + 2; }
   int read() { return this.value; }
+public:
+  Ticket() = default;
 };
 int divide(int value) { return 1 / value; }
 class Field {

@@ -486,7 +486,7 @@ struct MutableFirst {
   MutableFirst(mut int& a, int& b, mut int& c) : write(a), read(b), other(c) {}
   int update() mut { write = read; other = write + 1; return other; }
 };
-struct State { mut int a = 1; mut int b = 2; mut int c = 3; };
+struct State { mut int a = 1; mut int b = 2; mut int c = 3; State() = default; };
 int main() {
   mut int a = 1; mut int b = 2; mut int c = 3;
 )";

@@ -5,6 +5,8 @@ mut int phase = 0;
 
 struct Caller {
   ~Caller() { std::println("caller cleaned"); }
+public:
+  Caller() = default;
 };
 
 int read_value(int ordinal) {
@@ -21,6 +23,8 @@ struct Generated {
   int first = read_value(1);
   int second = read_value(2);
   int third = read_value(3);
+public:
+  Generated() = default;
 };
 
 struct Explicit {

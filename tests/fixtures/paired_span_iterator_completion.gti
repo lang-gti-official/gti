@@ -22,6 +22,8 @@ public:
     this.total += entry.first();
   }
   int result() { return this.total; }
+public:
+  PairCounter() = default;
 };
 
 int main() {

@@ -173,10 +173,10 @@ class LspSession:
 def test_inheritance_tooling(executable, root):
     source = (
         "interface Renderable{int render(int frame);};\n"
-        "class Base{public:virtual int tick(int frame){return frame;}};\n"
+        "class Base{public:virtual int tick(int frame){return frame;} public: Base() = default; };\n"
         "class Sprite:public Base,public Renderable{public:"
         "int tick(int frame)override{return frame;}"
-        "int render(int frame)override{return this.tick(frame);}};\n"
+        "int render(int frame)override{return this.tick(frame);} public: Sprite() = default; };\n"
         "int invoke(Renderable& value){return value.render(1);}\n"
         "interface RangeIteratorContract<T>{T& operator*();"
         "void operator++()mut;};\n"
@@ -184,9 +184,9 @@ def test_inheritance_tooling(executable, root):
         "mut int current=0;public:int& operator*()override{return this.current;}"
         "void operator++()mut override{this.current++;}"
         "bool operator!=(RangeIterator& other){"
-        "return this.current!=other.current;}};\n"
+        "return this.current!=other.current;} public: RangeIterator() = default; };\n"
         "class Range{public:RangeIterator begin(){return RangeIterator();}"
-        "RangeIterator end(){return RangeIterator();}};\n"
+        "RangeIterator end(){return RangeIterator();} public: Range() = default; };\n"
         "int sum(Range& values){mut int result=0;"
         "for(auto& value:values){result+=value;}return result;}\n"
         "struct Meter{int value;implicit Meter(int initial):value(initial){}};\n"
@@ -362,7 +362,7 @@ def test_interface_static_methods_tooling(executable, root):
         "class DesktopWindow : public Window {\n"
         "public:\n"
         "  int width() override { return Window::Create(0); }\n"
-        "};\n"
+        " public: DesktopWindow() = default; };\n"
         "int observe(Window& window) { return window.width(); }\n"
         "int main() { DesktopWindow window{};\n"
         "  return observe(window) == Window::Create(0) ? 0 : 1; }\n"
@@ -476,7 +476,7 @@ def test_interface_static_methods_tooling(executable, root):
         unused_declaration = (
             "interface Declared { static int Missing(); int read(); };\n"
             "class Reader : public Declared { public: "
-            "int read() override { return 1; } };\n"
+            "int read() override { return 1; }  public: Reader() = default; };\n"
             "int main() { Reader reader{}; return reader.read() - 1; }\n"
         )
         assert not has_error_diagnostics(change(unused_declaration, 3))
@@ -1988,7 +1988,7 @@ def test_documentation_hover(executable, root):
         "uint64_t calculate(uint64_t value) { return value; }\n"
         "/// A value supplied by the API.\n"
         "class Value {\n"
-        "public:\n"
+        "public: Value() = default;\n"
         "  /// Reads this value.\n"
         "  uint64_t read() { return 7; }\n"
         "};\n"
@@ -2316,7 +2316,7 @@ def test_documentation_completion_and_signature_help(executable, root):
 
 
 def test_consuming_methods(executable, root):
-    source = ("class Builder { public: int take() && { return 1; } };\n"
+    source = ("class Builder { public: int take() && { return 1; }  public: Builder() = default; };\n"
               "int main() { return Builder().take() - 1; }\n")
     path = root / "consuming-methods.gti"
     path.write_text(source, encoding="utf-8")
@@ -2388,7 +2388,7 @@ def test_callable_contract_hover(executable, root):
         "  T apply<Operation>(T value, Operation operation) {\n"
         "    return operation(value);\n"
         "  }\n"
-        "};\n"
+        " public: MemberMapper() = default; };\n"
         "class CallableOwner<T> {\n"
         "  T value;\n"
         "public:\n"
@@ -2596,11 +2596,11 @@ def test_requires_tooling(executable, root):
         "    requires std::integral<T> || std::floating_point<T> {\n"
         "    return T(value + value);\n"
         "  }\n"
-        "};\n"
+        " public: NumericBox() = default; };\n"
         "class positive {\n"
         "public:\n"
         "  bool operator()(int32_t& value) { return value > 0; }\n"
-        "};\n"
+        " public: positive() = default; };\n"
         "bool accepts<Predicate>(int32_t value, mut Predicate predicate)\n"
         "  requires std::predicate<Predicate, int32_t> {\n"
         "  return predicate(value);\n"
@@ -2924,7 +2924,7 @@ def test_constructor_local_generic_tooling(executable, root):
         "public:\n"
         "  Box<std::numeric Value>(Value value)\n"
         "    requires std::copyable<Value> {}\n"
-        "};\n"
+        " public: Box() = default; };\n"
         "int main() {\n"
         "  Box value = Box(1);\n"
         "  return 0;\n"
@@ -3497,7 +3497,7 @@ def test_constexpr_aggregate_tooling(executable, root):
         "static_assert(prepare_phase() == Phase::active);\n"
         "constexpr expected<int, Phase> checked(bool valid) { "
         "if (!valid) { return unexpected(Phase::idle); } return 7; }\n"
-        "struct Result { expected<int, Phase> value = checked(true); };\n"
+        "struct Result { expected<int, Phase> value = checked(true);  public: Result() = default; };\n"
         "constexpr Result result = Result();\n"
         "static_assert(result.value.value() == 7);\n"
         "struct Snapshot { int value; constexpr Snapshot(mut int& input) : "
@@ -3706,8 +3706,8 @@ def test_semantic_definition(executable, root):
         "  int value = 0;\n"
         "public:\n"
         "  Box(int initial) : value(initial) {}\n"
-        "};\n"
-        "struct Point { int x = 0; };\n"
+        " public: Box() = default; };\n"
+        "struct Point { int x = 0;  public: Point() = default; };\n"
         "enum class Mode { Active };\n"
     )
     dependency_path = root / "definitions.gti"
@@ -3875,10 +3875,10 @@ def test_semantic_definition(executable, root):
 def test_exact_qualified_specialization_tooling(executable, root):
     source = (
         "namespace demo {\n"
-        "class Value<T> { public: int read() { return 1; } };\n"
+        "class Value<T> { public: int read() { return 1; }  public: Value() = default; };\n"
         "}\n"
         "int exact(demo::Value<int>& value) { return value.read(); }\n"
-        "class demo::Value<int> { public: int read() { return 2; } };\n"
+        "class demo::Value<int> { public: int read() { return 2; }  public: Value() = default; };\n"
         "int fallback(demo::Value<bool>& value) { return value.read(); }\n"
     )
     path = root / "exact-specialization-tooling.gti"
@@ -4057,8 +4057,8 @@ def test_exact_qualified_specialization_tooling(executable, root):
         assert specialization_symbol["detail"] == "class demo::Value<int32_t>"
 
         invalid_source = (
-            "namespace duplicate { class Box<T> {}; }\n"
-            "class duplicate::Box<int> {};\n"
+            "namespace duplicate { class Box<T> { public: Box() = default; }; }\n"
+            "class duplicate::Box<int> { public: Box() = default; };\n"
             "class duplicate::Box<int> {};\n"
         )
         invalid_path = root / "invalid-exact-specialization-tooling.gti"
@@ -4105,7 +4105,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
     source = (
         "static int file_value = 1;\n"
         "class Registry { public: static int answer = 42; "
-        "static int current() { return answer; } };\n"
+        "static int current() { return answer; }  public: Registry() = default; };\n"
         "namespace math { uint64_t power(uint64_t base, uint64_t exponent) { "
         "return base + exponent; } float power(float base, float exponent) { "
         "return base + exponent; } }\n"
@@ -6981,7 +6981,7 @@ def test_constraint_failure_provenance(executable, root):
     library_path.write_text(contract, encoding="utf-8")
     source = (
         '#include "constraint-contract.gti"\n'
-        "struct Item {};\n"
+        "struct Item { public: Item() = default; };\n"
         "int main() { Item first{}; Item target{}; "
         "return library::read(first, /* 😀 */ target); }\n"
     )
@@ -7030,7 +7030,7 @@ def test_constraint_failure_provenance(executable, root):
 
         # The same source contract now finds a member but rejects its result.
         wrong_result = source.replace(
-            "struct Item {};", "struct Item { bool snapshot() { return true; } };")
+            "struct Item { public: Item() = default; };", "struct Item { bool snapshot() { return true; }  public: Item() = default; };")
         session.send({
             "jsonrpc": "2.0", "method": "textDocument/didChange",
             "params": {"textDocument": {"uri": uri, "version": 2},
@@ -7048,7 +7048,7 @@ def test_constraint_failure_provenance(executable, root):
                    for item in mismatch["relatedInformation"]), mismatch
 
         valid = source.replace(
-            "struct Item {};", "struct Item { int snapshot() { return 7; } };")
+            "struct Item { public: Item() = default; };", "struct Item { int snapshot() { return 7; }  public: Item() = default; };")
         session.send({
             "jsonrpc": "2.0", "method": "textDocument/didChange",
             "params": {"textDocument": {"uri": uri, "version": 3},
@@ -7068,7 +7068,7 @@ def test_concrete_generic_diagnostics(executable, root):
     source = (
         "class Bound<T, uint64_t N> {\n"
         '  static_assert(N <= uint64_t(4), "capacity too large");\n'
-        "};\n"
+        " public: Bound() = default; };\n"
         "int main() {\n"
         "  Bound<int32_t, 5> value{};\n"
         "  return 0;\n"
@@ -7165,7 +7165,7 @@ def test_constructor_ownership_diagnostic(executable, root):
         "class Path {\n"
         "public:\n"
         "  Path(std::string value) {}\n"
-        "};\n"
+        " public: Path() = default; };\n"
         "int main() {\n"
         '  mut std::string source = std::string("/hello/world.txt");\n'
         "  Path parsed = Path(source);\n"
@@ -7318,13 +7318,13 @@ def test_read_only_receiver_diagnostic(executable, root):
     source = (
         "struct Component {\n"
         "  mut int offset = 0;\n"
-        "};\n"
+        " public: Component() = default; };\n"
         "class Path {\n"
         "public:\n"
         "  void update() { component.offset = 1; }\n"
         "private:\n"
         "  mut Component component = Component();\n"
-        "};\n"
+        " public: Path() = default; };\n"
     )
     path = root / "read-only-receiver-diagnostic.gti"
     path.write_text(source, encoding="utf-8")
@@ -7453,7 +7453,7 @@ def test_global_borrow_return_diagnostics(executable, root):
         "static mut Application& Get() { "
         "unsafe { return *Application::app; } } "
         "void Update() mut {} private: "
-        "static mut Application* app = nullptr; };\n"
+        "static mut Application* app = nullptr;  public: Application() = default; };\n"
         "void update() { Application::Get().Update(); }\n"
         "int main() { update(); return 0; }\n"
     )
@@ -7461,7 +7461,7 @@ def test_global_borrow_return_diagnostics(executable, root):
         "class Application { public: "
         "static mut Application& Get() { "
         "unsafe { return *Application::app; } } private: "
-        "static mut Application* app = nullptr; };\n"
+        "static mut Application* app = nullptr;  public: Application() = default; };\n"
         "int main() {\n"
         "  mut Application& first = Application::Get();\n"
         "  mut Application& second = Application::Get();\n"
@@ -8031,7 +8031,7 @@ def test_layout_query_tooling(executable, root):
         assert edits and "sizeof(Word)" in edits[0]["newText"], edits
 
         invalid_source = (
-            "class Record { int value = 0; };\n"
+            "class Record { int value = 0;  public: Record() = default; };\n"
             "uint64_t bad = sizeof(Record);\n"
         )
         session.send(
@@ -9761,7 +9761,7 @@ def test_editor_hir_scope_follows_open_file(executable, root):
     library_source = (
         "class Bound<T, uint64_t N> {\n"
         '  static_assert(N <= uint64_t(4), "capacity too large");\n'
-        "};\n"
+        " public: Bound() = default; };\n"
         "int lib_only() {\n"
         "  Bound<int32_t, 5> value{};\n"
         "  return 0;\n"
@@ -10202,7 +10202,7 @@ def test_contextual_array_hover(executable, root):
         "public:\n"
         "  Total<uint64_t N>(int values[N]) {}\n"
         "  uint64_t extent<uint64_t N>() { return N; }\n"
-        "};\n"
+        " public: Total() = default; };\n"
         "int main() {\n"
         "  int value = total({1, 2, 3});\n"
         "  Total object = Total({4, 5});\n"
@@ -11267,7 +11267,7 @@ def test_restricted_arithmetic_operator_tooling(executable, root):
         "Number operator+(int other) { return Number(this.value + other); } "
         "void operator+=(int other) mut { this.value += other; } "
         "void operator--() mut { this.value--; } "
-        "int get() { return this.value; } };\n"
+        "int get() { return this.value; }  public: Number() = default; };\n"
         "int main() { mut Number value = Number(1); "
         "mut Number sum = value + 2; sum += 3; --sum; return sum.get(); }\n"
     )
@@ -11364,7 +11364,7 @@ def test_restricted_arithmetic_operator_tooling(executable, root):
 
         invalid_source = (
             "class Exact { public: Exact operator+(int64_t other) { "
-            "return Exact(); } };\n"
+            "return Exact(); }  public: Exact() = default; };\n"
             "int main() { Exact value = Exact(); "
             "[[discard]] value + int32_t(1); return 0; }\n"
         )
@@ -11401,7 +11401,7 @@ def test_restricted_arithmetic_operator_tooling(executable, root):
         assert "fixes" not in diagnostic["data"], diagnostic
         temporary_source = (
             "// 🙂\nclass Exact { public: "
-            "bool operator==(Exact& other) { return true; } };\n"
+            "bool operator==(Exact& other) { return true; } public: Exact() = default; };\n"
             "int main() { Exact value{}; "
             "if (value == Exact()) { return 1; } return 0; }\n"
         )
@@ -11677,7 +11677,7 @@ def main():
         "enum class Stage : uint8_t { Boot, Running = 4, };\n"
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
         "T& get() { return this.value; } };\n"
-        "class StaticArray<T, uint64_t N> { T values[N] = {}; public: "
+        "class StaticArray<T, uint64_t N> { T values[N] = {}; public: StaticArray() = default; "
         "uint64_t size() { return N; } };\n"
         "class FormattingProbe<T> { public: // Generic iterator access.\n"
         "Box<T> begin(); };\n"
@@ -11686,7 +11686,7 @@ def main():
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
         "void reset() mut { this.x = 0; } "
         "~Pixel() { this.reset(); } private: int y = 0; };\n"
-        "class Handle { mut Pixel pixel = Pixel(1); mut int value = 0; public: "
+        "class Handle { mut Pixel pixel = Pixel(1); mut int value = 0; public: Handle() = default; "
         "Pixel& operator->() { return this.pixel; } "
         "mut Pixel& operator->() mut { return this.pixel; } "
         "int& operator*() { return this.value; } "
@@ -12673,7 +12673,7 @@ class Resource {
 public:
   int add(int amount) mut { this.value += amount; return this.value; }
   int read() { return this.value; }
-};
+ public: Resource() = default; };
 class Service {
   mut Resource& resource;
 public:
@@ -12686,7 +12686,7 @@ class Client {
 public:
   Service auth() mut { return Service(this.resource); }
   int read() { return this.resource.read(); }
-};
+ public: Client() = default; };
 """
     valid = declarations + "int main() { mut Client api{}; return api.auth().update(1); }\n"
     escaping = declarations + "int main() { /* 🌱 */ mut Client api{}; [[discard]] api.auth().borrow(); return 0; }\n"
@@ -13375,7 +13375,7 @@ class Token {
 public:
   std::string_view view() { /*😀*/ return _token.view(); }
   void clear() mut { _token.clear(); }
-};
+  Token() = default; };
 int main() {
   mut Token token{};
   auto text = token.view();

@@ -40,11 +40,15 @@ def reject_invalid_sources(compiler: pathlib.Path) -> None:
 }""", "GTI-S2003"),
         "mutable-comparator": ("""class Compare {
 public: bool operator()(int& a, int& b) mut { return a < b; }
+public:
+  Compare() = default;
 };
 int main() { std::map<int, int, Compare> values{}; return 0; }
 """, "GTI-S2029"),
         "wrong-comparator-result": ("""class Compare {
 public: int operator()(int& a, int& b) { return 0; }
+public:
+  Compare() = default;
 };
 int main() { std::map<int, int, Compare> values{}; return 0; }
 """, "GTI-S2029"),

@@ -4,6 +4,8 @@
 [[unsafe_transfer, unsafe_share]] class Sentinel {
 public:
   ~Sentinel() { std::println(99); }
+public:
+  Sentinel() = default;
 };
 
 [[unsafe_transfer, unsafe_share]] class Failing {
@@ -13,6 +15,8 @@ public:
     int32_t zero = 0;
     int32_t secondary = 1 / zero;
   }
+public:
+  Failing() = default;
 };
 
 int main() {

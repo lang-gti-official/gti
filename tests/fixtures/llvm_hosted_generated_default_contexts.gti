@@ -1,11 +1,13 @@
 namespace construction {
-struct Token<T> { int number() { return 1; } };
+struct Token<T> { int number() { return 1; }  public: Token() = default; };
 }
-struct construction::Token<int> { int number() { return 2; } };
-struct construction::Token<char> { int number() { return 3; } };
+struct construction::Token<int> { int number() { return 2; }  public: Token() = default; };
+struct construction::Token<char> { int number() { return 3; }  public: Token() = default; };
 construction::Token<T> make_token<T>() { return construction::Token<T>(); }
 struct Factory<T> {
   construction::Token<T> make() { return construction::Token<T>(); }
+public:
+  Factory() = default;
 };
 struct ConstructorContext<T> {
   construction::Token<T> token;

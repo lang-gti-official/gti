@@ -10,6 +10,8 @@ public:
   Builder append(int n) && { this.value += n; return std::move(this); }
   Builder operator/(int n) { return Builder(this.value + n); }
   Builder operator/(int n) && { this.value += n; return std::move(this); }
+public:
+  Builder() = default;
 };
 Builder make() { return Builder(1); }
 int main() {

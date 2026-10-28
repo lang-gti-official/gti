@@ -4,8 +4,10 @@ struct Packet {
     std::println(11);
     this.lanes[0] = first;
   }
+public:
+  Packet() = default;
 };
-struct Guard { ~Guard() { std::println(99); } };
+struct Guard { ~Guard() { std::println(99); }  public: Guard() = default; };
 Packet fail(int denominator) {
   std::println(22);
   int checked = 1 / denominator;

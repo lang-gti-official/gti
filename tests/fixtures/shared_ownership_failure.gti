@@ -7,6 +7,8 @@ extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
 class Caller {
 public:
   ~Caller() { std::println(99); }
+public:
+  Caller() = default;
 };
 
 class Item {

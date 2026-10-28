@@ -1,5 +1,5 @@
 // Integer and enum switches, shadowing, block scoping and short-circuiting.
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 enum class Level {
   low,

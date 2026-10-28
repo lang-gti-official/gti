@@ -4,39 +4,55 @@ namespace application {
 using Item = int;
 struct Shadowing {
   Item item{};
-  struct Item { int value = 9; };
+  struct Item { int value = 9;  public: Item() = default; };
+public:
+  Shadowing() = default;
 };
 class Aliases {
-  struct Secret { int value = 11; };
+  struct Secret { int value = 11;  public: Secret() = default; };
 public:
   using Public = Secret;
+public:
+  Aliases() = default;
 };
-struct Standalone { struct Child { int value = 13; }; };
+struct Standalone { struct Child { int value = 13;  public: Child() = default; };  public: Standalone() = default; };
 using Alias = Standalone;
 struct Ordering {
   struct First {
     Later value{};
-  };
-  struct Later { int value = 17; };
+   public: First() = default; };
+  struct Later { int value = 17;  public: Later() = default; };
+public:
+  Ordering() = default;
 };
 struct Inheritance {
   struct Derived : public Base { Derived() : Base() {} };
   struct Base { int value; Base() : value(23) {} };
+public:
+  Inheritance() = default;
 };
 struct Graph {
-  struct A { B* next = nullptr; };
-  struct B { A* next = nullptr; };
+  struct A { B* next = nullptr;  public: A() = default; };
+  struct B { A* next = nullptr;  public: B() = default; };
+public:
+  Graph() = default;
 };
 struct CrossA {
-  struct Child { CrossB::Child* peer = nullptr; };
+  struct Child { CrossB::Child* peer = nullptr;  public: Child() = default; };
   Child child{};
+public:
+  CrossA() = default;
 };
 struct CrossB {
-  struct Child { CrossA::Child* peer = nullptr; };
+  struct Child { CrossA::Child* peer = nullptr;  public: Child() = default; };
   Child child{};
+public:
+  CrossB() = default;
 };
 [[no_transfer, no_share]] struct Policies {
-  struct Value { int value = 29; };
+  struct Value { int value = 29;  public: Value() = default; };
+public:
+  Policies() = default;
 };
 T transfer_value<std::transferable T>(T value) { return value; }
 void share_value<std::shareable T>(T& value) {}
@@ -49,6 +65,8 @@ struct Borrowing {
     [[borrowed_from(this)]] int& code() { return number; }
     uint64_t length() { return text.size(); }
   };
+public:
+  Borrowing() = default;
 };
 class LexicalAccess {
   using count = int;
@@ -64,12 +82,12 @@ public:
       return value.number + value.get() - code;
     }
     int default_value() { LexicalAccess value{}; return value.get(); }
-    struct Grandchild { int read() { return LexicalAccess::code; } };
-  };
+    struct Grandchild { int read() { return LexicalAccess::code; }  public: Grandchild() = default; };
+   public: Child() = default; };
   struct GenericChild<T> {
     using value_type = T;
     int read() { return code; }
-  };
+   public: GenericChild() = default; };
 };
 class NestedBase {
   int value;
@@ -85,9 +103,9 @@ struct Config {
     int port = 8080;
     struct Retry {
       int count = 3;
-    };
+     public: Retry() = default; };
     Retry retry{};
-  };
+   public: Network() = default; };
 
   class Logging {
     int level;
@@ -103,17 +121,21 @@ struct Config {
   using NetworkType = Network;
   Network network{};
   Logging logging{2};
+public:
+  Config() = default;
 };
 
 class Service {
   struct Secret {
     int value = 7;
-  };
+   public: Secret() = default; };
 public:
   int secret_value() {
     Secret secret{};
     return secret.value;
   }
+public:
+  Service() = default;
 };
 }
 

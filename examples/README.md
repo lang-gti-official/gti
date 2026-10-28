@@ -168,7 +168,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Read and write JSON as plain structs | [91: JSON documents](091-json-documents.gti) |
 | Map JSON to a class with an invariant and report field errors | [92: JSON codecs](092-json-codecs.gti) |
 | Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
-| Encode counted bytes as Base64 or hex | [94: binary-to-text encoding](094-binary-text-encoding.gti) |
+| Encode counted bytes as Base64 or hex; decode UTF-8 scalars | [94: text encoding](094-binary-text-encoding.gti) |
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
 | Translate library errors into application errors | [96: error mapping](096-error-mapping.gti) |
 | Build and validate data at compile time | [97: constexpr tables](097-constexpr-tables.gti) |
@@ -215,7 +215,7 @@ is a teaching helper, not a production server.
 | `002-control-flow.gti` | conditions, `for`, `while`, `break`, and `continue` |
 | `003-functions.gti` | typed parameters, return values, and calls |
 | `004-integers.gti` | fixed-width integers, arithmetic, and bitwise operators |
-| `005-objects.gti` | structs, classes, constructors, checked base arguments, state-bearing bases, declared cleanup, access, and mutable methods |
+| `005-objects.gti` | structs, classes, explicit default-constructor opt-in, required constructor arguments, checked base arguments, state-bearing bases, declared cleanup, access, and mutable methods |
 | `006-namespaces.gti` | nested namespace shorthand, qualification, and aliases |
 | `007-generics.gti` | type generics, exact inference, and class value parameters |
 | `008-expected.gti` | explicit recoverable errors and `?` propagation with `expected<T, E>` |
@@ -303,7 +303,7 @@ is a teaching helper, not a production server.
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
 | `093-http-json-client.gti` | encoded URLs, bounded GET/POST requests, transport/status/schema errors, and JSON responses |
-| `094-binary-text-encoding.gti` | Base64/hex round trips, embedded zero bytes, and strict decoding |
+| `094-binary-text-encoding.gti` | Base64/hex round trips, embedded zero bytes, strict UTF-8 validation and scalar traversal |
 | `095-explicit-cloning.gti` | vector/string cloning, ownership transfer, and exact member requirements |
 | `096-error-mapping.gti` | consuming `transform_error`, named mapper functions, and `?` propagation |
 | `097-constexpr-tables.gti` | constexpr constructors, methods, arrays, loops, and static assertions |
@@ -365,7 +365,7 @@ is a teaching helper, not a production server.
 | `166-source-optional.gti` | stable `std::optional`, one-step declared returns and their ownership boundary, ordinary payload-enum storage, move assignment, consuming `value()` and `?` propagation |
 | `167-callable-result-types.gti` | computed callable result types used by an unrelated source-defined mapping wrapper; no builtin combinator |
 | `168-source-value-profiles.gti` | disjoint void/reference class profiles, enum-backed constexpr construction and consumption, generic forwarding, and checked borrowing |
-| `169-source-expected.gti` | global source-defined `expected`, value/void/reference results, constexpr, `?`, borrowing mapper captures, error mapping and checked extraction from a temporary result |
+| `169-source-expected.gti` | global source-defined `expected`, value/void/reference results, constexpr, `?`, borrowing mapper captures, error mapping and checked extraction from a temporary result, plus source-defined `std::enum_name` for enum error messages |
 | `170-view-fields.gti` | a class and a struct whose text fields view a local string, a copy sharing that dependency, a field read yielding a view of the same owner, a temporary token read within its expression, a factory whose token views its argument's owner, reads through a returned text reference and a generic holder's accessor, an optional whose payload views the string through an implicit conversion and whose `->` calls that view's members, a parser whose failure views the string passed to it, a diagnostic nested in a returned result, and an ownerless token that keeps its method calls |
 | `171-recursive-text-relays.gti` | recursive and mutually recursive functions relaying a view parameter, a recursion relaying a value's text field, a recursive method relaying the receiver's field, and an ownerless result from a literal argument |
 | `172-deferred-assertions.gti` | source-defined always-on/debug assertions, lazy formatted messages, skipped owning moves, and an application-defined typed macro |

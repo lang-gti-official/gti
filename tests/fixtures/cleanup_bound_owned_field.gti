@@ -7,6 +7,8 @@ mut int binding_drops = 0;
 class Payload {
 public:
   ~Payload() { payload_drops += 1; }
+public:
+  Payload() = default;
 };
 
 class BoundMove {
@@ -37,6 +39,8 @@ int check_generated_binding_move() {
 struct Resource {
   mut int value = 3;
   void reset() mut { this.value = 5; }
+public:
+  Resource() = default;
 };
 
 class Mixed {

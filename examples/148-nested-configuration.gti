@@ -9,18 +9,20 @@ struct Config {
     uint16_t port = 8080;
     struct Retry {
       uint32_t attempts = 3;
-    };
+     public: Retry() = default; };
     Retry retry{};
-  };
+   public: Network() = default; };
   struct Logging {
     bool enabled = true;
-  };
+   public: Logging() = default; };
   class Validator {
   public:
     bool valid_port(uint16_t port) { return port != 0; }
-  };
+   public: Validator() = default; };
   Network network{};
   Logging logging{};
+public:
+  Config() = default;
 };
 
 int main() {

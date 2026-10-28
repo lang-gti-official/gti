@@ -1,4 +1,4 @@
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 int main() {
   mut int32_t exact = 16777217;      // 2^24 + 1, not representable in binary32
   mut float widened = exact;         // implicit, accepted

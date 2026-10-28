@@ -16,6 +16,8 @@ public:
   ~Root() { record(1); }
   virtual int phase() { return 1; }
   virtual int fail(int divisor) { return 12 / divisor; }
+public:
+  Root() = default;
 };
 
 class Middle : public Side, public Root {

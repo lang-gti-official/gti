@@ -4,12 +4,16 @@
 struct Vec2 {
   float x = 0.0;
   float y = 0.0;
+public:
+  Vec2() = default;
 };
 
 struct Player {
   std::string name;
   uint32_t health = 100;
   Vec2 position;
+public:
+  Player() = default;
 };
 
 // A generic "encoder": sums every integral/float field recursively.

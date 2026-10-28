@@ -1,2 +1,2 @@
-struct Owner { void* pointer = nullptr; ~Owner() {} };
+struct Owner { void* pointer = nullptr; ~Owner() {}  public: Owner() = default; };
 int sample(int input) { Owner value{}; return input + 1; }

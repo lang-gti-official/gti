@@ -1,4 +1,4 @@
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 enum class parse_errc { bad_digit };
 expected<int32_t, parse_errc> digit_value(int32_t c) {
   if (c < 0) { return unexpected(parse_errc::bad_digit); }

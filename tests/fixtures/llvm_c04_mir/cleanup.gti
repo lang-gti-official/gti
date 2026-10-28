@@ -1,2 +1,2 @@
-struct Owner { ~Owner() {} };
+struct Owner { ~Owner() {}  public: Owner() = default; };
 int sample(int input) { Owner value{}; return input + 1; }

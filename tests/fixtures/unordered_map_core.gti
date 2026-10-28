@@ -4,6 +4,8 @@
 class CollisionHash {
 public:
   std::size_t operator()(int& key) { return 1; }
+public:
+  CollisionHash() = default;
 };
 
 int main() {

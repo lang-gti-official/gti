@@ -59,6 +59,8 @@ public:
   int32_t inspect(expected<Position, expected_errc> value) {
     return value ? value.value().id : int32_t(0);
   }
+public:
+  PositionConsumer() = default;
 };
 int main() {
   DefaultPosition marker{};

@@ -6,6 +6,8 @@ class Pair {
 public:
   mut int& a() mut { return this.first; }
   mut int& b() mut { return this.second; }
+public:
+  Pair() = default;
 };
 
 int main() {

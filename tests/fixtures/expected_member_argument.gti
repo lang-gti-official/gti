@@ -41,11 +41,15 @@ public:
     return value ? value.value().number() : 0;
   }
   int count() { return this.calls; }
+public:
+  MemberConsumer() = default;
 };
 
 class MemberGuard {
 public:
   ~MemberGuard() { std::println(99); }
+public:
+  MemberGuard() = default;
 };
 mut MemberConsumer& member_alias(mut MemberConsumer& receiver) { return receiver; }
 

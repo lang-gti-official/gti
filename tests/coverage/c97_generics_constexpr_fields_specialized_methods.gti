@@ -5,6 +5,8 @@
 struct Limits {
   static constexpr uint64_t slots = 6;
   static constexpr int32_t scale = 3;
+public:
+  Limits() = default;
 };
 
 class Pool<uint64_t N> {
@@ -23,11 +25,15 @@ concept tagged<T> =
 struct WithTag {
   int32_t id() { return 1; }
   int32_t tag() { return 10; }
+public:
+  WithTag() = default;
 };
 
 struct WithLabel {
   int32_t id() { return 2; }
   int32_t label() { return 20; }
+public:
+  WithLabel() = default;
 };
 
 int32_t id_of<T>(T& value) requires tagged<T> {
@@ -39,6 +45,8 @@ namespace conv {
 class codec<T> {
 public:
   int32_t bits() { return 0; }
+public:
+  codec() = default;
 };
 }
 
@@ -46,6 +54,8 @@ class conv::codec<WithTag> {
 public:
   int32_t bits() { return 7; }
   U widen<std::numeric U>(U base) { return U(base * U(2)); }
+public:
+  codec() = default;
 };
 
 int main() {

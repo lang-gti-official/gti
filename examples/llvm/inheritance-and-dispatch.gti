@@ -37,7 +37,7 @@ public:
   InlineCounter() {}
   virtual int read() { return 4; }
 };
-struct DeviceBox { InlineCounter device{}; };
+struct DeviceBox { InlineCounter device{};  public: DeviceBox() = default; };
 
 int main() {
   DeviceBox boxed{};

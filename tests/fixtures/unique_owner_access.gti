@@ -12,6 +12,8 @@ public:
 struct cell {
   mut int32_t value = 7;
   mut std::unique_ptr<marker> child = std::unique_ptr<marker>();
+public:
+  cell() = default;
 };
 
 int32_t read_scalar(std::unique_ptr<int32_t>& owner) {

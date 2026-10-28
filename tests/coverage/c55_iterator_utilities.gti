@@ -8,6 +8,8 @@ public:
   Countdown(int32_t start) : remaining(start) {}
   bool has_next() { return this.remaining > 0; }
   int32_t next() mut { this.remaining = this.remaining - 1; return this.remaining; }
+public:
+  Countdown() = default;
 };
 
 int main() {

@@ -29,6 +29,8 @@ public:
       return std::move(granted).value();
     }
   }
+public:
+  Forwarding() = default;
 };
 
 int main() {

@@ -102,6 +102,8 @@ public:
   Error(int code) : code(code) {}
   Error(Error& other) = delete;
   Error(Error&& other) = default;
+public:
+  Error() = default;
 };
 expected<int, Error> make(bool fail, int divisor) {
   int checked = 1 / divisor;

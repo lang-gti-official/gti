@@ -36,6 +36,8 @@ struct Record {
     int checked_before_view = 120 / divisor;
     return this.leaf;
   }
+public:
+  Record() = default;
 };
 Reader& forward_read(Reader& value) { return value; }
 mut Writer& forward_write(mut Writer& value) { return value; }

@@ -11,6 +11,8 @@ class Holder {
   Cleanup cleanup = Cleanup();
 public:
   int operator()(int amount) mut { return amount; }
+public:
+  Holder() = default;
 };
 
 int later() {

@@ -10,11 +10,11 @@ if __name__ == "__main__":
                 "expected_temporary_observer_failure_free",
                 "expected_pointer_condition"),
          cases={"expected_passive_failure": [((), (70, "caller cleaned\n",
-                 "expected_passive_failure.gti:12: runtime error[GTI-R0002]: "
+                 "expected_passive_failure.gti:14: runtime error[GTI-R0002]: "
                  "division_by_zero in integer_division\n"))],
                 "expected_argument_failure": [
                     (arguments, (70, "item cleaned\n" * 3 + "caller cleaned\n",
-                     "expected_argument_failure.gti:17: runtime error[GTI-R0002]: "
+                     "expected_argument_failure.gti:19: runtime error[GTI-R0002]: "
                      "division_by_zero in integer_division\n"))
                     for arguments in ((), ("member",))],
                 "expected_pointer_condition": [

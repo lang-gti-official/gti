@@ -3,6 +3,8 @@ struct Pair {
   int32_t a = 0;
   int32_t b = 0;
   Pair(int32_t a, int32_t b) : a(a), b(b) {}
+public:
+  Pair() = default;
 };
 int main() {
   Pair p = {.a = 1, .b = 2};

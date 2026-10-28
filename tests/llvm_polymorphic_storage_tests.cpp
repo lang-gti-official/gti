@@ -62,12 +62,14 @@ void test(const std::filesystem::path &root) {
 namespace slot_operation_probe {
 interface First {};
 interface Target {};
-class Model : public First, public Target { public: mut int number = 41; };
-class Other : public Target, public First { public: mut int number = 41; };
+class Model : public First, public Target { public: mut int number = 41;  public: Model() = default; };
+class Other : public Target, public First { public: mut int number = 41;  public: Other() = default; };
 class Plain { public: Plain() {} };
 struct Holder {
   mut gti_internal::polymorphic_storage<Target, 64, 16> first{};
   mut gti_internal::polymorphic_storage<Target, 64, 16> second{};
+public:
+  Holder() = default;
 };
 int run(int mode) {
   Plain plain{};
@@ -127,11 +129,11 @@ int run(int mode) {
          "exact slot operations are admitted by NativeInlinePolymorphicSlot");
   bool slotWitness = false;
   for (const auto &use : admission.requirements())
-    slotWitness |= use.required &&
-                   use.entry->key() ==
-                       "IntrinsicKind.PolymorphicStorageConstruct" &&
-                   use.implementedShape &&
-                   use.implementedShape->name == "NativeInlinePolymorphicSlot";
+    slotWitness |=
+        use.required &&
+        use.entry->key() == "IntrinsicKind.PolymorphicStorageConstruct" &&
+        use.implementedShape &&
+        use.implementedShape->name == "NativeInlinePolymorphicSlot";
   expect(slotWitness,
          "slot construction carries the exact inline-slot operation witness");
   const auto &program = input->program().mir();

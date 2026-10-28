@@ -1,6 +1,6 @@
 #include <std/memory>
 
-struct Prefix { ~Prefix() { std::println(7); } };
+struct Prefix { Prefix() = default; ~Prefix() { std::println(7); } };
 struct Payload {
   Prefix prefix{};
   Payload(int divisor) {
@@ -9,7 +9,7 @@ struct Payload {
   }
   ~Payload() { std::println(8); }
 };
-struct Caller { ~Caller() { std::println(99); } };
+struct Caller { Caller() = default; ~Caller() { std::println(99); } };
 int main() {
   Caller caller{};
   auto owner = std::make_shared<Payload>(0);

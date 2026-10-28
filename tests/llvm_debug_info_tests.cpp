@@ -30,7 +30,7 @@ std::string metadata(const std::string &path) {
   const auto frontend =
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
           .analyze(path, R"(
-struct Node { mut Node* next = nullptr; mut int value = 7; };
+struct Node { mut Node* next = nullptr; mut int value = 7;  public: Node() = default; };
 enum class Mode : int64_t { Minus = -1, Plus = 7 };
 extern "C" { int foreign(int input); }
 int inspect(Node& owner, int input) {
@@ -371,7 +371,7 @@ void lifecycleIdentities() {
       Frontend({.sourceDebugProfile = SourceDebugProfile::LexicalV1})
           .analyze("/scope/lifecycle.gti", R"(
 class Sample { public: Sample() {} ~Sample() {} };
-struct Generated { int value = 7; };
+struct Generated { int value = 7;  public: Generated() = default; };
 int main() { Sample value{}; Generated generated{}; return generated.value == 7 ? 0 : 1; }
 )");
   if (!frontend.canGenerateCode())
@@ -1071,7 +1071,7 @@ int main() { return inspect(debug_input()) == 9 ? 0 : 1; }
 )gti"
                                          : ownedPack  ? R"gti(
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
-class Owner { public: int32_t value = 9; ~Owner() { debug_checkpoint(this.value); } };
+class Owner { public: int32_t value = 9; ~Owner() { debug_checkpoint(this.value); }  public: Owner() = default; };
 int32_t inspect<Args...>(int32_t input, Args... rest) {
   mut int32_t local = input & 31;
   debug_checkpoint(local);
@@ -1098,6 +1098,8 @@ public:
     debug_checkpoint(local);
     return local;
   }
+public:
+  Receiver() = default;
 };
 int main() { Receiver owner{}; return owner.inspect(debug_input()) == 4 ? 0 : 1; }
 )gti"
@@ -1366,9 +1368,10 @@ void ownerPointerMetadata(LlvmCodegenOptimization optimization) {
                 .lowerLibraryReachableOnly = true,
                 .trustedBodies = TrustedBodyAnalysis::Reachable,
                 .sourceDebugProfile = SourceDebugProfile::LexicalV1})
-          .analyze(root / "tests/fixtures/llvm_optimization/native_debug_owner.gti",
-                   std::nullopt, {root / "stdlib/prelude.gti"}, {},
-                   {root / "stdlib"});
+          .analyze(
+              root / "tests/fixtures/llvm_optimization/native_debug_owner.gti",
+              std::nullopt, {root / "stdlib/prelude.gti"}, {},
+              {root / "stdlib"});
   if (!frontend.canGenerateCode())
     throw std::runtime_error("owner debug source failed analysis");
   auto lowered = LoweredProgramBuilder().build(
@@ -1402,11 +1405,14 @@ void ownerPointerMetadata(LlvmCodegenOptimization optimization) {
       const auto *pointer =
           llvm::dyn_cast_or_null<llvm::DIDerivedType>(member->getBaseType());
       if (!pointer || pointer->getTag() != llvm::dwarf::DW_TAG_pointer_type ||
-          !pointer->getBaseType() || pointer->getBaseType()->getName() != "Node")
+          !pointer->getBaseType() ||
+          pointer->getBaseType()->getName() != "Node")
         continue;
-      if (pointer->getSizeInBits() != session.dataLayout().getPointerSizeInBits() ||
+      if (pointer->getSizeInBits() !=
+              session.dataLayout().getPointerSizeInBits() ||
           member->getSizeInBits() != pointer->getSizeInBits())
-        throw std::runtime_error("owner metadata changed its pointer storage size");
+        throw std::runtime_error(
+            "owner metadata changed its pointer storage size");
       ++typedOwners;
     }
   }
@@ -1426,7 +1432,8 @@ void ownerPointerMetadata(LlvmCodegenOptimization optimization) {
           throw std::runtime_error("owner debug changed ABI attributes");
       if (function.getAttributes().getAsString(
               llvm::AttributeList::FunctionIndex) !=
-          other->getAttributes().getAsString(llvm::AttributeList::FunctionIndex))
+          other->getAttributes().getAsString(
+              llvm::AttributeList::FunctionIndex))
         throw std::runtime_error("owner debug changed function attributes");
       auto otherBlock = other->begin();
       for (const auto &block : function) {
@@ -1595,8 +1602,10 @@ void generatedConstructorDebug(LlvmCodegenOptimization optimization) {
 class Solo {
 public:
   virtual int read() { return 3; }
+public:
+  Solo() = default;
 };
-class Stateful : public Solo {};
+class Stateful : public Solo { public: Stateful() = default; };
 int main() {
   Stateful stateful{};
   return stateful.read() == 3 ? 0 : 1;

@@ -19,6 +19,8 @@ public:
     output.append("ready");
     return;
   }
+public:
+  formatter() = default;
 };
 
 int main() {

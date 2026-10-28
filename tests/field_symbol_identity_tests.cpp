@@ -14,8 +14,10 @@ class Pair {
 public:
   mut int& b() mut { return this.second; }
   mut int& a() mut { return this.first; }
+public:
+  Pair() = default;
 };
-class Derived : public Pair { int third = 2; };
+class Derived : public Pair { int third = 2;  public: Derived() = default; };
 struct Box<T> { T payload; Box(T value) : payload(value) {} };
 int main() {
   mut Pair pair{};

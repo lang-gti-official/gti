@@ -43,6 +43,8 @@ public:
     int32_t ys = c.y * 7919;
     return h(xs) ^ h(ys);
   }
+public:
+  hash() = default;
 };
 
 int main() {

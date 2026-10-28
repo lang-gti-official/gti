@@ -45,6 +45,8 @@ struct Value {
   mut int value = 7;
   int read() { return value; }
   void change() mut { value++; }
+public:
+  Value() = default;
 };
 int main() {
   mut std::shared_ptr<Value> first = std::make_shared<Value>();
@@ -129,15 +131,15 @@ void checkRejections() {
            auto owner = std::make_shared<Borrowed>(value);
            return 0;
          })",
-      R"(class Base { public: virtual int read() { return 1; } };
-         class Other { public: int read() { return 2; } };
+      R"(class Base { public: virtual int read() { return 1; }  public: Base() = default; };
+         class Other { public: int read() { return 2; }  public: Other() = default; };
          int main() {
            auto owner = std::make_shared<Other>();
            auto base = std::upcast_shared<Base, Other>(std::move(owner));
            return base->read();
          })",
-      R"(class Base { public: int read() { return 1; } };
-         class Derived : public Base {};
+      R"(class Base { public: int read() { return 1; }  public: Base() = default; };
+         class Derived : public Base { public: Derived() = default; };
          int main() {
            auto owner = std::make_shared<Derived>();
            auto base = std::upcast_shared<Base, Derived>(std::move(owner));
@@ -147,36 +149,36 @@ void checkRejections() {
          class Derived : public Base {
          public:
            int read() override { return 3; }
-         };
+          public: Derived() = default; };
          int main() {
            auto owner = std::make_shared<Derived>();
            auto base = std::upcast_shared<Base, Derived>(owner);
            return base->read();
          })",
-      R"(class Base { public: virtual int read() { return 1; } };
+      R"(class Base { public: virtual int read() { return 1; }  public: Base() = default; };
          [[no_transfer]] class Derived : public Base {
          public: int read() override { return 2; }
-         };
+          public: Derived() = default; };
          int main() {
            auto owner = std::make_shared<Derived>();
            auto base = std::upcast_shared<Base, Derived>(std::move(owner));
            return base->read();
          })",
-      R"(class Base { public: virtual int read() { return 1; } };
+      R"(class Base { public: virtual int read() { return 1; }  public: Base() = default; };
          [[no_share]] class Derived : public Base {
          public: int read() override { return 2; }
-         };
+          public: Derived() = default; };
          int main() {
            auto owner = std::make_shared<Derived>();
            auto base = std::upcast_shared<Base, Derived>(std::move(owner));
            return base->read();
          })",
-      R"(class Base { public: virtual int read() { return 1; } };
+      R"(class Base { public: virtual int read() { return 1; }  public: Base() = default; };
          class Derived : public Base {
          public:
            ~Derived() {}
            int read() override { return 2; }
-         };
+          public: Derived() = default; };
          int main() {
            auto owner = std::make_shared<Derived>();
            auto base = std::upcast_shared<Base, Derived>(std::move(owner));
@@ -213,6 +215,8 @@ void checkUpcastContract() {
 class Concrete : public Sink {
 public:
   int read() override { return 7; }
+public:
+  Concrete() = default;
 };
 int main() {
   mut auto concrete = std::make_shared<Concrete>();
@@ -382,7 +386,7 @@ int main() {
 void checkConcurrencyCapabilities() {
   for (const std::string annotation : {"", "[[no_transfer]]", "[[no_share]]"}) {
     const auto frontend = analyze(annotation + R"(
-class Payload { int value = 7; };
+class Payload { int value = 7;  public: Payload() = default; };
 int main() {
   auto value = std::make_shared<Payload>();
   return int(value.use_count()) - 1;
@@ -412,6 +416,8 @@ void checkRecursiveOwnership() {
 struct Node {
   int value = 7;
   std::shared_ptr<Node> next{};
+public:
+  Node() = default;
 };
 int main() {
   auto root = std::make_shared<Node>();
@@ -430,7 +436,7 @@ int main() {
 
 void checkPassivePointee() {
   const auto frontend = analyze(R"(
-struct Passive { int value = 11; };
+struct Passive { int value = 11;  public: Passive() = default; };
 int main() {
   auto owner = std::make_shared<Passive>();
   return owner->value - 11;

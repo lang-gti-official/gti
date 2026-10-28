@@ -144,8 +144,10 @@ public:
     batch.count++;
     return std::move(batch);
   }
+public:
+  Batch() = default;
 };
-class NoDefault { public: NoDefault(int value) {} };
+class NoDefault { public: NoDefault(int value) {}  public: NoDefault() = default; };
 Batch<T> wrap<std::integral T>(T element) {
   Batch<T> result = {element};
   return result;
@@ -224,7 +226,7 @@ int main() {
     expect(!gti_test::emitCppText(generic).empty(),
            "generic collection plan emits through MIR");
   const std::string source = collection + R"(
-struct Config { Numbers numbers{}; };
+struct Config { Numbers numbers{};  public: Config() = default; };
 int main() {
   Numbers empty = {};
   Numbers numbers = {1, 2, 3};

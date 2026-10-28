@@ -1,5 +1,5 @@
 // INVALID: designated field that does not exist.
-struct Point { int32_t x = 0; int32_t y = 0; };
+struct Point { int32_t x = 0; int32_t y = 0;  public: Point() = default; };
 int main() {
   Point p = {.x = 1, .w = 2};
   return p.x - 1;

@@ -4,6 +4,8 @@ struct Point {
   constexpr Point(int initial_x, int initial_y) : x(initial_x), y(initial_y) {}
   constexpr int squared() { return this.x * this.x + this.y * this.y; }
   constexpr int scaled(int factor) { return this.squared() * factor; }
+public:
+  Point() = default;
 };
 
 struct Table {

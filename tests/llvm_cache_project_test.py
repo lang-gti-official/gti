@@ -211,8 +211,8 @@ def main():
         # Keep a real backend boundary in the script path: replacing a
         # polymorphic base view inside a derived object stays unsupported.
         replacement = (
-            "class Owner { public: virtual int read() { return 0; } };\n"
-            "class Derived : public Owner {};\n"
+            "class Owner { public: virtual int read() { return 0; }  public: Owner() = default; };\n"
+            "class Derived : public Owner { public: Derived() = default; };\n"
             "void assign_owner(mut Owner& value, Owner& other) { value = other; }\n"
             "unsafe int replace_owner() { mut Derived value{}; Derived other{}; "
             "assign_owner(value, other); return 0; }\n")
@@ -237,7 +237,7 @@ def main():
         assert output.read_bytes() == preserved
         run([output], project, expected=17, env=environment)
         (project / "src/main.gti").write_text(
-            "class Dynamic { public: virtual int value() { return 1; } }; "
+            "class Dynamic { public: virtual int value() { return 1; }  public: Dynamic() = default; }; "
             "int main() { Dynamic value{}; return value.value(); }\n",
             encoding="utf-8")
         invoke("build", "app", "--cxx", wrapper)

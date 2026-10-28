@@ -6,6 +6,8 @@ public:
 
 struct Frame {
   mut Plain values[2] = {Plain(11), Plain(13)};
+public:
+  Frame() = default;
 };
 
 int index() { return 0; }

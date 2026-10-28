@@ -87,32 +87,32 @@ public:
 
 /// `list<field<T, 0>, field<T, 1>, ...>` over the instance fields of `T`, in
 /// declaration order; a computed type like `field_type`.
-@compiler_type("meta_field_list") struct field_list<T> {};
+@compiler_type("meta_field_list") struct field_list<T> { field_list() = default; };
 
 /// `list<A, B, ...>` over the attribute types applied to instance field `I`
 /// of `T`, in application order; a computed type like `field_type`.
-@compiler_type("meta_field_attributes") struct field_attributes<T, uint64_t I> {};
+@compiler_type("meta_field_attributes") struct field_attributes<T, uint64_t I> { field_attributes() = default; };
 
 /// `list<A, B, ...>` over the attribute types applied to `T` itself.
-@compiler_type("meta_type_attributes") struct type_attributes<T> {};
+@compiler_type("meta_type_attributes") struct type_attributes<T> { type_attributes() = default; };
 
 /// `list<enumerator<E, 0>, enumerator<E, 1>, ...>` over the enumerators of
 /// `E`, in declaration order; a computed type like `field_list`.
-@compiler_type("meta_enumerator_list") struct enumerator_list<E> {};
+@compiler_type("meta_enumerator_list") struct enumerator_list<E> { enumerator_list() = default; };
 
 /// `list<payload_field<E, I, 0>, ...>` over the payload fields of enumerator
 /// `I` of `E`; empty for an integral enumerator.
-@compiler_type("meta_payload_list") struct payload_list<E, uint64_t I> {};
+@compiler_type("meta_payload_list") struct payload_list<E, uint64_t I> { payload_list() = default; };
 
 /// The exact type of payload field `P` of enumerator `I` of `E`.
 @compiler_type("meta_payload_type") struct payload_type<E, uint64_t I, uint64_t P> {};
 
 /// `list<type<B>, ...>` over the direct bases of `T`, in declaration order.
-@compiler_type("meta_base_list") struct base_list<T> {};
+@compiler_type("meta_base_list") struct base_list<T> { base_list() = default; };
 
 /// `list<type<Arg>, ...>` over the type arguments of a generic class or enum
 /// instance `T`; empty for a non-generic type.
-@compiler_type("meta_argument_list") struct argument_list<T> {};
+@compiler_type("meta_argument_list") struct argument_list<T> { argument_list() = default; };
 
 /// The first element type of a non-empty `list`, and the `list` of the rest:
 /// computed types that let generic code peel a sequence one element at a time.
@@ -121,20 +121,20 @@ public:
 
 /// `list<method<T, 0>, ...>` over the methods of `T` in declaration order:
 /// operators and static methods included, constructors and destructors not.
-@compiler_type("meta_method_list") struct method_list<T> {};
+@compiler_type("meta_method_list") struct method_list<T> { method_list() = default; };
 
 /// The subset of `method_list<T>` whose methods are overloaded operators.
-@compiler_type("meta_operator_list") struct operator_list<T> {};
+@compiler_type("meta_operator_list") struct operator_list<T> { operator_list() = default; };
 
 /// The resolved method set of T, including inherited overloads and excluding
 /// overridden base declarations. Elements retain their exact declaring owner
 /// and declaration index; names are ordered lexically, overloads by lookup.
 /// Metadata grants no access or invocation permission.
-@compiler_type("meta_lookup_method_list") struct lookup_method_list<T> {};
-@compiler_type("meta_lookup_operator_list") struct lookup_operator_list<T> {};
+@compiler_type("meta_lookup_method_list") struct lookup_method_list<T> { lookup_method_list() = default; };
+@compiler_type("meta_lookup_operator_list") struct lookup_operator_list<T> { lookup_operator_list() = default; };
 
 /// `list<parameter<T, I, 0>, ...>` over the parameters of method `I`.
-@compiler_type("meta_parameter_list") struct parameter_list<T, uint64_t I> {};
+@compiler_type("meta_parameter_list") struct parameter_list<T, uint64_t I> { parameter_list() = default; };
 
 /// The exact type of parameter `P` of method `I` of `T`.
 @compiler_type("meta_parameter_type") struct parameter_type<T, uint64_t I, uint64_t P> {};
@@ -149,11 +149,11 @@ public:
 @compiler_type("meta_callable_return_type") struct callable_return_type<F> {};
 
 /// `list<constructor<T, 0>, ...>` over the declared constructors of `T`.
-@compiler_type("meta_constructor_list") struct constructor_list<T> {};
+@compiler_type("meta_constructor_list") struct constructor_list<T> { constructor_list() = default; };
 
 /// `list<constructor_parameter<T, I, 0>, ...>` over constructor `I`'s
 /// parameters.
-@compiler_type("meta_constructor_parameter_list") struct constructor_parameter_list<T, uint64_t I> {};
+@compiler_type("meta_constructor_parameter_list") struct constructor_parameter_list<T, uint64_t I> { constructor_parameter_list() = default; };
 
 /// The exact type of parameter `P` of constructor `I` of `T`.
 @compiler_type("meta_constructor_parameter_type") struct constructor_parameter_type<T, uint64_t I, uint64_t P> {};
@@ -514,5 +514,17 @@ constexpr bool is_same<T, U>() { return gti_internal::meta_type_relation<T, U, 0
 /// Whether E is a payload-free enum with exactly U as its declared domain.
 constexpr bool is_enum_underlying<E, U>() { return gti_internal::meta_type_relation<E, U, 1>(); }
 
+}
+
+/// The first declared name matching an integral enum value, or "<unknown>".
+/// Returned text has static lifetime; payload enums are excluded.
+std::string_view enum_name<E>(E value)
+  requires std::meta::is_integral_enum<E>() {
+  constexpr for (auto enumerator : std::meta::enumerators_of<E>()) {
+    if (value == enumerator.value()) {
+      return enumerator.name();
+    }
+  }
+  return "<unknown>";
 }
 }

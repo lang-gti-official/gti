@@ -29,6 +29,8 @@ public:
     Registry::visits += 1;
     return Registry::visits;
   }
+public:
+  Registry() = default;
 };
 
 int local_visit() {

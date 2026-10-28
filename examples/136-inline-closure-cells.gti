@@ -12,6 +12,8 @@ public:
 
 struct cell_bytes {
   mut uint64_t words[3] = {0, 0, 0};
+public:
+  cell_bytes() = default;
 };
 
 // One erased inline cell. It knows nothing about closures: callers choose the

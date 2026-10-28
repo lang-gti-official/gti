@@ -41,6 +41,8 @@ public:
       std::construct_at(this.pointer, 2147483647);
     }
   }
+public:
+  Sequence() = default;
 };
 
 unsafe int prefix_frontier(Sequence& sequence) {

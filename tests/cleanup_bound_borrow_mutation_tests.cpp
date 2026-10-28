@@ -30,6 +30,8 @@ mut int observed = 0;
 struct Resource {
   mut int value = 7;
   void reset() mut { this.value = 9; }
+public:
+  Resource() = default;
 };
 class Guard {
   Resource& resource;

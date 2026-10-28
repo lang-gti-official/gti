@@ -69,10 +69,11 @@ const SharedOwnerLayout &Layouts::sharedOwner() {
 }
 
 MutexStorageLayout Layouts::mutexStorage(const SemanticType &type) {
-  const auto element = nativeMutexElement(session.program().mir(), type,
-                                          CompilerCapabilityTypeKind::MutexStorage);
+  const auto element = nativeMutexElement(
+      session.program().mir(), type, CompilerCapabilityTypeKind::MutexStorage);
   if (!element)
-    throw BackendUnsupportedError("LLVM mutex storage requires an exact trusted capability");
+    throw BackendUnsupportedError(
+        "LLVM mutex storage requires an exact trusted capability");
   return {*element, get(type)};
 }
 
@@ -278,11 +279,15 @@ TypeLayout Layouts::record(const SemanticType &type) {
     throw std::logic_error("recursive by-value LLVM record layout");
   const auto &instance = *entry.instance;
   if (instance.compilerCapability == CompilerCapabilityTypeKind::MutexStorage ||
-      instance.compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
-    const auto element = nativeMutexElement(session.program().mir(), type, instance.compilerCapability);
+      instance.compilerCapability ==
+          CompilerCapabilityTypeKind::MutexLockToken) {
+    const auto element = nativeMutexElement(session.program().mir(), type,
+                                            instance.compilerCapability);
     if (!element)
-      throw BackendUnsupportedError("LLVM mutex capability lost its exact private shape");
-    if (instance.compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
+      throw BackendUnsupportedError(
+          "LLVM mutex capability lost its exact private shape");
+    if (instance.compilerCapability ==
+        CompilerCapabilityTypeKind::MutexLockToken) {
       entry.layout = describe(pointer(), true, pointer());
       return *entry.layout;
     }
@@ -293,7 +298,8 @@ TypeLayout Layouts::record(const SemanticType &type) {
       const std::vector<llvm::Type *> fields{
           llvm::ArrayType::get(llvm::Type::getInt64Ty(session.context()), 8),
           get(*element).storage, llvm::Type::getInt8Ty(session.context())};
-      auto result = describe(llvm::StructType::get(session.context(), fields), true, pointer());
+      auto result = describe(llvm::StructType::get(session.context(), fields),
+                             true, pointer());
       entry.storage->setBody(fields);
       result.storage = entry.storage;
       entry.layout = result;

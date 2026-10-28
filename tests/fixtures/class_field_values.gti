@@ -2,6 +2,8 @@
 
 struct Value {
   mut int number = 7;
+public:
+  Value() = default;
 };
 
 Value make_value(int number) {
@@ -13,6 +15,8 @@ Value make_value(int number) {
 struct Pair {
   mut Value first = Value();
   mut Value second{};
+public:
+  Pair() = default;
 };
 
 class UserValue {
@@ -49,10 +53,14 @@ public:
 struct Item {
   int port = 80;
   Value value{};
+public:
+  Item() = default;
 };
 
 struct Box {
   mut Pair values{};
+public:
+  Box() = default;
 };
 
 int main() {

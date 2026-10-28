@@ -2,7 +2,7 @@
 #define TIER_HIGH
 #define ENABLE_EXTRA
 
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 constexpr int32_t high_tier_value = 100;
 constexpr int32_t low_tier_value = 2;

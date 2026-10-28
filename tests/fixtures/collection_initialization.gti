@@ -4,6 +4,8 @@
 struct Command {
   std::string name{};
   std::vector<Command> subcommands{};
+public:
+  Command() = default;
 };
 
 class Token {

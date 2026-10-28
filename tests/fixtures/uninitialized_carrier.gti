@@ -28,6 +28,8 @@ public:
       unsafe { std::destroy_at(this.bytes.data()); }
     }
   }
+public:
+  InlineAnchor() = default;
 };
 
 int main() {

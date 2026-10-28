@@ -3,6 +3,8 @@
 class Increment {
 public:
   int operator()(int value) && { return value + 1; }
+public:
+  Increment() = default;
 };
 
 std::function<int(int) &&> make_operation() {

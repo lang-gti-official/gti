@@ -37,6 +37,8 @@ public:
   bool operator()(int32_t& value) {
     return value > 0;
   }
+public:
+  positive() = default;
 };
 
 std::size_t measured_size<Range>(Range& range)

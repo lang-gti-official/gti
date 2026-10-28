@@ -4,6 +4,8 @@
 class marker {
 public:
   ~marker() { std::println("cleanup"); }
+public:
+  marker() = default;
 };
 
 int main() {

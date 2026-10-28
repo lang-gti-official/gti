@@ -2,8 +2,8 @@
 #include <std/vector>
 
 mut int stage = 0;
-struct Leaf { mut int value = 7; };
-struct Handle { mut Leaf leaf{}; };
+struct Leaf { mut int value = 7;  public: Leaf() = default; };
+struct Handle { mut Leaf leaf{};  public: Handle() = default; };
 class Path {
   std::string text;
 public:

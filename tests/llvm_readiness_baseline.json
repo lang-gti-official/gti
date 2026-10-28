@@ -3,7 +3,7 @@
   "provenance": {
     "frozen_commit": "3cc3b3dc1b39b9cf55f04d1ddae7d533bde2b86d",
     "version": "0.473.0",
-    "reconciled_through": "5eb0894b36c6540668577063ded21c44ff6b336e"
+    "reconciled_through": "6f011b9213e25082fbe00b3d04166755ab35ddb0"
   },
   "providers": [
     {
@@ -11,20 +11,20 @@
       "kind": "source-census",
       "manifest": "tests/mir_census_baseline.json",
       "member_count": 173,
-      "inventory_sha256": "307a514c59e7a8baf6f8c8d0cfa50cc49101fd8abd814697c57a3e10e48a3ec6"
+      "inventory_sha256": "1ad58f1b68d50706789ecf39677090a8793b3a42e8e4b4faf9c90484f87deef1"
     },
     {
       "id": "registered-llvm-evidence",
       "kind": "registered-evidence-manifests",
-      "member_count": 440,
-      "inventory_sha256": "c6da1219842e2d3c339b13a83ed7b10747b4ded6f0fc0b4483d8d41250899a7d"
+      "member_count": 444,
+      "inventory_sha256": "5e5e7dd1397e00113225436d03b30f97f68af5eff6f72eab2edf4725fe86a4fa"
     },
     {
       "id": "stdlib-surface",
       "kind": "source-backed-surface-manifest",
       "manifest": "tests/stdlib_surface_manifest.json",
-      "member_count": 188,
-      "inventory_sha256": "9c697c4f2ecb924b65bb23fc48d0f02f95d18a8242a942bd4ba07b505a9f760e"
+      "member_count": 191,
+      "inventory_sha256": "856b2c9f751c38c53a002fcfabc943cde121337a086a87f6e0dd3df755cc8823"
     }
   ],
   "family_obligations": [

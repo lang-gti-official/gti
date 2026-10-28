@@ -25,6 +25,8 @@ mut int observed = 0;
 struct Resource {
   mut int value = 7;
   void reset() mut { this.value = 9; }
+public:
+  Resource() = default;
 };
 class Guard {
   Resource& resource;
@@ -450,6 +452,8 @@ int main() { mut Resource owner{}; Guard guard{owner}; owner.reset(); return 0; 
            R"gti(
 struct Error {
   ~Error() { observed += 1; }
+public:
+  Error() = default;
 };
 expected<Resource&, Error> lookup(Resource& owner) { return owner; }
 int main() {
@@ -526,8 +530,8 @@ int main() {
         const auto *slot =
             parent != nullptr ? lambda.body.findPlace(parent->source) : nullptr;
         exact = exact ||
-                (loan.kind == lang::MirLoanKind::Stored && loan.lifecycleBound &&
-                 parent != nullptr && parent->entry &&
+                (loan.kind == lang::MirLoanKind::Stored &&
+                 loan.lifecycleBound && parent != nullptr && parent->entry &&
                  parent->kind == lang::MirLoanKind::Parameter && source &&
                  slot && source->root == lang::MirPlaceRootKind::Symbol &&
                  source->capture != 0 && source->capture == slot->capture &&
@@ -537,8 +541,9 @@ int main() {
       }
     expect(exact, "captured carrier keeps the capture entry loan as parent");
   }
-  positive("cleanup-bound carrier from an accessor receiver of a mutable formal",
-           station + R"gti(
+  positive(
+      "cleanup-bound carrier from an accessor receiver of a mutable formal",
+      station + R"gti(
 int run(mut Depot& depot) {
   auto guard = depot.get().watch();
   return 0;

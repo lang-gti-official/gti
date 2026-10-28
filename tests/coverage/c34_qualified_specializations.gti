@@ -6,11 +6,15 @@ class Widget {
 public:
   Widget(int32_t code) : code(code) {}
   int32_t id() { return this.code; }
+public:
+  Widget() = default;
 };
 
 class std::hash<Widget> {
 public:
   std::size_t operator()(Widget& value) { return std::size_t(value.id() * 7); }
+public:
+  hash() = default;
 };
 
 int main() {

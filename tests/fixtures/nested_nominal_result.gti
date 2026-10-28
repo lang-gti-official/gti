@@ -21,11 +21,15 @@ public:
     std::println(100 + packet.get());
     std::println(after);
   }
+public:
+  App() = default;
 };
 
 class Consumer {
 public:
   Consumer(Packet packet) { std::println(200 + packet.get()); }
+public:
+  Consumer() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

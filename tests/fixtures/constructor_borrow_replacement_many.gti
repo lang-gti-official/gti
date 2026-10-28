@@ -12,6 +12,8 @@ struct Pair {
 
 struct Holder {
   mut Pair value{"old", "old"};
+public:
+  Holder() = default;
 };
 
 int main(int argc, std::vector<std::string> args) {

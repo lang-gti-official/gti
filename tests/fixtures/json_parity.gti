@@ -18,6 +18,8 @@ class temperature {
 public:
   temperature(double degrees) : degrees(degrees) {}
   double value() { return this.degrees; }
+public:
+  temperature() = default;
 };
 
 class std::json::codec<temperature> {
@@ -37,6 +39,8 @@ public:
     double degrees = ?std::json::decode<double>(text);
     return temperature(degrees);
   }
+public:
+  codec() = default;
 };
 
 struct reading {
@@ -49,16 +53,22 @@ struct reading {
   int8_t small = 0;
   uint8_t byte = 0;
   int64_t wide = 0;
+public:
+  reading() = default;
 };
 
 struct point {
   int32_t x = 0;
   int32_t y = 0;
+public:
+  point() = default;
 };
 
 struct nested {
   std::vector<point> points = std::vector<point>();
   std::string label = std::string("");
+public:
+  nested() = default;
 };
 
 bool fails<T>(std::string_view text, ej::errc code) {

@@ -26,12 +26,13 @@ mut int32_t drops = 0;
 mut int64_t trace = 0;
 mut int32_t generated_drops = 0;
 
-struct Implicit {};
+struct BodyDefault { BodyDefault() {} };
 struct Defaulted { Defaulted() = default; };
 struct GeneratedCleanup {
+  GeneratedCleanup() = default;
   ~GeneratedCleanup() { generated_drops += 1; }
 };
-bool inspect_default(Implicit& value) { return true; }
+bool inspect_default(BodyDefault& value) { return true; }
 bool inspect_default(Defaulted& value) { return true; }
 bool inspect_default(GeneratedCleanup& value) { return true; }
 
@@ -165,7 +166,7 @@ int main() {
     return 9;
   }
 
-  if (!inspect_default(Implicit()) || !inspect_default(Defaulted()) ||
+  if (!inspect_default(BodyDefault()) || !inspect_default(Defaulted()) ||
       !inspect_default(GeneratedCleanup())) {
     return 10;
   }

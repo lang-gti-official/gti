@@ -50,9 +50,9 @@ public:
   Read(int& target) : target(target) {}
   void operator()() {}
 };
-struct Data { mut int left = 0; mut int right = 0; };
-struct Record { int number = 7; };
-struct RawRecord { int* address = nullptr; };
+struct Data { Data() = default; mut int left = 0; mut int right = 0; };
+struct Record { Record() = default; int number = 7; };
+struct RawRecord { RawRecord() = default; int* address = nullptr; };
 class Pair {
   int& input;
   mut int& output;
@@ -66,8 +66,8 @@ public:
   Nested(int& input, mut int& output) : task(Pair(input, output)) {}
   void operator()() mut { this.task(); }
 };
-struct Once { void operator()() && {} };
-[[no_transfer, no_share]] struct Affine { int value = 0; };
+struct Once { Once() = default; void operator()() && {} };
+[[no_transfer, no_share]] struct Affine { Affine() = default; int value = 0; };
 class AffineRead {
   Affine& value;
 public:
@@ -632,9 +632,9 @@ public:
   WriteJob(mut T& value) : value(value) {}
   void operator()() mut {}
 };
-[[no_share]] struct ExclusiveOnly { mut int value = 0; };
-[[no_transfer]] struct SharedOnly { int value = 0; };
-[[no_transfer, no_share]] struct Affine { int value = 0; };
+[[no_share]] struct ExclusiveOnly { mut int value = 0;  public: ExclusiveOnly() = default; };
+[[no_transfer]] struct SharedOnly { int value = 0;  public: SharedOnly() = default; };
+[[no_transfer, no_share]] struct Affine { Affine() = default; int value = 0; };
 [[no_transfer]] class LocalJob {
   int& value;
 public:
@@ -655,13 +655,13 @@ public:
   void operator()() {}
   ~AuditedRead() {}
 };
-struct OwnedJob { void operator()() {} };
-struct OnceJob { void operator()() && {} };
+struct OwnedJob { void operator()() {}  public: OwnedJob() = default; };
+struct OnceJob { void operator()() && {}  public: OnceJob() = default; };
 unsafe void unsafe_task() {}
 void safe_task() {}
-struct WrongResult { int operator()() { return 0; } };
-struct NeedsArgument { void operator()(int value) {} };
-struct RawJob { mut int* address = nullptr; void operator()() {} };
+struct WrongResult { int operator()() { return 0; }  public: WrongResult() = default; };
+struct NeedsArgument { void operator()(int value) {}  public: NeedsArgument() = default; };
+struct RawJob { mut int* address = nullptr; void operator()() {}  public: RawJob() = default; };
 int main() { return 0; }
 )";
   lang::FrontendOptions options;

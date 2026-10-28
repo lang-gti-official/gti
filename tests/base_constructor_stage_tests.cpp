@@ -8,12 +8,14 @@ void checkSelectedGeneratedBaseSchedule() {
 class Base {
 public:
   int state = 7;
+public:
+  Base() = default;
 };
 class ExplicitDerived : public Base {
 public:
   ExplicitDerived() : Base() {}
 };
-class GeneratedDerived : public Base { int tag = 9; };
+class GeneratedDerived : public Base { int tag = 9;  public: GeneratedDerived() = default; };
 int main() {
   ExplicitDerived explicit_value{};
   GeneratedDerived generated_value{};
@@ -225,7 +227,7 @@ int main() { Derived value{3}; return 0; }
       analyzeWithStandardLibrary("effectful-base-argument.gti", R"(
 mut int observed = 0;
 int observe() { observed = 7; return observed; }
-class Base { public: Base(int value) {} };
+class Base { public: Base(int value) {}  public: Base() = default; };
 class Derived : public Base {
   int field;
 public:
@@ -243,7 +245,7 @@ void checkOwningEnumBaseArgumentAuthority() {
       analyzeWithStandardLibrary("owning-enum-base-traits.gti", R"(
 class Resource { public: Resource() {} ~Resource() {} };
 enum class Parcel { empty, item(Resource value) };
-class Base { public: Base(int value) {} };
+class Base { public: Base(int value) {}  public: Base() = default; };
 class Derived : public Base { public: Derived() : Base(7) {} };
 int main() { Derived value{}; Parcel parcel = Parcel::empty; return 0; }
 )");
@@ -589,9 +591,9 @@ int main() {
   const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
   expect(!lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
          "the C++ backend does not represent staged owned base arguments");
-  const auto definitionOf = [](const lang::MirBody &body,
-                               const lang::MirOperand &operand)
-      -> const lang::MirInstruction * {
+  const auto definitionOf =
+      [](const lang::MirBody &body,
+         const lang::MirOperand &operand) -> const lang::MirInstruction * {
     const auto *value = operand.kind == lang::MirOperandKind::Value
                             ? body.findValue(operand.value)
                             : nullptr;
@@ -616,11 +618,10 @@ int main() {
         for (std::size_t index = 0; index < 2; ++index) {
           const auto *input =
               definitionOf(constructor.body, instruction.operands[index]);
-          const auto *prepared =
-              input && input->preparedParameterDrop
-                  ? constructor.body.findDropObligation(
-                        *input->preparedParameterDrop)
-                  : nullptr;
+          const auto *prepared = input && input->preparedParameterDrop
+                                     ? constructor.body.findDropObligation(
+                                           *input->preparedParameterDrop)
+                                     : nullptr;
           expect(input != nullptr &&
                      input->kind == lang::MirInstructionKind::CallInput &&
                      input->callSite == 0 &&
@@ -629,35 +630,35 @@ int main() {
                      input->callInputIndex == index &&
                      input->callInputKind == lang::HirCallInputKind::MoveValue,
                  "each owned base argument is an exact prepared move input");
-          expect(prepared != nullptr &&
-                     prepared->kind ==
-                         lang::MirDropObligationKind::PreparedParameter &&
-                     std::count_if(
-                         instruction.lifecycle.begin(),
-                         instruction.lifecycle.end(),
-                         [&](const lang::MirLifecycleEvent &event) {
-                           return event.kind ==
-                                      lang::MirLifecycleEventKind::
-                                          TransferOut &&
-                                  event.source == prepared->id;
-                         }) == 1,
-                 "the base stage hands each prepared parameter over once");
+          expect(
+              prepared != nullptr &&
+                  prepared->kind ==
+                      lang::MirDropObligationKind::PreparedParameter &&
+                  std::count_if(
+                      instruction.lifecycle.begin(),
+                      instruction.lifecycle.end(),
+                      [&](const lang::MirLifecycleEvent &event) {
+                        return event.kind ==
+                                   lang::MirLifecycleEventKind::TransferOut &&
+                               event.source == prepared->id;
+                      }) == 1,
+              "the base stage hands each prepared parameter over once");
         }
-        expect(definitionOf(constructor.body, instruction.operands[2]) ==
-                       nullptr ||
-                   definitionOf(constructor.body, instruction.operands[2])
-                           ->kind != lang::MirInstructionKind::CallInput,
-               "the scalar base argument is passed directly");
+        expect(
+            definitionOf(constructor.body, instruction.operands[2]) ==
+                    nullptr ||
+                definitionOf(constructor.body, instruction.operands[2])->kind !=
+                    lang::MirInstructionKind::CallInput,
+            "the scalar base argument is passed directly");
         for (int mutation = 0; mutation < 7; ++mutation) {
           auto malformed = frontend.mir;
           auto *changed = const_cast<lang::MirConstructorInstance *>(
               malformed.findConstructorInstance(constructor.id));
           auto &instructions = changed->body.blocks[block.id - 1].instructions;
-          auto &stage = *std::find_if(
-              instructions.begin(), instructions.end(),
-              [&](const auto &candidate) {
-                return candidate.id == instruction.id;
-              });
+          auto &stage = *std::find_if(instructions.begin(), instructions.end(),
+                                      [&](const auto &candidate) {
+                                        return candidate.id == instruction.id;
+                                      });
           const auto *original =
               definitionOf(constructor.body, instruction.operands[0]);
           lang::MirInstruction *input = nullptr;
@@ -747,9 +748,9 @@ int main() {
   const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
   expect(!lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
          "the C++ backend does not represent class reference base arguments");
-  const auto definitionOf = [](const lang::MirBody &body,
-                               const lang::MirOperand &operand)
-      -> const lang::MirInstruction * {
+  const auto definitionOf =
+      [](const lang::MirBody &body,
+         const lang::MirOperand &operand) -> const lang::MirInstruction * {
     const auto *value = operand.kind == lang::MirOperandKind::Value
                             ? body.findValue(operand.value)
                             : nullptr;
@@ -786,8 +787,8 @@ int main() {
                  "each class reference is an exact forwarded borrow input");
           ++index;
         }
-        const auto *target =
-            frontend.mir.findConstructorInstance(*instruction.constructorTarget);
+        const auto *target = frontend.mir.findConstructorInstance(
+            *instruction.constructorTarget);
         if (target == nullptr || target->parameterTypes.size() != 2) {
           expect(false, "the staged base keeps its selected constructor");
           continue;
@@ -798,11 +799,10 @@ int main() {
           auto *changed = const_cast<lang::MirConstructorInstance *>(
               malformed.findConstructorInstance(constructor.id));
           auto &instructions = changed->body.blocks[block.id - 1].instructions;
-          auto &stage = *std::find_if(
-              instructions.begin(), instructions.end(),
-              [&](const auto &candidate) {
-                return candidate.id == instruction.id;
-              });
+          auto &stage = *std::find_if(instructions.begin(), instructions.end(),
+                                      [&](const auto &candidate) {
+                                        return candidate.id == instruction.id;
+                                      });
           if (mutation == 0) {
             // The catalog records the referent as holding borrowed state, so
             // the forwarded formal no longer qualifies for the family.
@@ -988,7 +988,7 @@ int main() {
   }
   const auto prematureField =
       analyzeWithStandardLibrary("premature-derived-field.gti", R"(
-class Base { public: Base(int value) {} };
+class Base { public: Base(int value) {}  public: Base() = default; };
 class Derived : public Base {
   int field;
 public:

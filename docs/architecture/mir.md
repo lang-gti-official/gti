@@ -810,10 +810,12 @@ argument place identical to the child's recorded origin. A different field,
 carrier shell, read-only authority for a mutable child, or merely overlapping
 place cannot satisfy the proof. This rule applies equally to ordinary methods
 and nested scoped jobs; it does not grant the parent any cleanup ownership.
-A call result borrowed from a receiver behind a stored reference field of a
-formal, a local carrier or a local reference alias (`holder.box.slot()`,
-`teller.account.balance.lock()`) records that exact selected receiver place as
-its source, as a `this` field receiver does. The carrier's own loan source
+A call result borrowed from a receiver behind a stored reference field records
+that exact selected receiver place as its source, as a `this` field receiver
+does. The field may belong to a formal, a local carrier, a local reference
+alias, or a holder that another call returned by reference
+(`holder.box.slot()`, `teller.account.balance.lock()`,
+`outer.inner().box.slot()`). The carrier's own loan source
 would name the object that holds the reference, or another of its referents,
 instead. A formal's alias loan parents such a result only while its access
 reaches the receiver through every stored reference on the way; behind a
@@ -2343,12 +2345,7 @@ dependency the caller's value holds in that field:
   relay is a use of that one field, which the field contract tracks, and its
   return publishes exactly the declared source field. Program verification
   admits a call-result loan that names a text field of the selected argument
-  source for a by-value text result. A by-value formal is an immutable local
-  copy that its cleanup ends at the return: the relay's own loan names the
-  copy's field and stays in the body, the return publishes no loan, as a
-  direct return of the field does, and verification admits that return when
-  the call's argument is the exact load of the declared source field
-  (`relayedFormalField`).
+  source for a by-value text result.
 - At a call, `TextContracts` analyzes the callee under its field contracts and
   maps each returned field source onto the argument or receiver:
   `heldFieldSources` gives that formal's field here, unknown text for a

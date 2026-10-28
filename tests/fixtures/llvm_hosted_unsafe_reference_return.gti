@@ -11,6 +11,8 @@ mut int released = 0;
 
 struct Cleanup {
   ~Cleanup() { released += 1; }
+public:
+  Cleanup() = default;
 };
 
 int main() {

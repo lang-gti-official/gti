@@ -39,6 +39,8 @@ class Stamp {
 public:
   mut int32_t number = 0;
   Mode mode = Mode::Fast;
+public:
+  Stamp() = default;
 };
 
 class Holder {

@@ -1,6 +1,6 @@
 // TCP socket surface: construction, error enum coverage and closed-state paths.
 #include <std/tcp>
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 int32_t code_for(std::tcp::errc e) {
   switch (e) {

@@ -10,7 +10,7 @@ public:
 };
 
 // Copyable, non-borrowing elements are admitted structurally, not only scalars.
-struct Item { int32_t value = 7; };
+struct Item { int32_t value = 7;  public: Item() = default; };
 struct ItemArrayHolder {
   Item values[2];
   ItemArrayHolder(Item initial[2]) : values(initial) {}

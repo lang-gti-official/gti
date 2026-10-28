@@ -12,7 +12,7 @@ struct NoDefault {
 };
 
 union Payload { mut int32_t integer; mut float real; };
-struct Envelope { Payload payload{}; };
+struct Envelope { Payload payload{};  public: Envelope() = default; };
 
 [[c_abi]] struct NativeAddress { mut int32_t stamp; };
 extern "C" { NativeAddress empty_native(); }

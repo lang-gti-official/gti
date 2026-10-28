@@ -6,11 +6,15 @@ struct Command {
     std::string name{};
     std::vector<Command> subcommands{};
   }
+public:
+  Command() = default;
 };
 
 struct Box<std::default_initializable T> {
   T value = T();
   int count = 2;
+public:
+  Box() = default;
 };
 
 int mark(int value) {
@@ -28,6 +32,8 @@ public:
 struct Values {
   int first = 1;
   int second = 2;
+public:
+  Values() = default;
 };
 
 struct Owned {

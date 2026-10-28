@@ -4,9 +4,13 @@
 struct Details {
   mut std::string title = std::string("initial");
   mut std::unique_ptr<int> number = nullptr;
+public:
+  Details() = default;
 };
 struct Data {
   mut Details details{};
+public:
+  Data() = default;
 };
 interface Window {
   bool matches(std::string_view title, int number);
@@ -27,6 +31,8 @@ public:
   bool matches(std::string_view title, int number) override {
     return data.details.title.view() == title && *data.details.number == number;
   }
+public:
+  DefaultWindow() = default;
 };
 int main() {
   mut auto window = std::upcast_unique<Window, DefaultWindow>(

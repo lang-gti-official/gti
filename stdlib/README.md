@@ -313,6 +313,13 @@ whitespace, separators, prefixes, or malformed padding. Both codecs preserve
 embedded zeroes and arbitrary byte values. They are representations, not
 encryption, authentication, or Unicode transforms.
 
+The same unit provides `std::encoding::utf8::{decode,validate,append,encode}`
+and a borrowed `decoder` cursor for strict Unicode scalar traversal. Errors
+carry byte offsets; malformed sequences are not replaced. Validation and
+traversal allocate nothing. Strings remain byte-oriented; normalization,
+UTF-16 and grapheme segmentation are not part of this first phase. See
+[text encoding](../docs/language/encoding.md).
+
 `std::vector<T>` is implemented in `std/vector.gti` as an ordinary source-defined
 class over a source-defined prefix owner and imported with
 `#include <std/vector>`. `T` must satisfy `std::vector_element<T>`: storage-eligible

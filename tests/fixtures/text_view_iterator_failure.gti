@@ -25,7 +25,7 @@ public:
     if (this.fails) { std::panic("value range guard cleanup failure"); }
   }
 };
-class FailValueSentinel {};
+class FailValueSentinel { public: FailValueSentinel() = default; };
 class FailValueCursor {
   bool dereference_fails;
   bool increment_fails;

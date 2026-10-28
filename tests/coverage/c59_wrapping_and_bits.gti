@@ -1,6 +1,6 @@
 // Wrapping arithmetic, bit operations and shifts across widths.
 #include <std/numeric>
-class Anchor { public: int32_t id() { return 0; } };
+class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 int main() {
   uint8_t small = std::wrapping_add(uint8_t(250), uint8_t(10));

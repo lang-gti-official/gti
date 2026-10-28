@@ -16,6 +16,8 @@ struct Guard {
 
 [[unsafe_transfer]] struct TaskSentinel {
   ~TaskSentinel() { std::println(99); }
+public:
+  TaskSentinel() = default;
 };
 
 [[unsafe_transfer]] struct TaskCleanupFailure {

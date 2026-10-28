@@ -23,6 +23,8 @@ public:
 struct sized {
   mut int32_t width = 1;
   mut int32_t height = 2;
+public:
+  sized() = default;
 };
 
 expected<point, int32_t> make_point(int32_t x) {

@@ -96,28 +96,34 @@ void checkNativeControls(
   std::cout << "native mutation controls: " << checked << '\n';
 }
 
-void checkDynamicControls(lang::native_llvm::Session &session,
-                          const lang::LlvmAdmissionPlan &admission,
-                          const std::vector<lang::HirFunctionInstanceId> &roots) {
+void checkDynamicControls(
+    lang::native_llvm::Session &session,
+    const lang::LlvmAdmissionPlan &admission,
+    const std::vector<lang::HirFunctionInstanceId> &roots) {
   using namespace lang;
   using namespace lang::native_llvm;
   unsigned checked = 0;
-  for (const auto &selection : {std::vector<HirFunctionInstanceId>{},
-                              std::vector<HirFunctionInstanceId>{roots.front(), roots.front()},
-                              std::vector<HirFunctionInstanceId>{0}}) {
+  for (const auto &selection :
+       {std::vector<HirFunctionInstanceId>{},
+        std::vector<HirFunctionInstanceId>{roots.front(), roots.front()},
+        std::vector<HirFunctionInstanceId>{0}}) {
     bool rejected = false;
     try {
-      validateC04Evaluation(session, admission, selection, C04EvaluationProfile::DynamicCalls);
+      validateC04Evaluation(session, admission, selection,
+                            C04EvaluationProfile::DynamicCalls);
     } catch (const BackendUnsupportedError &) {
       rejected = true;
     }
     if (!rejected)
-      throw std::runtime_error("C04 dynamic root omission/forgery escaped admission");
+      throw std::runtime_error(
+          "C04 dynamic root omission/forgery escaped admission");
     ++checked;
   }
-  const auto bodies = validateC04Evaluation(session, admission, roots, C04EvaluationProfile::DynamicCalls);
+  const auto bodies = validateC04Evaluation(session, admission, roots,
+                                            C04EvaluationProfile::DynamicCalls);
   for (const auto address : bodies)
-    for (const auto &block : findMirBody(session.program().mir(), address)->blocks)
+    for (const auto &block :
+         findMirBody(session.program().mir(), address)->blocks)
       for (const auto &stage : block.instructions) {
         if (stage.intrinsic != IntrinsicKind::FunctionPointerFromItem &&
             stage.intrinsic != IntrinsicKind::FunctionPointerInvoke)
@@ -128,7 +134,8 @@ void checkDynamicControls(lang::native_llvm::Session &session,
           mutate(changed);
           bool rejected = false;
           try {
-            validateC04Evaluation(session, admission, roots, C04EvaluationProfile::DynamicCalls);
+            validateC04Evaluation(session, admission, roots,
+                                  C04EvaluationProfile::DynamicCalls);
           } catch (const BackendUnsupportedError &) {
             rejected = true;
           }
@@ -142,8 +149,11 @@ void checkDynamicControls(lang::native_llvm::Session &session,
         rejects([&](auto &value) { value.functionTarget = roots.front(); });
         rejects([](auto &value) { value.intrinsic = IntrinsicKind::None; });
         if (stage.intrinsic == IntrinsicKind::FunctionPointerFromItem) {
-          rejects([](auto &value) { value.functionPointerFunctionTarget.reset(); });
-          rejects([&](auto &value) { value.functionPointerFunctionTarget = roots.front(); });
+          rejects(
+              [](auto &value) { value.functionPointerFunctionTarget.reset(); });
+          rejects([&](auto &value) {
+            value.functionPointerFunctionTarget = roots.front();
+          });
         } else {
           rejects([](auto &value) { value.info.type = SemanticType::Bool; });
         }
@@ -153,28 +163,34 @@ void checkDynamicControls(lang::native_llvm::Session &session,
   std::cout << "dynamic mutation controls: " << checked << '\n';
 }
 
-void checkWorkerControls(lang::native_llvm::Session &session,
-                         const lang::LlvmAdmissionPlan &admission,
-                         const std::vector<lang::HirFunctionInstanceId> &roots) {
+void checkWorkerControls(
+    lang::native_llvm::Session &session,
+    const lang::LlvmAdmissionPlan &admission,
+    const std::vector<lang::HirFunctionInstanceId> &roots) {
   using namespace lang;
   using namespace lang::native_llvm;
   unsigned checked = 0;
   const auto validate = [&] {
-    return validateC04Evaluation(session, admission, roots, C04EvaluationProfile::ScopedWorkers);
+    return validateC04Evaluation(session, admission, roots,
+                                 C04EvaluationProfile::ScopedWorkers);
   };
   const auto rejects = [&](auto &changed, const auto &mutation) {
     const auto saved = changed;
     mutation(changed);
     bool rejected = false;
-    try { (void)validate(); }
-    catch (const BackendUnsupportedError &) { rejected = true; }
+    try {
+      (void)validate();
+    } catch (const BackendUnsupportedError &) {
+      rejected = true;
+    }
     changed = saved;
     if (!rejected)
       throw std::runtime_error("C04 worker mutation escaped admission");
     ++checked;
   };
   for (auto address : validate())
-    for (const auto &block : findMirBody(session.program().mir(), address)->blocks)
+    for (const auto &block :
+         findMirBody(session.program().mir(), address)->blocks)
       for (const auto &stage : block.instructions) {
         if (stage.intrinsic != IntrinsicKind::ThreadScope)
           continue;
@@ -182,13 +198,20 @@ void checkWorkerControls(lang::native_llvm::Session &session,
         rejects(instruction, [](auto &v) { v.scopedThreadTasks.clear(); });
         rejects(instruction, [](auto &v) { v.operands.clear(); });
         rejects(instruction, [](auto &v) { v.parameterTypes.clear(); });
-        rejects(instruction, [](auto &v) { v.synchronization.kind = SynchronizationOperationKind::None; });
-        rejects(instruction, [](auto &v) { v.definedFailure.propagation = FailurePropagationKind::None; });
+        rejects(instruction, [](auto &v) {
+          v.synchronization.kind = SynchronizationOperationKind::None;
+        });
+        rejects(instruction, [](auto &v) {
+          v.definedFailure.propagation = FailurePropagationKind::None;
+        });
         rejects(instruction, [](auto &v) { v.info.type = SemanticType::Bool; });
-        rejects(instruction, [&](auto &v) { v.functionTarget = roots.front(); });
-        rejects(instruction, [](auto &v) { v.scopedThreadTasks[0].dependency = 0; });
+        rejects(instruction,
+                [&](auto &v) { v.functionTarget = roots.front(); });
+        rejects(instruction,
+                [](auto &v) { v.scopedThreadTasks[0].dependency = 0; });
         for (const auto &task : stage.scopedThreadTasks) {
-          auto &adapter = const_cast<MirThreadTaskAdapter &>(*session.program().mir().findThreadTaskAdapter(task.adapter));
+          auto &adapter = const_cast<MirThreadTaskAdapter &>(
+              *session.program().mir().findThreadTaskAdapter(task.adapter));
           rejects(adapter, [](auto &v) { v.scoped = false; });
           rejects(adapter, [](auto &v) { v.sourceBody.owner = 0; });
           rejects(adapter, [](auto &v) { v.spawnInstruction = 0; });
@@ -223,18 +246,20 @@ int main(int argc, char **argv) {
     if (profileName != "scalar-cleanup" && profileName != "native-boundary" &&
         profileName != "dynamic-calls" && profileName != "scoped-workers")
       return 64;
-    const auto profile = profileName == "native-boundary"
-                             ? C04EvaluationProfile::NativeBoundary
-                             : profileName == "dynamic-calls"
-                                 ? C04EvaluationProfile::DynamicCalls
-                                 : profileName == "scoped-workers"
-                                     ? C04EvaluationProfile::ScopedWorkers
-                                     : C04EvaluationProfile::ScalarCleanup;
-    const bool nativeControls = argc == 7 && std::string_view(argv[6]) == "--native-contracts";
-    const bool dynamicControls = argc == 7 && std::string_view(argv[6]) == "--dynamic-contracts";
-    const bool workerControls = argc == 7 && std::string_view(argv[6]) == "--worker-contracts";
+    const auto profile =
+        profileName == "native-boundary"  ? C04EvaluationProfile::NativeBoundary
+        : profileName == "dynamic-calls"  ? C04EvaluationProfile::DynamicCalls
+        : profileName == "scoped-workers" ? C04EvaluationProfile::ScopedWorkers
+                                          : C04EvaluationProfile::ScalarCleanup;
+    const bool nativeControls =
+        argc == 7 && std::string_view(argv[6]) == "--native-contracts";
+    const bool dynamicControls =
+        argc == 7 && std::string_view(argv[6]) == "--dynamic-contracts";
+    const bool workerControls =
+        argc == 7 && std::string_view(argv[6]) == "--worker-contracts";
     const bool workers = profile == C04EvaluationProfile::ScopedWorkers;
-    const bool standardLibrary = profile == C04EvaluationProfile::DynamicCalls || workers ||
+    const bool standardLibrary =
+        profile == C04EvaluationProfile::DynamicCalls || workers ||
         (argc == 7 && std::string_view(argv[6]) == "--standard-library");
     if (argc == 7 && !nativeControls && !dynamicControls && !workerControls &&
         std::string_view(argv[6]) != "--standard-library")
@@ -254,15 +279,18 @@ int main(int argc, char **argv) {
     if (!stream)
       throw std::runtime_error("cannot read C04 source fixture");
     const std::string text(std::istreambuf_iterator<char>{stream}, {});
-    const auto library = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+    const auto library =
+        std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
     FrontendOptions frontendOptions;
     if (workers) {
       frontendOptions.target.executionProfile = ExecutionProfile::Concurrent;
       frontendOptions.target.runtimeCapabilities.threads = true;
     }
-    const auto frontend = standardLibrary
-        ? Frontend(frontendOptions).analyze(source.filename().string(), text, {library / "prelude.gti"}, {}, {library})
-        : Frontend().analyze(source.filename().string(), text);
+    const auto frontend =
+        standardLibrary ? Frontend(frontendOptions)
+                              .analyze(source.filename().string(), text,
+                                       {library / "prelude.gti"}, {}, {library})
+                        : Frontend().analyze(source.filename().string(), text);
     if (!frontend.canGenerateCode()) {
       if (!frontend.mirValid)
         write(prefix + ".invalid-mir", MirPrinter().print(frontend.mir));
@@ -272,7 +300,9 @@ int main(int argc, char **argv) {
     }
     std::vector<LoweredProgramIssue> issues;
     const auto verified = verifiedLoweredProgram(
-        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, frontendOptions.target), issues);
+        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir,
+                               frontendOptions.target),
+        issues);
     if (!verified)
       throw std::runtime_error("C04 source did not produce a sealed program");
     const LlvmBackendOptions options{
@@ -298,7 +328,8 @@ int main(int argc, char **argv) {
     // planner could accidentally make an unsupported return look compatible.
     if (profile == C04EvaluationProfile::DynamicCalls || workers) {
       if (!root)
-        throw BackendUnsupportedError("C04 dynamic evaluation requires its exact root");
+        throw BackendUnsupportedError(
+            "C04 dynamic evaluation requires its exact root");
       selected = {root->id};
     }
     validateC04Evaluation(session, admission, selected, profile);
@@ -335,8 +366,8 @@ int main(int argc, char **argv) {
     session.module().addModuleFlag(
         llvm::Module::Error, "gti.c04.dynamic-calls",
         profile == C04EvaluationProfile::DynamicCalls ? 1u : 0u);
-    session.module().addModuleFlag(
-        llvm::Module::Error, "gti.c04.scoped-workers", workers ? 1u : 0u);
+    session.module().addModuleFlag(llvm::Module::Error,
+                                   "gti.c04.scoped-workers", workers ? 1u : 0u);
     if (abi.statusResult != status ||
         abi.parameters.size() !=
             root->parameterTypes.size() + (status ? 2 : 0) ||
@@ -383,8 +414,8 @@ int main(int argc, char **argv) {
             name + (status ? "(int32_t*, Channel*, int32_t" : "(int32_t") +
             (borrowedCleanup ? ", int32_t*, int32_t*, int32_t*);\n" : ");\n"));
     write(prefix + ".o", object.contents);
-    std::cout << GTI_C04_MODE << ' ' << level
-              << ' ' << profileName << " verified closure emitted\n";
+    std::cout << GTI_C04_MODE << ' ' << level << ' ' << profileName
+              << " verified closure emitted\n";
     return 0;
   } catch (const BackendUnsupportedError &error) {
     std::cerr << error.what() << '\n';

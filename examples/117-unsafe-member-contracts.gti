@@ -8,6 +8,8 @@ struct Sensor {
   unsafe static int load(const int* address) {
     unsafe { return *address; }
   }
+public:
+  Sensor() = default;
 };
 
 concept samples<T> = requires(T& source) {
@@ -30,7 +32,7 @@ unsafe int forward<T>(T& source) requires samples<T> {
 
 // A safe implementation satisfies a contract permitting an unsafe operation.
 // A caller using only that contract still acknowledges the obligation.
-struct ConstantSensor { int sample() { return 42; } };
+struct ConstantSensor { int sample() { return 42; }  public: ConstantSensor() = default; };
 
 int main() {
   static_assert(!(requires(Sensor& source) { { source.sample() } -> int; }));

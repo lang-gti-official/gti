@@ -5,6 +5,8 @@ extern "C" {
 }
 struct Guard {
   ~Guard() { [[discard]] native_mark(99); }
+public:
+  Guard() = default;
 };
 int main() {
   Guard guard{};

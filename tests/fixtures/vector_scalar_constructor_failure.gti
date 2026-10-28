@@ -47,6 +47,8 @@ public:
     int divisor = ready && label == 'x' && ratio == 1.5 && size == uint64_t(3) ? 1 : 0;
     int checked = 1 / divisor;
   }
+public:
+  PrimitiveInputs() = default;
 };
 
 class Pair {

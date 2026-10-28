@@ -141,6 +141,8 @@ class defaulted_t {
 public:
   mut int32_t count = 1;
   ~defaulted_t() { drops += 1; }
+public:
+  defaulted_t() = default;
 };
 
 class field_reader_t {
@@ -318,11 +320,15 @@ public:
 struct corner_t {
   mut int32_t x = 0;
   mut int32_t y = 0;
+public:
+  corner_t() = default;
 };
 
 struct span_t {
   mut corner_t low;
   mut corner_t high;
+public:
+  span_t() = default;
 };
 
 phrase_t make_phrase(int32_t kind) { return phrase_t(word_t("made", kind)); }

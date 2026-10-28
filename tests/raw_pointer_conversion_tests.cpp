@@ -147,7 +147,7 @@ int main() { return 0; }
 void positiveAndMir() {
   const auto result = analyze(R"(
 #include <std/memory>
-struct Item { mut int value = 42; };
+struct Item { mut int value = 42;  public: Item() = default; };
 using Address = void*;
 using Pointer = Item*;
 using ReadPointer = const Item*;
@@ -273,8 +273,8 @@ int main() { mut int value = 0; E e = E(&value); P p = P(e); return 0; })",
                 "known pointee type");
   auditNegative("ordinary helpers cannot hide known type", R"(
 #include <std/memory>
-struct Item { int value = 0; };
-struct Other { int value = 0; };
+struct Item { int value = 0;  public: Item() = default; };
+struct Other { int value = 0;  public: Other() = default; };
 int main() { mut Item value{}; void* e = std::erase_address(&value);
 Other* p = std::typed_address<Other>(e); return 0; })",
                 "possible pointee type 'Item'");
@@ -285,7 +285,7 @@ int main() { return 0; })",
                 "known pointee type");
   auditNegative("aggregate copy retains type-only records", R"(
 using E = void*; using P = uint64_t*;
-struct Carrier { void* address = nullptr; };
+struct Carrier { void* address = nullptr;  public: Carrier() = default; };
 int main() { mut int value = 0; Carrier a{.address = E(&value)};
 Carrier b = a; P p = P(b.address); return 0; })",
                 "known pointee type");

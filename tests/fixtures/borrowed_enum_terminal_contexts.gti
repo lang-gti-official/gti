@@ -24,6 +24,8 @@ public:
 class Guard {
 public:
   ~Guard() { std::println(99); }
+public:
+  Guard() = default;
 };
 int accept(int& value) { return value; }
 [[borrowed_from(value)]] int& reference_path(int& value) {

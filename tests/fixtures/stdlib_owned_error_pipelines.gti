@@ -7,10 +7,14 @@
 struct document {
   std::string name = std::string("");
   std::vector<std::string> children = std::vector<std::string>();
+public:
+  document() = default;
 };
 
 struct inventory {
   std::vector<std::string> items = std::vector<std::string>();
+public:
+  inventory() = default;
 };
 
 expected<std::string, std::json::error> build_document(std::string_view text) {

@@ -244,6 +244,16 @@ The current implemented foundation includes:
   `constexpr for`; see
   [compile-time iteration and reflection](static-semantics.md#312-compile-time-iteration-and-reflection); and
 
+- `<std/meta>` also provides source-defined `std::enum_name(value)` at namespace
+  `std` scope. It accepts integral enums and returns a literal-backed
+  `std::string_view` with static lifetime: the unqualified enumerator name,
+  or `"<unknown>"` when no value matches. Aliases return the first matching
+  name in declaration order. Payload enums and non-enum arguments fail the
+  ordinary integral-enum constraint. Reflection expands the comparisons at
+  compile time; lookup allocates no memory and performs at most one comparison
+  per enumerator. See [the Expected example](../../examples/169-source-expected.gti)
+  for naming enum errors without a separate conversion helper.
+
 - `<std/panic>` source-defined raw and formatted terminal reporting through
   `std::panic`, with caller attribution and bounded message capture before
   deterministic cleanup. Formatting and stdout convenience APIs use the same
@@ -582,8 +592,10 @@ The current implemented foundation includes:
   padded RFC 4648 Base64 and lowercase hexadecimal encoders preserve all
   counted input bytes, including embedded zeroes. Their decoders return
   `expected<std::string, std::encoding::decode_errc>` and reject malformed,
-  non-canonical, or policy-ambiguous input; see
-  [Binary-to-text encoding](encoding.md); and
+  non-canonical, or policy-ambiguous input. `std::encoding::utf8` adds strict
+  scalar decoding, validation, encoding, append and a borrowed decoder cursor
+  with byte-offset errors, without changing byte-oriented string semantics;
+  see [Text and binary encoding](encoding.md); and
 - `<std/chrono>` exact signed `std::chrono::nanoseconds`, distinct monotonic and
   Unix-wall-clock time points, recoverable clock reads, checked elapsed
   subtraction, and normalized pre-epoch Unix second/subsecond decomposition;
@@ -1563,19 +1575,21 @@ The following component families remain planned or incomplete:
   explicit text decoding, and further structured I/O; public formatter
   customization, mutable buffers and buffered reader/writer adapters exist;
 - recursive filesystem copy/iteration and permission editing, calendar/time-zone breadth, random distributions and engine
-  breadth, connected networking, traffic buffers, atomic wait/notify, pointer
+  breadth, connected networking, traffic buffers, pointer
   atomics and fences, safe scoped condition variables, safe recursive mutexes,
   read/write mutexes, stop tokens, detached tasks, persistent worker pools,
-  typed thread-entry argument packs,
-  and broader threading;
+  further typed thread-entry argument profiles
+  and broader threading; scalar atomic wait/notify, synchronous scoped borrowed
+  tasks and admitted per-thread storage are implemented;
 - allocator-aware variants of containers other than `resource_vector`,
   runtime-polymorphic or concurrent resources, returning resource owners from
   factory functions, generation-bearing pool handles, and heterogeneous arenas;
 - broader native interoperability beyond the current bounded records, opaque
   handles, pointers, C strings, returned fixed arrays, and same-thread
   callbacks and indirect native invocation, including ownership transfer, array
-  parameters, varargs, alternate calling conventions, native variables, and
-  direct C++ linkage.
+  parameters, varargs, alternate calling conventions, TLS/volatile/top-level-array
+  foreign objects, and direct C++ linkage. Ordinary native variables are
+  implemented under the native-interop unsafe access contract.
 
 Implicit allocating container copies, optional copy/assignment and custom
 copy/move bodies are not automatic completion requirements: current GTI uses

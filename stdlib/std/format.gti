@@ -65,6 +65,7 @@ struct enum_underlying_probe<T, U> {
 /// The primary formats integral enums using their exact underlying integer.
 class formatter<T> {
 public:
+  formatter() = default;
   expected<void, format_errc> format(T& value, mut string& output,
                                     format_spec& spec)
       requires std::integral_enum<T> {
@@ -707,6 +708,7 @@ void append_format_literal(mut string& output, string_view pattern,
 
 class std::formatter<int8_t> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(int8_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -720,6 +722,7 @@ private:
 };
 class std::formatter<uint8_t> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(uint8_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -733,6 +736,7 @@ private:
 };
 class std::formatter<int16_t> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(int16_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -746,6 +750,7 @@ private:
 };
 class std::formatter<uint16_t> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(uint16_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -759,6 +764,7 @@ private:
 };
 class std::formatter<int32_t> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(int32_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -772,6 +778,7 @@ private:
 };
 class std::formatter<uint32_t> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(uint32_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -785,6 +792,7 @@ private:
 };
 class std::formatter<int64_t> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(int64_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -798,6 +806,7 @@ private:
 };
 class std::formatter<uint64_t> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(uint64_t& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -812,6 +821,7 @@ private:
 
 class std::formatter<bool> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(bool& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -834,6 +844,7 @@ private:
 
 class std::formatter<char> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(char& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -857,6 +868,7 @@ private:
 
 class std::formatter<float> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(float& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -871,6 +883,7 @@ private:
 
 class std::formatter<double> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(double& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -885,6 +898,7 @@ private:
 
 class std::formatter<std::string_view> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(std::string_view& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }
@@ -904,6 +918,7 @@ private:
 
 class std::formatter<std::string> {
 public:
+  formatter() = default;
   expected<void, std::format_errc> format(std::string& value, mut std::string& output, std::format_spec& spec) {
     return std::detail::format_result(this.append(output, value, spec));
   }

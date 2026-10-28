@@ -85,6 +85,8 @@ public:
     if (this.count >= uint64_t(4)) return;
     this.count = gti_internal::integer_wrapping_add(this.count, uint64_t(1));
   }
+public:
+  SmallCounter() = default;
 };
 uint64_t observe_counter(SmallCounter& counter) { return counter.count; }
 

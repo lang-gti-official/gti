@@ -26,6 +26,8 @@ SOURCE = """\
 #include <std/vector>
 
 class box {
+public: box() = default;
+private:
   mut int32_t generation = 99;
   mut int32_t cells[3] = {1, 2, 3};
 
@@ -36,6 +38,8 @@ public:
 };
 
 class shelf {
+public: shelf() = default;
+private:
   mut box items = box();
 
 public:

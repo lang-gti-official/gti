@@ -51,7 +51,7 @@ private:
 describeHirSourceDebug(const HirBody &body);
 
 [[nodiscard]] bool sourceDebugMatchesHir(const HirBody &source,
-                                       const MirBody &body);
+                                         const MirBody &body);
 
 struct MirDebugEditEffect {
   MirPlaceId promotedPlace = 0;
@@ -78,7 +78,8 @@ struct MirDebugRepairUndo {
 // No allocation request: losing an exact anchor invalidates affected value
 // locations. The in-place dead mutator retains only this bounded
 // journal, not a copy of every declaration and scope for each instruction.
-[[nodiscard]] MirDebugRepairUndo repairMirSourceDebug(
-    const MirBody &before, MirBody &candidate, const MirDebugEditEffect &effect);
+[[nodiscard]] MirDebugRepairUndo
+repairMirSourceDebug(const MirBody &before, MirBody &candidate,
+                     const MirDebugEditEffect &effect);
 
 } // namespace lang::mir_detail

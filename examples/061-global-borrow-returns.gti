@@ -11,6 +11,8 @@ public:
   static mut int& current() {
     return Metrics::value;
   }
+public:
+  Metrics() = default;
 };
 
 int main() {

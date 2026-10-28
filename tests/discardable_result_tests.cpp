@@ -59,12 +59,14 @@ struct Counter {
     this.value += amount; return this.value;
   }
   [[discardable]] static int constant() { return 7; }
+public:
+  Counter() = default;
 };
 int main() { mut Counter c{}; c.add(1); c.add(2); Counter::constant(); identity(3); return c.value - 3; }
 )");
   valid(R"(
-struct Base { [[discardable]] virtual int get() { return 1; } };
-struct Child : public Base { int get() override { return 2; } };
+struct Base { [[discardable]] virtual int get() { return 1; }  public: Base() = default; };
+struct Child : public Base { int get() override { return 2; }  public: Child() = default; };
 void use(Base& value) { value.get(); }
 int main() { Child child{}; use(child); return 0; }
 )");
@@ -95,12 +97,12 @@ int main() { select(1); select(true); return 0; }
           "Unknown function attribute");
   invalid("[[discardable]] int value = 1;", "GTI-P0001", "function");
   valid(R"(
-struct Callable { [[discardable]] int operator()() { return 1; } };
+struct Callable { [[discardable]] int operator()() { return 1; }  public: Callable() = default; };
 int main() { Callable fn{}; fn(); return 0; }
 )");
   invalid(R"(
-struct Base { virtual int get() { return 1; } };
-struct Child : public Base { [[discardable]] int get() override { return 2; } };
+struct Base { virtual int get() { return 1; }  public: Base() = default; };
+struct Child : public Base { [[discardable]] int get() override { return 2; }  public: Child() = default; };
 void use(Base& value) { value.get(); }
 int main() { Child child{}; child.get(); use(child); return 0; }
 )",
@@ -116,6 +118,8 @@ int main() { auto callback = []() -> int { return value(); }; callback(); return
 struct Counter {
   mut int value = 0;
   [[discardable, borrowed_from(this)]] mut int& add() mut { return this.value; }
+public:
+  Counter() = default;
 };
 int main() { mut Counter c{}; mut int& loan = c.add(); c.add(); return loan; }
 )",

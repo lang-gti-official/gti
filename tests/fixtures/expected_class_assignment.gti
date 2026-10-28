@@ -11,12 +11,16 @@ struct pair_value {
   int32_t first = 0;
   int32_t second = 0;
   pair_value(int32_t first, int32_t second) : first(first), second(second) {}
+public:
+  pair_value() = default;
 };
 
 // A cleanup-free class error alternative.
 struct code_value {
   int32_t code = 0;
   code_value(int32_t code) : code(code) {}
+public:
+  code_value() = default;
 };
 
 // An owning payload whose destructor reports each retirement.
@@ -84,6 +88,8 @@ public:
     current = make_pair(!ok);
     this.total = read_pair(current);
   }
+public:
+  replacing_holder() = default;
 };
 
 // Owning call results replace one binding through every alternative pair.
@@ -118,6 +124,8 @@ int32_t announce(int32_t code) {
 struct announced_code {
   int32_t code = 0;
   announced_code(int32_t code) : code(announce(code)) {}
+public:
+  announced_code() = default;
 };
 
 expected<noisy, announced_code> make_announced(int32_t id) {

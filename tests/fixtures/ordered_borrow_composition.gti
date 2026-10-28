@@ -2,6 +2,8 @@
 
 struct Node {
   int32_t value = 0;
+public:
+  Node() = default;
 };
 
 // A tree/table may grow before a lookup establishes a checked node borrow.
@@ -20,6 +22,8 @@ public:
   }
 private:
   mut std::vector<Node> nodes{};
+public:
+  Tree() = default;
 };
 
 std::size_t append_node(mut Tree& tree, int32_t value) {

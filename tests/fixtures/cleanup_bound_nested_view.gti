@@ -1,6 +1,6 @@
 #include <std/utility>
 
-struct Resource { int value = 7; };
+struct Resource { int value = 7;  public: Resource() = default; };
 class View {
   Resource& owner;
 public:

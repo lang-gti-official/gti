@@ -1552,11 +1552,21 @@ substitution; a constrained-out zero-argument constructor is not queried as an
 omitted default when a different constructor explicitly initializes the field.
 Abstract owners remain constructible only in base-subobject position, never as
 implicitly defaulted value fields.
-New omitted-nominal defaults do not manufacture an extra argument-free overload
-beside an owner's declared argument-taking construction API. Constructor-free
-owners can use the structural default; declared zero-argument operations keep
-their ordinary selection rules. The earlier generated overload for completely
-written declaration-default state remains available unchanged.
+Ordinary classes and structs require a declared zero-argument construction
+operation. Field initializers and an empty field list do not synthesize one.
+`classCanGenerateDefaultConstructor` retains only union zero-storage construction and stateless interface-base
+initialization;
+explicit structural defaults use the declared constructor's identity and access
+with `classCanUseStructuralDefaultConstruction`. Default-availability queries,
+factory calls, and omitted subobjects consume the same selection facts. An
+otherwise eligible struct can retain designated construction alongside a
+structural default declaration. Copy, move, and destruction inference is unchanged.
+This revises the earlier implicit-default policy: source must opt in even when
+all fields have declaration initializers. Existing generated HIR/MIR schedules
+execute the explicit default, with no additional runtime operation. Constant
+constructor roots match the generated HIR schedule by its generated-default
+identity and exact owner, rather than the explicit source declaration ID; this
+preserves compile-time construction when replacing an implicit default.
 
 `SemanticAnalysisSeal` binds the stable `Program` snapshot, full `TargetInfo`,
 active-statement preorder, and exact ordered source-graph/prelude provenance.

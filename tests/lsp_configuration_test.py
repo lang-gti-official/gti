@@ -33,10 +33,10 @@ def test_profiles(executable, root):
     )
     dependency = (
         '#ifdef TARGET_FEATURE\n#ifdef PSYCH_DEBUG\n'
-        'class Counter { public: int value() { return 0; } '
+        'class Counter { public: Counter() = default; int value() { return 0; } '
         'int dev_only() { return 1; } };\n'
         '#else\n'
-        'class Counter { public: int value() { return 0; } '
+        'class Counter { public: Counter() = default; int value() { return 0; } '
         'int release_only() { return 2; } };\n'
         '#endif\n#endif\n'
     )

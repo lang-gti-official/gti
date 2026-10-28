@@ -420,7 +420,7 @@ struct Count {
   return saved;
 }
 Count first = local_count(7);
-struct Registry { static Count second = local_count(9); };
+struct Registry { static Count second = local_count(9);  public: Registry() = default; };
 int main() { return first.number + Registry::second.number - 16; }
 )gti");
   if (!result.canGenerateCode())
@@ -799,12 +799,14 @@ struct InitPair {
   InitOwner owner{};
   return InitOwner();
 }
-struct OwnedRecord { InitOwner field = initial_owner(); };
+struct OwnedRecord { InitOwner field = initial_owner();  public: OwnedRecord() = default; };
 struct Record {
   int field = make_value(7);
   static int shared = make_value(9);
   uint64_t wide = initial_value(uint64_t(5));
   static int generic_shared = initial_value(9);
+public:
+  Record() = default;
 };
 int global = make_value(3);
 namespace setup { int namespaced = initial_value(4); }
@@ -1039,12 +1041,14 @@ int main() {
 
 void passiveInitializerMaterializations() {
   const auto result = analyze(R"gti(
-struct Leaf { int number = 7; };
+struct Leaf { int number = 7;  public: Leaf() = default; };
 class Record {
   Leaf object = Leaf();
   Leaf elements[2] = {};
 public:
   int read() { return this.object.number + this.elements[1].number; }
+public:
+  Record() = default;
 };
 int main() { Record record{}; return record.read() - 14; }
 )gti");
@@ -1102,7 +1106,7 @@ void callerConversionsAndPropagation() {
   const auto result = analyze(R"gti(
 #include <std/source_location>
 mut int cleaned = 0;
-struct Guard { ~Guard() { cleaned += 1; } };
+struct Guard { ~Guard() { cleaned += 1; }  public: Guard() = default; };
 struct Box {
   int value;
   implicit Box(int value) : value(value) {}
@@ -1110,6 +1114,8 @@ struct Box {
 struct Flag {
   operator bool() { return true; }
   implicit operator int() { return 19; }
+public:
+  Flag() = default;
 };
 #macro Flag flag() { return Flag(); }
 #macro int scalar(int value) { return value; }

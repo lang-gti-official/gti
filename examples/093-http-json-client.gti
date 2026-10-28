@@ -7,6 +7,8 @@
 // See README.md for a reproducible local-server demo (no credentials needed).
 struct named {
   std::string name = std::string("");
+public:
+  named() = default;
 };
 
 int main(int argc, std::vector<std::string> argv) {

@@ -13,11 +13,15 @@ struct Point {
   int32_t x = 0;
   int32_t y = 0;
   bool visible = true;
+public:
+  Point() = default;
 };
 
 struct Frame {
   uint32_t index = 0;
   Point origin{};
+public:
+  Frame() = default;
 };
 
 enum class read_error { short_input, bad_text };

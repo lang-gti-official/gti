@@ -12,6 +12,8 @@ public:
     auto owner = std::make_unique<int32_t>(7);
     unsafe { [[discard]] gti_test_observe_scalar_allocation(&*owner); }
   }
+public:
+  failing_cleanup() = default;
 };
 
 int32_t fail(int32_t divisor) {

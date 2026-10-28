@@ -1,7 +1,7 @@
 #include <std/memory>
 
 interface VoidInvoker<R, Args...> { R invoke(Args... args); };
-class VoidSignature<S> {};
+class VoidSignature<S> { public: VoidSignature() = default; };
 class VoidModel<T, R, Args...> : public VoidInvoker<R, Args...> {
   T callback;
 public:
@@ -21,6 +21,8 @@ mut int call_count = 0;
 class ConcreteVoid : public VoidInvoker<void> {
 public:
   void invoke() override { call_count++; }
+public:
+  ConcreteVoid() = default;
 };
 
 class ConcreteArguments : public VoidInvoker<void, int, bool> {
@@ -28,6 +30,8 @@ public:
   void invoke(int count, bool active) override {
     if (active) { call_count += count; }
   }
+public:
+  ConcreteArguments() = default;
 };
 
 R forward_void<R, T>(T callback, VoidSignature<R()>& signature) {

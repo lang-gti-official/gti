@@ -1,4 +1,4 @@
-class A { public: int32_t i() { return 0; } };
+class A { public: int32_t i() { return 0; }  public: A() = default; };
 int32_t apply_twice<Op>(mut Op op, int32_t v) { return op(op(v)); }
 int main() {
   auto d = [](int32_t v) -> int32_t { return v * 2; };

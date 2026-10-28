@@ -2,6 +2,8 @@
 
 struct Reading {
   mut int value = 42;
+public:
+  Reading() = default;
 };
 
 // The public language contract also lets an application define this bridge.

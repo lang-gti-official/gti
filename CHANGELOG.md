@@ -9,6 +9,57 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.488.1 - Native global copies, function-pointer fields, base returns and nested holders
+
+### Native function-pointer fields, base returns and mutex text witnesses
+
+- The native backend now builds these programs, which previously failed with
+  `GTI-B0003`, and matches the C++ backend:
+  - a polymorphic class holding a `std::function_ptr` field, copied into
+    `std::make_unique` or an owner of its interface;
+  - a function returning a base-class reference to a class that holds a
+    reference, such as `Base& up(Plain& p) { return p; }`;
+  - text built with `std::assume_string_view` or `std::assume_c_string` whose
+    owner is a `std::mutex`.
+
+### Native copies of global objects and nested holder borrows
+
+- The native backend now copies objects of derived, polymorphic and
+  interface-implementing classes out of global storage and out of fields.
+  This covers `Square c = global;`, a static field, a `thread_local`
+  initialized from a global, and `Twice t = holder.held;`. These previously
+  failed with `GTI-B0003` although the C++ backend ran them. Copying an
+  element out of a fixed array is still refused.
+- A borrow through a reference field of a holder returned by an accessor, as
+  in `outer.inner().box.slot() = 4;` or `outer->box.slot()`, no longer fails
+  with an internal compiler error (`GTI-B0001`). It runs on the native
+  backend. The C++ backend still fails on it.
+
+## 0.488.0 - Explicit default construction
+
+- Classes and structs require a declared constructor callable without arguments
+  before they can be default-constructed. Empty fields and field initializers
+  no longer create an implicit construction API. Declare `Type() = default;`
+  when structural default construction is intended, or write a constructor body.
+- Generic factories and default-initializability queries follow the same rule.
+  Missing constructor diagnostics point to the type and explain the opt-in.
+- Copy, move and destruction inference remain unchanged. Eligible structs retain
+  named-field construction alongside an explicit structural default. The standard
+  library explicitly preserves its intended empty owners, containers and policies.
+- Explicit structural defaults now select the correct generated constructor body
+  during constant evaluation.
+
+## 0.487.0 - Source-defined UTF-8 codecs
+
+- `<std/encoding>` adds `std::encoding::utf8` validation, scalar decoding,
+  encoding/append and a borrowed incremental decoder, implemented in GTI source
+  without new compiler or runtime capabilities.
+- Errors report byte offsets and reject malformed, overlong, surrogate and
+  out-of-range sequences. Invalid append input leaves the destination unchanged;
+  a failed decoder step does not advance. Validation and traversal do not allocate.
+- Strings and indexing remain byte-oriented. UTF-16 conversion, normalization,
+  grapheme segmentation and JSON migration are not included in this first phase.
+
 ## 0.486.1 - Faster editor updates with large imports
 
 - `gti_lsp` updates diagnostics sooner after an edit in a file whose imports
@@ -23,17 +74,6 @@ for what minor and patch releases mean.
   is no slower than one that clears it.
 
 ## 0.486.0 - Read-only arrow steps, closure copies, projected references and capture ranges
-
-### Text relays of a by-value formal's text field
-
-- A function that returns a text field of a by-value class parameter through a
-  call that relays text, such as
-  `std::string_view f(Label label) { return relay(label.text); }`, now
-  compiles instead of failing with the internal error `GTI-B0001`. The result
-  is the caller's text, as for `return label.text;`: a caller passing a
-  `Label` that holds an owner's view keeps that owner borrowed while the
-  result lives (`GTI-S2017`) and cannot return the result past the owner
-  (`GTI-S2045`).
 
 ### Native views of borrow carriers and interface text witnesses
 

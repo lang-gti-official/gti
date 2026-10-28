@@ -10,7 +10,7 @@
 
 namespace std::experimental {
 /// The residual of an empty optional: it carries no value.
-struct nullopt_t {};
+struct nullopt_t { nullopt_t() = default; };
 
 /// The empty residual as a value, such as `optional<int> none = nullopt;`.
 nullopt_t nullopt{};

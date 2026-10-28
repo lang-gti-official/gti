@@ -1326,6 +1326,7 @@ namespace std {
 
 class std::hash<std::string> {
 public:
+  hash() = default;
   std::size_t operator()(std::string& value) {
     return detail::fnv_64_1a_hasher(value);
   }

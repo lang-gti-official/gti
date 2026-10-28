@@ -148,7 +148,7 @@ int main() {
 }
 ''',
     "address-conversion": r'''
-struct Reading { int value = 42; };
+struct Reading { int value = 42;  public: Reading() = default; };
 using Erased = void*;
 using Typed = Reading*;
 

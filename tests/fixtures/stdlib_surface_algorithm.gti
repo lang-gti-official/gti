@@ -28,6 +28,8 @@ public:
   bool operator()(int32_t& value) {
     return value > 0;
   }
+public:
+  positive() = default;
 };
 
 class even {
@@ -35,6 +37,8 @@ public:
   bool operator()(int32_t& value) {
     return value % 2 == 0;
   }
+public:
+  even() = default;
 };
 
 class sum_values {
@@ -42,6 +46,8 @@ public:
   void operator()(int32_t& value) {
     algorithm_sum += value;
   }
+public:
+  sum_values() = default;
 };
 
 class descending {
@@ -49,6 +55,8 @@ public:
   bool operator()(int32_t& left, int32_t& right) {
     return left > right;
   }
+public:
+  descending() = default;
 };
 
 int main() {

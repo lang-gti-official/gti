@@ -1,14 +1,18 @@
 #include "gti/runtime_mutex.h"
 
 #include <assert.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <pthread.h>
 
 _Static_assert(sizeof(gti_mutex_slot_v1) == 64, "C slot size");
 _Static_assert(_Alignof(gti_mutex_slot_v1) == 8, "C slot alignment");
-struct Embedded { char prefix; gti_mutex_slot_v1 slot; char suffix; };
+struct Embedded {
+  char prefix;
+  gti_mutex_slot_v1 slot;
+  char suffix;
+};
 _Static_assert(offsetof(struct Embedded, slot) == 8, "C embedded offset");
 _Static_assert(sizeof(struct Embedded) == 80, "C embedded size");
 
@@ -18,7 +22,8 @@ static const char *fault = "";
 
 int gti_test_mutex_init(pthread_mutex_t *mutex,
                         const pthread_mutexattr_t *attributes) {
-  return strcmp(fault, "init") == 0 ? 12 : pthread_mutex_init(mutex, attributes);
+  return strcmp(fault, "init") == 0 ? 12
+                                    : pthread_mutex_init(mutex, attributes);
 }
 int gti_test_mutex_destroy(pthread_mutex_t *mutex) {
   return strcmp(fault, "destroy") == 0 ? 22 : pthread_mutex_destroy(mutex);

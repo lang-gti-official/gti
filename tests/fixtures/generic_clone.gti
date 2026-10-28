@@ -15,11 +15,15 @@ struct Record {
   Record clone() { Record result{.value = this.value + 1}; return result; }
   Record clone() mut { Record result{.value = 999}; return result; }
   Record snapshot() { Record result{.value = this.value + 2}; return result; }
+public:
+  Record() = default;
 };
 
 struct QueryOnly {
   int divisor = 0;
   int snapshot() { return 10 / this.divisor; }
+public:
+  QueryOnly() = default;
 };
 
 int main() {

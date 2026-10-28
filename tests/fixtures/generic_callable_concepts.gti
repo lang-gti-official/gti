@@ -8,6 +8,8 @@ mut int32_t action_calls = 0;
 class is_positive {
 public:
   bool operator()(int32_t& value) { return value > 0; }
+public:
+  is_positive() = default;
 };
 
 class alternating_positive {
@@ -34,6 +36,8 @@ public:
   bool operator()(int32_t& left, int32_t& right) {
     return left > right;
   }
+public:
+  descending() = default;
 };
 
 class add_values {
@@ -41,11 +45,15 @@ public:
   int32_t operator()(int32_t& left, int32_t& right) {
     return left + right;
   }
+public:
+  add_values() = default;
 };
 
 class times_three {
 public:
   int32_t operator()(int32_t& value) { return value * 3; }
+public:
+  times_three() = default;
 };
 
 class sum_values {
@@ -60,16 +68,22 @@ public:
 class mark_read_action {
 public:
   void operator()() { action_calls++; }
+public:
+  mark_read_action() = default;
 };
 
 class mark_mut_action {
 public:
   void operator()() mut { action_calls++; }
+public:
+  mark_mut_action() = default;
 };
 
 class mark_once_action {
 public:
   void operator()() && { action_calls++; }
+public:
+  mark_once_action() = default;
 };
 
 bool inspect<Callable>(int32_t value, Callable callable)

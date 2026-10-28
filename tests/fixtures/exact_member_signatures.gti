@@ -8,12 +8,16 @@ struct Counter {
     this.total += amount;
     return this.total;
   }
+public:
+  Counter() = default;
 };
 struct Policy<T> {
   Box<T> wrap(T& value) {
     Box<T> result = {.value = value};
     return result;
   }
+public:
+  Policy() = default;
 };
 
 concept accumulator<C, V> = requires(mut C& target, V& amount, mut V& old) {

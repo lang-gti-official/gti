@@ -49,6 +49,12 @@ int main() {
     return std::string("missing input");
   });
   if (described.has_value() || described.error() != "missing input") return 2;
+  // Reflection names an enum error directly; the returned view has static
+  // lifetime and can also be passed to std::println without an owning string.
+  auto named = read(false).transform_error([](parse_error error) -> std::string_view {
+    return std::enum_name(error);
+  });
+  if (named.has_value() || named.error() != "missing") return 5;
   auto numbered = read(false).transform_error(describe_error);
   if (numbered.has_value() || numbered.error() != 7) return 4;
   int owner = 7;

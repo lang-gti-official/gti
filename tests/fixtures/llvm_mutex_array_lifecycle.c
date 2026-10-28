@@ -34,14 +34,15 @@ void gti_test_mutex_array_drop(int32_t value) {
   trace = trace * 10 + (unsigned)value;
 }
 
-_Noreturn void gti_test_real_failure_terminate_v2(
-    const gti_failure_record_v2 *, const gti_failure_artifact_descriptor_v1 *,
-    gti_failure_observer_v2, void *);
+_Noreturn void
+gti_test_real_failure_terminate_v2(const gti_failure_record_v2 *,
+                                   const gti_failure_artifact_descriptor_v1 *,
+                                   gti_failure_observer_v2, void *);
 
-_Noreturn void gti_rt_failure_terminate_v2(
-    const gti_failure_record_v2 *record,
-    const gti_failure_artifact_descriptor_v1 *artifact,
-    gti_failure_observer_v2 observer, void *context) {
+_Noreturn void
+gti_rt_failure_terminate_v2(const gti_failure_record_v2 *record,
+                            const gti_failure_artifact_descriptor_v1 *artifact,
+                            gti_failure_observer_v2 observer, void *context) {
   assert(bounds_failure() && artifact &&
          record->abi_version == GTI_FAILURE_ABI_VERSION_V2 &&
          record->code == GTI_FAILURE_CODE_INDEX_OUT_OF_BOUNDS_V1 &&
