@@ -5775,7 +5775,7 @@ def test_diagnostic_code_actions(executable, root):
         action = actions[0]
         assert action["title"] == fix["message"]
         assert action["kind"] == "quickfix"
-        assert action["isPreferred"] is True
+        assert action["isPreferred"] is False
         assert action["diagnostics"][0]["code"] == diagnostic["code"]
         document_edit = action["edit"]["documentChanges"][0]
         assert document_edit["textDocument"] == {"uri": uri, "version": 1}
@@ -5928,7 +5928,7 @@ def test_advisory_diagnostics_and_actions(executable, root):
             "result"
         ]
         assert len(actions) == 1, actions
-        assert actions[0]["isPreferred"] is True
+        assert actions[0]["isPreferred"] is False
         assert actions[0]["edit"]["documentChanges"][0]["edits"][0][
             "newText"
         ] == ""
@@ -6253,7 +6253,7 @@ def test_missing_standard_library_include_code_action(
         action = actions[0]
         assert action["title"] == f"Add #include <{header}>", action
         assert action["kind"] == "quickfix", action
-        assert action["isPreferred"] is True, action
+        assert action["isPreferred"] is False, action
         assert action["edit"]["documentChanges"] == [
             {
                 "textDocument": {"uri": uri, "version": 1},
