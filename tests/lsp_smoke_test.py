@@ -48,6 +48,11 @@ def lsp_position(source, offset):
     return {"line": line, "character": character}
 
 
+def has_only_include_advice(diagnostics):
+    return (len(diagnostics) == 1 and diagnostics[0].get("code") == "GTI-I0013"
+            and diagnostics[0].get("severity") == 2)
+
+
 def has_error_diagnostics(params):
     return any(
         diagnostic.get("severity", 1) == 1
@@ -7308,8 +7313,8 @@ def test_expected_success_ownership_diagnostic(executable, root):
         # The result's implicit constructor would copy the named owner. That
         # is the return's own copy: no constructor call is written, so it is
         # not reported as a constructor argument.
-        assert [item.get("code") for item in errors] == ["GTI-S2003"], errors
-        diagnostic = errors[0]
+        assert [item.get("code") for item in errors] == ["GTI-I0013", "GTI-S2003"], errors
+        diagnostic = errors[1]
         offset = source.index("return text") + len("return ")
         assert diagnostic["range"] == {
             "start": lsp_position(source, offset),
@@ -7324,7 +7329,7 @@ def test_expected_success_ownership_diagnostic(executable, root):
                       "params": {"textDocument": {"uri": uri, "version": 2},
                                  "contentChanges": [{"text": source.replace(
                                      "return text;", "return std::move(text);")}]}})
-        assert not publication(2)
+        assert has_only_include_advice(publication(2))
     finally:
         session.close()
 

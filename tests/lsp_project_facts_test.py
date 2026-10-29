@@ -8,7 +8,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
+from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position, semantic_tokens_by_position
 
 
 def write(path, text):
@@ -178,7 +178,7 @@ def test_path_dependency_tooling(executable, root):
         ]
         app_uri = open_document(session, app_path, app_source)
         initial_diagnostics = diagnostics_for(session, app_uri, version=1)
-        assert initial_diagnostics == [], initial_diagnostics
+        assert has_only_include_advice(initial_diagnostics), initial_diagnostics
 
         labels = completion_labels(session, 2, app_uri, app_source)
         assert {"value", "doubled"}.issubset(labels), labels
@@ -281,7 +281,7 @@ def test_path_dependency_tooling(executable, root):
             }
         )
         updated_diagnostics = diagnostics_for(session, app_uri, version=2)
-        assert updated_diagnostics == [], updated_diagnostics
+        assert has_only_include_advice(updated_diagnostics), updated_diagnostics
         labels = completion_labels(session, 6, app_uri, updated_app)
         assert "answer" in labels and "value" not in labels, labels
 

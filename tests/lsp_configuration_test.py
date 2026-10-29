@@ -8,7 +8,7 @@ import tempfile
 from lsp_project_facts_test import (
     completion_labels, diagnostics_for, initialize, open_document, write,
 )
-from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
+from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position, semantic_tokens_by_position
 
 
 def test_profiles(executable, root):
@@ -51,7 +51,7 @@ def test_profiles(executable, root):
         legend = initial["result"]["capabilities"]["semanticTokensProvider"]["legend"]
         inactive_mask = 1 << legend["tokenModifiers"].index("inactiveCode")
         uri = open_document(session, path, source)
-        assert diagnostics_for(session, uri, version=1) == []
+        assert has_only_include_advice(diagnostics_for(session, uri, version=1))
         next_id = 2
 
         def tokens(document_uri=uri):
@@ -114,7 +114,7 @@ def test_profiles(executable, root):
         select("dev")
         select("release")
         select("analysis")
-        assert diagnostics_for(session, uri, predicate=lambda items: not items) == []
+        assert has_only_include_advice(diagnostics_for(session, uri, predicate=has_only_include_advice))
         assert_profile(True)
         assert "dev_only" in labels() and "dirty_release" not in labels()
         for invalid in (True, "", "../release"):
@@ -148,7 +148,7 @@ def test_profiles(executable, root):
             "jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
             "params": {"changes": [{"uri": manifest_path.resolve().as_uri(), "type": 2}]},
         })
-        diagnostics_for(session, uri, predicate=lambda items: not items)
+        diagnostics_for(session, uri, predicate=has_only_include_advice)
         assert_profile(True)
         write(manifest_path, manifest)
         session.send({
