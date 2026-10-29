@@ -630,7 +630,10 @@ def observed_profiles(report: dict, evidence: Path, root: Path,
             for case in profiles[profile]:
                 source = directory / f"{test}-{profile}-{case}.gti"
                 source.write_text(cases[case], encoding="utf-8")
-                result = run([str(evidence), "--probe", str(root), str(source),
+                prepare = getattr(modules[test], "prepare_evidence_case", None)
+                probe_root, probe_source = (prepare(root, case, source, directory)
+                                            if prepare else (root, source))
+                result = run([str(evidence), "--probe", str(probe_root), str(probe_source),
                               metadata[profile]["execution-profile"],
                               *program_request_arguments(requests.get(case))])
                 if result.returncode != 0:
