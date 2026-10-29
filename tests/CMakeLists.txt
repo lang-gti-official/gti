@@ -3308,6 +3308,11 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/scripts/check_release_version.py"
   )
   add_test(
+    NAME cut_release_policy
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/cut_release_test.py"
+  )
+  add_test(
     NAME repository_hosting
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/repository_hosting_test.py"
