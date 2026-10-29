@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.490.1 - Source-defined shared and weak ownership
+## 0.491.0 - Source-defined shared and weak ownership
 
 - `std::shared_ptr` now implements its handle, explicit cloning, reference
   counts, final release, upcasts and allocation policy in GTI source. The
@@ -37,6 +37,13 @@ for what minor and patch releases mean.
   enclosing-object teardown, preventing invalid or repeated cleanup under GCC.
 - Synthesized receiver witnesses retain their concrete place identity, allowing
   lexical debug information for unsafe raw-reference returns tied to `this`.
+
+## 0.490.0 - Per-file include migration advice
+
+- The language server recommends module imports at the first `#include` in
+  each file, with one warning per file. The warning follows edits, can be
+  suppressed with the `legacy-include` warning group, and does not change
+  ordinary build/check output or offer an unsafe automatic conversion.
 
 ## 0.489.1 - Native unique owners of null and function pointers
 

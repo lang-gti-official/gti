@@ -415,6 +415,16 @@ the completed Q-FAIL-01 consumer is not proof of every proposed boundary.
 
 ## Production Rules
 
+`GTI-I0013` is opt-in editor migration advice in warning group
+`legacy-include`: prefer module imports over `#include` where available.
+Source loading emits it at the first real include keyword in each canonical
+application file, including `export #include`, once per analysis even across
+module configuration replay. Comments and strings do not trigger it. Prelude
+and standard-library dependencies are exempt unless opened as the entry file.
+The LSP enables this advice; ordinary build/check requests leave it disabled.
+The warning neither invalidates source nor supplies a speculative import fix:
+a legacy file may require an explicit module interface first.
+
 `GTI-S2120` reports an invalid out-of-class method definition at the method
 name: absent/foreign owner, unmatched signature or receiver, duplicate body,
 pure/native/compiler-provided declaration, repeated declaration-only specifiers

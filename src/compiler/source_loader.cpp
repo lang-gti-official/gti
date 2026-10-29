@@ -663,6 +663,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
              "GTI-I0012");
     }
     const Token &includeToken = tokens[index + (exportInclude ? 1 : 0)];
+    const bool warnInclude = warnLegacyIncludes &&
+                             !states[key].includeWarningEmitted &&
+                             (isEntry || role == SourceUnitRole::Application);
+    states[key].includeWarningEmitted = true;
     const std::size_t occurrence = includeOccurrence++;
     const ResolvedInclude include =
         resolveInclude(tokens, index + (exportInclude ? 1 : 0), path,
@@ -687,6 +691,14 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
                              .includeSpelling = include.includeSpelling,
                              .includeOccurrence = occurrence});
       }
+    }
+    if (warnInclude) {
+      Diagnostic warning =
+          makeDiagnostic(DiagnosticId::LegacyInclude, includeToken);
+      warning.hints.push_back(
+          "Use 'import std;' or a named module import where available. "
+          "Legacy source files may need a module interface first.");
+      diagnostics.push_back(std::move(warning));
     }
     return include.directiveEnd;
   };

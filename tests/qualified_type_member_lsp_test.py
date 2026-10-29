@@ -5,7 +5,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
+from lsp_smoke_test import without_include_advice, LspSession, lsp_position, semantic_tokens_by_position
 
 
 def main():
@@ -36,7 +36,7 @@ def main():
                 and item["params"].get("uri") == uri
                 and item["params"].get("version") == version
             )
-            return reply["params"]["diagnostics"]
+            return without_include_advice(reply["params"]["diagnostics"])
 
         def change(version, text):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",

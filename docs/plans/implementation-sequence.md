@@ -8997,7 +8997,7 @@ prerequisite checkpoints as full acceptance.
 ### L-OWN-01: Shared And Weak Ownership
 
 - **Source replacement revision (2026-10-29):** strong and weak ownership
-  policy is implemented in ordinary GTI source in 0.490.1. Both handles support
+  policy is implemented in ordinary GTI source in 0.491.0. Both handles support
   explicit cloning, generated movement, reset and swap; weak handles provide
   expiration/count snapshots and non-resurrecting `lock()`. One allocation
   contains independently constructed payload and control objects. The final

@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position
+from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position
 
 
 def main():
@@ -60,7 +60,7 @@ def main():
                 errors = [item for item in publish(unknown) if item.get("severity") == 1]
                 assert len(errors) == 1 and errors[0]["code"] == "GTI-S2123", errors
             valid = source.replace('"middle.gti"', '"measure.gti"')
-            assert not publish(valid), "correcting the include must clear the diagnostic"
+            assert has_only_include_advice(publish(valid)), "correcting the include clears the error"
         finally:
             session.close()
     return 0

@@ -5,7 +5,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position
+from lsp_smoke_test import without_include_advice, LspSession, lsp_position
 
 
 def main():
@@ -28,10 +28,10 @@ def main():
                 "textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": valid}}})
 
             def diagnostics(version):
-                return session.receive_until(lambda message:
+                return without_include_advice(session.receive_until(lambda message:
                     message.get("method") == "textDocument/publishDiagnostics" and
                     message["params"]["uri"] == uri and message["params"].get("version") == version
-                )["params"]["diagnostics"]
+                )["params"]["diagnostics"])
 
             assert not diagnostics(1)
             session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/definition", "params": {

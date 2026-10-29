@@ -6,7 +6,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position
+from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position
 
 
 def main():
@@ -210,7 +210,7 @@ int main() {
                 publication = message["params"]
                 target = publication["uri"]
                 if target == uri and publication.get("version") == 18:
-                    assert not publication["diagnostics"], publication
+                    assert has_only_include_advice(publication["diagnostics"]), publication
                     cleared.add(uri)
                 if target == rejected_uri and not publication["diagnostics"]:
                     cleared.add(rejected_uri)

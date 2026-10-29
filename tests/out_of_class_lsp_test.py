@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 from lsp_project_facts_test import diagnostics_for, open_document, write
-from lsp_smoke_test import LspSession, initialize_session, lsp_position
+from lsp_smoke_test import has_only_include_advice, LspSession, initialize_session, lsp_position
 
 
 def main():
@@ -152,7 +152,7 @@ def test_signature_type_visibility(executable):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2},
                 "contentChanges": [{"text": corrected}]}})
-            assert diagnostics_for(session, uri, 2) == []
+            assert has_only_include_advice(diagnostics_for(session, uri, 2))
             assert actions(21) == [], "stale signature diagnostics must not offer edits"
         finally:
             session.close()
