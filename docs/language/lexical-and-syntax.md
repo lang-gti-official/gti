@@ -269,6 +269,9 @@ installed `stdlib/module-map.json`. `import std;` selects that map’s default
 aggregate interface, which re-exports portable public standard modules.
 Private standard-library files are not discoverable through named imports. A package
 cannot register a module named `std`, and a dependency alias cannot be `std`.
+A source file outside the standard-library roots cannot declare a module or
+module implementation named `std` or `std.` followed by further components
+(`GTI-I0012`).
 See [standard-library modules](standard-library.md#standard-library-modules).
 
 Source-local configuration flags neither enter nor escape imported modules;

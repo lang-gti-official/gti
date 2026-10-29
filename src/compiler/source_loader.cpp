@@ -795,6 +795,22 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       moduleHeaderEnd = at + 1;
     }
   }
+  // `std` names the configured standard library in direct and project
+  // compilation alike. A source header outside its roots cannot claim it.
+  for (const auto &[declaration, span] :
+       {std::pair{&moduleDeclaration, &moduleDeclarationSpan},
+        std::pair{&implementationDeclaration, &implementationDeclarationSpan}}) {
+    if (!*declaration)
+      continue;
+    const std::string &name = (*declaration)->lexeme;
+    if ((name == "std" || name.starts_with("std.")) && !standardLibraryName &&
+        !standardModuleNameForExistingPath(path)) {
+      diagnostics.push_back(makeDiagnostic(
+          "GTI-I0012", DiagnosticPhase::SourceLoading,
+          span->value_or(tokenSpan(**declaration)),
+          "The module name 'std' is reserved for the standard library."));
+    }
+  }
   graph.findUnit(unitId)->implementationDeclaration = implementationDeclaration;
   graph.findUnit(unitId)->implementationDeclarationSpan =
       implementationDeclarationSpan;

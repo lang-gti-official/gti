@@ -9,6 +9,13 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.493.1 - Reserved standard module names
+
+- A source file outside the standard library can no longer declare a module
+  named `std` or `std.*` (`GTI-I0012`). The language reference already reserved
+  that name; only package registration enforced it. Such a module never
+  received compiler trust.
+
 ## 0.493.0 - First-class modules
 
 - **Breaking:** GTI `#include` and `export #include` are removed. Use
