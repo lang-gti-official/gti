@@ -163,7 +163,8 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
       - name: Build
-        run: cmake --build build --parallel "${GTI_JOBS}"
+        # Keep going after a failure so one run reports every compile error.
+        run: cmake --build build --parallel "${GTI_JOBS}" -- -k 0
       - name: Run fast feedback and compiler pipeline
         run: >-
           ctest --test-dir build --output-on-failure --no-tests=error
