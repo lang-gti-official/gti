@@ -69,6 +69,8 @@ struct FrontendOptions {
   // source generation. Missing identities force SourceLoader to read and
   // digest the file before it may populate or reuse a cache row.
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
+  // Editor migration advice; ordinary build/check output stays unchanged.
+  bool warnLegacyIncludes = false;
   bool suggestIncludes = true;
   std::vector<IncludeSearchRoot> includeSearchRoots;
   // Lower to MIR only the instances reachable from the program roots. The

@@ -8,7 +8,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
+from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position, semantic_tokens_by_position
 
 
 def write(path, text):
@@ -178,7 +178,7 @@ def test_path_dependency_tooling(executable, root):
         ]
         app_uri = open_document(session, app_path, app_source)
         initial_diagnostics = diagnostics_for(session, app_uri, version=1)
-        assert initial_diagnostics == [], initial_diagnostics
+        assert has_only_include_advice(initial_diagnostics), initial_diagnostics
 
         labels = completion_labels(session, 2, app_uri, app_source)
         assert {"value", "doubled"}.issubset(labels), labels
@@ -281,7 +281,7 @@ def test_path_dependency_tooling(executable, root):
             }
         )
         updated_diagnostics = diagnostics_for(session, app_uri, version=2)
-        assert updated_diagnostics == [], updated_diagnostics
+        assert has_only_include_advice(updated_diagnostics), updated_diagnostics
         labels = completion_labels(session, 6, app_uri, updated_app)
         assert "answer" in labels and "value" not in labels, labels
 
@@ -349,7 +349,7 @@ def test_dependency_warning_policy(executable, root):
             return publications
 
         initial = publications_for_both()
-        assert [item.get("code") for item in initial[app_uri]] == ["GTI-S2096"], initial
+        assert [item.get("code") for item in initial[app_uri]] == ["GTI-I0013", "GTI-S2096"], initial
         assert [item.get("code") for item in initial[dependency_uri]] == ["GTI-S2096"], initial
 
         quiet_profile = "\n[profiles.dev]\ndependency-warnings = false\n"
@@ -362,7 +362,7 @@ def test_dependency_warning_policy(executable, root):
 
         changed_manifest(base_manifest + quiet_profile)
         suppressed = publications_for_both()
-        assert [item.get("code") for item in suppressed[app_uri]] == ["GTI-S2096"], suppressed
+        assert [item.get("code") for item in suppressed[app_uri]] == ["GTI-I0013", "GTI-S2096"], suppressed
         assert suppressed[dependency_uri] == [], suppressed
         session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
                       "params": {"textDocument": {"uri": app_uri},
@@ -372,13 +372,13 @@ def test_dependency_warning_policy(executable, root):
 
         changed_manifest(base_manifest + quiet_profile + 'disabled-warnings = ["unused-mut"]\n')
         grouped = diagnostics_for(session, app_uri, version=1,
-                                  predicate=lambda items: not items)
-        assert grouped == [], grouped
+                                  predicate=has_only_include_advice)
+        assert has_only_include_advice(grouped), grouped
         changed_manifest(base_manifest + quiet_profile)
         retained = diagnostics_for(session, app_uri, version=1,
                                    predicate=lambda items: any(
                                        item.get("code") == "GTI-S2096" for item in items))
-        assert len(retained) == 1, retained
+        assert [d["code"] for d in retained] == ["GTI-I0013", "GTI-S2096"], retained
 
         write(dependency_path,
               "namespace library { int value() { return missing; } }\n")
@@ -393,7 +393,7 @@ def test_dependency_warning_policy(executable, root):
                       "params": {"changes": [{"uri": dependency_uri, "type": 2}]}})
         recovered = publications_for_both()
         assert recovered[dependency_uri] == [], recovered
-        assert [item.get("code") for item in recovered[app_uri]] == ["GTI-S2096"], recovered
+        assert [item.get("code") for item in recovered[app_uri]] == ["GTI-I0013", "GTI-S2096"], recovered
 
         # A dependency opened as its own project is now the selected package;
         # its own warnings must remain visible even though the app suppressed it.

@@ -48,6 +48,19 @@ def lsp_position(source, offset):
     return {"line": line, "character": character}
 
 
+def without_include_advice(diagnostics):
+    # These fixtures test other diagnostics. Validate the migration warning's
+    # cardinality/severity before excluding only that separately tested advice.
+    advice = [d for d in diagnostics if d.get("code") == "GTI-I0013"]
+    assert not advice or has_only_include_advice(advice), diagnostics
+    return [d for d in diagnostics if d.get("code") != "GTI-I0013"]
+
+
+def has_only_include_advice(diagnostics):
+    return (len(diagnostics) == 1 and diagnostics[0].get("code") == "GTI-I0013"
+            and diagnostics[0].get("severity") == 2)
+
+
 def has_error_diagnostics(params):
     return any(
         diagnostic.get("severity", 1) == 1
@@ -5686,7 +5699,9 @@ def test_standalone_managed_thread_profile(executable, root):
         and "concurrent execution profile" in diagnostic["message"]
         for diagnostic in default_diagnostics
     )
-    assert analyze(["--execution-profile", "concurrent"]) == []
+    concurrent = analyze(["--execution-profile", "concurrent"])
+    assert [d["code"] for d in concurrent] == ["GTI-I0013"], concurrent
+    assert concurrent[0]["severity"] == 2, concurrent
 
 
 def test_diagnostic_code_actions(executable, root):
@@ -7306,8 +7321,8 @@ def test_expected_success_ownership_diagnostic(executable, root):
         # The result's implicit constructor would copy the named owner. That
         # is the return's own copy: no constructor call is written, so it is
         # not reported as a constructor argument.
-        assert [item.get("code") for item in errors] == ["GTI-S2003"], errors
-        diagnostic = errors[0]
+        assert [item.get("code") for item in errors] == ["GTI-I0013", "GTI-S2003"], errors
+        diagnostic = errors[1]
         offset = source.index("return text") + len("return ")
         assert diagnostic["range"] == {
             "start": lsp_position(source, offset),
@@ -7322,7 +7337,7 @@ def test_expected_success_ownership_diagnostic(executable, root):
                       "params": {"textDocument": {"uri": uri, "version": 2},
                                  "contentChanges": [{"text": source.replace(
                                      "return text;", "return std::move(text);")}]}})
-        assert not publication(2)
+        assert has_only_include_advice(publication(2))
     finally:
         session.close()
 
@@ -9157,9 +9172,8 @@ def test_canonical_document_identity(executable, root):
                 for diagnostic in message.get("params", {}).get("diagnostics", [])
             )
         )
-        assert "overlay_value" in root_diagnostics["params"]["diagnostics"][0][
-            "message"
-        ]
+        assert any(d.get("code") == "GTI-S2001" and "overlay_value" in d["message"]
+                   for d in root_diagnostics["params"]["diagnostics"])
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -9270,7 +9284,8 @@ def test_watched_dependency_reanalysis(executable, root):
                 for diagnostic in message.get("params", {}).get("diagnostics", [])
             )
         )
-        assert "watched_value" in changed["params"]["diagnostics"][0]["message"]
+        assert any(d.get("code") == "GTI-S2001" and "watched_value" in d["message"]
+                   for d in changed["params"]["diagnostics"])
     finally:
         session.close()
 
@@ -11933,7 +11948,9 @@ def main():
     assert len(initial_publications) == 1
     initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 11, diagnostics
+    assert len(diagnostics) == 12, diagnostics
+    include_advice = [d for d in diagnostics if d["code"] == "GTI-I0013"]
+    assert len(include_advice) == 1 and include_advice[0]["severity"] == 2, diagnostics
     missing_return = next(
         diagnostic
         for diagnostic in diagnostics

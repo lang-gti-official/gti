@@ -5,7 +5,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position
+from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position
 
 
 def check(executable, concurrent, selected="thrd_join"):
@@ -50,7 +50,7 @@ def check(executable, concurrent, selected="thrd_join"):
                 "#include <std/cthread>\nint main() { std::thrd_yield(); return 0; }\n")
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": valid}]}})
-            assert diagnostics(2) == []
+            assert has_only_include_advice(diagnostics(2))
             if concurrent:
                 position = lsp_position(valid, valid.index(selected) + 2)
                 session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
@@ -97,7 +97,7 @@ def check_confined(executable):
                 if version == 3:
                     assert any(d["code"] == "GTI-S2099" for d in errors), errors
                 else:
-                    assert errors == [], errors
+                    assert has_only_include_advice(errors), errors
             session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
                 "textDocument": {"uri": uri}, "position": lsp_position(valid, valid.index("transform") + 2)}})
             hover = session.receive_until(lambda message: message.get("id") == 2)["result"]

@@ -14,6 +14,15 @@ import sys
 import time
 
 
+def assert_clean_diagnostics(publication):
+    diagnostics = publication["params"]["diagnostics"]
+    # Include migration advice is expected from newer language servers; older
+    # comparison binaries may omit it. Every other diagnostic still fails.
+    assert len(diagnostics) <= 1 and all(
+        d.get("code") == "GTI-I0013" and d.get("severity") == 2
+        for d in diagnostics), publication
+
+
 def frame(message):
     payload = json.dumps(message, separators=(",", ":")).encode("utf-8")
     return b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload
@@ -228,14 +237,14 @@ def run_workload(executable, standard_library, fixture, run_root, dependency_cou
         )
         cold = session.receive(diagnostics_for(root_uri, 1))
         timings["coldDiagnostics"] = elapsed_ms(start)
-        assert not cold["params"]["diagnostics"], cold
+        assert_clean_diagnostics(cold)
 
         source = source.replace("benchmark_helper(total) + 0", "benchmark_helper(total) + 1")
         start = time.perf_counter_ns()
         session.send(full_change(root_uri, 2, source))
         repeated = session.receive(diagnostics_for(root_uri, 2))
         timings["repeatedEditDiagnostics"] = elapsed_ms(start)
-        assert not repeated["params"]["diagnostics"], repeated
+        assert_clean_diagnostics(repeated)
 
         start = time.perf_counter_ns()
         session.send(
@@ -304,16 +313,16 @@ def run_workload(executable, standard_library, fixture, run_root, dependency_cou
         # The opened text is exactly what the root already read from disk, so
         # the root keeps its analysis; only the dependency is analysed.
         dependency_open = session.receive(diagnostics_for(dependency_uri, 1))
-        assert not dependency_open["params"]["diagnostics"], dependency_open
+        assert_clean_diagnostics(dependency_open)
 
         changed_dependency = dependency_source.replace("value + 0", "value + 100")
         start = time.perf_counter_ns()
         session.send(full_change(dependency_uri, 2, changed_dependency))
         dirty = session.receive(diagnostics_for(root_uri, 2))
         timings["dirtyDependencyDiagnostics"] = elapsed_ms(start)
-        assert not dirty["params"]["diagnostics"], dirty
+        assert_clean_diagnostics(dirty)
         dependency_diagnostics = session.receive(diagnostics_for(dependency_uri, 2))
-        assert not dependency_diagnostics["params"]["diagnostics"], dependency_diagnostics
+        assert_clean_diagnostics(dependency_diagnostics)
 
         start = time.perf_counter_ns()
         session.send(
@@ -360,7 +369,7 @@ def run_workload(executable, standard_library, fixture, run_root, dependency_cou
             session.send(full_change(root_uri, version, superseded_source))
         final_diagnostics = session.receive(diagnostics_for(root_uri, final_version))
         timings["supersededDiagnostics"] = elapsed_ms(start)
-        assert not final_diagnostics["params"]["diagnostics"], final_diagnostics
+        assert_clean_diagnostics(final_diagnostics)
     finally:
         session.close()
     return {"timingsMilliseconds": timings, "frontendTrace": read_trace(trace_path)}

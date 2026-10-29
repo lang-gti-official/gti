@@ -1,3 +1,13 @@
+add_executable(gti_include_warning_tests include_warning_tests.cpp)
+target_link_libraries(gti_include_warning_tests PRIVATE gti_compiler)
+add_test(NAME include_warning COMMAND gti_include_warning_tests)
+if(TARGET gti_lsp)
+  add_test(NAME include_warning_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/include_warning_lsp_test.py"
+      $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(include_warning_lsp PROPERTIES TIMEOUT 120)
+endif()
+
 add_executable(gti_thread_local_syntax_tests thread_local_syntax_tests.cpp)
 target_link_libraries(gti_thread_local_syntax_tests PRIVATE gti_compiler)
 add_test(NAME thread_local_syntax COMMAND gti_thread_local_syntax_tests)
