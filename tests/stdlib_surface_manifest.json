@@ -5122,6 +5122,7 @@
         "examples/179-weak-ownership.gti",
         "tests/fixtures/weak_ownership.gti",
         "tests/fixtures/weak_ownership_threads.gti",
+        "tests/fixtures/shared_ownership_release_race.gti",
         "tests/fixtures/weak_ownership_failure.gti",
         "tests/shared_ownership_tests.cpp",
         "tests/shared_ownership_runtime_test.py",

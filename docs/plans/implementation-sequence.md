@@ -574,7 +574,7 @@ every composition, target, installed package or performance gate.
 | Foreign C variables | `foreign_variable_tests.cpp`, `foreign_variable_borrow_tests.cpp`, native-variable bindgen tests; [native interop](../language/native-c-interop.md). | TLS/volatile/top-level-array objects, ownership annotations, retained/captured callbacks and foreign-thread entry; C-08B ordinary objects are implemented. |
 | Reflection and JSON | Reflection phases 1–3 and the reflected JSON client are delivered; `<std/json>` has used the promoted reflection-driven library since 0.409.0. See [reflection](reflection.md) and [JSON](../language/json.md). | Metaobject invocation/runtime reflection and named residual metadata/execution profiles; do not repeat the experimental-JSON gate. |
 | Container traversal and module/package tooling | [Container delivery](iterators-and-ranges.md#container-completion-campaign-delivered-2026-10-12), `source_modules_*`, registry/build-script tests and driver `ProjectFacts` integration. Aggregate `import std` exists. | Adaptors, subrange rewrites, reseating/invalidation precision, package/platform breadth and independent linkage; not foundational map/range/package/LSP implementation. |
-| Weak owners and shared libraries | `memory.gti` still has bodyless weak observers. `ManifestFeaturePolicy` enables library requests by default; `llvm_embedding_project_test.py` builds real infallible LLVM modules through ordinary project commands. | Executable weak lifetime/lock behavior and recoverable factories; fallible embedding containment and complete editor/installed/platform acceptance. Do not schedule basic library/header/cache publication as absent. |
+| Weak owners and shared libraries | Source weak observers are executable (L-OWN-01). `ManifestFeaturePolicy` enables library requests by default; `llvm_embedding_project_test.py` builds real infallible LLVM modules through ordinary project commands. | Recoverable shared factories; fallible embedding containment and complete editor/installed/platform acceptance. Do not schedule basic library/header/cache publication as absent. |
 | LLVM production transition | Native source families and registered execution gates extend through classes, payloads, allocation, callables, dispatch, native calls and threads. macOS arm64 is promoted; see [the campaign](#llvm-production-backend-campaign). | Complete reconciled coverage and Linux/platform/installed/performance acceptance. Early O-LLVM “no lowering” checkpoints are not today's implementation status. |
 
 ### Audit Coverage And Remaining Domain Owners
@@ -9193,6 +9193,13 @@ prerequisite checkpoints as full acceptance.
   explicitly accepted on 2026-10-28. Measured optimized retain/release,
   contended-count and allocation workloads remain within the accepted budget;
   performance reports distinguish wall-time evidence from isolated-host claims.
+- **Concurrency evidence:** `shared_ownership_threads`,
+  `weak_ownership_threads` and `shared_ownership_release_race` also run
+  as instrumented LLVM objects under ThreadSanitizer (`*_tsan`). The release
+  race writes the payload in its destructor while other owners read it, so
+  removing the acquire after the final strong decrement is reported as a data
+  race. The acquire after the final weak decrement has no equivalent sensitive
+  gate yet.
 - **State/role:** source strong and weak ownership supersede the private-backed
   0.354.0 shared-owner implementation below. Recoverable shared allocation is
   still separate work. Custom copy/move constructor bodies remain out of scope
