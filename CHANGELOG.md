@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.493.2 - Thread-local owner assignment
+
+- Assigning a new value to a `thread_local` owner, such as a class with a
+  destructor or a `std::unique_ptr`, no longer stops with an internal compiler
+  error. The previous value is destroyed once, on the assigning thread, before
+  the new value is stored. This requires the LLVM backend; the retained C++
+  backend still does not support the assignment.
+
 ## 0.493.1 - Reserved standard module names
 
 - A source file outside the standard library can no longer declare a module
