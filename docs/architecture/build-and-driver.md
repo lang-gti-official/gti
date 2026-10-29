@@ -173,18 +173,24 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-Source lives on GitHub (`lang-gti-official/gti`), and toolchain releases move
-to its GitHub Releases. Until the GitHub release workflow and installer switch
-land, no new toolchain release publishes and the plugin keeps downloading the
-existing archives from the self-hosted Gitea (`gti-lang/gti`) at
+Source lives on GitHub (`lang-gti-official/gti`), and toolchain releases
+publish to its GitHub Releases through `.github/workflows/nightly.yml`, described
+under [GitHub nightly publication](#github-nightly-publication). Until the
+installer switch lands, after the first GitHub nightly is verified, the plugin
+keeps downloading the existing archives from the frozen self-hosted Gitea
+release (`gti-lang/gti`) at
 `https://git.internal.howetotech.dev/gti-lang/gti/releases/download/<tag>/<asset>`.
+Those Gitea archives no longer advance: their nightly is Linux x64 only and no
+stable release exists for a version cut after the freeze.
 The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
 shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
-published only after native validation. Existing Gitea Linux runners package
-`linux-x64` automatically. The owner selected manual Apple Silicon stable
-publication instead of installing a macOS Actions runner. Linux arm64 has no
-package job. The rolling nightly release is currently Linux-only; do not infer
-macOS availability from a tag or silently serve an older macOS nightly asset.
+published only after native validation on its platform. The GitHub nightly
+packages `linux-x64` and `darwin-arm64`. `linux-arm64` is not packaged: the
+runtime's raw atomic lanes (`runtime/src/atomic_lane.h`) have no reviewed
+linux-aarch64 compiler profile, so no admitted compiler exists for it. TODO:
+add the `ubuntu-24.04-arm` matrix entry once a runtime-safety review admits a
+linux-aarch64 profile. Do not infer a platform's availability from a tag or
+serve an older asset for a platform the current build did not produce.
 Version `v0.299.0` is the final historical macOS x64 toolchain; source
 compilation can still target or run on Intel macOS when its prerequisites are
 supplied locally.
@@ -260,64 +266,70 @@ Builds default to all detected logical CPUs (one if detection is unavailable),
 at normal process priority. `--jobs N` overrides the job count; the dry-run and
 normal output both report the selected parallelism.
 
-A single toolchain-release workflow builds, tests, stages, and smoke-tests each
-Gitea `main` commit on Linux with bundled LLVM/Clang. That verified stage supplies
-nightly and, when `VERSION` changes, stable archives. Stable is archived before
-the nightly `BUILD_ID` stamp; the two channels retain separate artifact names.
-The stable publication job owns the matching immutable tag and versioned
-release. A manual dispatch may rebuild that exact tagged commit, but cannot
-move a stable tag to another commit. New main commits do not cancel stable
-publication.
+### GitHub nightly publication
 
-The `nightly` release is one mutable channel whose tag and `BUILD_ID` advance
-to each admitted Gitea `main` commit. Nightly publication is serialized and
-checks current remote main before changing the tag; a superseded build skips
-publication. Its publication step uploads the complete current asset set before a
-Gitea API pass (`scripts/sync_release_assets.py`) removes any asset not produced by that build. This exact
-synchronization keeps retired platform archives from surviving a successful
-rolling publication while preserving current archives if upload is
-interrupted.
+`.github/workflows/nightly.yml` runs daily at 02:00 UTC and on manual dispatch.
+It publishes only the rolling `nightly` channel; stable `v<VERSION>` releases are
+not published by it and belong to the later beta/stable release train. Until
+that train lands, a `VERSION` advance publishes no stable release.
 
-### Manual macOS release publication
+1. **Select.** The workflow runs only from main's own definition in
+   `lang-gti-official/gti`. It takes main head, or on dispatch an exact 40-hex
+   commit that must be on main. `scripts/resolve_release_source.py
+   select-nightly` requires merge-queue evidence for that exact commit: a
+   `merge_group` run of `.github/workflows/ci.yml` on a
+   `gh-readonly-queue/main/...` branch of this repository whose `head_sha` is
+   the commit and whose latest `CI gate` job concluded `success`. The queue
+   merges by fast-forwarding main to the candidate it tested, so every queued
+   main commit carries that run; CI has no push trigger, and pull-request or
+   dispatch runs are not evidence. A scheduled run skips building when main
+   head is not newer than the published nightly.
+2. **Package.** Each platform (`ubuntu-24.04` for `linux-x64`, `macos-26` for
+   `darwin-arm64`) uses the reviewed compiler from
+   `scripts/configure_ci_toolchain.sh`, configures one
+   `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` build with the pinned
+   bundled LLVM/Clang, builds, stages `gti_toolchain` into a fresh directory,
+   and runs the installed CLI/LSP/project, process-resource, managed-thread,
+   atomic-runtime and installed-library consumer checks against that stage.
+   macOS installation generates and verifies `share/gti/host-runtime.json`;
+   `cmake/PackageRelease.cmake` refuses a macOS stage without it. The validated
+   stage becomes `gti-nightly-<platform>.tar.gz` with its `.sha256` sidecar
+   and a `share/gti/BUILD_ID` stamp naming the commit.
+3. **Release suite.** The complete CTest suite exceeds one hosted job's time
+   limit, so it runs on the identical release configuration in the merge
+   queue's cost-balanced shards (`scripts/validation_checks.py shard`), each
+   rebuilding from the packaging job's object cache. The release gate
+   (`validation_checks.py merge-shards`) fails unless every platform ran its
+   whole inventory exactly once on that commit. This is the same rebuilt-tree
+   equivalence the merge queue relies on; the packaged tree itself runs the
+   installed-toolchain checks.
+4. **Publish.** One serialized job (`gti-nightly-publication`, never
+   cancelled in progress) holds the workflow's only write token. It verifies
+   every archive's checksum and stamped `BUILD_ID`, writes the `BUILD_ID`
+   asset, and admits the build (`resolve_release_source.py admit-nightly`) only
+   if the commit is still main head and strictly newer than the commit the
+   `nightly` tag names; an equal or older commit is a skip, a published commit
+   outside main's history an error. It then attests build provenance, moves
+   the `nightly` tag with `git push --force-with-lease=refs/tags/nightly:<value
+   admission read>` (an empty lease requires the tag not to exist), creates or
+   edits the `nightly` prerelease, uploads archives and checksums before
+   `BUILD_ID`, and only after every current asset is present removes any asset
+   this build did not produce.
 
-This contract governed manual uploads to Gitea releases. No new toolchain
-release is published to Gitea; the GitHub release workflow replaces this
-procedure when it lands, and until then nothing is published.
+The installer contract is unchanged: it reads the `nightly` release's
+`BUILD_ID` asset, downloads `gti-nightly-<platform>.tar.gz` and its `.sha256`,
+and requires the extracted `share/gti/BUILD_ID` to match. A download that races
+publication fails that identity or checksum check and installs nothing. Only
+the moving `nightly` tag exists; dated per-build tags are not created, because
+no client reads them and each would retain full archives.
 
-No macOS background runner is configured or authorized by the hosting cutover.
-For an Apple Silicon **stable** release, use a clean, separate checkout of the
-exact immutable `v<VERSION>` commit advertised by canonical Gitea, not a newer
-`main` with the same archive name. Confirm its tag/commit and `VERSION` agree.
-Build with `-DCMAKE_BUILD_TYPE=Release -DGTI_RELEASE_BUILD=ON` and the documented
-macOS dependencies, using `scripts/build_window.py --kind build` for the full
-build and `--kind suite` for full CTest. Do not use an unoptimized compiler or
-drop required platform/runtime checks.
-
-Stage `gti_toolchain` into a fresh temporary directory with
-`cmake --install <build> --config Release --prefix <stage> --component gti_toolchain`.
-This is private packaging, not installation into the user's active toolchain.
-Run the same installed CLI/LSP/project, process-resource, managed-thread,
-atomic-runtime and installed-library consumer checks as the release workflow,
-against that stage. macOS installation must generate and verify
-`share/gti/host-runtime.json`; do not package a stage with unresolved Homebrew
-runtime dependencies. Then package the checked stage:
-
-```sh
-cmake -DGTI_SOURCE_DIR=<exact-source> -DGTI_STAGE_DIR=<validated-stage> \
-  -DGTI_OUTPUT_DIR=<output-directory> -DGTI_PLATFORM=darwin-arm64 \
-  -DGTI_EXPECTED_TAG=v<VERSION> -P cmake/PackageRelease.cmake
-```
-
-The packager checks the stage, version/tag agreement and macOS runtime manifest,
-and writes `gti-v<VERSION>-darwin-arm64.tar.gz` plus its `.sha256` file. Verify
-the checksum, retain exact-source build/test evidence, then use Gitea's release
-editor to attach **both** files to the existing matching stable release. Do not
-move its tag, create a competing version, delete Linux assets, or upload a
-system-LLVM-only local-install archive as a bundled release. Until those files
-are uploaded, a macOS download is unavailable; source/local installation remains
-available. Stable macOS publication is manual and is not a completed automated
-platform check. Nightly asset pruning intentionally removes archives outside
-its current Linux build rather than retaining misleading old macOS binaries.
+`.gitea/workflows/release.yml` is the frozen predecessor. It built Linux x64
+on each Gitea `main` push, archived stable before the nightly `BUILD_ID` stamp
+when `VERSION` changed, and pruned nightly assets through
+`scripts/sync_release_assets.py`. Gitea `main` no longer advances, so it does
+not run; it stays only as the record of that contract. Manual macOS uploads to
+Gitea releases are retired: GitHub-hosted `macos-26` runners package Apple
+Silicon automatically.
 
 Release archives explicitly use GNU tar format so macOS extended attributes do
 not become AppleDouble companion files after extraction. This preserves the
@@ -348,8 +360,8 @@ new or changed surface requires a minor increment. Missing, duplicate,
 malformed, or reason-free declarations fail the check, and a later internal
 commit cannot excuse earlier unclassified changes. Versions may not decrease;
 an internal declaration cannot authorize version churn. Documentation-only
-changes need no trailer. A stable-version advance retains the ordinary release
-workflow, with no competing manual tag.
+changes need no trailer. A stable-version advance publishes nothing until the
+beta/stable release train lands; never cut a competing manual tag.
 
 ## Live Build Progress
 

@@ -1,0 +1,412 @@
+name: Nightly toolchain
+
+# Packages the newest main commit that passed the merge queue's "CI gate" as a
+# bundled-LLVM release build on every reviewed platform, runs the complete
+# CTest suite on that release configuration plus the installed-toolchain
+# smoke, and republishes the one rolling `nightly` GitHub prerelease that the
+# Neovim installer reads (archives, .sha256 sidecars and BUILD_ID). Newer wins:
+# a commit that is no longer main head, or is not newer than the published
+# nightly, never publishes. Stable `v<VERSION>` releases are not published
+# here; they belong to the later beta/stable release train.
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full 40-hex main commit to package (default main head). Only main head publishes.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    name: Select a queue-verified main commit
+    if: github.repository == 'lang-gti-official/gti'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.select.outputs.sha }}
+      version: ${{ steps.select.outputs.version }}
+      build: ${{ steps.select.outputs.build }}
+      head: ${{ steps.select.outputs.head }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release orchestration before compiling
+        run: python3 tests/ci_release_test.py .
+      - name: Select the commit and verify its merge-queue gate
+        id: select
+        env:
+          GTI_GITHUB_TOKEN: ${{ github.token }}
+          GTI_REPOSITORY: ${{ github.repository }}
+          GTI_EVENT_NAME: ${{ github.event_name }}
+          GTI_REF: ${{ github.ref }}
+          GTI_REQUESTED_COMMIT: ${{ inputs.commit }}
+        run: >-
+          python3 scripts/resolve_release_source.py select-nightly
+          --repository "${GTI_REPOSITORY}" --event "${GTI_EVENT_NAME}"
+          --ref "${GTI_REF}" --requested "${GTI_REQUESTED_COMMIT}"
+          --output "${GITHUB_OUTPUT}"
+
+  package:
+    name: Package ${{ matrix.platform }}
+    needs: select
+    if: needs.select.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # linux-arm64 is not packaged: runtime/src/atomic_lane.h has no
+        # reviewed linux-aarch64 compiler profile, so configure_ci_toolchain.sh
+        # cannot admit a compiler there. See build-and-driver.md.
+        include:
+          - {os: ubuntu-24.04, platform: linux-x64, host: Linux-X64}
+          - {os: macos-26, platform: darwin-arm64, host: macOS-ARM64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          persist-credentials: false
+      - name: Confirm the exact nightly source and runner
+        env:
+          GTI_NIGHTLY_SHA: ${{ needs.select.outputs.sha }}
+          GTI_EXPECTED_HOST: ${{ matrix.host }}
+        run: |
+          if [[ "${RUNNER_OS}-${RUNNER_ARCH}" != "${GTI_EXPECTED_HOST}" ]]; then
+            echo "Runner ${RUNNER_OS}-${RUNNER_ARCH} is not ${GTI_EXPECTED_HOST}" >&2
+            exit 1
+          fi
+          python3 scripts/resolve_release_source.py source --sha "${GTI_NIGHTLY_SHA}" \
+            --event nightly --output "${RUNNER_TEMP}/gti-source"
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          # The bundled LLVM/Clang build compiles its large units beside GTI's.
+          GTI_MEMORY_PER_JOB_MIB: 3072
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/release
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore compiler and LLVM/Clang object cache
+        id: cache
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ needs.select.outputs.sha }}-${{ github.run_id }}
+          restore-keys: |
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-
+      - name: Check runner sanitizer execution
+        run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
+      - name: Configure release build
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_RELEASE_BUILD=ON
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+      - name: Check native driver compilation before LLVM/Clang
+        run: >-
+          cmake --build build --config Release --parallel "${GTI_JOBS}"
+          --target CMakeFiles/gti_driver.dir/src/driver/build.cpp.o
+      - name: Build
+        run: cmake --build build --config Release --parallel "${GTI_JOBS}"
+      - name: Stage toolchain
+        run: |
+          stage="$(mktemp -d "${RUNNER_TEMP}/gti-stage.XXXXXXXX")"
+          printf 'GTI_STAGE_DIRECTORY=%s\n' "${stage}" >> "${GITHUB_ENV}"
+          cmake --install build --config Release --prefix "${stage}" --component gti_toolchain
+      - name: Test installed toolchain
+        run: |
+          export PATH="${GTI_STAGE_DIRECTORY}/bin:${PATH}"
+          source="${GITHUB_WORKSPACE}"
+          cd "${RUNNER_TEMP}"
+          python3 "${source}/tests/lsp_smoke_test.py" gti_lsp
+          python3 "${source}/tests/cli_smoke_test.py" gti
+          python3 "${source}/tests/project_cli_smoke_test.py" gti
+          python3 "${source}/tests/process_resource_policy_test.py" gti --installed
+          python3 "${source}/tests/managed_thread_runtime_test.py" gti
+          python3 "${source}/tests/atomic_runtime_test.py" gti \
+            "${source}/tests/fixtures/atomic_scalar.gti" \
+            "${source}/tests/fixtures/atomic_concurrent.gti" \
+            "${source}/tests/fixtures/atomic_orders.gti" \
+            "${source}/tests/fixtures/atomic_fetch.gti" \
+            "${source}/tests/fixtures/atomic_fetch_overflow.gti"
+          cmake -S "${source}/tests/installed_library_smoke" \
+            -B "${RUNNER_TEMP}/gti-installed-library-smoke" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${GTI_STAGE_DIRECTORY}"
+          cmake --build "${RUNNER_TEMP}/gti-installed-library-smoke" \
+            --config Release --parallel "${GTI_JOBS}"
+          ctest --test-dir "${RUNNER_TEMP}/gti-installed-library-smoke" \
+            -C Release --parallel "${GTI_TEST_JOBS}" --output-on-failure
+      - name: Create nightly archive from the validated stage
+        env:
+          GTI_NIGHTLY_SHA: ${{ needs.select.outputs.sha }}
+          GTI_PLATFORM: ${{ matrix.platform }}
+        run: >-
+          cmake
+          -DGTI_SOURCE_DIR="${GITHUB_WORKSPACE}"
+          -DGTI_STAGE_DIR="${GTI_STAGE_DIRECTORY}"
+          -DGTI_OUTPUT_DIR="${GITHUB_WORKSPACE}/dist/nightly"
+          -DGTI_PLATFORM="${GTI_PLATFORM}"
+          -DGTI_CHANNEL=nightly
+          -DGTI_EXPECTED_TAG=nightly
+          -DGTI_BUILD_ID="${GTI_NIGHTLY_SHA}"
+          -P cmake/PackageRelease.cmake
+      - name: Upload nightly archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gti-nightly-${{ matrix.platform }}
+          path: dist/nightly/*
+          if-no-files-found: error
+          retention-days: 3
+      - name: Report compiler cache statistics
+        if: always()
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
+      # The release suite shards restore this exact key and rebuild the same
+      # configuration from cached objects.
+      - name: Save compiler and LLVM/Clang cache, including partial builds
+        if: always() && steps.cache.outputs.cache-primary-key != '' && steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+  # The complete suite exceeds one hosted job's time limit, so it runs on the
+  # identical release configuration in cost-balanced shards, as the merge
+  # queue does; the release gate proves each platform ran its inventory once.
+  suite:
+    name: Release suite (${{ matrix.platform }} ${{ matrix.index }}/${{ matrix.shards }})
+    needs: [select, package]
+    if: needs.select.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, platform: linux, shards: 4, index: 0}
+          - {os: ubuntu-24.04, platform: linux, shards: 4, index: 1}
+          - {os: ubuntu-24.04, platform: linux, shards: 4, index: 2}
+          - {os: ubuntu-24.04, platform: linux, shards: 4, index: 3}
+          - {os: macos-26, platform: darwin, shards: 6, index: 0}
+          - {os: macos-26, platform: darwin, shards: 6, index: 1}
+          - {os: macos-26, platform: darwin, shards: 6, index: 2}
+          - {os: macos-26, platform: darwin, shards: 6, index: 3}
+          - {os: macos-26, platform: darwin, shards: 6, index: 4}
+          - {os: macos-26, platform: darwin, shards: 6, index: 5}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          persist-credentials: false
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 3072
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/release
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore the packaging job's object cache
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ needs.select.outputs.sha }}-${{ github.run_id }}
+          restore-keys: |
+            gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+      - name: Configure release build
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_RELEASE_BUILD=ON
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+      - name: Run this shard of the complete release suite
+        env:
+          GTI_SHARDS: ${{ matrix.shards }}
+          GTI_SHARD_INDEX: ${{ matrix.index }}
+          GTI_SHARD_PLATFORM: ${{ matrix.platform }}
+        run: >-
+          python3 scripts/validation_checks.py shard --build build
+          --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}"
+          --jobs "${GTI_TEST_JOBS}"
+          --report "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.json"
+          --log "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.log"
+      - name: Show the shard log on failure
+        if: failure()
+        env:
+          GTI_SHARD_INDEX: ${{ matrix.index }}
+          GTI_SHARD_PLATFORM: ${{ matrix.platform }}
+        run: tail -n 400 "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_INDEX}.log" || true
+      - name: Upload shard evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-shard-${{ matrix.platform }}-${{ matrix.index }}
+          path: |
+            ${{ runner.temp }}/shard/*.json
+            ${{ runner.temp }}/shard/*.xml
+          retention-days: 30
+          if-no-files-found: ignore
+
+  release-gate:
+    name: Release suite gate
+    needs: [select, suite]
+    if: needs.select.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          persist-credentials: false
+      - name: Collect shard evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-shard-*
+          path: ${{ runner.temp }}/shards
+      - name: Require every release test to have run once per platform
+        env:
+          GTI_NIGHTLY_SHA: ${{ needs.select.outputs.sha }}
+        run: >-
+          python3 scripts/validation_checks.py merge-shards
+          --shard-reports "${RUNNER_TEMP}/shards" --platforms darwin,linux
+          --head "${GTI_NIGHTLY_SHA}"
+
+  publish:
+    name: Publish the nightly prerelease
+    needs: [select, package, release-gate]
+    if: needs.select.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: gti-nightly-publication
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GTI_NIGHTLY_SHA: ${{ needs.select.outputs.sha }}
+      GTI_NIGHTLY_VERSION: ${{ needs.select.outputs.version }}
+      GTI_NIGHTLY_PLATFORMS: linux-x64 darwin-arm64
+    steps:
+      - name: Check out the packaged commit with main's history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          fetch-depth: 0
+      - name: Download nightly archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gti-nightly-*
+          path: dist
+          merge-multiple: true
+      - name: Verify the complete asset set and record BUILD_ID
+        run: |
+          expected=()
+          for platform in ${GTI_NIGHTLY_PLATFORMS}; do
+            archive="gti-nightly-${platform}.tar.gz"
+            (cd dist && shasum -a 256 -c "${archive}.sha256")
+            stamped="$(tar -xOzf "dist/${archive}" ./share/gti/BUILD_ID)"
+            if [[ "${stamped}" != "${GTI_NIGHTLY_SHA}" ]]; then
+              echo "${archive} was built from ${stamped}, not ${GTI_NIGHTLY_SHA}" >&2
+              exit 1
+            fi
+            expected+=("${archive}" "${archive}.sha256")
+          done
+          printf '%s\n' "${GTI_NIGHTLY_SHA}" > dist/BUILD_ID
+          expected+=(BUILD_ID)
+          actual="$(cd dist && ls -1 | LC_ALL=C sort)"
+          wanted="$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)"
+          if [[ "${actual}" != "${wanted}" ]]; then
+            printf 'Unexpected nightly asset set:\n%s\n' "${actual}" >&2
+            exit 1
+          fi
+      - name: Admit only current main, newer than the published nightly
+        id: admission
+        run: >-
+          python3 scripts/resolve_release_source.py admit-nightly
+          --sha "${GTI_NIGHTLY_SHA}" --output "${GITHUB_OUTPUT}"
+      - name: Attest build provenance
+        if: steps.admission.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/gti-nightly-*.tar.gz
+      # The lease names the exact tag value admission read (empty: the tag
+      # must not exist yet), so a concurrent or stale move fails, not wins.
+      - name: Advance the nightly tag
+        if: steps.admission.outputs.publish == 'true'
+        env:
+          GTI_NIGHTLY_LEASE: ${{ steps.admission.outputs.lease }}
+        run: >-
+          git push --porcelain
+          "--force-with-lease=refs/tags/nightly:${GTI_NIGHTLY_LEASE}"
+          origin "${GTI_NIGHTLY_SHA}:refs/tags/nightly"
+      - name: Publish the nightly release and its assets
+        if: steps.admission.outputs.publish == 'true'
+        run: |
+          {
+            printf 'Rolling build of GitHub `main` that passed the merge queue.\n\n'
+            printf -- '- commit: `%s`\n' "${GTI_NIGHTLY_SHA}"
+            printf -- '- version at build: `%s`\n' "${GTI_NIGHTLY_VERSION}"
+            printf -- '- platforms: %s\n\n' "${GTI_NIGHTLY_PLATFORMS}"
+            printf 'Use a versioned release for anything that needs to stay put.\n'
+          } > "${RUNNER_TEMP}/nightly-notes.md"
+          if gh release view nightly --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit nightly --repo "${GITHUB_REPOSITORY}" --prerelease \
+              --latest=false --title "GTI nightly" --notes-file "${RUNNER_TEMP}/nightly-notes.md"
+          else
+            gh release create nightly --repo "${GITHUB_REPOSITORY}" --verify-tag --prerelease \
+              --latest=false --title "GTI nightly" --notes-file "${RUNNER_TEMP}/nightly-notes.md"
+          fi
+          # Archives first, BUILD_ID last: an installer that reads the new
+          # BUILD_ID finds the matching archives. A download racing this step
+          # fails its identity or checksum check and installs nothing.
+          for platform in ${GTI_NIGHTLY_PLATFORMS}; do
+            gh release upload nightly --repo "${GITHUB_REPOSITORY}" --clobber \
+              "dist/gti-nightly-${platform}.tar.gz" "dist/gti-nightly-${platform}.tar.gz.sha256"
+          done
+          gh release upload nightly --repo "${GITHUB_REPOSITORY}" --clobber dist/BUILD_ID
+      - name: Remove assets outside this nightly build
+        if: steps.admission.outputs.publish == 'true'
+        run: |
+          published="$(gh release view nightly --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')"
+          # Prune only after every current asset is present.
+          for name in $(cd dist && ls -1); do
+            if ! grep -Fxq -- "${name}" <<< "${published}"; then
+              echo "${name} was not uploaded; refusing to prune the release" >&2
+              exit 1
+            fi
+          done
+          while IFS= read -r name; do
+            if [[ -n "${name}" && ! -f "dist/${name}" ]]; then
+              gh release delete-asset nightly "${name}" --repo "${GITHUB_REPOSITORY}" --yes
+            fi
+          done <<< "${published}"

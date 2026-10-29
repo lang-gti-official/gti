@@ -508,16 +508,17 @@ Other clients can use the same `gti.profile` setting or
 use a grey comment-style default; themes can override
 `@lsp.mod.inactiveCode.gti`.
 
-Use the complete `https://` URL for Gitea, and write `version = "*"` without
-a backslash. The selected tag must have a matching toolchain archive under
-Gitea Releases; syncing Git tags does not create or copy release binaries.
-Older tags from before the hostname migration still contain the old installer.
-The current Linux-only runner cannot publish macOS binaries. On macOS, build
-locally and set `GTI_PATH` and `GTI_LSP_PATH` to those executables (and
-`GTI_TREE_SITTER_PATH` to the built parser), or manually publish a validated
-Apple Silicon stable archive using the
-[manual release contract](docs/architecture/build-and-driver.md#manual-macos-release-publication).
-No macOS runner service is configured; nightly binary downloads are Linux-only.
+Use the complete `https://` URL, and write `version = "*"` without a
+backslash. The selected tag must have a matching toolchain archive on the
+installer's release host; syncing Git tags does not create or copy release
+binaries. Older tags from before the hostname migration still contain the old
+installer. Toolchain releases now publish to GitHub Releases (a daily
+`nightly` for Linux x64 and Apple Silicon; see
+[GitHub nightly publication](docs/architecture/build-and-driver.md#github-nightly-publication)).
+Until the installer switches to them, it downloads the frozen Gitea archives,
+where nightly is Linux x64 only and no stable archive exists for a version cut
+after the freeze. Otherwise build locally and set `GTI_PATH` and `GTI_LSP_PATH`
+to those executables (and `GTI_TREE_SITTER_PATH` to the built parser).
 When supplying your own toolchain, set `build = false` in the Lazy spec to
 disable its release-download hook.
 
