@@ -1522,9 +1522,10 @@
       }
     },
     {
-      "id": "memory-layout",
+      "id": "memory-general-layout",
       "mode": "run",
-      "source": "examples/119-runtime-object-layout.gti",
+      "source": "examples/181-general-object-layout.gti",
+      "backend": "llvm",
       "optimizations": [
         "O0",
         "O3"
@@ -1536,10 +1537,9 @@
       }
     },
     {
-      "id": "memory-general-layout",
+      "id": "memory-layout",
       "mode": "run",
-      "source": "examples/181-general-object-layout.gti",
-      "backend": "llvm",
+      "source": "examples/119-runtime-object-layout.gti",
       "optimizations": [
         "O0",
         "O3"
