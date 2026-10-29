@@ -1,10 +1,12 @@
-void run<F>(mut F& callback) {
+export module borrowing_callbacks_kernel;
+
+export void run<F>(mut F& callback) {
   for (mut uint64_t tick = 0; tick < uint64_t(40000000); tick += uint64_t(1)) {
     callback(tick % uint64_t(127));
   }
 }
 
-void print_digit(uint64_t digit) {
+export void print_digit(uint64_t digit) {
   switch (digit) {
   case uint64_t(0): std::print("0"); break;
   case uint64_t(1): std::print("1"); break;
@@ -26,7 +28,7 @@ void print_digit(uint64_t digit) {
   }
 }
 
-void report(uint64_t state) {
+export void report(uint64_t state) {
   std::print("GTI-BENCH-1 digest:");
   mut uint64_t divisor = 0x1000000000000000;
   while (divisor > uint64_t(0)) {

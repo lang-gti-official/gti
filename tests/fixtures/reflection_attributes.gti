@@ -3,9 +3,9 @@
 // encoder and a binary writer. The compiler stores each `[[ns::name(args)]]`
 // as a constant of its `[[attribute]]` struct and gives it no meaning; every
 // policy below lives in the client.
-#include <std/meta>
-#include <std/string>
-#include <std/vector>
+import std.meta;
+import std.string;
+import std.vector;
 
 namespace enc {
 [[attribute]] struct key { std::string_view name = "";  public: key() = default; };

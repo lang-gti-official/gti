@@ -311,7 +311,7 @@ analyzeTrustedPreludeFixture(const std::string &name, const std::string &source,
 analyzeTrustedMemoryFixture(const std::string &name, const std::string &source,
                             lang::FrontendOptions options = {}) {
   return analyzeTrustedPreludeFixture(
-      name, std::string("#include <std/memory>\n") + source,
+      name, std::string("import std.memory;\n") + source,
       std::move(options));
 }
 

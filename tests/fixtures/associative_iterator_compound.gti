@@ -1,4 +1,4 @@
-#include <std/unordered_map>
+import std.unordered_map;
 
 int main() {
   mut std::unordered_map<int, int> values{};

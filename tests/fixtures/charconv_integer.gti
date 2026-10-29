@@ -1,5 +1,5 @@
-#include <std/charconv>
-#include <std/string>
+import std.charconv;
+import std.string;
 
 bool check<std::integral T>(std::string_view text, T expected_value) {
   mut T value = T(7);

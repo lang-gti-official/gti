@@ -1,3 +1,0 @@
-// Module std.span: the public surface of <std/span>.
-export module span;
-export #include <std/span>

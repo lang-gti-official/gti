@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 // A checked reference may name a GTI pointer slot: reading or reseating the
 // stored address through it is safe, while the pointee stays behind lexical

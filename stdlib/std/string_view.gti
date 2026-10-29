@@ -1,7 +1,8 @@
-#include <std/iterator>
-#include <std/detail/iterator>
+export module string_view;
 
-namespace std::detail {
+import std.iterator;
+import "detail/iterator.gti";
+export namespace std::detail {
 class text_view_sentinel {
   size_t final_position;
 public:
@@ -67,7 +68,7 @@ public:
 };
 }
 
-namespace gti_internal {
+export namespace gti_internal {
 // Trusted declaration identities bind builtin member syntax to these ordinary
 // source functions. They do not become backend-known iteration operations.
 std::detail::text_view_iterator<0> text_view_begin(std::string_view& view) {
@@ -108,7 +109,7 @@ std::detail::text_view_iterator<1> text_view_reverse_iterator_at(std::string_vie
 }
 }
 
-namespace std {
+export namespace std {
 detail::text_view_iterator<0> begin(std::string_view& view) { return gti_internal::text_view_begin(view); }
 detail::text_view_sentinel end(std::string_view& view) { return gti_internal::text_view_end(view); }
 detail::text_view_iterator<0> cbegin(std::string_view& view) { return gti_internal::text_view_cbegin(view); }

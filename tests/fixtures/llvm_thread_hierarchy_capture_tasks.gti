@@ -4,11 +4,11 @@
 // argument of std::thread_result<T>::start, whose spawn relocates it into the
 // runtime task box, rebuilding each capture's dispatch state. Every object is
 // destroyed exactly once.
-#include <std/string>
-#include <std/thread>
-#include <std/atomic>
-#include <std/format>
-#include <std/utility>
+import std.string;
+import std.thread;
+import std.atomic;
+import std.format;
+import std.utility;
 
 std::atomic<int32_t> constructed{0};
 std::atomic<int32_t> destroyed{0};

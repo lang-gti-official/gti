@@ -1,14 +1,15 @@
-#include <std/algorithm>
-#include <std/array>
-#include <std/cmath>
-#include <std/forward_list>
-#include <std/iterator>
-#include <std/numeric>
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+export module foundations;
 
-namespace stdlib {
+import std.algorithm;
+import std.array;
+import std.cmath;
+import std.forward_list;
+import std.iterator;
+import std.numeric;
+import std.string;
+import std.utility;
+import std.vector;
+export namespace stdlib {
 namespace tests {
 namespace foundations {
 class integer_sentinel {

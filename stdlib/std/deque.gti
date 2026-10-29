@@ -1,8 +1,9 @@
-#include <std/vector>
-#include <std/memory>
-#include <std/detail/iterator>
+export module deque;
 
-namespace std {
+import std.vector;
+import std.memory;
+import "detail/iterator.gti";
+export namespace std {
 namespace detail {
 enum class deque_in_place { value };
 struct deque_node<T> {

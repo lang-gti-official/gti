@@ -1,4 +1,4 @@
-#include <std/array>
+import std.array;
 
 struct Table {
   mut int values[3];

@@ -1,7 +1,8 @@
-#include <std/string>
-#include <std/vector>
+export module http;
 
-namespace gti_internal {
+import std.string;
+import std.vector;
+export namespace gti_internal {
   namespace runtime {
     extern "C" {
       uint32_t gti_rt_http_client_create_v1(int64_t* output_client);
@@ -547,7 +548,7 @@ namespace gti_internal {
   }
 }
 
-namespace std {
+export namespace std {
   namespace http {
     /// HTTP methods supported by the first synchronous client surface.
     enum class method {
@@ -1042,7 +1043,7 @@ namespace std {
   }
 }
 
-namespace gti_internal {
+export namespace gti_internal {
   namespace http_detail {
     uint32_t runtime_method(std::http::method value) {
       switch (value) {
@@ -1093,7 +1094,7 @@ namespace gti_internal {
   }
 }
 
-namespace std {
+export namespace std {
   namespace http {
     /// A reusable synchronous client. One mutable borrow permits one request at a
     /// time; the native easy handle retains its connection pool between calls.

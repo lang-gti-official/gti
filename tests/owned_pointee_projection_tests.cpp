@@ -131,7 +131,7 @@ lang::FrontendResult trusted(std::string name, const std::string &source) {
 
 void checkSourceDefinedIdentity() {
   const auto frontend = trusted("gti-owned-pointee-renamed.gti", R"gti(
-#include <std/memory>
+import std.memory;
 class Item { public: int read() { return 4; }  public: Item() = default; };
 class UnrelatedName<T> {
   mut gti_internal::unique_owner<T> resource = nullptr;

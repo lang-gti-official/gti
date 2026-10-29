@@ -1,9 +1,10 @@
-#include <std/vector>
-#include <std/memory>
-#include <std/functional>
-#include <std/utility>
+export module map;
 
-namespace std {
+import std.vector;
+import std.memory;
+import std.functional;
+import std.utility;
+export namespace std {
 namespace detail {
 struct map_node<K, V> {
   mut map_entry<K, V> entry;

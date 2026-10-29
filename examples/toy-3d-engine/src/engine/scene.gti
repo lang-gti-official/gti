@@ -1,6 +1,7 @@
-#include "math.gti"
+export module scene;
 
-namespace toy3d {
+import "math.gti";
+export namespace toy3d {
 class Scene {
   mut float cube_rotation_y_value;
   mut float cube_angular_speed;

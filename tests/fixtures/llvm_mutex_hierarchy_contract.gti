@@ -1,5 +1,5 @@
-#include <std/atomic>
-#include <std/mutex>
+import std.atomic;
+import std.mutex;
 
 class Base {
 public:

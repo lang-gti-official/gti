@@ -140,7 +140,7 @@ int main() { Key key{}; inspect(key); return 0; }
            "macro probes retain computed reflection declaration identities");
 
   accepted(check(root, directory, "predicate_alias_lexical_order", R"GTI(
-#include <std/meta>
+import std.meta;
 constexpr bool accepts<T>() { bool result = std::meta::is_integral<T>(); return result; }
 concept integer_type<T> = accepts<T>();
 class Box<integer_type T> { public: Box() = default; };
@@ -181,7 +181,7 @@ int main() { return forward(1); }
 
   accepted(
       check(root, directory, "symbolic_declaration_predicate", R"GTI(
-#include <std/meta>
+import std.meta;
 struct Cell<T> {
   T value;
   Cell(T input) : value(input) {}
@@ -206,7 +206,7 @@ int main() { Cell<int> value{1}; return forward(value) - 1; }
 )GTI"),
       "symbolic declaration metadata and existing expression proofs compose");
   accepted(check(root, directory, "symbolic_identity_predicate", R"GTI(
-#include <std/meta>
+import std.meta;
 struct Cell<T> { public: Cell() = default; };
 struct End { public: End() = default; };
 constexpr bool identities<T>() {
@@ -226,7 +226,7 @@ int main() {
 )GTI"),
            "symbolic type identities preserve equality and outer distinctions");
   rejected(check(root, directory, "symbolic_unknown_equality", R"GTI(
-#include <std/meta>
+import std.meta;
 constexpr bool equal<T, U>() { return std::meta::is_same<T, U>(); }
 concept same<T, U> = equal<T, U>();
 void accepts<T, U>(T& left, U& right) requires same<T, U> {}
@@ -235,7 +235,7 @@ int main() { return 0; }
 )GTI"),
            "distinct symbolic identities do not establish equality");
   rejected(check(root, directory, "symbolic_unknown_inequality", R"GTI(
-#include <std/meta>
+import std.meta;
 constexpr bool unequal<T, U>() { return !std::meta::is_same<T, U>(); }
 concept different<T, U> = unequal<T, U>();
 void accepts<T, U>(T& left, U& right) requires different<T, U> {}
@@ -257,7 +257,7 @@ int main() {
            "cached primitive proofs never authorize a different type domain");
   rejected(
       check(root, directory, "symbolic_specialization_inventory", R"GTI(
-#include <std/meta>
+import std.meta;
 namespace shapes {
 struct Cell<T> { T value; T& operator*() { return value; } };
 }
@@ -331,8 +331,8 @@ int main() { Reader reader{}; return same(reader, 2) ? 0 : 1; }
            "GTI-S2022");
 
   accepted(check(root, directory, "iteration_binding_checks", R"GTI(
-#include <std/algorithm>
-#include <std/string_view>
+import std.algorithm;
+import std.string_view;
 struct End { public: End() = default; };
 struct Cursor {
   int operator*() { return 3; }
@@ -415,7 +415,7 @@ int main() { return 0; }
 
   accepted(
       check(root, directory, "iteration_requirements", R"GTI(
-#include <std/vector>
+import std.vector;
 concept readable<R> = requires(R& range) { for (auto& element : range) {} };
 concept ints<R> = requires(R& range) { for (int& element : range) {} };
 concept editable<R> = requires(mut R& range) { for (mut int& element : range) {} };
@@ -445,8 +445,8 @@ int main() {
       "iteration requirements reuse loop analysis and export generic proofs");
 
   accepted(check(root, directory, "source_sized_range_policy", R"GTI(
-#include <std/iterator>
-#include <std/vector>
+import std.iterator;
+import std.vector;
 std::size_t measured<R>(R& range) requires std::sized_range<R> {
   return range.size();
 }
@@ -485,7 +485,7 @@ int main() {
 
   accepted(
       check(root, directory, "dependent_borrowed_query_result", R"GTI(
-#include <std/meta>
+import std.meta;
 struct Reader { int value = 1; int& operator*() { return this.value; }  public: Reader() = default; };
 constexpr bool result_matches<I, R>(std::meta::type<I> owner, std::meta::type<R> result) {
   if constexpr (std::meta::type<R>().is_reference()) {
@@ -506,9 +506,9 @@ int main() { static_assert(inspect<Reader>()); return 0; }
       "dependent borrowed result attributes are distinct from array suffixes");
 
   accepted(check(root, directory, "source_range_callable_policy", R"GTI(
-#include <std/functional>
-#include <std/algorithm>
-#include <std/meta>
+import std.functional;
+import std.algorithm;
+import std.meta;
 struct End { public: End() = default; };
 struct Cursor {
   int value = 1;
@@ -554,7 +554,7 @@ int main() { return pick(3); }
            "GTI-S2029");
 
   accepted(check(root, directory, "source_sentinel_policy", R"GTI(
-#include <std/iterator>
+import std.iterator;
 struct End { int position = 8;  public: End() = default; };
 struct Cursor {
   int position = 3;
@@ -605,8 +605,8 @@ int main() {
 
   accepted(
       check(root, directory, "source_scalar_policy", R"(
-#include <std/atomic>
-#include <std/meta>
+import std.atomic;
+import std.meta;
 constexpr bool truth_type<T>() { return std::meta::is_bool<T>(); }
 concept integer_or_boolean<T> = std::meta::is_integral<T>() || truth_type<T>();
 concept signed_or_unsigned<T> = std::meta::is_signed_integral<T>() ||
@@ -636,8 +636,8 @@ int main() {
       "source scalar policies transport common proofs across alternatives");
 
   rejected(check(root, directory, "disjunction_does_not_invent_scalar", R"(
-#include <std/atomic>
-#include <std/meta>
+import std.atomic;
+import std.meta;
 concept integer_or_float<T> = std::meta::is_integral<T>() ||
                               std::meta::is_floating_point<T>();
 T load<T>(std::atomic<T>& value) requires integer_or_float<T> {
@@ -649,8 +649,8 @@ int main() { return 0; }
            "one non-atomic alternative cannot justify atomic storage");
 
   accepted(check(root, directory, "source_storage_policy", R"(
-#include <std/memory>
-#include <std/meta>
+import std.memory;
+import std.meta;
 struct Payload { int value = 0;  public: Payload() = default; };
 struct Borrowed {
   int& value;
@@ -685,7 +685,7 @@ int main() {
            "independent source object-layout and borrow-state policies");
 
   rejected(check(root, directory, "copying_does_not_prove_storage", R"(
-#include <std/memory>
+import std.memory;
 std::uninitialized<T> slot<T>() requires std::copyable<T> {
   return std::uninitialized<T>();
 }
@@ -754,7 +754,7 @@ int main() { Wrong value; return read(value); }
            "inline source concepts validate the full concrete requirement");
 
   accepted(check(root, directory, "source_comparison_policy", R"(
-#include <std/meta>
+import std.meta;
 struct Key {
   int value = 0;
   bool operator==(Key& other) { return this.value == other.value; }
@@ -842,8 +842,8 @@ int main() {
            "excluding primitive equality");
 
   accepted(check(root, directory, "source_mutation_requirements", R"(
-#include <std/iterator>
-#include <std/meta>
+import std.iterator;
+import std.meta;
 concept adjustable<T> = requires(mut T& value, int amount) {
   { ++value } -> void;
   { --value } -> void;
@@ -896,7 +896,7 @@ int main() {
            "source classes without an iterator capability");
 
   accepted(check(root, directory, "source_once_action", R"(
-#include <std/functional>
+import std.functional;
 concept task<F> = requires(F action) { { std::move(action)() } -> void; };
 void run<F>(F action) requires task<F> { std::move(action)(); }
 void forward<F>(F action) requires std::once_action<F> {
@@ -926,21 +926,21 @@ int main() {
            "safety, arity and exact result checks");
 
   rejected(check(root, directory, "source_once_action_rejects_arity", R"(
-#include <std/functional>
+import std.functional;
 struct NeedsArgument { void operator()(int value) {}  public: NeedsArgument() = default; };
 int main() { std::invoke_once(NeedsArgument()); return 0; }
 )"),
            "source once_action does not invent a missing argument");
 
   rejected(check(root, directory, "source_once_action_rejects_result", R"(
-#include <std/functional>
+import std.functional;
 struct Wrong { int operator()() && { return 1; }  public: Wrong() = default; };
 int main() { std::invoke_once(Wrong()); return 0; }
 )"),
            "source once_action requires exactly void");
 
   accepted(check(root, directory, "lookup_reflection_overrides", R"(
-#include <std/meta>
+import std.meta;
 class Parent<T> {
 public:
   virtual int sample() { return 1; }
@@ -1083,8 +1083,8 @@ int main() {
 
   accepted(
       check(root, directory, "source_mutable_cursor_policy", R"GTI(
-#include <std/iterator>
-#include <std/meta>
+import std.iterator;
+import std.meta;
 struct Cursor {
   mut int value = 0;
   mut int& operator*() mut { return this.value; }
@@ -1120,9 +1120,9 @@ int main() {
       "source cursor policies use general owner-aware reference requirements");
 
   accepted(check(root, directory, "source_erased_owner_policy", R"(
-#include <std/meta>
-#include <std/polymorphic>
-#include <std/string>
+import std.meta;
+import std.polymorphic;
+import std.string;
 interface Measure { int read(); };
 class Point : public Measure {
 public:
@@ -1161,7 +1161,7 @@ int main() {
            "source policy composes independent cleanup and public-base facts");
 
   accepted(check(root, directory, "source_cursor_policy_implication", R"(
-#include <std/iterator>
+import std.iterator;
 void retreat<I>(mut I& cursor) requires std::bidirectional_cursor<I> {
   --cursor;
 }
@@ -1176,7 +1176,7 @@ int main() { return 0; }
            "nested conjunctions preserve opaque source predicate proofs");
 
   rejected(check(root, directory, "source_mutable_cursor_exact_index", R"(
-#include <std/iterator>
+import std.iterator;
 struct Cursor {
   mut int value = 0;
   mut int& operator[](std::ptrdiff_t& offset) mut { return this.value; }
@@ -1328,7 +1328,7 @@ int main() {
            "default and argument-bearing construction");
 
   accepted(check(root, directory, "unevaluated", R"(
-#include <std/memory>
+import std.memory;
 mut int calls = 0;
 int never_run() { calls += 1; return 1; }
 int main() {
@@ -1450,7 +1450,7 @@ int main() { Vault value{}; return value.probe(); }
 
   accepted(
       check(root, directory, "predicates", R"(
-#include <std/meta>
+import std.meta;
 constexpr bool integer_alias<T>() { return std::meta::is_integral<T>(); }
 concept integer_value<T> = integer_alias<T>();
 concept possible<T> = std::meta::is_integral<T>() || std::meta::is_floating_point<T>();
@@ -1584,7 +1584,7 @@ int main() {
 
   accepted(
       check(root, directory, "declaration_query_scope", R"(
-#include <std/meta>
+import std.meta;
 namespace definition {
   using Chosen = int;
   int leaf<T>() requires std::integral<T> { return 1; }
@@ -1694,7 +1694,7 @@ int main() { Reader receiver{}; bool result = false; return use(receiver, result
       "an independent required result does not falsely blame a unary receiver");
 
   rejected(check(root, directory, "false_predicate", R"(
-#include <std/meta>
+import std.meta;
 concept integral_only<T> = std::meta::is_integral<T>();
 int use<T>(T value) requires integral_only<T> { return 0; }
 int main() { return use(true); }
@@ -1729,7 +1729,7 @@ int main() { int value = 1; return broken(value); }
            "GTI-S2004");
 
   accepted(check(root, directory, "compound_type_arguments", R"(
-#include <std/meta>
+import std.meta;
 bool flag<T>() { return std::meta::is_integral<T>(); }
 int number<T>() { return 2; }
 concept selects<T> = requires {

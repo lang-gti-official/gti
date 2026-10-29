@@ -1,31 +1,32 @@
-#include <base/core>
-#include <std/vector>
-#include "detail/accumulate.gti"
+export module stats;
+import base.core;
+import std.vector;
+import "detail/accumulate.gti";
 
 namespace mid::stats {
-  int start = base::core::seed() * 10;
+  export int start = base::core::seed() * 10;
 
-  int doubled_sum(std::vector<int>& values) {
+  export int doubled_sum(std::vector<int>& values) {
     return base::core::twice(mid::detail::accumulate(values));
   }
 
-  int total_area(base::core::Shape& a, base::core::Shape& b) {
+  export int total_area(base::core::Shape& a, base::core::Shape& b) {
     return a.area() + b.area();
   }
 
-  int total_sides(base::core::Shape& a, base::core::Shape& b) {
+  export int total_sides(base::core::Shape& a, base::core::Shape& b) {
     return a.sides() + b.sides();
   }
 
-  int twice_calls() { return base::core::calls; }
+  export int twice_calls() { return base::core::calls; }
 }
 
 namespace mid::stats {
-  class Summary {
+  export class Summary {
   public:
     int total;
     Summary(int t) : total(t) {}
     int doubled() { return base::core::twice(total); }
   };
-  Summary summarize(int value) { return Summary(value); }
+  export Summary summarize(int value) { return Summary(value); }
 }

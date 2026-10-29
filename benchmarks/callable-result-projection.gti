@@ -1,6 +1,6 @@
 // Compare -D EXPLICIT_RESULT against the dependent result projection at -O3.
 // Both programs perform identical bounded scalar work with no owning storage.
-#include <std/meta>
+import std.meta;
 class Counter<T> {
   mut T value;
 public:

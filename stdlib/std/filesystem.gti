@@ -1,3 +1,5 @@
+export module filesystem;
+
 // <std/filesystem> — owning paths and recoverable host filesystem operations.
 //
 // Path members perform lexical manipulation. Free functions below access the
@@ -19,11 +21,9 @@
 // currently limits `using` to namespace scope. `operator+=` has not yet been
 // added to this class, so concat() alone carries that behaviour. Directory
 // joining is available through append()/append_path() and operator/()/operator/=().
-
-#include <std/string>
-#include <std/vector>
-
-namespace gti_internal {
+import std.string;
+import std.vector;
+export namespace gti_internal {
 namespace filesystem_runtime {
 extern "C" {
 uint32_t gti_rt_fs_status_v1(text_view path, uint32_t follow, uint32_t* type);
@@ -71,7 +71,7 @@ public:
 };
 }
 
-namespace std {
+export namespace std {
   namespace filesystem {
 
     /// An owning pathname value that performs lexical path manipulation.
@@ -661,7 +661,7 @@ namespace std {
 
   }
 }
-namespace std {
+export namespace std {
 namespace filesystem {
 
 /// Stable recoverable host errors; allocation of ordinary GTI values retains
@@ -696,7 +696,7 @@ public:
 
 }
 }
-namespace gti_internal {
+export namespace gti_internal {
 namespace filesystem_detail {
 std::filesystem::errc error(uint32_t code) {
   switch (code) {
@@ -767,7 +767,7 @@ expected<std::filesystem::path, std::filesystem::errc> resolve(uint32_t operatio
 }
 }
 
-namespace std {
+export namespace std {
 namespace filesystem {
 
 /// Follows symbolic links. An absent path is a successful not_found status.

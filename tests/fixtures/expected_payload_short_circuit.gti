@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // A field of an owning expected payload read inside the right operand of &&
 // or ||, or inside a conditional arm. The expected result and its extracted

@@ -5,7 +5,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import without_include_advice, LspSession, lsp_position, semantic_tokens_by_position
+from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
 
 
 def main():
@@ -36,7 +36,7 @@ def main():
                 and item["params"].get("uri") == uri
                 and item["params"].get("version") == version
             )
-            return without_include_advice(reply["params"]["diagnostics"])
+            return reply["params"]["diagnostics"]
 
         def change(version, text):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
@@ -109,7 +109,7 @@ def main():
 
             # The same spelling works with source-defined public stdlib aliases.
             vector_source = (
-                "#include <std/vector>\n"
+                "import std.vector;\n"
                 "using Cursor = std::vector<int>::const_iterator;\n"
                 "using Writable = std::vector<int>::iterator;\n"
                 "using End = std::vector<int>::sentinel;\n"

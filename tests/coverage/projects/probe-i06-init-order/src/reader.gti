@@ -1,5 +1,6 @@
+export module reader;
 namespace reader {
-  concept has_value<T> = requires(T& item) { { item.get() } -> int; };
+  export concept has_value<T> = requires(T& item) { { item.get() } -> int; };
 
-  int read<T>(T& item) requires has_value<T> { return item.get(); }
+  export int read<T>(T& item) requires has_value<T> { return item.get(); }
 }

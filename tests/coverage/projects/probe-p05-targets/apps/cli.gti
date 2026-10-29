@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/vector>
-#include "../src/inventory.gti"
+import std.string;
+import std.vector;
+import "../src/inventory.gti";
 
 int main(int argc, std::vector<std::string> argv) {
   mut inv::Inventory items{};

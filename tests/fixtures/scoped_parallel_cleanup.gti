@@ -1,5 +1,5 @@
-#include <std/thread>
-#include <std/memory>
+import std.thread;
+import std.memory;
 
 // The audited destructor touches only this task's checked exclusive referent.
 [[unsafe_transfer]] class Finish {

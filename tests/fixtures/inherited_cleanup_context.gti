@@ -1,6 +1,6 @@
-#include <std/thread>
-#include <std/vector>
-#include <std/string>
+import std.thread;
+import std.vector;
+import std.string;
 
 class Marker {
   int tag;

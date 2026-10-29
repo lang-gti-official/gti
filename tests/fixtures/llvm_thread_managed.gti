@@ -1,5 +1,5 @@
-#include <std/thread>
-#include <std/memory>
+import std.thread;
+import std.memory;
 
 // User-defined task shapes for managed void workers: read, mutable and
 // consuming call operators, owned captures with worker-side cleanup, a

@@ -2,7 +2,7 @@
 // including a constructor whose value parameter infers a function item from
 // a bare function name. Both a user-defined class and std::function_ptr are
 // built through aliases in return and initializer positions.
-#include <std/functional>
+import std.functional;
 
 class Tag {
   int64_t value;

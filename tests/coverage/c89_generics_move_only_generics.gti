@@ -1,8 +1,8 @@
 // Generic code over move-only types: constrained containers of unique owners,
 // generic transfer helpers, generic classes holding move-only values with
 // cleanup counting, and generic functions taking/returning move-only T.
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 
 mut int32_t live_tokens = 0;
 mut int32_t dropped_tokens = 0;

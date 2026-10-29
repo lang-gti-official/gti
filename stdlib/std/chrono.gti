@@ -1,12 +1,12 @@
+export module chrono;
+
 // <std/chrono> -- exact nanosecond clock readings and elapsed-time measurement.
 //
 // This first surface deliberately keeps monotonic and wall-clock points as
 // distinct nominal types. It does not yet provide sleeps, calendar fields,
 // civil-time formatting, time zones, or generic ratio-based durations.
-
-#include <std/numeric>
-
-namespace gti_internal {
+import std.numeric;
+export namespace gti_internal {
 namespace chrono_runtime {
 extern "C" {
 int32_t gti_rt_chrono_steady_now_v1(int64_t* output_nanoseconds);
@@ -15,7 +15,7 @@ int32_t gti_rt_chrono_system_now_v1(int64_t* output_nanoseconds);
 }
 }
 
-namespace std {
+export namespace std {
 namespace chrono {
 
 /// Recoverable clock-read and duration-arithmetic outcomes.

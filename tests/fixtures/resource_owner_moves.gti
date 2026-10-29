@@ -1,9 +1,9 @@
-#include <std/resource_vector>
-#include <std/resource>
-#include <std/memory>
-#include <std/panic>
-#include <std/string>
-#include <std/vector>
+import std.resource_vector;
+import std.resource;
+import std.memory;
+import std.panic;
+import std.string;
+import std.vector;
 
 class Provider {
   std::process_resource process{};

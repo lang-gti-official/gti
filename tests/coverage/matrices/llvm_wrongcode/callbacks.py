@@ -8,14 +8,14 @@ make(i) returns a callback whose call with x yields VALUE(i, x).
 """
 import itertools
 
-PRELUDE = """#include <std/functional>
-#include <std/memory>
-#include <std/vector>
-#include <std/map>
-#include <std/string>
-#include <std/atomic>
-#include <std/format>
-#include <std/utility>
+PRELUDE = """import std.functional;
+import std.memory;
+import std.vector;
+import std.map;
+import std.string;
+import std.atomic;
+import std.format;
+import std.utility;
 std::atomic<int32_t> constructed{0};
 std::atomic<int32_t> destroyed{0};
 [[unsafe_transfer]] class Tracked {

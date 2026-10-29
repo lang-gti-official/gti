@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 enum class choice { first, second };
 using callback = (int32_t) -> int32_t;

@@ -1,6 +1,6 @@
-#include <std/functional>
-#include <std/string>
-#include <std/memory>
+import std.functional;
+import std.string;
+import std.memory;
 
 std::size_t hashed<Hash, Key>(Hash hash, Key& key)
   requires std::read_callable<Hash, Key, std::size_t> {

@@ -1,10 +1,9 @@
 // Ordinary user types retain exact element addresses and receiver-tied views.
 // A view returned by a call can be observed in the same expression.
 // Boxing an existing value uses its selected copy/move operation, not a wrapper.
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
-
+import std.memory;
+import std.string;
+import std.vector;
 struct Counter {
   int count;
   Counter(int number) : count(number) {}

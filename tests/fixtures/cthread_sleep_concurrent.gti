@@ -1,5 +1,5 @@
-#include <std/cthread>
-#include <std/thread>
+import std.cthread;
+import std.thread;
 
 int32_t worker(void* ignored) {
   std::timespec duration = std::timespec(int64_t(0), int64_t(1));

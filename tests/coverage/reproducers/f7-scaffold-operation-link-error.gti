@@ -1,3 +1,3 @@
-#include <std/optional>
+import std.optional;
 class A { public: int32_t i() { return 0; }  public: A() = default; };
 int main() { mut std::optional<int32_t> o = std::optional<int32_t>(1); std::println(o.has_value() ? 1 : 0); return 0; }

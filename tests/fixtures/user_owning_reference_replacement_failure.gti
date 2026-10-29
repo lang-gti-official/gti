@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/vector>
-#include <std/panic>
+import std.string;
+import std.vector;
+import std.panic;
 
 class LoggedText {
   mut std::string text;

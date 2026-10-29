@@ -1,10 +1,10 @@
+export module memory;
+
 // Ownership and typed allocation are ordinary GTI policy over
 // declaration-bound private capabilities.
-
-#include <std/detail/iterator>
-#include <std/meta>
-
-namespace gti_internal {
+import "detail/iterator.gti";
+import std.meta;
+export namespace gti_internal {
 namespace runtime {
 extern "C" {
   const uint8_t* gti_rt_c_string_bytes_v1(c_string text);
@@ -67,7 +67,7 @@ enum class empty_storage_adoption {
 };
 }
 
-namespace std {
+export namespace std {
 /// Checked type erasure retains the original object's lifetime and access.
 /// Erasure does not make an object transferable or concurrently shareable.
 using erased_object = gti_internal::erased_object;
@@ -339,7 +339,7 @@ public:
 
 } // namespace std
 
-namespace gti_internal {
+export namespace gti_internal {
 // Source policy seal: no public spelling establishes allocator trust.
 enum class resource_binding { trusted };
 namespace runtime {
@@ -365,7 +365,7 @@ void gti_rt_posix_free_v1(void* address);
 }
 
 
-namespace std::detail {
+export namespace std::detail {
 /// Passive provider descriptor. Ownership belongs to a lease, not this value.
 /// Copying it copies metadata only: it neither retains a region nor authorizes
 /// a second release. The provider defines id; the process resource uses zero.
@@ -381,7 +381,7 @@ struct raw_allocation {
 
 } // namespace std::detail
 
-namespace gti_internal {
+export namespace gti_internal {
 // Infallible source policy distinguishes exhaustion from a malformed or
 // overflowing request. Fallible callers keep the original alloc_errc value.
 [[noreturn, track_caller]]
@@ -445,7 +445,7 @@ public:
   }
 };
 } // namespace gti_internal
-namespace std::detail {
+export namespace std::detail {
 // No external owner borrow: this lease owns one process allocation outright.
 // Shared observation cannot release or mutate its bytes. Its exclusive methods
 // transfer the descriptor, and generated movement suppresses source cleanup.
@@ -484,7 +484,7 @@ public:
 
 }
 
-namespace gti_internal {
+export namespace gti_internal {
 concept sparse_element<T> = std::storage_element<T>;
 concept movable_sparse_element<T> = sparse_element<T> && std::movable<T>;
 
@@ -1012,7 +1012,7 @@ expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
 }
 }
 
-namespace std {
+export namespace std {
 namespace detail {
 // Source owner: one process region and one initialized length, no slot map.
 [[unsafe_transfer(T), unsafe_share(T)]]

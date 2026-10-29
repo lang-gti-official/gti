@@ -388,18 +388,18 @@ void testSemanticRejections() {
       "c string boundary", "c_string read(c_string value) { return value; }",
       libraryRequest({{"read", "read_v1"}}), "type outside", true);
   expectSemanticRejection("owning string boundary",
-                          "#include <std/string>\n"
+                          "import std.string;\n"
                           "int32_t read(std::string value) { return 0; }",
                           libraryRequest({{"read", "read_v1"}}), "type outside",
                           true);
   expectSemanticRejection(
       "container boundary",
-      "#include <std/vector>\n"
+      "import std.vector;\n"
       "int32_t read(std::vector<int32_t> values) { return 0; }",
       libraryRequest({{"read", "read_v1"}}), "type outside", true);
   expectSemanticRejection(
       "owner boundary",
-      "#include <std/memory>\n"
+      "import std.memory;\n"
       "int32_t read(std::unique_ptr<int32_t> value) { return 0; }",
       libraryRequest({{"read", "read_v1"}}), "type outside", true);
   expectSemanticRejection(

@@ -1,4 +1,4 @@
-#include <std/mutex>
+import std.mutex;
 
 class User {
   std::mutex<int32_t>& owner;

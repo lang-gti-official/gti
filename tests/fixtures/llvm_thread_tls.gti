@@ -1,6 +1,6 @@
-#include <std/thread>
-#include <std/atomic>
-#include <std/format>
+import std.thread;
+import std.atomic;
+import std.format;
 
 // Each managed worker owns its thread-local objects; they are destroyed on
 // that worker before join returns, independently of the joining thread's.

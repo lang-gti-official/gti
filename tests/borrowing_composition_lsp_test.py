@@ -6,7 +6,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position
+from lsp_smoke_test import LspSession, lsp_position
 
 
 def main():
@@ -133,7 +133,7 @@ int main() {
             assert not diagnostics(12)
             # A destructor would read the field as ownerless text, so this
             # struct keeps the ownerless field rule (L-OWN-02).
-            moved_view = """#include <std/string>
+            moved_view = """import std.string;
 struct Holder { std::string_view text; ~Holder() {} };
 int main() {
   std::string owner{"owned"};
@@ -164,7 +164,7 @@ int main() {
             assert diagnostics(15)
             change(16, local_view)
             assert not diagnostics(16)
-            borrowed_payload = """#include <std/optional>
+            borrowed_payload = """import std.optional;
 struct View {
   int& value;
   View(int& source) : value(source) {}
@@ -210,7 +210,7 @@ int main() {
                 publication = message["params"]
                 target = publication["uri"]
                 if target == uri and publication.get("version") == 18:
-                    assert has_only_include_advice(publication["diagnostics"]), publication
+                    assert (publication["diagnostics"] == []), publication
                     cleared.add(uri)
                 if target == rejected_uri and not publication["diagnostics"]:
                     cleared.add(rejected_uri)

@@ -2,10 +2,10 @@
 // and compare, optionals for null and absent members, exact 64-bit extrema,
 // escapes and surrogate pairs, error codes with paths and locations, and
 // nesting limits.
-#include <std/json>
-#include <std/optional>
-#include <std/string>
-#include <std/vector>
+import std.json;
+import std.optional;
+import std.string;
+import std.vector;
 
 struct point {
   int64_t x = 0;

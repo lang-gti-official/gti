@@ -1,4 +1,4 @@
-#include <std/io>
+import std.io;
 
 class Earlier {
 public:

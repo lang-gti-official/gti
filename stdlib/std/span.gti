@@ -1,7 +1,8 @@
-#include <std/memory>
-#include <std/detail/iterator>
+export module span;
 
-namespace std {
+import std.memory;
+import "detail/iterator.gti";
+export namespace std {
 namespace detail {
 class span_sentinel {
   size_t final_position;

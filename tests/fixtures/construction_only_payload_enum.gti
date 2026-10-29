@@ -1,6 +1,6 @@
-#include <std/optional>
-#include <std/string>
-#include <std/vector>
+import std.optional;
+import std.string;
+import std.vector;
 
 mut int32_t cleanup_divisor = 1;
 mut int32_t helper_divisor = 1;

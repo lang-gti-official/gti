@@ -12,6 +12,24 @@ public std API in ordinary GTI
         -> host implementation / operating system
 ```
 
+## Module-only Phase 1 Status
+
+This unreleased branch converts the standard library to explicit source module
+interfaces. `import std.name;` resolves `stdlib/std/name.gti`; `import std;`
+selects the portable aggregate at `stdlib/std.gti`. The former `stdlib/modules`
+wrappers and their legacy republication are removed. Keeping canonical source
+paths preserves exact trusted declaration identities rather than granting
+capabilities through a public module name. The implicit prelude remains the
+language-wide root and imports `std.meta` explicitly.
+
+Mechanical exports preserve the previous directly visible library surface,
+including internal sharing declarations. They do not make compiler-private
+capabilities callable by ordinary source. The temporary `std.detail_iterator`,
+`std.detail_panic`, and `std.experimental_optional` facades explicitly re-export
+the corresponding nested interfaces. Phase 2 must review these public/internal
+boundaries, establish any required package-private sharing, and validate module
+semantics, correctness, tooling and performance before this change is released.
+
 ## Source Policy And Compiler Mechanisms
 
 GTI is an independent language. The use of C++ in the reference backend or
@@ -96,7 +114,7 @@ obtain metadata releases the object region before returning an error.
 | Allocation family | Current owner and rationale |
 | --- | --- |
 | Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in `stdlib/std/memory.gti`; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |
-| Prefix storage used by strings/vectors and related clients | Source raw-buffer/prefix state and matching process/resource leases in `<std/memory>`. Terminated string policy adds one initialized NUL slot. S-ALLOC-09 and its performance/regression acceptance are integrated in 0.397.0; the native engine, prelude declarations, semantic type/intrinsic family, construction-preflight instruction, representation and private optimizer facts are retired. General object-lifetime and checked-loan mechanisms remain. |
+| Prefix storage used by strings/vectors and related clients | Source raw-buffer/prefix state and matching process/resource leases in `std.memory`. Terminated string policy adds one initialized NUL slot. S-ALLOC-09 and its performance/regression acceptance are integrated in 0.397.0; the native engine, prelude declarations, semantic type/intrinsic family, construction-preflight instruction, representation and private optimizer facts are retired. General object-lifetime and checked-loan mechanisms remain. |
 | Unique ownership and generated allocation resources | `mir_object_allocation_v1` and scalar unique allocation in `cpp_failure_support_writer.cpp` still acquire native storage; verified MIR owns construction, publication, failure and cleanup. Shared ownership additionally uses its native control block. These are remaining migration clients, not reasons to put sparse allocation policy back in the backend. |
 | Native service implementation state | Runtime file/process/HTTP/thread/synchronization and conversion implementations use native containers or host handles internally. Their buffer/handle lifetimes belong to their service boundaries; they do not supply sparse-storage metadata. |
 | Compiler and tool memory | C++ containers in compiler, driver, LSP and tooling are host implementation state, outside GTI-program allocation policy. |
@@ -342,7 +360,7 @@ remain GTI's responsibility. OS access is a third category, not compiler magic.*
 ## Public Library
 
 `stdlib/prelude.gti` is implicitly available. Optional source units live below
-`stdlib/std/` and are loaded through `<std/name>`. Public classes and functions
+`stdlib/std/` and are loaded through `std.name`. Public classes and functions
 under `std` own API policy, logical state, error handling, and RAII. The
 compiler must not recognize public wrapper names such as `std::vector` or
 `std::make_unique` as shortcuts for container or ownership behavior.
@@ -350,14 +368,14 @@ compiler must not recognize public wrapper names such as `std::vector` or
 The implicit prelude is deliberately limited to language-wide vocabulary,
 shared compiler-capability declarations, source concepts over general
 `std::meta` type facts, `std::move`, and the minimal hosted output surface.
-The reflection vocabulary bootstraps those concepts; higher-level header-owned
+The reflection vocabulary bootstraps those concepts; higher-level module-owned
 policy is not ambient: the `std::unique_ptr`
 family and its private owner/storage capabilities are declared by
-`<std/memory>`, checked one-slot optional storage is declared by
-`<std/optional>`, the private file-descriptor bridge is declared by
-`<std/cstdio>`, and defined integer arithmetic intrinsics are declared by
-`<std/numeric>`. Atomic, iterator, and callable compiler constraints likewise
-live with their public header. Optional units do not re-export their own
+`std.memory`, checked one-slot optional storage is declared by
+`std.optional`, the private file-descriptor bridge is declared by
+`std.cstdio`, and defined integer arithmetic intrinsics are declared by
+`std.numeric`. Atomic, iterator, and callable compiler constraints likewise
+live with their public module. Optional units do not re-export their own
 dependencies, so application source names the canonical unit for every API it
 uses directly.
 
@@ -367,18 +385,20 @@ one element, not arbitrary constructor arguments; semantic checking and MIR
 verification reject a hidden source-constructor target. This preserves the
 normal constructor failure record, argument ordering, and partial cleanup.
 
-Missing-include fixes use compiler-owned declaration discovery, not a
-hardcoded public-type-to-header catalog. Structured unresolved lookup requests
+Missing-import fixes use compiler-owned declaration discovery, not a
+hardcoded public-type-to-module catalog. Structured unresolved lookup requests
 search the selected project, declared direct package roots and public standard
 units. The canonical parser filters actual declarations, then speculative
 frontend analysis must resolve the occurrence to that exact source declaration
 without introducing an error. Dirty/new/deleted inputs invalidate discovery;
-private, module-only and incompatible candidates fail closed. This supplies
+private declarations, non-interface sources and incompatible candidates fail
+closed. Candidate edits use standard/package module names or same-package
+quoted imports and must pass ordinary export visibility checks. This supplies
 advice without granting semantic behavior or implementing a second declaration
 parser; the edited file still uses ordinary source loading and exact identity.
 
-Integer `std::print`/`std::println` overloads, `<std/string>` conversion, and
-`<std/format>`'s bounded heterogeneous replacement are a deliberate
+Integer `std::print`/`std::println` overloads, `std.string` conversion, and
+`std.format`'s bounded heterogeneous replacement are a deliberate
 boundary example. Digit extraction, built-in argument adapters, brace
 validation, exact argument counting, owning-string construction, and format
 errors are ordinary GTI source. The frontend's bounded comma-pack fold supplies
@@ -415,7 +435,7 @@ per append, and a regrowth for the literal. That drove a 2-5x gap to C++ in
 formatting-heavy code; see
 [performance-tooling.md](../plans/performance-tooling.md#allocation-lean-formatting-2026-10-09).
 
-`<std/io>` composes source-defined partial reader/writer contracts, memory
+`std.io` composes source-defined partial reader/writer contracts, memory
 transports, exact transfer/line/copy helpers and owned buffering. Mutable spans
 borrow initialized prefix storage exclusively; byte buffers are ordinary
 vectors. Checked carrier loans permit a buffered adapter to borrow another
@@ -431,11 +451,11 @@ The panic-adoption layer remains source-defined: `try_format` and
 errors to panic, and `try_print`/`try_println` add stdout submission status in
 `print_errc`. Formatted `println` submits the text and newline together. Existing
 raw output helpers check their status instead of discarding it. They remain
-literal-output operations, independent of optional header visibility.
+literal-output operations, independent of optional module visibility.
 
-`<std/panic>` owns the public panic overloads. Its raw wrapper and the formatting
+`std.panic` owns the public panic overloads. Its raw wrapper and the formatting
 failure-policy helpers share `std/detail/panic.gti`, a non-formatting core over
-the identity-bound panic capability; this avoids a format/panic include cycle.
+the identity-bound panic capability; this avoids a format/panic import cycle.
 The core is implementation detail, not a second failure protocol. Every wrapper
 that owns panic policy is `[[track_caller]]`, so the existing semantic caller
 token survives through HIR/MIR; neither backend nor runtime guesses a public
@@ -443,7 +463,7 @@ function name. Allocation-free capture does not imply allocation-free formatting
 raw owning-string conversion, or user cleanup. The surface census includes
 nested implementation units as well as public units.
 
-`<std/encoding>` is another entirely source-defined boundary. Base64 and
+`std.encoding` is another entirely source-defined boundary. Base64 and
 hexadecimal operate over counted string views and construct owning strings;
 their alphabets, padding rules, canonical-bit validation, and recoverable
 `decode_errc` results are ordinary GTI. No codec name, lookup table, or native
@@ -483,7 +503,7 @@ owners instead of requiring a retained nullable traversal borrow. Clear and
 destruction drain nodes iteratively. No public container name has compiler
 recognition.
 
-Ordered-query composition remains ordinary source policy in `<std/algorithm>`:
+Ordered-query composition remains ordinary source policy in `std.algorithm`:
 `partition_point` and comparator bounds/binary search compose the existing
 forward-iterator, sentinel, exact-element and repeatable-callable constraints.
 They carry the original first cursor's checked owner dependency and retain one
@@ -495,7 +515,7 @@ same implementations.
 ## Compiler-Private Capabilities
 
 The fixed-lane arithmetic capability is declared only by the physical trusted
-`<std/simd>` unit. Its six selected identities operate on equal-length fixed
+`std.simd` unit. Its six selected identities operate on equal-length fixed
 arrays with float/double lanes and an equally sized mutable output (bool for
 comparison). Semantics validates lane type, extent 1..64, and output mutation,
 and records immediate read/read/write borrows. They retain no borrow and return
@@ -530,12 +550,12 @@ identity. The shared private `text_view` and `c_string`
 type declarations receive compiler-capability identities only when the exact
 trusted prelude declarations are selected. Module-specific capabilities bind
 to one exact installed standard-library unit: `unique_owner<T>`, `shared_owner<T>`,
-`uninitialized_storage<T>` and general object-lifetime operations to `<std/memory>`,
-`optional_storage<T>` to `<std/optional>`,
-managed threads to `<std/thread>`, atomics to `<std/atomic>`, mutexes to
-`<std/mutex>`, and defined integer arithmetic to `<std/numeric>`. Iterator and
-callable structural constraints are similarly owned by `<std/iterator>` and
-`<std/functional>`. Aliases preserve the selected semantic type; reusing a
+`uninitialized_storage<T>` and general object-lifetime operations to `std.memory`,
+`optional_storage<T>` to `std.optional`,
+managed threads to `std.thread`, atomics to `std.atomic`, mutexes to
+`std.mutex`, and defined integer arithmetic to `std.numeric`. Iterator and
+callable structural constraints are similarly owned by `std.iterator` and
+`std.functional`. Aliases preserve the selected semantic type; reusing a
 declaration or qualified spelling in application source creates no capability.
 HIR/MIR retain selected intrinsic identity, and the backend queries semantic
 capability facts rather than recognizing a source name before choosing its
@@ -605,12 +625,12 @@ and retain the exact supplied owner-witness loan, including static/null
 addresses. Raw validity remains the unsafe caller's obligation; no string or
 prefix type name grants compiler authority.
 
-Numeric input in `<std/charconv>` keeps integer grammar, radix selection,
+Numeric input in `std.charconv` keeps integer grammar, radix selection,
 overflow checking, consumed-byte offsets, and output publication in ordinary
 GTI. Integer accumulation uses exact-width overflow predicates and wrapping
 arithmetic. The primitive returns only whether the mathematical operation exceeds
 the operand domain; it does not construct a result carrier or choose an error.
-`<std/numeric>` owns checked-result construction and `arithmetic_errc` in source.
+`std.numeric` owns checked-result construction and `arithmetic_errc` in source.
 The native predicate uses the same overflow builtin or portable mathematical
 check as checked integer execution; source success paths use defined wrapping
 arithmetic, whose value is exact when overflow was excluded. MIR constant
@@ -631,7 +651,7 @@ requirements; its license accompanies affected packages. Configure with
 `GTI_FORCE_PORTABLE_CHARCONV=ON` to exercise this path on a modern toolchain.
 Parser regression checks cover exact boundaries, all rounding modes, consumed
 spans, counted input, allocation, and (when available) a host-parser differential.
-The `<std/string>` convenience functions own whitespace/sign/radix-prefix
+The `std.string` convenience functions own whitespace/sign/radix-prefix
 policy in GTI and return recoverable errors instead of exposing native
 exceptions or errno. No public parsing function receives compiler recognition.
 
@@ -648,7 +668,7 @@ or C++ exceptions becoming part of the public library contract.
 The first public typed-allocation slice is the ordinary source-defined
 `std::unique_ptr<T>`, `std::make_unique`, `std::upcast_unique`,
 `std::allocator`, `std::storage<T>`, `std::alignment`, and `std::alloc_errc`
-surface in `<std/memory>`. The compiler recognizes none of those public names.
+surface in `std.memory`. The compiler recognizes none of those public names.
 The public `unique_ptr::swap` delegates to one declaration-bound private
 capability operation over two matching mutable owner tokens. MIR verifies both
 places and emits native owner swap directly, so exchanging owners cannot copy a
@@ -759,7 +779,7 @@ Public `std::upcast_unique`, `vector::insert`, and
 by the compiler or backend.
 
 `std::optional<T>` is ordinary source-defined policy over the exact trusted
-`gti_internal::optional_storage<T>` capability from `<std/optional>`. The
+`gti_internal::optional_storage<T>` capability from `std.optional`. The
 private representation contains one correctly aligned inline `T` slot and one
 engagement bit; it performs no allocation merely to represent absence. Its
 five operations observe engagement, construct into an empty slot, borrow a
@@ -790,7 +810,7 @@ No public `std::optional` name is recognized by semantics or a backend.
 
 `std::inline_polymorphic<Interface, Bytes, Align>` is ordinary source-defined
 policy over the trusted `gti_internal::polymorphic_storage<Interface, Bytes,
-Align>` capability from `<std/polymorphic>`, plus an ordinary
+Align>` capability from `std.polymorphic`, plus an ordinary
 `std::unique_ptr<Interface>` for boxed payloads. Semantics admits a payload
 model into the slot only when the compiler-bound structural constraint
 `inline_polymorphic_payload` holds: a concrete class publicly derived from the
@@ -845,7 +865,7 @@ never those public names or `std::accumulate`.
 
 ## Package Build-Program Boundary
 
-`<std/build>` is an ordinary source-defined, host-only library surface for
+`std.build` is an ordinary source-defined, host-only library surface for
 approved package `build.gti` programs. `std::build::context` owns the exact
 driver-supplied host/target/toolchain facts, `std::build::command` constructs an
 exact argv without shell expansion, and `std::build::outputs` serializes the
@@ -862,7 +882,7 @@ than runtime policy. This boundary provides exact execution, not sandboxing.
 
 ## Public Child-Process Boundary
 
-`<std/process>` promotes exact synchronous argv execution to ordinary hosted
+`std.process` promotes exact synchronous argv execution to ordinary hosted
 applications without exposing the build-program policy type. Public
 `std::process::command`, `exit_status`, and `errc` are source-defined GTI
 values. They own validation, stable error categories, and the distinction
@@ -884,7 +904,7 @@ and pipelines remain later process-policy work rather than implicit shell
 behavior. Windows is rejected by the source unit until its UTF-16 command-line
 and handle-inheritance boundary is implemented.
 
-`<std/environment>` supplies the separate read-only observation family. Its
+`std.environment` supplies the separate read-only observation family. Its
 `get` function and error enum are ordinary GTI, with no public-name recognition.
 The counted `gti_rt_environment_get_v1` ABI revalidates names, copies one current
 native value, and distinguishes a missing variable (zero handle) from a present
@@ -903,7 +923,7 @@ and child-local overrides are not part of this slice. See
 
 ## Clock Boundary
 
-`<std/chrono>` keeps duration and time-point policy in ordinary GTI. Its signed
+`std.chrono` keeps duration and time-point policy in ordinary GTI. Its signed
 `nanoseconds`, nominally distinct `steady_time_point` and `system_time_point`,
 checked elapsed subtraction, comparison, and Unix decomposition contain no
 compiler or backend name recognition. Exact `std::checked_sub` supplies the
@@ -927,7 +947,7 @@ and additional clocks remain outside this first observation slice.
 ## Managed Concurrency Boundary
 
 The public managed-thread type is the ordinary source-defined `std::thread`
-class in `<std/thread>`. The compiler does not recognize that class, its
+class in `std.thread`. The compiler does not recognize that class, its
 constructors, `join`, or its destructor by qualified spelling. Its move-only
 handle state and automatic-join policy belong in GTI source and use the
 ordinary class lifecycle rules. Stop tokens are not part of this first slice.
@@ -944,7 +964,7 @@ explicit `join` returns `expected<Result, thread_errc>`, and destruction joins
 then abandons an unobserved value exactly once. GTI does not infer either
 public class by qualified spelling.
 
-The ordinary `<std/atomic>` source unit defines move-only `std::atomic<T>` and
+The ordinary `std.atomic` source unit defines move-only `std::atomic<T>` and
 its compare/exchange result policy. Semantics does not recognize either public
 name. The exact trusted unit alone owns the compiler-private
 `gti_internal::atomic_storage<T>` capability and load, store, exchange, and
@@ -1000,7 +1020,7 @@ Only the irreducible host boundary is compiler-private. Its capability surface
 is the identity-bound `gti_internal::thread_handle` and
 `gti_internal::thread_result_handle<Result>` plus their empty, spawn,
 joinable, explicit-join, and automatic-join operations. These declarations are
-owned by the exact trusted `<std/thread>` unit rather
+owned by the exact trusted `std.thread` unit rather
 than the implicit prelude, so programs that do not import the module retain no
 thread declaration bodies or runtime bridge dependency. A compiler-generated,
 type-specific task-entry adapter erases the exact closure only after semantic
@@ -1017,7 +1037,7 @@ thread spawn/join, atomic operation families, and mutex lock/unlock; atomic
 records retain legal order dimensions. MIR rejects these records in the
 single-threaded execution profile except in an exact, lowering-marked dormant
 compiler-trusted thread-, atomic-, or mutex-wrapper body. That exception lets
-complete unused `<std/thread>`, `<std/atomic>`, and `<std/mutex>` declaration
+complete unused `std.thread`, `std.atomic`, and `std.mutex` declaration
 inventories exist and build natively in either profile; it cannot create a
 task adapter or executable synchronization use and does not bypass the public
 semantic profile check. Their retained generic classes name the private
@@ -1196,7 +1216,7 @@ standard-stream flush. It knows only counted bytes, descriptors, fixed-width
 status values, and stable mode/origin ordinals. It does not know about
 `std::FILE`, `std::string`, formatting, CSV records, buffering, or encoding.
 Portable ownership, chunk allocation, mode spelling, EOF policy, and
-`expected` translation remain ordinary `<std/cstdio>` source.
+`expected` translation remain ordinary `std.cstdio` source.
 The `std::getline` overloads likewise implement delimiter recognition, final
 unterminated-line handling, and owned-string assembly in GTI source over the
 existing single-byte entries; the runtime has no line or terminal-prompt
@@ -1207,7 +1227,7 @@ source without making `char` numeric or adding an implicit conversion. Chunk
 reads use one fixed internal array and return an owned string; application code
 never receives the mutable runtime buffer or native descriptor.
 
-`<std/http>` follows the same public-policy boundary for owned URL construction
+`std.http` follows the same public-policy boundary for owned URL construction
 and a synchronous, buffered HTTP/HTTPS client. Absolute parsing, component
 percent-encoding, URL cloning and rendering, request construction, header
 validation, stable error categories, owned response copying, and RAII live in
@@ -1220,10 +1240,10 @@ views. No libcurl type, option, callback, or pointer crosses into public GTI.
 The response handle owns bytes that have already been received; it is not a
 public streaming or socket abstraction.
 
-`<std/json>` needs no runtime or compiler-private capability. Its strict
+`std.json` needs no runtime or compiler-private capability. Its strict
 scanner, reflection-driven encoding and decoding, exact number handling,
 deterministic serializer, limits, structured errors and explicit `codec<T>`
-customization are all GTI source over `<std/meta>`. This is an intentional
+customization are all GTI source over `std.meta`. This is an intentional
 proof that a format library can remain portable policy once compile-time
 reflection, `std::meta::construct` and the ordinary string and vector
 ownership primitives are sufficient. String-owning errors are ordinary source
@@ -1248,7 +1268,7 @@ make a thread-affine or unsynchronized handle safe merely because it can be
 moved as native storage. Unknown native calls remain conservative effect
 barriers and retain their documented unsafe and thread-safety obligations.
 
-`<std/random>` keeps seeded pseudo-random state and sequence policy in ordinary
+`std.random` keeps seeded pseudo-random state and sequence policy in ordinary
 GTI source. Its `std::random_device` crosses the bounded runtime entry
 `gti_rt_random_bytes` only when it refills an internal fixed array; the caller
 supplies the checked buffer and count inside the lexical raw-pointer `unsafe`
@@ -1260,7 +1280,7 @@ APIs should prefer ordinary GTI wrappers over the bounded native boundary when
 the existing ABI can express them. Neither mechanism turns a public GTI class
 layout into an ABI.
 
-`<std/cmath>` supplies ordinary GTI wrappers for its complete declared
+`std.cmath` supplies ordinary GTI wrappers for its complete declared
 binary32 math family. They lower as ordinary verified-MIR native calls to
 version-one `gti_rt_math_*_f32_v1` entries in `runtime/include/gti/math.h`.
 `runtime/src/math.cpp` uses the host's float math implementations; the seam
@@ -1271,7 +1291,7 @@ and underflow results follow the documented floating-point value contract,
 not the defined-integer-failure contract. Host errno and floating exception
 flags are not exposed to applications.
 
-`<std/cthread>` begins with ordinary GTI `std::thrd_yield()` over the
+`std.cthread` begins with ordinary GTI `std::thrd_yield()` over the
 version-one `gti_rt_cthread_yield_v1(void)` C entry in `gti/cthread.h`.
 `runtime/src/cthread.cpp` implements the host scheduling hint. The operation
 is thread-safe, non-owning, allocation-free, and has no failure result or
@@ -1288,7 +1308,7 @@ so C consumers referencing only the yield ABI do not acquire the registry.
 Executable lowering follows reached roots rather than emitting every unused
 ordinary wrapper, but native C declarations remain roots. `MirProgram` derives
 the C-thread service requirement from retained native operation/adapter
-records. Consequently a concurrent program importing `<std/cthread>` still
+records. Consequently a concurrent program importing `std.cthread` still
 conservatively includes the empty begin/end lifecycle, even for yield-only
 use; a default-profile yield/identity/sleep-only program does not start the
 service. Demand-only native-service selection is not established by pruning

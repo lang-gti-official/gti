@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 int before_raw(mut int& destination, int input) {
   int result = input + 1;

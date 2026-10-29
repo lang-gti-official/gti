@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/resource>
-#include <std/simd>
+import std.memory;
+import std.resource;
+import std.simd;
 
 extern "C" {
   void adoption_count_begin();

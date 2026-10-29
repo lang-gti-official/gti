@@ -43,7 +43,7 @@ bool hasCode(const lang::FrontendResult &result, std::string_view code) {
 }
 
 const std::string source = R"(
-#include <std/cthread>
+import std.cthread;
 int32_t worker(void* context) { return context == nullptr ? 42 : 7; }
 int main() {
   mut std::thrd_t handle = 0;
@@ -58,7 +58,7 @@ int main() {
 
 void testIdentity() {
   const std::string identitySource = R"(
-#include <std/cthread>
+import std.cthread;
 int main() {
   std::thrd_t identity = std::thrd_current();
   return std::thrd_equal(identity, std::thrd_current()) == 1 ? 0 : 1;
@@ -130,7 +130,7 @@ int main() {
 
 void testSleep() {
   const auto frontend = analyze(R"(
-#include <std/cthread>
+import std.cthread;
 int main() {
   mut std::timespec duration = std::timespec();
   return std::thrd_sleep(duration, duration);
@@ -174,14 +174,14 @@ int main() {
   }
   expect(found, "the source sleep wrapper retains its native MIR target");
   const auto unsafeCall = analyze(R"(
-#include <std/cthread>
+import std.cthread;
 int main() { std::timespec* pointer = nullptr; return std::thrd_sleep(pointer, pointer); }
 )",
                                   false);
   expect(!unsafeCall.canGenerateCode() && hasCode(unsafeCall, "GTI-S2055"),
          "raw sleep requires the caller's explicit unsafe acknowledgement");
   const auto readOnlyOutput = analyze(R"(
-#include <std/cthread>
+import std.cthread;
 int main() { std::timespec value = std::timespec(); return std::thrd_sleep(value, value); }
 )",
                                       false);
@@ -191,7 +191,7 @@ int main() { std::timespec value = std::timespec(); return std::thrd_sleep(value
 
 void testMutex() {
   const std::string mutexSource = R"(
-#include <std/cthread>
+import std.cthread;
 int main() {
   mut std::mtx_t mutex = 0;
   unsafe {
@@ -246,7 +246,7 @@ int main() {
          "every manual mutex operation requires concurrent profile and target "
          "support");
   const auto safe = analyze(R"(
-#include <std/cthread>
+import std.cthread;
 int main() { return std::mtx_lock(uint64_t(0)); }
 )");
   expect(!safe.canGenerateCode() && hasCode(safe, "GTI-S2055"),
@@ -287,7 +287,7 @@ int main() { return std::mtx_lock(uint64_t(0)); }
 
 void testCondition() {
   const std::string text = R"(
-#include <std/cthread>
+import std.cthread;
 int main() {
   mut std::cnd_t condition = 0;
   mut std::mtx_t mutex = 0;
@@ -396,7 +396,7 @@ int main() {
              !unsupported.canGenerateCode() &&
              hasCode(unsupported, "GTI-S2084"),
          "conditions require concurrent profile and target support");
-  const auto safe = analyze("#include <std/cthread>\nint main() { return "
+  const auto safe = analyze("import std.cthread;\nint main() { return "
                             "std::cnd_wait(uint64_t(0), uint64_t(0)); }");
   expect(!safe.canGenerateCode() && hasCode(safe, "GTI-S2055"),
          "manual waits require unsafe");
@@ -404,7 +404,7 @@ int main() {
 
 void testFailureFreeConstructorPublication() {
   const auto frontend = analyze(R"(
-#include <std/atomic>
+import std.atomic;
 struct Gate {
   std::atomic<int32_t> first;
   std::atomic<int32_t> second;
@@ -609,7 +609,7 @@ int main() { Wrapper value{3}; return value.value.value; }
 
 void testOnce() {
   const std::string text = R"(
-#include <std/cthread>
+import std.cthread;
 std::once_flag shared{std::ONCE_FLAG_INIT};
 void initialize() {}
 int main() {
@@ -703,7 +703,7 @@ int main() {
              hasCode(unavailable, "GTI-S2084"),
          "once requires concurrent profile and target support");
   const auto safe = analyze(R"(
-#include <std/cthread>
+import std.cthread;
 void initialize() {}
 int main() { std::once_flag flag{}; std::call_once(flag, initialize); return 0; }
 )");
@@ -711,14 +711,14 @@ int main() { std::once_flag flag{}; std::call_once(flag, initialize); return 0; 
          "once requires lexical unsafe");
   for (const std::string initializer : {"original", "std::move(original)"}) {
     const auto invalid = analyze(
-        "#include <std/cthread>\nint main() { mut std::once_flag original{}; "
+        "import std.cthread;\nint main() { mut std::once_flag original{}; "
         "std::once_flag copied = " +
         initializer + "; return 0; }");
     expect(!invalid.canGenerateCode(),
            "a live once flag cannot be copied or moved");
   }
   const auto hidden = analyze(R"(
-#include <std/cthread>
+import std.cthread;
 int main() { gti_internal::once_access access{}; return 0; }
 )");
   expect(!hidden.canGenerateCode(),
@@ -875,7 +875,7 @@ void testDiagnostics() {
   expect(!unavailable.canGenerateCode() && hasCode(unavailable, "GTI-S2084"),
          "C-thread use requires target thread support");
   const auto imported = analyze(
-      "#include <std/cthread>\nint main() { std::thrd_yield(); return 0; }",
+      "import std.cthread;\nint main() { std::thrd_yield(); return 0; }",
       false);
   expect(imported.canGenerateCode() && imported.mir.hostedStartupPlan() &&
              imported.mir.hostedStartupPlan()->cThreadBegin == 0,
@@ -889,13 +889,13 @@ void testDiagnostics() {
         "default-profile yield does not require the callback boundary header");
   }
   const auto safe = analyze(R"(
-#include <std/cthread>
+import std.cthread;
 int main() { std::thrd_t handle = 0; mut int32_t result = 0; return std::thrd_join(handle, result); }
 )");
   expect(!safe.canGenerateCode() && hasCode(safe, "GTI-S2055"),
          "manual lifetime contracts cannot be called from safe code");
   const auto callback = analyze(R"(
-#include <std/cthread>
+import std.cthread;
 using Wrong = (int32_t) -> int32_t;
 int32_t work(int32_t value) { return value; }
 int main() { Wrong callback = work; return 0; }
@@ -916,7 +916,7 @@ int main() {
   expect(ordinary.canGenerateCode() && !ordinary.mir.requiresCThreadRuntime(),
          "public std spelling does not confer compiler runtime identity");
   const std::string genericSource = R"(
-#include <std/cthread>
+import std.cthread;
 unsafe int32_t relay<T>(T ignored, std::thrd_t handle) {
   unsafe { return std::thrd_join(handle, nullptr); }
 }

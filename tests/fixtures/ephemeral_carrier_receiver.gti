@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 void checked(int divisor) { int value = 7 / divisor; }
 void checked_cleanup(int divisor) { int value = 19 / divisor; }

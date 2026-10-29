@@ -1,6 +1,6 @@
-#include <std/thread>
-#include <std/mutex>
-#include <std/string>
+import std.thread;
+import std.mutex;
+import std.string;
 
 // Managed workers return hierarchy storage. join() hands the result back in
 // std::expected, where it is borrowed or moved out by a consuming value(); an

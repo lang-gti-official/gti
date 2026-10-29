@@ -2,8 +2,8 @@
 // consuming receivers, plus unsafe static and unsafe constexpr helpers) over
 // raw pointer arithmetic: +, -, +=, -=, ++, --, negative indexing, pointer
 // difference, and erase/typed address round trips with const qualification.
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 concept raw_readable<C, T> = requires(C& cursor, int64_t offset) {
   unsafe { cursor.peek(offset) } -> T;

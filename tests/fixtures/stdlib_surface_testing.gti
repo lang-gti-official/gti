@@ -1,5 +1,5 @@
-#include <std/testing>
-#include <std/vector>
+import std.testing;
+import std.vector;
 
 int main() {
   std::testing::check(2 + 2 == 4, "Addition changed");

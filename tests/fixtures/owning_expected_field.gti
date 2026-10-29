@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // A constructor's expected<T, E> field initialized directly from a call whose
 // payload owns resources. The call's result is published into the field in

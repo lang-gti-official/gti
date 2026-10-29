@@ -1,8 +1,8 @@
-// Every public <std/name> unit is also the module std.name. Importing makes
-// that unit's declarations visible without an #include, and only that unit:
-// <std/vector> uses <std/span> internally, but std::span stays invisible here
-// until this file imports std.span as well. Application interfaces can pass a
-// standard module on to their own importers with `export import std.vector;`.
+// Every public std.name unit is an explicit module. Importing exposes only
+// that module's exported declarations: std.vector imports std.span internally,
+// but std::span stays invisible here until this file imports std.span too.
+// An application interface can deliberately re-export a standard module with
+// `export import std.vector;`.
 import std.format;
 import std.string;
 import std.vector;

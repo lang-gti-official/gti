@@ -1,1 +1,2 @@
-#include "left-leaf.gti"
+export module left;
+import "left-leaf.gti";

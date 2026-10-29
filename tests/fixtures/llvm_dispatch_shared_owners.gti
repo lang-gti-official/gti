@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 // Shared owners of polymorphic objects. An upcast keeps the control block and
 // every alias while viewing the same allocation through a base; whichever

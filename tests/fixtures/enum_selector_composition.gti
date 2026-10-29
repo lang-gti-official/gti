@@ -1,4 +1,4 @@
-#include <std/optional>
+import std.optional;
 
 namespace first { enum Event<T> { item(T value) }; }
 namespace second { enum Event<T> { empty, item(T value) }; }

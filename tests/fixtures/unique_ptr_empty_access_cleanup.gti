@@ -1,5 +1,5 @@
 // Empty access must clean the live marker before reporting GTI-R0008.
-#include <std/memory>
+import std.memory;
 
 class marker {
 public:

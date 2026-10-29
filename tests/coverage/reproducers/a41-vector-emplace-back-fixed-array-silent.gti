@@ -1,5 +1,5 @@
 // A41: the same through vector::emplace_back.
-#include <std/vector>
+import std.vector;
 class Holder {
   int32_t values[3];
 public:

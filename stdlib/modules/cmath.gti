@@ -1,3 +1,0 @@
-// Module std.cmath: the public surface of <std/cmath>.
-export module cmath;
-export #include <std/cmath>

@@ -37,7 +37,7 @@ def main():
         ]
         for index, body in enumerate(invalid):
             source = root / f"invalid-{index}.gti"
-            source.write_text('#include <std/string>\nint main() { mut std::string text{"abc"}; ' + body + '}\n')
+            source.write_text('import std.string;\nint main() { mut std::string text{"abc"}; ' + body + '}\n')
             checked = run([str(compiler), str(source), "--emit-mir", "-o", str(root / "invalid.mir")])
             assert checked.returncode != 0 and "error[GTI-S2017]" in checked.stderr, checked
             assert "GTI-B0001" not in checked.stderr, checked.stderr

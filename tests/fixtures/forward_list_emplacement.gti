@@ -1,4 +1,4 @@
-#include <std/forward_list>
+import std.forward_list;
 
 enum class Color { red, green };
 

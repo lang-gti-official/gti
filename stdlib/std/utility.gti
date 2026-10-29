@@ -1,8 +1,10 @@
+export module utility;
+
 // C++-familiar API scaffold for <std/utility>.
 // std::move is compiler-defined and implicitly available through the prelude;
 // it is intentionally not redeclared here.
 
-namespace std {
+export namespace std {
   concept member_cloneable<T> =
       requires (T& value) { { value.clone() } -> T; };
 

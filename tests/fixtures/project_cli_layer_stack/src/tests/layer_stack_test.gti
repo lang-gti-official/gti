@@ -1,6 +1,6 @@
-#include "../core/layer.gti"
-#include "../core/layer_stack.gti"
-#include <std/memory>
+import "../core/layer.gti";
+import "../core/layer_stack.gti";
+import std.memory;
 
 mut uint64_t observed_attach_order = 0;
 mut uint64_t observed_detach_order = 0;

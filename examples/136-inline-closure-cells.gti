@@ -1,6 +1,5 @@
-#include <std/format>
-#include <std/memory>
-
+import std.format;
+import std.memory;
 namespace application {
 // Wraps a closure so the cell can construct, call and destroy it in place.
 class holder<Callable> {

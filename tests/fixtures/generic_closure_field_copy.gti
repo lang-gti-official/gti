@@ -2,8 +2,8 @@
 // into its field. The copy keeps the closure's captures, leaves the source
 // closure usable, and composes with a base class, a moved sibling field, owned
 // string fields, a second closure type, a returned owner and a copied owner.
-#include <std/string>
-#include <std/utility>
+import std.string;
+import std.utility;
 
 class Holder<F> {
 public:

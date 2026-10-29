@@ -1,7 +1,8 @@
-#include <std/vector>
-#include <std/memory>
+export module list;
 
-namespace std {
+import std.vector;
+import std.memory;
+export namespace std {
 namespace detail {
 enum class list_in_place { value };
 struct list_node<T> {

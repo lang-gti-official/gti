@@ -2,7 +2,7 @@
 // ICE: std::make_unique<T>(T value) -- heap-allocating an already-built value
 // of the same type. Fails for a passive copyable struct, user move-only
 // classes, std::string and std::vector; make_unique<T>(other args) works.
-#include <std/memory>
+import std.memory;
 struct Copyable {
   int v;
   Copyable(int v) : v(v) {}

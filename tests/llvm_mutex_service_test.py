@@ -120,7 +120,7 @@ def main():
         }
         for name, (body, diagnostic) in rejections.items():
             source = output / f"reject-{name}.gti"
-            source.write_text("#include <std/mutex>\nint main() { " + body +
+            source.write_text("import std.mutex;\nint main() { " + body +
                               " return 0; }\n", encoding="utf-8")
             for backend in ("cpp", "llvm"):
                 artifact = output / f"rejected-{name}-{backend}"
@@ -138,7 +138,7 @@ def main():
              ["--execution-profile", "concurrent"], "GTI-S2061"),
         ):
             if name == "source-global-cleanup":
-                source.write_text("#include <std/mutex>\n"
+                source.write_text("import std.mutex;\n"
                     "class Owned { public: ~Owned() {}  public: Owned() = default; }; "
                     "std::mutex<Owned> global{Owned()};\nint main() { return 0; }\n",
                     encoding="utf-8")

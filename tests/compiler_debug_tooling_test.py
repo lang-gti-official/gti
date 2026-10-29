@@ -77,7 +77,10 @@ def main() -> int:
 
         # --- diagnostic capture, classification, and bundle shape.
         bad = temp / "bad.gti"
-        bad.write_text("int main() { return undefined_name_xyz; }\n",
+        bad.write_text((
+                           'export module bad;\n'
+                           'export int main() { return undefined_name_xyz; }\n'
+                       ),
                        encoding="utf-8")
         bundle = temp / "bundle"
         captured = run_tool(script, "capture", "--gti", str(gti),
@@ -104,11 +107,14 @@ def main() -> int:
         nested.mkdir()
         nested_bad = nested / "bad.gti"
         nested_bad.write_text(
-            "int nested_failure() { return missing_nested_name; }\n",
+            (
+                'export module bad;\n'
+                'export int nested_failure() { return missing_nested_name; }\n'
+            ),
             encoding="utf-8")
         include_entry = temp / "include-entry.gti"
         include_entry.write_text(
-            '#include "nested/bad.gti"\nint main() { return 0; }\n',
+            'import "nested/bad.gti";\nint main() { return 0; }\n',
             encoding="utf-8")
         include_bundle = temp / "include-bundle"
         included = run_tool(script, "capture", "--gti", str(gti),
@@ -142,10 +148,13 @@ root = "src/tests/main.gti"
 """,
             encoding="utf-8")
         (project / "src/tests/main.gti").write_text(
-            '#include "../core/helper.gti"\nint main() { return helper(); }\n',
+            'import "../core/helper.gti";\nint main() { return helper(); }\n',
             encoding="utf-8")
         (project / "src/core/helper.gti").write_text(
-            "int helper() { return missing_project_name; }\n",
+            (
+                'export module helper;\n'
+                'export int helper() { return missing_project_name; }\n'
+            ),
             encoding="utf-8")
         project_bundle = temp / "project-bundle"
         project_capture = run_tool(
@@ -177,7 +186,10 @@ root = "src/tests/main.gti"
 
         # --- exit gate: a changed earlier failure is rejected.
         (moved / "source/bad.gti").write_text(
-            "int main() { return @@@; }\n", encoding="utf-8")
+            (
+                'export module bad;\n'
+                'export int main() { return @@@; }\n'
+            ), encoding="utf-8")
         replaced = run_tool(script, "replay", "--gti", str(gti),
                             "--bundle", str(moved))
         check(replaced.returncode == 3 and "DIFFERENT" in replaced.stdout,
@@ -186,7 +198,10 @@ root = "src/tests/main.gti"
 
         # --- a fixed source makes the failure disappear, distinctly.
         (moved / "source/bad.gti").write_text(
-            "int main() { return 0; }\n", encoding="utf-8")
+            (
+                'export module bad;\n'
+                'export int main() { return 0; }\n'
+            ), encoding="utf-8")
         disappeared = run_tool(script, "replay", "--gti", str(gti),
                                "--bundle", str(moved))
         check(disappeared.returncode == 2

@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 
 std::detail::vector_iterator<int32_t> ambiguous_owner(
     bool select_first, mut std::detail::vector_iterator<int32_t> first,

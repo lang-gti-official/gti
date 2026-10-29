@@ -1,5 +1,6 @@
+export module class_b;
 namespace ui {
-  class Button {
+  export class Button {
   public:
     int label = 2;
     Button() {}

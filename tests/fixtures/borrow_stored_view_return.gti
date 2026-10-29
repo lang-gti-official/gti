@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 // A view or c_string field holds only an ownerless view, so returning one
 // copies that independent value rather than borrowing the receiver.

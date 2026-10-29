@@ -76,9 +76,9 @@ def main():
         ],
     }
     owner = """
-#include <std/optional>
-#include <std/string>
-#include <std/vector>
+import std.optional;
+import std.string;
+import std.vector;
 struct Envelope {
   std::optional<std::string> payload{};
 public:
@@ -99,7 +99,7 @@ bool requires_copy<std::copyable T>(T& input) { return true; }
 int main() { Envelope input{}; return requires_copy(input) ? 0 : 1; }
 """, "std::copyable"),
         ("deleted-move", """
-#include <std/vector>
+import std.vector;
 class Immovable {
 public:
   Immovable() {}
@@ -109,7 +109,7 @@ public:
 int main() { std::vector<Immovable> values{}; return 0; }
 """, "std::relocatable"),
         ("borrowed-element", """
-#include <std/vector>
+import std.vector;
 struct View { int& value; View(int& source) : value(source) {} };
 int main() { std::vector<View> values{}; return 0; }
 """, "stored borrows"),

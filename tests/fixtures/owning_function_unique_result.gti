@@ -1,7 +1,7 @@
-#include <std/functional>
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.functional;
+import std.memory;
+import std.string;
+import std.vector;
 
 class Resource {
   int identity;

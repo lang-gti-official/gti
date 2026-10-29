@@ -23,8 +23,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-PRELUDE = """#include <std/format>
-#include <std/string>
+PRELUDE = """import std.format;
+import std.string;
 
 void show(expected<std::string, std::format_errc> result) {
   if (result.has_value()) {

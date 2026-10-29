@@ -5,7 +5,7 @@
 namespace {
 
 const std::string declarations = R"gti(
-#include <std/utility>
+import std.utility;
 struct Counter { mut int value = 4;  public: Counter() = default; };
 class Shared {
   Counter& counter;
@@ -48,7 +48,7 @@ lang::FrontendResult analyze(const std::string &body) {
 
 void checkTextReferenceDependencies() {
   const std::string prefix = R"gti(
-#include <std/string>
+import std.string;
 struct TextReader {
   std::string_view& text;
   TextReader(std::string_view& input) : text(input) {}
@@ -274,7 +274,7 @@ int main() {
 // by value or escape that owner.
 void checkTextReferenceReads() {
   const std::string prefix = R"gti(
-#include <std/string>
+import std.string;
 class Named {
   std::string_view name;
 public:
@@ -519,7 +519,7 @@ void checkLocalReferences() {
 
 void checkOwningAccessorAdapters() {
   const std::string program = declarations + R"gti(
-#include <std/memory>
+import std.memory;
 class Adapter {
   mut Counter& target;
 public:
@@ -659,7 +659,7 @@ int main() {
 
 void checkIoConceptDiagnostics() {
   const std::string declarations = R"gti(
-#include <std/io>
+import std.io;
 class WrongResult {
 public:
   int read_some(mut std::mutable_span<uint8_t>& output) mut { return 0; }
@@ -733,8 +733,8 @@ void checkOwningElementSlice() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
   const std::string program = R"gti(
-#include <std/vector>
-#include <std/string>
+import std.vector;
+import std.string;
 struct Record {
   mut std::string name;
   Record(std::string text) : name(std::move(text)) {}
@@ -779,7 +779,7 @@ int main() {
 
 void checkProjectedOwningMemberRetainedResults() {
   const std::string declarations = R"gti(
-#include <std/string>
+import std.string;
 class View {
   int& value;
 public:
@@ -1212,7 +1212,7 @@ int main() {
 
 void checkReadOnlyConstructorDependencies() {
   for (const std::string carrier : {"Shared", "Exclusive"}) {
-    const std::string program = "#include <std/panic>\n" + declarations +
+    const std::string program = "import std.panic;\n" + declarations +
                                 "\nusing Carrier = " + carrier + R"gti(;
 class Marker {
 public:
@@ -1711,7 +1711,7 @@ void checkProtectedEscapeAnalysis() {
 // backed only by the carrier's Stored loan, which designates the external
 // referent rather than the carrier.
 const std::string upcastCarriers = R"gti(
-#include <std/utility>
+import std.utility;
 interface Gauge { int32_t read(); };
 class Scaled : public Gauge {
   int32_t value;
@@ -1919,8 +1919,8 @@ int main() { int owner = 7; return inspect(Window(owner)) - 7; }
 void checkAccessorReturnedTextCarriers() {
   const auto frontend = lang::Frontend().analyze(
       "accessor-returned-text-carriers.gti", R"gti(
-#include <std/string>
-#include <std/optional>
+import std.string;
+import std.optional;
 class Box {
 public:
   std::string_view text;
@@ -2025,8 +2025,8 @@ int main() {
 
   // The carrier keeps the accessor's owner and the text's owner borrowed.
   const std::string box = R"gti(
-#include <std/string>
-#include <std/optional>
+import std.string;
+import std.optional;
 class Box {
 public:
   mut std::string_view text;

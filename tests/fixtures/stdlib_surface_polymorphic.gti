@@ -1,5 +1,5 @@
-#include <std/polymorphic>
-#include <std/string>
+import std.polymorphic;
+import std.string;
 
 interface shape {
   int area();

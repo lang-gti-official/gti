@@ -1,5 +1,5 @@
-#include <std/optional>
-#include <std/vector>
+import std.optional;
+import std.vector;
 
 mut int32_t drops = 0;
 

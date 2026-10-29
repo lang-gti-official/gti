@@ -467,7 +467,7 @@ for <T> concept measurable<Crate<T>> {
     oneHeaderError("for concept gti_internal::missing<Rope>", "Rope",
                    "gti_internal", "GTI-S2058");
 
-    const std::string source = "#include \"middle.gti\"\nstruct Rope {};\n"
+    const std::string source = "import \"middle.gti\";\nstruct Rope {};\n"
                                "for concept measurable<Rope> {\n" +
                                members("Rope") +
                                "};\nint main() { return 0; }\n";
@@ -476,9 +476,10 @@ for <T> concept measurable<Crate<T>> {
     const auto invisible = lang::Frontend().analyze(
         entry, source, {root / "stdlib" / "prelude.gti"},
         {{(root / "tests" / "middle.gti").string(),
-          "#include \"measure.gti\"\n"},
-         {conceptPath.string(), "concept measurable<T> { int measure(T& item); "
-                                "bool is_empty(T& item); };\n"}},
+          "export module middle;\nimport \"measure.gti\";\n"},
+         {conceptPath.string(), R"GTIMODULE(export module measure;
+export concept measurable<T> { int measure(T& item); bool is_empty(T& item); };
+)GTIMODULE"}},
         {root / "stdlib"});
     const auto diagnostic =
         std::find_if(invisible.diagnostics.begin(), invisible.diagnostics.end(),
@@ -502,7 +503,7 @@ for <T> concept measurable<Crate<T>> {
                            }) &&
                std::any_of(diagnostic->hints.begin(), diagnostic->hints.end(),
                            [](const auto &hint) {
-                             return hint.find("#include \"measure.gti\"") !=
+                             return hint.find("import \"measure.gti\";") !=
                                     std::string::npos;
                            }),
            "an invisible concept retains declaration and include help even "

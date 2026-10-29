@@ -7,8 +7,8 @@
 // Phases 1 and 2 fail inside the selected operator: a temporary receiver and
 // a consumed receiver are each released exactly once. In phases 3 and 4 the
 // conversion is its function's only fallible operation.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 class Tracked {
   int id;

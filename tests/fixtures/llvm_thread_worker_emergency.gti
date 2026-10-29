@@ -1,4 +1,4 @@
-#include <std/thread>
+import std.thread;
 
 // A second failure while a worker frame cleans up after its first failure is
 // the terminal GTI-R0014 envelope. The remaining worker frames are abandoned

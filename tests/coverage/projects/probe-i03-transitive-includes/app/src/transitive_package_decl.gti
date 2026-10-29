@@ -1,4 +1,4 @@
-#include <mid/stats>
+import mid.stats;
 
 int main() {
   // base::core::twice is visible to mid/stats, not to this unit.

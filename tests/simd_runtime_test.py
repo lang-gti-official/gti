@@ -30,7 +30,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gti-simd-") as temporary:
         root = pathlib.Path(temporary)
         dormant = root / "dormant.gti"
-        dormant.write_text("#include <std/simd>\nint main() { return 0; }\n")
+        dormant.write_text("import std.simd;\nint main() { return 0; }\n")
         dormant_cpp = root / "dormant.cpp"
         success(run([str(compiler), str(dormant), "--emit-cpp", "-o", str(dormant_cpp)], environment),
                 "dormant SIMD include")
@@ -67,7 +67,7 @@ def main() -> int:
         }
         for name, body in bad_cases.items():
             source = root / f"bad-{name}.gti"
-            source.write_text("#include <std/simd>\n#include <std/array>\nint main() { " + body + " }\n")
+            source.write_text("import std.simd;\nimport std.array;\nint main() { " + body + " }\n")
             for optimization in ("O0", "O3"):
                 executable = root / f"bad-{name}-{optimization}"
                 success(run([str(compiler), str(source), f"-{optimization}", "-o", str(executable)], environment), name)
@@ -78,8 +78,8 @@ def main() -> int:
         # Observe the destination during GTI failure cleanup. An exit status
         # alone cannot prove that an invalid full range wrote no partial lanes.
         transactional = root / "transactional.gti"
-        transactional.write_text('''#include <std/simd>
-#include <std/array>
+        transactional.write_text('''import std.simd;
+import std.array;
 struct Destination {
   mut std::array<float, 6> values{};
   ~Destination() {
@@ -117,7 +117,7 @@ int main() {
         vector_host = "__clang__" in predefines or "__GNUC__" in predefines
         if native and vector_host and machine in {"arm64", "aarch64", "x86_64", "amd64"}:
             probe = root / "codegen.gti"
-            probe.write_text('''#include <std/simd>
+            probe.write_text('''import std.simd;
 extern "C" { float simd_input(float x); }
 int main() {
   float left[4] = {simd_input(1.0), simd_input(2.0), simd_input(3.0), simd_input(4.0)};

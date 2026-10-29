@@ -1,5 +1,5 @@
-#include <std/filesystem>
-#include <std/string>
+import std.filesystem;
+import std.string;
 
 int main() {
   std::string named = std::string("named");

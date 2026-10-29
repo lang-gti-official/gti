@@ -1,8 +1,8 @@
-#include <std/panic>
-#include <std/memory>
-#include <std/thread>
-#include <std/string>
-#include <std/vector>
+import std.panic;
+import std.memory;
+import std.thread;
+import std.string;
+import std.vector;
 
 struct Guard {
   int id;

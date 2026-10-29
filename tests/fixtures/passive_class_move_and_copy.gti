@@ -8,9 +8,9 @@
 // be declared before or after the moved one, and a scalar moved after a read
 // of its formal mixes with a class copy the same way. Each of these was
 // GTI-B0001.
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 mut int stage = 0;
 

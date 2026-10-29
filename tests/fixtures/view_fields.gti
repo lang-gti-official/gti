@@ -8,8 +8,8 @@
 // expression. A function that returns a fresh value over its text parameter,
 // generic or not, relays it to the result. An ownerless value of the same
 // type keeps every capability, including storage.
-#include <std/string>
-#include <std/utility>
+import std.string;
+import std.utility;
 
 class Token {
 public:

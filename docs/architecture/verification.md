@@ -9205,9 +9205,9 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `feature_interaction_smoke` | three fixed interaction programs through the real optimized compiler at C++20/C++23 and O0/O3, original/renamed variants, repeated execution, exact destructor/call/output checks, and negative ownership admission controls |
 | `stdlib_surface_manifest` | complete stdlib-source fingerprints and executable/scaffold/unsupported classification; injected missing-source, stale-source, missing-case, and wrong-case-kind rejection |
 | `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces. Each native build has a 300-second limit unless its case records a longer one, at most 900 seconds, with a `build_timeout_reason`; no case currently does |
-| `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an include-only translation unit, including unused generic declarations |
-| `stdlib_modules` | every public `<std/name>` unit has exactly one canonical `stdlib/modules/name.gti` interface, and `import std.name;` alone reaches verified MIR for each |
-| `dormant_capability_runtime` | include-only programs for every capability-family module (atomic storage, mutex storage and lock token, shared owner, managed thread, C thread), alone under both execution profiles and together under both profiles at C++20/C++23, compile natively and exit cleanly; so do an uninstantiated application generic over those members and a concrete atomic beside a dormant mutex in the concurrent profile. This is the native complement to the emission-only sweep (#164) |
+| `stdlib_include_sweep` | every shipped `std` module independently reaches C++ emission from an import-only source unit, including unused generic declarations |
+| `stdlib_modules` | every public `std.name` module has exactly one canonical `stdlib/std/name.gti` interface, and `import std.name;` alone reaches verified MIR for each |
+| `dormant_capability_runtime` | import-only programs for every capability-family module (atomic storage, mutex storage and lock token, shared owner, managed thread, C thread), alone under both execution profiles and together under both profiles at C++20/C++23, compile natively and exit cleanly; so do an uninstantiated application generic over those members and a concrete atomic beside a dormant mutex in the concurrent profile. This is the native complement to the emission-only sweep (#164) |
 | `encoding_runtime` | strict standard-alphabet padded Base64 and lowercase/dual-case hexadecimal across every byte value, RFC 4648 tail vectors, malformed length/character/padding/canonical-bit rejection, and C++20/C++23 O0/O1/O3 plus no-elide and ASan/UBSan execution |
 | `forward_list_runtime` | source-defined resize/merge/remove/unique/reverse/stable sort with scalar and move-only elements; 30,000-node iterative clear/destruction; exact cleanup on failing comparisons and checked owner-field assignment; verified-MIR emission at O0/O1/O3 under C++20/C++23 plus ASan/UBSan |
 | `unique_owner_access_runtime` | all four unique-owner dereference/arrow overloads; successful read/write, empty and reset access, nested caller cleanup, staged-RHS cleanup, and exact `GTI-R0008`/`GTI-R0014` reports at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; `failure_metadata` independently rejects forged owner detectors, missing edges, and mismatched loans |
@@ -11135,12 +11135,14 @@ The source-module slice is owned by `testSourceModuleInterfaces`,
 `testStandardLibraryModules` in `compiler_frontend`, `testModuleManifest` in
 `project_model`, and build-provenance round trips in `driver_pipeline`.
 `testStandardLibraryModules` covers direct and project `std.name` resolution,
-the standard-library role and `ExportInclude` edge, non-republication of
-nested includes, the rejected aggregate and unknown modules, application
-interfaces that re-export a standard module and republish their own legacy
-unit, `export #include` misuse, same-name application modules, and a legacy
-standard unit shared with a module domain whose source-local flags differ.
-`stdlib_modules` imports every standard module individually.
+the canonical trusted `stdlib/std/name.gti` interface and import edge,
+non-republication of private imports, the portable aggregate and unknown
+modules, application re-exports, and same-name application modules.
+`stdlib_modules` imports every canonical standard module individually; detail
+and experimental facades remain outside the portable aggregate. Removed GTI
+include syntax is a source-loading rejection, including legacy republication.
+These describe the phase 1 test obligations; the unreleased conversion does not
+claim production module readiness or waive unresolved phase 2 acceptance.
 
 Reachable executable lowering is owned by `testReachableExecutableLowering` in
 `compiler_frontend`. It covers:

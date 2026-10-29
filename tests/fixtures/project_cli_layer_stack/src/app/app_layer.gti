@@ -1,7 +1,8 @@
-#include "../core/layer.gti"
+export module app_layer;
+import "../core/layer.gti";
 
 namespace game {
-class AppLayer : public psych::Layer {
+export class AppLayer : public psych::Layer {
   mut bool attached = false;
   mut uint64_t updates = 0;
   mut uint64_t renders = 0;
@@ -46,7 +47,7 @@ public:
   }
 };
 
-class StatusOverlay : public psych::Layer {
+export class StatusOverlay : public psych::Layer {
   mut bool attached = false;
   mut uint64_t updates = 0;
   mut uint64_t renders = 0;

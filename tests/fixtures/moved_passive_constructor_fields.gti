@@ -14,9 +14,9 @@
 // keeps ownerless text, so it takes the same body-ordered route, even after
 // an earlier sibling reads it; so does a function name.
 // Copying these formals already compiled; moving them was GTI-B0001.
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 mut int stage = 0;
 

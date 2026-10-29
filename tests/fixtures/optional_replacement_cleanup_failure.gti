@@ -1,5 +1,5 @@
-#include "enum_replacement_support.gti"
-#include <std/optional>
+import "enum_replacement_support.gti";
+import std.optional;
 
 int main() {
   ReplacementGuard guard{};

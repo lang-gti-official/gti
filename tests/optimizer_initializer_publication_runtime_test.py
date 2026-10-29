@@ -19,7 +19,7 @@ import tempfile
 
 CASES = {
     "generated_default": (
-        """#include <std/string>
+        """import std.string;
 struct P { std::string_view name = "Ada"; uint32_t health = 7;  public: P() = default; };
 void app(mut std::string& out, std::string_view& item) { out.append(item); }
 int main() {
@@ -36,21 +36,21 @@ int main() {
         "Ada|Ada\n",
     ),
     "user_constructor_default_member": (
-        """#include <std/string>
+        """import std.string;
 struct P { std::string_view name = "Ada"; uint32_t health = 7; P() {} };
 int main() { P p{}; std::print(p.name); std::print("\\n"); return 0; }
 """,
         "Ada\n",
     ),
     "explicit_initializer": (
-        """#include <std/string>
+        """import std.string;
 struct P { std::string_view name; uint32_t health; P() : name("Ada"), health(7) {} };
 int main() { P p{}; std::print(p.name); std::print("\\n"); return 0; }
 """,
         "Ada\n",
     ),
     "nested_record": (
-        """#include <std/string>
+        """import std.string;
 struct Q { std::string_view tag = "Q";  public: Q() = default; };
 struct P { Q q{}; std::string_view name = "Ada";  public: P() = default; };
 int main() { P p{}; std::print(p.q.tag); std::print(p.name); std::print("\\n"); return 0; }

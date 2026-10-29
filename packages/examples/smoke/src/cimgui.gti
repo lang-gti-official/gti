@@ -1,5 +1,4 @@
-#include <cimgui/cimgui>
-
+import cimgui.cimgui;
 int main() {
   unsafe {
     imgui::ImGuiContext* context = imgui::gti_imgui_create_context();

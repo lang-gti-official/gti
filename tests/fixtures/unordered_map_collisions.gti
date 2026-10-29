@@ -1,4 +1,4 @@
-#include <std/unordered_map>
+import std.unordered_map;
 
 class CollisionHash {
 public:

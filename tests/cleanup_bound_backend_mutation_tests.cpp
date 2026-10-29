@@ -25,7 +25,7 @@ void expect(bool condition, std::string_view name) {
 }
 
 const std::string prefix = R"gti(
-#include <std/utility>
+import std.utility;
 mut int observed = 0;
 struct Resource { int value = 7;  public: Resource() = default; };
 class Guard {

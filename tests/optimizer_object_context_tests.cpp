@@ -1038,7 +1038,7 @@ int main() {
              "source prefix field publication independently replays");
   }
   const std::string invalidMove =
-      "#include <std/memory>\nint main() { int source = 7; "
+      "import std.memory;\nint main() { int source = 7; "
       "int result = std::move(source); return source + result; }\n";
   const auto invalidPath = sourcePath.parent_path() / "moved-source-read.gti";
   const auto invalid = lang::Frontend().analyze(

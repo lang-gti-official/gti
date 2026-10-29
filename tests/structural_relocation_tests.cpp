@@ -214,7 +214,7 @@ int main() {
         "std::floating_point"}) {
     const auto numeric = analyzeWithStandardLibrary(
         "numeric-storage.gti",
-        "#include <std/memory>\n#include <std/vector>\n"
+        "import std.memory;\nimport std.vector;\n"
         "struct Parcel<T> { T item; }; "
         "void require_bits<std::bitwise_relocatable T>() {} "
         "void require_storage<T>() requires std::storage_element<T> {} "
@@ -240,7 +240,7 @@ int main() {
   for (const std::string requirement :
        {"std::copyable<T>", "std::relocatable<T>",
         "std::numeric<T> || std::copyable<T>"}) {
-    requireRejected("#include <std/memory>\n"
+    requireRejected("import std.memory;\n"
                     "void need<T>() requires std::storage_element<T> {} "
                     "void check<T>() requires " +
                         requirement +

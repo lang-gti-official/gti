@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 // The rule is checked-reference replacement, not a container-name exception.
 class OwnedText {

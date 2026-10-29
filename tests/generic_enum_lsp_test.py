@@ -10,13 +10,15 @@ from lsp_smoke_test import (
 )
 
 
-DECLARATIONS = """enum Message<T, U = int64_t, uint64_t Channel = 3> {
-  idle,
-  item(T payload, U detail)
-};
-"""
+DECLARATIONS = (
+                   'export module messages;\n'
+                   'export enum Message<T, U = int64_t, uint64_t Channel = 3> {\n'
+                   '  idle,\n'
+                   '  item(T payload, U detail)\n'
+                   '};\n'
+               )
 
-SOURCE = """#include "messages.gti"
+SOURCE = """import "messages.gti";
 using Count = Message<int32_t>;
 int main() {
   // The supplementary character tests UTF-16 navigation below.

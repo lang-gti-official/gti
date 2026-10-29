@@ -1,3 +1,0 @@
-// Module std.panic: the public surface of <std/panic>.
-export module panic;
-export #include <std/panic>

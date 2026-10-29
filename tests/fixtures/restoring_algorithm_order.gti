@@ -1,8 +1,8 @@
-#include <std/algorithm>
-#include <std/array>
-#include <std/panic>
-#include <std/string>
-#include <std/vector>
+import std.algorithm;
+import std.array;
+import std.panic;
+import std.string;
+import std.vector;
 
 constexpr std::array<int, 3> constant_values = std::array<int, 3>({4, 5, 6});
 static_assert(constant_values.size() == 3);

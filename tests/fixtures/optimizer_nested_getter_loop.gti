@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 
 class Tick {
   mut uint64_t count = uint64_t(0);

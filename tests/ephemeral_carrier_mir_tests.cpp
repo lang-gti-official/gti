@@ -978,7 +978,7 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   const auto fallible = lang::Frontend().analyze(
       "temporary-fallible-borrow-extraction.gti", R"gti(
-#include <std/utility>
+import std.utility;
 enum class Error { absent };
 struct Owner { int value = 7;  public: Owner() = default; };
 expected<Owner&, Error> lookup(Owner& source) { return source; }
@@ -1980,7 +1980,7 @@ int main() {
         source.replace(source.find(arithmetic), arithmetic.size(),
                        "~Guard() { if (this.value != 'a') "
                        "std::panic(\"bad referent\"); }");
-        source.insert(0, "#include <std/panic>\n");
+        source.insert(0, "import std.panic;\n");
       }
       const auto frontend = lang::Frontend().analyze(
           "readonly-local-cleanup-guard.gti", source,
@@ -2078,7 +2078,7 @@ int main() {
 void checkMovedExclusiveParameterEntry() {
   const auto frontend = lang::Frontend().analyze(
       "exclusive-parameter-entry.gti", R"gti(
-#include <std/iterator>
+import std.iterator;
 class UserPosition {
   mut int& number;
 public:
@@ -2209,7 +2209,7 @@ void checkMultiDependencyRelayIdentity() {
     const std::string prefix = sharedFirst ? "int&" : "mut int&";
     const auto frontend = lang::Frontend().analyze(
         "multi-dependency-relay.gti",
-        "#include <std/utility>\nclass Owners {\n" + prefix + R"gti( first;
+        "import std.utility;\nclass Owners {\n" + prefix + R"gti( first;
   mut int& second;
 public:
   Owners()gti" +

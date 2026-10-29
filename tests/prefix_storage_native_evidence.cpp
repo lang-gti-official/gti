@@ -42,7 +42,7 @@ lang::FrontendResult analyzeTrusted(const std::string &name,
   const std::filesystem::path stdlibRoot = environmentPath("GTI_STDLIB_PATH");
   const std::filesystem::path entry =
       std::filesystem::temp_directory_path() / ("gti-prefix-" + name);
-  return lang::Frontend().analyze(entry, "#include <std/memory>\n" + source,
+  return lang::Frontend().analyze(entry, "import std.memory;\n" + source,
                                   {stdlibRoot / "prelude.gti"}, {},
                                   {stdlibRoot});
 }

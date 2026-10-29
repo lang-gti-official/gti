@@ -5,6 +5,9 @@ Each factor changes how the same owned value is produced, transported, observed
 or retired. Only supported, acyclic, single-threaded programs are generated.
 The oracle models integer results, call effects and observable resource drops;
 it deliberately does not infer GTI borrow admission or native representation.
+
+Case schema v3 records module-only sources. Loading v1/v2 authenticates their
+historical source hashes, then upgrades subsequent emission and records to v3.
 """
 
 from __future__ import annotations
@@ -163,9 +166,9 @@ class InteractionCase:
         error = "Ticket" if enabled("move_only") else "int32_t"
         result_type = f"expected<int32_t, {error}>" if enabled("expected") else "int32_t"
         factory_type = f"expected<{payload}, {error}>" if enabled("expected") else payload
-        parts = ["#include <std/utility>\n"]
+        parts = ["import std.utility;\n"]
         if enabled("vector"):
-            parts.append("#include <std/vector>\n")
+            parts.append("import std.vector;\n")
         parts.append("\nmut int32_t effects = 0;\nmut int32_t producers = 0;\n"
                      "mut int32_t reads = 0;\n")
         if enabled("control_flow"):
@@ -324,21 +327,35 @@ class InteractionCase:
             source = re.sub(r"Ticket\(([0-9]+)\)", r"Ticket((\1))", source)
         return source
 
+    def _source_hashes(self, legacy_includes: bool = False) -> dict[str, str]:
+        hashes = {}
+        for variant in ("original", "renamed"):
+            source = self.emit(variant)
+            if legacy_includes:
+                # Authenticate retained v1/v2 records against their historical
+                # bytes. This spelling is hashed only; emit() always uses imports.
+                source = source.replace("import std.utility;", "#include <std/utility>")
+                source = source.replace("import std.vector;", "#include <std/vector>")
+            hashes[variant] = hashlib.sha256(source.encode()).hexdigest()
+        return hashes
+
     def record(self) -> dict[str, Any]:
         return {
-            "schema": "gti-feature-interaction-case-v2",
+            "schema": "gti-feature-interaction-case-v3",
             "seed": self.seed, "index": self.index,
             "factors": dict(zip(FACTORS, self.selection)),
             "base": self.base, "delta": self.delta, "width": self.width,
             "expected": list(self.oracle()),
-            "source_sha256": {variant: hashlib.sha256(self.emit(variant).encode()).hexdigest()
-                              for variant in ("original", "renamed")},
+            "source_sha256": self._source_hashes(),
         }
 
     @classmethod
     def from_record(cls, record: dict[str, Any]) -> "InteractionCase":
-        legacy = record.get("schema") == "gti-feature-interaction-case-v1"
-        if not legacy and record.get("schema") != "gti-feature-interaction-case-v2":
+        schema = record.get("schema")
+        legacy = schema == "gti-feature-interaction-case-v1"
+        if schema not in ("gti-feature-interaction-case-v1",
+                          "gti-feature-interaction-case-v2",
+                          "gti-feature-interaction-case-v3"):
             raise ValueError("unsupported interaction case schema")
         names = V1_FACTORS if legacy else FACTORS
         if set(record["factors"]) != set(names):
@@ -348,8 +365,10 @@ class InteractionCase:
                    row + (False,) if legacy else row,
                    record["base"], record["delta"], record["width"])
         regenerated = case.record()
+        regenerated["schema"] = schema
+        if schema != "gti-feature-interaction-case-v3":
+            regenerated["source_sha256"] = case._source_hashes(legacy_includes=True)
         if legacy:
-            regenerated["schema"] = "gti-feature-interaction-case-v1"
             del regenerated["factors"]["control_flow"]
         if regenerated != record:
             raise ValueError("case oracle or source hashes disagree with this generator")
@@ -365,7 +384,7 @@ def make_case(seed: int, index: int, selection: Selection) -> InteractionCase:
 
 def negative_controls() -> dict[str, tuple[str, str]]:
     """Invalid siblings exercise admission, independently of runtime agreement."""
-    prefix = """#include <std/utility>
+    prefix = """import std.utility;
 class Owner {
 public:
   Owner(int32_t input) : value(input) {}

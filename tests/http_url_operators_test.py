@@ -10,7 +10,7 @@ from lambda_pack_invocation_runtime_test import main
 
 
 def check_rejections():
-    prefix = '''#include <std/http>
+    prefix = '''import std.http;
 int main() {
   auto parsed = std::http::url::parse("https://example.com");
   auto base = std::move(parsed).value();

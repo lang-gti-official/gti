@@ -310,7 +310,7 @@ evaluation precedes message evaluation, and both happen once before selecting
 the active alternative. This means that message-producing expressions also
 execute on success. Panic snapshots the counted message before cleanup can
 invalidate its storage. No include is needed for the prelude's expected member;
-the `<std/panic>` public function and its formatted overloads are separate APIs.
+the `std.panic` public function and its formatted overloads are separate APIs.
 
 Owned extraction requires movable owned alternatives. A read-only reference
 success `expected<T&, E>` instead yields a checked `T&`, with no movement of
@@ -477,7 +477,7 @@ expected<Payload, Error> forward(expected<Payload, Error> result) {
 }
 ```
 
-`<std/numeric>` uses this ordinary result form for fixed-width
+`std.numeric` uses this ordinary result form for fixed-width
 `checked_add`, `checked_sub`, and `checked_mul`. Success contains the exact
 integer result; overflow or underflow contains
 `std::arithmetic_errc::result_out_of_range`. In the current bounded constant

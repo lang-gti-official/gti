@@ -1,9 +1,9 @@
 // Migration client, not a replacement for the production expected type.
 // This intentionally tests owned, non-void payloads without changing prelude
 // return sugar, borrowed results or constexpr behavior.
-#include <std/meta>
-#include <std/string>
-#include <std/panic>
+import std.meta;
+import std.string;
+import std.panic;
 
 struct Failure<E> {
   mut E error;

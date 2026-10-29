@@ -1,6 +1,5 @@
-#include <std/format>
-#include <std/string>
-
+import std.format;
+import std.string;
 // Enum identity remains distinct from integer identity. A wire protocol can
 // request the exact declared representation explicitly, without formatting.
 enum class Opcode : uint8_t { ping = 1, data = 42, data_alias = 42 };

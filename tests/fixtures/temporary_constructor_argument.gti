@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 void checked(int32_t divisor) {
   int32_t value = 7 / divisor;

@@ -1,7 +1,7 @@
-#include <std/map>
-#include <std/unordered_map>
-#include <std/string>
-#include <std/vector>
+import std.map;
+import std.unordered_map;
+import std.string;
+import std.vector;
 
 class Marker {
   int value;

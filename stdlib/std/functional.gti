@@ -1,11 +1,12 @@
-#include <std/memory>
-#include <std/polymorphic>
-#include <std/iterator>
-#include <std/meta>
+export module functional;
 
+import std.memory;
+import std.polymorphic;
+import std.iterator;
+import std.meta;
 // Callable relationships and source-defined owning callback policy.
 
-namespace gti_internal {
+export namespace gti_internal {
 // Non-null GTI invocation address with its defined-failure convention. This
 // is not a C function pointer and never retains a callable environment.
 class function_pointer<Signature> {};
@@ -167,7 +168,7 @@ public:
 };
 }
 
-namespace std {
+export namespace std {
 /// A non-null, non-owning GTI invocation pointer. Construction accepts one
 /// exact namespace function item or zero-capture lambda; signatures match
 /// exactly. It does not borrow an environment or allocate storage.
@@ -605,7 +606,7 @@ public:
 
 }
 
-class std::hash<int8_t> {
+export class std::hash<int8_t> {
 public:
   hash() = default;
   std::size_t operator()(int8_t& value) {
@@ -613,7 +614,7 @@ public:
   }
 };
 
-class std::hash<int16_t> {
+export class std::hash<int16_t> {
 public:
   hash() = default;
   std::size_t operator()(int16_t& value) {
@@ -621,7 +622,7 @@ public:
   }
 };
 
-class std::hash<int32_t> {
+export class std::hash<int32_t> {
 public:
   hash() = default;
   std::size_t operator()(int32_t& value) {
@@ -629,7 +630,7 @@ public:
   }
 };
 
-class std::hash<int64_t> {
+export class std::hash<int64_t> {
 public:
   hash() = default;
   std::size_t operator()(int64_t& value) {
@@ -637,31 +638,31 @@ public:
   }
 };
 
-class std::hash<uint8_t> {
+export class std::hash<uint8_t> {
 public:
   hash() = default;
   std::size_t operator()(uint8_t& value) { return std::size_t(value); }
 };
 
-class std::hash<uint16_t> {
+export class std::hash<uint16_t> {
 public:
   hash() = default;
   std::size_t operator()(uint16_t& value) { return std::size_t(value); }
 };
 
-class std::hash<uint32_t> {
+export class std::hash<uint32_t> {
 public:
   hash() = default;
   std::size_t operator()(uint32_t& value) { return std::size_t(value); }
 };
 
-class std::hash<uint64_t> {
+export class std::hash<uint64_t> {
 public:
   hash() = default;
   std::size_t operator()(uint64_t& value) { return value; }
 };
 
-class std::hash<bool> {
+export class std::hash<bool> {
 public:
   hash() = default;
   std::size_t operator()(bool& value) {
@@ -670,7 +671,7 @@ public:
   }
 };
 
-class std::hash<char> {
+export class std::hash<char> {
 public:
   hash() = default;
   std::size_t operator()(char& value) {

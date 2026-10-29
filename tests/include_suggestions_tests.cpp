@@ -71,7 +71,8 @@ void internalTrialsDoNotReportProgress() {
   } counter;
   Fixture f;
   f.options.progress = &counter;
-  f.write("api.gti", "struct ProgressValue { int value = 7;  public: "
+  f.write("api.gti", "export module api;\nexport struct ProgressValue { int "
+                     "value = 7;  public: "
                      "ProgressValue() = default; };\n");
   const auto result =
       f.analyze("int main() { ProgressValue item{}; return item.value; }\n");
@@ -79,19 +80,18 @@ void internalTrialsDoNotReportProgress() {
   expect(result.includeSuggestionsRequested &&
              std::any_of(suggestions.begin(), suggestions.end(),
                          [](const auto &fix) {
-                           return fix.replacement.find(
-                                      "#include \"api.gti\"") !=
+                           return fix.replacement.find("import \"api.gti\";") !=
                                   std::string::npos;
                          }),
-         "silent internal trials must still validate a usable include fix");
+         "silent internal trials must still validate a usable import fix");
   expect(counter.loads == 1 && counter.parses == 1 && counter.checks == 1,
          "only the original analysis reports loading, parsing and checking");
 }
 
 void projectDeclarations() {
   Fixture f;
-  f.write("api.gti", R"(
-namespace example {
+  f.write("api.gti", R"(export module api;
+export namespace example {
   int test() { return 7; }
   struct Value { int n = 0;  public: Value() = default; };
   using Number = int;
@@ -119,52 +119,55 @@ namespace example {
     if (!edits.empty()) {
       expect(std::all_of(edits.begin(), edits.end(),
                          [](const auto &edit) {
-                           return edit.replacement ==
-                                      "#include \"api.gti\"\n" &&
+                           return edit.replacement == "import \"api.gti\";\n" &&
                                   edit.preferred;
                          }),
-             "each unresolved use offers the same exact defining header");
+             "each unresolved use offers the same exact defining interface");
       expect(f.analyze(edits[0].replacement + source).hirValid,
-             "applying include restores actual frontend validity");
+             "applying import restores actual frontend validity");
     }
   }
   expect(fixes(f.analyze("int main() { return wrong::test(); }")).empty(),
-         "equal leaf names in the wrong namespace must not guess an include");
-  f.write("private.gti", "class Hidden { static int inaccessible() { return 1; "
+         "equal leaf names in the wrong namespace must not guess an import");
+  f.write("private.gti", "export module private_api;\nexport class Hidden { "
+                         "static int inaccessible() { return 1; "
                          "}  public: Hidden() = default; };");
   expect(
       fixes(f.analyze("int main() { return Hidden::inaccessible(); }")).empty(),
-      "no include fix bypasses private member access");
-  f.write("broken.gti",
-          "namespace example { int broken() { return no_such_value; } }");
+      "no import fix bypasses private member access");
+  f.write("broken.gti", "export module broken;\nexport namespace example { int "
+                        "broken() { return no_such_value; } }");
   expect(fixes(f.analyze("int main() { return example::broken(); }")).empty(),
          "a candidate that introduces semantic errors is not a safe edit");
-  f.write("inactive.gti", "#if target.os == \"impossible\"\nint inactive() { "
+  f.write("inactive.gti", "export module inactive_api;\n#if target.os == "
+                          "\"impossible\"\nexport int inactive() { "
                           "return 1; }\n#endif\n");
   expect(fixes(f.analyze("int main() { return inactive(); }")).empty(),
          "inactive declarations are not candidates");
   f.write("module.gti",
           "export module secret;\nint private_value() { return 1; }\n");
-  expect(fixes(f.analyze("int main() { return private_value(); }")).empty(),
-         "module interfaces must not be exposed through include edits");
-  f.write("integer.gti",
-          "namespace overload { int choose(int n) { return n; } }");
-  f.write("boolean.gti", "namespace overload { int choose(bool n) { if (n) { "
+  expect(
+      fixes(f.analyze("int main() { return private_value(); }")).empty(),
+      "private module declarations must not be exposed through import edits");
+  f.write("integer.gti", "export module integer;\nexport namespace overload { "
+                         "int choose(int n) { return n; } }");
+  f.write("boolean.gti", "export module boolean;\nexport namespace overload { "
+                         "int choose(bool n) { if (n) { "
                          "return 1; } return 0; } }");
   const auto selected =
       fixes(f.analyze("int main() { return overload::choose(3); }"));
   expect(selected.size() == 1 &&
-             selected.front().replacement == "#include \"integer.gti\"\n",
+             selected.front().replacement == "import \"integer.gti\";\n",
          "candidate checking uses exact call overload resolution, not just a "
          "matching name");
 }
 
 void missingOverloadDeclarations() {
   Fixture f;
-  f.write("extra.gti",
-          "namespace example { int choose(int a, int b) { return a + b; } }");
-  f.write("wrong.gti",
-          "namespace other { int choose(int a, int b) { return a + b; } }");
+  f.write("extra.gti", "export module extra;\nexport namespace example { int "
+                       "choose(int a, int b) { return a + b; } }");
+  f.write("wrong.gti", "export module wrong;\nexport namespace other { int "
+                       "choose(int a, int b) { return a + b; } }");
   const std::string source =
       "namespace example { int choose(int a) { return a; } "
       "int choose(bool a) { return 0; } }\n"
@@ -172,28 +175,32 @@ void missingOverloadDeclarations() {
   const auto result = f.analyze(source);
   const auto edits = fixes(result);
   expect(edits.size() == 1 &&
-             edits.front().replacement == "#include \"extra.gti\"\n" &&
+             edits.front().replacement == "import \"extra.gti\";\n" &&
              edits.front().preferred,
          "arity failures discover exact missing user-defined overloads, not "
          "same-spelled unrelated declarations");
   if (!edits.empty())
     expect(f.analyze(edits.front().replacement + source).hirValid,
-           "the proposed overload include must restore frontend validity");
+           "the proposed overload import must restore frontend validity");
   f.overlays[(f.root / "extra.gti").string()] =
-      "namespace example { int choose(int a, int b) { return missing; } }";
+      "export module extra;\nexport namespace example { int choose(int a, int "
+      "b) { return missing; } }";
   expect(fixes(f.analyze(source)).empty(),
          "a missing overload with a broken body cannot receive a safe fix");
 }
 
 void snapshotsAndAlternatives() {
   Fixture f;
-  f.write("first.gti", "int answer() { return 1; }");
-  f.write("second.gti", "int answer() { return 2; }");
+  f.write("first.gti",
+          "export module first;\nexport int answer() { return 1; }");
+  f.write("second.gti",
+          "export module second;\nexport int answer() { return 2; }");
   const std::string source = "int main() { return answer(); }\n";
   auto edits = fixes(f.analyze(source));
   expect(edits.size() == 2 && !edits[0].preferred && !edits[1].preferred,
          "ambiguous defining files are separate non-preferred alternatives");
-  f.overlays[(f.root / "first.gti").string()] = "int changed() { return 3; }";
+  f.overlays[(f.root / "first.gti").string()] =
+      "export module first;\nexport int changed() { return 3; }";
   edits = fixes(f.analyze(source));
   expect(edits.size() == 1 &&
              edits[0].replacement.find("second.gti") != std::string::npos,
@@ -201,19 +208,23 @@ void snapshotsAndAlternatives() {
   std::filesystem::remove(f.root / "second.gti");
   expect(fixes(f.analyze(source)).empty(),
          "deleted candidate is not cached as a fix");
-  f.overlays[(f.root / "unsaved.gti").string()] = "int answer() { return 4; }";
+  f.overlays[(f.root / "unsaved.gti").string()] =
+      "export module unsaved;\nexport int answer() { return 4; }";
   edits = fixes(f.analyze("\xef\xbb\xbf// 😀\r\n" + source));
   expect(edits.size() == 1 && edits[0].span.start == 3 &&
-             edits[0].replacement == "#include \"unsaved.gti\"\r\n",
+             edits[0].replacement == "import \"unsaved.gti\";\r\n",
          "new unsaved files participate; insertion preserves BOM and CRLF");
   f.overlays.clear();
   std::filesystem::remove(f.root / "first.gti");
-  f.write("build/generated.gti", "int answer() { return 5; }");
-  f.write(".hidden/private.gti", "int answer() { return 6; }");
+  f.write("build/generated.gti",
+          "export module generated;\nexport int answer() { return 5; }");
+  f.write(".hidden/private.gti",
+          "export module hidden_api;\nexport int answer() { return 6; }");
   expect(fixes(f.analyze(source)).empty(),
          "generated and hidden directories are excluded");
   Fixture external;
-  external.write("outside.gti", "int answer() { return 7; }");
+  external.write("outside.gti",
+                 "export module outside;\nexport int answer() { return 7; }");
   std::error_code ec;
   std::filesystem::create_symlink(external.root / "outside.gti",
                                   f.root / "escape.gti", ec);
@@ -227,7 +238,8 @@ void conceptsAndGenericDeclarations() {
   const auto library =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   f.write("generic.gti",
-          "namespace example { concept Number<T> = std::numeric<T>; T "
+          "export module generic;\nexport namespace example { concept "
+          "Number<T> = std::numeric<T>; T "
           "identity<T>(T value) requires std::copyable<T> { return value; } "
           "struct Box<T> { T value; }; }");
   for (const std::string source :
@@ -239,21 +251,22 @@ void conceptsAndGenericDeclarations() {
         f.root / "main.gti", source, {library / "prelude.gti"}, {}, {library});
     auto edits = fixes(result);
     expect(!edits.empty() &&
-               edits.front().replacement == "#include \"generic.gti\"\n",
+               edits.front().replacement == "import \"generic.gti\";\n",
            "generic/concept declaration: " + source);
     if (!edits.empty()) {
       auto corrected = lang::Frontend(f.options).analyze(
           f.root / "main.gti", edits.front().replacement + source,
           {library / "prelude.gti"}, {}, {library});
       expect(corrected.hirValid,
-             "generic/concept include edit is accepted by HIR");
+             "generic/concept import edit is accepted by HIR");
     }
   }
 }
 
 void requestingModuleHeader() {
   Fixture f;
-  f.write("helper.gti", "int helper() { return 8; }");
+  f.write("helper.gti",
+          "export module helper;\nexport int helper() { return 8; }");
   lang::PackageSourceRoot package;
   package.identity = "library@0.1.0";
   package.name = "library";
@@ -270,8 +283,8 @@ void requestingModuleHeader() {
   }
   expect(edits.size() == 1 &&
              edits[0].span.start == source.find("export int") &&
-             edits[0].replacement == "#include \"helper.gti\"\r\n",
-         "an include must follow the requesting interface's required module "
+             edits[0].replacement == "import \"helper.gti\";\r\n",
+         "an import must follow the requesting interface's required module "
          "header");
   if (edits.size() == 1) {
     auto corrected = source;
@@ -290,8 +303,11 @@ void declaredDependencies() {
   f.write("src/main.gti", "int main() { return 0; }");
   f.write("dep/gti.toml",
           "manifest-version = 1\n[package]\nname = \"library\"\nversion = "
-          "\"0.1.0\"\nsource-root = \"src\"\n");
-  f.write("dep/src/api.gti", "namespace dep { int test() { return 9; } }");
+          "\"0.1.0\"\nsource-root = \"src\"\n"
+          "[modules]\napi = \"src/api.gti\"\n");
+  f.write(
+      "dep/src/api.gti",
+      "export module api;\nexport namespace dep { int test() { return 9; } }");
   const auto project = lang::driver::resolveProjectFacts(f.root);
   expect(project.succeeded(),
          "fixture resolves through canonical project facts");
@@ -305,18 +321,20 @@ void declaredDependencies() {
   auto result = f.analyze("int main() { return dep::test(); }",
                           project.facts->packageSourceRoots());
   auto edits = fixes(result);
-  expect(edits.size() == 1 && edits[0].replacement == "#include <api/api>\n",
-         "direct dependencies use their declared angle include alias");
+  expect(edits.size() == 1 && edits[0].replacement == "import api.api;\n",
+         "direct dependencies use their declared dependency alias and module "
+         "registration");
   f.write("unlisted/gti.toml", "manifest-version = 1\n[package]\nname = "
                                "\"unlisted\"\nversion = \"0.1.0\"\n");
-  f.write("unlisted/api.gti", "int secret() { return 1; }");
+  f.write("unlisted/api.gti",
+          "export module api;\nexport int secret() { return 1; }");
   expect(
       fixes(f.analyze("int main() { return secret(); }",
                       project.facts->packageSourceRoots()))
           .empty(),
       "nested undeclared packages are not part of the selected package search");
   f.overlays[(f.root / "unlisted/unsaved.gti").string()] =
-      "int secret() { return 2; }";
+      "export module unsaved;\nexport int secret() { return 2; }";
   expect(fixes(f.analyze("int main() { return secret(); }",
                          project.facts->packageSourceRoots()))
              .empty(),

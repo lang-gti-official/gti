@@ -1,12 +1,11 @@
-#include <std/string>
-#include <std/charconv>
-#include <std/filesystem>
-#include <std/list>
-#include <std/deque>
-#include <std/queue>
-#include <std/set>
-#include <std/unordered_set>
-
+import std.string;
+import std.charconv;
+import std.filesystem;
+import std.list;
+import std.deque;
+import std.queue;
+import std.set;
+import std.unordered_set;
 class NamedJob {
   int priority;
   std::string name;

@@ -423,21 +423,12 @@ std::optional<std::string> SourceLoader::standardLibraryNameForExistingPath(
 std::optional<std::string> SourceLoader::standardModuleNameForExistingPath(
     const std::filesystem::path &path) const {
   for (const std::filesystem::path &root : standardLibraryRoots) {
-    if (path == canonicalPath(root / "std.gti")) {
+    if (path == canonicalPath(root / "std.gti"))
       return "std";
-    }
-    const std::filesystem::path directory = canonicalPath(root / "modules");
-    if (path.parent_path() != directory || path.extension() != ".gti" ||
-        !isImportPathSegment(path.stem().string())) {
-      continue;
-    }
-    std::error_code error;
-    if (std::filesystem::is_regular_file(path, error) ||
-        sourceOverrides->contains(path.string())) {
-      return "modules/" + path.stem().string();
-    }
   }
-  return std::nullopt;
+  // Interfaces retain their established standard-library source identities;
+  // trust still requires a path under a configured standard-library root.
+  return standardLibraryNameForExistingPath(path);
 }
 
 SourceUnitId
@@ -652,55 +643,24 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       }
       return imported.directiveEnd;
     }
-    // `export #include` keeps include resolution and direct visibility for
-    // this interface, then deliberately republishes that one legacy unit to
-    // importers. The unit's own nested includes are not republished.
-    const bool exportInclude = token.kind == TokenKind::EXPORT;
-    if (exportInclude && !moduleInterface) {
-      report(token,
-             "Republishing an include requires an 'export module name;' "
-             "interface.",
-             "GTI-I0012");
+    const bool exported = token.kind == TokenKind::EXPORT;
+    const Token &includeToken = tokens[index + (exported ? 1 : 0)];
+    Diagnostic diagnostic =
+        makeDiagnostic(DiagnosticId::RemovedInclude, includeToken);
+    diagnostic.hints.push_back(
+        "Import an explicit module interface instead. Use 'import std.name;' "
+        "for a standard module, or 'import \"path.gti\";' for a relative "
+        "interface; publish its API with 'export module name;' and exports.");
+    diagnostics.push_back(std::move(diagnostic));
+    // Do not resolve or load a rejected legacy dependency. Keep scanning the
+    // following source lines so independent dependency errors remain visible.
+    std::size_t end = index + (exported ? 1 : 0);
+    while (end + 1 < tokens.size() &&
+           tokens[end + 1].kind != TokenKind::END_OF_FILE &&
+           tokens[end + 1].line == includeToken.line) {
+      ++end;
     }
-    const Token &includeToken = tokens[index + (exportInclude ? 1 : 0)];
-    const bool warnInclude = warnLegacyIncludes &&
-                             !states[key].includeWarningEmitted &&
-                             (isEntry || role == SourceUnitRole::Application);
-    states[key].includeWarningEmitted = true;
-    const std::size_t occurrence = includeOccurrence++;
-    const ResolvedInclude include =
-        resolveInclude(tokens, index + (exportInclude ? 1 : 0), path,
-                       braceDepth, conditionalDepth);
-    if (include.dependency != 0) {
-      if (graph.findUnit(include.dependency)->moduleDeclaration) {
-        report(includeToken,
-               exportInclude
-                   ? "A module interface is republished with 'export "
-                     "import', not 'export #include'."
-                   : "A module interface must be imported, not included; "
-                     "use 'import' to respect its exports.",
-               "GTI-I0012");
-      }
-      if (!replayConfiguration) {
-        graph.addDependency({.source = unitId,
-                             .target = include.dependency,
-                             .kind = exportInclude && moduleInterface
-                                         ? SourceDependencyKind::ExportInclude
-                                         : include.kind,
-                             .directive = tokenSpan(includeToken),
-                             .includeSpelling = include.includeSpelling,
-                             .includeOccurrence = occurrence});
-      }
-    }
-    if (warnInclude) {
-      Diagnostic warning =
-          makeDiagnostic(DiagnosticId::LegacyInclude, includeToken);
-      warning.hints.push_back(
-          "Use 'import std;' or a named module import where available. "
-          "Legacy source files may need a module interface first.");
-      diagnostics.push_back(std::move(warning));
-    }
-    return include.directiveEnd;
+    return end;
   };
 
   const auto publish = [&](std::shared_ptr<const ProcessedSourceUnit> unit) {
@@ -811,10 +771,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
          fileTokens[index + 1].kind == TokenKind::LESS);
     if (legacyInclude) {
       tokenDiagnostic = true;
-      report(token,
-             "GTI include directives use '#include'; plain 'include' is "
-             "not a directive.",
-             "GTI-I0009");
+      report(
+          token,
+          "Source inclusion has been removed; use an explicit module import.",
+          "GTI-I0009");
     }
 
     const bool exported =
@@ -1256,7 +1216,7 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
     const std::string &name = aggregate ? names.front() : names[1];
     for (const std::filesystem::path &root : standardLibraryRoots) {
       const std::filesystem::path candidate = canonicalPath(
-          aggregate ? root / "std.gti" : root / "modules" / (name + ".gti"));
+          aggregate ? root / "std.gti" : root / "std" / (name + ".gti"));
       std::error_code error;
       if (std::filesystem::is_regular_file(candidate, error) ||
           sourceOverrides->contains(candidate.string())) {
@@ -1274,7 +1234,7 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
                 "install a standard library providing std.gti or import "
                 "individual units."
               : "Standard-library module 'std." + name +
-                    "' was not found; each public <std/name> unit is "
+                    "' was not found; each public std/name.gti interface is "
                     "imported as 'std.name'.");
     }
     expectedName = name;
@@ -1355,7 +1315,8 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
   const SourceUnit *unit = graph.findUnit(loaded);
   if (unit == nullptr || !unit->moduleDeclaration) {
     return reject("An import must name an explicit 'export module name;' "
-                  "interface; legacy units still use '#include'.");
+                  "interface; add a module header and explicit exports to the "
+                  "dependency.");
   }
   if (expectedName && unit->moduleDeclaration->lexeme != *expectedName) {
     Diagnostic diagnostic = makeDiagnostic(

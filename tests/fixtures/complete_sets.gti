@@ -1,5 +1,5 @@
-#include <std/set>
-#include <std/unordered_set>
+import std.set;
+import std.unordered_set;
 int main() {
   mut std::set<int> ordered{};
   [[discard]] ordered.insert(3);

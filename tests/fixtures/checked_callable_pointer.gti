@@ -1,5 +1,5 @@
-#include <std/functional>
-#include <std/memory>
+import std.functional;
+import std.memory;
 
 struct Accumulator {
   mut int value;

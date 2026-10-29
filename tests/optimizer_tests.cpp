@@ -5102,7 +5102,7 @@ void testLifecycleCarrierAbstractEntry() {
   const auto frontend =
       lang::Frontend({.target = target})
           .analyze("lifecycle-carrier-abstract-entry.gti", R"gti(
-#include <std/mutex>
+import std.mutex;
 int32_t observe(std::mutex_guard<int32_t>& guard) { return guard.get(); }
 void update(mut std::mutex_guard<int32_t>& guard) {
   mut int32_t& value = guard.get();
@@ -9273,7 +9273,7 @@ void testRecordPublishedInitializerRetained() {
   const auto frontend =
       lang::Frontend({.target = lang::TargetInfo::host()})
           .analyze("record-published-initializer.gti", R"gti(
-#include <std/string>
+import std.string;
 struct P { std::string_view name = "Ada"; uint32_t health = 7;  public: P() = default; };
 int main() {
   P p{};

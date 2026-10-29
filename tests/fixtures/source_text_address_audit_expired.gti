@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 unsafe std::string_view relayed_text(const char* address, char& witness) {
   unsafe { return std::assume_string_view(address, uint64_t(1), witness); }
 }

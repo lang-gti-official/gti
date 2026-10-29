@@ -1,9 +1,9 @@
-#include <std/testing>
-#include <std/format>
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
-#include <std/cmath>
+import std.testing;
+import std.format;
+import std.memory;
+import std.string;
+import std.vector;
+import std.cmath;
 
 namespace sample {
 mut int format_calls = 0;

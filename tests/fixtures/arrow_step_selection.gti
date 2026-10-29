@@ -2,7 +2,7 @@
 // pair is: reads, read-only bindings, the hidden range and read-only member
 // calls take the read-only step; `push_back`, field assignment, a `mut`
 // binding and a mutating member call take the `mut` step, which counts.
-#include <std/vector>
+import std.vector;
 class Dir {
 public:
   mut std::vector<int32_t> items = std::vector<int32_t>();

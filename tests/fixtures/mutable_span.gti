@@ -1,6 +1,6 @@
-#include <std/vector>
-#include <std/string>
-#include <std/span>
+import std.vector;
+import std.string;
+import std.span;
 
 void fill(mut std::mutable_span<int>& output) {
   for (mut std::size_t i = 0; i < output.size(); i++) {

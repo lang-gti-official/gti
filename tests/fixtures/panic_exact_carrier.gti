@@ -1,4 +1,4 @@
-#include <std/panic>
+import std.panic;
 
 namespace sample {
 class Reader<T> {

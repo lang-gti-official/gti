@@ -1,5 +1,5 @@
-#include <std/atomic>
-#include <std/thread>
+import std.atomic;
+import std.thread;
 
 std::atomic<int32_t> published_value{0};
 std::atomic<bool> published_ready{false};

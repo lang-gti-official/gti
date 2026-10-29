@@ -1,5 +1,5 @@
-#include <std/mutex>
-#include <std/thread>
+import std.mutex;
+import std.thread;
 // A guard locked through a stored reference to a mutex depends on that
 // reference's referent, not on the carrier holding the reference: through
 // `this`, a reference formal, a by-value formal, read-only or mutable.

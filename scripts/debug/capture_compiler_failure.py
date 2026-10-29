@@ -66,7 +66,7 @@ SCHEMA = "gti-debug-bundle-v1"
 DEFAULT_TIMEOUT_SECONDS = 120
 MAX_SOURCE_FILES = 512
 MAX_SOURCE_BYTES = 16 * 1024 * 1024
-MAX_INCLUDE_DEPTH = 64
+MAX_IMPORT_DEPTH = 64
 SIGNATURE_STEM_LENGTH = 160
 
 # Environment variables worth recording (and passing through on replay).
@@ -79,7 +79,7 @@ ENVIRONMENT_ALLOWLIST = (
 )
 
 DIAGNOSTIC_PATTERN = re.compile(r"error\[(GTI-[A-Z][0-9]{4})\]:?\s*(.*)")
-LOCAL_INCLUDE_PATTERN = re.compile(r'^\s*#include\s+"([^"]+)"', re.MULTILINE)
+LOCAL_IMPORT_PATTERN = re.compile(r'^\s*(?:export\s+)?import\s+"([^"]+)"\s*;', re.MULTILINE)
 NATIVE_FAILURE_MARKERS = (
     "native C++ compiler diagnostics",
     "native C++ compiler failed",
@@ -291,13 +291,13 @@ def signatures_match(original: dict, observed: dict) -> bool:
 
 def collect_source_graph(
         entry: Path, package_root: Path | None = None) -> list[Path]:
-    """Resolve the local-include graph from an entry unit, bounded.
+    """Resolve the local-import graph from an entry unit, bounded.
 
-    Follows only `#include "relative"` edges and stays inside the supplied
+    Follows only `import "relative";` edges and stays inside the supplied
     package root. Direct mode defaults that root to the entry's directory;
     project mode supplies the manifest directory so sibling source trees are
     retained without copying the surrounding repository. Standard-library
-    includes (`<...>`) resolve through the toolchain and are not part of the
+    imports (`std.name`) resolve through the toolchain and are not part of the
     bundle.
     """
     root = (package_root or entry.parent).resolve()
@@ -311,7 +311,7 @@ def collect_source_graph(
         current, depth = pending.pop()
         if current in seen:
             continue
-        if depth > MAX_INCLUDE_DEPTH or len(seen) >= MAX_SOURCE_FILES:
+        if depth > MAX_IMPORT_DEPTH or len(seen) >= MAX_SOURCE_FILES:
             raise CaptureError("source graph exceeds bundle bounds")
         try:
             text = current.read_text(encoding="utf-8", errors="replace")
@@ -321,7 +321,7 @@ def collect_source_graph(
         if total_bytes > MAX_SOURCE_BYTES:
             raise CaptureError("source graph exceeds bundle size bound")
         seen.append(current)
-        for spelling in LOCAL_INCLUDE_PATTERN.findall(text):
+        for spelling in LOCAL_IMPORT_PATTERN.findall(text):
             resolved = (current.parent / spelling).resolve()
             if not resolved.is_relative_to(root):
                 # Recorded, not followed: bundles never reach outside the

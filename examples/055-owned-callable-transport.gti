@@ -1,6 +1,5 @@
-#include <std/memory>
-#include <std/string>
-
+import std.memory;
+import std.string;
 mut int cleanup_count = 0;
 
 class resource {

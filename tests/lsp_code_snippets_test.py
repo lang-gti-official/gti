@@ -73,7 +73,7 @@ def run(executable, compiler, root, support):
         contexts = (
             "|\nint main() { return 0; }\n",
             "class Widget { public:\n|\n};\nint main() { return 0; }\n",
-            "#include <std/vector>\nvoid f() {\n  bool condition = false; int32_t count = 0; int32_t value = 0;\n  std::vector<int32_t> values = std::vector<int32_t>();\n  |\n}\nint main() { f(); return 0; }\n",
+            "import std.vector;\nvoid f() {\n  bool condition = false; int32_t count = 0; int32_t value = 0;\n  std::vector<int32_t> values = std::vector<int32_t>();\n  |\n}\nint main() { f(); return 0; }\n",
         )
         for context_index, marked in enumerate(contexts):
             source, items = complete(marked)

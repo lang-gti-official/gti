@@ -82,7 +82,7 @@ void testIncrementalDirectiveState() {
   std::vector<lang::Token> tokens = lexer.scan(R"(
 #define FEATURE
 #if defined(FEATURE)
-#include "dependency.gti"
+import "dependency.gti";
 #else
 int inactive = 1;
 #endif
@@ -105,7 +105,7 @@ int inactive = 1;
       index = step.lastConsumedIndex;
       continue;
     }
-    if (tokens[index].kind == lang::TokenKind::HASH_INCLUDE) {
+    if (tokens[index].kind == lang::TokenKind::IMPORT) {
       includeSawFeature = activeFlags.contains("FEATURE");
       includeDepth = processor.conditionalDepth();
     }
@@ -119,10 +119,10 @@ int inactive = 1;
   const std::vector<lang::ConfigurationToken> configuration =
       processor.takeConfigurationTokens();
   expect(includeSawFeature && includeDepth == 1,
-         "incremental processing should expose pre-include flag state and "
+         "incremental processing should expose pre-import flag state and "
          "conditional depth before recursion");
   expect(!activeFlags.contains("FEATURE") && declaredFlags.contains("FEATURE"),
-         "post-include directives should run only after the caller resumes");
+         "post-import directives should run only after the caller resumes");
   expect(diagnostics.empty() && !inactive.empty() && configuration.size() >= 3,
          "directive processing should own inactive spans and configuration "
          "token publication without changing valid diagnostics");

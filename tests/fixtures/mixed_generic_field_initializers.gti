@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 // The closure application retains the generic native carrier. The int
 // application is only an empty owner's pointee and selects no constructor.

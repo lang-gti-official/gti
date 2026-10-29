@@ -1,4 +1,4 @@
-#include <std/utility>
+import std.utility;
 
 struct Value {
   mut int number = 7;

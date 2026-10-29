@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/span>
-#include <std/vector>
+import std.string;
+import std.span;
+import std.vector;
 
 // A call that selects a reference, a span or a record reference out of
 // hierarchy storage it borrows returns its own checked result, whether it is

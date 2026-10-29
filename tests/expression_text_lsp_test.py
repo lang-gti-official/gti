@@ -13,7 +13,7 @@ def main():
     repository = pathlib.Path(__file__).resolve().parents[1]
     library = repository / "stdlib"
     source = (
-        "#include <std/source_location>\n"
+        "import std.source_location;\n"
         "#macro int choose(bool condition, int value) {\n"
         "  if (condition) { return value; } return 0;\n"
         "}\n"

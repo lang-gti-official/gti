@@ -1,7 +1,7 @@
 // A reference of a base or interface type to a borrow carrier borrows the
 // carrier object: a local view, a call relaying an upcast argument and an
 // upcast return each end before the carrier moves, which is valid.
-#include <std/utility>
+import std.utility;
 
 interface Gauge { int32_t read(); };
 

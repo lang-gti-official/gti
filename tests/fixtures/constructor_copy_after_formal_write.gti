@@ -8,9 +8,9 @@
 // in body order; each of them used to store the formal's entry value.
 // A copy made before the write, and the copy of a formal nothing writes,
 // still publish natively.
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 mut int stage = 0;
 

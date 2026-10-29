@@ -1,8 +1,8 @@
-#include <std/resource>
-#include <std/memory>
-#include <std/panic>
-#include <std/string>
-#include <std/vector>
+import std.resource;
+import std.memory;
+import std.panic;
+import std.string;
+import std.vector;
 
 // This unrelated source-defined byte owner controls release independently of
 // object lifetime. A stateless process provider may release its own family of

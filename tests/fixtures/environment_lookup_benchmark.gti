@@ -1,5 +1,5 @@
-#include <std/environment>
-#include <std/string>
+import std.environment;
+import std.string;
 
 // A deterministic owned-lookup workload, not a comparison to borrowed getenv.
 int main() {

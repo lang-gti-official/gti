@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 class json_error_repro {
   std::string path = std::string("");

@@ -1,4 +1,4 @@
-#include <std/panic>
+import std.panic;
 
 enum Observed { ready(int& owner), missing };
 class Observation {

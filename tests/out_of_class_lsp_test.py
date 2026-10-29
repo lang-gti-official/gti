@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 from lsp_project_facts_test import diagnostics_for, open_document, write
-from lsp_smoke_test import has_only_include_advice, LspSession, initialize_session, lsp_position
+from lsp_smoke_test import LspSession, initialize_session, lsp_position
 
 
 def main():
@@ -104,9 +104,9 @@ def test_signature_type_visibility(executable):
     with tempfile.TemporaryDirectory(prefix="gti-split-type-lsp-") as temporary:
         root = pathlib.Path(temporary)
         api, body = root / "api.gti", root / "body.gti"
-        write(api, "#include <std/memory>\nnamespace demo { interface Factory {\n"
+        write(api, "import std.memory;\nnamespace demo { interface Factory {\n"
               "  static std::unique_ptr<Factory> make();\n}; }\n")
-        source = ('#include "api.gti"\nnamespace demo {\n'
+        source = ('import "api.gti";\nnamespace demo {\n'
                   '/* UTF-16: 🦉 */ std::unique_ptr<Factory> Factory::make() {\n'
                   '  return std::unique_ptr<Factory>(nullptr);\n}\n}\n'
                   'int main() { auto owner = demo::Factory::make(); return 0; }\n')
@@ -129,7 +129,7 @@ def test_signature_type_visibility(executable):
                 "start": lsp_position(source, offset),
                 "end": lsp_position(source, offset + len("unique_ptr"))}, diagnostic
             assert diagnostic["relatedInformation"], diagnostic
-            assert any("#include <std/memory>" in hint
+            assert any("import std.memory;" in hint
                        for hint in diagnostic["data"]["hints"]), diagnostic
 
             def actions(request_id):
@@ -141,18 +141,18 @@ def test_signature_type_visibility(executable):
 
             fixes = actions(20)
             assert len(fixes) == 1, fixes
-            assert fixes[0]["title"] == "Add #include <std/memory>", fixes
+            assert fixes[0]["title"] == "Add import std.memory;", fixes
             document = fixes[0]["edit"]["documentChanges"][0]
             assert document["textDocument"] == {"uri": uri, "version": 1}, document
             assert document["edits"] == [{
                 "range": {"start": {"line": 0, "character": 0},
                           "end": {"line": 0, "character": 0}},
-                "newText": "#include <std/memory>\n"}], document
-            corrected = "#include <std/memory>\n" + source
+                "newText": "import std.memory;\n"}], document
+            corrected = "import std.memory;\n" + source
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2},
                 "contentChanges": [{"text": corrected}]}})
-            assert has_only_include_advice(diagnostics_for(session, uri, 2))
+            assert (diagnostics_for(session, uri, 2) == [])
             assert actions(21) == [], "stale signature diagnostics must not offer edits"
         finally:
             session.close()

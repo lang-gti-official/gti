@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 // A by-value text relay of a formal's or the receiver's text field holds that
 // field's text, which the function's field contract tracks (L-OWN-02), as a

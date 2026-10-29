@@ -74,7 +74,7 @@ def main():
                 ("immutable", f"{spelling} fixed = {spelling}();", "a.swap(fixed);"),
             ):
                 source = root / f"invalid-{header}-{name}.gti"
-                source.write_text(f"#include <std/{header}>\nint main() {{\n"
+                source.write_text(f"import std.{header};\nint main() {{\n"
                                   f"mut {spelling} a = {spelling}();\n"
                                   f"mut {spelling} b = {spelling}();\n"
                                   f"{setup}\n{expression}\nreturn 0;\n}}\n")

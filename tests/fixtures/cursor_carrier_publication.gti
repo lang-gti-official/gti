@@ -1,9 +1,9 @@
-#include <std/resource_vector>
-#include <std/resource>
-#include <std/paired_span>
-#include <std/vector>
-#include <std/string>
-#include <std/panic>
+import std.resource_vector;
+import std.resource;
+import std.paired_span;
+import std.vector;
+import std.string;
+import std.panic;
 
 // A user-defined aggregate retains two independent owners. A cursor borrows
 // its physical shell and its nested observation forwards that checked borrow.

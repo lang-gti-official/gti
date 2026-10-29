@@ -1,6 +1,6 @@
-#include <std/charconv>
-#include <std/format>
-#include <std/string>
+import std.charconv;
+import std.format;
+import std.string;
 
 class unsupported_format_value { public: unsupported_format_value() = default; };
 // A supported formatter may still reject a dynamic value. Unsupported static

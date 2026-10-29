@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/utility>
+import std.memory;
+import std.utility;
 
 [[c_abi]] struct NativeAddress {
   mut const int* address;

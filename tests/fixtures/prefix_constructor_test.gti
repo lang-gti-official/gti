@@ -1,16 +1,17 @@
+export module prefix_constructor_test;
 // Test-only ordinary source-owner client; never shipped in the standard library.
-#include <std/memory>
-void append_to_empty<T, Args...>(Args... args) requires std::storage_element<T> {
+import std.memory;
+export void append_to_empty<T, Args...>(Args... args) requires std::storage_element<T> {
   mut std::detail::prefix_owner<T> storage{uint64_t(0)};
   storage.append(args...); // capacity failure
 }
 
-void append_same_type<T>(T value, uint64_t capacity) requires std::storage_element<T> {
+export void append_same_type<T>(T value, uint64_t capacity) requires std::storage_element<T> {
   mut std::detail::prefix_owner<T> storage{capacity};
   storage.append_value(std::move(value)); // direct capacity
 }
 
-void append_same_type_pack<T, Args...>(uint64_t capacity, Args... args) requires std::storage_element<T> {
+export void append_same_type_pack<T, Args...>(uint64_t capacity, Args... args) requires std::storage_element<T> {
   mut std::detail::prefix_owner<T> storage{capacity};
   storage.append(args...); // pack capacity
 }

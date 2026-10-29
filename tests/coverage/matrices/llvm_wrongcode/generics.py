@@ -6,12 +6,12 @@ an interface hierarchy and a class hierarchy with virtual methods.
 """
 import itertools
 
-PRELUDE = """#include <std/memory>
-#include <std/functional>
-#include <std/vector>
-#include <std/atomic>
-#include <std/format>
-#include <std/utility>
+PRELUDE = """import std.memory;
+import std.functional;
+import std.vector;
+import std.atomic;
+import std.format;
+import std.utility;
 std::atomic<int32_t> constructed{0};
 std::atomic<int32_t> destroyed{0};
 class Tracked {

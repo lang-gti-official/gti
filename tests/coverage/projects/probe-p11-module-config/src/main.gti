@@ -1,6 +1,6 @@
 import frontend;
 import backend;
-#include "shared.gti"
+import "shared.gti";
 #define MAIN_LOCAL
 
 #ifdef BACKEND_LOCAL

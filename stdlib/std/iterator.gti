@@ -1,10 +1,10 @@
+export module iterator;
+
 // C++-familiar iterator and range vocabulary for <std/iterator>.
 // Iterator behavior remains structural in GTI; these names are ordinary
 // library vocabulary rather than compiler-recognized category tags.
-
-#include <std/meta>
-
-namespace std {
+import std.meta;
+export namespace std {
 namespace detail {
 // Declaration metadata supplies the result type; an ordinary expression query
 // separately validates access, overload selection, and the checked origin.

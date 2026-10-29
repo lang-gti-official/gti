@@ -10,8 +10,8 @@ import pathlib, subprocess, sys
 GTI = sys.argv[1] if len(sys.argv) > 1 else "build/gti"
 OUT = pathlib.Path("/tmp/tempmx"); OUT.mkdir(exist_ok=True)
 
-PRELUDE = """#include <std/vector>
-#include <std/string>
+PRELUDE = """import std.vector;
+import std.string;
 
 class Val {
   mut int32_t n = 0;

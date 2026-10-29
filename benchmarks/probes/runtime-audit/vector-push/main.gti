@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 int main() {
   mut uint64_t checksum = 0;
   for (mut int32_t round = 0; round < 300; round++) {

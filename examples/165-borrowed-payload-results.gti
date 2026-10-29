@@ -1,9 +1,8 @@
 // A source-defined fallible view can consume its wrapper while keeping the
 // success reference tied to the caller's owner. Its error owns its text.
-#include <std/string>
-#include <std/panic>
-#include <std/vector>
-
+import std.string;
+import std.panic;
+import std.vector;
 class Reading {
 public:
   int& value;

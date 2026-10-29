@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 class Marker {
 public:

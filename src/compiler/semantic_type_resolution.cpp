@@ -4145,7 +4145,7 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
           "'string' is not a built-in GTI type; choose 'std::string' for "
           "owning text or 'std::string_view' for a non-owning view.");
       diagnostic.hints.push_back(
-          "Use '#include <std/string>' before naming 'std::string'.");
+          "Use 'import std.string;' before naming 'std::string'.");
       diagnostic.hints.push_back(
           "'std::string_view' is available from the standard prelude.");
       diagnostics.emplace_back(std::move(diagnostic));

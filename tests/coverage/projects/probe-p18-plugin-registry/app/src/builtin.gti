@@ -1,9 +1,10 @@
+export module builtin;
 import plugins;
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 namespace app {
-  class Doubler : public plugins::Plugin {
+  export class Doubler : public plugins::Plugin {
     mut int calls = 0;
 
   public:
@@ -15,7 +16,7 @@ namespace app {
     std::string name() override { return std::string("double"); }
   };
 
-  class Adder : public plugins::Plugin {
+  export class Adder : public plugins::Plugin {
     int amount;
 
   public:
@@ -24,7 +25,7 @@ namespace app {
     std::string name() override { return std::string("add"); }
   };
 
-  void install(mut plugins::Registry& registry) {
+  export void install(mut plugins::Registry& registry) {
     registry.add(std::upcast_unique<plugins::Plugin, Doubler>(std::make_unique<Doubler>()));
     registry.add(std::upcast_unique<plugins::Plugin, Adder>(std::make_unique<Adder>(2)));
   }

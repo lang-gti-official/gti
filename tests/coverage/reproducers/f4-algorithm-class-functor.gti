@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/algorithm>
+import std.vector;
+import std.algorithm;
 class Positive {
 public:
   Positive() {}

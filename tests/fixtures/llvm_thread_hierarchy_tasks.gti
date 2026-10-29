@@ -1,8 +1,8 @@
-#include <std/thread>
-#include <std/functional>
-#include <std/polymorphic>
-#include <std/mutex>
-#include <std/string>
+import std.thread;
+import std.functional;
+import std.polymorphic;
+import std.mutex;
+import std.string;
 
 // Managed and scoped workers whose tasks hold hierarchy storage inline: a
 // polymorphic object, an inline polymorphic slot and an erased transferable

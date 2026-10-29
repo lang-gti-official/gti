@@ -23,7 +23,7 @@ def errors(items):
 def test_contracts(executable, root):
     cases = [
         ("namespaced", 'namespace checks { [[test]] void addition() {} }\n', None),
-        ("testing-header", '#include <std/testing>\nnamespace checks {\n'
+        ("testing-header", 'import std.testing;\nnamespace checks {\n'
          '[[test]] void addition() { std::testing::check(1 + 2 == 3); }\n}\n', None),
         ("legacy", 'int main() { return 0; }\n', None),
         ("ambiguous", '[[test]] void addition() {}\n', None),

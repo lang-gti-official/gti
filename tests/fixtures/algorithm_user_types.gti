@@ -1,9 +1,9 @@
-#include <std/algorithm>
-#include <std/vector>
-#include <std/string>
-#include <std/list>
-#include <std/deque>
-#include <std/array>
+import std.algorithm;
+import std.vector;
+import std.string;
+import std.list;
+import std.deque;
+import std.array;
 
 // Independent application-owned protocol, not a wrapper over a std cursor.
 class stop {

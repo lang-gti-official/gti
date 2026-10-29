@@ -1,10 +1,10 @@
 // Word frequency: tokenize with find/substr, count in an unordered_map with
 // owning-string keys via get_or_insert, move results into a vector of a
 // move-only record, then comparator sort (count desc, word asc).
-#include <std/unordered_map>
-#include <std/string>
-#include <std/vector>
-#include <std/algorithm>
+import std.unordered_map;
+import std.string;
+import std.vector;
+import std.algorithm;
 
 class WordCount {
 public:

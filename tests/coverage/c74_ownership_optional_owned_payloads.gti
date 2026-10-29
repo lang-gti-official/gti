@@ -1,10 +1,10 @@
 // std::optional with owned payloads: strings, unique owners of a class with
 // a destructor, nested optionals, clone, value_or on a copyable payload,
 // emplace in a loop, by-value transfer through functions, and a cache field.
-#include <std/memory>
-#include <std/optional>
-#include <std/string>
-#include <std/utility>
+import std.memory;
+import std.optional;
+import std.string;
+import std.utility;
 
 mut int g_released = 0;
 

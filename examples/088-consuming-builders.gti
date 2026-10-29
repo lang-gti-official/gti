@@ -1,5 +1,4 @@
-#include <std/string>
-
+import std.string;
 // A named path keeps its storage. Intermediate owned paths can reuse theirs.
 class Path {
   mut std::string text;

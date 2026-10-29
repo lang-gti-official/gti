@@ -76,7 +76,7 @@ int main() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto entry = root / "text-view-iterator-compiler-test.gti";
   const std::string source = R"(
-#include <std/string_view>
+import std.string_view;
 using IndependentText = std::string_view;
 char unrelated_yield() { return 'a'; }
 class UserAdapter {

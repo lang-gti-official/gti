@@ -1,0 +1,7 @@
+export module geometry;
+
+namespace geometry {
+  int implementation_offset() { return 2; }
+
+  export int answer() { return 40 + implementation_offset(); }
+}

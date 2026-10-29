@@ -1,7 +1,7 @@
-#include <std/resource>
-#include <std/memory>
-#include <std/numeric>
-#include "../../examples/allocator-support/arena.gti"
+import std.resource;
+import std.memory;
+import std.numeric;
+import "../../examples/allocator-support/arena.gti";
 
 // Test the provider's placement algorithm independently of checked-owner
 // integration. These raw operations deliberately acknowledge the provider

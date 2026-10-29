@@ -5,9 +5,9 @@
 // from the abstract base and implements an interface, mut virtual overrides,
 // a virtual comparison operator, and dispatch through Base&, Interface&,
 // unique_ptr<Base> and unique_ptr<Interface>.
-#include <std/format>
-#include <std/memory>
-#include <std/vector>
+import std.format;
+import std.memory;
+import std.vector;
 
 interface Named {
   int32_t name_code();

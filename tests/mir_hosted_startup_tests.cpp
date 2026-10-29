@@ -50,8 +50,8 @@ std::filesystem::path standardLibraryRoot() {
 
 lang::FrontendResult analyzeOwned() {
   return lang::Frontend().analyze("/tmp/gti-mir-hosted-startup/owned.gti", R"(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 using arguments_type = std::vector<std::string>;
 
 class Texts {

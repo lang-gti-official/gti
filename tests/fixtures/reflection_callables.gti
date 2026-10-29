@@ -1,7 +1,7 @@
 // Callable metadata and source locations through <std/meta>: methods,
 // operators, constructors and their parameters as metaobjects, with source
 // lines, all folded to constants; no invocation through a metaobject.
-#include <std/meta>
+import std.meta;
 
 class Counter {
 public:

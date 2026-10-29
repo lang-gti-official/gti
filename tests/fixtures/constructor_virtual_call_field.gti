@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // A virtual member call's owning result initializes a constructor field. A
 // virtual method returning an owning class is never proved failure-free, so

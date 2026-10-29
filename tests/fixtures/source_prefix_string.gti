@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 extern "C" {
   int32_t source_bridge_byte(c_string text, uint64_t index);

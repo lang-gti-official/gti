@@ -72,8 +72,7 @@ public:
       }
       if (lexeme.kind == Kind::Newline) {
         ++state.sourceNewlines;
-        if ((state.directiveLine || state.includeLine) &&
-            state.lineHasContent) {
+        if (state.directiveLine && state.lineHasContent) {
           state.newline();
         }
         if (state.sourceNewlines >= 2) {
@@ -92,21 +91,11 @@ public:
 
       switch (lexeme.kind) {
       case Kind::Directive:
-        // An interface republishes one legacy unit with `export #include`;
-        // the prefix belongs to that directive's line.
-        if (lexeme.text == "#include" && previous != nullptr &&
-            previous->kind == Kind::Word && previous->text == "export" &&
-            state.lineHasContent && !state.directiveLine) {
-          state.space();
-          state.append(lexeme.text);
-        } else {
-          if (state.lineHasContent) {
-            state.newline();
-          }
-          state.appendUnindented(lexeme.text);
+        if (state.lineHasContent) {
+          state.newline();
         }
+        state.appendUnindented(lexeme.text);
         state.directiveLine = true;
-        state.includeLine = lexeme.text == "#include";
         break;
       // A comment alone on its source line describes what follows it, so it
       // keeps its own line rather than trailing the preceding code.
@@ -169,7 +158,7 @@ public:
         if (needsSpaceBeforeValue(previous)) {
           state.space();
         }
-        state.append(lexeme.kind == Kind::Word && !state.includeLine
+        state.append(lexeme.kind == Kind::Word
                          ? canonicalIntegerType(lexeme.text)
                          : lexeme.text);
         break;
@@ -384,11 +373,8 @@ public:
         state.append("@");
         break;
       case Kind::Less:
-        if (state.includeLine) {
-          state.space();
-          state.append("<");
-        } else if (previous != nullptr && previous->kind == Kind::Word &&
-                   previous->text == "operator") {
+        if (previous != nullptr && previous->kind == Kind::Word &&
+            previous->text == "operator") {
           state.trimSpaces();
           state.append("<");
         } else if (previous != nullptr && previous->kind == Kind::Word &&
@@ -407,11 +393,8 @@ public:
         }
         break;
       case Kind::Greater:
-        if (state.includeLine) {
-          state.trimSpaces();
-          state.append(">");
-        } else if (previous != nullptr && previous->kind == Kind::Word &&
-                   previous->text == "operator") {
+        if (previous != nullptr && previous->kind == Kind::Word &&
+            previous->text == "operator") {
           state.trimSpaces();
           state.append(">");
         } else if (state.templateDepth > 0) {
@@ -440,11 +423,8 @@ public:
         }
         break;
       case Kind::Operator:
-        if (state.includeLine && lexeme.text == "/") {
-          state.trimSpaces();
-          state.append("/");
-        } else if (lexeme.text == ">=" && state.templateDepth > 0 &&
-                   isConceptGenericCloseAssignment(lexemes, index)) {
+        if (lexeme.text == ">=" && state.templateDepth > 0 &&
+            isConceptGenericCloseAssignment(lexemes, index)) {
           state.trimSpaces();
           state.append(">");
           --state.templateDepth;
@@ -673,7 +653,6 @@ private:
       atLineStart = true;
       lineHasContent = false;
       directiveLine = false;
-      includeLine = false;
       lexicalSeparatorRequired = false;
     }
 
@@ -786,7 +765,6 @@ private:
         atLineStart = true;
         lineHasContent = false;
         directiveLine = false;
-        includeLine = false;
         lineStart = newline + 1;
       }
     }
@@ -884,7 +862,6 @@ private:
     bool atLineStart = true;
     bool lineHasContent = false;
     bool directiveLine = false;
-    bool includeLine = false;
     bool requiresClauseOpen = false;
     bool lexicalSeparatorRequired = false;
     std::size_t constructorIndentColumns = 0;

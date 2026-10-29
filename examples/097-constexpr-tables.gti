@@ -1,5 +1,4 @@
-#include <std/array>
-
+import std.array;
 struct Sprite {
   int width;
   int height;

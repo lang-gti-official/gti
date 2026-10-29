@@ -1,8 +1,8 @@
 // Constructors over passive values are failure-free: integral enums, payload
 // enums over passive payloads, passive records, and a consuming member call
 // on a passive record. A checked operation beside them keeps its failure form.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 mut int32_t stage = 0;
 

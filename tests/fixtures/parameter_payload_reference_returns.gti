@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 // A free function may return a reference bound by a payload pattern of its
 // reference parameter. The binding borrows storage inside that parameter's

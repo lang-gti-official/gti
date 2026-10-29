@@ -3,8 +3,7 @@
 // return, including the recursive calls, so the result views whatever the
 // caller passed. The caller's owner stays borrowed read-only while the result
 // is live.
-#include <std/string>
-
+import std.string;
 // A word with its offset into a line; it views the line and owns no text.
 struct Word {
   std::string_view text;

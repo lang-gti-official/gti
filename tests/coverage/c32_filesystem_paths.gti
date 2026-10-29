@@ -1,6 +1,6 @@
 // filesystem::path decomposition, mutation and rendering.
-#include <std/filesystem>
-#include <std/string>
+import std.filesystem;
+import std.string;
 
 int main() {
   mut std::filesystem::path p = std::filesystem::path("/usr/local/lib/thing.tar.gz");

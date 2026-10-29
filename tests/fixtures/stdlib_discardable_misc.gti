@@ -1,11 +1,11 @@
-#include <std/optional>
-#include <std/experimental/optional>
-#include <std/string>
-#include <std/queue>
-#include <std/atomic>
-#include <std/algorithm>
-#include <std/vector>
-#include <std/io>
+import std.optional;
+import std.experimental_optional;
+import std.string;
+import std.queue;
+import std.atomic;
+import std.algorithm;
+import std.vector;
+import std.io;
 
 std::atomic<int> observed{0};
 struct Observer {

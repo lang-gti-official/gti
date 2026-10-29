@@ -5,9 +5,9 @@
 // failure of a later operand, inside a conditional arm or a short-circuit
 // operand, on each loop iteration, in a lambda, a member initializer and a
 // generic body. An operand that fails before the move leaves the source live.
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // How many times `flag` was passed.
 int32_t seen(std::vector<std::string>& argv, std::string_view flag) {

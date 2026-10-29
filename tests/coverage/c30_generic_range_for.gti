@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 int32_t count_local<std::copyable T>(T seed) requires std::vector_element<T> {
   mut std::vector<T> values = std::vector<T>();
   values.push_back(seed);

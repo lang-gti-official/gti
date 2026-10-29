@@ -1,6 +1,7 @@
-#include <std/string>
+export module encoding;
 
-namespace std {
+import std.string;
+export namespace std {
 namespace encoding {
 
 namespace utf8 {

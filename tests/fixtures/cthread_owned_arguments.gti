@@ -1,6 +1,6 @@
-#include <std/cthread>
-#include <std/string>
-#include <std/vector>
+import std.cthread;
+import std.string;
+import std.vector;
 
 int32_t worker(void* context) { return 42; }
 

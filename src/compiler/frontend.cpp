@@ -297,7 +297,7 @@ FrontendResult Frontend::analyze(
   const std::string frontendCacheContext = cacheContext(options);
   SourceLoader sourceLoader(options.workMetrics, options.cache,
                             &options.sourceGenerations, &options.sourceDigests,
-                            frontendCacheContext, options.warnLegacyIncludes);
+                            frontendCacheContext);
   const auto sourceLoadStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-source-load");

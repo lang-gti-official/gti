@@ -8,9 +8,9 @@ import tempfile
 from lsp_smoke_test import LspSession, lsp_position
 
 
-SOURCE = """#include <std/resource_vector>
-#include <std/resource>
-#include <std/memory>
+SOURCE = """import std.resource_vector;
+import std.resource;
+import std.memory;
 struct Pool { Pool() = default;
   unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
     return unexpected(std::alloc_errc::resource_exhausted);

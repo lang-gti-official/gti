@@ -1,3 +1,0 @@
-// Module std.process: the public surface of <std/process>.
-export module process;
-export #include <std/process>

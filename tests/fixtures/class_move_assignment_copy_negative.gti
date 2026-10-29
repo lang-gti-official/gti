@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 // A move-only owner cannot be copy-assigned into an existing binding; the
 // semantic diagnostic must fire without reaching the backend.

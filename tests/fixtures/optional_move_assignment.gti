@@ -1,4 +1,4 @@
-#include <std/optional>
+import std.optional;
 
 mut int drops = 0;
 mut int drop_sum = 0;

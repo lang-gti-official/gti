@@ -1,5 +1,5 @@
 // INVALID: std::set requires a totally ordered key (or an explicit comparator).
-#include <std/set>
+import std.set;
 class Widget {
   int id;
 public:

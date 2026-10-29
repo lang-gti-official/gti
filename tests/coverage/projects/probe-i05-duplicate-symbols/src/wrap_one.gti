@@ -1,3 +1,4 @@
-#include "one.gti"
+export module wrap_one;
+import "one.gti";
 
-int via_one() { return util::helper(0); }
+export int via_one() { return util::helper(0); }

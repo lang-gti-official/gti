@@ -47,7 +47,7 @@ void checkFixtures(const std::filesystem::path &root) {
                                      : lang::TrustedBodyAnalysis::Reachable;
     auto result = lang::Frontend(options).analyze(
         libraryEntry ? library : entry,
-        libraryEntry ? declarations + extra : "#include <std/cmath>\n" + text,
+        libraryEntry ? declarations + extra : "import std.cmath;\n" + text,
         {root / "stdlib/prelude.gti"},
         {{library.string(), declarations + extra}}, {root / "stdlib"});
     if (!complete && !libraryEntry && text == "int main() { return 0; }")
@@ -101,7 +101,7 @@ void checkFixtures(const std::filesystem::path &root) {
       "};\n"
       "int value_of<T>(T& value) { return value(0); }\n";
   const std::string consumer =
-      "#include <std/cmath>\n"
+      "import std.cmath;\n"
       "int main() { Producer value{}; return value_of(value) - 42; }\n";
   lang::FrontendWorkMetrics metrics;
   lang::FrontendOptions options;
@@ -212,7 +212,7 @@ void checkFixtures(const std::filesystem::path &root) {
       "};\n"
       "int value_of<T>(T& value) { return value(0); }\n";
   editorCase("late demand", lateLibrary,
-             "#include <std/cmath>\n"
+             "import std.cmath;\n"
              "int main() { Producer value{}; return value_of(value) - 42; }\n",
              0);
   // The late body is invalid: invalid primary analysis never reaches HIR, so
@@ -223,14 +223,14 @@ void checkFixtures(const std::filesystem::path &root) {
              "operator()(int n) { return leaf() + "
              "n; } };\n"
              "int value_of<T>(T& value) { return value(0); }\n",
-             "#include <std/cmath>\n"
+             "import std.cmath;\n"
              "int main() { Producer value{}; return value_of(value) - 42; }\n",
              1, false);
   // A global initializer's effect closure completes the consulted body before
   // validating the initialization plan. Later HIR discovery therefore needs
   // no repeated analysis to preserve those already-finalized effects.
   editorCase("late demand behind a global initializer", lateLibrary,
-             "#include <std/cmath>\n"
+             "import std.cmath;\n"
              "Producer producer{};\n"
              "int first = value_of(producer);\n"
              "int main() { return first - 42; }\n",
@@ -244,7 +244,7 @@ void checkFixtures(const std::filesystem::path &root) {
              "operator()(int n) { return leaf() + "
              "n; } };\n"
              "int value_of<T>(T& value) { return value(0); }\n",
-             "#include <std/cmath>\n"
+             "import std.cmath;\n"
              "Producer producer{};\n"
              "int first = value_of(producer);\n"
              "int main() { return first - 42; }\n",
@@ -346,7 +346,7 @@ void checkLibraryOnlyOmission(const std::filesystem::path &root) {
     options.lowerLibraryOnlyInstanceBodies = complete;
     options.workMetrics = &metrics;
     return lang::Frontend(options).analyze(
-        entry, "#include <std/cmath>\n" + text, {root / "stdlib/prelude.gti"},
+        entry, "import std.cmath;\n" + text, {root / "stdlib/prelude.gti"},
         {{library.string(), declarations}}, {root / "stdlib"});
   };
   const auto keys = [](const lang::FrontendResult &result) {
@@ -437,12 +437,15 @@ void checkPreambleGraphs(const std::filesystem::path &root) {
       "int helper(int value) { return value + 1; }\n";
   const std::unordered_map<std::string, std::string> overlays{
       {library.string(), libraryText},
-      {first.string(), "#include \"preamble-graph-lib.gti\"\nint main() { "
-                       "return helper(0) - 1; }\n"},
-      {second.string(), "#include \"preamble-graph-lib.gti\"\n#include "
-                        "<std/memory>\nint main() { std::unique_ptr<int> "
-                        "owner = std::make_unique<int>(helper(1)); return "
-                        "*owner - 2; }\n"}};
+      {first.string(), R"GTIMODULE(export module preamble_graph_first;
+import "preamble-graph-lib.gti";
+export int main() { return helper(0) - 1; }
+)GTIMODULE"},
+      {second.string(), R"GTIMODULE(export module preamble_graph_second;
+import "preamble-graph-lib.gti";
+#include <std/memory>
+export int main() { std::unique_ptr<int> owner = std::make_unique<int>(helper(1)); return *owner - 2; }
+)GTIMODULE"}};
   auto preambles = std::make_shared<lang::SemanticPreambleCache>();
   auto parses = std::make_shared<lang::FrontendCache>(lang::FrontendCacheLimits{
       .maximumEntries = 1024, .maximumEstimatedBytes = 512U * 1024U * 1024U});

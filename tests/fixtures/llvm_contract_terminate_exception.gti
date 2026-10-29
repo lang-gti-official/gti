@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 
 // A foreign C++ exception that reaches a GTI callback boundary ends the
 // process through std::terminate on both backends; it never escapes to the

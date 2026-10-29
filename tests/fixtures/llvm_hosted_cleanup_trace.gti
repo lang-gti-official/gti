@@ -1,7 +1,9 @@
+export module detail_llvm_hosted_cleanup_trace;
+import std.string_view;
 // Alternative-library observation only: no owning strings, formatting or panic.
 // A nonzero byte-write status ends the trace attempt; incomplete output must
 // fail any future runtime oracle rather than become a primary/secondary failure.
-namespace gti_hosted_cleanup_fixture {
+export namespace gti_hosted_cleanup_fixture {
 void write(std::string_view text) {
   // For immutable size N, index<N guards the byte access. The final increment
   // is at most N (even N=UINT64_MAX), never N+1. Fixed fixture markers/arguments

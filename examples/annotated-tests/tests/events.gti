@@ -1,6 +1,7 @@
-#include <std/testing>
+export module events;
 
-namespace engine::tests {
+import std.testing;
+export namespace engine::tests {
   struct Event {
     int value;
     Event(int value) : value(value) {}

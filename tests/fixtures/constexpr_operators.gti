@@ -1,4 +1,4 @@
-#include <std/array>
+import std.array;
 
 // A source-defined math type exercises the same call rules as std::array.
 struct Point {

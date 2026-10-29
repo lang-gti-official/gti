@@ -1204,7 +1204,7 @@ int main() {
   }
   const auto publishedCall = lang::Frontend().analyze(
       "owning-enum-call-publication.gti", R"gti(
-#include <std/string>
+import std.string;
 enum Packet { number(int value), text(std::string value) };
 Packet produce(bool text) {
   if (text) return Packet::text(std::string("owned publication"));
@@ -1322,7 +1322,7 @@ int main() {
   }
   const auto movedPublication = lang::Frontend().analyze(
       "owning-enum-move-publication.gti", R"gti(
-#include <std/string>
+import std.string;
 enum Packet { number(int value), text(std::string value) };
 int main() {
   auto packet = Packet::text(std::string("owned publication"));
@@ -1374,7 +1374,7 @@ int main() {
   }
   const auto receiverReferences = lang::Frontend().analyze(
       "receiver-enum-reference.gti", R"gti(
-#include <std/panic>
+import std.panic;
 enum Slot { present(int& value), absent };
 class Reading {
   mut Slot slot;
@@ -1463,8 +1463,8 @@ int main() {
   }
   const auto mixedOwnership = lang::Frontend().analyze(
       "borrowed-owning-enum-field.gti", R"gti(
-#include <std/string>
-#include <std/panic>
+import std.string;
+import std.panic;
 enum Choice { borrowed(int& value), owned(std::string value) };
 class Envelope {
   mut Choice choice;

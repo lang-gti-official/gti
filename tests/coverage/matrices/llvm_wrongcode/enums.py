@@ -3,7 +3,7 @@ import itertools
 
 from .transfer import PRELUDE, TEXT, text_sum, TEXT_CHECK
 
-COMMON = """#include <std/utility>
+COMMON = """import std.utility;
 int64_t check_text(std::string& body) {
 """ + TEXT_CHECK.replace("BODY", "body") + """
 }

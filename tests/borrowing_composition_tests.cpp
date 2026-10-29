@@ -265,7 +265,7 @@ void checkNestedArgumentRejections() {
          "GTI-S2045", "nested exclusive arguments cannot duplicate an owner");
   const auto owning = lang::Frontend().analyze(
       "nested-owning-owner-write.gti", R"(
-#include <std/utility>
+import std.utility;
 struct View {
   int& value;
   View(int& value) : value(value) {}
@@ -620,7 +620,7 @@ int main() { mut int value = 0; Duplicate view{value}; return 0; }
 void checkNestedMixedTransfer() {
   const auto differingPermissions = lang::Frontend().analyze(
       "nested-field-permissions.gti", R"(
-#include <std/utility>
+import std.utility;
 struct Exclusive {
   mut int& value;
   Exclusive(mut int& source) : value(source) {}
@@ -706,7 +706,7 @@ int main() {
     expect(inspected, "nested receiver regression exercises its exact path");
   }
   const std::string declarations = R"(
-#include <std/utility>
+import std.utility;
 struct Mixed {
   int& read;
   mut int& write;

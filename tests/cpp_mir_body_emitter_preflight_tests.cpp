@@ -460,7 +460,7 @@ void testPayloadObserverRequiresCompleteReceiver() {
   // a read-only method cannot receive an object with a moved enum field.
   const auto invalid =
       analyzeWithStandardLibrary("partial-payload-observer.gti", R"gti(
-#include <std/string>
+import std.string;
 enum State { empty, value(std::string text) };
 class Holder {
   mut State state;
@@ -1377,7 +1377,7 @@ void testConstructionOnlyPayloadEnumFieldAdmission() {
        (offset = source.find(original, offset)) != std::string::npos;
        offset += replacement.size())
     source.replace(offset, original.size(), replacement);
-  source = "#include <std/mutex>\n" + source;
+  source = "import std.mutex;\n" + source;
   // The mutex's address stability is separate from construction-only field
   // publication; it is not a relocatable vector element.
   const auto vectorStart = source.find("  mut std::vector<Event> events{};");
@@ -4023,8 +4023,8 @@ void testHostedStartupOwnsRemainingAuthorityGap() {
 
   const lang::FrontendResult owned =
       analyzeWithStandardLibrary("cpp-mir-body-owned-entry.gti", R"(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 int main(int argc, std::vector<std::string> argv) { return argc; }
 )");
   expect(owned.canGenerateCode(),
@@ -5021,7 +5021,7 @@ int main() { return exercise(1, 2); }
 void testExpectedReferenceHasOnlyLoanStorage() {
   const auto frontend =
       analyzeWithStandardLibrary("expected-reference-storage.gti", R"(
-#include <std/memory>
+import std.memory;
 class Ticket {
   int number;
 public:
@@ -5594,9 +5594,9 @@ int main() {
 void testDefaultPrefixConstructorStatusAdmission() {
   const auto source = [](std::string_view body) {
     return std::string(R"(
-#include <std/optional>
-#include <std/string>
-#include <std/vector>
+import std.optional;
+import std.string;
+import std.vector;
 class Envelope {
   std::optional<std::string> payload{};
 public:
@@ -5979,7 +5979,7 @@ void testScalarPrefixConstructorStatusAdmission() {
 
 void testOwningConstructorAcrossArgumentDiamond() {
   const std::string sources[] = {R"(
-#include <std/string>
+import std.string;
 class Reading {
 public:
   int& value;
@@ -5997,7 +5997,7 @@ int main() {
 }
 )",
                                  R"(
-#include <std/string>
+import std.string;
 class Parcel {
   std::string text;
 public:
@@ -6019,7 +6019,7 @@ int exercise(bool choose) {
 int main() { return exercise(true); }
 )",
                                  R"(
-#include <std/string>
+import std.string;
 class Reading {
 public:
   int& value;
@@ -6118,7 +6118,7 @@ int main() {
 void testMutableReferencePrefixBeforeOwnedField() {
   const auto frontend = analyzeWithStandardLibrary(
       "cpp-mir-mutable-reference-owned-prefix.gti", R"(
-#include <std/string>
+import std.string;
 class Editing {
 public:
   mut int& value;
@@ -6232,9 +6232,9 @@ int main() {
 void testOptionalPayloadCleanupComposition() {
   const auto frontend = analyzeWithStandardLibrary(
       "cpp-mir-optional-payload-cleanup-composition.gti", R"(
-#include <std/optional>
-#include <std/string>
-#include <std/vector>
+import std.optional;
+import std.string;
+import std.vector;
 class Message {
   std::optional<std::string> text{};
 public:
@@ -6494,7 +6494,7 @@ int main() {
 void testSourceStringCStringAdmissionFailsClosed() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-source-string-c-string.gti", R"(
-#include <std/string>
+import std.string;
 
 int main() {
   mut std::string text = std::string("abc");
@@ -6879,7 +6879,7 @@ int main() {
 void testPassiveReturnSignedMinimumAndRepresentationSlot() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-passive-return-and-slot.gti", R"(
-#include <std/numeric>
+import std.numeric;
 
 constexpr int8_t wrapped_boundary =
     std::wrapping_add(int8_t(127), int8_t(1));
@@ -7035,8 +7035,8 @@ int main() {
 void testSingleUseClassSsaRepresentationSlot() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-class-ssa-slot.gti", R"(
-#include <std/algorithm>
-#include <std/vector>
+import std.algorithm;
+import std.vector;
 
 class Positive {
   mut bool observed = false;

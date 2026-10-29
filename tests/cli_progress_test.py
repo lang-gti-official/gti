@@ -53,7 +53,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-progress-") as temporary:
         root = Path(temporary)
         (root / "main.gti").write_text(
-            '#include <std/string>\nint main() { std::println("program-output"); return 0; }\n'
+            'import std.string;\nint main() { std::println("program-output"); return 0; }\n'
         )
         (root / "bridge.cpp").write_text('extern "C" int unused_bridge() { return 42; }\n')
         manifest = (
@@ -184,13 +184,13 @@ def main():
                 recovery = run([*command, "--progress=plain", "--color=never",
                                 *verbosity], 65)
                 output = recovery.stderr
-                assert "Add #include <std/vector>" in output, output
+                assert "Add import std.vector;" in output, output
                 assert len(re.findall(r"^\s*Loading  source graph$", output, re.M)) == 1, output
                 assert len(re.findall(r"^\s*Parsing  \d+ source units$", output, re.M)) == 1, output
                 assert len(re.findall(r"^\s*Checking  progress$", output, re.M)) == 1, output
                 assert "Failed" in output and "Finished" not in output, output
         quiet_recovery = run(["check", "--progress=never"], 65)
-        assert "Add #include <std/vector>" in quiet_recovery.stderr
+        assert "Add import std.vector;" in quiet_recovery.stderr
         assert not re.search(r"^\s*(Loading|Parsing|Checking)  ", quiet_recovery.stderr, re.M)
 
         # Parent target waits are live; captured child telemetry stays disabled

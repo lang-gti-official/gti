@@ -14,7 +14,7 @@ int main() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto frontend = lang::Frontend().analyze(
       root / "source-prefix-contract.gti", R"gti(
-#include <std/memory>
+import std.memory;
 int main() {
   mut std::detail::prefix_owner<int> source{uint64_t(4)};
   source.append_value(3);
@@ -81,8 +81,8 @@ int main() {
   }
   const auto hosted = lang::Frontend().analyze(
       root / "source-prefix-hosted-contract.gti", R"gti(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 int main(int argc, std::vector<std::string> argv) { return argc; }
 )gti",
       {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});

@@ -2,14 +2,14 @@
 
 Status: Implemented bounded POSIX process execution and read-only environment access.
 
-`<std/process>` provides synchronous child-process execution through exact
+`std.process` provides synchronous child-process execution through exact
 argument vectors. It exists for programs such as command-line clients that
 need to invoke an editor, pager, or another tool without importing shell
 parsing into GTI.
 
 ## Environment Observation
 
-`<std/environment>` (or `import std.environment;`) provides
+`std.environment` (or `import std.environment;`) provides
 `std::environment::get(std::string_view name)`, returning
 `expected<std::optional<std::string>, std::environment::errc>`:
 
@@ -24,8 +24,8 @@ parsing into GTI.
   cleanup, with allocation exhaustion retaining its abort policy.
 
 ```gti
-#include <std/environment>
-#include <std/string>
+import std.environment;
+import std.string;
 
 int main() {
   auto lookup = std::environment::get("APP_PROFILE");

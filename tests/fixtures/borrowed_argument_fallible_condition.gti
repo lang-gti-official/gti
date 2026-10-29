@@ -4,8 +4,8 @@
 // a text view the call returns. A function, a constructor, a method on the
 // borrowed receiver and a local lambda consume the arguments; the failing
 // call may also be one arm's value, and the arms may select a text view.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 class Tracked {
   int32_t identity;

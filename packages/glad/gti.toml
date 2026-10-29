@@ -11,3 +11,6 @@ c-sources = ["native/generated/src/gl.c", "native/adapter.c"]
 [[package.native.platforms]]
 os = "linux"
 libraries = ["dl"]
+
+[modules]
+glad = "src/glad.gti"

@@ -1,4 +1,4 @@
-#include <std/source_location>
+import std.source_location;
 
 std::source_location capture(
     std::source_location location = std::source_location::current()) {

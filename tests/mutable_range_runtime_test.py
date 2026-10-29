@@ -24,7 +24,7 @@ def main() -> int:
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source_text = """\
-#include <std/vector>
+import std.vector;
 
 int32_t mutate_fixed_array() {
   mut int32_t values[4] = {1, 2, 3, 4};

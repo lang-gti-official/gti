@@ -1,5 +1,4 @@
-#include <std/vector>
-
+import std.vector;
 int main() {
   int fixed[3] = {1, 2, 3};
   mut int total = 0;

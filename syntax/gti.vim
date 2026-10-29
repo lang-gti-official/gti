@@ -29,7 +29,6 @@ syntax keyword gtiTypeAliasKeyword typename nextgroup=gtiTypeAliasName skipwhite
 syntax keyword gtiConceptKeyword concept nextgroup=gtiConceptName skipwhite
 syntax keyword gtiStorageClass const constexpr export extern implicit mut override static thread_local virtual
 syntax keyword gtiOperatorKeyword operator
-syntax match gtiInclude "#include\>"
 syntax match gtiMacroKeyword "#macro\>"
 syntax match gtiMacroName "\%(#macro\>[^{};()]*\s\)\@<=\h\w*\ze\s*\%(<[^{};()]*>\s*\)\?("
 syntax keyword gtiInclude import
@@ -51,7 +50,6 @@ syntax match gtiAttribute "\[\[\s*\h\w*\%([[:space:]]*,[[:space:]]*\h\w*\)*\s*\]
 syntax match gtiEscape "\\." contained
 syntax region gtiString start=+"+ skip=+\\"+ end=+"+ contains=gtiEscape
 syntax region gtiCharacter start=+'+ skip=+\\'+ end=+'+ contains=gtiEscape
-syntax match gtiStandardInclude "<std/[A-Za-z0-9_/]*>"
 
 highlight default link gtiAttribute PreProc
 highlight default link gtiAccess Keyword
@@ -91,7 +89,6 @@ highlight default link gtiThis Special
 highlight default link gtiStatement Statement
 highlight default link gtiStorageClass StorageClass
 highlight default link gtiString String
-highlight default link gtiStandardInclude String
 highlight default link gtiTodo Todo
 highlight default link gtiType Type
 highlight default link gtiTypeAliasKeyword Structure

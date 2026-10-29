@@ -7,15 +7,15 @@ vectors and joined in loops.
 """
 import itertools
 
-PRELUDE = """#include <std/thread>
-#include <std/mutex>
-#include <std/memory>
-#include <std/vector>
-#include <std/string>
-#include <std/functional>
-#include <std/atomic>
-#include <std/format>
-#include <std/utility>
+PRELUDE = """import std.thread;
+import std.mutex;
+import std.memory;
+import std.vector;
+import std.string;
+import std.functional;
+import std.atomic;
+import std.format;
+import std.utility;
 std::atomic<int32_t> constructed{0};
 std::atomic<int32_t> destroyed{0};
 [[unsafe_transfer]] class Tracked {

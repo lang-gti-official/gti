@@ -4,9 +4,9 @@
 // formatter), positional arguments, a generic formattable helper, an
 // integral enum through the primary formatter, and format_to accumulation
 // over a vector of user values.
-#include <std/format>
-#include <std/string>
-#include <std/vector>
+import std.format;
+import std.string;
+import std.vector;
 
 namespace geo {
 struct Point {

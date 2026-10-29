@@ -1,6 +1,6 @@
 import core;
-#include "scorers.gti"
-#include <std/vector>
+import "scorers.gti";
+import std.vector;
 
 int main() {
   mut std::vector<int> values{};

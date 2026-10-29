@@ -1,3 +1,5 @@
+export module spdlog;
+
 // A source-defined, ownership-safe logging package modelled after spdlog.
 //
 // The public names intentionally follow spdlog where GTI can preserve the
@@ -5,19 +7,18 @@
 // throwing, and process-global registry state is represented by an explicit
 // `spdlog::registry` owner.
 
-#include <std/chrono>
-#include <std/cstdio>
-#include <std/atomic>
-#include <std/filesystem>
-#include <std/format>
-#include <std/functional>
-#include <std/memory>
-#include <std/mutex>
-#include <std/source_location>
-#include <std/string>
-#include <std/vector>
-
-namespace spdlog {
+import std.chrono;
+import std.cstdio;
+import std.atomic;
+import std.filesystem;
+import std.format;
+import std.functional;
+import std.memory;
+import std.mutex;
+import std.source_location;
+import std.string;
+import std.vector;
+export namespace spdlog {
 
 enum class errc {
   invalid_argument,

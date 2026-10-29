@@ -31,11 +31,10 @@ public:
           nullptr,
       const std::unordered_map<std::string, std::uint64_t> *sourceDigests =
           nullptr,
-      std::string cacheContext = {}, bool warnLegacyIncludes = false)
+      std::string cacheContext = {})
       : workMetrics(workMetrics), cache(std::move(cache)),
         sourceGenerations(sourceGenerations), sourceDigests(sourceDigests),
-        cacheContext(std::move(cacheContext)),
-        warnLegacyIncludes(warnLegacyIncludes) {}
+        cacheContext(std::move(cacheContext)) {}
 
   SourceGraph
   load(const std::filesystem::path &entryPath,
@@ -64,7 +63,6 @@ private:
   struct FileState {
     LoadState state = LoadState::Visiting;
     SourceUnitId unit = 0;
-    bool includeWarningEmitted = false;
     // Includes run once in each isolated module configuration domain. The
     // source graph and selected syntax still have one canonical identity.
     std::unordered_set<SourceUnitId> configurationDomains;
@@ -156,7 +154,6 @@ private:
       nullptr;
   const std::unordered_map<std::string, std::uint64_t> *sourceDigests = nullptr;
   std::string cacheContext;
-  bool warnLegacyIncludes = false;
 };
 
 } // namespace lang

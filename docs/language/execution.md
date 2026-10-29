@@ -186,7 +186,7 @@ require destination-passing construction support; an owning indirection can
 transport an immovable payload in this profile. Ordinary references and
 borrowed values remain usable *inside* macros under their existing rules.
 
-`std::expression_text(expression)` from `<std/source_location>` is a library
+`std::expression_text(expression)` from `std.source_location` is a library
 macro over a trusted source-metadata capability. It type-checks but never
 evaluates the expression, returning static literal-backed written text with
 interior comments/whitespace preserved. Whole-argument forwarding retains its
@@ -534,8 +534,8 @@ Program source units are initialized by this deterministic walk:
 1. traverse implicit prelude roots, and their explicit dependencies, in the
    target/runtime profile's configured prelude order;
 2. traverse the entry unit and its explicit dependencies;
-3. for each unit, visit distinct direct dependencies in lexical include-
-   directive order before the requesting unit, initializing a shared unit only
+3. for each unit, visit distinct direct dependencies in lexical import-
+   declaration order before the requesting unit, initializing a shared unit only
    on its first visit; and
 4. within a unit, initialize selected namespace globals and non-generic class
    static fields by increasing source position. A static field occupies the
@@ -635,8 +635,8 @@ and the storage, optional and vector APIs, with both consumed and ignored result
 
 ### Program initialization and call ordering
 
-For source units where `main.gti` includes `a.gti` and then `b.gti`, and
-`a.gti` includes `shared.gti`, the program-wide unit order is `shared.gti`,
+For source units where `main.gti` imports `a.gti` and then `b.gti`, and
+`a.gti` imports `shared.gti`, the program-wide unit order is `shared.gti`,
 `a.gti`, `b.gti`, `main.gti` after the configured prelude roots. Reversing the
 two directives in `main.gti` reverses only the independent `a.gti`/`b.gti`
 steps.
@@ -706,7 +706,7 @@ divisor or a signed minimum divided by `-1`. Integer `%` fails for a zero
 divisor, has the sign of its left operand, and defines signed minimum modulo
 `-1` as zero.
 
-The optional `<std/numeric>` unit provides explicit non-failing arithmetic for
+The optional `std.numeric` unit provides explicit non-failing arithmetic for
 each of `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`, `uint16_t`,
 `uint32_t`, and `uint64_t`:
 
@@ -1090,10 +1090,10 @@ GTI does not provide language exceptions.
 
 GTI has an adopted concurrency and memory-model boundary, with rationale in
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). The compiler
-exposes owned managed threads through `<std/thread>`, scalar atomics with a
+exposes owned managed threads through `std.thread`, scalar atomics with a
 sequentially consistent default plus explicit legal orders through
-`<std/atomic>`, and owner-tied scoped mutex guards through `<std/mutex>`.
-The separate unsafe `<std/cthread>` surface provides exact registered manual
+`std.atomic`, and owner-tied scoped mutex guards through `std.mutex`.
+The separate unsafe `std.cthread` surface provides exact registered manual
 workers, once initialization, manual mutexes, and manual condition variables.
 A safe scoped condition-variable wrapper and arbitrary foreign-thread entry
 remain unavailable. The single-threaded profile remains the default executable
@@ -1107,8 +1107,8 @@ lock/unlock. Atomic records retain operation-specific memory orders and MIR
 rejects illegal order combinations. In the single-threaded profile it rejects
 executable synchronization records while permitting only exact private thread,
 atomic, mutex, or condition intrinsics in lowering-marked dormant
-standard-library wrapper bodies. This is why source may import `<std/thread>`,
-`<std/atomic>`, `<std/mutex>`, or `<std/cthread>` without using a
+standard-library wrapper bodies. This is why source may import `std.thread`,
+`std.atomic`, `std.mutex`, or `std.cthread` without using a
 concurrent-only operation; calling or constructing such an operation still
 fails semantically before MIR publication. The profile-independent C-style
 scheduling, sleep, and identity operations create no synchronization edge.
@@ -1291,20 +1291,20 @@ the future embedding ABI must expose this descriptor-lifetime rule explicitly.
 The all-zero artifact identity is reserved for the synthetic runtime site and
 is never assigned to a loaded artifact.
 
-Logical names are `<prelude>` for the implicit prelude, canonical include
-spellings such as `<std/vector>` for standard units, and `/`-separated paths
+Logical names are `<prelude>` for the implicit prelude, canonical logical source
+names such as `<std/vector>` for standard units, and `/`-separated paths
 relative to the manifest package root or, for direct compilation, the entry
 file's parent. A source outside that root uses
 `<external>/<unit-id>/<basename>`, never an absolute path; `<unit-id>` is the
 64-lowercase-hexadecimal rendering of SHA-256 over the source's exact contents
 plus its selected route from the entry unit. Select routes by shortest edge
 count and then by the lexicographically least complete encoded-route byte
-string under unsigned-byte order. A route serializes each include spelling and
-that directive's zero-based lexical occurrence in its including unit, so it
+string under unsigned-byte order. A route serializes each dependency spelling and
+that directive's zero-based lexical occurrence in its importing unit, so it
 exposes no resolved host path and distinguishes equal basenames at different
 graph positions; the hash input uses ASCII
 `GTI-EXTERNAL-SOURCE-V1`, one zero byte, the source byte length and contents,
-the route edge count, and for each edge its include-spelling length/bytes and
+the route edge count, and for each edge its dependency-spelling length/bytes and
 occurrence integer, using the encoding below.
 Artifact identity is the identity of the immutable
 failure descriptor, not of unrelated code bytes, and is derived as follows:
@@ -1500,7 +1500,7 @@ runtime terminal boundary with no callback-local observer; it never returns
 failure through C. Its `noexcept` adapter catches a native exception and
 terminates rather than translating it into a GTI record.
 
-The concurrent `<std/cthread>` worker and once-initializer adapters are exact
+The concurrent `std.cthread` worker and once-initializer adapters are exact
 registered exceptions to that single-threaded callback surface. A worker may
 enter only on the native thread registered for its successful `thrd_create`,
 and an initializer may enter only during its exact `call_once` invocation on

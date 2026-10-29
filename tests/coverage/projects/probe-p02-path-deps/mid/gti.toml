@@ -6,3 +6,7 @@ version = "0.3.0"
 
 [dependencies]
 base = { path = "../base" }
+
+[modules]
+detail_accumulate = "src/detail/accumulate.gti"
+stats = "src/stats.gti"

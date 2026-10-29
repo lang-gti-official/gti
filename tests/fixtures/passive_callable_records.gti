@@ -1,4 +1,4 @@
-#include <std/utility>
+import std.utility;
 extern "C" { void gti_test_trace(int value); }
 
 class Ticket {

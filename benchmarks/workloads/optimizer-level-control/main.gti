@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 constexpr int32_t image_width = 1000;
 constexpr int32_t image_height = 700;

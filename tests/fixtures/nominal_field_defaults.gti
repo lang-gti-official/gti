@@ -1,5 +1,5 @@
-#include <std/io>
-#include <std/memory>
+import std.io;
+import std.memory;
 
 mut int trace = 0;
 mut int live = 0;

@@ -161,7 +161,7 @@ void testPrefixPointerInputRejection() {
   for (const auto &[parameter, argument] :
        {std::pair{"int*", "const int*"}, std::pair{"const int*", "float*"}}) {
     const std::string source =
-        "#include <std/vector>\nclass Entry { public: Entry(" +
+        "import std.vector;\nclass Entry { public: Entry(" +
         std::string(parameter) + " value) {} };\nint main() { " + argument +
         " value = nullptr; mut std::vector<Entry> values{}; "
         "[[discard]] values.emplace_back(value); return 0; }\n";
@@ -312,7 +312,7 @@ void testSparseFinalAddressConstructor() {
   }
   expect(checked != 0, "fixture exercises sparse final-address construction");
   for (const std::string &source : {std::string(R"(
-#include <std/memory>
+import std.memory;
 int main() {
   std::allocator allocator{};
   mut auto slots = allocator.try_storage<int>(std::size_t(1)).expect("allocation");
@@ -321,7 +321,7 @@ int main() {
   return value;
 })"),
                                     std::string(R"(
-#include <std/memory>
+import std.memory;
 int& escape() {
   std::allocator allocator{};
   mut auto slots = allocator.try_storage<int>(std::size_t(1)).expect("allocation");

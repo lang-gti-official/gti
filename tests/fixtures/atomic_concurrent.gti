@@ -1,5 +1,5 @@
-#include <std/atomic>
-#include <std/thread>
+import std.atomic;
+import std.thread;
 
 std::atomic<int32_t> shared_count{0};
 std::atomic<int32_t> left_value{0};

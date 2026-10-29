@@ -4,9 +4,9 @@
 // omitted fields with defaults, enum- and string-typed fields, class-scoped
 // alias field types, structured bindings over a designated struct, and a
 // user collection type initialized with a list of designated structs.
-#include <std/format>
-#include <std/string>
-#include <std/vector>
+import std.format;
+import std.string;
+import std.vector;
 
 namespace app::config {
 enum class Level { debug, info, warn };

@@ -76,23 +76,23 @@ def main():
                 print(f"{source.stem}: {name} passed", flush=True)
 
         invalid = {
-            "owner-invalidation": ('#include <std/string>\nint main() { mut std::string owner{"abc"}; '
+            "owner-invalidation": ('import std.string;\nint main() { mut std::string owner{"abc"}; '
                 'std::string_view view = owner.view(); auto cursor = view.begin(); owner.clear(); return int(*cursor); }', "GTI-S2017"),
-            "argument-invalidates-owner": ('#include <std/string>\nstd::size_t erase(mut std::string& owner) { '
+            "argument-invalidates-owner": ('import std.string;\nstd::size_t erase(mut std::string& owner) { '
                 'owner.clear(); return std::size_t(0); } int main() { mut std::string owner{"abc"}; '
                 'std::string_view view = owner.view(); auto cursor = view.iterator_at(erase(owner)); return int(*cursor); }', "GTI-S2017"),
-            "readonly-element": ('#include <std/string_view>\nint main() { std::string_view view = "abc"; '
+            "readonly-element": ('import std.string_view;\nint main() { std::string_view view = "abc"; '
                 'mut auto cursor = view.begin(); *cursor = \'z\'; return 0; }', "GTI-S2002"),
-            "escaped-view-shell": ('#include <std/string>\n#include <std/string_view>\nstd::detail::text_view_iterator<0> escape(std::string& owner) { '
+            "escaped-view-shell": ('import std.string;\nimport std.string_view;\nstd::detail::text_view_iterator<0> escape(std::string& owner) { '
                 'std::string_view view = owner.view(); return view.begin(); } int main() { return 0; }', "GTI-S2045"),
-            "temporary-view-shell": ('#include <std/string_view>\nint main() { auto cursor = "abc".begin(); return int(*cursor); }', "GTI-S2017"),
-            "ordinary-value-temporary-reference": ('#include <std/string_view>\nint main() { std::string_view view = "abc"; '
+            "temporary-view-shell": ('import std.string_view;\nint main() { auto cursor = "abc".begin(); return int(*cursor); }', "GTI-S2017"),
+            "ordinary-value-temporary-reference": ('import std.string_view;\nint main() { std::string_view view = "abc"; '
                 'auto cursor = view.begin(); char& character = *cursor; return int(character); }', "GTI-S2017"),
-            "value-iterator-reference-callback": ('#include <std/string>\n#include <std/algorithm>\n'
+            "value-iterator-reference-callback": ('import std.string;\nimport std.algorithm;\n'
                 'class RefCounter { public: void operator()(char& value) mut {}  public: RefCounter() = default; }; '
                 'int main() { std::string_view view = "abc"; '
                 'auto visits = std::for_each(view.begin(), view.end(), RefCounter()); return 0; }', "GTI-S2029"),
-            "value-range-mutable-reference": ('#include <std/string_view>\nint main() { std::string_view view = "abc"; '
+            "value-range-mutable-reference": ('import std.string_view;\nint main() { std::string_view view = "abc"; '
                 'for (mut char& character : view) {} return 0; }', "GTI-S2083"),
             "mutable-value-dereference": ('class ValueCursor { public: int operator*() mut { return 1; }  public: ValueCursor() = default; }; '
                 'int main() { return 0; }', "GTI-S2022"),
@@ -100,7 +100,7 @@ def main():
                 'int main() { return 0; }', "GTI-S2022"),
             "borrowed-value-dereference": ('struct Borrowed { int& value; }; '
                 'class ValueCursor { public: Borrowed operator*();  public: ValueCursor() = default; }; int main() { return 0; }', "GTI-S2022"),
-            "move-only-value-dereference": ('#include <std/string>\nclass ValueCursor { public: '
+            "move-only-value-dereference": ('import std.string;\nclass ValueCursor { public: '
                 'std::string operator*() { return std::string("owned"); }  public: ValueCursor() = default; }; int main() { return 0; }', "GTI-S2022"),
         }
         for name, (source, code) in invalid.items():

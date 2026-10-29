@@ -1,4 +1,4 @@
-#include <std/functional>
+import std.functional;
 
 int divide(int value) { return 12 / value; }
 

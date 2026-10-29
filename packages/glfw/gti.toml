@@ -7,3 +7,6 @@ version = "0.1.0"
 [package.build-script]
 source = "build.gti"
 inputs = ["vendor/glfw"]
+
+[modules]
+glfw = "src/glfw.gti"

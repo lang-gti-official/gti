@@ -1,3 +1,5 @@
+export module meta;
+
 // <std/meta> -- compile-time reflection over GTI declarations.
 //
 // A metaobject is an ordinary empty value whose generic arguments are the
@@ -14,7 +16,7 @@
 // a field list from, and `field_list`/`field_type` are computed types whose
 // concrete instances the compiler rewrites.
 
-namespace gti_internal {
+export namespace gti_internal {
 uint64_t meta_field_count<T>();
 std::string_view meta_field_name<T, uint64_t I>();
 bool meta_field_is_public<T, uint64_t I>();
@@ -48,7 +50,7 @@ std::string_view meta_type_primary_name<T>();
 T meta_construct<T, Values...>(Values... values);
 }
 
-namespace std {
+export namespace std {
 namespace meta {
 
 /// The categories used by the reflection classification predicates.

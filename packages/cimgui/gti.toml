@@ -13,3 +13,6 @@ cpp-sources = [
   "vendor/cimgui/imgui/imgui_demo.cpp",
   "vendor/cimgui/imgui/backends/imgui_impl_opengl3.cpp"
 ]
+
+[modules]
+cimgui = "src/cimgui.gti"

@@ -136,9 +136,28 @@ public:
                 if not expected_errors:
                     assert not diagnostics, (version, diagnostics)
             dependency = path.parent / "mapper.gti"
-            dependency.write_text(mapper +
-                                  "int outer<T>(T& input) { return decode<T>(input); }\n")
-            consumer = ('#include "mapper.gti"\n'
+            dependency.write_text((
+                                      'export module mapper;\n'
+                                      'namespace traits {\n'
+                                      'export class Mapper<T> {\n'
+                                      'public:\n'
+                                      '  int decode(T& input);\n'
+                                      '  int inspect();\n'
+                                      'public:\n'
+                                      '  Mapper() = default;\n'
+                                      '};\n'
+                                      '}\n'
+                                      'export int decode<T>(T& input) {\n'
+                                      '  traits::Mapper<T> mapping{};\n'
+                                      '  return mapping.decode(input);\n'
+                                      '}\n'
+                                      'export int inspect<T>() {\n'
+                                      '  traits::Mapper<T> mapping{};\n'
+                                      '  return mapping.inspect();\n'
+                                      '}\n'
+                                      'export int outer<T>(T& input) { return decode<T>(input); }\n'
+                                  ))
+            consumer = ('import "mapper.gti";\n'
                         'int main() { int input = 7; return outer<int>(input); }\n')
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
                           "params": {"textDocument": {"uri": uri, "version": 9},
@@ -154,7 +173,7 @@ public:
             assert len(related) == 3, related
             assert all(item["location"]["uri"] == dependency.resolve().as_uri()
                        for item in related), related
-            constructor = ('#include "mapper.gti"\n'
+            constructor = ('import "mapper.gti";\n'
                            'class Factory<T> { public: int value;\n'
                            '  Factory(T& input) : value(outer<T>(input)) {}\n};\n'
                            'int main() { int input = 7; Factory<int> result{input}; return 0; }\n')

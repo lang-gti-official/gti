@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 // Owners of interface and base views destroy the complete allocated object
 // exactly once, whatever static view they hold. Destructors record explicit

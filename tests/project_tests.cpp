@@ -1575,7 +1575,7 @@ void testWorkspaceAndPathDependencies() {
   expect(
       writeFile(root / "src/main.gti", "int main() { return 0; }\n") &&
           writeFile(app / "src/main.gti",
-                    "#include <math/add>\nint main() { return 0; }\n") &&
+                    "import math.add;\nint main() { return 0; }\n") &&
           writeFile(math / "lib/add.gti",
                     "namespace math { int add(int a, int b) { return a + b; } "
                     "}\n"),
@@ -1813,7 +1813,7 @@ void testProjectFacts() {
   const std::filesystem::path math = root / "packages/math";
   expect(writeFile(root / "src/main.gti", "int main() { return 0; }\n") &&
              writeFile(app / "src/main.gti",
-                       "#include <math/add>\nint main() { return 0; }\n") &&
+                       "import math.add;\nint main() { return 0; }\n") &&
              writeFile(math / "lib/add.gti",
                        "namespace math { int add(int a, int b) { return a + b; "
                        "} }\n"),
@@ -2102,7 +2102,7 @@ void testProjectFactsDiagnostics() {
   const std::filesystem::path consumer = temporary.root() / "consumer";
   const std::filesystem::path library = temporary.root() / "library";
   expect(writeFile(consumer / "src/main.gti",
-                   "#include <lib/unit>\nint main() { return 0; }\n") &&
+                   "import lib.unit;\nint main() { return 0; }\n") &&
              writeFile(library / "src/unit.gti",
                        "namespace lib { int value() { return 1; } }\n") &&
              writeFile(consumer / "gti.toml",
@@ -2138,8 +2138,8 @@ void testProjectFactsDiagnostics() {
 
 void testProjectScaffolding(const std::filesystem::path &testExecutable) {
   TemporaryDirectory temporary;
-  const std::string expectedSource = R"(#include <std/string>
-#include <std/vector>
+  const std::string expectedSource = R"(import std.string;
+import std.vector;
 
 int main(int argc, std::vector<std::string> argv) {
   std::println("Hello, GTI!");

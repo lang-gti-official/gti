@@ -22,7 +22,7 @@ TESTS = {"mir_cutover_corpus_oracle", "practical_examples",
          "llvm_native_c_indirect_execution", "llvm_native_c_aggregate_execution",
          "llvm_native_c_storage_execution"}
 NESTED = {"allocator-support", "annotated-tests", "infallible-embedding",
-          "libc-region-provider", "llvm", "native-callback-slots",
+          "libc-region-provider", "llvm", "module-only", "native-callback-slots",
           "native-enum-bindings", "native-union-bindings", "native-variable-bindings",
           "objective-cpp-bridge", "scoped-configuration",
           "toy-3d-engine", "transit-planner", "window-factory"}

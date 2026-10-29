@@ -108,7 +108,7 @@ lang::FrontendResult analyze(const TemporaryStandardLibrary &library,
   options.toolingOccurrences = toolingOccurrences;
   return lang::Frontend(options).analyze(library.root / "reference-entry.gti",
                                          R"(
-#include <std/sample>
+import std.sample;
 int main() {
   std::widget item{3};
   return std::twice(item.value());

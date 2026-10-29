@@ -1,5 +1,5 @@
 export module frontend;
-#include "shared.gti"
+import "shared.gti";
 import backend;
 
 #ifdef BACKEND_LOCAL

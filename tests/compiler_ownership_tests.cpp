@@ -65,7 +65,7 @@ const lang::MirInstruction *definingInstruction(const lang::MirBody &body,
 
 lang::FrontendResult analyzeWithMemory(std::string_view name,
                                        std::string source) {
-  source.insert(0, "#include <std/memory>\n");
+  source.insert(0, "import std.memory;\n");
   return lang::Frontend().analyze(std::filesystem::temp_directory_path() /
                                       std::string(name),
                                   std::move(source), {standardLibraryPrelude()},
@@ -3953,7 +3953,7 @@ int main() {
 
   const auto optionalMisuse =
       analyzeTrustedMemoryFixture("source-prefix-optional-misuse.gti", R"(
-#include <std/optional>
+import std.optional;
 int main() {
   mut std::detail::prefix_owner<int> values{uint64_t(1)};
   return int(gti_internal::optional_storage_read(values));
@@ -4671,7 +4671,7 @@ int main() {
 
   const lang::FrontendResult standardStringRange = lang::Frontend().analyze(
       "standard-string-range.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "class PathRange { std::string internal_path; public: "
       "PathRange(std::string value) : internal_path(std::move(value)) {} "
       "std::detail::storage_iterator<char> begin() { return "
@@ -4695,7 +4695,7 @@ int main() {
   const lang::FrontendResult releasedStandardStringBorrow =
       lang::Frontend().analyze(
           "released-standard-string-borrow.gti",
-          "#include <std/string>\n"
+          "import std.string;\n"
           "int main() { mut std::string value = std::string(\"gti\"); "
           "mut auto iterator = value.begin(); char first = *iterator; "
           "value.push_back('!'); return 0; }\n",
@@ -4806,7 +4806,7 @@ int main() {
   const lang::FrontendResult invalidStandardStringBorrow =
       lang::Frontend().analyze(
           "invalid-standard-string-borrow.gti",
-          "#include <std/string>\n"
+          "import std.string;\n"
           "int main() { mut std::string value = std::string(\"gti\"); "
           "mut auto iterator = value.begin(); value.push_back('!'); "
           "char first = *iterator; return 0; }\n",
@@ -4820,7 +4820,7 @@ int main() {
 
   const lang::FrontendResult controlFlowBorrow = lang::Frontend().analyze(
       "control-flow-string-borrow.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); if (true) { char first = "
       "*iterator; } value.push_back('!'); return 0; }\n",
@@ -4919,7 +4919,7 @@ int main() {
 
   const lang::FrontendResult bothBranchBorrow = lang::Frontend().analyze(
       "both-branch-string-borrow.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); if (true) { char left = "
       "*iterator; } else { char right = *iterator; } value.push_back('!'); "
@@ -4931,7 +4931,7 @@ int main() {
 
   const lang::FrontendResult nestedConditionalBorrow = lang::Frontend().analyze(
       "nested-conditional-string-borrow.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); if (true) { if (true) { "
       "char first = *iterator; } } value.push_back('!'); return 0; }\n",
@@ -4963,7 +4963,7 @@ int main() {
 
   const lang::FrontendResult conditionalCarrierMove = lang::Frontend().analyze(
       "conditional-carrier-move.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); if (true) { mut auto moved = "
       "std::move(iterator); char first = *moved; } value.push_back('!'); "
@@ -4979,7 +4979,7 @@ int main() {
   const lang::FrontendResult terminatingConditionalBorrow =
       lang::Frontend().analyze(
           "terminating-conditional-string-borrow.gti",
-          "#include <std/string>\n"
+          "import std.string;\n"
           "int consume(bool choose) { mut std::string value = "
           "std::string(\"gti\"); mut auto iterator = value.begin(); if "
           "(choose) { char first = *iterator; return 1; } else { return 0; "
@@ -4992,7 +4992,7 @@ int main() {
 
   const lang::FrontendResult laterConditionalUse = lang::Frontend().analyze(
       "later-conditional-string-borrow.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); if (true) { char first = "
       "*iterator; } value.push_back('!'); char second = *iterator; "
@@ -5007,7 +5007,7 @@ int main() {
 
   const lang::FrontendResult branchLocalInvalidation = lang::Frontend().analyze(
       "branch-local-string-invalidation.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); if (value.empty()) { char first = "
       "*iterator; value.push_back('!'); } else { value.push_back('?'); } "
@@ -5136,7 +5136,7 @@ int main() {
   const lang::FrontendResult unbracedBranchInvalidation =
       lang::Frontend().analyze(
           "unbraced-branch-invalidation.gti",
-          "#include <std/string>\n"
+          "import std.string;\n"
           "int main() { mut std::string value = std::string(\"gti\"); "
           "mut auto iterator = value.begin(); mut char observed = 'x'; if "
           "(true) observed = *iterator; else value.push_back('!'); "
@@ -5255,7 +5255,7 @@ int main() {
 
   const lang::FrontendResult elseIfInvalidation = lang::Frontend().analyze(
       "else-if-invalidation.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int choose(bool left, bool middle) { mut std::string value = "
       "std::string(\"gti\"); mut auto iterator = value.begin(); mut char "
       "observed = 'x'; if (left) { value.push_back('!'); } else if "
@@ -5335,7 +5335,7 @@ int main() {
   const lang::FrontendResult nestedBranchInvalidation =
       lang::Frontend().analyze(
           "nested-branch-string-invalidation.gti",
-          "#include <std/string>\n"
+          "import std.string;\n"
           "int main() { mut std::string value = std::string(\"gti\"); "
           "mut auto iterator = value.begin(); if (true) { if (true) { "
           "char first = *iterator; } value.push_back('!'); } return 0; }\n",
@@ -5467,7 +5467,7 @@ int main() {
 
   const lang::FrontendResult nestedArmInvalidations = lang::Frontend().analyze(
       "nested-arm-string-invalidations.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); if (true) { if "
       "(value.empty()) { char first = *iterator; "
@@ -5481,7 +5481,7 @@ int main() {
 
   const lang::FrontendResult terminatingNestedArm = lang::Frontend().analyze(
       "terminating-nested-arm.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int consume(bool stop) { mut std::string value = "
       "std::string(\"gti\"); mut auto iterator = value.begin(); if "
       "(true) { if (stop) { char first = *iterator; return 1; } "
@@ -5494,7 +5494,7 @@ int main() {
 
   const lang::FrontendResult terminatingReturnUse = lang::Frontend().analyze(
       "terminating-return-borrow-use.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "char choose(bool stop) { mut std::string value = "
       "std::string(\"gti\"); mut auto iterator = value.begin(); if "
       "(stop) { return *iterator; } value.push_back('!'); return value[0]; "
@@ -5508,7 +5508,7 @@ int main() {
 
   const lang::FrontendResult terminatingConflictPath = lang::Frontend().analyze(
       "terminating-conflict-path.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int consume(bool stop) { mut std::string value = "
       "std::string(\"gti\"); mut auto iterator = value.begin(); if "
       "(true) { if (stop) { value.push_back('!'); return 1; } char "
@@ -5521,7 +5521,7 @@ int main() {
 
   const lang::FrontendResult allTerminatingConflicts = lang::Frontend().analyze(
       "all-terminating-conflicts.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "char choose(bool left) { mut std::string value = "
       "std::string(\"gti\"); mut auto iterator = value.begin(); if "
       "(left) { char first = *iterator; value.push_back('!'); return "
@@ -5575,7 +5575,7 @@ int main() {
 
   const lang::FrontendResult nestedBothReturn = lang::Frontend().analyze(
       "nested-both-return.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "char choose(bool outer, bool inner) { mut std::string value = "
       "std::string(\"gti\"); mut auto iterator = value.begin(); if "
       "(outer) { if (inner) { return *iterator; } else { return "
@@ -5656,7 +5656,7 @@ int main() {
 
   const lang::FrontendResult literalTerminatingArm = lang::Frontend().analyze(
       "literal-terminating-arm.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "char choose(bool outer) { mut std::string value = "
       "std::string(\"gti\"); mut auto iterator = value.begin(); if "
       "(outer) { if (true) { return *iterator; } } else { "
@@ -5671,7 +5671,7 @@ int main() {
   const lang::FrontendResult deeplyNestedInvalidations =
       lang::Frontend().analyze(
           "deeply-nested-string-invalidations.gti",
-          "#include <std/string>\n"
+          "import std.string;\n"
           "int main() { mut std::string value = std::string(\"gti\"); "
           "mut auto iterator = value.begin(); if (true) { if (true) { if "
           "(true) { char first = *iterator; value.push_back('!'); } else "
@@ -5683,7 +5683,7 @@ int main() {
 
   const lang::FrontendResult mutationBeforeNestedUse = lang::Frontend().analyze(
       "mutation-before-nested-use.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); if (true) { if (true) { "
       "value.push_back('!'); char first = *iterator; } } return 0; }\n",
@@ -5707,7 +5707,7 @@ int main() {
 
   const lang::FrontendResult loopBorrow = lang::Frontend().analyze(
       "loop-string-borrow.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); mut int count = 0; while (count "
       "< 2) { char current = *iterator; count++; } value.push_back('!'); "
@@ -5811,7 +5811,7 @@ int main() {
 
   const lang::FrontendResult zeroIterationLoop = lang::Frontend().analyze(
       "zero-iteration-loop-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); while (false) { char current = "
       "*iterator; } value.push_back('!'); return 0; }\n",
@@ -5822,7 +5822,7 @@ int main() {
 
   const lang::FrontendResult unbracedLoop = lang::Frontend().analyze(
       "unbraced-loop-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut char observed = '?'; while "
       "(false) observed = *iterator; value.push_back('!'); return 0; }\n",
@@ -5839,7 +5839,7 @@ int main() {
 
   const lang::FrontendResult breakLoop = lang::Frontend().analyze(
       "break-loop-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); while (true) { char current = "
       "*iterator; break; } value.push_back('!'); return 0; }\n",
@@ -5850,7 +5850,7 @@ int main() {
 
   const lang::FrontendResult continueLoop = lang::Frontend().analyze(
       "continue-loop-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut int count = 0; while (count < 2) "
       "{ count++; if (count == 1) { continue; } char current = *iterator; "
@@ -5862,7 +5862,7 @@ int main() {
 
   const lang::FrontendResult forLoop = lang::Frontend().analyze(
       "for-loop-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); for (mut int count = 0; count < 2; "
       "count++) { char current = *iterator; if (count == 0) { continue; } "
@@ -5874,7 +5874,7 @@ int main() {
 
   const lang::FrontendResult doWhileLoop = lang::Frontend().analyze(
       "do-while-loop-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut int count = 0; do { char current "
       "= *iterator; count++; if (count < 2) { continue; } } while (count < "
@@ -5886,7 +5886,7 @@ int main() {
 
   const lang::FrontendResult loopReturn = lang::Frontend().analyze(
       "loop-return-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int run(bool leave) { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); while (leave) { char current = "
       "*iterator; return 0; } value.push_back('!'); return 0; } int main() "
@@ -5898,7 +5898,7 @@ int main() {
 
   const lang::FrontendResult nestedLoops = lang::Frontend().analyze(
       "nested-loop-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut int outer = 0; while (outer < 2) "
       "{ mut int inner = 0; while (inner < 1) { char current = *iterator; "
@@ -5910,7 +5910,7 @@ int main() {
 
   const lang::FrontendResult perIterationInnerLoop = lang::Frontend().analyze(
       "per-iteration-inner-loop-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "int outer = 0; while (outer < 2) { mut auto iterator = "
       "value.begin(); mut int inner = 0; while (inner < 1) { char "
@@ -5923,7 +5923,7 @@ int main() {
 
   const lang::FrontendResult forInitializerLoan = lang::Frontend().analyze(
       "for-initializer-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); for "
       "(mut auto iterator = value.begin(); false; ++iterator) { char "
       "current = *iterator; } value.push_back('!'); return 0; }\n",
@@ -5959,7 +5959,7 @@ int main() {
 
   const lang::FrontendResult transferredForLoan = lang::Frontend().analyze(
       "transferred-for-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto original = value.begin(); for (mut auto iterator = "
       "std::move(original); false; ++iterator) { char current = *iterator; "
@@ -6025,7 +6025,7 @@ int main() {
 
   const lang::FrontendResult transferInsideLoop = lang::Frontend().analyze(
       "transfer-inside-loop.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); while (false) { mut auto moved = "
       "std::move(iterator); } value.push_back('!'); return 0; }\n",
@@ -6041,7 +6041,7 @@ int main() {
 
   const lang::FrontendResult loopConditionUse = lang::Frontend().analyze(
       "loop-condition-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut int count = 0; while (*iterator "
       "== 'g' and count < 1) { count++; } value.push_back('!'); return 0; "
@@ -6053,7 +6053,7 @@ int main() {
 
   const lang::FrontendResult forIncrementUse = lang::Frontend().analyze(
       "for-increment-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); for (mut int count = 0; count < 2; "
       "++iterator) { count++; } value.push_back('!'); return 0; }\n",
@@ -6064,7 +6064,7 @@ int main() {
 
   const lang::FrontendResult perIterationConditional = lang::Frontend().analyze(
       "per-iteration-conditional-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "int count = 0; while (count < 2) { mut auto iterator = "
       "value.begin(); if (count == 0) { char current = *iterator; } "
@@ -6077,7 +6077,7 @@ int main() {
 
   const lang::FrontendResult backedgeInvalidation = lang::Frontend().analyze(
       "loop-backedge-invalidation.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut int count = 0; while (count < 2) "
       "{ char current = *iterator; value.push_back('!'); count++; } return "
@@ -6103,7 +6103,7 @@ int main() {
 
   const lang::FrontendResult continueInvalidation = lang::Frontend().analyze(
       "continue-loop-invalidation.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut int count = 0; while (*iterator "
       "== 'g' and count < 2) { value.push_back('!'); count++; continue; } "
@@ -6119,7 +6119,7 @@ int main() {
 
   const lang::FrontendResult breakPathInvalidation = lang::Frontend().analyze(
       "break-path-invalidation.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); while (true) { char current = "
       "*iterator; value.push_back('!'); break; } return 0; }\n",
@@ -6130,7 +6130,7 @@ int main() {
 
   const lang::FrontendResult switchBreakInvalidation = lang::Frontend().analyze(
       "switch-break-loop-invalidation.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut int count = 0; while (count < "
       "1) { switch (count) { case 0: { char current = *iterator; "
@@ -6148,7 +6148,7 @@ int main() {
 
   const lang::FrontendResult laterUseAfterLoop = lang::Frontend().analyze(
       "later-use-after-loop.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); while (false) { char current = "
       "*iterator; } value.push_back('!'); char later = *iterator; return "
@@ -6163,7 +6163,7 @@ int main() {
 
   const lang::FrontendResult conditionalInsideLoop = lang::Frontend().analyze(
       "conditional-inside-loop.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
       "mut auto iterator = value.begin(); while (false) if (true) { "
       "char first = *iterator; value.push_back('!'); } else { "
@@ -6179,7 +6179,7 @@ int main() {
 
   const lang::FrontendResult scopedBorrow = lang::Frontend().analyze(
       "scoped-string-borrow.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); { "
       "mut auto iterator = value.begin(); char first = *iterator; } "
       "value.push_back('!'); return 0; }\n",
@@ -8125,7 +8125,7 @@ int use() {
          "value because assignment could reseat their dependency");
 
   const std::string mutableCopySource = R"(
-#include <std/vector>
+import std.vector;
 int use() {
   mut std::vector<int> values = std::vector<int>({1});
   mut auto cursor = values.begin_mut();
@@ -8145,7 +8145,7 @@ int use() {
          "the attempted source alias");
 
   const std::string aliasLifetimeSource = R"(
-#include <std/vector>
+import std.vector;
 int main() {
   mut std::vector<int> values = std::vector<int>({1, 2, 3});
   {
@@ -8170,7 +8170,7 @@ int main() {
          "leave the shared owner loan live until the final alias ends");
 
   const std::string liveAliasSource = R"(
-#include <std/vector>
+import std.vector;
 int use() {
   mut std::vector<int> values = std::vector<int>({1, 2});
   mut auto first = values.begin();
@@ -8202,8 +8202,8 @@ void testProjectedAccessorReturnLoanOrder() {
   const auto stdlib = standardLibraryPrelude().parent_path();
   const auto frontend =
       lang::Frontend().analyze("projected-accessor-return.gti", R"(
-#include <std/vector>
-#include <std/memory>
+import std.vector;
+import std.memory;
 struct Entry { mut int value; Entry(int v) : value(v) {} };
 class Table {
   mut std::vector<std::unique_ptr<Entry>> entries{};
@@ -8418,8 +8418,8 @@ int main() {
 void testReferenceArgumentRuntimePlaceCoherence() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "reference-argument-place-coherence.gti", R"(
-#include <std/vector>
-#include <std/iterator>
+import std.vector;
+import std.iterator;
 
 bool has_any<Iterator, Sentinel>(Iterator& first, Sentinel& last)
   requires std::input_iterator<Iterator> &&
@@ -8506,7 +8506,7 @@ void testCallSiblingArgumentBorrowConflicts() {
   // live while the second argument evaluates its receiver read. Semantics
   // must reject this before MIR construction refuses the overlap.
   const std::string mutThenReadSource = R"(
-#include <std/vector>
+import std.vector;
 
 void consume<A, B>(A first, B last) {}
 
@@ -8537,7 +8537,7 @@ int use() {
   // The same conflict without any borrow in the read result: size() only
   // reads the owner ephemerally, but the exclusive loan is still live.
   const std::string mutThenPlainReadSource = R"(
-#include <std/vector>
+import std.vector;
 
 void consume<A, B>(A first, B count) {}
 
@@ -8564,7 +8564,7 @@ int use() {
   // Two exclusive borrows of one owner in a single call stay rejected by the
   // pairwise overlap check.
   const std::string mutThenMutSource = R"(
-#include <std/vector>
+import std.vector;
 
 void consume<A, B>(A first, B last) {}
 
@@ -8587,7 +8587,7 @@ int use() {
   // Reversed order is sound: end() finishes its ephemeral receiver read
   // before begin_mut() creates the exclusive loan.
   const std::string readThenMutSource = R"(
-#include <std/vector>
+import std.vector;
 
 void consume<A, B>(A last, B first) {}
 
@@ -8609,7 +8609,7 @@ int use() {
   // exclusive iterator is consumed inside the first operand, but its owner
   // loan lasts through the full expression, so the sibling read conflicts.
   const std::string consumedCarrierSource = R"(
-#include <std/vector>
+import std.vector;
 
 int32_t drain<Iterator>(Iterator cursor) {
   return 0;
@@ -8641,7 +8641,7 @@ int use() {
   // The mirrored nesting: a read carrier consumed inside the first operand
   // still holds a read loan, so a later operand mutation conflicts.
   const std::string nestedReadThenMutSource = R"(
-#include <std/vector>
+import std.vector;
 
 int32_t drain<Iterator>(Iterator cursor) {
   return 0;
@@ -8675,7 +8675,7 @@ int use() {
   // A completed nested mutable-reference call holds no loan afterwards, so
   // a later sibling read of the same owner stays valid.
   const std::string completedMutationSource = R"(
-#include <std/vector>
+import std.vector;
 
 int32_t bump(mut std::vector<int32_t>& sink) {
   sink.push_back(9);
@@ -8700,7 +8700,7 @@ int use() {
 
   // Borrows of two different owners in one call never overlap.
   const std::string twoOwnersSource = R"(
-#include <std/vector>
+import std.vector;
 
 void consume<A, B>(A first, B last) {}
 
@@ -8723,9 +8723,9 @@ int use() {
 void testForwardIteratorContractsAndBinarySearch() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "forward-iterator-contracts.gti", R"(
-#include <std/algorithm>
-#include <std/iterator>
-#include <std/vector>
+import std.algorithm;
+import std.iterator;
+import std.vector;
 
 int main() {
   mut std::vector<int32_t> values =
@@ -8856,7 +8856,7 @@ int main() {
   }
 
   const std::string copyBlockedSource = R"(
-#include <std/iterator>
+import std.iterator;
 
 class CopyBlockedIterator {
   int& value;
@@ -8896,7 +8896,7 @@ int use() {
       "the constrained call");
 
   const std::string distinctSentinelSource = R"(
-#include <std/iterator>
+import std.iterator;
 
 class DistinctSentinel { public: DistinctSentinel() = default; };
 
@@ -8935,8 +8935,8 @@ int use() {
          "the constrained call with the structural reason");
 
   const std::string mutableCursorSource = R"(
-#include <std/iterator>
-#include <std/vector>
+import std.iterator;
+import std.vector;
 
 bool accepts_forward<Iterator>(Iterator iterator)
   requires std::forward_iterator<Iterator> {
@@ -8964,8 +8964,8 @@ int use() {
       "constrained call");
 
   const std::string mutCursorReadReceiverSource = R"(
-#include <std/iterator>
-#include <std/vector>
+import std.iterator;
+import std.vector;
 
 bool probe<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::input_iterator<Iterator> &&
@@ -8997,8 +8997,8 @@ int main() {
          "storage, not the carrier object itself");
 
   const std::string mutCursorLoopSource = R"(
-#include <std/iterator>
-#include <std/vector>
+import std.iterator;
+import std.vector;
 
 int32_t drain<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::input_iterator<Iterator> &&
@@ -9037,9 +9037,9 @@ int main() {
 void testWritableAndMovementIteratorCapabilities() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "writable-movement-iterators.gti", R"(
-#include <std/algorithm>
-#include <std/iterator>
-#include <std/vector>
+import std.algorithm;
+import std.iterator;
+import std.vector;
 
 int main() {
   mut std::vector<int32_t> source = std::vector<int32_t>();
@@ -9085,8 +9085,8 @@ int main() {
 
   const lang::FrontendResult readDestination = lang::Frontend().analyze(
       "writable-read-destination.gti", R"(
-#include <std/algorithm>
-#include <std/vector>
+import std.algorithm;
+import std.vector;
 
 int main() {
   mut std::vector<int32_t> source = std::vector<int32_t>();
@@ -9104,7 +9104,7 @@ int main() {
 
   const lang::FrontendResult forwardOnly = lang::Frontend().analyze(
       "bidirectional-forward-only.gti", R"(
-#include <std/iterator>
+import std.iterator;
 
 class ForwardOnly {
   mut int32_t value = 0;
@@ -9135,7 +9135,7 @@ int use() {
 
   const lang::FrontendResult noJumps = lang::Frontend().analyze(
       "random-access-no-jumps.gti", R"(
-#include <std/iterator>
+import std.iterator;
 
 class StepOnly {
   mut int32_t value = 0;
@@ -9167,8 +9167,8 @@ int use() {
 
   const lang::FrontendResult wrongElement = lang::Frontend().analyze(
       "writes-to-wrong-element.gti", R"(
-#include <std/iterator>
-#include <std/vector>
+import std.iterator;
+import std.vector;
 
 void stamp<Iterator>(mut Iterator iterator, int16_t value)
   requires std::writes_to<Iterator, int16_t> {
@@ -9190,7 +9190,7 @@ int use() {
 
   const lang::FrontendResult unsizedSentinel = lang::Frontend().analyze(
       "sized-sentinel-missing.gti", R"(
-#include <std/iterator>
+import std.iterator;
 
 class PlainSentinel { public: PlainSentinel() = default; };
 
@@ -9223,7 +9223,7 @@ int use() {
 
   const lang::FrontendResult userCursor = lang::Frontend().analyze(
       "user-cursor-symbolic-writes.gti", R"(
-#include <std/iterator>
+import std.iterator;
 
 class grid_cursor {
   mut int32_t[6] cells = {};
@@ -9294,9 +9294,9 @@ void testCompleteRangeConceptsAndAlgorithms() {
   }
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "complete-range-concepts.gti", R"(
-#include <std/algorithm>
-#include <std/iterator>
-#include <std/vector>
+import std.algorithm;
+import std.iterator;
+import std.vector;
 
 class number_range {
   mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
@@ -9444,7 +9444,7 @@ int main() {
 
   const lang::FrontendResult missingRange = lang::Frontend().analyze(
       "complete-range-missing-endpoints.gti", R"(
-#include <std/iterator>
+import std.iterator;
 class not_a_range { public: not_a_range() = default; };
 bool accepts<Range>(Range& values) requires std::input_range<Range> {
   for (auto& value : values) {}
@@ -9464,7 +9464,7 @@ int main() {
 
   const lang::FrontendResult wrongElement = lang::Frontend().analyze(
       "complete-range-wrong-element.gti", R"(
-#include <std/iterator>
+import std.iterator;
 bool accepts<Range>(Range& values) requires std::range_of<Range, int16_t> {
   return true;
 }
@@ -9483,8 +9483,8 @@ int main() {
 
   const lang::FrontendResult missingMutable = lang::Frontend().analyze(
       "complete-range-missing-mutable.gti", R"(
-#include <std/iterator>
-#include <std/vector>
+import std.iterator;
+import std.vector;
 class read_range {
   mut std::vector<int32_t> values = std::vector<int32_t>({1});
 public:
@@ -9513,8 +9513,8 @@ int main() {
 
   const lang::FrontendResult wrongSize = lang::Frontend().analyze(
       "complete-range-wrong-size.gti", R"(
-#include <std/iterator>
-#include <std/vector>
+import std.iterator;
+import std.vector;
 class wrong_size_range {
   mut std::vector<int32_t> values = std::vector<int32_t>({1});
 public:
@@ -9543,8 +9543,8 @@ int main() {
 
   const lang::FrontendResult wrongPredicate = lang::Frontend().analyze(
       "complete-range-wrong-predicate.gti", R"(
-#include <std/functional>
-#include <std/iterator>
+import std.functional;
+import std.iterator;
 class wrong_predicate {
 public:
   bool operator()(int16_t& value) { return value > 0; }
@@ -9569,7 +9569,7 @@ int main() {
 
   const lang::FrontendResult directEndpoint = lang::Frontend().analyze(
       "complete-range-direct-endpoint.gti", R"(
-#include <std/iterator>
+import std.iterator;
 bool accepts<Range>(Range& values) requires std::input_range<Range> {
   auto iterator = values.begin();
   return true;
@@ -10068,7 +10068,7 @@ int main() { return nested_owner_retention() - 1; }
 
 void testSwitchAndBreakLoanFlow() {
   const std::string source = R"(
-#include <std/string>
+import std.string;
 
 int switch_merge(int selected) {
   mut std::string value = std::string("gti");
@@ -10440,7 +10440,7 @@ int main() {
 
   const lang::FrontendResult continuePath = lang::Frontend().analyze(
       "continue-loan-path.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut int count = 0; while (count < 2) "
       "{ char current = *iterator; value.push_back('!'); count++; continue; "
@@ -10453,7 +10453,7 @@ int main() {
 
   const lang::FrontendResult separatedBreak = lang::Frontend().analyze(
       "separated-break-loan-path.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); while (true) { char current = "
       "*iterator; value.push_back('!'); int marker = 0; break; } return 0; "
@@ -10466,7 +10466,7 @@ int main() {
 
   const lang::FrontendResult laterUse = lang::Frontend().analyze(
       "later-use-after-break.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); while (true) { char current = "
       "*iterator; value.push_back('!'); break; } char later = *iterator; "
@@ -10478,7 +10478,7 @@ int main() {
 
   const lang::FrontendResult nestedSwitchBreak = lang::Frontend().analyze(
       "switch-break-in-loop.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut int count = 0; while (count < 2) "
       "{ switch (count) { case 0: char current = *iterator; "
@@ -10493,7 +10493,7 @@ int main() {
 
 void testSharedReadOnlyLoanAliases() {
   const std::string source = R"(
-#include <std/string>
+import std.string;
 
 int sequential_aliases() {
   mut std::string value = std::string("gti");
@@ -10742,7 +10742,7 @@ int loop_aliases() {
 
   const lang::FrontendResult laterUse = lang::Frontend().analyze(
       "shared-alias-later-use.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); std::detail::storage_iterator<char>& "
       "alias = iterator; char first = *iterator; value.push_back('!'); "
@@ -10754,7 +10754,7 @@ int loop_aliases() {
 
   const lang::FrontendResult mutableAlias = lang::Frontend().analyze(
       "mutable-loan-alias.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut "
       "std::detail::storage_iterator<char>& alias = iterator; return 0; }\n",
@@ -10765,7 +10765,7 @@ int loop_aliases() {
          "access");
   const auto mutableElement = lang::Frontend().analyze(
       "mutable-carrier-read-only-element.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut "
       "std::detail::storage_iterator<char>& alias = iterator; *alias = 'x'; "
@@ -11965,7 +11965,7 @@ int main() {
 
   const lang::FrontendResult publicStorage = lang::Frontend().analyze(
       "public-storage.gti", R"(
-#include <std/memory>
+import std.memory;
 
 int main() {
   std::allocator allocator = std::allocator();
@@ -12016,7 +12016,7 @@ int main() {
 
   const lang::FrontendResult checkedConstructorStorage =
       lang::Frontend().analyze("checked-constructor-storage.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class checked_value {
   mut int32_t stored;
@@ -12130,7 +12130,7 @@ int main() {
 
   const lang::FrontendResult invalidPublicStorage = lang::Frontend().analyze(
       "invalid-public-storage.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class fixed_value {
 public:
@@ -12337,7 +12337,7 @@ int main() {
 void testVariadicStorageConstructionAndVector() {
   const lang::FrontendResult frontend =
       analyzeSourceStorageFixture("variadic-storage-construction.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class DefaultValue {
   int32_t stored = 17;
@@ -12551,8 +12551,8 @@ int main() {
 
   const lang::FrontendResult vectorFrontend = lang::Frontend().analyze(
       "standard-vector-emplace.gti", R"(
-#include <std/vector>
-#include <std/memory>
+import std.vector;
+import std.memory;
 
 class Reading {
   int32_t left;
@@ -12657,7 +12657,7 @@ int main() {
 
   const lang::FrontendResult forwardedPointers = lang::Frontend().analyze(
       "standard-vector-forwarded-pointers.gti", R"(
-#include <std/vector>
+import std.vector;
 
 class PointerBox {
   const int32_t* pointer = nullptr;
@@ -12692,7 +12692,7 @@ int main() {
 
   const lang::FrontendResult rangeMutation = lang::Frontend().analyze(
       "vector-range-mutation.gti", R"(
-#include <std/vector>
+import std.vector;
 
 int main() {
   mut std::vector<int32_t> values = std::vector<int32_t>();
@@ -13994,7 +13994,7 @@ int main() {
 // members; a referent with none is an ordinary source error.
 void testArrowNonClassReferents() {
   const auto analyze = [](std::string_view name, std::string source) {
-    source.insert(0, "#include <std/string>\n#include <std/optional>\n");
+    source.insert(0, "import std.string;\nimport std.optional;\n");
     return lang::Frontend().analyze(
         std::filesystem::temp_directory_path() / std::string(name),
         std::move(source), {standardLibraryPrelude()}, {},
@@ -15081,7 +15081,7 @@ int main() {
 
   const lang::FrontendResult concreteGeneric = lang::Frontend().analyze(
       "generic-range-for.gti", R"(
-#include <std/vector>
+import std.vector;
 int32_t count_all<T>(std::vector<T>& values) requires std::vector_element<T> {
   mut int32_t total = 0;
   for (auto& value : values) { total = total + 1; }
@@ -15406,8 +15406,8 @@ int main() {
 
   const lang::FrontendResult sharedTraversal = lang::Frontend().analyze(
       "nested-read-only-range-loans.gti", R"(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 class Holder {
 public:
@@ -15765,7 +15765,7 @@ int main() { return generic_pair() + three_siblings(); }
 
 void testExpectedPayloadRangeLoans() {
   const std::string source = R"(
-#include <std/string>
+import std.string;
 
 expected<std::string, int32_t> make_text() {
   return std::string("ab");
@@ -16033,7 +16033,7 @@ int main() {
          "payload range plans");
 
   const std::string invalidPrefix = R"(
-#include <std/string>
+import std.string;
 
 expected<std::string, int32_t> make_text() {
   return std::string("ab");
@@ -16100,7 +16100,7 @@ int main() { return 0; }
 
   const lang::FrontendResult owningTemporary = lang::Frontend().analyze(
       "owning-temporary-expected-payload-range.gti", R"(
-#include <std/string>
+import std.string;
 expected<std::string, int32_t> make_text() {
   return std::string("ab");
 }
@@ -16331,7 +16331,7 @@ int main() { return mutate_arrays() + return_from_mutable_loop(); }
 
   const lang::FrontendResult standardVector = lang::Frontend().analyze(
       "mutable-vector-range.gti", R"(
-#include <std/vector>
+import std.vector;
 
 std::vector<int32_t> make_values() {
   mut std::vector<int32_t> values = std::vector<int32_t>();
@@ -16483,7 +16483,7 @@ int& escape_element() {
 
   const lang::FrontendResult invalidVector = lang::Frontend().analyze(
       "invalid-mutable-vector-range.gti", R"(
-#include <std/vector>
+import std.vector;
 
 int reserve_during_iteration() {
   mut std::vector<int32_t> values = std::vector<int32_t>();
@@ -16959,7 +16959,7 @@ int main() {
 
   const lang::FrontendResult ownedMoveCapture = lang::Frontend().analyze(
       "owned-move-capture.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class Owner {
   int value = 5;
@@ -17266,7 +17266,7 @@ int main() {
 
   const lang::FrontendResult parameterMoveCapture = lang::Frontend().analyze(
       "parameter-move-capture.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class Owner {
   int value = 3;
@@ -17299,7 +17299,7 @@ int main() { return capture_parameter(Owner()) - 3; }
 
   const lang::FrontendResult invalidOwnedMoveCapture = lang::Frontend().analyze(
       "invalid-owned-move-capture.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class Owner {
 public:
@@ -20573,7 +20573,7 @@ int main() {
 
   const lang::FrontendResult owner =
       analyzeTrustedPreludeFixture("unique-owner-stage.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class Entity {
 public:
@@ -21020,7 +21020,7 @@ Resource global_resource{};
 
   const auto temporaryMutex =
       analyzeTrustedPreludeFixture("ephemeral-mutex-escape.gti", R"(
-#include <std/mutex>
+import std.mutex;
 int main() {
   std::mutex<int> owner{1};
   int& escaped = owner.lock().get();
@@ -23632,8 +23632,8 @@ int main() {
 // every use of the result is GTI-S2003 at the assignment operator.
 void testMoveOnlyAssignmentResultUse() {
   const std::string prelude = R"(
-#include <std/memory>
-#include <std/utility>
+import std.memory;
+import std.utility;
 class Tracked {
 public:
   int32_t x;

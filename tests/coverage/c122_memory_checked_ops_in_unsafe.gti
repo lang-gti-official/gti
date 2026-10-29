@@ -4,9 +4,9 @@
 // Before the status-70 report, every live owner must be destroyed in reverse
 // order: nested block local, helper local, by-value owned parameter, caller
 // local, outer guard.
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.vector;
 
 class Guard {
   std::string name;

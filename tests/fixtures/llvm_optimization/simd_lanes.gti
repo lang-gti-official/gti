@@ -1,4 +1,4 @@
-#include <std/simd>
+import std.simd;
 
 int lanes<std::floating_point T, uint64_t N>() {
   std::simd<T, N> two{T(2)};

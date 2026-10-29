@@ -1,5 +1,5 @@
 // A41: passing a fixed-array argument through storage::emplace fails with no diagnostic.
-#include <std/memory>
+import std.memory;
 class Holder {
   int32_t values[3];
 public:

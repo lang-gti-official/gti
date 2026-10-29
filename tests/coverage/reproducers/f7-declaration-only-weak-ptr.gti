@@ -1,6 +1,6 @@
 // F7: weak_ptr is declaration-only in <std/memory>; calling a member reaches
 // the native linker as an undefined mangled symbol instead of a GTI diagnostic.
-#include <std/memory>
+import std.memory;
 int main() {
   std::weak_ptr<int32_t> observer{};
   return observer.expired() ? 0 : 1;

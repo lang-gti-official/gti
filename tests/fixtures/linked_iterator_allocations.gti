@@ -1,5 +1,5 @@
-#include <std/deque>
-#include <std/list>
+import std.deque;
+import std.list;
 
 extern "C" {
   void adoption_count_begin();

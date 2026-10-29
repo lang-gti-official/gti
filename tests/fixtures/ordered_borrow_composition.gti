@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 
 struct Node {
   int32_t value = 0;

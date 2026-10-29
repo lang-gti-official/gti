@@ -1,6 +1,6 @@
 # Filesystem
 
-`<std/filesystem>` provides owning lexical paths and recoverable host filesystem
+`std.filesystem` provides owning lexical paths and recoverable host filesystem
 operations. Public types, error mapping, iteration policy, and deterministic
 cleanup are ordinary GTI. Host operations use the versioned bounded C ABI in
 `runtime/include/gti/filesystem.h`; no public filesystem name has compiler
@@ -93,8 +93,8 @@ valid when the iterator advances or is destroyed. Iterator destruction closes
 its native resources through normal GTI cleanup, including failure unwinding.
 
 ```gti
-#include <std/filesystem>
-#include <std/string>
+import std.filesystem;
+import std.string;
 
 expected<void, std::filesystem::errc> list(std::filesystem::path& directory) {
   mut auto entries = ?std::filesystem::directory_iterator::open(directory);

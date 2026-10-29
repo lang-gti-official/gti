@@ -202,7 +202,7 @@ declarations and its explicit re-exports. Publication is per declaration and
 overload, not per spelling: exporting one overload does not export the others.
 Private implementation declarations and private imports remain usable while
 checking their defining bodies and concrete generic instances. Consumers cannot
-name a private declaration through qualification or an include bypass. A public
+name a private declaration through qualification or a dependency-loading bypass. A public
 function can return a private nominal type; an inferred value retains that exact
 type and ordinary member access, without making its private type name visible.
 Modules do not introduce namespaces or change existing program-wide
@@ -1272,10 +1272,10 @@ and `unsafe` must match. Parameter names may differ. Access, `static`, `virtual`
 declaration. A definition must be in the owner's namespace or an enclosing
 namespace and in the same package ownership domain. Duplicate/mismatched
 definitions and foreign-package definitions are errors (`GTI-S2120`).
-The definition's source file must directly include or import the types it
+The definition's source file must directly import the types it
 spells, including return and parameter types. Including the owner's declaration
-does not make that declaration's includes transitively visible; an invisible
-signature type reports `GTI-S2024` with its direct-include guidance.
+does not make that declaration's imports transitively visible; an invisible
+signature type reports `GTI-S2024` with its direct-import guidance.
 
 A `borrowed_from` parameter name is resolved on that original declaration and
 retained by parameter position. Renaming parameters in the definition does not
@@ -2187,7 +2187,7 @@ there is no run-time loop and no run-time sequence value.
 
 ### 3.12.2 Reflection Metaobjects
 
-`<std/meta>` describes GTI declarations with ordinary values. A metaobject is
+`std.meta` describes GTI declarations with ordinary values. A metaobject is
 an empty value whose generic arguments carry the canonical identity of what it
 describes: `std::meta::type<T>` for a type and `std::meta::field<T, I>` for
 instance field `I` of `T` in declaration order. `std::meta::fields_of<T>()`
@@ -2245,7 +2245,7 @@ Reflection consumed at compile time leaves no run-time representation:
 metaobjects are empty values, queries fold to constants, and reflected access
 lowers to ordinary projections. A name used at run time is an ordinary string
 literal. `@compiler_type("...")` and the `gti_internal::meta_*` operations
-that `<std/meta>` is built on are compiler-bound declarations of that trusted
+that `std.meta` is built on are compiler-bound declarations of that trusted
 unit and are unavailable to application code (`GTI-S2049`, `GTI-S2058`).
 
 ### 3.12.3 Declared Attributes

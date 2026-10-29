@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 struct Point { int32_t x; int32_t y; Point(int32_t x, int32_t y) : x(x), y(y) {} };
 int main() {
   mut int32_t[2] pair = {3, 4};

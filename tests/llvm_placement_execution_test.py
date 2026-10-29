@@ -372,7 +372,7 @@ def main():
             source = work / f"{name}.gti"
             prelude = PINNED
             source.write_text((root / "examples/llvm/immovable-placement.gti").read_text()
-                              if text is None else '#include <std/panic>\n' + prelude + text,
+                              if text is None else 'import std.panic;\n' + prelude + text,
                               encoding="utf-8")
             for endpoint in endpoints[2:] if name in COMPARATOR_GAPS else endpoints:
                 result = execute(gti, root, work / f"{name}-{endpoint}", source, endpoint, env)
@@ -384,7 +384,7 @@ def main():
             if selected and selected != name:
                 continue
             source = work / f"{name}.gti"
-            source.write_text('#include <std/panic>\n' + PINNED + text, encoding="utf-8")
+            source.write_text('import std.panic;\n' + PINNED + text, encoding="utf-8")
             observables = []
             expected_message, wrong_cleanup = FAILURE_MESSAGES[name]
             for endpoint in endpoints:
@@ -401,7 +401,7 @@ def main():
             if selected and selected != name:
                 continue
             source = work / f"{name}.gti"
-            source.write_text('#include <std/panic>\n' + PINNED + text, encoding="utf-8")
+            source.write_text('import std.panic;\n' + PINNED + text, encoding="utf-8")
             for backend in ("cpp", "llvm"):
                 output = work / f"reject-{name}-{backend}"
                 output.write_text("preserved", encoding="utf-8")

@@ -215,7 +215,7 @@ void addIncludeSuggestions(
       requested.insert(diagnostic.missingIncludeName);
     }
   }
-  // Adding an include cannot repair syntax in the frozen source graph. Every
+  // Adding an import cannot repair syntax in the frozen source graph. Every
   // speculative edit below already requires valid syntax, so recovered parser
   // errors cannot produce a fix and must not trigger a workspace-wide search.
   if (requested.empty() || !result.sourceValid || !result.syntaxValid)
@@ -247,9 +247,9 @@ void addIncludeSuggestions(
   auto searchCandidates = candidates(std::move(roots), overrides);
   // Loaded-but-invisible declarations already belong to this compilation's
   // source authority, including virtual/overlay-only compiler-library inputs.
-  // Keep their direct-include advice even when no project search was requested.
+  // Keep their module-import advice even when no project search was requested.
   for (const auto &unit : result.sourceGraph.sourceUnits()) {
-    if (unit.entry || unit.prelude || unit.moduleDeclaration)
+    if (unit.entry || unit.prelude || !unit.moduleDeclaration)
       continue;
     if (std::none_of(searchCandidates.begin(), searchCandidates.end(),
                      [&](const auto &candidate) {
@@ -263,7 +263,7 @@ void addIncludeSuggestions(
               return std::tie(a.path, a.angleName) <
                      std::tie(b.path, b.angleName);
             });
-  // The analysis entry is never proposed: including it from a unit it reaches
+  // The analysis entry is never proposed: importing it from a unit it reaches
   // forms a cycle, and the program root is not a library unit. It usually
   // spells the missing name, so probing it would reload and parse its whole
   // graph on every such edit.
@@ -302,7 +302,7 @@ void addIncludeSuggestions(
     }
     const auto *candidateUnit = std::as_const(parsed.sourceGraph)
                                     .findUnit(parsed.sourceGraph.entryUnit());
-    if (!candidateUnit || candidateUnit->moduleDeclaration ||
+    if (!candidateUnit || !candidateUnit->moduleDeclaration ||
         !parsed.syntaxValid)
       continue;
     StmtList declarations;
@@ -330,16 +330,21 @@ void addIncludeSuggestions(
       const auto relative =
           candidate.path.lexically_relative(unit->path.parent_path())
               .generic_string();
-      const std::string spelling = candidate.angleName
-                                       ? "<" + *candidate.angleName + ">"
-                                       : "\"" + relative + "\"";
+      std::string spelling = "\"" + relative + "\"";
+      if (candidate.angleName) {
+        const auto slash = candidate.angleName->find('/');
+        if (slash == std::string::npos)
+          continue;
+        spelling = candidate.angleName->substr(0, slash) + "." +
+                   candidateUnit->moduleDeclaration->lexeme;
+      }
       if (spelling.find_first_of("\r\n") != std::string::npos ||
           (!candidate.angleName && relative.find('"') != std::string::npos))
         continue;
       const auto insertion = insertionOffset(*source, *unit);
       const std::string newline =
           source->find("\r\n") != std::string::npos ? "\r\n" : "\n";
-      const std::string directive = "#include " + spelling;
+      const std::string directive = "import " + spelling + ";";
       const std::string replacement =
           (insertion && (*source)[insertion - 1] == ';' ? newline : "") +
           directive + newline;

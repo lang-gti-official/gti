@@ -1,5 +1,4 @@
-#include <events/bindings>
-
+import events.bindings;
 // Safe policy lives outside the ABI declaration; copying the complete union
 // preserves the alternative selected by the native factory.
 native::EventData relay(native::EventData value) { return value; }

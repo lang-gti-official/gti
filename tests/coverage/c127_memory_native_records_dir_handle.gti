@@ -3,9 +3,9 @@
 // vectors, and passed by value to GTI helpers. An opaque DIR handle lives
 // behind a move-only RAII wrapper; moving the wrapper transfers the single
 // close obligation, observable through a global close counter.
-#include <std/filesystem>
-#include <std/string>
-#include <std/vector>
+import std.filesystem;
+import std.string;
+import std.vector;
 
 [[c_abi]]
 struct QuotRem {

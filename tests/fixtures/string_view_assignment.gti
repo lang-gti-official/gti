@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 // Assignment from a counted view replaces the contents and keeps capacity.
 int main() {

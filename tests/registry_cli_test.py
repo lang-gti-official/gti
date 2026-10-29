@@ -139,7 +139,7 @@ def main():
                 run(["publish", "--name", "helper"], helper, env)
                 assert not marker.exists(), "publication ran a repository fsmonitor hook"
             libc = root / "libc"
-            package(libc, "libc", "0.2.0", '#include <helper/unit>\nnamespace libc { extern "C" { int64_t fixture_uid(); } int64_t id() { return fixture_uid() + helper::value(); } }\n',
+            package(libc, "libc", "0.2.0", 'import helper.unit;\nnamespace libc { extern "C" { int64_t fixture_uid(); } int64_t id() { return fixture_uid() + helper::value(); } }\n',
                     'helper = "^1.0"\n', native=True)
             run(["publish", "--name", "libc"], libc, env)
             run(["publish", "--name", "libc"], libc, env, False, "GTI-B1719")
@@ -163,7 +163,7 @@ def main():
             consumer = root / "consumer"
             original = '# Consumer comment must survive\nmanifest-version = 1\n[package]\nname = "consumer"\nversion = "0.1.0"\n\n[targets.app]\nkind = "executable"\nroot = "src/main.gti"\n'
             write(consumer / "gti.toml", original)
-            source = '#include <libc/unit>\nint main() { return libc::id() == int64_t(52) ? 0 : 1; }\n'
+            source = 'import libc.unit;\nint main() { return libc::id() == int64_t(52) ? 0 : 1; }\n'
             write(consumer / "src/main.gti", source)
             consumer_env = dict(env, GTI_GIT=str(root / "must-not-run-git"), GTI_TEST_REGISTRY_TOKEN="")
             server.require_read_token = True

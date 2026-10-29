@@ -24,7 +24,7 @@ auto analyze(std::string source) -> lang::FrontendResult {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   return lang::Frontend().analyze(
       "resource-client.gti",
-      "#include <std/resource>\n#include <std/memory>\n" + source,
+      "import std.resource;\nimport std.memory;\n" + source,
       {stdlib / "prelude.gti"}, {}, {stdlib});
 }
 void diagnostics(const lang::FrontendResult &result) {
@@ -364,7 +364,7 @@ int main() { return 0; }
     for (const bool iterator : {false, true}) {
       negative(
           R"(
-#include <std/resource_vector>
+import std.resource_vector;
 int use(std::resource_ref<std::process_resource> resource) {
   mut std::resource_vector<int,std::process_resource> values{resource};
   values.emplace_back(42);
@@ -429,7 +429,7 @@ int main() { return 0; }
            "a resource binding cannot outlive its checked resource");
 
   const std::string resettable = R"(
-#include <std/resource_vector>
+import std.resource_vector;
 struct Resource {
   unsafe expected<std::raw_allocation,std::alloc_errc> allocate(std::layout request) {
     return unexpected(std::alloc_errc::resource_exhausted);
@@ -489,7 +489,7 @@ int main() {
         std::string("mut int& slot = values.get_mut(std::size_t(0));\n"
                     "  slot = 9;")}) {
     negative(R"(
-#include <std/resource_vector>
+import std.resource_vector;
 int use(std::resource_ref<std::process_resource> resource) {
   mut std::resource_vector<int,std::process_resource> values{resource};
   values.emplace_back(42);
@@ -505,7 +505,7 @@ int main() { return 0; }
                  operation);
   }
   negative(R"(
-#include <std/resource_vector>
+import std.resource_vector;
 int& leak(std::resource_ref<std::process_resource> resource) {
   mut std::resource_vector<int,std::process_resource> values{resource};
   values.emplace_back(42);

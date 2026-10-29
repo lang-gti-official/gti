@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // A comma expression yields its right operand. When that operand is a class
 // or Expected value, the comma denotes the operand's own object: no copy and

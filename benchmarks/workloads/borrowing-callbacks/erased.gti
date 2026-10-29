@@ -1,5 +1,5 @@
-#include <std/functional>
-#include "kernel.gti"
+import std.functional;
+import "kernel.gti";
 
 int main() {
   mut uint64_t state = 3;

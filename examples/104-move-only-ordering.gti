@@ -1,8 +1,7 @@
-#include <std/algorithm>
-#include <std/array>
-#include <std/string>
-#include <std/vector>
-
+import std.algorithm;
+import std.array;
+import std.string;
+import std.vector;
 struct Job {
   std::string name;
   int priority;

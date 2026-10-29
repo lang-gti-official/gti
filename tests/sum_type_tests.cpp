@@ -1865,7 +1865,7 @@ int main() {
          "with a hint to consume the enum");
 
   const auto terminal = analyzeWithPrelude(
-      "consuming-terminal-subject.gti", "#include <std/panic>\n" + prefix + R"(
+      "consuming-terminal-subject.gti", "import std.panic;\n" + prefix + R"(
 [[noreturn]] data never() { std::panic("never"); }
 int main() {
   switch (never()) {

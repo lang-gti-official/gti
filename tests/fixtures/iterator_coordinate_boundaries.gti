@@ -1,4 +1,4 @@
-#include <std/detail/iterator>
+import std.detail_iterator;
 
 int main() {
   std::size_t maximum = std::size_t(18446744073709551615);

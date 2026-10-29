@@ -1,6 +1,6 @@
-#include <std/numeric>
-#include <std/string>
-#include <std/vector>
+import std.numeric;
+import std.string;
+import std.vector;
 
 int add(int value) {
   if (value < 0 || value > 8) return 0;

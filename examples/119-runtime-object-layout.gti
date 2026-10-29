@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 // These types have GTI object representations, not a promised C ABI. Merely
 // asking for their layout neither creates an object nor runs its cleanup.
 mut int cleanups = 0;

@@ -1,5 +1,5 @@
 // INVALID: a fallible borrow of a function-local owner escapes the function.
-#include <std/string>
+import std.string;
 
 enum class errc { missing };
 

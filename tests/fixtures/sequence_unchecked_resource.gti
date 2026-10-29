@@ -1,5 +1,5 @@
-#include <std/resource_vector>
-#include <std/resource>
+import std.resource_vector;
+import std.resource;
 
 int main() {
   std::process_resource process{};

@@ -46,6 +46,69 @@ Reproduce a remaining
 composition against current main before treating a past rejection as a new
 compiler task.
 
+## Module-only source campaign (2026-10-29)
+
+**Owner-directed delivery hold:** this is one coordinated breaking change in
+`codex/module-only-phase1`. Do not merge either phase into `main`, publish a
+release, or install it as the user's toolchain until phase 2 is complete.
+**Do not run a full validation suite in phase 1** (owner clarification);
+full correctness/platform/performance validation belongs to phase 2. Phase 1
+uses only focused migration checks and may remain a non-production prototype.
+VERSION remains unchanged during
+this phase; the breaking release's minor version and migration notes belong to
+phase 2. Earlier include-preservation promises are revised explicitly in ADRs
+002, 011 and 024.
+
+The outcome is one explicit module/import/export boundary for libraries,
+application dependencies, generated bindings and editor tooling. Native C/C++
+headers and backend-generated C++ includes remain native implementation inputs.
+Removing GTI include syntax does not remove those facilities or weaken ownership,
+borrow checking, package isolation, trusted declaration identity, or exports.
+
+### Phase 1: coordinated mechanical conversion
+
+- Convert stdlib implementation units in place to interfaces, remove
+  `stdlib/modules` republishing wrappers, and map `std.name` to its canonical
+  `stdlib/std/name.gti` source. Preserve the implicit compiler prelude.
+- Convert examples, packages, benchmarks, fuzz inputs, static and generated test
+  fixtures, binding generation and build-script source to imports. Register
+  public package modules explicitly. Preserve test purpose and negative cases.
+- Reject both include spellings with source-loading error GTI-I0014, before
+  loading their targets. Retain keyword recognition for a useful migration
+  diagnostic. Do not emulate includes with implicitly exported imported units.
+- Remove accepted include grammar/highlighting/formatting, replace editor
+  suggestions with compiler-validated import edits, and document the prototype.
+- Validate structural conversion, representative compilation, rejection,
+  visibility and editor behavior using an optimized compiler. Record all failed
+  checks and classify mechanical defects separately from missing module
+  capabilities. A failed production gate is not a passed or skipped test.
+- Publish a draft checkpoint and preserve the branch/worktree for phase 2.
+  Passing phase 1 evidence is not approval for production, integration or release.
+
+### Phase 2: production modules and breaking release
+
+Review the following obligations against the converted corpus before deciding
+whether a new facility is required. These are acceptance questions, not claims
+that every item is currently broken or that every possible module feature is
+mandatory for 1.0.
+
+| Obligation | Required evidence / completion boundary |
+| --- | --- |
+| Deliberate public API | Replace migration-era broad exports with reviewed public surfaces; prove private helpers, private type dependencies, generics and specializations work without leaking names. Review temporary detail/experimental facades. |
+| Package composition | Decide and implement any required package-private/shared implementation units, re-export and facade behavior; prove local, dependency and transitive visibility, alias collisions and containment. |
+| Configuration and initialization | Verify module configuration isolation, duplicate imports, cycles and deterministic initialization/cleanup order; no importer flag leakage or include-order assumptions. |
+| Generated/native interfaces | Validate standalone bindgen modules, multi-output naming, registered package bindings, C ABI, native linking and hosted build scripts. |
+| Compiler/tooling agreement | Verify fresh/cached/overlay analysis, source mapping, diagnostic recovery, import suggestions, rename/navigation, formatter and parser across the converted corpus. |
+| Full correctness | Repair outstanding module prerequisites and run the full required optimized compiler/platform suites, runnable examples and supported backend regressions; preserve independent LLVM execution evidence where C++ lacks support. |
+| Runtime and build costs | Measure representative optimized workloads, allocations, code size and compile/cache costs; retain safety and reject unaccepted regressions. |
+| Release readiness | Reconcile current canonical main, review the exact candidate, complete required platform/combined validation, write migration guidance and advance the minor VERSION before PR-only integration. |
+
+The source-loader's unused legacy resolution helpers and historical internal
+`Include*` graph/query names can be removed or renamed once their shared consumers
+are audited. Leaving unreachable machinery temporarily is not compatibility
+support. A blanket syntax error alone would not satisfy this migration: corpus,
+module metadata, generators and editor behavior must agree.
+
 ## Typed macro and assertion foundation
 
 The implementation provides source-defined `std::assert` and

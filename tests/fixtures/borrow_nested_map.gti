@@ -1,5 +1,5 @@
-#include <std/map>
-#include <std/vector>
+import std.map;
+import std.vector;
 
 int main() {
   mut std::map<int32_t, std::vector<int32_t>> graph{};

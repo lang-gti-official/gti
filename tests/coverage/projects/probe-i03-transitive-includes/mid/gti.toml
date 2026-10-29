@@ -6,3 +6,6 @@ version = "0.1.0"
 
 [dependencies]
 base = { path = "../base" }
+
+[modules]
+stats = "src/stats.gti"

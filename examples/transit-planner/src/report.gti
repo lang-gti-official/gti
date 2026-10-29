@@ -1,7 +1,8 @@
-#include "network.gti"
-#include "planner.gti"
+export module report;
 
-void print_station(uint64_t station) {
+import "network.gti";
+import "planner.gti";
+export void print_station(uint64_t station) {
   switch (station) {
   case uint64_t(0):
     std::print("Depot");
@@ -33,7 +34,7 @@ void print_station(uint64_t station) {
   }
 }
 
-void print_load_error(NetworkLoadError error) {
+export void print_load_error(NetworkLoadError error) {
   switch (error) {
   case NetworkLoadError::open_failed:
     std::println("could not open data/network.txt");
@@ -59,7 +60,7 @@ void print_load_error(NetworkLoadError error) {
   }
 }
 
-void print_report(uint64_t links, RouteResult& route) {
+export void print_report(uint64_t links, RouteResult& route) {
   std::println("GTI Transit Planner");
   std::print("Loaded ");
   std::print(links);

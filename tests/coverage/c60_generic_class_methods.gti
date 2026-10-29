@@ -1,5 +1,5 @@
 // Generic classes with constrained methods, chained instantiation and statics.
-#include <std/vector>
+import std.vector;
 
 class Stack<std::vector_element T> {
   mut std::vector<T> items;

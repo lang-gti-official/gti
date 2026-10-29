@@ -15,7 +15,7 @@ int main() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto forwarded = lang::Frontend().analyze(
       "/tmp/forwarded.gti", R"(
-#include <std/string>
+import std.string;
 class Base {
   std::string name;
 public:
@@ -300,7 +300,7 @@ int main() { Explicit first{}; return 0; }
 
   const auto allocationDefaults = lang::Frontend().analyze(
       "/tmp/gti-allocation-default.gti", R"(
-#include <std/memory>
+import std.memory;
 struct Spec {
   int count;
   Spec(int value = 2) : count(value) {}
@@ -378,7 +378,7 @@ int main() { auto item = std::make_unique<Item>(); return 0; }
   }
   const auto packDefaults = lang::Frontend().analyze(
       "/tmp/gti-pack-default.gti", R"(
-#include <std/memory>
+import std.memory;
 struct Spec {
   int count;
   Spec(int value = 2) : count(value) {}

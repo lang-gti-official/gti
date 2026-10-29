@@ -1,6 +1,6 @@
-#include <std/functional>
-#include <std/string>
-#include <std/vector>
+import std.functional;
+import std.string;
+import std.vector;
 
 struct Packet {
   int value;

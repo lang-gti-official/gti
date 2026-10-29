@@ -1,4 +1,4 @@
-#include <std/functional>
+import std.functional;
 
 concept scalar<T> = std::integral<T> || std::floating_point<T>;
 concept floating_or_closed<T> =

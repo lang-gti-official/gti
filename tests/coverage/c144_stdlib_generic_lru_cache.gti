@@ -3,10 +3,10 @@
 // equality-comparable, copyable), move-only V (std::string), borrowed
 // lookups returning receiver-tied V&, eviction with list::remove/pop_back,
 // and range-for over a dependent field inside a generic-class method.
-#include <std/unordered_map>
-#include <std/list>
-#include <std/string>
-#include <std/functional>
+import std.unordered_map;
+import std.list;
+import std.string;
+import std.functional;
 
 class LruCache<std::integral K, std::movable V> {
   mut std::unordered_map<K, V> entries;

@@ -2,7 +2,7 @@
 
 namespace {
 const std::string source = R"gti(
-#include <std/memory>
+import std.memory;
 interface Operation { int operator()(int value) &&; };
 class Increment : public Operation {
 public:
@@ -236,8 +236,8 @@ int main() { return 0; }
 void checkPassiveFreshClosureStaging() {
   const auto frontend =
       analyzeWithStandardLibrary("passive-fresh-wrapper.gti", R"gti(
-#include <std/functional>
-#include <std/string>
+import std.functional;
+import std.string;
 int main() {
   std::move_only_function<void() &&> empty{[]() -> void {}};
   std::move(empty)();
@@ -331,7 +331,7 @@ void checkAccessorSpellings() {
       "grouping does not lose the exact immediate owned accessor capability");
 
   const std::string named = R"gti(
-#include <std/memory>
+import std.memory;
 interface Operation { int operator()(int value) &&; };
 class Transparent<T> {
   mut gti_internal::unique_owner<T> resource = nullptr;

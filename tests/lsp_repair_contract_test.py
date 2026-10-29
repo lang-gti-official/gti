@@ -107,14 +107,20 @@ def run(executable, root):
                   "int main() { /* call site */ identity(7); return 0; }\n")
         repair(source, "GTI-S2009", source.replace("/* call site */ identity(7)",
                                                   "/* call site */ [[discard]] identity(7)"))
-        (root / "calls.gti").write_text("int calculate(int value) { return value; }\n")
-        source = ('#include "calls.gti"\n'
+        (root / "calls.gti").write_text((
+                                            'export module calls;\n'
+                                            'export int calculate(int value) { return value; }\n'
+                                        ))
+        source = ('import "calls.gti";\n'
                   'int main() { calculate(calculate(1)); return 0; }\n')
         repair(source, "GTI-S2009", source.replace("{ calculate(calculate(1))",
                                                   "{ [[discard]] calculate(calculate(1))"))
-        (root / "api.gti").write_text("namespace api { int value() { return 7; } }\n")
+        (root / "api.gti").write_text((
+                                          'export module api;\n'
+                                          'namespace api { export int value() { return 7; } }\n'
+                                      ))
         source = "// \U0001f600\r\nint main() { return api::value(); }\r\n"
-        repair(source, "GTI-S2089", '#include "api.gti"\r\n' + source)
+        repair(source, "GTI-S2089", 'import "api.gti";\r\n' + source)
         # Different valid includes are alternatives, not an atomic combined edit.
         (root / "other.gti").write_text("namespace api { int value() { return 8; } }\n")
         notify("workspace/didChangeWatchedFiles", {"changes": [
@@ -138,7 +144,7 @@ def run(executable, root):
         assert any(d.get("severity") == 1 for d in diagnostics)
         assert all(actions(d) == [] for d in diagnostics)
         for source, code in [
-            ('#include <std/string>\nvoid consume(std::string value) {}\n'
+            ('import std.string;\nvoid consume(std::string value) {}\n'
              'int main() { std::string value = std::string("x"); consume(value); return 0; }\n',
              "GTI-S2018"),
             ('class Counter { public: mut int value = 0; Counter() = default; '

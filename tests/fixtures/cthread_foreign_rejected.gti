@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 extern "C" {
   void cthread_install_terminal();
   int32_t cthread_foreign(std::thrd_start_t callback);

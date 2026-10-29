@@ -51,8 +51,8 @@ lang::FrontendResult analyze(const std::string &source,
 
 int main() {
   const std::string prefix = R"(
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 struct Plain { int value = 8;  public: Plain() = default; };
 class Stationary {
 public:

@@ -91,7 +91,7 @@ def main():
             failures = failures[2:]
         for name, body in failures:
             source = output / f"{name}.gti"
-            source.write_text("#include <std/simd>\n#include <std/array>\nint main() { " + body + " }\n")
+            source.write_text("import std.simd;\nimport std.array;\nint main() { " + body + " }\n")
             expected_failure = None
             for backend, level, standard in modes:
                 binary = output / f"{name}-{backend}-O{level}-{standard or 'native'}"
@@ -119,7 +119,7 @@ def main():
         )
         for index, body in enumerate(declarations if args.profile != "copy-range" else ()):
             source = output / f"reject-{index}.gti"
-            source.write_text("#include <std/simd>\nint main() { " + body + " return 0; }\n")
+            source.write_text("import std.simd;\nint main() { " + body + " return 0; }\n")
             binary = output / f"reject-{index}"
             marker = b"existing-destination-must-survive"
             binary.write_bytes(marker)

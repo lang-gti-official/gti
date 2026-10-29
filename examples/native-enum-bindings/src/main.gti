@@ -1,5 +1,4 @@
-#include <flags/bindings>
-
+import flags.bindings;
 int main() {
   auto request = native_flags::flags_make(
     native_flags::ACCESS_HIGH, native_flags::WIDE_ALL, native_flags::OFFSET_MIN

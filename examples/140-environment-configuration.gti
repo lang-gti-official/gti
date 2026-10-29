@@ -1,6 +1,5 @@
-#include <std/environment>
-#include <std/string>
-
+import std.environment;
+import std.string;
 // GTI_DEMO_PROFILE may be absent, empty, or contain a profile spelling.
 // Every successful lookup is an independent owner, not a libc pointer.
 int main() {

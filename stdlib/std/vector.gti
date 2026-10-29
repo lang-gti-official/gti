@@ -1,11 +1,12 @@
-#include <std/span>
-#include <std/utility>
-#include <std/memory>
-#include <std/detail/iterator>
+export module vector;
 
+import std.span;
+import std.utility;
+import std.memory;
+import "detail/iterator.gti";
 // The storage-backed value, capacity, indexed operations, move-aware
 // insertion/erasure, and bounded read-only/mutable iteration are implemented.
-namespace std {
+export namespace std {
 // Capacity changes and shifts use generated, failure-free relocation, never
 // custom movement or assignment. Independent storage excludes checked borrows.
 concept vector_element<T> = std::relocatable<T> && std::storage_element<T>;

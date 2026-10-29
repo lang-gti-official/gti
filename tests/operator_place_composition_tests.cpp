@@ -309,7 +309,7 @@ int main() {
       "mut Grid grid{}; mut Row& held = grid[std::size_t(0)]; "
       "grid[std::size_t(1)][std::size_t(0)] = 2; return held[std::size_t(0)];");
   const std::string sentinelDeclarations = R"(
-#include <std/iterator>
+import std.iterator;
 class End { public: End() = default; };
 class Cursor {
   mut int32_t current = 0;

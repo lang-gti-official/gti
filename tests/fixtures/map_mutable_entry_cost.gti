@@ -1,5 +1,5 @@
-#include <std/map>
-#include <std/unordered_map>
+import std.map;
+import std.unordered_map;
 
 extern "C" {
   void adoption_count_begin();

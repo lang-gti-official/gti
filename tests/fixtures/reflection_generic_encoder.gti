@@ -1,5 +1,5 @@
-#include <std/meta>
-#include <std/string>
+import std.meta;
+import std.string;
 
 struct Vec2 {
   float x = 0.0;

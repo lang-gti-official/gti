@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.vector;
 
 extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
 mut int32_t phase = 0;

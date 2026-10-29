@@ -1,4 +1,4 @@
-#include "../src/inventory.gti"
+import "../src/inventory.gti";
 
 int main() {
   mut inv::Inventory items{};

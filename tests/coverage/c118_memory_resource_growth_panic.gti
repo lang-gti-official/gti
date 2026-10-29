@@ -2,11 +2,11 @@
 // aborts with GTI-R0011. No element, prepared push argument, region or local
 // is cleaned up. Make output unbuffered so a missing cleanup witness cannot be
 // confused with buffered output lost by abort.
-#include <std/resource_vector>
-#include <std/resource>
-#include <std/memory>
-#include <std/string>
-#include "support/bump.gti"
+import std.resource_vector;
+import std.resource;
+import std.memory;
+import std.string;
+import "support/bump.gti";
 
 extern "C" { void coverage_unbuffered_output(); }
 

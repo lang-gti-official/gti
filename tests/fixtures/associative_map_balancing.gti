@@ -1,4 +1,4 @@
-#include <std/map>
+import std.map;
 
 int main() {
   // A bounded deterministic differential test against an independent dense

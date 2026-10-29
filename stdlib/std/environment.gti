@@ -1,3 +1,5 @@
+export module environment;
+
 // <std/environment> — owned read-only process environment observation.
 // No host buffer escapes. Mutation through unsafe native code must exclude
 // concurrent environment access; safe GTI provides no environment mutation.
@@ -8,12 +10,10 @@
 #if target.os == "unknown"
 #error "std/environment requires a supported POSIX target."
 #endif
-
-#include <std/string>
-#include <std/optional>
-#include <std/memory>
-
-namespace gti_internal {
+import std.string;
+import std.optional;
+import std.memory;
+export namespace gti_internal {
 namespace environment_runtime {
 extern "C" {
 uint32_t gti_rt_environment_get_v1(text_view name, int64_t* snapshot);
@@ -47,7 +47,7 @@ public:
 };
 }
 
-namespace std {
+export namespace std {
 namespace environment {
 
 /// Lookup errors. A missing variable is an empty optional, not an error.

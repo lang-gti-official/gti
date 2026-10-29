@@ -389,7 +389,7 @@ the same compiler-owned notes and hints; it does not reconstruct explanations
 from diagnostic text. This is focused coverage, not a claim that every diagnostic
 family already has complete causal context.
 
-Current phase prefixes are `GTI-L` (lexing), `GTI-I` (source/include loading),
+Current phase prefixes are `GTI-L` (lexing), `GTI-I` (source/import loading),
 `GTI-P` (parsing), `GTI-S` (semantics), and `GTI-B` (driver/backend families).
 Use the existing local family and number rather than inventing a parallel code
 scheme.
@@ -428,15 +428,13 @@ the completed Q-FAIL-01 consumer is not proof of every proposed boundary.
 
 ## Production Rules
 
-`GTI-I0013` is opt-in editor migration advice in warning group
-`legacy-include`: prefer module imports over `#include` where available.
-Source loading emits it at the first real include keyword in each canonical
-application file, including `export #include`, once per analysis even across
-module configuration replay. Comments and strings do not trigger it. Prelude
-and standard-library dependencies are exempt unless opened as the entry file.
-The LSP enables this advice; ordinary build/check requests leave it disabled.
-The warning neither invalidates source nor supplies a speculative import fix:
-a legacy file may require an explicit module interface first.
+`GTI-I0014` rejects removed GTI `#include` syntax, including `export #include`,
+at the include keyword. Source loading does not load the named dependency.
+The diagnostic directs the author to an explicit module interface and import;
+there is no automatic replacement because exports and visibility may need
+changes in the dependency. This is an error in build and editor requests, not
+a suppressible migration warning. The former `GTI-I0013` / `legacy-include`
+advice is removed.
 
 `GTI-S2120` reports an invalid out-of-class method definition at the method
 name: absent/foreign owner, unmatched signature or receiver, duplicate body,
@@ -448,9 +446,9 @@ default-argument edit is offered. Missing selected bodies retain `GTI-S2106`.
 Before reporting a signature mismatch, binding validates the definition's
 written return and parameter types in its owner's namespace and its own source
 unit. Unknown or invisible types receive their ordinary type diagnostic instead
-of `GTI-S2120`, including the declaration note and direct-include hint for
-`GTI-S2024`. The existing include-suggestion trial supplies a fix-it only when
-the proposed include makes the program valid.
+of `GTI-S2120`, including the declaration note and direct-import hint for
+`GTI-S2024`. The existing import-suggestion trial supplies a fix-it only when
+the proposed import makes the program valid.
 The LSP publishes the same diagnostics, including unsaved implementation files.
 
 Registry authentication keeps driver-owned structured codes: `GTI-B1713` for
@@ -521,9 +519,8 @@ the later use.
 
 `GTI-I0012` owns invalid source-module headers and imports: placement, syntax,
 missing registration, name mismatch, duplicate interfaces, package escapes,
-inconsistent shared legacy-unit configuration, include/import bypasses,
-misplaced or interface-naming `export #include`, unknown standard-library
-modules, and the unsupported aggregate `import std;`.
+non-interface import targets, and unknown standard-library modules. The
+aggregate `import std;` is supported. Removed include syntax uses `GTI-I0014`.
 Point at the source directive; relate the interface declaration for name
 mismatches or duplicates. Imports retain their tokens through parsing, so an
 import embedded in an otherwise unfinished declaration receives `GTI-P0001`
@@ -532,7 +529,7 @@ retain `GTI-I0001`. `GTI-S2098` owns
 invalid declaration exports, including exports outside an interface and
 source-local static declarations. Visibility errors explain whether a
 declaration is private or its public interface was not imported; they must not
-offer an include fix that would bypass a module boundary. No fix guesses which
+offer an import fix that would bypass a module boundary. No fix guesses which
 declarations an author intends to export.
 An `export` written after a declaration's attribute lists, `@` bindings or
 specifiers is parser-owned `GTI-P0001` at the misplaced keyword. Its one edit
@@ -691,7 +688,7 @@ fix changes ownership intent. The LSP publishes these same frontend records.
 - Diagnose invalid GTI in the earliest authoritative frontend phase. A native
   C++ diagnostic is not a substitute for a language diagnostic.
 - Point the primary span at the token/range the user can act on. Use related
-  diagnostics for conflicting declarations, includes, or instantiation sites.
+  diagnostics for conflicting declarations, imports, or instantiation sites.
 - An unnamed formal uses its written type token as the diagnostic/source
   anchor. Related lifetime messages identify it by its one-based parameter
   index, not an empty or generated name. Its physical semantic binding is
@@ -731,7 +728,7 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   diagnostic rather than cascading with unary-unsigned or mixed-operand
   errors. No replacement is universally correct, so do not attach a fix-it.
 - `GTI-S2033` owns the obsolete unqualified `string` spelling. Explain the
-  implemented ownership choice: `std::string` after `#include <std/string>` is
+  implemented ownership choice: `std::string` after `import std.string;` is
   owning, while prelude-provided `std::string_view` is non-owning. Do not offer
   a replacement fix-it because changing ownership is not mechanically safe.
 - `GTI-S2015` owns a brace call argument that has no one exact by-value
@@ -1007,7 +1004,7 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   Do not suggest a cast, lambda, member thunk, or signature-changing fix-it;
   those choices require intent. Foreign callback values remain valid in the
   concurrent profile, so this code applies there only when GTI code is exposed
-  through an adapter. It rejects conversion without `<std/cthread>` or with a
+  through an adapter. It rejects conversion without `std.cthread` or with a
   signature other than `int32_t(void*)` or `void()`
   in the concurrent profile. The exact registered worker/once forms additionally
   checks target support through `GTI-S2084`. Ordinary GTI function items have
@@ -1053,7 +1050,7 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   constraints. Generated operations reuse those parameter identities and do
   not repeat concept, arity or pack diagnostics from their restated requires
   clauses. Operation-relative parameter/name collisions remain checked.
-  Invisible concepts use `GTI-S2024` with the declaring source and include
+  Invisible concepts use `GTI-S2024` with the declaring source and import
   suggestion, also for an empty block; compiler-private paths retain
   `GTI-S2058`. These checks are independent of the number of operations.
   - **Declarations:** a body with other than one type parameter, a duplicate
@@ -1166,7 +1163,7 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   recognize `std::thread` or `std::atomic` by spelling.
 - `GTI-S2086` owns malformed compiler-private scalar atomic storage and
   operation shapes. It is normally visible only while validating the trusted
-  `<std/atomic>` unit; public unsupported type arguments fail through the
+  `std.atomic` unit; public unsupported type arguments fail through the
   `std::atomic_scalar` constraint. Do not replace exact identity, place,
   mutability, operand-type, or domain failures with a backend error.
 - `GTI-S2085` owns an incoherent return from a by-value direct
@@ -1207,10 +1204,10 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   - use in a constexpr function;
   - an operand that is not a class, struct or payload enum.
 - `GTI-S2089` owns an unresolved declaration for which compiler discovery has
-  proved a defining include. Preserve the unresolved source-name span and
-  message, add the verified include hints and zero-width edits. The same rule
+  proved an import exposing the defining declaration. Preserve the unresolved source-name span and
+  message, add the verified import hints and zero-width edits. The same rule
   handles project and dependency declarations and public standard-library units;
-  no nominal type-to-header catalog remains. `missingIncludeName` is structured
+  no nominal type-to-module catalog remains. `missingIncludeName` is structured
   compiler lookup metadata, not text extracted from a diagnostic message.
   Reanalysis must resolve the exact occurrence to the proposed file without
   introducing new errors. Otherwise retain the original unknown-name diagnostic
@@ -1218,7 +1215,7 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   module header and preserve CRLF. Several valid files are alternative fixes,
   none preferred. Already-loaded but invisible declarations keep `GTI-S2024`
   and acquire fixes through the same proof; module privacy/import diagnostics
-  never request an include that would bypass their boundary.
+  never request an import that would bypass their boundary.
 - `GTI-S2091` owns struct designated construction: eligibility, unknown,
   duplicate or out-of-order fields, missing required fields, and incompatible
   values. Point at the offending field name (or opening brace for an omitted

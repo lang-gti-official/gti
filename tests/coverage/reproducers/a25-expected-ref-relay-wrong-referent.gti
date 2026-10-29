@@ -3,7 +3,7 @@
 // WRONG RESULT: a free function returning expected<T&, E> from a local
 // reference derived from its reference parameter returns the parameter itself
 // (the root, value 1) instead of the child (value 2). Exits 1, prints 1.
-#include <std/memory>
+import std.memory;
 enum class errc { missing };
 class Node {
   int value_;

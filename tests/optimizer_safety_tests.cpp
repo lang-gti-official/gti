@@ -410,7 +410,7 @@ int32_t main() {
 
 void testSynchronizingCallInvalidation() {
   const auto frontend = analyzeTrusted("optimizer-sync-call.gti", R"(
-#include <std/atomic>
+import std.atomic;
 std::atomic<int32_t> signal{0};
 void synchronize(std::atomic<int32_t>& signal) {
   [[discard]] signal.load();
@@ -481,7 +481,7 @@ int main() {
 
 void testOpaqueRuntimeCallInvalidation() {
   const std::string source = R"(
-#include <std/memory>
+import std.memory;
 mut bool inspect_runtime = false;
 int32_t inspect_shared(gti_internal::shared_owner<int32_t>& owner, bool inspect) {
   if (inspect) {
@@ -1107,7 +1107,7 @@ std::size_t borrowingCallDischarges(const lang::OptimizedProgram &optimized,
 
 void testSourcePrefixBoundsRelation() {
   const std::string source = R"(
-#include <std/memory>
+import std.memory;
 extern "C" {
   void analysis_barrier();
 }
@@ -1484,7 +1484,7 @@ int32_t main() {
 
 void testClosedIndexedElementEnvelope() {
   const std::string source = R"(
-#include <std/memory>
+import std.memory;
 class CheckedBuffer {
   mut std::detail::prefix_owner<int32_t> data;
 
@@ -1582,7 +1582,7 @@ int32_t main() {
 
 void testClosedIndexedRecordFieldEnvelope() {
   const std::string source = R"(
-#include <std/memory>
+import std.memory;
 extern "C" {
   void analysis_barrier();
 }
@@ -1804,7 +1804,7 @@ void testSourceRecordSequenceEnvelopes() {
   // intact; a caller-local loop index reads one element of the initialized
   // region without naming an exact cell.
   const std::string source = R"(
-#include <std/vector>
+import std.vector;
 extern "C" {
   void analysis_barrier();
 }
@@ -1940,7 +1940,7 @@ void testScalarLeafSequenceStores() {
   // the container's live length. A caller-local index then proves `at`. An
   // index reaching the length, or an opaque call in the loop, keeps it.
   const std::string containers = R"(
-#include <std/memory>
+import std.memory;
 extern "C" {
   void analysis_barrier();
 }
@@ -2237,7 +2237,7 @@ int32_t main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return;
   }
-  const std::string containerHeader = R"(#include <std/memory>
+  const std::string containerHeader = R"(import std.memory;
 extern "C" {
   void analysis_barrier();
 
@@ -2354,7 +2354,7 @@ int32_t main() {
 
 void testGuardedClosedCallContextWidening() {
   const std::string source = R"(
-#include <std/memory>
+import std.memory;
 struct ContextEntity {
   ContextEntity() {}
 

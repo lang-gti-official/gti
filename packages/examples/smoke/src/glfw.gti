@@ -1,5 +1,4 @@
-#include <glfw/glfw>
-
+import glfw.glfw;
 int main() {
   unsafe {
     mut int32_t major = 0;

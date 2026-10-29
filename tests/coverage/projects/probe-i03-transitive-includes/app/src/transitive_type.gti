@@ -1,4 +1,4 @@
-#include <mid/stats>
+import mid.stats;
 
 int main() {
   // Naming the transitive type is not allowed; using auto is.

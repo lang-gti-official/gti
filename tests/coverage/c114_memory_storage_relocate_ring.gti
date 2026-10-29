@@ -1,10 +1,10 @@
 // Valid: a small ring of std::storage<T> buffers holding owning records.
 // Relocation moves live prefixes between two allocations repeatedly; every
 // element must be destroyed exactly once and keep its owned text intact.
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
-#include <std/format>
+import std.memory;
+import std.string;
+import std.vector;
+import std.format;
 
 mut int32_t destroyed = 0;
 

@@ -1,5 +1,5 @@
 // INVALID: list::remove requires an equality-comparable element type.
-#include <std/list>
+import std.list;
 class Token {
   int id;
 public:

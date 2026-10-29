@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/vector>
-#include <storage/texts>
+import std.string;
+import std.vector;
+import storage.texts;
 
 int main(int argc, std::vector<std::string> argv) {
   mut storage::Texts texts{};

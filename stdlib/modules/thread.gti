@@ -1,3 +1,0 @@
-// Module std.thread: the public surface of <std/thread>.
-export module thread;
-export #include <std/thread>

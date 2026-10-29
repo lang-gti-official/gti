@@ -316,7 +316,7 @@ if __name__ == "__main__":
             fixture.parent.parent.parent / "stdlib")), library)
         module, entry = guard_source.split("int main() {", 1)
         (library / "std" / guard.name).write_text(module)
-        entry_source = "#include <std/optimizer_boolean_guards>\nint main() {" + entry
+        entry_source = "import std.optimizer_boolean_guards;\nint main() {" + entry
         sites = [index for index, text in enumerate(guard_source.splitlines(), 1)
                  if text.strip() == "return input + uint64_t(1);"]
         assert len(sites) == 3

@@ -1,7 +1,7 @@
-#include <std/string>
-#include <std/vector>
-#include <std/utility>
-#include <std/panic>
+import std.string;
+import std.vector;
+import std.utility;
+import std.panic;
 
 class Resource {
   int identity;

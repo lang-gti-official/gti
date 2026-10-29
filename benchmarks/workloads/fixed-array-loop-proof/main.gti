@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 void print_hex_digit(uint64_t digit) {
   switch (digit) {

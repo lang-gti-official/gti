@@ -1,12 +1,13 @@
-#include "a.gti"
-#include "log.gti"
+export module c;
+import "a.gti";
+import "log.gti";
 
 #define OFF
 #undef OFF
 
-int c_value = trace::record(3);
+export int c_value = trace::record(3);
 
-class Registry {
+export class Registry {
 public:
   static int first = trace::record(4);
   static mut int hits = 0;
@@ -16,7 +17,7 @@ public:
 };
 
 #ifdef OFF
-int c_never = trace::record(9);
+export int c_never = trace::record(9);
 #endif
 
-int c_after = trace::record(5) + a_value;
+export int c_after = trace::record(5) + a_value;

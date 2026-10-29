@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // No allocator or standard-library carrier is involved: an ordinary owning
 // argument forwards a caller's borrowed source through two constructor levels.

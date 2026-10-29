@@ -1,5 +1,5 @@
-#include <std/array>
-#include <std/meta>
+import std.array;
+import std.meta;
 
 constexpr void add(mut int& value, int amount) { value += amount; }
 constexpr mut int& forward_mut(mut int& value) { return value; }

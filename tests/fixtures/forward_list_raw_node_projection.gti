@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 struct UserNode {
   mut std::unique_ptr<int32_t> next{};

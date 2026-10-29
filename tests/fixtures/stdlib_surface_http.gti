@@ -1,5 +1,5 @@
-#include <std/http>
-#include <std/string>
+import std.http;
+import std.string;
 
 bool rejects_url(std::string_view source, std::http::url_errc expected_error) {
   mut auto result = std::http::url::parse(source);

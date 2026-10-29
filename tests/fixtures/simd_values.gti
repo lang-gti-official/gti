@@ -1,7 +1,7 @@
-#include <std/simd>
-#include <std/array>
-#include <std/optional>
-#include <std/vector>
+import std.simd;
+import std.array;
+import std.optional;
+import std.vector;
 
 struct LanePacket {
   std::simd<float, 7> values{2.0};

@@ -1,7 +1,7 @@
 // Owner-tracked text through implicit conversions, constructor relays and
 // returns over a reference formal (L-OWN-02, phase 2c).
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 
 class Token {
 public:

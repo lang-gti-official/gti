@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // Conditionals whose arms are owning class values: read through a field,
 // assigned, nested, or selecting a moved local that is then bound or

@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 // The range's checked owner is distinct from the synthesized iterator shell.
 // No standard-library container or private prefix capability is involved.

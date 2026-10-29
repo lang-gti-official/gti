@@ -10,7 +10,7 @@ int main() {
         "[[no_transfer]]"}) {
     const auto reviewed = analyzeTrustedPreludeFixture(
         "reviewed-callable-state.gti",
-        "#include <std/string>\n" + policy + R"( class Reviewed<T> {
+        "import std.string;\n" + policy + R"( class Reviewed<T> {
   T* pointer = nullptr;
 public:
   Reviewed() {}
@@ -42,7 +42,7 @@ int main() {
         "[[unsafe_transfer]] struct Capture { std::string_view view = \"\"; "
         " public: Capture() = default; };"}) {
     const auto rejected = analyzeTrustedPreludeFixture(
-        "nonindependent-callable-state.gti", "#include <std/string>\n" + state +
+        "nonindependent-callable-state.gti", "import std.string;\n" + state +
                                                  R"(
 void retain<T>(T callback) {}
 int main() {
@@ -67,7 +67,7 @@ int main() {
   }
   const auto sourceOwner =
       analyzeTrustedPreludeFixture("source-owner-callable.gti", R"(
-#include <std/string>
+import std.string;
 void retain<T>(T callback) {}
 int main() {
   std::string text{"owned"};
@@ -1434,8 +1434,8 @@ Owner<T> own<T>(T value) { return Owner<T>(std::move(value)); }
   // shared constructor template has one member-initializer list.
   const auto copiedField =
       analyzeTrustedPreludeFixture("copied-closure-field.gti", R"(
-#include <std/string>
-#include <std/utility>
+import std.string;
+import std.utility;
 struct Offset {
   int amount;
   Offset(int amount) : amount(amount) {}
@@ -1612,7 +1612,7 @@ int main() {
   // the planner spells the field by its own declared type.
   const auto constructedField =
       analyzeTrustedPreludeFixture("constructed-closure-field.gti", R"(
-#include <std/utility>
+import std.utility;
 struct Offset {
   int amount;
   Offset(int amount) : amount(amount) {}
@@ -1777,8 +1777,8 @@ int main() {
   // native base and the consumed formals.
   const auto composedField =
       analyzeTrustedPreludeFixture("composed-closure-field.gti", R"(
-#include <std/string>
-#include <std/utility>
+import std.string;
+import std.utility;
 struct Offset {
   int amount;
   Offset(int amount) : amount(amount) {}

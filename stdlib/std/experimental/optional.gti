@@ -1,14 +1,15 @@
+export module experimental_optional_impl;
+
 // A source-defined optional value. A payload enum holds either nothing or one
 // live `T`, so GTI's generated movement and exactly-once cleanup apply to the
 // value directly and no compiler-private storage is involved. Prefix `?`
 // propagates an empty optional through `std::tryable`.
 //
 // Compatibility spelling for the former candidate. New code should use
-// <std/optional>; this distinct type retains its historical panic behavior.
-#include <std/panic>
-#include <std/utility>
-
-namespace std::experimental {
+// import std.optional; this distinct type retains its historical panic behavior.
+import std.panic;
+import std.utility;
+export namespace std::experimental {
 /// The residual of an empty optional: it carries no value.
 struct nullopt_t { nullopt_t() = default; };
 

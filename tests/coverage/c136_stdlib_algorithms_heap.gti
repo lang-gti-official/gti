@@ -3,11 +3,11 @@
 // stateful comparator, std::transform producing move-only unique_ptr results,
 // bounds/binary_search/search/count/equal/lexicographical_compare/min/max
 // element over sorted iterator ranges, and stable-order checks via tie-breaks.
-#include <std/algorithm>
-#include <std/iterator>
-#include <std/vector>
-#include <std/memory>
-#include <std/string>
+import std.algorithm;
+import std.iterator;
+import std.vector;
+import std.memory;
+import std.string;
 
 class Job {
 public:

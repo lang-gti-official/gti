@@ -179,10 +179,10 @@ def main():
             owner_source = root / 'owner.gti'
             owner_output = root / 'owner'
             owner_cases = [
-                '#include <std/memory>\nint main() { auto value = '
+                'import std.memory;\nint main() { auto value = '
                 'std::make_unique<int>(17); return *value == 17 ? 0 : 1; }\n',
                 (Path(__file__).parent / 'fixtures/llvm_memory_empty_unique.gti').read_text(),
-                '''#include <std/memory>
+                '''import std.memory;
 mut int released = 0;
 struct Value {
   int number;
@@ -207,7 +207,7 @@ int main() {
                 previous = owner_output.read_bytes()
                 owner_bundle = Path(str(owner_output) + '.dSYM')
                 previous_symbols = tree_bytes(owner_bundle) if sys.platform == 'darwin' else None
-                owner_source.write_text('''#include <std/memory>
+                owner_source.write_text('''import std.memory;
 int main() {
   auto owner = std::make_unique<int>(17);
   auto moved = std::move(owner);
@@ -227,7 +227,7 @@ int main() {
                         assert tree_bytes(owner_bundle) == previous_symbols
                     failures.append(denied.stderr)
                 assert failures[0] == failures[1], 'debug changed move rejection'
-                owner_source.write_text('''#include <std/memory>
+                owner_source.write_text('''import std.memory;
 int main() { std::unique_ptr<int> owner{nullptr}; return *owner; }
 ''')
                 run([gti, owner_source, '--backend', 'llvm', '-g', f'-O{level}',

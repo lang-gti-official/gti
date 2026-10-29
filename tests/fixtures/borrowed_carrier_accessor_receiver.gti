@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/mutex>
+import std.memory;
+import std.mutex;
 
 // Cleanup-bound carriers produced by a method of an accessor's result, and
 // synchronized guards taken through shared or mutable formals.

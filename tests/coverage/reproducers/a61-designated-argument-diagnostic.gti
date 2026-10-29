@@ -6,7 +6,7 @@
 // satisfies every listed condition; the real issue is the missing
 // destination type (static-semantics.md:370-379 only defines it for a
 // declared destination).
-#include <std/vector>
+import std.vector;
 struct Point {
   int x;
   int y;

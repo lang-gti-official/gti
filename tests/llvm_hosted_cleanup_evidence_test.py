@@ -21,11 +21,11 @@ import llvm_readiness_collect as collector
 
 
 SCHEMA = "gti.llvm.hosted-cleanup-source-contract/v1"
-TRACE_PATH = "std/detail/llvm_hosted_cleanup_trace.gti"
+TRACE_PATH = "std/detail_llvm_hosted_cleanup_trace.gti"
 CTOR = "    implicit string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {\n"
 MOVE = "    string(string&& other) = default;\n"
-STRING_INCLUDE = "#include <std/iterator>\n"
-MEMORY_INCLUDE = "#include <std/meta>\n"
+STRING_INCLUDE = "import std.iterator;\n"
+MEMORY_INCLUDE = "import std.meta;\n"
 RELEASE = """  void release() mut {
     std::detail::raw_allocation previous = this.take();
     gti_internal::process_resource process{};
@@ -76,13 +76,13 @@ def transformed_sources(root: Path, *, failures: bool, release_marker: bool) -> 
             audit.require(text.count(anchor) == 1, "unmodified source anchor differs")
     if failures:
         string = replace_once(string, STRING_INCLUDE, STRING_INCLUDE +
-            "#include <std/detail/panic>\n#include <std/detail/llvm_hosted_cleanup_trace>\n")
+            "import std.detail_panic;\nimport std.detail_llvm_hosted_cleanup_trace;\n")
         string = replace_once(string, CTOR, CTOR + PRIMARY)
         string = replace_once(string, MOVE, MOVE + SECONDARY)
     if release_marker:
         audit.require(failures, "post-release markers are an optional alternative-library observation")
         memory = replace_once(memory, MEMORY_INCLUDE,
-                              MEMORY_INCLUDE + "#include <std/detail/llvm_hosted_cleanup_trace>\n")
+                              MEMORY_INCLUDE + "import std.detail_llvm_hosted_cleanup_trace;\n")
         modified_release = replace_once(RELEASE, "    unsafe { process.release(previous); }\n",
                                        "    unsafe { process.release(previous); }\n" + POST_RELEASE)
         memory = replace_once(memory, RELEASE, modified_release)

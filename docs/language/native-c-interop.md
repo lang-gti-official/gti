@@ -25,7 +25,7 @@ supports fixed-width and target-correct C scalar values, passive `[[c_abi]]` rec
 `c_string` values, and annotated native pointer-plus-count returns behind
 lexical `unsafe`. It also supports named exact native callback types and
 same-thread adapters for eligible GTI free functions, plus the exact registered
-worker and once-initializer adapters owned by `<std/cthread>`. Ordinary foreign
+worker and once-initializer adapters owned by `std.cthread`. Ordinary foreign
 variables are available under the external-storage contract below. It does not
 expose variadic calls, C++ linkage, annotated ownership
 transfer, general foreign-thread GTI callback entry, or a stable binary ABI for
@@ -478,7 +478,7 @@ Ordinary callback failure remains terminal, not a recoverable worker result.
 Unannotated general callbacks remain single-threaded. In the concurrent profile, GTI
 adapters support the exact `(void*) -> int32_t` C-thread entry and `() -> void`
 once initializer, with target
-thread support and `<std/cthread>` included. The adapter requires once-only
+thread support and `std.cthread` imported. The adapter requires once-only
 attachment on its exact runtime-registered worker; ordinary initial-thread or
 foreign-thread invocation of the worker adapter terminates before entering GTI.
 The once adapter instead requires its exact synchronous invocation on an
@@ -494,13 +494,13 @@ shapes and conversions; `GTI-S2084` owns unavailable thread capability.
 `[[thread_confined_callback]]` on an eligible non-generic, safe namespace-scope
 GTI function permits native adaptation with any already-supported C callback
 signature in the concurrent profile. It requires thread capability and
-`<std/cthread>`, like other concurrent adapters. It cannot annotate a method,
+`std.cthread`, like other concurrent adapters. It cannot annotate a method,
 hosted entry, unsafe/native/bodyless function, or caller-tracked function, and
 takes no arguments. Invalid contracts use `GTI-S2099`. Ordinary direct GTI calls
 are unchanged. Single-threaded consumers retain their existing callback policy.
 
 ```gti
-#include <std/cthread>
+import std.cthread;
 using ResizeHook = (int32_t, int32_t) -> void;
 [[thread_confined_callback]] void on_resize(int32_t width, int32_t height) {}
 // Inside main or an attached worker:
@@ -565,7 +565,7 @@ callbacks or broader foreign-thread entry. See runnable example
 
 ## NUL-Terminated C Strings
 
-`<std/string>` supports explicit inbound copies. `unsafe string(c_string)`
+`std.string` supports explicit inbound copies. `unsafe string(c_string)`
 copies through the first NUL into independent owned storage; null causes a
 defined panic and allocation exhaustion follows ordinary string allocation
 policy (an allocation-failure report and process abort). The unsafe static
@@ -582,7 +582,7 @@ terminators are unsafe precondition violations, not recoverable error values.
 Neither result retains the input address or its owner. Example
 [151](../../examples/151-c-string-import.gti) demonstrates both APIs.
 
-`unsafe const uint8_t* std::c_string_bytes(c_string)` in `<std/memory>` exposes
+`unsafe const uint8_t* std::c_string_bytes(c_string)` in `std.memory` exposes
 the same non-owning byte address, preserving null without scanning, allocating,
 reading or extending storage lifetime. It establishes no checked reference or
 owner witness. Subsequent pointer reads remain unsafe. This general bridge also
@@ -1218,7 +1218,7 @@ tree, file, or environment value.
 
 ## Runtime Relationship
 
-The process byte provider in `<std/resource>` is ordinary GTI over target-selected
+The process byte provider in `std.resource` is ordinary GTI over target-selected
 native calls. Its remaining `<gti/memory.h>` adapters expose native `size_t`
 limits, POSIX alignment/error constants and minimal allocation forwarding.
 Fixed-width `uint64_t` is not declared as if it were native `size_t`; source
@@ -1227,7 +1227,7 @@ checks the limit before the adapter narrows. Native `c_size_t` and POSIX
 forwarders avoid monopolizing `posix_memalign` and `free` while compatible
 repeated C declarations are unsupported; Windows reserved CRT symbol spellings
 also require adapters. Applications can declare either ordinary C symbol alongside
-`<std/resource>`. None of these functions confers
+`std.resource`. None of these functions confers
 ownership, initialization or safety merely by name.
 
 The runnable [`libc-region-provider`](../../examples/libc-region-provider/)

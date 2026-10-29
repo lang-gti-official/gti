@@ -152,12 +152,12 @@ def main():
             ("const-write", "struct F{mut int values[2]={1,2}; public: F() = default; };int main(){F f{};const F* p=&f;unsafe{p->values[0]=7;}return 0;}"),
             ("binding-readonly", "struct V{mut int n;V(int n):n(n){}};int main(){V values[2]={V(1),V(2)};auto[first,second]=values;first.n=3;return 0;}"),
             ("binding-arity", "struct V{int n;V(int n):n(n){}};int main(){V values[2]={V(1),V(2)};auto[first]=values;return 0;}"),
-            ("binding-copy-owner", "#include <std/string>\n#include <std/utility>\nclass V{public:std::string n;V(std::string n):n(std::move(n)){}};int main(){V values[2]={V(std::string(\"one\")),V(std::string(\"two\"))};auto[first,second]=values;return 0;}"),
+            ("binding-copy-owner", "import std.string;\nimport std.utility;\nclass V{public:std::string n;V(std::string n):n(std::move(n)){}};int main(){V values[2]={V(std::string(\"one\")),V(std::string(\"two\"))};auto[first,second]=values;return 0;}"),
             ("element-reference-immutable", "int main(){int values[2]={1,2};mut int& element=values[0];element=3;return 0;}"),
             ("element-reference-overlap", "int main(){mut int values[2]={1,2};mut int& element=values[0];int& alias=values[0];element=3;return alias;}"),
             ("element-reference-write-while-live", "int main(){mut int values[2]={1,2};mut int& element=values[0];values[0]=5;return element;}"),
             ("element-reference-dynamic-overlap", "int pick(int n){return n;}int main(){mut int values[2]={1,2};mut int& first=values[pick(0)];mut int& second=values[pick(1)];first=3;second=4;return 0;}"),
-            ("binding-moved-source", "#include <std/utility>\nclass V{public:int n;V(int n):n(n){}};int main(){V values[2]={V(1),V(2)};auto[first,second]=std::move(values);return values[0].n;}"),
+            ("binding-moved-source", "import std.utility;\nclass V{public:int n;V(int n):n(n){}};int main(){V values[2]={V(1),V(2)};auto[first,second]=std::move(values);return values[0].n;}"),
         ):
             path = scratch / f"bad-{name}.gti"
             path.write_text(source)

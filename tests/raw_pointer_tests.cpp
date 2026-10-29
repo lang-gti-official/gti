@@ -2095,7 +2095,7 @@ int main() {
         "slots.emplace(std::size_t(0), 9);",
         "slots.relocate_to(other, std::size_t(1));"}) {
     const std::string source = R"(
-#include <std/memory>
+import std.memory;
 int main() {
   std::allocator allocator{};
   mut auto slots = allocator.try_storage<int>(std::size_t(1)).expect("allocate");

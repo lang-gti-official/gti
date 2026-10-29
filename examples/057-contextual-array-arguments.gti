@@ -1,5 +1,4 @@
-#include <std/vector>
-
+import std.vector;
 int total<uint64_t N>(int values[N]) {
   mut int result = 0;
   for (mut uint64_t index = 0; index < N; index++) {

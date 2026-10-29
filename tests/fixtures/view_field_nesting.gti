@@ -1,7 +1,7 @@
 // Dependent values nested in fields and payloads of other values
 // (L-OWN-02, phase 3).
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 
 mut std::string_view kept = "";
 

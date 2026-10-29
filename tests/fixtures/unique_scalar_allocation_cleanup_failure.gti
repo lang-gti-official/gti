@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 extern "C" {
   void gti_test_fail_scalar_allocation(int32_t enabled);

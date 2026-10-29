@@ -3,11 +3,11 @@
 import pathlib
 import sys
 import tempfile
-from lsp_smoke_test import without_include_advice, LspSession
+from lsp_smoke_test import LspSession
 
 
 def main():
-    source = ('#include <std/vector>\n'
+    source = ('import std.vector;\n'
               'struct Command { int number = 0; std::vector<Command> children{};  public: Command() = default; };\n'
               'int main() { Command root = {.children = {{.number = 1}}}; return 0; }\n')
     with tempfile.TemporaryDirectory(prefix="gti-collection-lsp-") as root:
@@ -26,8 +26,8 @@ def main():
             return reply["result"]
 
         def diagnostics(version):
-            return without_include_advice(session.receive_until(lambda m: m.get("method") == "textDocument/publishDiagnostics"
-                and m["params"].get("version") == version)["params"]["diagnostics"])
+            return session.receive_until(lambda m: m.get("method") == "textDocument/publishDiagnostics"
+                and m["params"].get("version") == version)["params"]["diagnostics"]
 
         def change(version, text):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {

@@ -1,8 +1,8 @@
 // A switch observes a payload enum reached through a reference: a call that
 // returns one, or a reference local bound to one. The reference stays live
 // until each arm has bound its payloads, as a reference local's loan does.
-#include <std/panic>
-#include <std/string>
+import std.panic;
+import std.string;
 
 enum Shape { circle(int radius), none };
 

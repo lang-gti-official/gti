@@ -24,7 +24,7 @@ def main() -> int:
 
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source_text = """\
-#include <std/vector>
+import std.vector;
 
 class DispatchBase {
 public:

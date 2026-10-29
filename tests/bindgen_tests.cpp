@@ -812,8 +812,10 @@ int engine_variadic(const char *format, ...);
       lang::bindgen::runCBindgen(header, "engine.h", options);
   expect(first.gtiSource == second.gtiSource,
          "identical inputs should produce byte-identical output");
-  expect(contains(first.gtiSource, "namespace engine {"),
-         "the namespace option should wrap the generated source names");
+  expect(contains(first.gtiSource, "export module bindings;"),
+         "bindings should declare a module interface");
+  expect(contains(first.gtiSource, "export namespace engine {"),
+         "the namespace option should export the generated source names");
   expect(contains(first.gtiSource, "[[c_opaque]] struct Engine;"),
          "the opaque handle should emit");
   expect(contains(first.gtiSource, "mut c_float x;"),
@@ -827,6 +829,51 @@ int engine_variadic(const char *format, ...);
   expect(contains(first.gtiSource, "// Not imported:") &&
              contains(first.gtiSource, "engine_variadic"),
          "the skip report should name what was not imported");
+}
+
+// Each generated declaration must be visible across a real module boundary,
+// including later enum constants and records degraded to opaque handles.
+void testGeneratedModuleExports() {
+  const auto result = lang::bindgen::runCBindgen(R"(
+typedef struct Handle Handle;
+struct Device { volatile int status; };
+enum Mode { MODE_A = 1, MODE_B = 2 };
+enum { FIRST = 3, SECOND = 4 };
+typedef int Value;
+extern int counter;
+int consume(Handle *handle, struct Device *device, Value value, enum Mode mode);
+)",
+                                                 "module-exports.h");
+  expect(result.usable(), "module export bindings should read");
+  expect(contains(result.gtiSource, "export constexpr Mode MODE_A") &&
+             contains(result.gtiSource, "export constexpr Mode MODE_B") &&
+             contains(result.gtiSource, "export constexpr c_uint FIRST") &&
+             contains(result.gtiSource, "export constexpr c_uint SECOND"),
+         "every named and anonymous enum constant should be exported");
+  expect(contains(result.gtiSource, "export extern \"C\" {"),
+         "unnamespaced external declarations should be exported");
+  const auto standardLibrary =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto entry = std::filesystem::absolute("bindgen-module-consumer.gti");
+  const auto bindings = entry.parent_path() / "generated-bindings.gti";
+  const auto frontend = lang::Frontend().analyze(
+      entry, R"(import "generated-bindings.gti";
+int main() {
+  mut Handle* handle = nullptr;
+  mut Device* device = nullptr;
+  Value number = Value(FIRST + SECOND);
+  Mode mode = Mode(MODE_A + MODE_B);
+  unsafe { return consume(handle, device, number, mode) + counter; }
+}
+)",
+      {standardLibrary / "prelude.gti"},
+      {{bindings.string(), result.gtiSource}}, {standardLibrary});
+  for (const auto &diagnostic : frontend.diagnostics) {
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(
+      frontend.canGenerateCode(),
+      "a separate unit should consume generated types, constants and externs");
 }
 
 // Object-like integer macros import as constants: literal bases and
@@ -1650,6 +1697,7 @@ int main() {
   testEnumAndTypedefPlanning();
   testNativeEnumRepresentations();
   testWriterShapeAndDeterminism();
+  testGeneratedModuleExports();
   testMacroConstantImport();
   testSynthesizedCallbackAliases();
   testComposableNativeTypedefs();

@@ -1,5 +1,4 @@
-#include <std/string>
-
+import std.string;
 // A fallible lookup need not copy its resource. The success refers to an
 // existing owner; the error carries the reason no reference could be returned.
 enum class lookup_errc { missing };

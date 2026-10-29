@@ -126,9 +126,11 @@ int main() {
       std::filesystem::weakly_canonical(overlayDependency).string();
   const lang::FrontendResult overlaid = lang::Frontend().analyze(
       overlayEntry,
-      "#include \"gti-source-overlay-dependency.gti\"\n"
+      "import \"gti-source-overlay-dependency.gti\";\n"
       "int main() { return dependency_value; }\n",
-      {}, {{dependencyKey, "int dependency_value = 0;\n"}});
+      {}, {{dependencyKey, R"GTIMODULE(export module gti_source_overlay_dependency;
+export int dependency_value = 0;
+)GTIMODULE"}});
   expect(overlaid.canGenerateCode() && overlaid.diagnostics.empty(),
          "the frontend should analyze unsaved included-source overlays");
 }
@@ -708,7 +710,7 @@ int main() {
 void testOrderedRawReceiverInputs() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "ordered-raw-receiver.gti", R"(
-#include <std/memory>
+import std.memory;
 struct Item {
   mut std::unique_ptr<int> value;
   Item(int n) : value(std::make_unique<int>(n)) {}
@@ -2781,8 +2783,8 @@ int main() { return lifetime(true) - 13; }
 
 void testProgramArgumentsEntryPoint() {
   const std::string source = R"(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 using arguments_type = std::vector<std::string>;
 
 int main(mut int argc, mut arguments_type argv) {
@@ -3053,7 +3055,7 @@ int main(mut int argc, mut arguments_type argv) {
 
   const lang::FrontendResult wrongArguments = lang::Frontend().analyze(
       "main-wrong-arguments.gti",
-      "#include <std/vector>\n"
+      "import std.vector;\n"
       "int main(int count, std::vector<int> values) { return count; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const lang::FrontendResult rawArguments = lang::Frontend().analyze(
@@ -3747,7 +3749,7 @@ void testTypedHirGenericInstances() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "hir-generics.gti",
       R"(
-#include <std/memory>
+import std.memory;
 
 struct Widget {
 public:
@@ -3879,7 +3881,7 @@ int main() {
   const lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-hir-generics.gti",
       R"(
-#include <std/memory>
+import std.memory;
 
 struct Widget { public: Widget() = default; };
 

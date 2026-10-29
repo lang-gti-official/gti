@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/span>
+import std.vector;
+import std.span;
 std::span<int32_t> relay(std::span<int32_t> view) { return view; }
 int main() {
   mut std::vector<int32_t> v = std::vector<int32_t>();

@@ -1,5 +1,5 @@
-#include <m/stats>
-#include <std/vector>
+import m.stats;
+import std.vector;
 
 int main() {
   mut std::vector<int> empty{};

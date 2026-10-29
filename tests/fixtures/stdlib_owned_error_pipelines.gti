@@ -1,8 +1,8 @@
-#include <std/chrono>
-#include <std/json>
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.chrono;
+import std.json;
+import std.memory;
+import std.string;
+import std.vector;
 
 struct document {
   std::string name = std::string("");

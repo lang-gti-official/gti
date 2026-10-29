@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/memory>
+import std.string;
+import std.memory;
 
 struct Entry<K, V> {
   K first;

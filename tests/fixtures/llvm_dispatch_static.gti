@@ -1,4 +1,4 @@
-#include <std/string_view>
+import std.string_view;
 
 interface Reader { int read(); };
 interface Writer { void write(int value) mut; };

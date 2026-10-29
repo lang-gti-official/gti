@@ -5,10 +5,9 @@
 // struct exists, and the values produced so far are cleaned up normally.
 // Constructors and invariants are never bypassed: only structs eligible for
 // designated construction (public value fields, no constructors) qualify.
-#include <std/meta>
-#include <std/string>
-#include <std/vector>
-
+import std.meta;
+import std.string;
+import std.vector;
 struct Point {
   int32_t x = 0;
   int32_t y = 0;

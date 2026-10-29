@@ -5,11 +5,11 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import without_include_advice, LspSession, lsp_position, semantic_tokens_by_position
+from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
 
 
 def main():
-    source = ("#include <std/assert>\n"
+    source = ("import std.assert;\n"
               "int main() { /*😀*/ std::assert(1); return 0; }\n")
     valid = source.replace("assert(1)", "assert(true)")
     with tempfile.TemporaryDirectory(prefix="gti-deferred-lsp-") as directory:
@@ -19,11 +19,11 @@ def main():
         session = LspSession(sys.argv[1])
 
         def published(version):
-            return without_include_advice(session.receive_until(lambda message:
+            return session.receive_until(lambda message:
                 message.get("method") == "textDocument/publishDiagnostics"
                 and message["params"].get("uri") == uri
                 and message["params"].get("version") == version
-            )["params"]["diagnostics"])
+            )["params"]["diagnostics"]
 
         def change(version, text):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
@@ -59,7 +59,7 @@ def main():
             incomplete = valid.replace("std::assert(true)", "std::assert(")
             assert change(5, incomplete)
             assert not change(6, valid)
-            macros = ("#include <std/assert>\n"
+            macros = ("import std.assert;\n"
                       "namespace application {\n"
                       "  /*😀*/ #macro check(int value) { std::assert(value == 7); }\n"
                       "  #macro check(bool value) { std::assert(value); }\n"
@@ -151,11 +151,14 @@ def main():
             # syntax and provenance; the server must not reread stale disk text.
             policy_path = (pathlib.Path(directory) / "policy.gti").resolve()
             policy_uri = policy_path.as_uri()
-            policy_path.write_text("#macro external(int value) { if (value == 1) {} }\n")
+            policy_path.write_text((
+                                       'export module policy;\n'
+                                       '#macro external(int value) { if (value == 1) {} }\n'
+                                   ))
             overlay = "#macro external(int value) { if (value == 2) {} }\n"
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
                 "textDocument": {"uri": policy_uri, "languageId": "gti", "version": 1, "text": overlay}}})
-            included = '#include "policy.gti"\nint main() { external(7); return 0; }\n'
+            included = 'import "policy.gti";\nint main() { external(7); return 0; }\n'
             assert not change(13, included)
             expanded = inspect(included, included.index("external(7)") + 1, 13)["result"]
             assert "(7 == 2)" in expanded["text"], expanded

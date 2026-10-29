@@ -801,7 +801,7 @@ ProjectBuildPlan makeBuildPlan(
 
   // Bindgen imports become synthetic package source roots: the generated
   // directory is an ordinary alias edge of the declaring package, so
-  // `#include <alias/bindings>` resolves through the existing dependency
+  // `import alias.bindings;` resolves through the existing dependency
   // mechanism and stays invisible to every other package. The declared
   // (relative) header spelling and options join the model identity; the
   // generated unit's content participates in cache identity as ordinary
@@ -828,11 +828,13 @@ ProjectBuildPlan makeBuildPlan(
       }
       owner->dependencies.push_back(
           {.alias = import.alias, .targetIdentity = syntheticIdentity});
-      packageSourceRoots.push_back({.identity = syntheticIdentity,
-                                    .name = import.alias,
-                                    .packageRoot = importDirectory,
-                                    .sourceRoot = importDirectory,
-                                    .dependencies = {}});
+      packageSourceRoots.push_back(
+          {.identity = syntheticIdentity,
+           .name = import.alias,
+           .packageRoot = importDirectory,
+           .sourceRoot = importDirectory,
+           .dependencies = {},
+           .modules = {{"bindings", importDirectory / "bindings.gti"}}});
       modelIdentity += "\nbindgen:" + resolved.identity() + ":" + import.alias +
                        "=" + import.declaredHeader;
       if (!import.namespaceName.empty()) {
@@ -970,8 +972,8 @@ std::string scaffoldManifest(std::string_view packageName) {
          "root = \"src/main.gti\"\n";
 }
 
-constexpr std::string_view scaffoldMainSource = R"(#include <std/string>
-#include <std/vector>
+constexpr std::string_view scaffoldMainSource = R"(import std.string;
+import std.vector;
 
 int main(int argc, std::vector<std::string> argv) {
   std::println("Hello, GTI!");

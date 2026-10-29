@@ -10,9 +10,9 @@ import pathlib, subprocess, sys
 GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
 OUT = pathlib.Path("/tmp/kindmx"); OUT.mkdir(exist_ok=True)
 
-HEAD = """#include <std/vector>
-#include <std/string>
-#include <std/memory>
+HEAD = """import std.vector;
+import std.string;
+import std.memory;
 
 mut int32_t drops = 0;
 """

@@ -1,6 +1,6 @@
-#include <std/span>
-#include <std/vector>
-#include <std/string>
+import std.span;
+import std.vector;
+import std.string;
 
 int main(int argc, std::vector<std::string> argv) {
   mut std::vector<int> values = {1, 2, 3};

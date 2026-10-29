@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/string_view>
+import std.memory;
+import std.string_view;
 mut int released = 0;
 struct Owner {
   int tag;

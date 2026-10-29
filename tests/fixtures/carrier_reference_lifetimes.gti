@@ -1,5 +1,5 @@
-#include <std/utility>
-#include <std/string>
+import std.utility;
+import std.string;
 
 class Scope {
 public:

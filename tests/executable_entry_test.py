@@ -11,7 +11,11 @@ from lsp_project_facts_test import diagnostics_for, initialize, open_document
 
 
 CODE = "GTI-S2094"
-SOURCE = "// supplementary: \U0001f600\nnamespace tea { /* \U0001f600 */ int main() { return 0; } }\n"
+SOURCE = (
+             'export module helper;\n'
+             '// supplementary: 😀\n'
+             'namespace tea { /* 😀 */ export int main() { return 0; } }\n'
+         )
 
 
 def main():
@@ -73,9 +77,9 @@ def main():
         entry.write_text(SOURCE)
         assert CODE in run("build", cwd=project, error=True)
         # An included ordinary function named main is not an entry candidate.
-        entry.write_text('#include "helper.gti"\nint main() { return tea::main(); }\n')
+        entry.write_text('import "helper.gti";\nint main() { return tea::main(); }\n')
         run("check", cwd=project)
-        entry.write_text('#include "helper.gti"\n')
+        entry.write_text('import "helper.gti";\n')
         assert CODE in run("check", cwd=project, error=True)
         entry.write_text(SOURCE)
 

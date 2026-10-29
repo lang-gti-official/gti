@@ -11,13 +11,13 @@ def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     repository = pathlib.Path(__file__).resolve().parent.parent
     environment = dict(os.environ, GTI_STDLIB_PATH=str(repository / "stdlib"))
-    headers = """#include <std/algorithm>
-#include <std/vector>
-#include <std/list>
-#include <std/deque>
-#include <std/array>
-#include <std/set>
-#include <std/string>
+    headers = """import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
 """
     negatives = {
         "overlapping-transform": 'int main() { mut std::vector<int> x = {1}; std::transform(x, x, [](int& n) -> int { return n + 1; }); return 0; }',

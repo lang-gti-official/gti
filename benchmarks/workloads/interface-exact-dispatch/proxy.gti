@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 int32_t step(int32_t value, int32_t bias) {
   return (value * 17 + bias) % 65521;
 }

@@ -23,13 +23,13 @@ native flags, incidental host threads, and emitted C++ never infer it.
 
 `std::thread`, `std::thread_result<Result>`, `std::atomic<T>`, and
 `std::mutex<T>`, and `std::parallel_invoke` require the concurrent profile and a target advertising
-thread-capable concurrency support. Merely importing `<std/thread>`,
-`<std/atomic>`, or `<std/mutex>` without constructing or calling their public
+thread-capable concurrency support. Merely importing `std.thread`,
+`std.atomic`, or `std.mutex` without constructing or calling their public
 values remains valid in the default profile and does not select native
 synchronization support. An executable use fails in semantics with
 `GTI-S2084` when either requirement is absent.
 
-The `<std/cthread>` create/join, once-initialization, manual-mutex, and
+The `std.cthread` create/join, once-initialization, manual-mutex, and
 condition-variable operations have the same profile and target requirements
 and additionally require lexical `unsafe`. Its scheduling hint, relative
 sleep, and identity observation/comparison operations remain available in
@@ -160,7 +160,7 @@ foreign-thread entry or async suspension. Runnable example:
 
 ## C-Style Scheduling Hint
 
-`<std/cthread>` currently implements `void std::thrd_yield()`. It offers the
+`std.cthread` currently implements `void std::thrd_yield()`. It offers the
 host scheduler an opportunity to run another thread and may have no effect.
 The call returns no value, owns no resource, and raises no defined failure.
 It is valid in both execution profiles, including on the initial thread:
@@ -177,7 +177,7 @@ not C handle ABI parity.
 
 ## C-Style Relative Sleep
 
-`<std/cthread>` provides `std::timespec`, an ordinary copyable GTI struct with
+`std.cthread` provides `std::timespec`, an ordinary copyable GTI struct with
 mutable public `int64_t tv_sec` and `int64_t tv_nsec` fields. Its default
 constructor sets both to zero; its two-argument constructor stores seconds and
 nanoseconds. For sleep it represents a relative duration; timed mutex locking
@@ -216,7 +216,7 @@ delivery.
 
 ## C-Style Thread Identity
 
-`<std/cthread>` provides safe `thrd_t thrd_current()` and
+`std.cthread` provides safe `thrd_t thrd_current()` and
 `int32_t thrd_equal(thrd_t left, thrd_t right)`. Both work in either execution
 profile; neither creates a thread or requires target thread-creation support.
 The initial thread and managed workers have identities too. `thrd_current()`
@@ -237,7 +237,7 @@ without registering that thread for GTI callback entry.
 
 ## C-Style Manual Create And Join
 
-`<std/cthread>` also provides `thrd_t` (an opaque-purpose `uint64_t` identity),
+`std.cthread` also provides `thrd_t` (an opaque-purpose `uint64_t` identity),
 `thrd_start_t` (`(void*) -> int32_t`), and these ordinary GTI wrappers:
 
 ```gti
@@ -274,7 +274,7 @@ violation. Use `std::thread` for owned, automatically joined tasks instead.
 
 Concurrent GTI callback conversion accepts the exact `thrd_start_t` worker
 signature or the once-initializer signature described below and requires the
-trusted `<std/cthread>` runtime declarations. The worker's
+trusted `std.cthread` runtime declarations. The worker's
 generated adapter enters only on the worker registered for that exact adapter,
 once. Initial-thread invocation, unregistered foreign threads, another adapter,
 recursive entry, and replay are stopped before entering the GTI target.
@@ -303,7 +303,7 @@ separate lifetime and failure contract.
 
 ## C-Style Once Initialization
 
-`<std/cthread>` supplies noncopyable, nonmovable `once_flag`, the constructor
+`std.cthread` supplies noncopyable, nonmovable `once_flag`, the constructor
 tag `ONCE_FLAG_INIT`, `once_initializer_t` (`() -> void`), and unsafe
 `call_once(once_flag&, once_initializer_t)` plus a `const once_flag*` overload.
 Default construction and construction from the tag each create independent,
@@ -336,7 +336,7 @@ failure path.
 
 ## C-Style Manual Mutexes
 
-`<std/cthread>` provides `mtx_t` (a non-owning `uint64_t` handle) and unsafe
+`std.cthread` provides `mtx_t` (a non-owning `uint64_t` handle) and unsafe
 `mtx_init`, `mtx_destroy`, `mtx_lock`, `mtx_trylock`, `mtx_timedlock`, and
 `mtx_unlock`. Every operation requires the concurrent profile and target thread
 support. Initialization accepts a mutable handle reference or output pointer;
@@ -386,7 +386,7 @@ lock/try/timed/unlock pointers return error; null destruction terminates.
 
 ## C-Style Manual Condition Variables
 
-`<std/cthread>` supplies unsafe `cnd_init`, `cnd_destroy`, `cnd_signal`,
+`std.cthread` supplies unsafe `cnd_init`, `cnd_destroy`, `cnd_signal`,
 `cnd_broadcast`, `cnd_wait`, and `cnd_timedwait` over non-owning `cnd_t`
 (`uint64_t`) handles. All require the concurrent profile and target threads.
 Initialization takes an output pointer or mutable reference; failure preserves
@@ -430,7 +430,7 @@ with the unsafe caller. This is not a safe scoped condition-variable wrapper.
 
 ## Managed Threads
 
-`<std/thread>` provides the move-only `std::thread` and
+`std.thread` provides the move-only `std::thread` and
 `std::thread_result<Result>` owners. A task and every capture cross by owned
 transfer exactly once. References, stored borrowed state, raw pointers, and
 non-transfer-capable values do not cross. An outstanding handle automatically
@@ -462,7 +462,7 @@ automatic handle cleanup.
 
 ## Scoped Parallel Invocation
 
-`<std/thread>` provides the synchronous operation
+`std.thread` provides the synchronous operation
 `expected<void, std::thread_errc> std::parallel_invoke<Tasks...>(Tasks... tasks)`.
 It consumes an ordered group of exact `void()` callable values and completes
 every started worker before returning or propagating a defined failure. The
@@ -524,7 +524,7 @@ example is [066-managed-threads.gti](../../examples/066-managed-threads.gti).
 
 ## Atomic Scalar Domain
 
-`<std/atomic>` provides `std::atomic<T>` when `T` satisfies
+`std.atomic` provides `std::atomic<T>` when `T` satisfies
 `std::atomic_scalar<T>`. The closed domain is:
 
 - `bool`;
@@ -541,7 +541,7 @@ compiler-validated synchronized interior mutation. In the concurrent profile,
 this permits an immutable, share-capable namespace global such as:
 
 ```gti
-#include <std/atomic>
+import std.atomic;
 
 std::atomic<int32_t> requests{0};
 ```
@@ -688,7 +688,7 @@ written strong compare/exchange loop.
 
 ## Safe Atomic Waiting
 
-`<std/atomic>` also supplies `wait(old)`, `notify_one()`, and `notify_all()` on
+`std.atomic` also supplies `wait(old)`, `notify_one()`, and `notify_all()` on
 every supported atomic scalar. These are safe shared-receiver operations in
 the concurrent profile, not async suspension or a worker pool:
 
@@ -732,7 +732,7 @@ per-object state; host parking implementation costs are platform-dependent.
 
 ## Mutexes And Scoped Guards
 
-`<std/mutex>` provides `std::mutex<T>` for an owned movable `T`. The mutex is
+`std.mutex` provides `std::mutex<T>` for an owned movable `T`. The mutex is
 noncopyable and may be moved locally only while no guard derived from it is
 live. It exposes no direct reference to its payload. Shared mutation is
 available only through `lock()`:
@@ -791,7 +791,7 @@ of a live lock or bypassing protected-value loans.
 
 ## Transfer-Qualified Callable Storage
 
-`<std/functional>` supplies move-only `std::transfer_function<R(Args...)>`,
+`std.functional` supplies move-only `std::transfer_function<R(Args...)>`,
 `std::transfer_function<R(Args...) mut>` and
 `std::transfer_function<R(Args...) &&>`. Construction and replacement require
 a transferable target; interface erasure retains that requirement. As with
@@ -830,7 +830,7 @@ The safe surface deliberately excludes weak compare/exchange, spurious
 failure, timed/cancellable atomic waiting, atomic references, pointer atomics,
 and fences. It also
 has no safe scoped condition-variable wrapper, safe public manual-unlock API,
-or safe recursive/read-write mutex family. The unsafe `<std/cthread>` surface
+or safe recursive/read-write mutex family. The unsafe `std.cthread` surface
 does provide manual unlock, recursive mutexes, and manual condition variables.
 Across both surfaces, detach, C-style thread exit,
 C-style thread-specific-storage keys, read/write mutexes, and arbitrary

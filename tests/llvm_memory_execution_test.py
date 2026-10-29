@@ -43,9 +43,9 @@ INLINE_CASES = {
     # must be destroyed exactly once afterwards, whole arrays swap as one
     # object, and swapping an element with itself must change nothing.
     "restoring-exchanges": r'''
-#include <std/array>
-#include <std/string>
-#include <std/utility>
+import std.array;
+import std.string;
+import std.utility;
 
 mut int destroyed = 0;
 
@@ -103,8 +103,8 @@ int main() {
     # dispatch headers and owned text, element views dispatch through raw
     # references, and destruction runs each exact recipe once in reverse.
     "hierarchy-element-storage": r'''
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 mut int destroyed = 0;
 mut int trace = 0;

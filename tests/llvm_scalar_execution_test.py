@@ -76,7 +76,7 @@ int main() {
 '''
 
 COVERAGE_CONSTRUCTIONS = r'''
-#include <std/numeric>
+import std.numeric;
 
 using Index = uint8_t;
 mut int implicit_zero;
@@ -143,10 +143,10 @@ def failures() -> dict[str, tuple[str, str]]:
 int fail(mut int8_t value) { value += 1; return int(value); }
 int main() { return fail(int8_t(127)); }
 ''', 'GTI-R0006')
-    cases['panic'] = ('#include <std/panic>\nint main() { std::panic("native panic"); }\n', 'GTI-R0017')
-    cases['empty-panic'] = ('#include <std/panic>\nint main() { std::panic(""); }\n', 'GTI-R0017')
-    cases['truncated-panic'] = ('#include <std/panic>\nint main() { std::panic("' + '\u03bb' * 260 + '"); }\n', 'GTI-R0017')
-    cases['assertion'] = ('''#include <std/panic>
+    cases['panic'] = ('import std.panic;\nint main() { std::panic("native panic"); }\n', 'GTI-R0017')
+    cases['empty-panic'] = ('import std.panic;\nint main() { std::panic(""); }\n', 'GTI-R0017')
+    cases['truncated-panic'] = ('import std.panic;\nint main() { std::panic("' + '\u03bb' * 260 + '"); }\n', 'GTI-R0017')
+    cases['assertion'] = ('''import std.panic;
 #macro require(bool condition) {
   if (!condition) { std::panic("assertion failed"); }
 }
@@ -264,7 +264,7 @@ class Unused { public: Unused() {} ~Unused() {} };
 int unused() { Unused value{}; return 1; }
 int main() { return 0; }
 ''', 'numeric-intrinsics': '''
-#include <std/numeric>
+import std.numeric;
 int main() {
   if (std::wrapping_add(uint8_t(255), uint8_t(1)) != uint8_t(0)) { return 1; }
   if (std::wrapping_mul(int8_t(64), int8_t(2)) != int8_t(-128)) { return 2; }

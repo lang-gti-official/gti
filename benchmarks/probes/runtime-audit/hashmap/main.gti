@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/unordered_map>
+import std.string;
+import std.unordered_map;
 int main() {
   mut std::unordered_map<int32_t, int32_t> table{};
   for (mut int32_t i = 0; i < 1000000; i++) {

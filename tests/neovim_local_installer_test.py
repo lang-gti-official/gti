@@ -34,7 +34,7 @@ def real_toolchain_smoke(installer, toolchain):
                                     capture_output=True, text=True, env=environment)
             assert result.stdout.strip() == f"{tool} {version}", result
         source = root / "hello.gti"
-        source.write_text('#include <std/string>\nint main() {\n'
+        source.write_text('import std.string;\nint main() {\n'
                           'std::println("local terminal activation works");\nreturn 0;\n}\n')
         binary = root / "hello"
         subprocess.run([commands / "gti", source, "-o", binary], check=True,

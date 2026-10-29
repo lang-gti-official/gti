@@ -1,5 +1,6 @@
-#include "leaf.gti"
+export module middle;
+import "leaf.gti";
 
 namespace middle {
-  int value() { return leaf::value() + 1; }
+  export int value() { return leaf::value() + 1; }
 }

@@ -1,0 +1,7 @@
+// The relative source import works without a manifest or header pairing.
+import "geometry.gti";
+
+int main() {
+  // Only answer is exported; implementation_offset remains private.
+  return geometry::answer() - 42;
+}

@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 uint64_t bounded(uint64_t input) {
   gti_internal::require_relocation_capacity(input < uint64_t(4));

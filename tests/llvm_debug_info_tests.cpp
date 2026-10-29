@@ -1467,7 +1467,7 @@ void payloadEnumMetadata(LlvmCodegenOptimization optimization) {
                 .trustedBodies = TrustedBodyAnalysis::Reachable,
                 .sourceDebugProfile = SourceDebugProfile::LexicalV1})
           .analyze("payload-debug.gti", R"gti(
-#include <std/optional>
+import std.optional;
 extern "C" { int32_t debug_input(); }
 enum Reading { sample(int32_t value, int64_t at), missing };
 int32_t inspect(Reading reading) {
@@ -1545,7 +1545,7 @@ void libraryMacroScopes(LlvmCodegenOptimization optimization) {
                 .trustedBodies = TrustedBodyAnalysis::Reachable,
                 .sourceDebugProfile = SourceDebugProfile::LexicalV1})
           .analyze("macro-debug.gti", R"gti(
-#include <std/testing>
+import std.testing;
 int32_t twice(int32_t value) { return value * 2; }
 int main() {
   std::testing::check_eq(twice(2), 4);

@@ -1,3 +1,5 @@
+export module process;
+
 // <std/process> — exact synchronous child-process execution.
 //
 // This first public process slice deliberately does not invoke a shell. A
@@ -14,10 +16,8 @@
 #if target.os == "unknown"
 #error "std/process requires a supported POSIX target."
 #endif
-
-#include <std/string>
-
-namespace gti_internal {
+import std.string;
+export namespace gti_internal {
 namespace process_runtime {
 extern "C" {
 uint32_t gti_rt_process_run_v1(
@@ -27,7 +27,7 @@ uint32_t gti_rt_process_run_v1(
 }
 }
 
-namespace std {
+export namespace std {
 namespace process {
 
 /// Recoverable failures before a child termination status is available.

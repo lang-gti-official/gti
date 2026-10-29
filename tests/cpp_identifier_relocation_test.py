@@ -26,8 +26,8 @@ def main():
         shutil.copytree(repository / "stdlib", moved_stdlib)
         for name, source in (
             ("ownership", (repository / "examples/013-ownership.gti").read_text()),
-            ("nominal", """#include "../external/left/shared.gti"
-#include "../external/right/shared.gti"
+            ("nominal", """import "../external/left/shared.gti";
+import "../external/right/shared.gti";
 struct Outer { struct Inner { int value; }; };
 class Box<T> {
 public:
@@ -55,8 +55,9 @@ int main() {
                     external = project / "external" / side
                     external.mkdir(parents=True)
                     (external / "shared.gti").write_text(
+                        f"export module {side}_shared;\n"
                         f"static int local<T>(T ignored) {{ return {value}; }}\n"
-                        f"int {side}() {{ return local<int>(0); }}\n")
+                        f"export int {side}() {{ return local<int>(0); }}\n")
             for optimization in ("-O0", "-O3"):
                 outputs = []
                 for project in projects:

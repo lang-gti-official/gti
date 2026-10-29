@@ -45,7 +45,7 @@ concept fits<Item, Space> {
 };
 """
 
-OWNED = """#include <lib/shapes>
+OWNED = """import lib.shapes;
 class Circle {
 public:
   int radius;
@@ -86,7 +86,7 @@ int main() {
 }
 """
 
-FOREIGN = """#include <lib/shapes>
+FOREIGN = """import lib.shapes;
 for concept shaped<Square> {
   using size_type = int;
   int size(Square& value) { return value.side; }

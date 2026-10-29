@@ -1,16 +1,16 @@
-#include <std/iterator>
-#include <std/string_view>
-#include <std/span>
-#include <std/detail/iterator>
-#include <std/memory>
+export module string;
 
+import std.iterator;
+import std.string_view;
+import std.span;
+import "detail/iterator.gti";
+import std.memory;
 // The storage-backed value, capacity, indexed operations, and owner-dependent
 // read-only views are implemented.
-#include <std/functional>
-#include <std/numeric>
-#include <std/charconv>
-
-namespace std {
+import std.functional;
+import std.numeric;
+import std.charconv;
+export namespace std {
   /// Recoverable failures while copying a foreign NUL-terminated byte string.
   /// Invalid non-null addresses are unsafe precondition violations, not errors.
   enum class c_string_errc {
@@ -1309,6 +1309,10 @@ namespace std {
     return detail::float_to_decimal_string(value);
   }
 
+}
+
+// Source-local implementation helpers remain private to this module.
+namespace std {
   namespace detail {
     static std::size_t fnv_64_1a_hasher(std::string& value) {
       mut uint64_t result = uint64_t(14695981039346656037);
@@ -1324,7 +1328,7 @@ namespace std {
   }
 }
 
-class std::hash<std::string> {
+export class std::hash<std::string> {
 public:
   hash() = default;
   std::size_t operator()(std::string& value) {
@@ -1332,7 +1336,7 @@ public:
   }
 };
 
-namespace std {
+export namespace std {
   // Convenience parsing borrows an owner only for the duration of the call.
   expected<int32_t, parse_errc> stoi(string& input) {
     return std::stoi(input.view());

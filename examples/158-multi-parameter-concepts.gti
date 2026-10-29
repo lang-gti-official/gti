@@ -1,8 +1,7 @@
 // A protocol concept can relate several types. A block supplies the
 // operations for one combination of them, and generic code names the
 // combination it requires.
-#include <std/string>
-
+import std.string;
 // Adding two quantities, where the result's type depends on both inputs.
 concept adds_to<Left, Right> {
   typename sum_type;

@@ -1,8 +1,8 @@
-#include <std/algorithm>
-#include <std/array>
-#include <std/string>
-#include <std/vector>
-#include <std/panic>
+import std.algorithm;
+import std.array;
+import std.string;
+import std.vector;
+import std.panic;
 
 class Resource {
   int identity;

@@ -79,7 +79,7 @@ spdlog = { git = "https://git.internal.howetotech.dev/gti-lang/spdlog.git", rev 
 
 Run `gti fetch`, commit the resulting `gti.lock`, and use `gti build --locked`
 for reproducible builds. Then use a direct package include, such as
-`#include <sqlite3/sqlite3>`.
+`import sqlite3.sqlite3;`.
 
 GLFW, Assimp, and libgit2 now declare consumer-approved GTI build scripts instead
 of depending on prebuilt host archives. For development in this checkout,
@@ -100,7 +100,7 @@ allow-build-scripts = [
 ```
 
 Paths are relative to your application's `gti.toml`. Then use a direct package
-include, such as `#include <sqlite3/sqlite3>`, and `gti build`/`gti run`.
+module import, such as `import sqlite3.sqlite3;`, and `gti build`/`gti run`.
 Only approve scripts for dependencies actually used by the application, after
 reviewing the package and its pinned Git revision. Approval permits arbitrary
 host code; build-script sandboxing and enforced network denial are not yet
@@ -181,7 +181,7 @@ null and count getters return zero for invalid input; a null mesh's material
 index is `UINT32_MAX`. Node transforms are local, not accumulated world transforms.
 
 To use Assimp alone, prepare it, add the dependency above, and directly include
-`#include <assimp/assimp>`. The complete consumer in
+`import assimp.assimp;`. The complete consumer in
 [`examples/assimp/src/main.gti`](examples/assimp/src/main.gti) demonstrates import,
 geometry access and cleanup. Run `gti test` in `packages/examples/assimp` to build
 and execute it independently of the other binding smoke tests.

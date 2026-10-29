@@ -6,8 +6,8 @@
 // These uses used to fail MIR construction or C++ emission (GTI-B0001). A
 // move-only destination has no copy, so semantics rejects using the result of
 // its assignment (GTI-S2003).
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 struct Point {
   int32_t x;

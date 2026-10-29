@@ -1,9 +1,10 @@
-#include <std/memory>
-#include <std/meta>
+export module polymorphic;
 
+import std.memory;
+import std.meta;
 // Owning polymorphic values with inline storage for small eligible payloads.
 
-namespace gti_internal {
+export namespace gti_internal {
 /// Compiler-bound inline slot for at most one object whose dynamic type
 /// implements `Interface`, within `Bytes` and `Align`. Application code cannot
 /// name this type or its operations; `std::inline_polymorphic` owns every
@@ -30,7 +31,7 @@ void polymorphic_storage_reset<Interface, uint64_t Bytes, uint64_t Align>(
     mut gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage);
 }
 
-namespace std {
+export namespace std {
 namespace detail {
 constexpr bool inline_payload_policy<Model, Interface>() {
   return (std::meta::is_class<Model>() || std::meta::is_struct<Model>()) &&

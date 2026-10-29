@@ -1,7 +1,7 @@
-#include <std/io>
-#include <std/cstdio>
-#include <std/span>
-#include <std/string>
+import std.io;
+import std.cstdio;
+import std.span;
+import std.string;
 
 // Ordinary user transport: one short write, one retryable failure, then success.
 class FlakySink {

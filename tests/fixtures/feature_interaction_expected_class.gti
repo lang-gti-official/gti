@@ -1,5 +1,5 @@
 // Expected exit status: 0. Reduced from the seed-20261003 interaction campaign.
-#include <std/utility>
+import std.utility;
 
 class Ticket {
 public:

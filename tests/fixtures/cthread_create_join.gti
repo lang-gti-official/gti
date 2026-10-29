@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 
 int32_t worker(void* context) {
   return context == nullptr ? 42 : 7;

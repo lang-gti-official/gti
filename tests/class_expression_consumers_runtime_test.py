@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 
 
-PRELUDE = """#include <std/vector>
+PRELUDE = """import std.vector;
 class Value {
   int number;
 public:

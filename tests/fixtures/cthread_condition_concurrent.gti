@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 extern "C" {
   void* cthread_condition_context(uint64_t mutex, uint64_t condition);
   uint64_t cthread_condition_mutex(void* context);

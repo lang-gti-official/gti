@@ -79,15 +79,18 @@ def main():
         library = root / "library.gti"
         executable = root / "main"
         library.write_text(
-            "namespace support {\n"
-            "class Result { public: Result() = default; };\n"
-            "int print(int value) { return value; }\n"
-            "}\n",
+            (
+                'export module library;\n'
+                'namespace support {\n'
+                'export class Result { public: Result() = default; };\n'
+                'export int print(int value) { return value; }\n'
+                '}\n'
+            ),
             encoding="utf-8",
         )
         source.write_text(
-            '#include "library.gti"\n'
-            '#include "./library.gti";\n'
+            'import "library.gti";\n'
+            'import "./library.gti";\n'
             '#if target.vendor == "apple"\n'
             "int platform_value() { return 0; }\n"
             "#else\n"
@@ -613,7 +616,7 @@ def main():
             extern_c_source = root / "extern-c-sockets.gti"
             extern_c_executable = root / "extern-c-sockets"
             extern_c_source.write_text(
-                "#include <std/tcp>\n"
+                "import std.tcp;\n"
                 "int main() {\n"
                 "  mut auto opened = std::tcp::open();\n"
                 "  if (!opened or !opened.value().is_open()) { return 1; }\n"
@@ -683,7 +686,7 @@ def main():
 
             copied_socket_source = root / "copied-tcp-socket.gti"
             copied_socket_source.write_text(
-                "#include <std/tcp>\n"
+                "import std.tcp;\n"
                 "void copy_socket(std::tcp::socket& original) {\n"
                 "  std::tcp::socket copied = original;\n"
                 "}\n"
@@ -706,7 +709,7 @@ def main():
 
             forged_socket_source = root / "forged-tcp-socket.gti"
             forged_socket_source.write_text(
-                "#include <std/tcp>\n"
+                "import std.tcp;\n"
                 "int main() {\n"
                 "  std::tcp::socket forged = std::tcp::socket(\n"
                 "      gti_internal::tcp_socket_handle(1));\n"
@@ -752,7 +755,7 @@ def main():
             tcp_failure_source = root / "tcp-failures.gti"
             tcp_failure_executable = root / "tcp-failures"
             tcp_failure_source.write_text(
-                "#include <std/tcp>\n"
+                "import std.tcp;\n"
                 'extern "C" {\n'
                 "  void gti_test_set_socket_result(int32_t value);\n"
                 "  int32_t gti_test_close_calls();\n"
@@ -827,7 +830,7 @@ def main():
         cstdio_executable = root / "cstdio"
         (root / "bytes.bin").write_bytes(b"A\x00Z")
         cstdio_source.write_text(
-            '#include <std/cstdio>\n'
+            'import std.cstdio;\n'
             "int main() {\n"
             '  mut auto opened = std::fopen("bytes.bin", "rb");\n'
             "  if (!opened) { return 1; }\n"
@@ -894,7 +897,7 @@ def main():
         auto_source = root / "auto-inference.gti"
         auto_executable = root / "auto-inference"
         auto_source.write_text(
-            "#include <std/memory>\n"
+            "import std.memory;\n"
             "struct Value { int value = 0; "
             "Value(int initial) : value(initial) {}  public: Value() = default; };\n"
             "T preserve<T>(T value) { auto inferred = value; "
@@ -940,7 +943,7 @@ def main():
         standard_array_source = root / "standard-array.gti"
         standard_array_executable = root / "standard-array"
         standard_array_source.write_text(
-            "#include <std/array>\n"
+            "import std.array;\n"
             "int main() { int initial[3] = {2, 4, 6}; "
             "mut std::array<int, 3> values{initial}; "
             "std::array<int, 0> empty_values{}; "
@@ -963,7 +966,7 @@ def main():
         standard_string_source = root / "standard-string.gti"
         standard_string_executable = root / "standard-string"
         standard_string_source.write_text(
-            "#include <std/string>\n"
+            "import std.string;\n"
             "int main() { "
             "std::string_view literal = \"engine\"; "
             "mut std::string value = std::string(literal); "
@@ -1034,8 +1037,8 @@ def main():
         standard_vector_source = root / "standard-vector.gti"
         standard_vector_executable = root / "standard-vector"
         standard_vector_source.write_text(
-            "#include <std/vector>\n"
-            "#include <std/memory>\n"
+            "import std.vector;\n"
+            "import std.memory;\n"
             "class Pair { int left; int right; public: "
             "Pair(int first, int second) : left(first), right(second) {} "
             "int sum() { return this.left + this.right; } }; "
@@ -1092,9 +1095,9 @@ def main():
         standard_accumulate_source = root / "standard-accumulate.gti"
         standard_accumulate_executable = root / "standard-accumulate"
         standard_accumulate_source.write_text(
-            "#include <std/numeric>\n"
-            "#include <std/iterator>\n"
-            "#include <std/vector>\n"
+            "import std.numeric;\n"
+            "import std.iterator;\n"
+            "import std.vector;\n"
             "class BaseEnd { public: BaseEnd() = default; }; "
             "class AccumulateEnd : public BaseEnd { int limit; public: "
             "AccumulateEnd(int value) : limit(value) {} "
@@ -1282,8 +1285,8 @@ def main():
 
         program_arguments_source = root / "program-arguments.gti"
         program_arguments_source.write_text(
-            "#include <std/string>\n"
-            "#include <std/vector>\n"
+            "import std.string;\n"
+            "import std.vector;\n"
             "int main(int argc, std::vector<std::string> argv) { "
             "if (argc != 4 or argv.size() != std::size_t(4)) { return 1; } "
             'if (argv[std::size_t(1)] != "alpha") { return 2; } '
@@ -1332,7 +1335,7 @@ def main():
 
         nested_loan_source = root / "nested-loan-flow.gti"
         nested_loan_source.write_text(
-            "#include <std/string>\n"
+            "import std.string;\n"
             "int exercise(bool stop) { "
             'mut std::string value = std::string("gti"); '
             "mut auto iterator = value.begin(); "
@@ -1368,7 +1371,7 @@ def main():
 
         loop_loan_source = root / "loop-loan-flow.gti"
         loop_loan_source.write_text(
-            "#include <std/string>\n"
+            "import std.string;\n"
             "int while_flow() { "
             'mut std::string value = std::string("gti"); '
             "mut auto iterator = value.begin(); mut int count = 0; "
@@ -1581,7 +1584,7 @@ def main():
         ownership_source = root / "unique-ownership.gti"
         ownership_executable = root / "unique-ownership"
         ownership_source.write_text(
-            "#include <std/memory>\n"
+            "import std.memory;\n"
             "struct HeapValue { public: mut int value = 0; "
             "HeapValue(int initial) : value(initial) {} "
             "int read() { return this.value; } "
@@ -1611,7 +1614,7 @@ def main():
 
         indexed_ownership_source = root / "indexed-ownership.gti"
         indexed_ownership_source.write_text(
-            "#include <std/memory>\n"
+            "import std.memory;\n"
             "struct Record { int value; "
             "Record(int initial) : value(initial) {} };\n"
             "int partial_drop() { "
@@ -1798,7 +1801,7 @@ def main():
         storage_source = root / "internal-storage.gti"
         storage_executable = root / "internal-storage"
         storage_source.write_text(
-            "#include <std/vector>\n"
+            "import std.vector;\n"
             "std::vector<int> transfer(std::vector<int> value) { "
             "return std::move(value); } "
             "int main() { mut std::vector<int> values = std::vector<int>(); "
@@ -1829,7 +1832,7 @@ def main():
         uninitialized_storage_source = root / "uninitialized-storage.gti"
         uninitialized_storage_executable = root / "uninitialized-storage"
         uninitialized_storage_source.write_text(
-            "#include <std/vector>\n"
+            "import std.vector;\n"
             "int main() { mut std::vector<int> values = std::vector<int>(); "
             "values.reserve(std::size_t(1)); "
             "return values[std::size_t(0)]; }\n",
@@ -1874,7 +1877,7 @@ def main():
         empty_owner_source = root / "empty-owner.gti"
         empty_owner_executable = root / "empty-owner"
         empty_owner_source.write_text(
-            "#include <std/memory>\n"
+            "import std.memory;\n"
             "struct HeapValue { public: int read() { return 1; }  public: HeapValue() = default; };\n"
             "int main() { std::unique_ptr<HeapValue> value = "
             "std::unique_ptr<HeapValue>(); "
@@ -1897,7 +1900,7 @@ def main():
 
         moved_owner_source = root / "moved-owner.gti"
         moved_owner_source.write_text(
-            "#include <std/memory>\n"
+            "import std.memory;\n"
             "struct HeapValue { public: int read() { return 1; }  public: HeapValue() = default; };\n"
             "int main() { "
             "std::unique_ptr<HeapValue> value = std::make_unique<HeapValue>(); "
@@ -2643,7 +2646,7 @@ def main():
 
         owned_move_capture_source = root / "owned-move-capture.gti"
         owned_move_capture_source.write_text(
-            "#include <std/memory>\n"
+            "import std.memory;\n"
             "class DropTracer { public: DropTracer() {} "
             "DropTracer(DropTracer& other) = delete; "
             "DropTracer(DropTracer&& other) = default; "
@@ -2676,7 +2679,7 @@ def main():
 
         owned_callable_transport_source = root / "owned-callable-transport.gti"
         owned_callable_transport_source.write_text(
-            "#include <std/memory>\n"
+            "import std.memory;\n"
             "class DropTracer { public: DropTracer() {} "
             "DropTracer(DropTracer& other) = delete; "
             "DropTracer(DropTracer&& other) = default; "
@@ -2720,8 +2723,8 @@ def main():
         dependent_callable_source = root / "dependent-callable-dispatch.gti"
         dependent_callable_executable = root / "dependent-callable-dispatch"
         dependent_callable_source.write_text(
-            "#include <std/algorithm>\n"
-            "#include <std/vector>\n"
+            "import std.algorithm;\n"
+            "import std.vector;\n"
             "class PositivePredicate { public: "
             "bool operator()(int& value) mut { return value > 0; }  public: PositivePredicate() = default; };\n"
             "int main() { mut std::vector<int> values{}; "
@@ -3338,7 +3341,7 @@ def main():
 
         invalid_auto = root / "invalid-auto.gti"
         invalid_auto.write_text(
-            "#include <std/memory>\n"
+            "import std.memory;\n"
             "struct Value { int value = 1;  public: Value() = default; };\n"
             "int main() { auto owner = std::make_unique<Value>(); "
             "auto copied = owner; return copied->value; }\n",
@@ -3358,7 +3361,7 @@ def main():
 
         integer_print = root / "integer-print.gti"
         integer_print.write_text(
-            "#include <std/string>\n"
+            "import std.string;\n"
             "int main() { "
             'if (std::to_string(int8_t(0)) != "0") { return 9; } '
             'if (std::to_string(int8_t(-128)) != "-128") { return 1; } '
@@ -3404,7 +3407,7 @@ def main():
         for operation in ("try_format", "try_print", "try_println"):
             unsupported_source = root / f"unsupported-{operation}.gti"
             unsupported_source.write_text(
-                "#include <std/format>\n"
+                "import std.format;\n"
                 "class unsupported_format_value {};\n"
                 "int main() { mut auto result = std::" + operation +
                 '("{}", unsupported_format_value()); return 0; }\n',
@@ -3420,8 +3423,8 @@ def main():
 
         formatted_output = root / "formatted-output.gti"
         formatted_output.write_text(
-            "#include <std/format>\n"
-            "#include <std/string>\n"
+            "import std.format;\n"
+            "import std.string;\n"
             "class rejected_format_value { public: rejected_format_value() = default; }; "
             "class std::formatter<rejected_format_value> { public: "
             "expected<void, std::format_errc> format(rejected_format_value& value, "
@@ -3625,20 +3628,26 @@ def main():
 
         cycle_a = root / "cycle_a.gti"
         cycle_b = root / "cycle_b.gti"
-        cycle_a.write_text('#include "cycle_b.gti"\n', encoding="utf-8")
-        cycle_b.write_text('#include "cycle_a.gti"\n', encoding="utf-8")
+        cycle_a.write_text((
+                               'export module cycle_a;\n'
+                               'import "cycle_b.gti";\n'
+                           ), encoding="utf-8")
+        cycle_b.write_text((
+                               'export module cycle_b;\n'
+                               'import "cycle_a.gti";\n'
+                           ), encoding="utf-8")
         cycle = run([gti, str(cycle_a), "--emit-cpp"], 65)
         assert "Include cycle detected" in cycle.stderr
 
         missing_standard = root / "missing-standard.gti"
         missing_standard.write_text(
-            "#include <std/not_present>\nint main() { return 0; }\n",
+            "import std.not_present;\nint main() { return 0; }\n",
             encoding="utf-8",
         )
         rejected_standard = run(
             [gti, str(missing_standard), "--emit-cpp"], 65
         )
-        assert "error[GTI-I0007]" in rejected_standard.stderr
+        assert "error[GTI-I0012]" in rejected_standard.stderr
         assert "<std/not_present>" in rejected_standard.stderr
 
         private_capability = root / "private-capability.gti"
@@ -3662,15 +3671,21 @@ def main():
         private_branch = root / "private_branch.gti"
         private_entry = root / "private_entry.gti"
         private_leaf.write_text(
-            "int private_leaf_value() { return 1; }\n", encoding="utf-8"
+            (
+                'export module private_leaf;\n'
+                'export int private_leaf_value() { return 1; }\n'
+            ), encoding="utf-8"
         )
         private_branch.write_text(
-            '#include "private_leaf.gti"\n'
-            "int private_branch_value() { return private_leaf_value(); }\n",
+            (
+                'export module private_branch;\n'
+                'import "private_leaf.gti";\n'
+                'export int private_branch_value() { return private_leaf_value(); }\n'
+            ),
             encoding="utf-8",
         )
         private_entry.write_text(
-            '#include "private_branch.gti"\n'
+            'import "private_branch.gti";\n'
             "int main() { return private_leaf_value(); }\n",
             encoding="utf-8",
         )
@@ -3678,13 +3693,13 @@ def main():
             [gti, str(private_entry), "--emit-cpp"], 65
         )
         assert "error[GTI-S2024]" in private_dependency.stderr
-        assert '#include "private_leaf.gti"' in private_dependency.stderr
+        assert 'import "private_leaf.gti";' in private_dependency.stderr
         assert "Declaration is in this source unit" in private_dependency.stderr
 
         conditional_include = root / "conditional_include.gti"
         conditional_include.write_text(
             '#if target.os == "never"\n'
-            '#include "library.gti"\n'
+            'import "library.gti";\n'
             "#endif\n"
             "int main() { return 0; }\n",
             encoding="utf-8",
@@ -3747,6 +3762,8 @@ def main():
             )
             assert "meter_variadic" in bindgen_generation.stderr
             bindings_text = bindgen_bindings.read_text(encoding="utf-8")
+            assert "export module bindings;" in bindings_text
+            assert 'export extern "C" {' in bindings_text
             assert "[[c_opaque]] struct Meter;" in bindings_text
             assert "[[c_abi]]" in bindings_text
             assert "using MeterMode = c_uint;" in bindings_text
@@ -3857,8 +3874,7 @@ def main():
             bindgen_program = root / "meter-program.gti"
             bindgen_executable = root / "meter-program"
             bindgen_program.write_text(
-                bindings_text
-                + "\n"
+                'import "meter-bindings.gti";\n'
                 + "int main() {\n"
                 + "  mut Meter* meter = nullptr;\n"
                 + "  unsafe {\n"

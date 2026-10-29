@@ -11,7 +11,7 @@ from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
 
 
 def reject_invalid_sources(compiler: pathlib.Path) -> None:
-    prefix = "#include <std/unordered_map>\n#include <std/functional>\n"
+    prefix = "import std.unordered_map;\nimport std.functional;\n"
     cases = {
         "immutable-key": """int main() {
   mut std::unordered_map<int, int> values{};

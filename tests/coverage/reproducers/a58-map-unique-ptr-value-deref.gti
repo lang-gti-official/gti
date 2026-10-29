@@ -1,6 +1,6 @@
 // A58: the same through std::map elements.
-#include <std/map>
-#include <std/memory>
+import std.map;
+import std.memory;
 class Box {
 public:
   int v;

@@ -2,11 +2,11 @@
 // move-only captures (unique_ptr, string), std::function with copyable
 // captures cloned as a vector, a mutable-reference callback field, and a
 // one-shot && callback invoked from a consuming method via std::move(field).
-#include <std/functional>
-#include <std/memory>
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.functional;
+import std.memory;
+import std.string;
+import std.utility;
+import std.vector;
 
 class EventBus {
   mut std::vector<std::move_only_function<int(int)>> handlers_{};

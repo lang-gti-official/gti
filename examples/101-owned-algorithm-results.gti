@@ -1,7 +1,6 @@
-#include <std/algorithm>
-#include <std/string>
-#include <std/vector>
-
+import std.algorithm;
+import std.string;
+import std.vector;
 // The input stays borrowed; the result is a new owner that transform moves
 // into the existing destination element. No string copy or clone is implicit.
 std::string compiled_name(std::string& source) {

@@ -1,7 +1,7 @@
 // Owner-tracked text through payload-enum fields (L-OWN-02, phase 2b).
-#include <std/optional>
-#include <std/panic>
-#include <std/string>
+import std.optional;
+import std.panic;
+import std.string;
 
 enum Word { text(std::string_view value), none };
 

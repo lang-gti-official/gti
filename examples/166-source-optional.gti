@@ -1,8 +1,7 @@
 // The stable class API is ordinary GTI over a private payload enum.
 // No optional-specific storage capability is involved in this program.
-#include <std/optional>
-#include <std/string>
-
+import std.optional;
+import std.string;
 std::optional<std::string> label(bool present) {
   if (!present) {
     return std::nullopt;

@@ -2,8 +2,8 @@
 // conditional and can fail, after an owning class argument for the same call
 // was already prepared. The receiver is a local lambda or a method object, and
 // the owning argument is freshly constructed or moved from another local.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 class Token {
   int32_t identity;

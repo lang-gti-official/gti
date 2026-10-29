@@ -25,7 +25,7 @@ void expect(bool condition, const std::string &name) {
 }
 
 const std::string declarations = R"gti(
-#include <std/utility>
+import std.utility;
 mut int observed = 0;
 struct Resource {
   mut int value = 7;

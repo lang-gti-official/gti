@@ -1,3 +1,5 @@
+export module json;
+
 // <std/json> -- JSON text for application types, through reflection.
 //
 // Every encoding and decoding rule is ordinary GTI written over <std/meta>;
@@ -29,17 +31,16 @@
 // no trailing commas, nothing after the root value. Decoding failures carry
 // an `errc`, the byte offset, the one-based line and column, and a JSON
 // Pointer path to the failing value.
-#include <std/charconv>
-#include <std/cstdio>
-#include <std/format>
-#include <std/map>
-#include <std/meta>
-#include <std/optional>
-#include <std/string>
-#include <std/unordered_map>
-#include <std/vector>
-
-namespace std {
+import std.charconv;
+import std.cstdio;
+import std.format;
+import std.map;
+import std.meta;
+import std.optional;
+import std.string;
+import std.unordered_map;
+import std.vector;
+export namespace std {
 namespace json {
 
 enum class errc {

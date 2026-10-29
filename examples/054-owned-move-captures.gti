@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 class resource {
   int value;
 

@@ -1,4 +1,4 @@
-#include <std/resource>
+import std.resource;
 int main() {
   std::process_resource process{};
   unsafe {

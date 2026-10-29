@@ -1451,7 +1451,7 @@ int main() { return caller(1); }
 void testContainerContractChecks() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-container-contract/main.gti",
-      "#include <std/functional>\n"
+      "import std.functional;\n"
       "void check(bool valid) { std::key(valid); std::argument(valid); }\n",
       {standardLibraryPrelude()},
       {{(standardLibraryRoot() / "std/functional.gti").string(),
@@ -1513,7 +1513,7 @@ void testContainerContractChecks() {
                                  "require_container_argument(true, false)"}) {
     const auto invalid = lang::Frontend().analyze(
         "/tmp/gti-container-contract/invalid.gti",
-        "#include <std/functional>\nvoid invoke() { std::invalid(); }\n",
+        "import std.functional;\nvoid invoke() { std::invalid(); }\n",
         {standardLibraryPrelude()},
         {{(standardLibraryRoot() / "std/functional.gti").string(),
           "namespace std { void invalid() { gti_internal::" + call + "; } }"}},
@@ -1558,8 +1558,8 @@ void testHostedProgramEntryMetadata() {
          "a no-argument entry point should add no hosted failure metadata");
 
   const std::string source = R"(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 using arguments = std::vector<std::string>;
 int main(mut int count, mut arguments values) { return count; }
 )";
@@ -1758,11 +1758,11 @@ void testExternalSourceRouteIdentity() {
           std::filesystem::temp_directory_path()) /
       "gti-route";
   const std::string entrySource = R"(
-#include "../shared.gti"
+import "../shared.gti";
 int main() { return checked(1); }
 )";
   const std::string externalSource =
-      "int checked(int value) { return value + 1; }";
+      "export module shared;\nexport int checked(int value) { return value + 1; }";
   const auto analyzeAt = [&](const std::filesystem::path &root) {
     const std::filesystem::path entry = root / "app/main.gti";
     const std::filesystem::path external = root / "shared.gti";
@@ -1837,11 +1837,12 @@ void testModuleImplementationSourceIdentity() {
         {api.string(), "export module factory; export class Widget { public: "
                        "static int read();  public: Widget() = default; };"},
         {implementation.string(),
-         "import factory;\n#include \"helpers.gti\"\n"
-         "struct Local { int value; };\n"
-         "int Widget::read() { Local local{.value = helper()}; "
-         "return local.value; }"},
-        {helper.string(), "int helper() { return 7; }"}};
+         R"GTIMODULE(import factory;
+import "helpers.gti";
+struct Local { int value; };
+int Widget::read() { Local local{.value = helper()}; return local.value; })GTIMODULE"},
+        {helper.string(), R"GTIMODULE(export module helpers;
+export int helper() { return 7; })GTIMODULE"}};
     return lang::Frontend().analyze(
         app / "main.gti",
         "import lib.factory; int main() { return Widget::read(); }", {},
@@ -2041,7 +2042,7 @@ void testCallerLocationAssignments() {
 
 void testMetadataAndSiteVerifierMutations() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "/tmp/gti-forged/main.gti", "int checked(int value) { return value + 1; }"
+      "/tmp/gti-forged/main.gti", "export module shared;\nexport int checked(int value) { return value + 1; }"
                                   "int main() { return checked(1); }");
   expect(frontend.canGenerateCode(),
          "the verifier mutation fixture should compile");
@@ -2534,7 +2535,7 @@ int main() { return checked_add(1, 2); }
 void testUniqueOwnerBorrowFailureEdges() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "/tmp/gti-owner-failure/main.gti", R"(
-#include <std/memory>
+import std.memory;
 struct Record { mut int32_t value = 1;  public: Record() = default; };
 int32_t read(std::unique_ptr<Record>& owner) {
   return (*owner).value + owner->value;
@@ -2636,7 +2637,7 @@ int main() {
 void testScalarUniqueAllocationContracts() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "/tmp/gti-scalar-allocation/main.gti", R"(
-#include <std/memory>
+import std.memory;
 int main() {
   auto value = std::make_unique<int32_t>(7);
   auto zero = std::make_unique<int32_t>();
@@ -2716,7 +2717,7 @@ int main() {
 
   const auto callback = lang::Frontend().analyze(
       "/tmp/gti-scalar-callback/main.gti", R"(
-#include <std/memory>
+import std.memory;
 using callback = (int32_t) -> int32_t;
 int main() {
   callback empty = nullptr;
@@ -2742,7 +2743,7 @@ int main() {
     const std::string path = "/tmp/gti-invalid-scalar/main.gti";
     const auto rejected = lang::Frontend().analyze(
         path,
-        "#include <std/memory>\nenum class choice { one };\n"
+        "import std.memory;\nenum class choice { one };\n"
         "using callback = (int32_t) -> int32_t;\n"
         "int main() { auto owner = " +
             expression + "; return 0; }\n",
@@ -2795,7 +2796,7 @@ int main() {
 void testImplicitUniqueAllocationContracts() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-implicit-allocation/main.gti", R"(
-#include <std/memory>
+import std.memory;
 class Empty { public: ~Empty() {}  public: Empty() = default; };
 int main() { auto owner = std::make_unique<Empty>(); return 0; }
 )",
@@ -2855,7 +2856,7 @@ int main() { auto owner = std::make_unique<Empty>(); return 0; }
 void testClassUniqueAllocationContracts() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-class-allocation/main.gti", R"(
-#include <std/memory>
+import std.memory;
 class Value {
   int32_t result;
 public:
@@ -2992,7 +2993,7 @@ int main() { auto owner = std::make_unique<Value>(0); return 0; }
 void testUniquePointeeCleanupContracts() {
   const auto quiet = lang::Frontend().analyze(
       "/tmp/gti-quiet-cleanup/main.gti", R"(
-#include <std/memory>
+import std.memory;
 class Quiet { public: Quiet() {} ~Quiet() {} };
 int main() { auto owner = std::make_unique<Quiet>(); return 0; }
 )",
@@ -3732,7 +3733,7 @@ void testCollectionCleanupContracts() {
 void testConstructorPreparedParameterTransfers() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-constructor-prepared-parameter/main.gti", R"(
-#include <std/string>
+import std.string;
 mut int32_t divisor = 1;
 void consume(std::string value) { int32_t checked = 3 / divisor; }
 std::string relay(std::string value) { return std::move(value); }
@@ -3862,7 +3863,7 @@ int main() { auto fields = Fields(); auto caller = Caller(); return 0; }
 void testBaseInitializationContracts() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-base-initialization/main.gti", R"(
-#include <std/memory>
+import std.memory;
 mut int32_t divisor = 1;
 class Base {
   std::unique_ptr<int32_t> value;

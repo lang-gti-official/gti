@@ -1,4 +1,4 @@
-#include <std/thread>
+import std.thread;
 struct Cleanup {
   int input;
   mut int& slot;

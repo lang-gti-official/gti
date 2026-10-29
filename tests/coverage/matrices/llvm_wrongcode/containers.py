@@ -156,7 +156,7 @@ def program(element, container, op):
     expected = 0
     for index in order:
         expected = expected * 3 + spec["expected"](index)
-    source = PRELUDE + "#include <std/utility>\n"
+    source = PRELUDE + "import std.utility;\n"
     if "helper" in spec:
         source += spec["helper"] + "\n"
     source += spec["check"] + "\n"

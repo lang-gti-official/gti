@@ -1,7 +1,7 @@
-#include <std/utility>
-#include <std/string>
-#include <std/memory>
-#include <std/optional>
+import std.utility;
+import std.string;
+import std.memory;
+import std.optional;
 
 class Resource {
   int identity;

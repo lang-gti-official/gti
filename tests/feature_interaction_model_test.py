@@ -80,9 +80,9 @@ class ModelTests(unittest.TestCase):
         self.assertIn("break;", all_on.emit())
         self.assertIn("Ticket audit_route_guard", all_on.emit())
 
-    def test_v1_cases_keep_exact_source_hashes_and_oracle(self):
+    def test_v1_cases_authenticate_old_hashes_and_migrate_to_modules(self):
         # This record was produced by the ten-factor generator, before any
-        # control-flow source existed. Do not silently invalidate retained bugs.
+        # control-flow source existed. Authenticate it before migrating its syntax.
         record = {
             "schema": "gti-feature-interaction-case-v1", "seed": 1, "index": 0,
             "factors": dict.fromkeys(V1_FACTORS, True), "base": 3, "delta": 2, "width": 3,
@@ -94,13 +94,18 @@ class ModelTests(unittest.TestCase):
         }
         restored = InteractionCase.from_record(record)
         self.assertFalse(restored.enabled("control_flow"))
-        self.assertEqual(restored.record()["source_sha256"], record["source_sha256"])
+        self.assertNotEqual(restored.record()["source_sha256"], record["source_sha256"])
+        self.assertTrue(restored.emit().startswith("import std.utility;\n"))
+        self.assertNotIn("#include", restored.emit())
         self.assertEqual(list(restored.oracle()), record["expected"])
         upgraded = restored.record()
-        self.assertEqual(upgraded["schema"], "gti-feature-interaction-case-v2")
+        self.assertEqual(upgraded["schema"], "gti-feature-interaction-case-v3")
         self.assertEqual(restored, InteractionCase.from_record(upgraded))
-        record["factors"]["control_flow"] = True
+        record["source_sha256"]["original"] = "0" * 64
         with self.assertRaises(ValueError):
+            InteractionCase.from_record(record)
+        record["factors"]["control_flow"] = True
+        with self.assertRaisesRegex(ValueError, "case factors do not match"):
             InteractionCase.from_record(record)
 
     def test_bounds_and_prerequisites(self):
@@ -116,6 +121,24 @@ class ModelTests(unittest.TestCase):
             covering_array(1, 4)
         with self.assertRaises(ValueError):
             case.emit("unknown")
+
+    def test_v2_cases_authenticate_old_hashes_and_migrate_to_modules(self):
+        case = InteractionCase(1, 0, tuple(True for _ in FACTORS), 3, 2, 3)
+        record = case.record()
+        record["schema"] = "gti-feature-interaction-case-v2"
+        # Exact hashes from the pre-module eleven-factor generator.
+        record["source_sha256"] = {
+            "original": "c73b5b2413fbf7b142795a5856f7580bf429aff8a3522dc1876612589e821612",
+            "renamed": "834bda163177d909831af4bbdf61e359c00fa6088a223b9c5adb0757266dc3ce",
+        }
+        restored = InteractionCase.from_record(record)
+        self.assertEqual(restored, case)
+        self.assertEqual(restored.record()["schema"], "gti-feature-interaction-case-v3")
+        self.assertNotEqual(restored.record()["source_sha256"], record["source_sha256"])
+        self.assertNotIn("#include", restored.emit())
+        record["source_sha256"]["renamed"] = "0" * 64
+        with self.assertRaises(ValueError):
+            InteractionCase.from_record(record)
 
 
 class DecisionTests(unittest.TestCase):

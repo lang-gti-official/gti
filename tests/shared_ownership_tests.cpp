@@ -18,7 +18,7 @@ lang::FrontendResult
 analyze(const std::string &source,
         lang::FrontendPhase phase = lang::FrontendPhase::Hir) {
   return lang::Frontend({.stopAfter = phase})
-      .analyze("shared-owner-check.gti", "#include <std/memory>\n" + source,
+      .analyze("shared-owner-check.gti", "import std.memory;\n" + source,
                {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
 }
 

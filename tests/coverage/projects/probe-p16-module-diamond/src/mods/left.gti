@@ -1,6 +1,6 @@
 export module left;
 export import core;
-#include "../trace.gti"
+import "../trace.gti";
 
 namespace left {
   int left_step = trace::record(2);

@@ -4,20 +4,20 @@
 // a declaration of the alias type proves the alias names that exact type.
 // Mutable iterators are range-for carriers only, so they are proved through
 // range classes whose begin_mut() returns the alias.
-#include <std/array>
-#include <std/deque>
-#include <std/list>
-#include <std/map>
-#include <std/memory>
-#include <std/resource>
-#include <std/resource_vector>
-#include <std/set>
-#include <std/span>
-#include <std/string>
-#include <std/unordered_map>
-#include <std/unordered_set>
-#include <std/vector>
-#include "../../examples/allocator-support/arena.gti"
+import std.array;
+import std.deque;
+import std.list;
+import std.map;
+import std.memory;
+import std.resource;
+import std.resource_vector;
+import std.set;
+import std.span;
+import std.string;
+import std.unordered_map;
+import std.unordered_set;
+import std.vector;
+import "../../examples/allocator-support/arena.gti";
 
 using Ints = std::vector<int32_t>;
 using Triple = std::array<int32_t, 3>;

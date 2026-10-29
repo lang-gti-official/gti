@@ -1,5 +1,5 @@
 // `?` through `std::tryable` on an unrelated user result type.
-#include <std/string>
+import std.string;
 
 struct Missing {
   int code;

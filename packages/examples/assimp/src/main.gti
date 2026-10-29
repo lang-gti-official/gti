@@ -1,5 +1,4 @@
-#include <assimp/assimp>
-
+import assimp.assimp;
 int inspect_scene(const assimp::aiScene* scene) {
   unsafe {
     if (assimp::gti_assimp_mesh_count(scene) != 1) { return 2; }

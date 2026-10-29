@@ -1,6 +1,7 @@
-#include <std/memory>
+export module resource;
 
-namespace std {
+import std.memory;
+export namespace std {
 /// Passive provider descriptor; copying it does not duplicate release authority.
 using raw_allocation = std::detail::raw_allocation;
 
@@ -52,7 +53,7 @@ public:
 };
 }
 
-namespace std::detail {
+export namespace std::detail {
 class resource_lease<std::memory_resource R> {
   std::resource_ref<R> resource;
   mut std::raw_allocation allocation;
@@ -91,7 +92,7 @@ public:
 };
 }
 
-namespace std {
+export namespace std {
 /// Typed owner over a region chosen by a checked, explicitly bound resource.
 /// Two leases precede the slot engine: reverse field cleanup destroys elements
 /// before metadata and object bytes. Both regions use the same bound resource.

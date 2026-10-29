@@ -163,7 +163,7 @@ int main() {
   // Receivers follow ordinary member calls: a temporary or explicitly moved
   // owner selects the consuming operator, a mutable place the `mut` one.
   accepted(R"gti(
-#include <std/string>
+import std.string;
 class Builder {
   mut std::string text;
 public:
@@ -242,8 +242,8 @@ int main() {
   // Constant evaluation calls a constexpr operator through the same selected
   // call, and reflection names each operator by its target.
   accepted(R"gti(
-#include <std/meta>
-#include <std/string>
+import std.meta;
+import std.string;
 struct UserId {
   int64_t value;
   UserId(int64_t raw) : value(raw) {}
@@ -324,21 +324,21 @@ int main() { return 0; }
 )gti",
            "GTI-S2122", "ambiguous");
   rejected(R"gti(
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 std::optional<std::string> label() { return "ready"; }
 int main() { return 0; }
 )gti",
            "GTI-S2003", "Cannot return");
   rejected(R"gti(
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 std::optional<std::string> label(std::string named) { return named; }
 int main() { return 0; }
 )gti",
            "GTI-S2003", "Cannot return 'named' by copy");
   rejected(R"gti(
-#include <std/optional>
+import std.optional;
 int take(std::optional<int> value) { return 0; }
 int main() { return take(7); }
 )gti",
@@ -409,7 +409,7 @@ int main() { Secret secret{}; return int(secret); }
 )gti",
            "GTI-S2007", "The conversion of 'Secret' to 'int32_t' is private");
   rejected(R"gti(
-#include <std/string>
+import std.string;
 class Builder {
   mut std::string text;
 public:
@@ -438,7 +438,7 @@ int main() { Counter fixed{}; return int(fixed); }
   const auto declaration = [&](const std::string &member,
                                const std::string &fragment,
                                const char *code = "GTI-S2022") {
-    rejected("#include <std/string>\nusing Count = int;\nusing Truth = "
+    rejected("import std.string;\nusing Count = int;\nusing Truth = "
              "bool;\nstruct Holder {\n  std::string text;\n  int value = "
              "0;\n  Holder() : text(\"held\") {}\n  " +
                  member + "\n};\nint main() { return 0; }\n",

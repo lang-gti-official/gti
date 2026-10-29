@@ -1,12 +1,13 @@
-#include <std/panic>
-#include <std/format>
-#include <std/string>
-#include <std/memory>
-#include <std/span>
+export module testing;
 
+import std.panic;
+import std.format;
+import std.string;
+import std.memory;
+import std.span;
 // Operand capture is ordinary source policy: objects stay borrowed, while
 // scalar literals and expressions are evaluated once into inexpensive values.
-namespace std::testing::detail {
+export namespace std::testing::detail {
   class check_operand<T> {
     T& value;
   public:
@@ -20,68 +21,68 @@ namespace std::testing::detail {
     T& get() { return this.value; }
   };
 }
-class std::testing::detail::check_operand<bool>
+export class std::testing::detail::check_operand<bool>
     : public std::testing::detail::scalar_check_operand<bool> {
 public:
   check_operand(bool value) : std::testing::detail::scalar_check_operand<bool>(value) {}
 };
-class std::testing::detail::check_operand<char>
+export class std::testing::detail::check_operand<char>
     : public std::testing::detail::scalar_check_operand<char> {
 public:
   check_operand(char value) : std::testing::detail::scalar_check_operand<char>(value) {}
 };
-class std::testing::detail::check_operand<int8_t>
+export class std::testing::detail::check_operand<int8_t>
     : public std::testing::detail::scalar_check_operand<int8_t> {
 public:
   check_operand(int8_t value) : std::testing::detail::scalar_check_operand<int8_t>(value) {}
 };
-class std::testing::detail::check_operand<uint8_t>
+export class std::testing::detail::check_operand<uint8_t>
     : public std::testing::detail::scalar_check_operand<uint8_t> {
 public:
   check_operand(uint8_t value) : std::testing::detail::scalar_check_operand<uint8_t>(value) {}
 };
-class std::testing::detail::check_operand<int16_t>
+export class std::testing::detail::check_operand<int16_t>
     : public std::testing::detail::scalar_check_operand<int16_t> {
 public:
   check_operand(int16_t value) : std::testing::detail::scalar_check_operand<int16_t>(value) {}
 };
-class std::testing::detail::check_operand<uint16_t>
+export class std::testing::detail::check_operand<uint16_t>
     : public std::testing::detail::scalar_check_operand<uint16_t> {
 public:
   check_operand(uint16_t value) : std::testing::detail::scalar_check_operand<uint16_t>(value) {}
 };
-class std::testing::detail::check_operand<int32_t>
+export class std::testing::detail::check_operand<int32_t>
     : public std::testing::detail::scalar_check_operand<int32_t> {
 public:
   check_operand(int32_t value) : std::testing::detail::scalar_check_operand<int32_t>(value) {}
 };
-class std::testing::detail::check_operand<uint32_t>
+export class std::testing::detail::check_operand<uint32_t>
     : public std::testing::detail::scalar_check_operand<uint32_t> {
 public:
   check_operand(uint32_t value) : std::testing::detail::scalar_check_operand<uint32_t>(value) {}
 };
-class std::testing::detail::check_operand<int64_t>
+export class std::testing::detail::check_operand<int64_t>
     : public std::testing::detail::scalar_check_operand<int64_t> {
 public:
   check_operand(int64_t value) : std::testing::detail::scalar_check_operand<int64_t>(value) {}
 };
-class std::testing::detail::check_operand<uint64_t>
+export class std::testing::detail::check_operand<uint64_t>
     : public std::testing::detail::scalar_check_operand<uint64_t> {
 public:
   check_operand(uint64_t value) : std::testing::detail::scalar_check_operand<uint64_t>(value) {}
 };
-class std::testing::detail::check_operand<float>
+export class std::testing::detail::check_operand<float>
     : public std::testing::detail::scalar_check_operand<float> {
 public:
   check_operand(float value) : std::testing::detail::scalar_check_operand<float>(value) {}
 };
-class std::testing::detail::check_operand<double>
+export class std::testing::detail::check_operand<double>
     : public std::testing::detail::scalar_check_operand<double> {
 public:
   check_operand(double value) : std::testing::detail::scalar_check_operand<double>(value) {}
 };
 
-namespace std::testing {
+export namespace std::testing {
   /// Fails the current isolated test with a source-located terminal message.
   /// Ordinary return from a [[test]] function indicates success.
   [[track_caller]]

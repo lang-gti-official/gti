@@ -1,3 +1,0 @@
-// Module std.json: the public surface of <std/json>.
-export module json;
-export #include <std/json>

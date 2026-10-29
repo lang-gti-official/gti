@@ -1,4 +1,4 @@
-#include "kernel.gti"
+import "kernel.gti";
 
 int main() {
   mut uint64_t state = 3;

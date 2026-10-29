@@ -8,10 +8,10 @@ import tempfile
 from lsp_smoke_test import LspSession, lsp_position
 
 
-SOURCE = """#include <std/functional>
-#include <std/memory>
-#include <std/mutex>
-#include <std/thread>
+SOURCE = """import std.functional;
+import std.memory;
+import std.mutex;
+import std.thread;
 [[no_transfer]] struct LocalOnly { LocalOnly() = default; int operator()() { return 7; } };
 [[no_share]] struct State { State() = default; mut int total = 42; };
 class Write {
@@ -125,7 +125,7 @@ def main():
             version = 7
             for nested in (False, True):
                 receiver = "this.holder.owner" if nested else "this.owner"
-                stored = """#include <std/mutex>
+                stored = """import std.mutex;
 void see(std::mutex<int32_t>& value) {}
 """
                 if nested:

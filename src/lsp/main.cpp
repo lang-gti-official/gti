@@ -1215,25 +1215,6 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   return std::nullopt;
 }
 
-void classifyStandardLibraryIncludes(
-    const std::vector<lang::Token> &tokens,
-    std::vector<std::optional<SemanticClassification>> &types) {
-  using enum lang::TokenKind;
-  for (std::size_t index = 0; index + 1 < tokens.size(); ++index) {
-    if (tokens[index].kind != HASH_INCLUDE || tokens[index + 1].kind != LESS) {
-      continue;
-    }
-    const int line = tokens[index].line;
-    for (std::size_t path = index + 1;
-         path < tokens.size() && tokens[path].line == line; ++path) {
-      types[path] = SemanticClassification{String, DefaultLibrary};
-      if (tokens[path].kind == GREATER) {
-        break;
-      }
-    }
-  }
-}
-
 void collectCommentTokens(std::string_view source,
                           const SourcePositionIndex &positions,
                           std::vector<SemanticToken> &result) {
@@ -1472,7 +1453,6 @@ collectSemanticTokens(std::string_view source,
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     classifications.push_back(basicSemanticType(tokens, index));
   }
-  classifyStandardLibraryIncludes(tokens, classifications);
   if (snapshot != nullptr && sourceUnit != 0) {
     for (std::size_t index = 0; index < tokens.size(); ++index) {
       if (tokens[index].kind == lang::TokenKind::IDENTIFIER &&
@@ -3344,7 +3324,6 @@ private:
     frontendOptions.requireEntryPoint = project.requireEntryPoint;
     frontendOptions.program = project.program;
     frontendOptions.synthesizeTestEntry = false;
-    frontendOptions.warnLegacyIncludes = true;
     // HIR performs the compiler's concrete generic-instance reanalysis. The
     // LSP retains it only so editor diagnostics agree with `gti check` for
     // the open file's own code; MIR remains code-generation work and is not

@@ -1,5 +1,5 @@
-#include <std/format>
-#include <std/string>
+import std.format;
+import std.string;
 class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 int main() {
   mut auto text = std::try_format("a={} b={}", int32_t(1), int32_t(2));

@@ -1,7 +1,8 @@
-#include <std/array>
-#include <std/detail/iterator>
+export module simd;
 
-namespace gti_internal {
+import std.array;
+import "detail/iterator.gti";
+export namespace gti_internal {
 // These exact installed declarations bind immediate, nonescaping array
 // borrows. They do not expose references to arrays in the public language.
 void simd_add<A, B, C>(A& left, B& right, mut C& output);
@@ -12,7 +13,7 @@ void simd_equal<A, B, C>(A& left, B& right, mut C& output);
 void simd_less<A, B, C>(A& left, B& right, mut C& output);
 }
 
-namespace std {
+export namespace std {
 namespace detail {
 class lane_sentinel {
   size_t limit;

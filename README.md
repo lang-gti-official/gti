@@ -52,10 +52,14 @@ source graph -> frontend -> checked AST -> typed HIR/MIR
 > release is published; GTI 1.0 then freezes Edition 1 under the published
 > [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md).
 
+This branch contains the unreleased phase 1 module-only conversion. GTI
+`#include` is rejected; the examples below use explicit imports. The change is
+held from main and release until phase 2 completes production module support.
+
 ## A small example
 
 ```gti
-#include <std/string>
+import std.string;
 
 class Counter {
   mut int value = 0;
@@ -94,7 +98,7 @@ for the compiler API boundary and why the former in-tree website was removed.
   checked-result add/subtract/multiply operations, direct base-10
   `std::print`/`std::println`, owning `std::to_string` conversion, and
   recoverable sequential heterogeneous formatting for booleans, characters,
-  integers, binary32 floats, and owned or borrowed text through `<std/format>`.
+  integers, binary32 floats, and owned or borrowed text through `std.format`.
 - Exact IEEE-754 binary32 `float` and binary64 `double`, with width-selecting
   literals, deterministic promotion and conversion, frontend constant
   evaluation, and bit-exact native emission.
@@ -125,7 +129,7 @@ for the compiler API boundary and why the former in-tree website was removed.
 - Contextual brace arguments for any exact by-value fixed-array parameter,
   including inferred array extents on functions, methods, and constructors;
   these are owned arrays rather than C++ `std::initializer_list` values.
-- Independent source units, load-once `#include`, namespaces, aliases, and
+- Independent source units, explicit modules and imports, namespaces, aliases, and
   target/configuration conditionals with valueless source, CLI, and manifest
   flags but no textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
@@ -298,7 +302,7 @@ options, project profiles, outputs, and current project-mode boundaries.
 Local multi-package development is available without a registry or network.
 A workspace root declares `[workspace].members`; packages declare source-only
 dependencies such as `math = { path = "../math" }` under `[dependencies]`, and
-source uses `#include <math/add>`. Run a command inside a member to select it or
+source uses `import math.add;` for the dependency's registered `add` module. Run a command inside a member to select it or
 use `--package <name>` from the workspace root. Only direct aliases are visible,
 and dependency cycles or duplicate package identities fail before compilation.
 Pinned git dependencies are declared as

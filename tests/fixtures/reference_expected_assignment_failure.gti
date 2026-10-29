@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 enum class expected_errc { missing };
 class Tracked {
   int32_t tag;

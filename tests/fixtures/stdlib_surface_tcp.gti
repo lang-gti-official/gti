@@ -1,4 +1,4 @@
-#include <std/tcp>
+import std.tcp;
 
 extern "C" {
   void gti_test_set_socket_result(int32_t value);

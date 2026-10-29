@@ -1,6 +1,6 @@
-#include <std/functional>
-#include <std/io>
-#include <std/panic>
+import std.functional;
+import std.io;
+import std.panic;
 
 class Token {
   int value;

@@ -1,10 +1,11 @@
-#include "math.gti"
-#include "model.gti"
-#include "scene.gti"
-#include <glad/glad>
-#include <std/cmath>
+export module renderer;
 
-namespace toy3d {
+import "math.gti";
+import "model.gti";
+import "scene.gti";
+import glad.glad;
+import std.cmath;
+export namespace toy3d {
 class Renderer {
   mut uint32_t shader_program = uint32_t(0);
   mut uint32_t vertex_array = uint32_t(0);

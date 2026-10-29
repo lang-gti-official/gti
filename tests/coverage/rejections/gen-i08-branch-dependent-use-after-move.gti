@@ -1,7 +1,7 @@
 // INVALID: the owner is moved inside the branch selected only for Mode == 0
 // and read afterwards. Mode == 1 is valid; the Mode == 0 instance must be
 // rejected by per-instance flow analysis, not accepted from the symbolic body.
-#include <std/memory>
+import std.memory;
 
 int32_t read_after<uint64_t Mode>(std::unique_ptr<int32_t> owner) {
   if constexpr (Mode == 0) {

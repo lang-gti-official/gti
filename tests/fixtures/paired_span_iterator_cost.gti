@@ -1,8 +1,8 @@
-#include <std/paired_span>
-#include <std/vector>
-#include <std/string>
-#include <std/memory>
-#include <std/iterator>
+import std.paired_span;
+import std.vector;
+import std.string;
+import std.memory;
+import std.iterator;
 
 extern "C" {
   void adoption_count_begin();

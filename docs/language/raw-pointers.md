@@ -208,7 +208,7 @@ state cannot be hidden in the manual carrier. Thread transfer/sharing
 capabilities remain constrained by the payload, not by the apparent byte-only
 representation.
 
-`<std/memory>` provides `unsafe T* std::construct_at<T, Args...>(T* address,
+`std.memory` provides `unsafe T* std::construct_at<T, Args...>(T* address,
 Args... args)` for complete, layout-queryable object types. The pointer supplies
 the final address; ordinary GTI constructor selection and argument preparation
 apply, including construction of immovable types. The returned pointer is the
@@ -228,7 +228,7 @@ checked borrowed state is currently rejected: an untracked destination address
 cannot establish that state's checked owner and escape boundary. This is a
 structural restriction, not recognition of particular container or view names.
 
-`<std/memory>` provides `unsafe void std::destroy_at<T>(T* address)` for
+`std.memory` provides `unsafe void std::destroy_at<T>(T* address)` for
 complete, layout-queryable object types admitted by the pointer surface.
 It runs the selected GTI destructor and field cleanup and ends that object's
 lifetime without releasing its storage. It does not require copying or moving
@@ -514,7 +514,7 @@ itself require `unsafe`.
 
 ## Explicit Owner-Witness Borrowing
 
-`<std/memory>` provides unsafe free functions:
+`std.memory` provides unsafe free functions:
 
 ```gti
 unsafe T& assume_ref<T, Owner>(const T* address, Owner& owner);
@@ -576,7 +576,7 @@ relocation operations above also serve unrelated source-defined owners.
 
 ## Owner-Witness Text Views
 
-`<std/memory>` also provides:
+`std.memory` also provides:
 
 ```gti
 unsafe std::string_view assume_string_view<Owner>(const char* address,
@@ -630,7 +630,7 @@ unrelated typed-pointer reinterpretation remain rejected. A dependent target
 type call with a raw-pointer input is checked again in its concrete instance;
 it does not establish a general unconstrained conversion capability.
 
-`<std/memory>` supplies ordinary source helpers:
+`std.memory` supplies ordinary source helpers:
 
 ```gti
 void* erase_address<T>(T* address);
@@ -684,7 +684,7 @@ pointer precondition.
 
 ### Explicit resource binding
 
-The custom-resource protocol in `<std/resource>` makes the trust
+The custom-resource protocol in `std.resource` makes the trust
 boundary explicit with `unsafe std::bind_resource(resource)`. The result is a
 reusable checked shared borrow, not ownership of the provider. The unsafe
 obligation applies to every later allocation through that binding or any copy:
@@ -788,7 +788,7 @@ creation succeeds, the unsafe caller keeps that context and everything
 reachable through it live and appropriately synchronized until successful
 join, not merely until `thrd_create` returns. The `unsafe` modifier does
 not itself enable concurrent native callbacks, runtime attachment, or any
-C-thread operation outside the exact registered `<std/cthread>` contract.
+C-thread operation outside the exact registered `std.cthread` contract.
 
 ## Native C ABI
 

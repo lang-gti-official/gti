@@ -1,4 +1,4 @@
-#include <std/functional>
+import std.functional;
 extern "C" { c_int gti_visibility_select(); void gti_visibility_drop(c_int id); }
 
 int identity(int value) { return value; }

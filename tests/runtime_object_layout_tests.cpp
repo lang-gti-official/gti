@@ -153,7 +153,7 @@ int main() {
   forged(
       frontend.mir, [](auto &i) { i.intrinsic = lang::IntrinsicKind::None; },
       "metadata cannot become an ordinary call");
-  const std::string prefix = "#include <std/memory>\n";
+  const std::string prefix = "import std.memory;\n";
   const auto otherShapes = analyze(prefix + R"gti(
 enum class Code : uint16_t { ready, done };
 union Bits { uint64_t word; double real; };

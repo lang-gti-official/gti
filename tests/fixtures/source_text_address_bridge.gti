@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 extern "C" {
   int32_t source_bridge_byte(c_string text, uint64_t index);

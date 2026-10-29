@@ -1,3 +1,0 @@
-// Module std.unordered_map: the public surface of <std/unordered_map>.
-export module unordered_map;
-export #include <std/unordered_map>

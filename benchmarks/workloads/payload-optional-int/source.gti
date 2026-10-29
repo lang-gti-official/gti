@@ -1,5 +1,5 @@
-#include <std/experimental/optional>
-#include <std/string>
+import std.experimental_optional;
+import std.string;
 
 std::experimental::optional<int32_t> lookup(int32_t index) {
   if (index % 4 == 0)

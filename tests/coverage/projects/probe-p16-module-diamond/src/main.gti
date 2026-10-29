@@ -1,6 +1,6 @@
 import top;
 import left;
-#include "trace.gti"
+import "trace.gti";
 
 int main_step = trace::record(4);
 

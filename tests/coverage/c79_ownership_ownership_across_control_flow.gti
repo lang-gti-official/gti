@@ -2,9 +2,9 @@
 // reinitialization inside loops, break right after a move, switch arms that
 // consume, do/while, early returns dropping live owners, std::exchange and
 // std::swap on vector elements, and exactly-once destruction accounting.
-#include <std/memory>
-#include <std/utility>
-#include <std/vector>
+import std.memory;
+import std.utility;
+import std.vector;
 
 mut int g_dropped = 0;
 

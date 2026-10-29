@@ -146,7 +146,7 @@ int main() { return 0; }
 }
 void positiveAndMir() {
   const auto result = analyze(R"(
-#include <std/memory>
+import std.memory;
 struct Item { mut int value = 42;  public: Item() = default; };
 using Address = void*;
 using Pointer = Item*;
@@ -272,7 +272,7 @@ mut int value = 0; void* p = &value; return 0; })",
 int main() { mut int value = 0; E e = E(&value); P p = P(e); return 0; })",
                 "known pointee type");
   auditNegative("ordinary helpers cannot hide known type", R"(
-#include <std/memory>
+import std.memory;
 struct Item { int value = 0;  public: Item() = default; };
 struct Other { int value = 0;  public: Other() = default; };
 int main() { mut Item value{}; void* e = std::erase_address(&value);

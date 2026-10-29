@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/utility>
+import std.string;
+import std.utility;
 
 class OwnedValue {
 public:

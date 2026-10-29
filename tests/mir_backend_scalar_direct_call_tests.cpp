@@ -850,7 +850,7 @@ void testStructuralFailureFreedom() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "structural-failure-freedom.gti", R"(
-#include <std/utility>
+import std.utility;
 
 mut int32_t destroyed = 0;
 

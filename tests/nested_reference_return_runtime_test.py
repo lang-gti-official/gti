@@ -23,7 +23,7 @@ def fail(label: str, process: subprocess.CompletedProcess[str]) -> int:
 
 
 SOURCE = """\
-#include <std/vector>
+import std.vector;
 
 class box {
 public: box() = default;

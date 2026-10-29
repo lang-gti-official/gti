@@ -220,8 +220,8 @@ def generated_programs() -> list[Program]:
                                 f"  return taken.get();\n"
                                 f"}}\n\n")
 
-                source = ("#include <std/vector>\n"
-                          "#include <std/utility>\n\n"
+                source = ("import std.vector;\n"
+                          "import std.utility;\n\n"
                           f"{declaration}\n{support}"
                           "int main() {\n"
                           f"{body}"

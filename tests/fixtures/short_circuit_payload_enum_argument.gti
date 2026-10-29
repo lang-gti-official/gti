@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // A payload-enum temporary borrowed by a read-only reference parameter inside
 // a conditionally evaluated operand: the right operand of `&&` or `||`, or an

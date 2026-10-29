@@ -1,5 +1,5 @@
-#include <std/thread>
-#include "kernel.gti"
+import std.thread;
+import "kernel.gti";
 
 class partition_job {
   int32_t row;

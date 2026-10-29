@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 // User-defined erased callbacks: a model class implements an interface by
 // holding a closure. Boxing a model whose closure holds only scalars or a

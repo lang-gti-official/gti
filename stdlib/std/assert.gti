@@ -1,14 +1,15 @@
+export module assert;
+
 // Assertions are source policy over the general typed macro facility.
 // NDEBUG disables only debug_assert; assert is always checked.
-#include <std/panic>
-#include <std/source_location>
-
+import std.panic;
+import std.source_location;
 // Declare this optional configuration switch without changing its value.
 #ifdef NDEBUG
 #define NDEBUG
 #endif
 
-namespace std {
+export namespace std {
   /// Source configuration, independent of optimizer success.
 #ifdef NDEBUG
   constexpr bool debug_assertions_enabled = false;

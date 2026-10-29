@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 struct Entity {
 public:
   int id = 7;

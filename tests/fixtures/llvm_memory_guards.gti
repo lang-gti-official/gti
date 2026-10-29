@@ -1,4 +1,4 @@
-#include <std/detail/iterator>
+import std.detail_iterator;
 
 int main() {
   auto next = std::detail::checked_iterator_step(uint64_t(1), uint64_t(0), uint64_t(3));

@@ -25,8 +25,8 @@ polymorphicIntrinsicIndex(lang::IntrinsicKind intrinsic) {
 }
 
 constexpr std::string_view source = R"(
-#include <std/polymorphic>
-#include <std/string>
+import std.polymorphic;
+import std.string;
 
 interface meter {
   int read();
@@ -290,7 +290,7 @@ void testPayloadAdmission() {
   const auto analyze = [](std::string_view body) {
     return lang::Frontend().analyze(
         "polymorphic-payload-admission.gti",
-        std::string("#include <std/polymorphic>\n#include <std/string>\n"
+        std::string("import std.polymorphic;\nimport std.string;\n"
                     "interface meter { int read(); };\n") +
             std::string(body),
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});

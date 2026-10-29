@@ -1,3 +1,0 @@
-// Module std.resource_vector: the public surface of <std/resource_vector>.
-export module resource_vector;
-export #include <std/resource_vector>

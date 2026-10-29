@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 
 // Receivers that live in a full-expression temporary or behind an address.
 // Each arm of a conditional constructs its own receiver in the hidden

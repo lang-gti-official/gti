@@ -1,9 +1,8 @@
-#include "../src/spdlog.gti"
-#include <std/cstdio>
-#include <std/filesystem>
-#include <std/memory>
-#include <std/string>
-
+import "../src/spdlog.gti";
+import std.cstdio;
+import std.filesystem;
+import std.memory;
+import std.string;
 int main() {
   spdlog::source_loc source{"/tmp/example.gti", uint32_t(42), "main"};
   spdlog::details::log_msg message{

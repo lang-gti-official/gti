@@ -1,9 +1,10 @@
+export module shared;
 #ifdef FAST
 namespace shared {
-  int mode() { return 1; }
+  export int mode() { return 1; }
 }
 #else
 namespace shared {
-  int mode() { return 2; }
+  export int mode() { return 2; }
 }
 #endif

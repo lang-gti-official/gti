@@ -4,8 +4,8 @@
 // itself. The staged Loan operand records the owner loan as provenance only;
 // spelling the loan (which is representation-erased) emitted a dereference of
 // an undeclared __gti_mir_loan_N symbol and broke the native C++ compile.
-#include <std/vector>
-#include <std/iterator>
+import std.vector;
+import std.iterator;
 
 bool has_any<Iterator, Sentinel>(Iterator& first, Sentinel& last)
   requires std::input_iterator<Iterator> &&

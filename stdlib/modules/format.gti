@@ -1,3 +1,0 @@
-// Module std.format: the public surface of <std/format>.
-export module format;
-export #include <std/format>

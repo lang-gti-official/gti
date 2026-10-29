@@ -87,7 +87,7 @@ int main() { std::map<int, int, Compare> values{}; return 0; }
         root = pathlib.Path(temporary)
         for name, (body, code) in cases.items():
             path = root / f"{name}.gti"
-            path.write_text("#include <std/map>\n" + body)
+            path.write_text("import std.map;\n" + body)
             result = subprocess.run(
                 [str(compiler), str(path), "--emit-mir", "-o", str(root / f"{name}.mir")],
                 capture_output=True, text=True, timeout=60, check=False,

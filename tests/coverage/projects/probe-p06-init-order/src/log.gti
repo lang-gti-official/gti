@@ -1,7 +1,8 @@
+export module log;
 namespace trace {
-  mut int sequence = 0;
+  export mut int sequence = 0;
 
-  int record(int code) {
+  export int record(int code) {
     sequence = sequence * 10 + code;
     return code;
   }

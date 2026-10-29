@@ -1,6 +1,7 @@
-#include "math_a.gti"
+export module math_c;
+import "math_a.gti";
 
 namespace engine::math::detail {
   // Reopens a shorthand namespace declared in another unit, using a visible alias.
-  int widened() { return em::add(40, 2); }
+  export int widened() { return em::add(40, 2); }
 }

@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // A construction whose constructor can fail, assigned to an existing
 // variable. The construction publishes into representation-only storage on

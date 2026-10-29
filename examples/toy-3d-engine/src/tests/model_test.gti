@@ -1,7 +1,6 @@
-#include "../engine/math.gti"
-#include "../engine/model.gti"
-#include <std/memory>
-
+import "../engine/math.gti";
+import "../engine/model.gti";
+import std.memory;
 int main() {
   mut std::unique_ptr<toy3d::Model> model =
       std::make_unique<toy3d::Model>();

@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/span>
+import std.vector;
+import std.span;
 
 // Independent scalar parameter copies must not change the native field
 // publication proof merely because their declaration position differs.

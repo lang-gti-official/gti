@@ -1,3 +1,4 @@
-int helper_value() { return 3; }
+export module has_main;
+export int helper_value() { return 3; }
 
-int main() { return 0; }
+export int main() { return 0; }

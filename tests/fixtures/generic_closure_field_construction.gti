@@ -4,7 +4,7 @@
 // the constructed field, beside a scalar field, through two levels, into two
 // fields, with an extra argument, and for captureless, scalar-capturing and
 // struct-capturing closures of one class.
-#include <std/utility>
+import std.utility;
 
 class Holder<F> {
 public:

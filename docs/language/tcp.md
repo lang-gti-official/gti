@@ -2,11 +2,11 @@
 
 Status: current bounded standard-library contract
 
-`#include <std/tcp>` provides a small POSIX socket owner implemented in
+`import std.tcp;` provides a small POSIX socket owner implemented in
 ordinary GTI over the bounded C ABI:
 
 ```gti
-#include <std/tcp>
+import std.tcp;
 
 int main() {
   mut auto opened = std::tcp::open();
@@ -93,13 +93,13 @@ extern "C" {
 ```
 
 The `gti_internal::runtime` declarations are compiler-private implementation
-details. Trusted `<std/tcp>` source can call them, while application lookup and
+details. Trusted `std.tcp` source can call them, while application lookup and
 tooling cannot resolve or present them. The private `socket` constructor adds
 the ordinary class-access boundary inside the trusted implementation; neither
 layer exposes a raw descriptor API.
 
 The implementation currently relies on the Linux/macOS values `AF_INET = 2`
-and `SOCK_STREAM = 1`. Importing `<std/tcp>` on Windows or an unknown target is
+and `SOCK_STREAM = 1`. Importing `std.tcp` on Windows or an unknown target is
 a compile-time error. Creating an unconnected socket allocates a local kernel
 resource but sends no network traffic.
 

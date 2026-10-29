@@ -61,13 +61,13 @@ void forged(const lang::FrontendResult &frontend, Mutation mutation,
 } // namespace
 
 int main() {
-  const std::string prefix = "#include <std/memory>\n";
+  const std::string prefix = "import std.memory;\n";
   // Sparse region admission is now ordinary library policy. The underlying
   // operation that starts/ends a payload lifetime retains general unsafe
   // authority and independently verified cleanup, not adoption-specific MIR.
   // This static fixture is not executed: its destructor deliberately fails.
   const std::string source = prefix + R"(
-#include <std/panic>
+import std.panic;
 class Payload {
   int value;
 public:
@@ -230,7 +230,7 @@ int main() {
            "ordinary declarations with retired names still emit");
   }
   const std::string resourceSource = R"(
-#include <std/resource>
+import std.resource;
 int use(std::resource_ref<std::process_resource> resource) {
   mut std::resource_storage<int, std::process_resource> slots{resource};
   auto allocated = slots.try_allocate(std::size_t(1));

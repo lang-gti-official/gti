@@ -6,16 +6,16 @@ result against a value computed here from the literal inputs, and counts
 tracked destructions.
 """
 
-PRELUDE = """#include <std/map>
-#include <std/unordered_map>
-#include <std/set>
-#include <std/optional>
-#include <std/deque>
-#include <std/vector>
-#include <std/string>
-#include <std/format>
-#include <std/atomic>
-#include <std/utility>
+PRELUDE = """import std.map;
+import std.unordered_map;
+import std.set;
+import std.optional;
+import std.deque;
+import std.vector;
+import std.string;
+import std.format;
+import std.atomic;
+import std.utility;
 std::atomic<int32_t> constructed{0};
 std::atomic<int32_t> destroyed{0};
 class Tracked {

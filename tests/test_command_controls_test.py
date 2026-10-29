@@ -21,8 +21,8 @@ def main():
         shutil.copytree(root / "examples/annotated-tests", project,
                         ignore=shutil.ignore_patterns("build"))
         source = project / "tests/main.gti"
-        source.write_text('''#include <std/testing>
-#include <std/string>
+        source.write_text('''import std.testing;
+import std.string;
 extern "C" { int raise(int signal); int usleep(uint32_t duration); }
 [[test]] void a_pass() { std::println("pass-output"); }
 [[test]] void b_failure() { std::testing::check(false, "forced-failure"); }
@@ -136,7 +136,7 @@ extern "C" { int raise(int signal); int usleep(uint32_t duration); }
         events = run(expected=23)
         assert events[-1]["discovered"] == events[-1]["completed"] == 1
         assert next(e for e in events if e["event"] == "test_finished")["status"] == "failed"
-        source.write_text('#include <std/string>\n#include <std/panic>\nint main() {\n'
+        source.write_text('import std.string;\nimport std.panic;\nint main() {\n'
                           '  std::println("legacy-stdout");\n'
                           '  std::panic("legacy-stderr");\n}\n')
         human = run(expected=70, structured=False)
@@ -147,8 +147,8 @@ extern "C" { int raise(int signal); int usleep(uint32_t duration); }
         events = run(expected=70)
         legacy = next(e for e in events if e["event"] == "test_finished")
         assert "legacy-stdout" in legacy["output"] and "legacy-stderr" in legacy["output"], legacy
-        source.write_text('#include <std/string>\n[[test]] void shared() { std::println("first-suite"); }\n')
-        (project / "tests/other.gti").write_text('#include <std/string>\n[[test]] void shared() { std::println("second-suite"); }\n')
+        source.write_text('import std.string;\n[[test]] void shared() { std::println("first-suite"); }\n')
+        (project / "tests/other.gti").write_text('import std.string;\n[[test]] void shared() { std::println("second-suite"); }\n')
         with (project / "gti.toml").open("a") as manifest:
             manifest.write('\n[targets.other-tests]\nkind = "test"\nroot = "tests/other.gti"\n')
         human = run("--jobs", "2", structured=False)

@@ -7,7 +7,6 @@
 
 (string_literal) @string
 (character_literal) @character
-(standard_library_path) @string
 (integer_literal) @number
 (float_literal) @number.float
 (boolean_literal) @boolean
@@ -222,10 +221,7 @@
 (static_assert_declaration
   "static_assert" @keyword)
 
-[
-  "#include"
-  "import"
-] @keyword.import
+"import" @keyword.import
 
 (module_declaration name: (identifier) @module)
 (module_name (identifier) @module)

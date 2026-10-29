@@ -1,5 +1,5 @@
 // A29: the same view-method ICE through an owning string's view().
-#include <std/string>
+import std.string;
 int main() {
   std::string s{"pear"};
   std::size_t n = s.view().size();

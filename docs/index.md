@@ -194,6 +194,7 @@ delivery state. Completed delivery records are retained in the archive rather
 than mixed into the active queue.
 
 - [Dependency-ordered implementation sequence](plans/implementation-sequence.md)
+- [Unreleased two-phase module-only campaign](plans/implementation-sequence.md#module-only-source-campaign-2026-10-29)
   — the sole prompt-sized work queue, prerequisites, status, and exit gates;
   distinguishes the current ready queue from dated campaign evidence, including the
   [general object-lifetime and source-defined storage brief](plans/implementation-sequence.md#s-alloc-06-general-object-lifetimes-and-source-defined-storage)

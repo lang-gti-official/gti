@@ -1,5 +1,5 @@
-#include <std/environment>
-#include <std/string>
+import std.environment;
+import std.string;
 
 int main() {
   auto missing = std::environment::get("GTI_ENVIRONMENT_MISSING_7d4c9f3e");

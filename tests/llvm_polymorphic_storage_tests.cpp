@@ -105,7 +105,7 @@ int run(int mode) {
   options.lowerLibraryReachableOnly = true;
   const auto frontend = Frontend(options).analyze(
       root / "tests/slot-operation-entry.gti",
-      "#include <std/polymorphic>\nint main() { return "
+      "import std.polymorphic;\nint main() { return "
       "slot_operation_probe::run(0); }\n",
       {root / "stdlib/prelude.gti"}, {{library.string(), source}},
       {root / "stdlib"});
@@ -446,7 +446,8 @@ int main(int argc, char **argv) {
            "construct, borrow, repeated move, reset and empty move execute at "
            "O0/O3");
     expect(
-        driver::invokeProcess({executable.string(), "6"}).succeeded(),
+        driver::invokeProcess({executable.string(), R"GTIMODULE(export module slot_operation_entry;
+6)GTIMODULE"}).succeeded(),
         "runtime-selected model uses its own relocation and interface offset");
     for (int mode = 1; mode <= 5; ++mode) {
       const auto result =

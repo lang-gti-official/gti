@@ -111,7 +111,7 @@ def main() -> None:
                 continue
             source = work / f"{name}.gti"
             declaration = "enum class E { first };\n" if name == "enum-domain" else ""
-            source.write_text("#include <std/atomic>\n" + declaration +
+            source.write_text("import std.atomic;\n" + declaration +
                               "int main() { " + body + " return 0; }\n")
             for backend in ("cpp", "llvm"):
                 output = work / f"rejected-{name}-{backend}"

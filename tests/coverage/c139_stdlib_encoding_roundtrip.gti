@@ -1,10 +1,10 @@
 // Base64 and hexadecimal: RFC 4648 vectors kept in an ordered map, a full
 // 256-byte round trip with embedded zeroes, uppercase hex acceptance, and
 // every decode_errc category, including non-canonical padding bits.
-#include <std/encoding>
-#include <std/string>
-#include <std/map>
-#include <std/vector>
+import std.encoding;
+import std.string;
+import std.map;
+import std.vector;
 
 bool decode_fails(std::string_view text, std::encoding::decode_errc wanted) {
   auto result = std::encoding::base64::decode(text);

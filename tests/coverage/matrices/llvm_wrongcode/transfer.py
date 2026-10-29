@@ -73,12 +73,12 @@ VALUES = {
         expected=text_sum(TEXT)),
 }
 
-PRELUDE = """#include <std/string>
-#include <std/vector>
-#include <std/memory>
-#include <std/thread>
-#include <std/atomic>
-#include <std/format>
+PRELUDE = """import std.string;
+import std.vector;
+import std.memory;
+import std.thread;
+import std.atomic;
+import std.format;
 
 std::atomic<int32_t> constructed{0};
 std::atomic<int32_t> destroyed{0};

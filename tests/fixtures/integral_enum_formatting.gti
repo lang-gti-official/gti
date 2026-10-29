@@ -1,6 +1,6 @@
-#include <std/format>
-#include <std/string>
-#include <std/panic>
+import std.format;
+import std.string;
+import std.panic;
 
 enum class Signed8 : int8_t { low = -128, sparse = 12, alias = 12 };
 enum class Unsigned8 : uint8_t { high = 255 };

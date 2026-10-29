@@ -14,3 +14,6 @@ zlib = { path = "../zlib" }
 [package.native]
 include-dirs = ["native", "vendor/assimp/include"]
 c-sources = ["native/adapter.c"]
+
+[modules]
+assimp = "src/assimp.gti"

@@ -1,5 +1,5 @@
-#include <std/functional>
-#include <std/vector>
+import std.functional;
+import std.vector;
 void output(std::vector<int32_t>& state) {
   // Publish every final lane, not merely a success predicate.
   for (auto& value : state) { std::println(value); }

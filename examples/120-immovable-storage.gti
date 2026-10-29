@@ -1,6 +1,5 @@
-#include <std/memory>
-#include <std/string>
-
+import std.memory;
+import std.string;
 // This object owns text and remembers its final address. Neither copying nor
 // moving it is allowed; storage's handle can still be moved independently.
 class Anchor {

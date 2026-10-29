@@ -115,8 +115,7 @@ namespace std {
 }
 
 // General compile-time type facts are available to source-defined concepts.
-#include <std/meta>
-
+import std.meta;
 namespace std {
   /// Can initialize a new value by movement; assignment is not required.
   concept move_constructible<T> = std::meta::is_move_constructible<T>();

@@ -1,5 +1,5 @@
-#include "alpha.gti"
-#include "beta.gti"
+import "alpha.gti";
+import "beta.gti";
 
 static int bump() { return 1000; }
 

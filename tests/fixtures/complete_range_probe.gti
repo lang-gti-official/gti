@@ -1,6 +1,6 @@
-#include <std/algorithm>
-#include <std/iterator>
-#include <std/vector>
+import std.algorithm;
+import std.iterator;
+import std.vector;
 
 class number_range {
   mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});

@@ -1,3 +1,4 @@
+export module alpha;
 static mut int count = 0;
 static int bump() {
   count = count + 1;
@@ -8,8 +9,8 @@ namespace stats {
   static mut int hits = 100;
 }
 
-int alpha_bump() { return bump(); }
-int alpha_hits() {
+export int alpha_bump() { return bump(); }
+export int alpha_hits() {
   stats::hits = stats::hits + 1;
   return stats::hits;
 }

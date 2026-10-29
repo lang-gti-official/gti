@@ -1,6 +1,6 @@
-#include <std/functional>
-#include <std/string>
-#include <std/vector>
+import std.functional;
+import std.string;
+import std.vector;
 
 mut int dropped = 0;
 class Resource {

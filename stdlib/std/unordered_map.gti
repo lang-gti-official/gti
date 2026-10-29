@@ -1,10 +1,11 @@
-#include <std/vector>
-#include <std/memory>
-#include <std/functional>
-#include <std/utility>
-#include <std/cmath>
+export module unordered_map;
 
-namespace std {
+import std.vector;
+import std.memory;
+import std.functional;
+import std.utility;
+import std.cmath;
+export namespace std {
 namespace detail {
 struct unordered_map_node<K, V> {
   mut map_entry<K, V> entry;

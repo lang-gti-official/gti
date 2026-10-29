@@ -1,5 +1,4 @@
-#include <std/random>
-
+import std.random;
 int main() {
   mut std::random_engine left{uint64_t(42)};
   mut std::random_engine right{uint64_t(42)};

@@ -1,10 +1,10 @@
-#include <std/algorithm>
-#include <std/iterator>
-#include <std/functional>
-#include <std/vector>
-#include <std/list>
-#include <std/deque>
-#include <std/array>
+import std.algorithm;
+import std.iterator;
+import std.functional;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
 
 mut int calls = 0;
 class odd {

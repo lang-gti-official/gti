@@ -1,6 +1,6 @@
 // INVALID: a consuming (&&) method is invoked twice on the same named value,
 // and `this` is used after `std::move(this)` inside a consuming method.
-#include <std/string>
+import std.string;
 
 class Builder {
   mut std::string text_;

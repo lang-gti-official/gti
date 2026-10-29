@@ -1,6 +1,6 @@
-#include <std/deque>
-#include <std/memory>
-#include <std/string>
+import std.deque;
+import std.memory;
+import std.string;
 
 class Queue {
   mut std::deque<std::string> values{};

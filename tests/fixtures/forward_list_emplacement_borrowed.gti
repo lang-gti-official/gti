@@ -1,5 +1,5 @@
-#include <std/forward_list>
-#include <std/string>
+import std.forward_list;
+import std.string;
 
 class Count {
 public:

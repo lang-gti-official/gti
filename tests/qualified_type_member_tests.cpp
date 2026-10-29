@@ -88,7 +88,7 @@ struct Later<T = Box<U>::value_type, U = int> { public: Later() = default; };
         "owner arguments cannot hide references to later default parameters");
 
   const auto moveOnly = analyze(R"(
-#include <std/memory>
+import std.memory;
 struct Box<T> { using value_type = T;  public: Box() = default; };
 int main() {
   Box<std::unique_ptr<int>>::value_type first = std::make_unique<int>(7);
@@ -102,7 +102,7 @@ int main() {
                 [](const auto &item) { return item.code == "GTI-S2003"; }),
         "type aliases cannot make a unique owner copyable");
   const std::string borrowedSource = R"(
-#include <std/vector>
+import std.vector;
 int main() {
   mut std::vector<int> values{};
   values.push_back(1);
@@ -123,7 +123,7 @@ int main() {
         "public iterator aliases reject owner mutation at the actual call, "
         "with borrow-origin and later-use locations");
   const auto wrapper = analyze(R"(
-#include <std/vector>
+import std.vector;
 struct CursorTraits<std::vector_element T> {
   using iterator = std::vector<T>::const_iterator;
   using sentinel = std::vector<T>::sentinel;

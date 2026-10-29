@@ -23,7 +23,10 @@ root = "src/main.gti"
     header = root / "include/api.gti"
     source = '// 😀\nint main() { return example::test(); }\n'
     entry.write_text(source)
-    header.write_text('namespace example { int test() { return 7; } }\n')
+    header.write_text((
+                          'export module api;\n'
+                          'namespace example { export int test() { return 7; } }\n'
+                      ))
     uri = entry.as_uri()
     header_uri = header.as_uri()
     session = LspSession(executable)
@@ -75,10 +78,10 @@ root = "src/main.gti"
         assert diagnostic["range"]["start"] == lsp_position(source, source.index("test")), diagnostic
         assert "(fix available)" in diagnostic["message"], diagnostic
         offered = actions(diagnostic)
-        assert len(offered) == 1 and offered[0]["title"] == 'Add #include "../include/api.gti"', offered
+        assert len(offered) == 1 and offered[0]["title"] == 'Add import "../include/api.gti";', offered
         edit = offered[0]["edit"]["documentChanges"][0]
         assert edit["textDocument"] == {"uri": uri, "version": 1}, edit
-        assert edit["edits"][0]["newText"] == '#include "../include/api.gti"\n', edit
+        assert edit["edits"][0]["newText"] == 'import "../include/api.gti";\n', edit
 
         # An unsaved dependency edit removes the definition; no disk fallback.
         open_file(header_uri, 'namespace example { int renamed() { return 7; } }\n')
@@ -108,7 +111,7 @@ root = "src/main.gti"
         # Functions in standard-library files use exactly the same mechanism.
         change(uri, 3, 'int main() { return std::gcd(12, 8); }\n')
         std = include_diagnostic(published(lambda p: p.get("version") == 3 and include_diagnostic(p)))
-        assert actions(std)[0]["title"] == 'Add #include <std/numeric>', std
+        assert actions(std)[0]["title"] == 'Add import std.numeric;', std
     finally:
         session.close()
 

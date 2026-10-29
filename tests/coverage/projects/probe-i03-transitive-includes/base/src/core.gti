@@ -1,6 +1,7 @@
+export module core;
 namespace base::core {
-  int twice(int value) { return value * 2; }
-  class Box {
+  export int twice(int value) { return value * 2; }
+  export class Box {
   public:
     int value;
     Box(int v) : value(v) {}

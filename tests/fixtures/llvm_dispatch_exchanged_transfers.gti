@@ -1,9 +1,9 @@
-#include <std/functional>
-#include <std/memory>
-#include <std/polymorphic>
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.functional;
+import std.memory;
+import std.polymorphic;
+import std.string;
+import std.utility;
+import std.vector;
 
 // Restoring exchanges of whole objects containing hierarchy storage. The
 // by-value replacement waits in its own storage until the exchange relocates

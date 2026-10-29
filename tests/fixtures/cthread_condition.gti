@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 int main() {
   unsafe {
     mut std::cnd_t condition = 0;

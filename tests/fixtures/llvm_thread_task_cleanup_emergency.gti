@@ -1,4 +1,4 @@
-#include <std/thread>
+import std.thread;
 
 // The worker body fails and destroying the transferred task then fails too:
 // task cleanup completes the worker's exact two-record envelope.

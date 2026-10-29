@@ -225,10 +225,15 @@ def generate_bindings(name, gti):
                         "crc32*", "adler32*", "Z_*"):
             command += ["--allow", pattern]
     # Bindgen aliases are intentionally private to a package. Generate into the
-    # public unit itself so a direct package include owns visible declarations.
+    # public module interface with the name registered in the package manifest.
     with tempfile.TemporaryDirectory(prefix=".bindings-", dir=package / "src") as directory:
         staged = Path(directory) / f"{name}.gti"
         run([*command, "-o", staged])
+        source = staged.read_text()
+        header = "export module bindings;"
+        if source.count(header) != 1:
+            raise ValueError("bindgen did not produce the expected module interface")
+        staged.write_text(source.replace(header, f"export module {name};", 1))
         checksum = digest(staged.read_bytes())
         os.replace(staged, destination)
         staged_marker = Path(directory) / "marker.json"

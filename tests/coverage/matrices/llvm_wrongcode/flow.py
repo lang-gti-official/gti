@@ -110,7 +110,7 @@ PATTERNS = ["conditional_move", "loop_keep", "early_return", "switch_move",
 def program(element, name):
     spec = ELEMENTS[element]
     helpers, body, expected = pattern(name, spec["type"], spec["expected"])
-    source = PRELUDE + "#include <std/utility>\n"
+    source = PRELUDE + "import std.utility;\n"
     if "helper" in spec:
         source += spec["helper"] + "\n"
     source += spec["check"] + "\n"

@@ -1,12 +1,13 @@
+export module math_a;
 namespace engine::math {
-  using scalar = int32_t;
+  export using scalar = int32_t;
 
   static int helper() { return 1; }
 
-  scalar add(scalar a, scalar b) { return a + b; }
-  int from_a() { return helper(); }
+  export scalar add(scalar a, scalar b) { return a + b; }
+  export int from_a() { return helper(); }
 
-  class Counter {
+  export class Counter {
   public:
     static mut int created = 0;
     static int limit = 10;
@@ -15,4 +16,4 @@ namespace engine::math {
   };
 }
 
-namespace em = engine::math;
+export namespace em = engine::math;

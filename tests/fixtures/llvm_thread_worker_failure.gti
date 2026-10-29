@@ -1,4 +1,4 @@
-#include <std/thread>
+import std.thread;
 
 // A worker defined failure cleans task-owned state at the task boundary and
 // is re-raised by explicit join; the joining frame then cleans up normally.

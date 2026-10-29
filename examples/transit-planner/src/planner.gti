@@ -1,6 +1,7 @@
-#include "network.gti"
+export module planner;
 
-class RouteResult {
+import "network.gti";
+export class RouteResult {
   mut uint64_t route_nodes[8] = {};
   mut uint64_t route_length = 0;
   mut uint64_t travel_minutes = 0;
@@ -36,7 +37,7 @@ public:
   RouteResult() = default;
 };
 
-class RoutePlanner {
+export class RoutePlanner {
   TransitNetwork& network;
   mut uint64_t distances[8] = {};
   mut uint64_t previous[8] = {};
@@ -114,7 +115,7 @@ public:
   }
 };
 
-bool matches_reference_route(RouteResult& route) {
+export bool matches_reference_route(RouteResult& route) {
   if (!route.found() or route.total_minutes() != 11 or route.size() != 6) {
     return false;
   }

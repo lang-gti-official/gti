@@ -1,6 +1,6 @@
-#include <std/panic>
-#include <std/string>
-#include <std/utility>
+import std.panic;
+import std.string;
+import std.utility;
 
 // A function returns a by-value borrowed payload enum parameter whole: moved,
 // copied, or under an explicit borrowed_from contract. The result keeps the

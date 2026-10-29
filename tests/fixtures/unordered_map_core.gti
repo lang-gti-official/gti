@@ -1,5 +1,5 @@
-#include <std/unordered_map>
-#include <std/functional>
+import std.unordered_map;
+import std.functional;
 
 class CollisionHash {
 public:

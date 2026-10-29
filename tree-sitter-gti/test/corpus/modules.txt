@@ -32,24 +32,21 @@ export namespace shape {
                   (literal (integer_literal)))))))))))
 
 ==================
-Republished includes and standard-library modules
+Re-exported standard-library and relative modules
 ==================
 
 export module vector;
-export #include <std/vector>
+export import std.vector;
 import std.span;
-#include "local.gti"
+import "local.gti";
 
 ---
 
 (source_file
   (module_declaration (identifier))
-  (include_directive
-    (standard_library_path
-      (standard_library_component (identifier))
-      (standard_library_component (identifier))))
   (import_declaration (module_name (identifier) (identifier)))
-  (include_directive (string_literal)))
+  (import_declaration (module_name (identifier) (identifier)))
+  (import_declaration (string_literal)))
 
 ==================
 Export precedes declaration attributes and specifiers

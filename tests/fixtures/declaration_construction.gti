@@ -9,8 +9,8 @@
 // body, a lambda body and view assignment. Phases 1 and 2 construct from an
 // owned argument and then fail; the argument is released exactly once. In
 // phase 3 the construction is its function's only fallible operation.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // Construction prints a tracked id and destruction its negation, so each
 // phase's trace shows exactly which values exist and when each is released.

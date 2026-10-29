@@ -1,4 +1,4 @@
-#include <std/atomic>
+import std.atomic;
 
 std::atomic<int32_t> value{2147483647};
 

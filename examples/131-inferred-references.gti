@@ -1,7 +1,6 @@
-#include <std/json>
-#include <std/string>
-#include <std/vector>
-
+import std.json;
+import std.string;
+import std.vector;
 struct Record {
   mut int count = 1;
 public:

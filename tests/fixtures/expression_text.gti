@@ -1,7 +1,7 @@
-#include <std/source_location>
-#include <std/memory>
-#include <std/panic>
-#include <std/string>
+import std.source_location;
+import std.memory;
+import std.panic;
+import std.string;
 
 int effect() { std::panic("expression text evaluated its argument"); }
 

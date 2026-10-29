@@ -61,7 +61,7 @@ int main() {
   // Forged lowered programs below also exercise the construction seal.
   lang::setLoweredProgramSealValidation(true);
   rejected(R"(
-#include <std/meta>
+import std.meta;
 [[borrowed_from(value)]]
 std::meta::callable_return_type<F> borrow<F>(F& fn, int& value, int& other) {
   return fn(other);
@@ -88,7 +88,7 @@ int main() {
 )",
            "GTI-S2017", "must derive from read-only parameter 'value'");
   rejected(R"(
-#include <std/meta>
+import std.meta;
 [[borrowed_from(value)]]
 std::meta::callable_return_type<F> borrow<F>(F& fn, int& value) { return fn(value); }
 int main() {
@@ -101,7 +101,7 @@ int main() {
 )",
            "GTI-S2017", "overlapping borrow");
   rejected(R"(
-#include <std/meta>
+import std.meta;
 [[borrowed_from(value)]]
 std::meta::callable_return_type<F> borrow<F>(F& fn, int& value) { return fn(value); }
 int& bad() {
@@ -113,7 +113,7 @@ int main() { return bad(); }
 )",
            "GTI-S2017", "reference");
   const auto borrowed = analyze(R"(
-#include <std/meta>
+import std.meta;
 [[borrowed_from(value)]]
 std::meta::callable_return_type<F> borrow<F>(F& fn, int& value, int& other) {
   return fn(value);
@@ -154,7 +154,7 @@ int main() {
   }
   accepted(
       R"(
-#include <std/meta>
+import std.meta;
 std::meta::callable_return_type<F> apply<F>(F fn, int value) { return fn(value); }
 int increment(int value) { return value + 1; }
 int main() { return apply(increment, 2) - 3; }
@@ -162,7 +162,7 @@ int main() { return apply(increment, 2) - 3; }
       "selected function items are inferred before dependent result checking");
   accepted(
       R"(
-#include <std/meta>
+import std.meta;
 using Native = (int32_t) -> int32_t;
 using NativeResult = std::meta::callable_return_type<Native>;
 NativeResult zero() { return 0; }
@@ -170,7 +170,7 @@ int main() { return zero(); }
 )",
       "native pointer result metadata does not require invoking the pointer");
   accepted(R"(
-#include <std/meta>
+import std.meta;
 using Number = std::meta::callable_return_type<int(int)>;
 using Empty = std::meta::callable_return_type<void()>;
 using Shared = std::meta::callable_return_type<int&(int&)>;
@@ -181,7 +181,7 @@ int main() { nothing(); return identity(0); }
 )",
            "signature results preserve scalar, void and reference metadata");
   accepted(R"(
-#include <std/meta>
+import std.meta;
 std::meta::callable_return_type<F> apply<F, T>(F& fn, T value) {
   return fn(value);
 }
@@ -195,34 +195,34 @@ int main() {
            "generic result query follows exact lambda and selected function "
            "item types");
   accepted(R"(
-#include <std/meta>
+import std.meta;
 std::meta::callable_return_type<F> invoke<F>(F& fn) { return fn(); }
 void nothing() {}
 int main() { auto function = nothing; invoke(function); return 0; }
 )",
            "void result queries compose with ordinary void return expressions");
   rejected(R"(
-#include <std/meta>
+import std.meta;
 using Native = (int32_t) -> int32_t;
 std::meta::callable_return_type<Native> invoke(Native fn) { return fn(1); }
 int main() { return 0; }
 )",
            "GTI-S2055", "unsafe");
   rejected(R"(
-#include <std/meta>
+import std.meta;
 using Invalid = std::meta::callable_return_type<int>;
 int main() { return 0; }
 )",
            "GTI-S2023", "Callable return-type reflection requires");
   rejected(R"(
-#include <std/meta>
+import std.meta;
 class Overloaded { public: int operator()(int x) { return x; }  public: Overloaded() = default; };
 using Invalid = std::meta::callable_return_type<Overloaded>;
 int main() { return 0; }
 )",
            "GTI-S2023", "does not select an overloaded operator()");
   rejected(R"(
-#include <std/meta>
+import std.meta;
 struct Holder<F> { std::meta::callable_return_type<F> value; };
 void inspect(Holder<int>& holder) {}
 int main() { return 0; }
@@ -233,7 +233,7 @@ int main() { return 0; }
     // names no result type. It is rejected once, at the call, instead of
     // every later use treating the unresolved query as an ordinary type.
     const std::string source = R"(
-#include <std/meta>
+import std.meta;
 std::meta::callable_return_type<F> apply<F>(F& fn) { return fn(1); }
 struct Mapper { int operator()(int value) { return value; }  public: Mapper() = default; };
 int main() { Mapper mapper{}; return apply(mapper); }
@@ -258,7 +258,7 @@ int main() { Mapper mapper{}; return apply(mapper); }
            "one error at the call");
   }
   rejected(R"(
-#include <std/meta>
+import std.meta;
 F escape<F>(F& fn) { return fn; }
 int main() {
   int owner = 7;
@@ -274,14 +274,14 @@ int main() { return 0; }
 )",
            "GTI-S2049", "trusted standard-library unit");
   rejected(R"(
-#include <std/meta>
+import std.meta;
 std::meta::callable_return_type<F> bad<F>(F& fn) { return true; }
 int mapper() { return 1; }
 int main() { auto selected = mapper; return bad(selected); }
 )",
            "GTI-S2003", "return");
   const auto projected = analyze(R"(
-#include <std/meta>
+import std.meta;
 std::meta::callable_return_type<F> apply<F>(F& fn, int value) {
   return fn(value);
 }
@@ -338,8 +338,8 @@ int main() {
            "dependent callable signature is checked against MIR");
   }
   const auto owned = analyze(R"(
-#include <std/meta>
-#include <std/string>
+import std.meta;
+import std.string;
 std::meta::callable_return_type<F> invoke<F>(F& mapper) {
   std::meta::callable_return_type<F> value = mapper();
   return value;

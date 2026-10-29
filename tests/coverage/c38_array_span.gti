@@ -1,6 +1,6 @@
 // Fixed-capacity array plus span views over it.
-#include <std/array>
-#include <std/span>
+import std.array;
+import std.span;
 
 int32_t sum_span(std::span<int32_t> view) {
   mut int32_t total = 0;

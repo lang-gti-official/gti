@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 extern "C" {
   uint64_t native_c_string_length(c_string value);

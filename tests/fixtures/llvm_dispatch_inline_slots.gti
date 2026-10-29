@@ -1,6 +1,6 @@
-#include <std/polymorphic>
-#include <std/string>
-#include <std/vector>
+import std.polymorphic;
+import std.string;
+import std.vector;
 
 // std::inline_polymorphic owns one object through a user-defined interface.
 // A small cleanup-free model may live in the inline slot; a model with source

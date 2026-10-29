@@ -1,4 +1,4 @@
-#include <std/meta>
+import std.meta;
 struct Nothing { public: Nothing() = default; };
 int main() {
   mut uint64_t count = 0;

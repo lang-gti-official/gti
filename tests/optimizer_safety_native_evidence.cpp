@@ -189,9 +189,9 @@ RunResult run(const std::filesystem::path &binary,
 }
 
 constexpr std::string_view source = R"(
-#include <std/string>
-#include <std/vector>
-#include <std/memory>
+import std.string;
+import std.vector;
+import std.memory;
 
 mut int32_t destroyed = 0;
 mut int32_t constructed_value = 0;
@@ -360,7 +360,7 @@ int main(int argc, std::vector<std::string> argv) {
 )";
 
 constexpr std::string_view closedCallNearMissSource = R"(
-#include <std/vector>
+import std.vector;
 
 extern "C" {
   int32_t external_factor();
@@ -439,7 +439,7 @@ int main() {
 )";
 
 constexpr std::string_view boundedLogicalSizeSource = R"(
-#include <std/vector>
+import std.vector;
 
 int main() {
   mut std::vector<int32_t> values =
@@ -490,8 +490,8 @@ void testBoundedLogicalSizeEmission(const std::string &compiler,
 // reaches a non-strict guard that admits `index == live`, whose check must
 // fail exactly as it does unoptimized.
 constexpr std::string_view relationalBoundsSource = R"(
-#include <std/vector>
-#include <std/string>
+import std.vector;
+import std.string;
 
 uint64_t looped(uint64_t live) {
   mut uint64_t total = 0;

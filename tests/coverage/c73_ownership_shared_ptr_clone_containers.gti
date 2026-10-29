@@ -2,10 +2,10 @@
 // explicit clone(), std::clone of a vector whose elements define clone(),
 // use_count snapshots, reset/swap/null handles, pop_back/clear releasing,
 // and exactly-once release of the shared object.
-#include <std/memory>
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.utility;
+import std.vector;
 
 mut int g_configs_released = 0;
 

@@ -1,4 +1,4 @@
-#include <std/utility>
+import std.utility;
 
 mut int observed = 0;
 mut int payload_drops = 0;

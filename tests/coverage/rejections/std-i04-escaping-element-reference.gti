@@ -1,6 +1,6 @@
 // INVALID: returning a reference into a by-value (local) container that is
 // destroyed when the function returns.
-#include <std/map>
+import std.map;
 int& first_value(std::map<int, int> table) {
   int key = 1;
   return table.at(key);

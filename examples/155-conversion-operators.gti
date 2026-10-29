@@ -1,5 +1,4 @@
-#include <std/string>
-
+import std.string;
 // A strongly typed identifier. Nothing converts to it by accident: a raw
 // database key must be converted explicitly.
 struct UserId {

@@ -1,6 +1,6 @@
-#include <std/unordered_map>
-#include <std/memory>
-#include <std/string>
+import std.unordered_map;
+import std.memory;
+import std.string;
 
 mut int constructions = 0;
 mut int destructions = 0;

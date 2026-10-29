@@ -17,7 +17,7 @@ int main() {
             .analyze(
                 root / "tests/fixtures/environment-target.gti",
                 std::string{
-                    "#include <std/environment>\nint main() { return 0; }\n"},
+                    "import std.environment;\nint main() { return 0; }\n"},
                 {stdlib / "prelude.gti"}, {}, {stdlib});
     const bool supported = os == "linux" || os == "macos";
     if (result.canGenerateCode() != supported) {

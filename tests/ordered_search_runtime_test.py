@@ -20,9 +20,9 @@ MODES += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
 
 
 def negative_sources():
-    headers = """#include <std/algorithm>
-#include <std/functional>
-#include <std/vector>
+    headers = """import std.algorithm;
+import std.functional;
+import std.vector;
 class OncePredicate {
 public:
   bool operator()(int& value) && { return value < 2; }

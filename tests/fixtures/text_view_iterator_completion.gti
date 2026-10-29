@@ -1,9 +1,9 @@
-#include <std/string>
-#include <std/string_view>
-#include <std/iterator>
-#include <std/algorithm>
-#include <std/vector>
-#include <std/numeric>
+import std.string;
+import std.string_view;
+import std.iterator;
+import std.algorithm;
+import std.vector;
+import std.numeric;
 
 struct IndependentRecord {
   int number;

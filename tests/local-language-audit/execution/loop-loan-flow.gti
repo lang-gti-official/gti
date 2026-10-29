@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 int while_flow() {
   mut std::string value = std::string("gti");

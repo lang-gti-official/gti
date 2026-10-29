@@ -1,5 +1,5 @@
-#include <std/thread>
-#include <std/mutex>
+import std.thread;
+import std.mutex;
 
 // An environmental automatic-join failure transfers the still-coherent worker
 // to terminal quarantine, pins native process storage and raises GTI-R0012.

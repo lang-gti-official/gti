@@ -1,4 +1,4 @@
-#include <std/utility>
+import std.utility;
 extern "C" {
   int gti_test_mode();
   int gti_test_zero();

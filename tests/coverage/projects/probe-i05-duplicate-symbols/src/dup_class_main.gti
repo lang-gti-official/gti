@@ -1,5 +1,5 @@
-#include "class_a.gti"
-#include "class_b.gti"
+import "class_a.gti";
+import "class_b.gti";
 
 int main() {
   ui::Button button{};

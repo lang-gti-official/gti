@@ -1,5 +1,5 @@
-#include <std/panic>
-#include <std/thread>
+import std.panic;
+import std.thread;
 
 struct Guard {
   int id;

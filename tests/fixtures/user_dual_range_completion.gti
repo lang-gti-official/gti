@@ -1,7 +1,7 @@
-#include "user_dual_range_support.gti"
-#include <std/vector>
-#include <std/string>
-#include <std/panic>
+import "user_dual_range_support.gti";
+import std.vector;
+import std.string;
+import std.panic;
 
 int nested(UserDualRange& range) {
   UserDualGuard outer{10};

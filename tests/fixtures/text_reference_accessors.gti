@@ -1,7 +1,7 @@
 // Text read through a returned reference is the text that the reference
 // designates: a direct text field of the receiver, or an enum payload. The
 // first values hold ownerless text, so the reads can be stored.
-#include <std/string>
+import std.string;
 
 mut std::string_view kept = "";
 

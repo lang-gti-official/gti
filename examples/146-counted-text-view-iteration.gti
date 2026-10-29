@@ -1,8 +1,7 @@
 // Counted views keep the same checked owner dependency during iteration.
 // Include the view unit directly, or get it through <std/string>.
-#include <std/string>
-#include <std/iterator>
-
+import std.string;
+import std.iterator;
 int main() {
   std::string owner{"systems"};
   std::string_view text = owner.view();

@@ -532,7 +532,7 @@ A successful conjunction supplies each member contract to symbolic body
 analysis; a disjunction supplies only contracts shared by every alternative,
 including their member names and exact receiver/result relationships.
 
-`<std/utility>` defines `std::member_cloneable<T>` with this syntax and
+`std.utility` defines `std::member_cloneable<T>` with this syntax and
 `std::cloneable<T>` as member cloning or `std::copy_constructible<T>`.
 `std::clone(value)` prefers the exact member operation and otherwise performs
 ordinary copy construction. This is explicit duplication, not automatic deep
@@ -772,7 +772,7 @@ The four domain-value capabilities are spelled publicly as `std::addable`,
 `std::subtractable`, `std::negatable`, and `std::scalable_by`, and compose into
 `std::vector_space<T, Scalar>` together with `std::copyable<T>`.
 
-The callable facts are exposed from `<std/functional>`. Public
+The callable facts are exposed from `std.functional`. Public
 `std::predicate`, `std::binary_predicate`, `std::operation`,
 `std::binary_operation`, and `std::comparator` are ordinary source concepts
 over the repeatable forms; `std::once_action` exposes the nullary consuming
@@ -864,7 +864,7 @@ SFINAE, implicit conversion, and overload ranking do not decide GTI validity.
 
 ## Standard-library client
 
-`<std/iterator>` and `<std/numeric>` use the bounded model to expose
+`std.iterator` and `std.numeric` use the bounded model to expose
 `std::dereferences_to` and implement `std::accumulate` in ordinary GTI source:
 
 ```gti
@@ -886,13 +886,13 @@ assignment rules for narrow integer types. The compiler recognizes none of the
 public names `std::accumulate`, `std::input_iterator`, `std::sentinel_for`, or
 `std::accumulates_into`.
 
-`<std/string>` uses the closed exact argument in
+`std.string` uses the closed exact argument in
 `std::dereferences_to<Iterator, char>` for its constructor-local generic
 iterator/sentinel constructor. `std::string(source.begin(), source.end())`
 copies characters into independent owning storage and retains neither the
 iterators nor the source loan after construction.
 
-`<std/algorithm>` supplies the first multi-pass client,
+`std.algorithm` supplies the first multi-pass client,
 `std::binary_search`. Its iterator must satisfy `std::forward_iterator`, its
 possibly distinct end value must satisfy `std::sentinel_for`, and dereference
 must produce the exact ordered value type. The implementation copies a cursor

@@ -1,6 +1,6 @@
-#include "engine/math_a.gti"
-#include "engine/math_b.gti"
-#include "engine/math_c.gti"
+import "engine/math_a.gti";
+import "engine/math_b.gti";
+import "engine/math_c.gti";
 
 namespace m2 = engine::math;
 namespace deep = engine::math::detail;

@@ -1,4 +1,4 @@
-#include <std/format>
+import std.format;
 enum class Status { failed = 9 };
 int main() {
   std::println("{:s}", Status::failed);

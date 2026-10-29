@@ -509,7 +509,7 @@ def execution_profile_controls(evidence: Path, root: Path) -> None:
         require(default.returncode == 0 and
                 "ExecutionProfile.SingleThreaded" in default.stdout.splitlines(),
                 "default probe changed its execution profile")
-        source.write_text("#include <std/atomic>\nint main() { "
+        source.write_text("import std.atomic;\nint main() { "
                           "std::atomic<int> value{0}; return value.load(); }\n",
                           encoding="utf-8")
         for arguments in ([], ["single-threaded"]):

@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // An Expected<Class, E> call result passed directly to a by-value function or
 // constructor parameter. A cleanup-free result has no MIR drop; it is staged in

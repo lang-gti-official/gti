@@ -1,4 +1,4 @@
-#include <std/thread>
+import std.thread;
 struct Task {
   mut int& slot;
   Task(mut int& target) : slot(target) {}

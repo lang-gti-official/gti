@@ -1,7 +1,7 @@
-#include <std/algorithm>
-#include <std/panic>
-#include <std/string>
-#include <std/vector>
+import std.algorithm;
+import std.panic;
+import std.string;
+import std.vector;
 
 mut uint64_t comparisons = 0;
 mut int comparator_drops = 0;

@@ -1,7 +1,7 @@
-#include <std/panic>
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.panic;
+import std.string;
+import std.utility;
+import std.vector;
 
 // A borrowed carrier consumed on only some paths: inside the right operand of
 // || and &&, one arm of ?:, one branch of an if, and both branches. The path

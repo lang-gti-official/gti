@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 mut int32_t drops_total = 0;
 mut int32_t dropped_tag_sum = 0;

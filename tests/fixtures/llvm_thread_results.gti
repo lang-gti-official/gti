@@ -1,4 +1,4 @@
-#include <std/thread>
+import std.thread;
 
 // User-defined result shapes crossing back from managed workers: a scalar, a
 // cleanup-owning class taken exactly once, an unobserved result destroyed by

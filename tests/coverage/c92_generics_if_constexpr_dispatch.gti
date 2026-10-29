@@ -2,7 +2,7 @@
 // member-requirement queries, layout queries on T, value-parameter recursion,
 // else-if chains, loops containing compile-time branches, and dependent
 // static assertions evaluated per instance.
-#include <std/string>
+import std.string;
 
 struct Celsius {
   int32_t value = 0;

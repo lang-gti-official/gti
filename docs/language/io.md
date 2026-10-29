@@ -3,7 +3,7 @@
 Status: Current contract
 
 GTI provides recoverable byte-oriented host I/O through ordinary GTI wrappers
-in `<std/cstdio>` and a narrow, versioned C-linkage runtime boundary. The public
+in `std.cstdio` and a narrow, versioned C-linkage runtime boundary. The public
 library does not expose a C pointer, native descriptor, caller-owned raw
 buffer, or native C++ stream type. This layer is intended to support portable
 library code such as parsers and serializers; buffering, text decoding, and
@@ -11,7 +11,7 @@ domain-specific records remain ordinary higher-level libraries.
 
 ## Surface
 
-`<std/panic>` provides explicit terminal reporting, including formatted messages:
+`std.panic` provides explicit terminal reporting, including formatted messages:
 
 ```gti
 std::panic("configuration is missing");
@@ -35,7 +35,7 @@ message truncation and containment.
 
 Formatting and stdout convenience APIs adopt this facility as described below.
 
-`<std/assert>` also builds `std::assert` and `std::debug_assert` in source on
+`std.assert` also builds `std::assert` and `std::debug_assert` in source on
 this panic facility. They use general typed `#macro` declarations, so a
 successful assertion does not evaluate or format its optional message.
 Disabled debug assertions evaluate no arguments, while retaining static
@@ -49,8 +49,8 @@ argument types are rejected by the source-defined `std::formattable` protocol
 described below; dynamic presentation and value errors remain recoverable.
 
 ```gti
-#include <std/cstdio>
-#include <std/memory> // when spelling std::unique_ptr explicitly
+import std.cstdio;
+import std.memory; // when spelling std::unique_ptr explicitly
 
 expected<int32_t, std::io_errc> std::getchar();
 expected<std::string, std::io_errc>
@@ -234,8 +234,8 @@ of it; see [`ranges.md`](ranges.md#ranges-over-expected-payloads).
 
 ## Composable buffered I/O
 
-`<std/io>` defines `std::byte_buffer` as `vector<uint8_t>` and source-defined
-reader/writer contracts. Include `<std/span>`, `<std/cstdio>` and other units
+`std.io` defines `std::byte_buffer` as `vector<uint8_t>` and source-defined
+reader/writer contracts. Include `std.span`, `std.cstdio` and other units
 directly when naming their declarations. Buffers own initialized bytes;
 `byte_buffer(size)` establishes writable size, while `reserve` alone does not.
 
@@ -316,7 +316,7 @@ Single-byte compatibility calls and bounded chunk calls cross the runtime.
 `*_v1` functions for standard-stream chunks, file open/read/write/seek, and
 standard-stream flush. The legacy single-byte and read-only entries remain for
 existing generated programs. Ordinary `gti_internal::runtime` wrappers and
-the trusted `<std/cstdio>` implementation translate status values into the
+the trusted `std.cstdio` implementation translate status values into the
 public `expected` API.
 
 Paths and text writes cross as immutable, counted, non-retained
@@ -339,14 +339,14 @@ failure; ordinary file writes use unbuffered descriptors.
 ## Stdout and bounded formatting
 
 The implicitly available `std::print` and `std::println` overloads write a
-counted string view, one `char`, or one fixed-width integer. `<std/string>` adds
+counted string view, one `char`, or one fixed-width integer. `std.string` adds
 read-only overloads for an owning `std::string`. Integer output is canonical
 base-10 text with a leading minus sign for negative values, no locale,
 grouping, width, or alternate base, and complete coverage of signed minima and
-unsigned maxima. `<std/string>` supplies the same conversion as an owning
+unsigned maxima. `std.string` supplies the same conversion as an owning
 `std::to_string(integer)` result.
 
-`<std/string>` also adds binary32 text through `std::to_string(float)` and the
+`std.string` also adds binary32 text through `std::to_string(float)` and the
 matching `std::print`/`std::println` overloads. The output is an optional minus
 sign, the integer part, a point, and exactly six fractional digits, with `nan`,
 `inf`, and `-inf` for non-finite values and no locale, width, precision, or
@@ -355,12 +355,12 @@ rounded to nearest with ties to even at the sixth place — not a re-rounded
 approximation — and signed zero retains its minus sign. The text therefore
 matches C's default `printf("%f", (float)value)` result for every finite
 binary32 under the default rounding mode, including magnitudes past the range
-of a 64-bit integer. `<std/format>` is deliberately independent of that legacy
+of a 64-bit integer. `std.format` is deliberately independent of that legacy
 fixed-display conversion. It formats both binary32 and binary64 values through
 the bounded, locale-independent character-conversion runtime described below.
-Floating input for both widths is available through `<std/charconv>`.
+Floating input for both widths is available through `std.charconv`.
 
-`<std/format>` provides explicit convenience/recoverable pairs:
+`std.format` provides explicit convenience/recoverable pairs:
 
 ```gti
 namespace std {
@@ -492,7 +492,7 @@ reports `write_failed`.
 
 With **only one text argument**, all four print functions write literally,
 including braces. This preserves the prelude's raw-output contract without
-making semantics depend on whether `<std/format>` is included. In contrast,
+making semantics depend on whether `std.format` is included. In contrast,
 `format(pattern)` and `try_format(pattern)` always interpret replacement syntax,
 even with no arguments. Use `println("{}", text)` to request formatted output
 explicitly. This changes the previous zero-argument `try_print` interpretation.
@@ -531,9 +531,9 @@ uses the plain name and no longer calls `.value()`. `try_print` errors are now
 HTTP/network requests, entropy and managed-thread startup remain expected-first;
 panic adoption is not a blanket rename of environmental operations.
 
-Composable buffered streams are provided by `<std/io>` as described above;
+Composable buffered streams are provided by `std.io` as described above;
 they build on the byte boundary without exposing the runtime ABI as the public
-GTI API. `<std/encoding>` already implements counted-byte Base64 and hexadecimal
+GTI API. `std.encoding` already implements counted-byte Base64 and hexadecimal
 encoding/decoding. Unicode transcoding and named/dynamic formatting fields are
 separate unfinished capabilities.
 

@@ -1,9 +1,9 @@
 // A60: println with format arguments but no <std/format> never suggests the include.
 // Diagnostic quality: formatted println without <std/format>. The error
 // lists only the raw prelude/string overloads and advises an explicit
-// conversion; it does not suggest #include <std/format>, although the include
+// conversion; it does not suggest import std.format;, although the include
 // machinery does so for undeclared names such as std::distance.
-#include <std/string>
+import std.string;
 int main() {
   int64_t line = 2;
   std::println("line {}", line);

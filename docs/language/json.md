@@ -3,8 +3,8 @@
 
 Status: Implemented source contract and native C++ execution.
 
-`<std/json>` maps application types to JSON text with no codec, field list or
-constructor: every rule is ordinary GTI over `<std/meta>` (static semantics
+`std.json` maps application types to JSON text with no codec, field list or
+constructor: every rule is ordinary GTI over `std.meta` (static semantics
 §3.12), and no JSON type or operation has compiler recognition. A document is
 a struct; its fields are the members, and their types are the value kinds.
 The library began as `std::json`, the acceptance client of
@@ -12,7 +12,7 @@ compile-time reflection, and replaced the earlier owned document model and
 its explicit codecs once it covered their uses.
 
 ```gti
-#include <std/json>
+import std.json;
 
 enum class severity { info, warning };
 
@@ -105,7 +105,7 @@ default 128) and document bytes (`set_max_document_bytes`, default 64 MiB).
 
 Whole documents move to and from disk with `read_file<T>(path[, options])`,
 `write_file(path, value)` and `write_file_pretty(path, value, indentation)`
-over `<std/cstdio>`; a file that cannot be opened, read or written is
+over `std.cstdio`; a file that cannot be opened, read or written is
 `io_failure`, with no source location.
 
 Decoding reports `std::json::error`: `code` (an `errc`:

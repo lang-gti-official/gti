@@ -1,4 +1,4 @@
-#include <std/filesystem>
+import std.filesystem;
 
 int main() {
   mut std::filesystem::path value = std::filesystem::path("alpha/beta");

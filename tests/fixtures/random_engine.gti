@@ -12,7 +12,7 @@
 // from the published algorithm, so these vectors verify the GTI port against a
 // reference, not the algorithm against itself.
 
-#include <std/random>
+import std.random;
 
 mut uint64_t failures = 0;
 

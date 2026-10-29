@@ -1,8 +1,7 @@
 // Prefix `?` works on any type with a `std::tryable` conformance block, not
 // only on `expected`. Here a validator's own result type propagates its
 // error to the caller, and the type itself gains no protocol members.
-#include <std/string>
-
+import std.string;
 struct InvalidField {
   int field;
   InvalidField(int index) : field(index) {}

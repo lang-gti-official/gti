@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 int main() {
   mut std::vector<int32_t> divisors{};
   for (mut int32_t i = 0; i < 1024; i++) { divisors.push_back((i * 37) % 97 + 1); }

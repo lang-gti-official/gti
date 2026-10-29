@@ -1,4 +1,6 @@
-namespace gti_internal {
+export module mutex;
+
+export namespace gti_internal {
 /// Compiler-owned mutex representation. Declaration identity, rather than
 /// source spelling, selects the native synchronization capability.
 class mutex_storage<std::movable T> {
@@ -33,7 +35,7 @@ mut T& mutex_guard_read_mut<std::movable T>(
 void mutex_lock_failure();
 }
 
-namespace std {
+export namespace std {
 /// A move-only scoped exclusive loan into one mutex-protected value.
 ///
 /// Destruction releases the lock. Moving the guard transfers both the lock

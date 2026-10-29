@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // Shared normal-exit cleanup. Each phase leaves `run` or `drain` through a
 // different exit while a different set of user-defined resources is live:

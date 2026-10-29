@@ -1,3 +1,4 @@
-#include "two.gti"
+export module wrap_two;
+import "two.gti";
 
-int via_two() { return util::helper(0); }
+export int via_two() { return util::helper(0); }

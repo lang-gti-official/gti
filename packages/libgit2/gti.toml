@@ -14,3 +14,6 @@ zlib = { path = "../zlib" }
 [package.native]
 include-dirs = ["native", "vendor/libgit2/include"]
 c-sources = ["native/adapter.c"]
+
+[modules]
+libgit2 = "src/libgit2.gti"

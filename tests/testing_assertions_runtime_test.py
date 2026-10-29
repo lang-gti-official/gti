@@ -68,7 +68,7 @@ def main():
             "no-equality": "Item a{}; Item b{}; std::testing::check_eq(a, b);",
         }.items():
             source = temporary / f"{name}.gti"
-            source.write_text('#include <std/testing>\nstruct Item {};\nint main() { ' + statement + ' return 0; }\n')
+            source.write_text('import std.testing;\nstruct Item {};\nint main() { ' + statement + ' return 0; }\n')
             rejected = subprocess.run([str(compiler), str(source), "--emit-mir", "-o", str(temporary / name)],
                                       env=environment, capture_output=True, text=True, timeout=60)
             assert rejected.returncode == 65, (name, rejected.stdout, rejected.stderr)

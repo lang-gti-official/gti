@@ -128,10 +128,10 @@ int main() { int a = 1; int b = 2; auto view = bad(a, b, true); return view.sum(
 
 
 def check_failure_cleanup(compiler: pathlib.Path) -> None:
-    prefix = """#include <std/paired_span>
-#include <std/vector>
-#include <std/string>
-#include <std/memory>
+    prefix = """import std.paired_span;
+import std.vector;
+import std.string;
+import std.memory;
 class Guard {
   std::unique_ptr<int> token;
 public:
@@ -170,9 +170,9 @@ int main() {
 
 
 def check_mixed_failure_cleanup(compiler: pathlib.Path) -> None:
-    prefix = """#include <std/panic>
-#include <std/memory>
-#include <std/string>
+    prefix = """import std.panic;
+import std.memory;
+import std.string;
 class Guard {
   std::unique_ptr<int> token;
 public:

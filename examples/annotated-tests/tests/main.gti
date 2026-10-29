@@ -1,7 +1,6 @@
-#include <std/testing>
-#include <std/vector>
-#include "events.gti"
-
+import std.testing;
+import std.vector;
+import "events.gti";
 namespace engine::tests {
   mut int executions = 0;
 

@@ -17,7 +17,7 @@ allow-build-scripts = ["gti-libgit2@0.1.0"]
 After `gti fetch`:
 
 ```gti
-#include <libgit2/libgit2>
+import libgit2.libgit2;
 
 int main() {
   unsafe {

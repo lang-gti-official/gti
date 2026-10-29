@@ -1,4 +1,4 @@
-#include <std/source_location>
+import std.source_location;
 
 mut int effects = 0;
 mut int drops = 0;

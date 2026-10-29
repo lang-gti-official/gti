@@ -1,3 +1,0 @@
-// Module std.numeric: the public surface of <std/numeric>.
-export module numeric;
-export #include <std/numeric>

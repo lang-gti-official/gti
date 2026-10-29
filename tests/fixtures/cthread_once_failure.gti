@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 extern "C" { int32_t once_zero(); void once_cleanup(); }
 class Guard { public: Guard() {} ~Guard() { once_cleanup(); } };
 void initialize() {

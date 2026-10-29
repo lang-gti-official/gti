@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // An Expected<Class, E> binding replaced as a whole. A cleanup-free call
 // result, copy, move, Unexpected or payload construction replaces the native

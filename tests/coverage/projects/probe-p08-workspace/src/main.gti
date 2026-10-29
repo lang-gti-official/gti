@@ -1,5 +1,5 @@
 import core;
-#include <std/vector>
+import std.vector;
 
 class Tripler : public core::Scorer {
 public:

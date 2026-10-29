@@ -1,5 +1,4 @@
-#include <std/optional>
-
+import std.optional;
 class token {
   mut int32_t value_;
 

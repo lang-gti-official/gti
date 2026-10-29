@@ -1,15 +1,15 @@
+export module build;
+
 // <std/build> — host-side package build-program support.
 //
 // A build.gti program is an ordinary hosted GTI executable compiled for the
 // build host. The driver supplies one exact context argument vector, and the
 // program may run native tools through exact argv execution before publishing
 // a versioned native-output manifest.
-
-#include <std/cstdio>
-#include <std/string>
-#include <std/vector>
-
-namespace gti_internal {
+import std.cstdio;
+import std.string;
+import std.vector;
+export namespace gti_internal {
 namespace build_runtime {
 extern "C" {
 int32_t gti_rt_run_process_v1(gti_internal::text_view arguments);
@@ -17,7 +17,7 @@ int32_t gti_rt_run_process_v1(gti_internal::text_view arguments);
 }
 }
 
-namespace std {
+export namespace std {
 namespace build {
 
 /// Immutable invocation facts supplied by the GTI project driver.

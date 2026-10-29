@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 mut int dropped = 0;
 class Owner {

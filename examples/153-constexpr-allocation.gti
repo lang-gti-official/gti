@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 struct curve_summary {
   int total;
   int peak;

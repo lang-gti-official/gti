@@ -15,12 +15,7 @@ import time
 
 
 def assert_clean_diagnostics(publication):
-    diagnostics = publication["params"]["diagnostics"]
-    # Include migration advice is expected from newer language servers; older
-    # comparison binaries may omit it. Every other diagnostic still fails.
-    assert len(diagnostics) <= 1 and all(
-        d.get("code") == "GTI-I0013" and d.get("severity") == 2
-        for d in diagnostics), publication
+    assert not publication["params"]["diagnostics"], publication
 
 
 def frame(message):
@@ -161,18 +156,19 @@ def write_fixture(root, dependency_count):
     root.mkdir(parents=True, exist_ok=True)
     for index in range(dependency_count):
         (root / f"dep_{index:02d}.gti").write_text(
-            f"int dep_{index:02d}(int value) {{ return value + {index}; }}\n",
+            f"export module dep_{index:02d};\n"
+            f"export int dep_{index:02d}(int value) {{ return value + {index}; }}\n",
             encoding="utf-8",
         )
-    includes = "".join(
-        f'#include "dep_{index:02d}.gti"\n' for index in range(dependency_count)
+    imports = "".join(
+        f'import "dep_{index:02d}.gti";\n' for index in range(dependency_count)
     )
     additions = "".join(
         f"  total = total + dep_{index:02d}({index + 1});\n"
         for index in range(dependency_count)
     )
     return (
-        includes
+        imports
         + "int benchmark_helper(int value) { return value + 1; }\n"
         + "int main() {\n"
         + "  mut int total = 0;\n"

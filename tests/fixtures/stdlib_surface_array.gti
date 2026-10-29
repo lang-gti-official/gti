@@ -1,4 +1,4 @@
-#include <std/array>
+import std.array;
 
 int read_array(std::array<int32_t, 3>& values) {
   return values.front() + values.back() + values.at(std::size_t(1)) +

@@ -1,7 +1,7 @@
 // Literal-backed constexpr text inspection feeding array extents, value
 // generic arguments, generic `if constexpr` selection and static assertions,
 // plus runtime execution of the same helpers on runtime text.
-#include <std/string>
+import std.string;
 
 constexpr uint64_t count_char(std::string_view text, char wanted) {
   mut uint64_t n = 0;

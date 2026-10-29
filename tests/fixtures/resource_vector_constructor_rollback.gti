@@ -1,8 +1,8 @@
-#include <std/resource_vector>
-#include <std/resource>
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.resource_vector;
+import std.resource;
+import std.memory;
+import std.string;
+import std.vector;
 
 // A failing element constructor during growable-container emplacement keeps
 // its original failure identity: partial members roll back, the published

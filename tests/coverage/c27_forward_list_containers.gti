@@ -1,4 +1,4 @@
-#include <std/forward_list>
+import std.forward_list;
 class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 int main() {
   mut std::forward_list<int32_t> l = std::forward_list<int32_t>();

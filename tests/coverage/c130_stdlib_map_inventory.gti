@@ -1,9 +1,9 @@
 // Ordered map of move-only class values keyed by owning strings:
 // insertion, try_emplace, borrowed lookup through a free function, find_mut,
 // mutable range-for, bounds traversal, and erase-after-scan logic.
-#include <std/map>
-#include <std/string>
-#include <std/vector>
+import std.map;
+import std.string;
+import std.vector;
 
 class Item {
   std::string label_;

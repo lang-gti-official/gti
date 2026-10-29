@@ -124,7 +124,7 @@ namespace llvm_source_metadata {
     source = scratch / "metadata-\u00e9.gti"
     filename = json.dumps(str(source.resolve()), ensure_ascii=False)
     source.write_text(
-        "#include <std/source_location>\n"
+        "import std.source_location;\n"
         "int main() {\n"
         f"  if (!llvm_source_metadata::file({filename}, std::size_t({len(str(source.resolve()).encode('utf-8'))}))) {{ return 1; }}\n"
         '  if (!llvm_source_metadata::function("main")) { return 2; }\n'

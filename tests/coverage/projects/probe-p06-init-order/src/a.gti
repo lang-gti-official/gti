@@ -1,3 +1,4 @@
-#include "log.gti"
+export module a;
+import "log.gti";
 
-int a_value = trace::record(1);
+export int a_value = trace::record(1);

@@ -1,8 +1,7 @@
 // expected remains global prelude vocabulary, implemented by ordinary classes
 // over payload enums. No experimental header or namespace is required.
-#include <std/string>
-#include <std/meta>
-
+import std.string;
+import std.meta;
 enum parse_error { missing };
 
 // The mapper's exact signature remains visible through ordinary source helper

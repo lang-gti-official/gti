@@ -1,6 +1,7 @@
-#include <std/deque>
+export module queue;
 
-namespace std {
+import std.deque;
+export namespace std {
 /// Owning FIFO adapter with amortized constant-time push and constant-time pop.
 class queue<T> {
   mut deque<T> values{};

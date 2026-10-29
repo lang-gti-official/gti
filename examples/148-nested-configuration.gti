@@ -1,8 +1,7 @@
 // Named nested types organize a schema without capturing an outer object.
 // Reflected JSON recursively follows fields, not lexical declaration scopes.
-#include <std/json>
-#include <std/string>
-
+import std.json;
+import std.string;
 struct Config {
   struct Network {
     std::string host = std::string("localhost");

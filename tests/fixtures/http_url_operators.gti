@@ -1,4 +1,4 @@
-#include <std/http>
+import std.http;
 
 int main() {
   auto parsed = std::http::url::parse("https://example.com/base?token=1");

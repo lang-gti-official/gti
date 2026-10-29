@@ -25,7 +25,7 @@ remain outside ordinary local reference support in either spelling.
 The implemented unique ownership surface is:
 
 ```gti
-#include <std/memory>
+import std.memory;
 
 std::unique_ptr<Entity> entity = std::make_unique<Entity>(arguments);
 std::unique_ptr<Base> erased = std::upcast_unique<Base, Entity>(
@@ -35,7 +35,7 @@ std::unique_ptr<Base> erased = std::upcast_unique<Base, Entity>(
 These names are standard-library API, not keywords. The current implementation
 defines `std::unique_ptr<T>` as a nominal GTI class in
 `stdlib/std/memory.gti`; application source imports it with
-`#include <std/memory>`.
+`import std.memory;`.
 Its private field is a compiler-defined owner capability, while dereference,
 member access, boolean conversion, null comparison, movement, and destruction
 use the ordinary class, operator, and lifecycle systems.
@@ -111,7 +111,7 @@ checked references. C++-style `new` and `delete` are not GTI syntax. See
 Intrinsic capabilities are ordinary bodyless functions declared either in the
 implicit prelude when shared across modules or in the one canonical
 standard-library unit that owns them. Unique ownership and object-lifetime
-operations live in `<std/memory>`; the public logical-bounds check remains a
+operations live in `std.memory`; the public logical-bounds check remains a
 shared prelude facility. Prefix allocation and live-length policy are ordinary
 source classes, not prelude capabilities. Semantic registration marks only those exact
 trusted declarations, and a call receives intrinsic behavior from its selected
@@ -167,7 +167,7 @@ The default executable profile is single-threaded. GTI also implements the
 ownership facts, process-wide storage policy, owned managed threads, and
 ordered scalar atomics with sequentially consistent defaults in its opt-in
 concurrent profile. Owner-tied `std::mutex<T>` guards provide scoped
-mutex-protected borrows. The unsafe `<std/cthread>` surface separately provides
+mutex-protected borrows. The unsafe `std.cthread` surface separately provides
 registered manual workers, once initialization, manual mutexes, and manual
 condition variables. Scoped cross-thread borrows, detach, thread-specific
 storage, and arbitrary foreign-thread entry remain unavailable.
@@ -1464,7 +1464,7 @@ of that invocation. Shared/read-only calls may overlap when all dependencies
 are shared. Native callback retention and thread-confinement obligations are
 unchanged; a scoped callback is not an automatically safe native registration.
 
-`<std/functional>` provides source-defined, non-owning
+`std.functional` provides source-defined, non-owning
 `std::function_ref<R(Args...)>` and `std::function_ref<R(Args...) mut>`.
 Construct a view from a named callable of the exact signature. A read view
 borrows it read-only; a mutable view borrows it exclusively and requires a
@@ -1671,7 +1671,7 @@ comparisons inspect that state. Dereference and member access on an empty owner
 produce a defined GTI runtime failure rather than undefined behavior.
 For `std::unique_ptr`, both read-only and mutable access now follow explicit
 MIR failure edges: initialized live values are cleaned before status 70 and
-`GTI-R0008` are reported. The original trusted `<std/memory>` operation owns
+`GTI-R0008` are reported. The original trusted `std.memory` operation owns
 the source site and `dereference` or `member_access` detail. A failed checked
 destination also cleans a completed, unpublished right-hand value.
 
@@ -2139,7 +2139,7 @@ nontrivial C++ representation is never copied as bytes.
 
 The first explicit public operation is
 `std::storage<T>::relocate_to(mut storage<T>& destination, size_t count)` in
-`<std/memory>`. It checks both capacities and every source/destination slot in
+`std.memory`. It checks both capacities and every source/destination slot in
 `[0, count)` before transferring anything. Source slots must be initialized;
 destination slots must be empty. The source prefix becomes uninitialized and
 can be constructed again; neither allocation is released. A zero count is a
@@ -2188,7 +2188,7 @@ not define public raw-pointer ownership or manual lifetime semantics.
 
 ## Public Typed Allocation
 
-`<std/memory>` provides a safe typed allocation boundary directly in `std`:
+`std.memory` provides a safe typed allocation boundary directly in `std`:
 
 ```gti
 std::allocator allocator = std::allocator();
@@ -2262,7 +2262,7 @@ C++/Rust/Zig/Swift comparison are in
 
 ## Bounded Arena And Pool Ownership
 
-`<std/memory>` composes the typed storage owner into two ordinary GTI classes:
+`std.memory` composes the typed storage owner into two ordinary GTI classes:
 
 ```gti
 auto created = std::try_make_arena<Widget>(std::size_t(64));
@@ -2301,7 +2301,7 @@ and does not make either public class compiler-recognized.
 
 ## Programmable Resource Leases
 
-`<std/resource>` separates four lifetimes that a C++ allocator usually blurs:
+`std.resource` separates four lifetimes that a C++ allocator usually blurs:
 
 - **Keeping the resource alive.** `unsafe std::bind_resource(resource)` yields
   a `resource_ref<R>`, an ordinary checked shared borrow of the provider. Every
@@ -2423,7 +2423,7 @@ profiles have separate obligations, not an unfinished private-storage cutover.
 
 ## Source-Defined Vector
 
-`std::vector<T>`, imported with `#include <std/vector>`, is now an ordinary GTI
+`std::vector<T>`, imported with `import std.vector;`, is now an ordinary GTI
 class over the source-defined process-backed prefix owner. Its element type
 satisfies `std::storage_element` and failure-free `std::relocatable`, not
 assignment-bearing `std::movable`: growth, insertion and erasure transfer
@@ -2491,7 +2491,7 @@ by a call in the same expression, as in `text.view().size()`,
 the call's owner dependency stays live for the whole expression, including a
 temporary owner such as `std::string("tmp").view().size()`.
 
-`std::string`, imported with `#include <std/string>`, is an ordinary nominal GTI
+`std::string`, imported with `import std.string;`, is an ordinary nominal GTI
 class over the source-defined terminated-prefix owner. Its shared character
 prefix includes one initialized trailing NUL, excluded from logical size and
 capacity. Zero-capacity empty strings use an immutable static terminator without
@@ -3140,7 +3140,7 @@ received from native code has no inferred GTI owner, and hidden retention by a
 native callee remains part of that API's external contract.
 
 Both accessors use the general unsafe owner-witness bridge from
-`<std/memory>` inside their safe, source-defined policy. The raw address carries
+`std.memory` inside their safe, source-defined policy. The raw address carries
 no checked lifetime by itself: the nominated string owner supplies the mandatory
 read-only dependency. The compiler verifies that dependency and the exact staged
 address inputs, but neither stores the prefix length nor scans for embedded NUL

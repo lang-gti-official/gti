@@ -1,6 +1,6 @@
 // Seeded engine determinism, sequence independence and bounded reduction.
-#include <std/random>
-#include <std/vector>
+import std.random;
+import std.vector;
 
 int32_t bounded(uint64_t raw, int32_t limit) {
   return int32_t(raw % uint64_t(limit));

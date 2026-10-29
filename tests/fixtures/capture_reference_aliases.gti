@@ -1,5 +1,5 @@
-#include <std/format>
-#include <std/vector>
+import std.format;
+import std.vector;
 
 // Local reference aliases inside closures of by-reference captures. Each
 // alias borrows below the capture's entry loan, which the closure environment

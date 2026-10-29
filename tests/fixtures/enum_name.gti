@@ -1,5 +1,5 @@
-#include <std/meta>
-#include <std/memory>
+import std.meta;
+import std.memory;
 
 namespace client {
 enum greeting { hello, world, cool };

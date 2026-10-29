@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 std::string_view escape() {
   int owner = 0;
   char bytes[3] = {'a', '\0', 'b'};

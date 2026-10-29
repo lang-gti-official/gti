@@ -1,9 +1,8 @@
-#include <std/vector>
-#include <std/numeric>
-#include "numeric.gti"
-#include "foundations.gti"
-#include "random.gti"
-
+import std.vector;
+import std.numeric;
+import "numeric.gti";
+import "foundations.gti";
+import "random.gti";
 int main() {
   int result = stdlib::tests::numeric::numeric_tests();
   if (result > 0) {

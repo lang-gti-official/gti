@@ -15,7 +15,7 @@ namespace {
 void testOptionalCompilerContract() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "optional-compiler-contract.gti", R"(
-#include <std/optional>
+import std.optional;
 
 class payload {
   mut int32_t stored;
@@ -147,7 +147,7 @@ int main() {
 
   const auto invalidEmplacement = lang::Frontend().analyze(
       "optional-invalid-payload-construction.gti", R"(
-#include <std/optional>
+import std.optional;
 struct Payload {
   int value;
   Payload(int value) : value(value) {}
@@ -169,7 +169,7 @@ int main() {
 
   const lang::FrontendResult copied = lang::Frontend().analyze(
       "optional-copy-rejected.gti", R"(
-#include <std/optional>
+import std.optional;
 int main() {
   std::optional<int32_t> source{int32_t(1)};
   std::optional<int32_t> copied = source;
@@ -184,7 +184,7 @@ int main() {
 
   const lang::FrontendResult reusedAfterMove = lang::Frontend().analyze(
       "optional-source-after-move-rejected.gti", R"(
-#include <std/optional>
+import std.optional;
 int main() {
   std::optional<int32_t> source{int32_t(1)};
   std::optional<int32_t> destination{std::move(source)};
@@ -201,7 +201,7 @@ int main() {
 
   const lang::FrontendResult aliased = lang::Frontend().analyze(
       "optional-live-borrow-rejected.gti", R"(
-#include <std/optional>
+import std.optional;
 int main() {
   mut std::optional<int32_t> value{int32_t(7)};
   mut int32_t& borrowed = value.value();
@@ -243,7 +243,7 @@ int main() {
 void testOptionalResetCleanup() {
   const auto frontend = lang::Frontend().analyze(
       "optional-reset-cleanup.gti", R"(
-#include <std/optional>
+import std.optional;
 class Resource {
   int divisor;
 public:
@@ -353,8 +353,8 @@ void testNestedOptionalConstruction() {
 
 void testStoragePayloadAdmission() {
   const std::string prefix = R"(
-#include <std/optional>
-#include <std/vector>
+import std.optional;
+import std.vector;
 class View {
   int& source;
 public:
@@ -489,7 +489,7 @@ int main() {
   for (const std::string type : {"int*", "int&", "void"}) {
     const auto frontend = lang::Frontend().analyze(
         "optional-unsupported-payload.gti",
-        "#include <std/optional>\nint main() { std::optional<" + type +
+        "import std.optional;\nint main() { std::optional<" + type +
             "> item{}; return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     if (type == "int*") {
@@ -523,8 +523,8 @@ int main() {
 
   const auto admitted = lang::Frontend().analyze(
       "optional-admitted-payloads.gti", R"(
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 int main() {
   std::optional<std::string_view> text{};
   std::optional<int[2]> array{};
@@ -541,7 +541,7 @@ int main() {
   for (const std::string argument : {"owner.view()", "\"static\""}) {
     const auto text = lang::Frontend().analyze(
         "optional-text-parameter-storage.gti",
-        "#include <std/optional>\n#include <std/string>\n"
+        "import std.optional;\nimport std.string;\n"
         "std::optional<std::string_view> escape() { "
         "std::string owner{\"owned\"}; "
         "return std::optional<std::string_view>(" +
@@ -576,7 +576,7 @@ int main() { auto text = Text::value("static"); return 0; }
   for (const std::string expression : {"owner.view()", "std::move(view)"}) {
     const auto dynamicPayload = lang::Frontend().analyze(
         "dynamic-text-payload.gti",
-        "#include <std/string>\nenum Text { empty, value(std::string_view "
+        "import std.string;\nenum Text { empty, value(std::string_view "
         "text) };\n"
         "int main() { std::string owner{\"owned\"}; "
         "std::string_view view = owner.view(); auto text = Text::value(" +
@@ -595,7 +595,7 @@ int main() { auto text = Text::value("static"); return 0; }
         "values.push_back(std::move(view));"}) {
     const auto moved = lang::Frontend().analyze(
         "moved-text-storage-rejected.gti",
-        "#include <std/string>\n#include <std/vector>\n"
+        "import std.string;\nimport std.vector;\n"
         "struct Holder { std::string_view text; };\n"
         "int main() { std::string owner{\"owned\"}; "
         "std::string_view view = owner.view(); " +
@@ -611,7 +611,7 @@ int main() { auto text = Text::value("static"); return 0; }
   // (L-OWN-02), so the owner stays borrowed while the value is live.
   const auto movedField = lang::Frontend().analyze(
       "moved-text-field-loan.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "struct Holder { std::string_view text; };\n"
       "int main() { mut std::string owner{\"owned\"}; "
       "std::string_view view = owner.view(); "
@@ -626,7 +626,7 @@ int main() { auto text = Text::value("static"); return 0; }
 
   const auto localText = lang::Frontend().analyze(
       "moved-text-local-loan.gti", R"(
-#include <std/string>
+import std.string;
 int main() {
   std::string owner{"owned"};
   std::string_view view = owner.view();
@@ -641,7 +641,7 @@ int main() {
          "owner loan and remains valid within that owner's lifetime");
   const auto ownerMutation = lang::Frontend().analyze(
       "moved-text-owner-mutation.gti", R"(
-#include <std/string>
+import std.string;
 int main() {
   mut std::string owner{"owned"};
   std::string_view view = owner.view();
@@ -657,8 +657,8 @@ int main() {
          "owner rather than merely retaining a borrowed-state flag");
   const auto cText = lang::Frontend().analyze(
       "optional-c-string-escape.gti", R"(
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 std::optional<c_string> escape() {
   std::string owner{"owned"};
   return std::optional<c_string>(owner.c_string());
@@ -678,8 +678,8 @@ int main() { auto result = escape(); return 0; }
 void testStoragePayloadMirAdmission() {
   const auto frontend = lang::Frontend().analyze(
       "storage-payload-mir-admission.gti", R"(
-#include <std/optional>
-#include <std/vector>
+import std.optional;
+import std.vector;
 struct Payload { int value = 7;  public: Payload() = default; };
 int main() {
   std::optional<Payload> optional{};
@@ -726,7 +726,7 @@ int main() {
 
 void testValueOrContract() {
   const std::string source = R"(
-#include <std/optional>
+import std.optional;
 struct Resource {
   Resource() {}
   Resource(Resource& other) = delete;

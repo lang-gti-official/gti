@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 // Generated moves of owned hierarchy objects: fresh by-value arguments, an
 // owned local or parameter moved into another call's argument storage or into

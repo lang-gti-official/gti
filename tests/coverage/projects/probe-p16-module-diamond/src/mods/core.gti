@@ -1,5 +1,5 @@
 export module core;
-#include "../trace.gti"
+import "../trace.gti";
 
 namespace core {
   int core_step = trace::record(1);

@@ -7,12 +7,12 @@ drive runtime loops, constexpr values as generic arguments, and global
 initialization order across dependent definitions.
 """
 
-PRELUDE = """#include <std/atomic>
-#include <std/meta>
-#include <std/string>
-#include <std/vector>
-#include <std/format>
-#include <std/utility>
+PRELUDE = """import std.atomic;
+import std.meta;
+import std.string;
+import std.vector;
+import std.format;
+import std.utility;
 """
 
 CELLS = {

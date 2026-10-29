@@ -1,5 +1,4 @@
-#include <libpng/libpng>
-
+import libpng.libpng;
 int main() {
   mut uint8_t pixels[4] = {255, 0, 0, 255};
   mut uint8_t encoded[256] = {};

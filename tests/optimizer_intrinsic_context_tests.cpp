@@ -16,7 +16,7 @@ int main() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto entry = standardLibrary / "optimizer-bounds-context.gti";
   const std::string source = R"gti(
-#include <std/numeric>
+import std.numeric;
 class BoundsClient {
 public:
   mut int value;

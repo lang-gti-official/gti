@@ -21,7 +21,7 @@ def dependency(root, name):
         '[package.build-script]\nsource = "build.gti"\ninputs = []\n')
     source = package / "build.gti"
     source.write_text(
-        '#include <std/build>\n#include <std/string>\n#include <std/vector>\n'
+        'import std.build;\nimport std.string;\nimport std.vector;\n'
         'int main(int argc, std::vector<std::string> argv) {\n'
         '  mut auto context = std::build::context_from_args(argv);\n'
         '  std::print("native script log");\n'

@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 
 struct entity_state {
   entity_state() {}

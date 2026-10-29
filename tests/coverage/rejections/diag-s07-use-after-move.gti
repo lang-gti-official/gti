@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 struct Widget {
   mut int v = 0;

@@ -1,5 +1,4 @@
-#include <std/string>
-
+import std.string;
 extern "C" {
   int64_t apple_bridge_copy_label(uint8_t* output, uint64_t capacity);
 }

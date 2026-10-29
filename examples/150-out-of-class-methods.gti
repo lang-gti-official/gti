@@ -1,5 +1,4 @@
-#include <std/string>
-
+import std.string;
 // Most methods can stay inline. Split a declaration and definition when its
 // body needs other types or would obscure the public API. Parameter names may
 // differ; defaults and access remain on the declaration.

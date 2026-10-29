@@ -25,8 +25,8 @@ text bitwise false holder false string-sized true
 4346
 """
 
-SHAPES = """#include <std/polymorphic>
-#include <std/string>
+SHAPES = """import std.polymorphic;
+import std.string;
 
 interface shape { int area(); };
 
@@ -95,7 +95,7 @@ int main() {
 }
 """, "GTI-S2046"),
     "owning closure bytes": ("""
-#include <std/string>
+import std.string;
 int keep<std::bitwise_relocatable Callable>(Callable callable) { return 1; }
 int main() {
   std::string text = std::string("abc");

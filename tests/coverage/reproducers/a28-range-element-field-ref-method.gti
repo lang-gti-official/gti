@@ -1,7 +1,7 @@
 // A28: a reference-returning method on a class field of a range-for element.
 // ICE: range-for element reference, then a reference-returning method on a
 // class-typed field of that element.
-#include <std/vector>
+import std.vector;
 class Inner {
   int v;
 public:

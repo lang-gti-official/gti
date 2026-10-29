@@ -101,7 +101,7 @@ int scope_probe(mut int& first, mut int& second, mut Data& data,
   options.target.runtimeCapabilities.threads = true;
   return lang::Frontend(options).analyze(
       "scoped-invocation.gti",
-      "#include <std/thread>\n" +
+      "import std.thread;\n" +
           (privateDeclaration ? std::string{} : fixture.str()) +
           "int main() { return 0; }",
       {standardLibrary / "prelude.gti"},

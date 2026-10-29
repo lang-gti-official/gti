@@ -1,6 +1,8 @@
-#include <std/atomic>
+export module atomic_scalar_core_kernel;
 
-int atomic_core() {
+import std.atomic;
+
+export int atomic_core() {
   std::atomic<uint32_t> value{uint32_t(0)};
   for (mut uint32_t index = 0; index < 20000000; index++) {
     uint32_t input = index + 1;

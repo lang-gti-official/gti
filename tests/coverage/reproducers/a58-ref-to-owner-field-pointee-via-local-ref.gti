@@ -4,7 +4,7 @@
 // through a function parameter, or directly from the owner, compiles.
 // Reached in practice as `Shape& s = *entry.second;` over
 // std::map<K, std::unique_ptr<Shape>> elements.
-#include <std/memory>
+import std.memory;
 class Box {
 public:
   int v;

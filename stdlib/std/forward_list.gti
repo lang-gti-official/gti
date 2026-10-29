@@ -1,10 +1,10 @@
+export module forward_list;
+
 // Node algorithms transfer exclusive node owners instead of retaining mutable
 // traversal borrows. Cursors retain the whole chain's checked owner dependency
 // and follow its stable node addresses in constant time.
-
-#include <std/memory>
-
-namespace std {
+import std.memory;
+export namespace std {
   namespace detail {
     enum class forward_list_in_place { value };
 

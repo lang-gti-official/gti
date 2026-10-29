@@ -1,6 +1,5 @@
-#include <std/array>
-#include <std/meta>
-
+import std.array;
+import std.meta;
 // Pure helpers can edit a checked referent during constant execution. The
 // same helper is an ordinary safe function when called at runtime.
 constexpr void add(mut int& value, int amount) { value += amount; }

@@ -125,7 +125,7 @@ int gti_cost_end(c_ulonglong checksum, c_ulonglong effects) {
 '''
 
 CASES = {
-    "simd": (7, '''#include <std/simd>
+    "simd": (7, '''import std.simd;
 int main() {
   int count = gti_cost_iterations(); mut uint64_t value = 7;
   gti_cost_begin();

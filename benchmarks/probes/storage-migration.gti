@@ -1,7 +1,7 @@
-#include <std/resource>
-#include <std/memory>
-#include <std/vector>
-#include <std/string>
+import std.resource;
+import std.memory;
+import std.vector;
+import std.string;
 
 // Public API intersection before/after source sparse-storage migration.
 // Counter instrumentation allocates no memory and is single-threaded.

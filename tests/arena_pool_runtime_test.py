@@ -13,7 +13,7 @@ import tempfile
 NEGATIVE_CASES = {
     "copy": (
         """\
-#include <std/memory>
+import std.memory;
 int main() {
   mut auto created = std::try_make_arena<int32_t>(std::size_t(1));
   if (!created) { return 1; }
@@ -26,7 +26,7 @@ int main() {
     ),
     "sealed-adoption": (
         """\
-#include <std/memory>
+import std.memory;
 int main() {
   gti_internal::empty_storage_adoption token =
       gti_internal::empty_storage_adoption::trusted;
@@ -37,7 +37,7 @@ int main() {
     ),
     "retained-borrow": (
         """\
-#include <std/memory>
+import std.memory;
 int main() {
   mut auto created = std::try_make_arena<int32_t>(std::size_t(1));
   if (!created) { return 1; }
@@ -52,7 +52,7 @@ int main() {
     ),
     "nonmovable-element": (
         """\
-#include <std/memory>
+import std.memory;
 class pinned {
 public:
   pinned() {}
@@ -76,7 +76,7 @@ int main() {
 FAILURE_CASES = {
     "arena-logical-bounds": (
         """\
-#include <std/memory>
+import std.memory;
 int main() {
   mut auto created = std::try_make_arena<int32_t>(std::size_t(2));
   if (!created) { return 1; }
@@ -90,7 +90,7 @@ int main() {
     ),
     "pool-empty-slot": (
         """\
-#include <std/memory>
+import std.memory;
 int main() {
   mut auto created = std::try_make_pool<int32_t>(std::size_t(1));
   if (!created) { return 1; }
@@ -103,7 +103,7 @@ int main() {
     ),
     "constructor-failure-cleanup": (
         """\
-#include <std/memory>
+import std.memory;
 class probe {
   int32_t stored;
 public:

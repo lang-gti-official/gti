@@ -1,4 +1,4 @@
-#include "bindings.gti"
+import "bindings.gti";
 
 // Generated bindings also declare records and function pointers. Only the
 // required scalar and pointer calls belong to this production profile.

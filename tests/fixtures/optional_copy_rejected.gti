@@ -1,4 +1,4 @@
-#include <std/optional>
+import std.optional;
 
 int main() {
   std::optional<int32_t> source{1};

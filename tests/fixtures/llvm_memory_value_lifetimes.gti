@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 mut int trace = 0;
 class Ticket {

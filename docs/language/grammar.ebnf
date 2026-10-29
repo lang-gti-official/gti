@@ -2,16 +2,13 @@
 
    Terminals are written with their source spelling when the lexer has a fixed
    lexeme, and with the TokenKind name for token classes such as IDENTIFIER or
-   INT_LITERAL. PATH_COMPONENT is `[A-Za-z_][A-Za-z0-9_]*` and may have the
-   same spelling as a GTI keyword because it occurs inside a standard-library
-   path. This file intentionally follows the current token surface in
+   INT_LITERAL. This file intentionally follows the current token surface in
    include/gti/token.h.
 
    IDENTIFIER values beginning with `__gti_` are reserved for compiler-
    generated names and are rejected during lexing. C++20/C++23 core keyword
    spellings are also excluded from IDENTIFIER. `delete` is accepted only as
-   the special-member policy token. These restrictions do not apply to
-   PATH_COMPONENT.
+   the special-member policy token.
 
    A source unit is strict UTF-8 and may begin with one UTF-8 byte-order mark.
    The BOM is discarded before the first grammar symbol while all token spans
@@ -38,7 +35,7 @@
 *)
 
 source-file            = [ module-declaration ]
-                         { include-directive | import-declaration | declaration }
+                         { import-declaration | declaration }
                          END_OF_FILE ;
 
 module-declaration     = "export" "module" IDENTIFIER ";" ;
@@ -51,32 +48,20 @@ export-declaration     = "export" declaration ;
    invalid. An exported namespace exports its child declarations, not private
    imported dependencies. Class member access is unchanged. A first import
    component `std` names the standard library: `import std.name;` selects the
-   module interface of `<std/name>`, and the bare `import std;` is invalid. *)
+   explicit interface at stdlib/std/name.gti. The bare `import std;` selects
+   the aggregate standard interface at stdlib/std.gti. *)
 
-include-directive      = [ "export" ] "#include"
-                         ( STRING_LITERAL | angle-include-path )
-                         [ ";" ] ;
-(* `export #include` is valid only in a module interface and republishes that
-   one legacy unit, but not its own includes, to the interface's importers. *)
-
-angle-include-path     = "<" PATH_COMPONENT "/" PATH_COMPONENT
-                         { "/" PATH_COMPONENT } ">" ;
-
-(* Source loading resolves include directives into a graph of independently
-   parsed source units before assembling `program`. Quoted paths are relative
-   .gti files. Paths such as `<std/array>` resolve to `std/array.gti` beneath
-   the compiler-managed standard-library root and never search the project or
-   native C++ include paths. A non-`std` first component is a package alias and
-   resolves only through the direct dependency graph explicitly supplied by
-   project mode; direct compilation does not discover it from a manifest.
-   Quoted paths cannot cross package boundaries when that graph is active.
-   All forms are loaded once and may only appear at
-   top level. A trailing semicolon is optional. Include cycles are invalid. A
-   source unit sees its own declarations, direct includes, and the implicit
-   standard prelude; an include's dependencies are not re-exported. This is
-   dependency loading, not textual macro preprocessing. Only the entry source
-   unit may declare the top-level `main` function.
-*)
+(* Source loading resolves imports into a graph of independently parsed source
+   units before assembling `program`. Quoted paths are relative .gti interfaces
+   and cannot cross package boundaries when a package graph is active. Named
+   package modules resolve through explicit registrations and direct dependency
+   aliases; direct compilation never discovers a manifest. Imports require a
+   semicolon, are unconditional at source-unit top level, and load canonical
+   units once. Cycles are invalid. A source unit sees its own declarations, the
+   exported declarations of its imports and explicit re-exports, and the
+   implicit standard prelude. Only the entry may define top-level main.
+   In this unreleased phase 1 prototype, #include and export #include are
+   rejected with GTI-I0014 without loading a dependency. *)
 
 program                = { declaration } END_OF_FILE ;
 
@@ -1222,7 +1207,7 @@ unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
 
    The former unqualified `string` keyword is removed. `std::string` is an
    ordinary source-defined standard-library class imported with
-   `#include <std/string>`. It owns `char` storage, is move-only to prevent
+   `import std.string;`. It owns `char` storage, is move-only to prevent
    implicit allocating copies, and provides explicit `clone()` when duplication
    is intended. `string.view()` returns a dynamic `std::string_view` whose
    single read-only owner dependency is tracked through local copies and exact
@@ -1234,7 +1219,7 @@ unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
 (* The `_t` fixed-width spellings are canonical. Their suffix-less forms are
    exact compatibility aliases and the formatter rewrites them to `_t`.
    Both spelling families are lexer-owned primitive types; neither requires a
-   source include or a `std::` qualifier.
+   source import or a `std::` qualifier.
    `int` is an exact alias for `int32_t`; `uint` is an exact alias for
    `uint32_t`. Integer literals use int32_t, int64_t, or uint64_t according to
    their value, and may initialize any integer type when they are in range.
@@ -1527,7 +1512,7 @@ pack-expansion         = IDENTIFIER "..." ;
    `std::equality_comparable` and `std::totally_ordered`. `std::ordered` remains
    a compatibility spelling for total ordering. These public concepts are
    declared by the implicit standard prelude and are available without an
-   explicit include. User source may compose them with `concept` declarations.
+   explicit import. User source may compose them with `concept` declarations.
 
    Numeric constraints classify integer and floating primitive subsets.
    Lifecycle constraints inspect GTI construction and assignment availability.

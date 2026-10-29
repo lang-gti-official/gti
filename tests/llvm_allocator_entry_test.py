@@ -24,7 +24,7 @@ PROTOTYPES = '''extern "C" {
   int gti_cost_end(c_ulonglong checksum, c_ulonglong effects);
 }
 '''
-PROVIDER = '''#include <std/memory>
+PROVIDER = '''import std.memory;
 int main() {
   int count = gti_cost_iterations(); mut uint64_t checksum = 7;
   mut std::detail::process_lease lease{};
@@ -44,7 +44,7 @@ int main() {
   return gti_cost_end(c_ulonglong(checksum), c_ulonglong(0));
 }
 '''
-REJECTIONS = '''#include <std/memory>
+REJECTIONS = '''import std.memory;
 int main() {
   int count = gti_cost_iterations();
   mut std::detail::process_lease lease{};

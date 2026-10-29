@@ -104,7 +104,7 @@ def main():
                   f"C++={binary.with_suffix('.gti.cpp').stat().st_size} bytes, "
                   f"build={build_seconds:.3f}s", flush=True)
 
-        prefix = """#include <std/forward_list>
+        prefix = """import std.forward_list;
 class UserMutableField {
   mut int32_t value = 1;
 public:

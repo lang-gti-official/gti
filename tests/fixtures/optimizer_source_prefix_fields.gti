@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 uint64_t initial_length(std::detail::prefix_owner<int>& value) {
   return value.length();

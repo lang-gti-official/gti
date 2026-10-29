@@ -55,8 +55,8 @@ if __name__ == "__main__":
         (staged / "std" / policy.name).write_text(
             policy_source.replace("int main(", "int prefix_policy_main(", 1))
         entry = pathlib.Path(temporary) / "prefix_policy_test.gti"
-        entry.write_text("#include <std/source_resource_prefix_policy>\n"
-                         "#include <std/string>\n#include <std/vector>\n"
+        entry.write_text("import std.source_resource_prefix_policy;\n"
+                         "import std.string;\nimport std.vector;\n"
                          "int main(int argc, std::vector<std::string> argv) {\n"
                          "  return prefix_policy_main(argc, std::move(argv));\n}\n")
         os.environ["GTI_STDLIB_PATH"] = str(staged)

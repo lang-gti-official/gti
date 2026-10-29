@@ -1,4 +1,4 @@
-#include <std/format>
+import std.format;
 
 // A closure that moves in a cleanup-bound carrier is itself one: the
 // carrier's destructor reads its reference when the closure is destroyed, so

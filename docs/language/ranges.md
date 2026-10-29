@@ -2,7 +2,7 @@
 
 ## Mutable contiguous views
 
-`<std/span>` provides `std::mutable_span<T>`, an exclusive, move-only view of
+`std.span` provides `std::mutable_span<T>`, an exclusive, move-only view of
 initialized elements. `vector<T>::as_mutable_span() mut` and
 `string::as_mutable_span() mut` create checked views of their current size, not
 their spare capacity. This slice uses the source-defined prefix-owner
@@ -245,7 +245,7 @@ access and invalidation attempts.
 
 ## Complete-range concepts
 
-`<std/iterator>` exposes bounded structural concepts for generic code that
+`std.iterator` exposes bounded structural concepts for generic code that
 wants the complete owner rather than an iterator/sentinel pair:
 
 - `std::input_range<Range>` checks an ordinary read-only range loop, including
@@ -279,10 +279,10 @@ generic type is substituted with the array, such as `Range&` or `mut Range&`.
 It does not enable explicitly spelled or aliased array-reference parameters,
 array-reference storage or returns, or array-reference callback signatures.
 
-`<std/functional>` similarly provides `std::range_predicate<Predicate, Range>`
+`std.functional` similarly provides `std::range_predicate<Predicate, Range>`
 and `std::range_operation<Operation, Range, Result>`. They derive the exact
 read-only element from the complete range and require one repeatable exact
-callable. `<std/algorithm>` uses these facts for generic whole-range `all_of`,
+callable. `std.algorithm` uses these facts for generic whole-range `all_of`,
 `any_of`, `none_of`, `count_if`, and `for_each`; generic `fill` uses
 `mutable_range_of`. The same source implementations accept application-defined
 nominal ranges, standard-library ranges, and fixed arrays. No algorithm or
@@ -328,7 +328,7 @@ The original L-RANGE-03 checkpoint was a single-owner read-only slice, not a
 permanent limit on nominal carriers. Mutable spans are implemented above;
 ordinary carriers may also compose multiple shared/exclusive dependencies and
 nominal fields under the current [ownership contract](ownership-and-lifetimes.md).
-`<std/paired_span>` supplies a source-defined two-span indexed/subspan and
+`std.paired_span` supplies a source-defined two-span indexed/subspan and
 checked reference-proxy iteration client. Primitive dynamic text views retain their
 narrower one-owner contract and cannot be reseated or stored in fields,
 globals/statics, arrays or containers. A view of a temporary owner may be used
@@ -340,8 +340,8 @@ object. These restrictions keep source validity in semantics and preserve the
 same owner and transfer facts in HIR and verified MIR. The C++ backend only
 represents the already-verified counted view and does not infer its lifetime.
 
-`<std/string_view>` and its `std.string_view` module (also included by
-`<std/string>`) supply source-defined
+`std.string_view` and its `std.string_view` module (also included by
+`std.string`) supply source-defined
 counted-text cursors. Member `begin/end`, `cbegin/cend`, `rbegin/rend`,
 `crbegin/crend`, common-position endpoints, and positioned cursor factories
 retain a checked reference to the view shell and its dynamic owner, if any.
@@ -395,7 +395,7 @@ inline eight-byte field to each vector/resource-vector cursor, with no allocatio
 
 ## Generic iterator contracts
 
-`<std/iterator>` exposes the implemented operator subset to generic functions
+`std.iterator` exposes the implemented operator subset to generic functions
 without making an iterator inherit a category base or teaching the compiler a
 public library name:
 
@@ -427,7 +427,7 @@ public library name:
   reachable later sentinel. A difference outside `ptrdiff_t` raises defined
   invalid-container-argument failure rather than narrowing or overflowing.
 
-`<std/numeric>` additionally defines `std::accumulates_into<I, T>`, proving
+`std.numeric` additionally defines `std::accumulates_into<I, T>`, proving
 that read-only dereferencing `I` has exactly the readable element `T`.
 These source concepts are implemented over private declaration-identity-bound
 structural capabilities and are consumed through trailing `requires` clauses.
@@ -461,7 +461,7 @@ a bounded homogeneous numeric algorithm surface. Complete-range concepts and
 source-composed iterator categories are implemented separately; heterogeneous
 accumulation and the full C++20 ranges model do not follow from this contract.
 
-`<std/algorithm>` additionally defines the ordinary iterator/sentinel
+`std.algorithm` additionally defines the ordinary iterator/sentinel
 `std::find`, `std::count`, and `std::for_each` cluster. All three accept an
 `Iterator` and a potentially distinct `Sentinel` under exact
 `input_iterator`/`sentinel_for` requirements. `find` and `count` also require
@@ -581,7 +581,7 @@ without tracked borrowed state or lambda identity, and proven forwarding
 through other confined callable parameters are available for algorithm
 callbacks. Direct composition of open callables such as `outer(inner(value))`
 also resolves the intermediate value from the selected concrete callable;
-it need not have the outer function's result type. `<std/functional>` exposes
+it need not have the outer function's result type. `std.functional` exposes
 those same read/mut/once facts as public
 unary, binary, and iterator-aware predicate/operation relations, so invalid
 targets fail before concrete body reanalysis. Result
@@ -617,7 +617,7 @@ protects the whole owner during iteration.
 
 ### Searching and rewriting containers
 
-`<std/algorithm>` also supplies whole-range `contains`, `count`,
+`std.algorithm` also supplies whole-range `contains`, `count`,
 `is_partitioned`, `replace`, and `replace_if`. They work with structural
 user-defined ranges as well as fixed arrays and standard containers. A value
 needle is an exact readable `T&`; bind scalar needles to a local first rather

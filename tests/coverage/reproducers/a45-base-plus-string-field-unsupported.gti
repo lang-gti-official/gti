@@ -1,5 +1,5 @@
 // A45: any derived class with a std::string field hits the same GTI-B0003.
-#include <std/string>
+import std.string;
 class Base {
 public:
   int32_t x;

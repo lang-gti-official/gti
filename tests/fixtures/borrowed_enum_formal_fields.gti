@@ -1,7 +1,7 @@
-#include <std/panic>
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.panic;
+import std.string;
+import std.utility;
+import std.vector;
 
 // A constructor stores a by-value borrowed payload enum from its own formal:
 // moved, copied, after a fallible sibling, and after an earlier read of the

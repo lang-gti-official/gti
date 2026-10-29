@@ -3,3 +3,6 @@ manifest-version = 1
 [package]
 name = "tracelib"
 version = "0.1.0"
+
+[modules]
+log = "src/log.gti"

@@ -1,6 +1,5 @@
-#include <std/algorithm>
-#include <std/vector>
-
+import std.algorithm;
+import std.vector;
 int32_t apply<Function>(int32_t value, Function function) {
   return function(value);
 }

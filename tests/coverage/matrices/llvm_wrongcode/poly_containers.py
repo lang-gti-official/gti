@@ -7,14 +7,14 @@ lost, duplicated or misdispatched element changes it.
 """
 import itertools
 
-PRELUDE = """#include <std/memory>
-#include <std/vector>
-#include <std/map>
-#include <std/unordered_map>
-#include <std/algorithm>
-#include <std/atomic>
-#include <std/format>
-#include <std/utility>
+PRELUDE = """import std.memory;
+import std.vector;
+import std.map;
+import std.unordered_map;
+import std.algorithm;
+import std.atomic;
+import std.format;
+import std.utility;
 std::atomic<int32_t> constructed{0};
 std::atomic<int32_t> destroyed{0};
 [[unsafe_transfer]] class Tracked {

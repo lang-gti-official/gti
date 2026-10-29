@@ -1,4 +1,4 @@
-#include "reader.gti"
+import "reader.gti";
 
 Late shared_late{};
 // The generic in reader.gti would reach late_value before its step completes.

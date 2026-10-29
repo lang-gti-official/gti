@@ -1,5 +1,5 @@
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 
 // A user-defined copyable payload exercises the successful API independently
 // of scalar and standard-library types.

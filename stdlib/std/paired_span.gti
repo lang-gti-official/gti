@@ -1,8 +1,9 @@
-#include <std/span>
-#include <std/memory>
-#include <std/detail/iterator>
+export module paired_span;
 
-namespace std {
+import std.span;
+import std.memory;
+import "detail/iterator.gti";
+export namespace std {
 namespace detail {
 class paired_span_sentinel {
   size_t finish;

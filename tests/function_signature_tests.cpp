@@ -1393,10 +1393,10 @@ void signatureReceiverFamily() {
          "without guessing a fix");
   std::unordered_map<std::string, std::string> overlays{
       {(root / "read.gti").string(),
-       "class C<R(Args...)> { public: C() = default; };"},
+       "export module read_receiver;\nexport class C<R(Args...)> { public: C() = default; };"},
       {(root / "mut.gti").string(),
-       "class C<R(Args...) mut> { public: C() = default; };"}};
-  const std::string entry = "#include \"read.gti\"\n#include \"mut.gti\"\n"
+       "export module mut_receiver;\nexport class C<R(Args...) mut> { public: C() = default; };"}};
+  const std::string entry = "import \"read.gti\";\nimport \"mut.gti\";\n"
                             "int main() { C<int() mut> value{}; return 0; }";
   const auto included =
       lang::Frontend().analyze(root / "main.gti", entry, {}, overlays);
@@ -1487,7 +1487,7 @@ void mutableSignatureArguments() {
         "void read(int& value) {} int main() { std::function<void(mut int&)> "
         "fn{read}; return 0; }"}) {
     const auto rejected = analyzeTrustedPreludeFixture(
-        "invalid-mutable-arguments.gti", "#include <std/functional>\n" + body);
+        "invalid-mutable-arguments.gti", "import std.functional;\n" + body);
     expect(!rejected.canGenerateCode() &&
                !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
            "mutable references reject immutable/rvalue inputs, aliasing and "

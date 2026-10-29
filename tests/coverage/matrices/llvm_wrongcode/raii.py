@@ -8,8 +8,8 @@ execution.md 4.2.3): locals end in reverse initialization order at every exit
 from their scope, and a full-expression's temporaries end with it.
 """
 
-PRELUDE = """#include <std/format>
-#include <std/atomic>
+PRELUDE = """import std.format;
+import std.atomic;
 std::atomic<int32_t> position{0};
 std::atomic<int32_t> first_bad{-1};
 int32_t expected_at(int32_t index) {

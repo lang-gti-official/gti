@@ -1,9 +1,8 @@
 // Payload enums compose by value, including other enums and fixed arrays.
 // Each concrete layout must be finite. Owning payloads move and are cleaned
 // up exactly once; indirection is needed for a recursive storage edge.
-#include <std/experimental/optional>
-#include <std/string>
-
+import std.experimental_optional;
+import std.string;
 enum Message<T> { empty, item(T value) };
 
 std::experimental::optional<Message<std::string>> receive(bool available) {

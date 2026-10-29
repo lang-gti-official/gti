@@ -1,7 +1,9 @@
+export module detail_iterator_impl;
+
 // Source-defined cursor arithmetic. An endpoint is a valid position, but not
 // an element. Validate before changing state, including the minimum signed
 // offset, without converting the owner's full size to a signed integer.
-namespace std::detail {
+export namespace std::detail {
 // One-step movement has no dynamic signed offset to decode. A forward step
 // requires begin <= position < end; a backward step requires
 // begin < position <= end. These checks also prove that the following ordinary

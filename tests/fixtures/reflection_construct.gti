@@ -2,9 +2,9 @@
 // reader build the same struct field by field with std::meta::construct, in
 // declaration order, under ordinary initialization. A short input fails
 // before construction and the values produced so far are cleaned up.
-#include <std/meta>
-#include <std/string>
-#include <std/vector>
+import std.meta;
+import std.string;
+import std.vector;
 
 struct Point {
   int32_t x = 0;

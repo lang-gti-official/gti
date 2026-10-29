@@ -1,4 +1,4 @@
-#include <std/utility>
+import std.utility;
 
 // The issue #214 shape with user-defined types: two fields each built from
 // the same borrowed binding through a chain that moves a lease into nested

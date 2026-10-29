@@ -1,4 +1,4 @@
-#include <std/panic>
+import std.panic;
 
 struct Missing { public: Missing() = default; };
 enum ViewState<T> { reference(T& value), absent };

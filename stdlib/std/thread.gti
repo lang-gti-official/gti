@@ -1,4 +1,6 @@
-namespace std {
+export module thread;
+
+export namespace std {
 /// Recoverable managed-thread creation and explicit-join outcomes.
 enum class thread_errc {
   resource_unavailable,
@@ -8,7 +10,7 @@ enum class thread_errc {
 };
 }
 
-namespace gti_internal {
+export namespace gti_internal {
 [[no_transfer, no_share]] class thread_handle {
 public:
   thread_handle(thread_handle& other) = delete;
@@ -39,7 +41,7 @@ void thread_result_auto_join<Result>(mut gti_internal::thread_result_handle<Resu
 int32_t thread_scope<Tasks...>(Tasks... tasks);
 }
 
-namespace std {
+export namespace std {
 /// Runs consumed void tasks concurrently and joins every started task before
 /// returning or propagating failure. Checked references may cross this bounded
 /// call: shared referents must be share-safe; exclusive referents transfer-safe.

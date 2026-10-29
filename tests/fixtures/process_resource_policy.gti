@@ -1,5 +1,5 @@
-#include <std/resource>
-#include <std/memory>
+import std.resource;
+import std.memory;
 
 extern "C" {
   void provider_test_mode(int32_t mode);

@@ -1,5 +1,4 @@
-#include <std/utility>
-
+import std.utility;
 // A context borrows its services; it does not own or copy them.
 struct Settings { int frame_step = 2;  public: Settings() = default; };
 struct Renderer {

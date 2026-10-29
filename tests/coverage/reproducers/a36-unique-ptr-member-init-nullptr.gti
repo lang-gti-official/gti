@@ -1,6 +1,6 @@
 // A36: ': child_(nullptr)' for a unique_ptr field is rejected although the field
 // initializer '= nullptr' is accepted.
-#include <std/memory>
+import std.memory;
 class Node {
   std::unique_ptr<int> child_;
 public:

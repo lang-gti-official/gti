@@ -1,6 +1,6 @@
 // A32: optional<move_only_function>::emplace is a MIR verifier ICE.
-#include <std/functional>
-#include <std/optional>
+import std.functional;
+import std.optional;
 int main() {
   mut std::optional<std::move_only_function<int(int)>> o{};
   [[discard]] o.emplace([](int x) -> int { return x + 1; });

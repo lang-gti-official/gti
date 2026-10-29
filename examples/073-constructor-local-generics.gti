@@ -1,5 +1,4 @@
-#include <std/string>
-
+import std.string;
 class Capture {
   int tag;
 

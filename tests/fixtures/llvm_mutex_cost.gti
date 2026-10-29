@@ -1,4 +1,4 @@
-#include <std/mutex>
+import std.mutex;
 
 int main() {
   std::mutex<int64_t> value{int64_t(0)};

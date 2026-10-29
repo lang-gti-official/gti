@@ -1,8 +1,8 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 #define APP_LOCAL
-#include <dep/feature>
-#include "config.gti"
+import dep.feature;
+import "config.gti";
 
 class Settings {
 public:

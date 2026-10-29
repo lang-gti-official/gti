@@ -1,5 +1,5 @@
-#include <std/mutex>
-#include <std/thread>
+import std.mutex;
+import std.thread;
 
 // Closure environments that hold mutex storage in a capture taken by value.
 // Every payload is a user-defined class; none of the captures is a library

@@ -2,8 +2,8 @@
 // before class types are recorded ('unknown class').
 // Same defect through the documented container-alias idiom
 // (standard-library.md:635-636) with an owning-string key.
-#include <std/map>
-#include <std/string>
+import std.map;
+import std.string;
 using Dictionary = std::map<std::string, int>;
 int main() {
   mut Dictionary d{};

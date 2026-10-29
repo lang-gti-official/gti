@@ -1,13 +1,13 @@
+export module source_location;
+
 // <std/source_location> -- immutable, owned source call-site information.
 //
 // The private declarations are identity-bound compiler capabilities.
 // Ordinary source cannot invoke them directly. `current` deliberately uses
 // caller-side default arguments so a direct call, or an API defaulted at its
 // caller, records the external invocation rather than this implementation.
-
-#include <std/string>
-
-namespace gti_internal {
+import std.string;
+export namespace gti_internal {
 std::string_view source_file_name();
 std::string_view source_function_name();
 uint32_t source_line();
@@ -17,7 +17,7 @@ std::string_view source_expression_text_or<T>(T expression,
                                              std::string_view fallback);
 }
 
-namespace std {
+export namespace std {
 /// Exact written expression text; the expression is checked but never evaluated.
 /// Interior whitespace and comments are retained. The result has static storage.
 #macro std::string_view expression_text<T>(T expression) {

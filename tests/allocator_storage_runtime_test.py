@@ -15,7 +15,7 @@ from native_symbol_spelling import native_spelling
 FAILURE_CASES = {
     "bounds": (
         """\
-#include <std/memory>
+import std.memory;
 
 int main() {
   std::allocator allocator = std::allocator();
@@ -30,7 +30,7 @@ int main() {
     ),
     "duplicate-construction": (
         """\
-#include <std/memory>
+import std.memory;
 
 int main() {
   std::allocator allocator = std::allocator();
@@ -46,7 +46,7 @@ int main() {
     ),
     "uninitialized-access": (
         """\
-#include <std/memory>
+import std.memory;
 
 int main() {
   std::allocator allocator = std::allocator();
@@ -60,7 +60,7 @@ int main() {
     ),
     "uninitialized-destruction": (
         """\
-#include <std/memory>
+import std.memory;
 
 int main() {
   std::allocator allocator = std::allocator();
@@ -77,7 +77,7 @@ int main() {
 
 
 CONSTRUCTOR_FAILURE_CLEANUP = """\
-#include <std/memory>
+import std.memory;
 
 class probe {
   int32_t value;

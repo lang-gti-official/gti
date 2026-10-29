@@ -48,17 +48,8 @@ def lsp_position(source, offset):
     return {"line": line, "character": character}
 
 
-def without_include_advice(diagnostics):
-    # These fixtures test other diagnostics. Validate the migration warning's
-    # cardinality/severity before excluding only that separately tested advice.
-    advice = [d for d in diagnostics if d.get("code") == "GTI-I0013"]
-    assert not advice or has_only_include_advice(advice), diagnostics
-    return [d for d in diagnostics if d.get("code") != "GTI-I0013"]
 
 
-def has_only_include_advice(diagnostics):
-    return (len(diagnostics) == 1 and diagnostics[0].get("code") == "GTI-I0013"
-            and diagnostics[0].get("severity") == 2)
 
 
 def has_error_diagnostics(params):
@@ -686,11 +677,14 @@ def test_parser_depth_and_formatter_token_boundaries(executable, root):
 def test_unsaved_dependency_reanalysis(executable, root):
     library_path = root / "overlay-library.gti"
     root_path = root / "overlay-root.gti"
-    disk_source = 'int overlay_value = "stale disk text";\n'
-    valid_source = "int overlay_value = 1;\n"
-    invalid_buffer_source = 'int overlay_value = "unsaved buffer text";\n'
+    disk_source = (
+                      'export module overlay_library;\n'
+                      'export int overlay_value = "stale disk text";\n'
+                  )
+    valid_source = disk_source.replace('"stale disk text"', "1")
+    invalid_buffer_source = disk_source.replace("stale disk text", "unsaved buffer text")
     root_source = (
-        '#include "overlay-library.gti"\n'
+        'import "overlay-library.gti";\n'
         "int main() { return overlay_value; }\n"
     )
     library_path.write_text(disk_source, encoding="utf-8")
@@ -807,15 +801,16 @@ def test_unsaved_dependency_reanalysis(executable, root):
 
 
 def test_dependency_chain_reanalysis_count(executable, root):
-    # Each file includes the one before it, so every later file depends on
+    # Each file imports the one before it, so every later file depends on
     # every earlier one. Re-analysing an unchanged dependant must not make the
     # dependants above it discard their results and analyse again.
     paths = [root / f"chain-{index}.gti" for index in range(5)]
-    sources = ["int chain_0() { return 0; }\n"]
+    sources = ["export module chain_0;\nexport int chain_0() { return 0; }\n"]
     for index in range(1, len(paths)):
         sources.append(
-            f'#include "chain-{index - 1}.gti"\n'
-            f"int chain_{index}() {{ return chain_{index - 1}() + 1; }}\n"
+            f"export module chain_{index};\n"
+            f'import "chain-{index - 1}.gti";\n'
+            f"export int chain_{index}() {{ return chain_{index - 1}() + 1; }}\n"
         )
     for path, source in zip(paths, sources):
         path.write_text(source, encoding="utf-8")
@@ -903,7 +898,7 @@ def test_dependency_chain_reanalysis_count(executable, root):
                 "method": "textDocument/hover",
                 "params": {
                     "textDocument": {"uri": uris[-1]},
-                    "position": {"line": 1, "character": 5},
+                    "position": lsp_position(sources[-1], sources[-1].index("int chain_") + len("int ")),
                 },
             }
         )
@@ -1097,7 +1092,7 @@ def test_preamble_concept_proofs_across_snapshots(executable, root):
     # the edit reports.
     path = root / "concept-proofs.gti"
     source = (
-        "#include <std/string>\n#include <std/vector>\n"
+        "import std.string;\nimport std.vector;\n"
         "int count(std::vector<std::string>& names) {\n"
         "  return int(names.size());\n}\n"
         "int main() {\n  mut std::vector<std::string> names{};\n"
@@ -1180,13 +1175,15 @@ def test_opening_unchanged_dependencies_keeps_dependants(executable, root):
     # from disk still reanalyses its dependants.
     names = ["open-a", "open-b", "open-d", "open-e"]
     sources = {
-        "open-a": "int open_a() { return 1; }\n",
-        "open-b": '#include "open-a.gti"\nint open_b() { return open_a(); }\n',
-        "open-d": "int open_d() { return 2; }\n",
-        "open-e": "int open_e() { return 3; }\n",
+        "open-a": "export module open_a;\nexport int open_a() { return 1; }\n",
+        "open-b": ('export module open_b;\nimport "open-a.gti";\n'
+                   'export int open_b() { return open_a(); }\n'),
+        "open-d": "export module open_d;\nexport int open_d() { return 2; }\n",
+        "open-e": "export module open_e;\nexport int open_e() { return 3; }\n",
         "open-c": (
-            '#include "open-b.gti"\n#include "open-d.gti"\n'
-            '#include "open-e.gti"\n'
+            'export module open_c;\n'
+            'import "open-b.gti";\nimport "open-d.gti";\n'
+            'import "open-e.gti";\n'
             "int open_c() { return open_b() + open_d() + open_e(); }\n"
         ),
     }
@@ -1243,7 +1240,7 @@ def test_opening_unchanged_dependencies_keeps_dependants(executable, root):
 
         # This overlay differs from disk, so the root that read the disk text
         # must analyse again.
-        open_text("open-e", "int open_e() { return 4; }\n")
+        open_text("open-e", sources["open-e"].replace("return 3", "return 4"))
         session.receive_until(
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
@@ -1266,13 +1263,16 @@ def test_duplicate_dependency_diagnostics_keep_include_context(executable, root)
     dependency_path = root / "shared-invalid-dependency.gti"
     first_path = root / "first-diagnostic-root.gti"
     second_path = root / "second-diagnostic-root.gti"
-    dependency_source = "int shared_value() { return 1 }\n"
+    dependency_source = (
+                            'export module shared_invalid_dependency;\n'
+                            'export int shared_value() { return 1 }\n'
+                        )
     first_source = (
-        '#include "shared-invalid-dependency.gti"\n'
+        'import "shared-invalid-dependency.gti";\n'
         "int first_root() { return 1; }\n"
     )
     second_source = (
-        '#include "shared-invalid-dependency.gti"\n'
+        'import "shared-invalid-dependency.gti";\n'
         "int second_root() { return 2; }\n"
     )
     dependency_path.write_text(dependency_source, encoding="utf-8")
@@ -1355,13 +1355,19 @@ def test_direct_dependency_visibility(executable, root):
     leaf_path = root / "visibility-leaf.gti"
     branch_path = root / "visibility-branch.gti"
     root_path = root / "visibility-root.gti"
-    leaf_source = "int visibility_leaf() { return 1; }\n"
+    leaf_source = (
+                      'export module visibility_leaf;\n'
+                      'export int visibility_leaf() { return 1; }\n'
+                  )
     branch_source = (
-        '#include "visibility-leaf.gti"\n'
-        "int visibility_branch() { return visibility_leaf(); }\n"
+        (
+            'export module visibility_branch;\n'
+            'import "visibility-leaf.gti";\n'
+            'export int visibility_branch() { return visibility_leaf(); }\n'
+        )
     )
     root_source = (
-        '#include "visibility-branch.gti"\n'
+        'import "visibility-branch.gti";\n'
         "int main() { return visibility_leaf(); }\n"
     )
     leaf_path.write_text(leaf_source, encoding="utf-8")
@@ -1413,7 +1419,7 @@ def test_direct_dependency_visibility(executable, root):
             for item in publication["diagnostics"]
             if item.get("code") == "GTI-S2024"
         )
-        assert '#include "visibility-leaf.gti"' in diagnostic["message"]
+        assert 'import "visibility-leaf.gti";' in diagnostic["message"]
         assert diagnostic["relatedInformation"][0]["location"]["uri"] == leaf_uri
     finally:
         session.close()
@@ -1424,7 +1430,7 @@ def test_missing_include_and_format_config(executable, root):
     missing_dependency = root / "missing-include-never-created.gti"
     missing_dependency.unlink(missing_ok=True)
     missing_source = (
-        '#include "missing-include-never-created.gti"\n'
+        'import "missing-include-never-created.gti";\n'
         "int main() { return 0; }\n"
     )
     missing_root.write_text(missing_source, encoding="utf-8")
@@ -1461,11 +1467,11 @@ def test_missing_include_and_format_config(executable, root):
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == missing_uri
             and any(
-                diagnostic.get("code") == "GTI-I0008"
+                diagnostic.get("code") == "GTI-I0012"
                 for diagnostic in message["params"]["diagnostics"]
             )
         )
-        assert publication["params"]["diagnostics"][0]["code"] == "GTI-I0008"
+        assert publication["params"]["diagnostics"][0]["code"] == "GTI-I0012"
         assert not missing_dependency.exists()
     finally:
         session.close()
@@ -2005,24 +2011,27 @@ def test_class_scoped_type_alias_tooling(executable, root):
 
 def test_documentation_hover(executable, root):
     dependency_source = (
-        "namespace api {\n"
-        "/// Calculates an unsigned result.\n"
-        "///\n"
-        "/// Supports **Markdown**, `code`, and Unicode: résumé 🙂.\n"
-        "uint64_t calculate(uint64_t value) { return value; }\n"
-        "/// A value supplied by the API.\n"
-        "class Value {\n"
-        "public: Value() = default;\n"
-        "  /// Reads this value.\n"
-        "  uint64_t read() { return 7; }\n"
-        "};\n"
-        "}\n"
+        (
+            'export module documentation_api;\n'
+            'namespace api {\n'
+            '/// Calculates an unsigned result.\n'
+            '///\n'
+            '/// Supports **Markdown**, `code`, and Unicode: résumé 🙂.\n'
+            'export uint64_t calculate(uint64_t value) { return value; }\n'
+            '/// A value supplied by the API.\n'
+            'export class Value {\n'
+            'public: Value() = default;\n'
+            '  /// Reads this value.\n'
+            '  uint64_t read() { return 7; }\n'
+            '};\n'
+            '}\n'
+        )
     )
     dependency_path = root / "documentation-api.gti"
     dependency_path.write_text(dependency_source, encoding="utf-8")
     dependency_uri = dependency_path.resolve().as_uri()
     source = (
-        '#include "documentation-api.gti"\n'
+        'import "documentation-api.gti";\n'
         "int main() {\n"
         "  uint64_t result = api::calculate(uint64_t(1));\n"
         "  api::Value value = api::Value();\n"
@@ -2605,7 +2614,7 @@ def test_callable_contract_hover(executable, root):
 
 def test_requires_tooling(executable, root):
     source = (
-        "#include <std/functional>\n"
+        "import std.functional;\n"
         "concept pairwise<Left, Right> =\n"
         "    std::numeric<Left> && std::numeric<Right> ||\n"
         "    std::integral<Left> && std::integral<Right>;\n"
@@ -3500,7 +3509,7 @@ def test_defaulted_lifecycle_tooling(executable, root):
 
 def test_constexpr_aggregate_tooling(executable, root):
     source = (
-        "#include <std/memory>\n"
+        "import std.memory;\n"
         "constexpr void advance(mut int32_t& value) { value += 1; }\n"
         "struct Point {\n"
         "  mut int32_t coordinate;\n"
@@ -3722,22 +3731,25 @@ def test_constexpr_aggregate_tooling(executable, root):
 
 def test_semantic_definition(executable, root):
     dependency_source = (
-        "namespace math {\n"
-        "uint64_t choose(uint64_t value) { return value; }\n"
-        "float choose(float value) { return value; }\n"
-        "}\n"
-        "class Box {\n"
-        "  int value = 0;\n"
-        "public:\n"
-        "  Box(int initial) : value(initial) {}\n"
-        " public: Box() = default; };\n"
-        "struct Point { int x = 0;  public: Point() = default; };\n"
-        "enum class Mode { Active };\n"
+        (
+            'export module definitions;\n'
+            'namespace math {\n'
+            'export uint64_t choose(uint64_t value) { return value; }\n'
+            'export float choose(float value) { return value; }\n'
+            '}\n'
+            'export class Box {\n'
+            '  int value = 0;\n'
+            'public:\n'
+            '  Box(int initial) : value(initial) {}\n'
+            ' public: Box() = default; };\n'
+            'export struct Point { int x = 0;  public: Point() = default; };\n'
+            'export enum class Mode { Active };\n'
+        )
     )
     dependency_path = root / "definitions.gti"
     dependency_path.write_text(dependency_source, encoding="utf-8")
     source = (
-        '#include "definitions.gti"\n'
+        'import "definitions.gti";\n'
         "namespace calc = math;\n"
         "int main() {\n"
         "  uint64_t result = calc::choose(uint64_t(1));\n"
@@ -4399,7 +4411,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
 
 def test_io_tooling_boundary(executable, root):
     source = (
-        "#include <std/cstdio>\n"
+        "import std.cstdio;\n"
         "int main() {\n"
         "  char code_unit = char(uint8_t(65));\n"
         '  mut auto opened = std::fopen("input.csv", std::file_mode::read);\n'
@@ -4538,7 +4550,7 @@ def test_io_tooling_boundary(executable, root):
 
 def test_compiler_private_tooling_boundary(executable, root):
     source = (
-        "#include <std/memory>\n"
+        "import std.memory;\n"
         "namespace hidden = gti_internal;\n"
         "int main() {\n"
         "  int value = 1;\n"
@@ -4845,7 +4857,7 @@ def test_atomic_tooling(executable, root):
     path = project / "src/main.gti"
     path.parent.mkdir(parents=True)
     source = (
-        "#include <std/atomic>\n"
+        "import std.atomic;\n"
         "std::atomic<int32_t> counter{0};\n"
         "int main() {\n"
         "  counter.store(1, std::memory_order_release());\n"
@@ -5029,7 +5041,7 @@ def test_atomic_tooling(executable, root):
         assert "fetch_add" in fetch_item["detail"]
 
         private_source = (
-            "#include <std/atomic>\n"
+            "import std.atomic;\n"
             "int main() {\n"
             "  gti_internal::atomic_storage<int32_t> storage{1};\n"
             "  int32_t probe = gti_internal::atomic_;\n"
@@ -5120,7 +5132,7 @@ def test_mutex_tooling(executable, root):
     path = project / "src/main.gti"
     path.parent.mkdir(parents=True)
     source = (
-        "#include <std/mutex>\n"
+        "import std.mutex;\n"
         "std::mutex<int32_t> counter{0};\n"
         "int main() {\n"
         "  {\n"
@@ -5278,7 +5290,7 @@ def test_mutex_tooling(executable, root):
         assert "get" in get_item["detail"]
 
         private_source = (
-            "#include <std/mutex>\n"
+            "import std.mutex;\n"
             "int main() {\n"
             "  gti_internal::mutex_storage<int32_t> storage{1};\n"
             "  int32_t probe = gti_internal::mutex_;\n"
@@ -5369,7 +5381,7 @@ def test_managed_thread_tooling(executable, root):
     path = project / "src/main.gti"
     path.parent.mkdir(parents=True)
     source = (
-        "#include <std/thread>\n"
+        "import std.thread;\n"
         "int main() {\n"
         "  auto started = std::thread::start([]() -> void {});\n"
         "  if (!started.has_value()) { return 1; }\n"
@@ -5642,7 +5654,7 @@ def test_managed_thread_tooling(executable, root):
 def test_standalone_managed_thread_profile(executable, root):
     path = root / "standalone-managed-thread.gti"
     source = (
-        "#include <std/thread>\n"
+        "import std.thread;\n"
         "int main() {\n"
         "  auto started = std::thread::start([]() -> void {});\n"
         "  if (!started.has_value()) { return 1; }\n"
@@ -5700,8 +5712,7 @@ def test_standalone_managed_thread_profile(executable, root):
         for diagnostic in default_diagnostics
     )
     concurrent = analyze(["--execution-profile", "concurrent"])
-    assert [d["code"] for d in concurrent] == ["GTI-I0013"], concurrent
-    assert concurrent[0]["severity"] == 2, concurrent
+    assert concurrent == [], concurrent
 
 
 def test_diagnostic_code_actions(executable, root):
@@ -6175,7 +6186,7 @@ def test_missing_standard_library_include_code_action(
     suffix = f"<{argument}>" if argument is not None else ""
     if source is None:
         source = f"// 🙂\nusing values = std::{symbol}{suffix};\n"
-    include = f"#include <{header}>\n"
+    include = f"import {header.replace(chr(47), chr(46))};\n"
     corrected_source = include + source
     path = root / "missing-standard-include.gti"
     path.write_text(source, encoding="utf-8")
@@ -6253,7 +6264,7 @@ def test_missing_standard_library_include_code_action(
                     "end": {"line": 0, "character": 0},
                 },
                 "replacement": include,
-                "message": f"Add #include <{header}>",
+                "message": f"Add import {header.replace(chr(47), chr(46))};",
                 "repairId": "singleton:0",
                 "applicability": "requiresReview",
             }
@@ -6279,7 +6290,7 @@ def test_missing_standard_library_include_code_action(
         ]
         assert len(actions) == 1, actions
         action = actions[0]
-        assert action["title"] == f"Add #include <{header}>", action
+        assert action["title"] == f"Add import {header.replace(chr(47), chr(46))};", action
         assert action["kind"] == "quickfix", action
         assert action["isPreferred"] is False, action
         assert action["edit"]["documentChanges"] == [
@@ -6376,7 +6387,7 @@ def test_diagnostic_capability_negotiation(executable, root):
         assert "relatedInformation" not in duplicate
         assert "data" not in legacy_string
         assert "choose 'std::string' for owning text" in legacy_string["message"]
-        assert "help: Use '#include <std/string>'" in legacy_string["message"]
+        assert "help: Use 'import std.string;'" in legacy_string["message"]
     finally:
         session.close()
 
@@ -6470,7 +6481,7 @@ def test_current_language_diagnostics(executable, root):
         assert legacy_string["data"]["phase"] == "semantics"
         assert "fixes" not in legacy_string["data"]
         assert legacy_string["data"]["hints"] == [
-            "Use '#include <std/string>' before naming 'std::string'.",
+            "Use 'import std.string;' before naming 'std::string'.",
             "'std::string_view' is available from the standard prelude.",
         ]
 
@@ -6997,18 +7008,19 @@ def test_function_contract_diagnostics(executable, root):
 
 def test_constraint_failure_provenance(executable, root):
     contract = (
-        "namespace library {\n"
-        "concept snapshot_as<R, T> = requires(T& value) "
-        "{ { value.snapshot() } -> R; };\n"
-        "concept readable<T> = snapshot_as<int, T>;\n"
-        "int read<A, B>(A& unrelated, B& value) requires readable<B> "
-        "{ return value.snapshot(); }\n"
-        "}\n"
+        (
+            'export module constraint_contract;\n'
+            'namespace library {\n'
+            'export concept snapshot_as<R, T> = requires(T& value) { { value.snapshot() } -> R; };\n'
+            'export concept readable<T> = snapshot_as<int, T>;\n'
+            'export int read<A, B>(A& unrelated, B& value) requires readable<B> { return value.snapshot(); }\n'
+            '}\n'
+        )
     )
     library_path = root / "constraint-contract.gti"
     library_path.write_text(contract, encoding="utf-8")
     source = (
-        '#include "constraint-contract.gti"\n'
+        'import "constraint-contract.gti";\n'
         "struct Item { public: Item() = default; };\n"
         "int main() { Item first{}; Item target{}; "
         "return library::read(first, /* 😀 */ target); }\n"
@@ -7189,7 +7201,7 @@ def test_concrete_generic_diagnostics(executable, root):
 
 def test_constructor_ownership_diagnostic(executable, root):
     source = (
-        "#include <std/string>\n"
+        "import std.string;\n"
         "class Path {\n"
         "public:\n"
         "  Path(std::string value) {}\n"
@@ -7288,7 +7300,7 @@ def test_constructor_ownership_diagnostic(executable, root):
 
 def test_expected_success_ownership_diagnostic(executable, root):
     source = (
-        '#include <std/string>\n'
+        'import std.string;\n'
         'enum class error { failed };\n'
         'std::string relay(std::string word) { return word; }\n'
         'expected<std::string, error> value() {\n'
@@ -7321,8 +7333,8 @@ def test_expected_success_ownership_diagnostic(executable, root):
         # The result's implicit constructor would copy the named owner. That
         # is the return's own copy: no constructor call is written, so it is
         # not reported as a constructor argument.
-        assert [item.get("code") for item in errors] == ["GTI-I0013", "GTI-S2003"], errors
-        diagnostic = errors[1]
+        assert [item.get("code") for item in errors] == ["GTI-S2003"], errors
+        diagnostic = errors[0]
         offset = source.index("return text") + len("return ")
         assert diagnostic["range"] == {
             "start": lsp_position(source, offset),
@@ -7337,7 +7349,7 @@ def test_expected_success_ownership_diagnostic(executable, root):
                       "params": {"textDocument": {"uri": uri, "version": 2},
                                  "contentChanges": [{"text": source.replace(
                                      "return text;", "return std::move(text);")}]}})
-        assert has_only_include_advice(publication(2))
+        assert (publication(2) == [])
     finally:
         session.close()
 
@@ -7603,7 +7615,7 @@ def test_global_borrow_return_diagnostics(executable, root):
 
 def test_unique_ptr_null_state_tooling(executable, root):
     valid_source = (
-        "#include <std/memory>\n"
+        "import std.memory;\n"
         "class Example { public: Example() {} };\n"
         "void consume(std::unique_ptr<Example> value) {}\n"
         "int main() {\n"
@@ -8129,7 +8141,7 @@ def test_layout_query_tooling(executable, root):
 
 def test_integer_arithmetic_tooling(executable, root):
     source = (
-        "#include <std/numeric>\n"
+        "import std.numeric;\n"
         "int main() {\n"
         "  auto result = std::checked_add(int8_t(1), int8_t(2));\n"
         "  uint8_t wrapped = std::wrapping_add(uint8_t(255), uint8_t(1));\n"
@@ -8296,7 +8308,7 @@ def test_integer_arithmetic_tooling(executable, root):
 
 def test_owned_move_capture_tooling(executable, root):
     source = (
-        "#include <std/memory>\n"
+        "import std.memory;\n"
         "class Owner { public: Owner() {} Owner(Owner& other) = delete; "
         "Owner(Owner&& other) = default; int read() { return 7; } };\n"
         "int main() { Owner source{}; "
@@ -9090,7 +9102,7 @@ def test_canonical_document_identity(executable, root):
     entry_path = root / "canonical-root.gti"
     dependency_source = "int overlay_value() { return 1; }\n"
     entry_source = (
-        '#include "canonical-alias.gti"\n'
+        'import "canonical-alias.gti";\n'
         "int main() { return overlay_value(); }\n"
     )
     real_path.write_text(dependency_source, encoding="utf-8")
@@ -9195,9 +9207,12 @@ def test_canonical_document_identity(executable, root):
 def test_watched_dependency_reanalysis(executable, root):
     dependency_path = root / "watched-library.gti"
     entry_path = root / "watched-root.gti"
-    dependency_source = "int watched_value() { return 1; }\n"
+    dependency_source = (
+                            'export module watched_library;\n'
+                            'export int watched_value() { return 1; }\n'
+                        )
     entry_source = (
-        '#include "watched-library.gti"\n'
+        'import "watched-library.gti";\n'
         "int main() { return watched_value(); }\n"
     )
     dependency_path.write_text(dependency_source, encoding="utf-8")
@@ -9262,7 +9277,10 @@ def test_watched_dependency_reanalysis(executable, root):
         assert not has_error_diagnostics(initial["params"])
 
         dependency_path.write_text(
-            "int renamed_watched_value() { return 1; }\n", encoding="utf-8"
+            (
+                'export module watched_library;\n'
+                'export int renamed_watched_value() { return 1; }\n'
+            ), encoding="utf-8"
         )
         session.send(
             {
@@ -9421,9 +9439,12 @@ def test_edits_keep_diagnostics_until_replaced(executable, root):
     # edit is the new result, never an empty interim set.
     dependency_path = root / "retained-lib.gti"
     entry_path = root / "retained-root.gti"
-    dependency_source = "int retained_value() { return 1; }\n"
+    dependency_source = (
+                            'export module retained_lib;\n'
+                            'export int retained_value() { return 1; }\n'
+                        )
     entry_source = (
-        '#include "retained-lib.gti"\n'
+        'import "retained-lib.gti";\n'
         "int main() { return retained_value() + missing_name; }\n"
     )
     dependency_path.write_text(dependency_source, encoding="utf-8")
@@ -9485,9 +9506,12 @@ def test_dependency_reanalysis_refreshes_tokens_only_when_changed(
     # refresh only when they differ.
     dependency_path = root / "refresh-lib.gti"
     entry_path = root / "refresh-root.gti"
-    dependency_source = "int shared_counter = 1;\n"
+    dependency_source = (
+                            'export module refresh_lib;\n'
+                            'export int shared_counter = 1;\n'
+                        )
     entry_source = (
-        '#include "refresh-lib.gti"\n'
+        'import "refresh-lib.gti";\n'
         "int main() { return shared_counter; }\n"
     )
     dependency_path.write_text(dependency_source, encoding="utf-8")
@@ -9787,16 +9811,19 @@ def test_editor_hir_scope_follows_open_file(executable, root):
     library_path = root / "scope-lib.gti"
     entry_path = root / "scope-root.gti"
     library_source = (
-        "class Bound<T, uint64_t N> {\n"
-        '  static_assert(N <= uint64_t(4), "capacity too large");\n'
-        " public: Bound() = default; };\n"
-        "int lib_only() {\n"
-        "  Bound<int32_t, 5> value{};\n"
-        "  return 0;\n"
-        "}\n"
+        (
+            'export module scope_lib;\n'
+            'export class Bound<T, uint64_t N> {\n'
+            '  static_assert(N <= uint64_t(4), "capacity too large");\n'
+            ' public: Bound() = default; };\n'
+            'export int lib_only() {\n'
+            '  Bound<int32_t, 5> value{};\n'
+            '  return 0;\n'
+            '}\n'
+        )
     )
     entry_source = (
-        '#include "scope-lib.gti"\n'
+        'import "scope-lib.gti";\n'
         "int main() {\n"
         "  Bound<int32_t, 4> value{};\n"
         "  return 0;\n"
@@ -9858,9 +9885,9 @@ def test_instance_reuse_across_snapshots(executable, root):
     # semantic tokens, hover and definition in the open file are unchanged,
     # and editing a library unit invalidates every reusable instance.
     source = (
-        "#include <std/string>\n"
-        "#include <std/vector>\n"
-        "#include <std/set>\n"
+        "import std.string;\n"
+        "import std.vector;\n"
+        "import std.set;\n"
         "int main() {\n"
         "  mut std::vector<std::string> names{};\n"
         '  names.push_back(std::string("ada"));\n'
@@ -9985,8 +10012,8 @@ def test_preamble_across_snapshots(executable, root):
     # preamble is invisible: diagnostics, semantic tokens, hover and definition
     # are unchanged, and editing a library unit builds a new preamble.
     source = (
-        "#include <std/string>\n"
-        "#include <std/vector>\n"
+        "import std.string;\n"
+        "import std.vector;\n"
         "int main() {\n"
         "  mut std::vector<std::string> names{};\n"
         '  names.push_back(std::string("ada"));\n'
@@ -10149,7 +10176,7 @@ def test_worker_survives_failed_analysis(executable, root):
         for index in range(3):
             broken_path = root / f"worker-failure-{index}.gti"
             broken_source = (
-                f'#include "definitely-missing-{index}.gti"\n'
+                f'import "definitely-missing-{index}.gti";\n'
                 "int main() { return 0; }\n"
             )
             broken_path.write_text(broken_source, encoding="utf-8")
@@ -10542,14 +10569,17 @@ def open_document(session, uri, source, expect_clean=True, version=1):
 
 def test_references_and_highlights(executable, root):
     dependency_source = (
-        "namespace math {\n"
-        "uint64_t twice(uint64_t value) { return value + value; }\n"
-        "}\n"
+        (
+            'export module references_library;\n'
+            'namespace math {\n'
+            'export uint64_t twice(uint64_t value) { return value + value; }\n'
+            '}\n'
+        )
     )
     dependency_path = root / "references-library.gti"
     dependency_path.write_text(dependency_source, encoding="utf-8")
     source = (
-        '#include "references-library.gti"\n'
+        'import "references-library.gti";\n'
         "int main() {\n"
         "  mut uint64_t total = uint64_t(0);\n"
         "  total = math::twice(total);\n"
@@ -11680,17 +11710,20 @@ def main():
     test_temporary_argument_borrow_tooling(sys.argv[1], root)
     test_configuration_flag_inactive_tokens(sys.argv[1], root)
     library_source = (
-        "T identity<T>(T value) { return value; }\n"
-        'int dependency_value = "bad";\n'
+        (
+            'export module library;\n'
+            'export T identity<T>(T value) { return value; }\n'
+            'export int dependency_value = "bad";\n'
+        )
     )
     library_path = root / "library.gti"
     library_path.write_text(library_source, encoding="utf-8")
     uri = (root / "lsp-smoke.gti").as_uri()
     stress_uri = (root / "lsp-stress.gti").as_uri()
     source = (
-        '#include "library.gti"\n'
-        "#include <std/array>\n"
-        "#include <std/memory>\n"
+        'import "library.gti";\n'
+        "import std.array;\n"
+        "import std.memory;\n"
         '#if target.os == "never"\n'
         "int inactive() { return missing_name; }\n"
         '#error "inactive target"\n'
@@ -11948,9 +11981,7 @@ def main():
     assert len(initial_publications) == 1
     initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 12, diagnostics
-    include_advice = [d for d in diagnostics if d["code"] == "GTI-I0013"]
-    assert len(include_advice) == 1 and include_advice[0]["severity"] == 2, diagnostics
+    assert len(diagnostics) == 11, diagnostics
     missing_return = next(
         diagnostic
         for diagnostic in diagnostics
@@ -12207,10 +12238,10 @@ def main():
     assert token_types_by_position[
         (error_directive["line"], error_directive["character"])
     ] == 13
-    include_directive = lsp_position(source, source.index("#include"))
+    include_directive = lsp_position(source, source.index("import"))
     assert token_types_by_position[
         (include_directive["line"], include_directive["character"])
-    ] == 13
+    ] == 0
     syntax_owned_offsets = (
         source.index("this.value"),
         source.index("false", source.index("operator==(nullptr_t")),
@@ -12462,7 +12493,7 @@ def main():
     assert "Box<int> box = Box<int>(identity(1));" in formatted
     assert "class StaticArray<T, uint64_t N> {" in formatted
     assert "// Generic iterator access.\n    Box<T> begin();" in formatted
-    assert "#include <std/array>" in formatted
+    assert "import std.array;" in formatted
     assert "using EntityId = uint64_t;" in formatted
     assert (
         "    switch (stage) {\n"
@@ -12887,7 +12918,7 @@ def test_range_loan_tooling(executable, root):
 
 def test_expected_payload_range_tooling(executable, root):
     invalid_source = (
-        "#include <std/string>\n"
+        "import std.string;\n"
         "expected<std::string, int32_t> make_text() {\n"
         '  return std::string("ab");\n'
         "}\n"
@@ -12898,7 +12929,7 @@ def test_expected_payload_range_tooling(executable, root):
         "}\n"
     )
     valid_source = (
-        "#include <std/string>\n"
+        "import std.string;\n"
         "expected<std::string, int32_t> make_text() {\n"
         '  return std::string("ab");\n'
         "}\n"
@@ -13106,8 +13137,8 @@ def test_mutable_stored_dependency_tooling(executable, root):
 
 def test_owner_dependent_span_tooling(executable, root):
     valid_source = (
-        "#include <std/vector>\n"
-        "#include <std/span>\n"
+        "import std.vector;\n"
+        "import std.span;\n"
         "int main() {\n"
         "  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2});\n"
         "  {\n"
@@ -13122,15 +13153,15 @@ def test_owner_dependent_span_tooling(executable, root):
         "  }\n  values.push_back(3);", "  values.push_back(3);"
     ).replace("  return 0;", "  return view.empty() ? 0 : 1;")
     escaped_source = (
-        "#include <std/vector>\n"
-        "#include <std/span>\n"
+        "import std.vector;\n"
+        "import std.span;\n"
         "std::span<int32_t> escape() {\n"
         "  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2});\n"
         "  return values.as_span();\n"
         "}\n"
     )
     valid_text_source = (
-        "#include <std/string>\n"
+        "import std.string;\n"
         "std::string_view relay(std::string_view view) { return view; }\n"
         "int main() {\n"
         "  mut std::string text = std::string(\"abc\");\n"
@@ -13147,7 +13178,7 @@ def test_owner_dependent_span_tooling(executable, root):
         "  }\n  text.push_back('d');", "  text.push_back('d');"
     ).replace("  return 0;", "  return copied.empty() ? 0 : 1;")
     escaped_text_source = (
-        "#include <std/string>\n"
+        "import std.string;\n"
         "std::string_view escape() {\n"
         "  mut std::string text = std::string(\"abc\");\n"
         "  return text.view();\n"
@@ -13399,7 +13430,7 @@ def test_owner_dependent_span_tooling(executable, root):
             and message["params"].get("version") == 8
             and not has_error_diagnostics(message["params"])
         )
-        field_source = '''#include <std/string>
+        field_source = '''import std.string;
 class Token {
   mut std::string _token{"secret"};
 public:
@@ -13439,7 +13470,7 @@ int main() {
 def test_constructor_text_storage_tooling(executable, root):
     # Storing a view formal makes it an ownerless-text requirement of `store`;
     # the caller that passes owner-dependent text is the one rejected.
-    source = '''#include <std/string>
+    source = '''import std.string;
 struct Label {
   std::string_view text;
   Label(std::string_view input) : text(input) {}

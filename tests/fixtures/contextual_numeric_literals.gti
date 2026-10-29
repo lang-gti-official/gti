@@ -1,4 +1,4 @@
-#include <std/numeric>
+import std.numeric;
 
 constexpr bool zero<std::numeric T>(T value) { return value == (0); }
 bool operators<std::numeric T>(T value) {

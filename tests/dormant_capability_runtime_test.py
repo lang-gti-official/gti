@@ -29,7 +29,7 @@ EMPTY_MAIN = "int main() { return 0; }\n"
 
 
 def includes(modules):
-    return "".join(f"#include <std/{module}>\n" for module in modules)
+    return "".join(f"import std.{module};\n" for module in modules)
 
 
 def imports(modules):

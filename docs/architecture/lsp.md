@@ -310,7 +310,7 @@ C-style create/join, manual mutexes, conditions, and once initialization use tha
 Their `GTI-S2084` profile requirement is derived by semantics from the resolved
 private runtime call graph, and `GTI-S2055` retains the ordinary unsafe caller contract. The
 editor publishes both without recognizing public `std::thrd_*`, `std::mtx_*`, or `std::cnd_*`
-spellings or `std::call_once`; hover and definition select the ordinary wrapper in `<std/cthread>`.
+spellings or `std::call_once`; hover and definition select the ordinary wrapper in `std.cthread`.
 
 Function-declaration and selected-call hover also append compiler-owned
 callable-parameter contracts from `FunctionInfo`. Confined notes identify
@@ -428,7 +428,7 @@ the private source factory's injected receiver. Normalization remains inside
 the immutable frontend snapshot; the LSP protocol adapter performs no
 name-based dispatch or argument-index repair.
 
-The checked integer functions are ordinary `<std/numeric>` declarations.
+The checked integer functions are ordinary `std.numeric` declarations.
 Hover, definition, and completion therefore consume the same selected overload
 and source-unit records as other standard-library functions; the protocol layer
 does not recognize `checked_add/sub/mul` by spelling.
@@ -818,11 +818,11 @@ frontend trace reports `semanticLateDemandBodies`,
 
 The LSP also owns a `SemanticPreambleCache` beside its parse and instance
 caches and passes it through `FrontendOptions::preambleCache`: the open
-file's standard-library prefix is analysed once per include graph and every
+file's standard-library prefix is analysed once per import graph and every
 later snapshot resumes from a copy of that analysis, registering and
 analysing only the file's own declarations (see "Trusted Prefix Preamble" in
 [semantic-analysis.md](semantic-analysis.md)). The first snapshot of a new
-include graph pays for the build; a changed or re-parsed library unit selects
+import graph pays for the build; a changed or re-parsed library unit selects
 a new preamble. The trace reports `preambleBuilds`,
 `preambleBuildMicroseconds`, `preambleAdoptions`,
 `preambleAdoptMicroseconds`, `preambleBodies`, `preambleReachedBodies`, the
@@ -869,7 +869,7 @@ generation has only lexical/empty query recovery, not fabricated default-profile
 semantics or inactive spans. Selecting a valid/default profile clears it.
 Standalone documents retain their prior analysis defaults; named project
 profiles do not invent a manifest for them.
-Package angle includes therefore use only declared direct aliases, including
+Named package imports therefore use only declared direct aliases, including
 already-materialized checksum-verified Git dependencies. Resolution runs no
 process, performs no fetch or build, and creates no project state. Registry
 dependencies use the same verified cached closure, logical source identities
@@ -946,7 +946,7 @@ selected project profile when present and otherwise remains
 single-threaded.
 
 This keeps standalone and concurrent-project diagnostics and the public
-`<std/thread>`, `<std/atomic>`, and `<std/mutex>` surfaces aligned with
+`std.thread`, `std.atomic`, and `std.mutex` surfaces aligned with
 compiler-driver workflows. Analysis work
 additionally runs inside `lang::runGuarded`, and that boundary is deliberately
 narrow. Only compiler work runs under the guard: `runIsolatedAnalysis` builds
@@ -970,7 +970,7 @@ shared `FrontendCache` inside `runIsolatedAnalysis`, and its lookup/store method
 acquire their own mutex. A fatal signal during one of those critical sections
 can skip the lock destructor or interrupt a cache update. In-process recovery
 therefore cannot guarantee that the cache or future workers remain usable.
-`test_worker_survives_failed_analysis` covers missing-include failures followed
+`test_worker_survives_failed_analysis` covers missing-dependency failures followed
 by healthy analysis/hover; it does not inject a crash under a cache lock. The
 parser-depth regression proves bounded diagnostic recovery, not arbitrary fault
 recovery. A stronger promise needs a state/lock-safe recovery design and
@@ -990,11 +990,11 @@ required; it is tracked in
 
 ## Protocol Boundary
 
-Editor snapshots enable the compiler's `legacy-include` warning
-(`GTI-I0013`) once per file, at its first `#include`. Each new snapshot recomputes
-that location, so removing the first include moves the warning to the next one,
-and removing all includes clears it. The usual warning policy can suppress the
-group. Module conversion has no automatic fix because it can change visibility.
+Editor snapshots publish the compiler-owned `GTI-I0014` error for removed GTI
+include syntax using the same source-loading rule as build/check requests. The
+former optional `legacy-include` migration warning is removed. Module conversion
+has no automatic fix because dependencies require explicit interfaces and
+exports and conversion can change visibility.
 
 `src/lsp/main.cpp` owns JSON-RPC IDs, capabilities, URIs, UTF-8 byte to LSP
 position conversion, request/result serialization, diagnostic publication,
@@ -1079,7 +1079,7 @@ Quick fixes come only from compiler `Diagnostic::fixes` associated with the
 current source/generation, an intersecting request range, and an exact
 client-provided diagnostic. Position conversion is tested at the protocol
 edge; compiler source spans remain half-open UTF-8 byte ranges.
-Unresolved declarations publish compiler-validated missing-include fixes through
+Unresolved declarations publish compiler-validated missing-import fixes through
 this same path. This covers project functions such as `example::test()`, types,
 aliases, values, scoped enumerators, static members, and concepts, not a catalog
 of standard-library type spellings. Semantics marks the unresolved lookup on
@@ -1090,9 +1090,10 @@ direct dependency aliases. Standalone files search their parent directory;
 standard-library public units use the same discovery mechanism. Discovery
 recurses through `.gti` files, excluding hidden/build directories, nested
 packages without their own search authority, and symlink escapes. Unsaved
-files and dirty overlays participate. Dependency fixes use the declared angle
-alias; same-package fixes use a relative quoted path. Module interfaces are
-not include candidates, including exported interfaces: those require imports.
+files and dirty overlays participate. Candidates must be explicit module
+interfaces. Dependency fixes use the direct alias and declared module name;
+standard fixes use `std.name`; same-package fixes use a relative quoted import.
+A speculative compile checks registrations and exported declaration visibility.
 
 `include_suggestions.cpp` uses the lexer as a cheap candidate filter and the
 existing source loader/parser to discover declaration names. `FrontendPhase::Parsing`
@@ -1106,10 +1107,10 @@ unrelated errors may remain; a candidate that reveals additional errors is
 conservatively withheld until those errors are addressed. No discovery runs
 for a snapshot without unresolved-name requests, with source-loading or parser
 errors, or for completion-marker analysis. Parser recovery still supplies its
-ordinary diagnostics and semantic queries, but an include edit cannot repair
+ordinary diagnostics and semantic queries, but an import edit cannot repair
 syntax in the frozen source graph. Skipping discovery in that case avoids a
 workspace-wide scan whose speculative edits would all be rejected; fixing the
-syntax restores include suggestions on the next snapshot.
+syntax restores import suggestions on the next snapshot.
 
 The service shares the bounded parsed-unit cache but retains no semantic IDs
 across snapshots. Edits preserve BOM/CRLF and follow a module header when the

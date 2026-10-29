@@ -1,5 +1,4 @@
-#include <std/utility>
-
+import std.utility;
 // A guard borrows a resource until its destructor completes, even after its
 // last ordinary use. Several read-only guards can retain the same resource.
 mut int observed = 0;

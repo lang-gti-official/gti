@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 
 int main() {
   mut std::vector<int> values = std::vector<int>({1, 2});

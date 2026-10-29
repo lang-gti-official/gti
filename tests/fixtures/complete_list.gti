@@ -1,5 +1,5 @@
-#include <std/list>
-#include <std/memory>
+import std.list;
+import std.memory;
 int main() {
   mut std::list<int> values{};
   values.push_back(3);

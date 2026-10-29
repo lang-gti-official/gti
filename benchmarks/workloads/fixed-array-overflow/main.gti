@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 void print_hex_digit(uint64_t digit) {
   switch (digit) {

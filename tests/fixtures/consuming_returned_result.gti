@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // A consuming member's owning result is returned directly. The receiver's
 // full-expression drop runs after the call and before the Return, so the

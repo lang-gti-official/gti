@@ -1,5 +1,5 @@
 // A44: --raw-pointer-audit=warn reports one GTI-S2102 warning three times.
-#include <std/memory>
+import std.memory;
 class Cell {
   mut int32_t v = 1;
 public:

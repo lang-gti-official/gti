@@ -3,7 +3,7 @@
 // as a comma operand. The nested lambda captures a local declared inside the
 // outer one rather than the outer one's own capture, because capture-of-
 // capture is still open (#117) and a seed must compile to be useful.
-#include <std/string>
+import std.string;
 
 class holder {
 public:

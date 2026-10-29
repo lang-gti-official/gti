@@ -3,7 +3,7 @@
 // enum tag, unions inside a fixed array field, nested union members, writes
 // through a mutable struct field inside unsafe, sizeof/alignof of the union,
 // and a method that switches on the tag before reading the active member.
-#include <std/format>
+import std.format;
 
 enum class Kind : uint8_t { integer, real, pair };
 

@@ -1,14 +1,14 @@
+export module algorithm;
+
 // Algorithms that need ordering, input iteration, confined predicates, one
 // exact-return callable, writable output iteration, or whole-range in-place
 // element rewriting are implemented here. In-place algorithms take the owning
 // container so the exclusive borrow and the element type stay explicit;
 // iterator-pair in-place forms wait on retainable mutable cursors.
-
-#include <std/iterator>
-#include <std/functional>
-#include <std/vector>
-
-namespace std {
+import std.iterator;
+import std.functional;
+import std.vector;
+export namespace std {
 constexpr T min<std::totally_ordered T>(T left, T right) {
   if (right < left) {
     return std::move(right);

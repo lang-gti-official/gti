@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 // A constructor's primary failure must survive a second failure while cleaning
 // its completed base: status 70 and GTI-R0014 must name both division sites.

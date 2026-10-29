@@ -15,8 +15,8 @@ lang::FrontendResult analyzeText(std::string source) {
 
 void testOwnerlessForwarding() {
   const auto result = analyzeText(R"gti(
-#include <std/string>
-#include <std/utility>
+import std.string;
+import std.utility;
 struct Label<T> {
   mut T text;
   Label(T input) : text(std::move(input)) {}
@@ -81,8 +81,8 @@ int main() {
 
 void testOwnerlessTextAliasWrites() {
   const std::string declarations = R"gti(
-#include <std/string>
-#include <std/utility>
+import std.string;
+import std.utility;
 struct Label {
   mut std::string_view text;
   Label() : text("literal") {}
@@ -291,7 +291,7 @@ int main() { return make("x").text.size() + twice().size() == 7 ? 0 : 1; }
 
 void testPermutingRecursiveFieldContracts() {
   const std::string declarations = R"gti(
-#include <std/string>
+import std.string;
 struct Token {
   std::string_view text;
   int line;
@@ -482,7 +482,7 @@ void testRecursiveTextSummaryScaling() {
 }
 
 const std::string kReferenceAccessors = R"gti(
-#include <std/string>
+import std.string;
 mut std::string_view kept = "";
 class Token {
 public:
@@ -763,7 +763,7 @@ int main() { retain(0); return 0; }
   }
 
   const auto dependent = analyzeText(R"gti(
-#include <std/string>
+import std.string;
 class NativeText {
   c_string text;
 public:
@@ -794,8 +794,8 @@ int main() {
 // and one binding it by value places the same ownerless requirement as
 // `switch (this.word)` would, which MIR derives through the accessor's body.
 const std::string kAccessorSubjects = R"gti(
-#include <std/panic>
-#include <std/string>
+import std.panic;
+import std.string;
 mut std::string_view kept = "";
 enum Word { text(std::string_view value), none };
 class Line {
@@ -920,7 +920,7 @@ int main() { return leak().size() == 5 ? 0 : 1; }
                 "this.either(true)"},
        }) {
     const std::string declarations = std::string(R"gti(
-#include <std/string>
+import std.string;
 enum Word { text(std::string_view value), none };
 class Line {
 public:
@@ -971,7 +971,7 @@ int main() { return leak().size() == 5 ? 0 : 1; }
 // it requires the field's payloads ownerless, in semantics and in MIR. The
 // accessor itself, whose every return borrows the field, requires nothing.
 const std::string kAccessorEscapes = R"gti(
-#include <std/string>
+import std.string;
 mut std::string_view kept = "";
 enum Word { text(std::string_view value), none };
 void keepWord(Word& w) {
@@ -1085,7 +1085,7 @@ bool rejectedAtSource(const lang::FrontendResult &result,
 // an ownerless result proof. A user-defined record's array field and a
 // lambda's result follow the same rules.
 const std::string kArrayTextStorage = R"gti(
-#include <std/string>
+import std.string;
 struct Shelf {
   std::string_view titles[2];
   int count;
@@ -1275,7 +1275,7 @@ void testArrayElementTextRejections() {
            "dynamic text cannot reach an array: " + body);
   }
   const auto leak = analyzeText(R"gti(
-#include <std/string>
+import std.string;
 std::string_view leak() {
   std::string owner{"local"};
   std::string_view names[1] = {"static"};
@@ -1294,7 +1294,7 @@ int main() { return leak().empty() ? 1 : 0; }
 // return ownerless text.
 void testRawMemoryTextReads() {
   const auto result = analyzeText(R"gti(
-#include <std/string>
+import std.string;
 struct Entry {
   std::string_view name;
   int id;
@@ -1373,7 +1373,7 @@ int main() {
     }
   // A GTI owner's C string is not raw memory, inside unsafe code or not.
   const auto dependent = analyzeText(R"gti(
-#include <std/string>
+import std.string;
 c_string leak(c_string* items) {
   std::string owner{"local"};
   unsafe {
@@ -1411,7 +1411,7 @@ int main() { mut std::string_view v = "x"; return either("a", &v, true) == "a" ?
 // or a function item behind `std::function_ptr` all return ownerless text.
 void testCallableTextResults() {
   const auto result = analyzeText(R"gti(
-#include <std/functional>
+import std.functional;
 class Greeter {
 public:
   std::string_view greeting;
@@ -1492,7 +1492,7 @@ int main() {
 // lambda result are ownerless and stay storable.
 void testCapturedTextLocalUse() {
   const auto result = analyzeText(R"gti(
-#include <std/string>
+import std.string;
 struct Note {
   std::string_view text;
   int line;
@@ -1579,8 +1579,8 @@ int main() {
 }
 
 const std::string kCapturedTextEscapes = R"gti(
-#include <std/string>
-#include <std/functional>
+import std.string;
+import std.functional;
 struct Note {
   std::string_view text;
   int line;
@@ -1782,8 +1782,8 @@ int main() {
 // existing binding, so it cannot outlive an inner owner through an outer one.
 void testCapturedTextBorrowsOwner() {
   const std::string prelude = R"gti(
-#include <std/string>
-#include <std/functional>
+import std.string;
+import std.functional;
 struct Doc {
   mut std::string body;
   Doc() : body("doc-body") {}
@@ -1898,7 +1898,7 @@ int main() { return sameScope("x") + outerScope(); }
 // formal, a function without a relay would return unproven text.
 void testReassignedTextLocals() {
   const auto result = analyzeText(R"gti(
-#include <std/string>
+import std.string;
 struct Note {
   std::string_view text;
   int line;
@@ -1973,7 +1973,7 @@ int main() {
 // through the receiver's field or a nested one (MIR).
 void testReceiverFieldCallReturns() {
   const auto result = analyzeText(R"gti(
-#include <std/string_view>
+import std.string_view;
 class Inner {
 public:
   int n;
@@ -2037,9 +2037,9 @@ int main() {
 // So an erased callable over a literal lambda returns ownerless text through
 // a user-defined interface and through std::function, and MIR verifies it.
 const std::string kErasedTextResults = R"gti(
-#include <std/functional>
-#include <std/polymorphic>
-#include <std/string>
+import std.functional;
+import std.polymorphic;
+import std.string;
 interface Labeler {
   std::string_view label();
 };
@@ -2134,8 +2134,8 @@ int main() {
   // An override keeps its root's contract: a view of the override's own
   // string is not ownerless text.
   const std::string owned = R"gti(
-#include <std/polymorphic>
-#include <std/string>
+import std.polymorphic;
+import std.string;
 interface Named {
   std::string_view name();
 };
@@ -2183,7 +2183,7 @@ int main() {
 // argument, each override relays that argument or returns ownerless text,
 // and each call keeps the argument's owner borrowed (L-OWN-02).
 const std::string kGenericVirtualRoot = R"gti(
-#include <std/string>
+import std.string;
 class Picker<T> {
 public:
   int n;
@@ -2283,7 +2283,7 @@ int main() {
 // borrowed while the result is used, and an argument holding ownerless text
 // relays nothing.
 const std::string kOperatorTextRelays = R"gti(
-#include <std/string>
+import std.string;
 class Same {
 public:
   Same() {}
@@ -2361,7 +2361,7 @@ int main() {
 // nested-text-return case uses it.
 void testOwnerlessTextRelayLoans() {
   const auto result = analyzeText(R"gti(
-#include <std/string_view>
+import std.string_view;
 std::string_view relay(std::string_view value) { return value; }
 int inspect(std::string_view value) {
   if (value.size() != uint64_t(4) || value[1] != '\0' || value[3] != 'c') { return 1; }
@@ -2391,7 +2391,7 @@ int main() {
 // keeps its conservative loan without borrowed state.
 void testDependentTextCallBorrowedState() {
   const auto result = analyzeText(R"gti(
-#include <std/string>
+import std.string;
 std::string_view relay(std::string_view value) { return value; }
 c_string crelay(c_string value) { return value; }
 std::string_view forward(std::string_view s) { return relay(s); }
@@ -2489,7 +2489,7 @@ int main() {
 // loans: escaping one reports GTI-S2045 and mutating its owner GTI-S2017.
 void testFormalTextFieldRelays() {
   const std::string declarations = R"gti(
-#include <std/string>
+import std.string;
 std::string_view relay(std::string_view value) { return value; }
 class Label {
 public:
@@ -2578,8 +2578,8 @@ int main() {
 // keep no argument's owner borrowed.
 void testInvocationPointerTextTargets() {
   const auto accepted = analyzeText(R"gti(
-#include <std/functional>
-#include <std/string>
+import std.functional;
+import std.string;
 std::string_view tag(std::string_view s) {
   if (s.empty()) { return "empty"; }
   return "full";
@@ -2626,7 +2626,7 @@ int main() {
         Case{"c_string target(c_string native) { return native; }\n",
              "c_string(c_string)", "native", "c_string"}}) {
     const std::string source =
-        "#include <std/functional>\n#include <std/string>\n" +
+        "import std.functional;\nimport std.string;\n" +
         std::string(target.declarations) +
         "int main() {\n  std::function_ptr<" + std::string(target.signature) +
         "> pointer{target};\n  return 0;\n}\n";
@@ -2670,7 +2670,7 @@ int main() {
 // ownerless text there, at every construction and through a function that
 // forwards to it; MIR derives that requirement independently.
 const std::string kInheritedTextFields = R"gti(
-#include <std/string>
+import std.string;
 class Base {
 public:
   std::string_view text;

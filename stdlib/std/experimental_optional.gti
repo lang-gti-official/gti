@@ -1,0 +1,3 @@
+// Mechanical compatibility facade; public/internal surface is reviewed in phase 2.
+export module experimental_optional;
+export import "experimental/optional.gti";

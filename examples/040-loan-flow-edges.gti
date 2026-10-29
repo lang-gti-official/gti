@@ -1,5 +1,4 @@
-#include <std/string>
-
+import std.string;
 int main() {
   mut std::string selected = std::string("gti");
   mut auto selected_iterator = selected.begin();

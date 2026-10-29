@@ -1,6 +1,6 @@
-#include <std/optional>
-#include <std/string>
-#include <std/vector>
+import std.optional;
+import std.string;
+import std.vector;
 
 // A payload enum whose alternatives own cleanup is replaced through the
 // complete referent of a checked mutable reference: a member call's reference

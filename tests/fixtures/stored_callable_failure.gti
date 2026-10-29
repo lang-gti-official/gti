@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/vector>
-#include <std/memory>
+import std.string;
+import std.vector;
+import std.memory;
 
 class Token {
   int identity;

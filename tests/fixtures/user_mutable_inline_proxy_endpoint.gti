@@ -1,6 +1,6 @@
-#include <std/panic>
-#include <std/vector>
-#include <std/string>
+import std.panic;
+import std.vector;
+import std.string;
 
 extern "C" { void user_dual_range_event(int identity); }
 

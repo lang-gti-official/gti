@@ -1,7 +1,7 @@
 // A reflected access keeps the evaluation of the expression producing its
 // metaobject receiver (GitHub #4): the call runs exactly once, before the
 // owner, for both `get` and `get_mut`, at every optimization level.
-#include <std/meta>
+import std.meta;
 
 mut int32_t observations = int32_t(0);
 

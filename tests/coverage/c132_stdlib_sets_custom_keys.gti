@@ -2,12 +2,12 @@
 // totally-ordered Version in std::set (default std::less), bounds traversal,
 // a std::hash<Coord> specialization driving unordered_set/unordered_map with
 // the default equal_to, and a reversed std::greater<std::string> set.
-#include <std/set>
-#include <std/unordered_set>
-#include <std/unordered_map>
-#include <std/functional>
-#include <std/string>
-#include <std/vector>
+import std.set;
+import std.unordered_set;
+import std.unordered_map;
+import std.functional;
+import std.string;
+import std.vector;
 
 class Version {
 public:

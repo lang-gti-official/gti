@@ -6,9 +6,9 @@
 // closure relocates every capture, and the closure's cleanup ends its
 // captures in reverse declaration order, once each. Destructors record
 // explicit IDs.
-#include <std/string>
-#include <std/memory>
-#include <std/utility>
+import std.string;
+import std.memory;
+import std.utility;
 
 mut int events = 0;
 mut int expected_cleanup = 0;

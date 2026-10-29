@@ -1,6 +1,6 @@
 // INVALID: a text view of a map key must not outlive the map.
-#include <std/map>
-#include <std/string>
+import std.map;
+import std.string;
 std::string_view first_key() {
   mut std::map<std::string, int> table{};
   [[discard]] table.insert(std::string("k"), 1);

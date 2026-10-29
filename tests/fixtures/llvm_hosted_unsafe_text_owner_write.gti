@@ -1,5 +1,5 @@
-#include <std/string_view>
-#include <std/memory>
+import std.string_view;
+import std.memory;
 unsafe std::string_view select_text(int& first, int& second, const char* bytes) {
   unsafe { return std::assume_string_view(bytes, std::size_t(3), second); }
 }

@@ -1,7 +1,7 @@
 // `constexpr for` is general: any class whose generic arguments are one type
 // pack is a sequence, elements may be plain types, loops nest, zero elements
 // expand to nothing, and each copy's locals are its own.
-#include <std/meta>
+import std.meta;
 
 struct Pair<A, B> {
   A first;

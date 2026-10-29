@@ -90,7 +90,7 @@ void run() {
        {"void f() { int32_t x = cl|; }", "void f() { f(cl|); }",
         "void f() { this.cl|; }", "namespace n {} void f() { n::cl|; }",
         "// cl|", "/* cl| */", "/* cl|", "\"cl|\"", "\"cl|",
-        "void f() { char c = 'c|'; }", "#include <cl|>",
+        "void f() { char c = 'c|'; }", "import cl|;",
         "#if defined(NEVER)\ncl|\n#endif\n",
         "#if target.os == \"never\"\ncl|\n#endif\n"}) {
     const auto result = query(source);

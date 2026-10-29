@@ -5,8 +5,8 @@
 // nested call, the argument's construction or that later argument may fail;
 // each live local and each prepared argument is destroyed exactly once. An
 // owning argument of the outer call itself may be built from a text view.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 class Tracked {
   int32_t identity;

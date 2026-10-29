@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/mutex>
-#include <std/thread>
+import std.memory;
+import std.mutex;
+import std.thread;
 
 // The worker's task closure holds the last shared owner of a mutex. Its
 // payload destructor fails while the task is cleaned on the worker; join

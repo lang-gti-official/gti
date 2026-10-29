@@ -1,7 +1,7 @@
-#include <std/optional>
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.optional;
+import std.string;
+import std.utility;
+import std.vector;
 
 expected<std::optional<std::vector<std::string>>, std::string> load(bool fail) {
   if (fail) { return unexpected(std::string("unavailable")); }

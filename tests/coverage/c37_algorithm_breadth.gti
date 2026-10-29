@@ -1,6 +1,6 @@
 // Iterator-range algorithms driven by lambdas.
-#include <std/vector>
-#include <std/algorithm>
+import std.vector;
+import std.algorithm;
 
 int main() {
   mut std::vector<int32_t> v = std::vector<int32_t>();

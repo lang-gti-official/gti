@@ -1,4 +1,4 @@
-#include <std/thread>
+import std.thread;
 
 // Result-bearing handles that never start a worker. The program has no task
 // adapter, so join, automatic join and transfer of an empty handle are

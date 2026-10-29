@@ -2,10 +2,10 @@
 // (ftw's callback). The callback boundary is a terminating containment
 // boundary: the callback's own live owners are cleaned, the report names the
 // GTI detector site, and the process exits 70 without returning through C.
-#include <std/filesystem>
-#include <std/string>
-#include <std/vector>
-#include <std/panic>
+import std.filesystem;
+import std.string;
+import std.vector;
+import std.panic;
 
 [[c_opaque]] struct FileStat;
 using Visitor = (c_string, const FileStat*, int32_t) -> int32_t;

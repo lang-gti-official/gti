@@ -1,4 +1,4 @@
-#include <std/atomic>
+import std.atomic;
 
 extern "C" {
   void gti_scoped_alloc_reset();

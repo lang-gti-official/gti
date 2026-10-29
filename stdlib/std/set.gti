@@ -1,8 +1,9 @@
-#include <std/map>
-#include <std/functional>
-#include <std/utility>
+export module set;
 
-namespace std {
+import std.map;
+import std.functional;
+import std.utility;
+export namespace std {
 namespace detail {
 /// Projects immutable keys while preserving the underlying iterator's loan.
 class set_key_iterator<K, uint64_t Reverse = 0> {

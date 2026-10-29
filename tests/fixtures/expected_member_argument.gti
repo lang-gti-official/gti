@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // The result is transferred to an unrelated source-defined member, not just
 // to a compiler-known or standard-library consumer. The receiver is borrowed

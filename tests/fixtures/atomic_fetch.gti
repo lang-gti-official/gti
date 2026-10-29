@@ -1,4 +1,4 @@
-#include <std/atomic>
+import std.atomic;
 
 void verify(mut int32_t& failures, std::atomic<int32_t>& value,
             int32_t prior, int32_t expected_prior, int32_t expected_value) {

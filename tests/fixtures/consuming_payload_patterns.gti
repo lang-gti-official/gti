@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/vector>
-#include <std/panic>
+import std.string;
+import std.vector;
+import std.panic;
 
 // Consuming payload-enum matches. A switch over a prvalue or an explicit
 // std::move consumes its enum: by-value bindings take their fields by move,

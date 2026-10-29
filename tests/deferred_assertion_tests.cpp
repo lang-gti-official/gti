@@ -33,8 +33,8 @@ analyze(std::string_view source, lang::ConfigurationFlags flags = {},
 
 void positive() {
   auto result = analyze(R"(
-#include <std/assert>
-#include <std/string>
+import std.assert;
+import std.string;
 struct Value { int number = 7;  public: Value() = default; };
 namespace policy { constexpr bool enabled = false; }
 int impossible() { std::assert(false); }
@@ -101,7 +101,7 @@ int main() {
 void disabledTypeChecks() {
   for (bool disabled : {false, true}) {
     auto result = analyze(R"(
-#include <std/assert>
+import std.assert;
 struct Unknown { int number = 7; };
 int main() { std::debug_assert(true, "{}", Unknown{}); return 0; }
 )",
@@ -187,7 +187,7 @@ int main() { return ordinary() + selected<0>() + selected<1>() - 1; }
 
 void typedMacroSyntax() {
   auto result = analyze(R"(
-#include <std/assert>
+import std.assert;
 namespace application {
   void accept(int number) { std::assert(number == 7); }
   void accept(bool condition) { std::assert(condition); }
@@ -301,8 +301,8 @@ void migrationAndOverloadDiagnostics() {
 
 void localBindingsAndLoops() {
   auto result = analyze(R"(
-#include <std/assert>
-#include <std/string>
+import std.assert;
+import std.string;
 namespace library {
   struct Item { int code = 1;  public: Item() = default; };
   #macro once(bool enabled, int expression) {
@@ -392,7 +392,7 @@ int main() { return application::run(); }
 
 void feasibleLifecycleSources() {
   const auto result = analyze(R"(
-#include <std/string>
+import std.string;
 struct Owned {
   std::string text;
   Owned() : text(std::string("owned")) {}
@@ -602,7 +602,7 @@ int main() { return (helper(true), 0); }
 )",
            "GTI-S2124", "complete expression statement");
   negative(R"(
-#include <std/assert>
+import std.assert;
 int main() { std::debug_assert(1); return 0; }
 )",
            "GTI-S2012", "exactly matches");
@@ -623,14 +623,14 @@ int main() { helper(); return 0; }
 )",
            "GTI-S2124", "resource limit");
   negative(R"(
-#include <std/string>
+import std.string;
 void consume(std::string value) {}
 #macro twice(std::string value) { consume(value); consume(value); }
 int main() { std::string owner{"owned"}; twice(std::move(owner)); return 0; }
 )",
            "GTI-S2018", "moved");
   negative(R"(
-#include <std/string>
+import std.string;
 void consume(std::string value) {}
 #macro twice(std::string expression) {
   std::string owned = expression;
@@ -641,7 +641,7 @@ int main() { twice(std::string("owned")); return 0; }
 )",
            "GTI-S2018", "moved");
   negative(R"(
-#include <std/string>
+import std.string;
 void consume(std::string value) {}
 #macro invalid() {
   std::string owned{"owned"};
@@ -653,7 +653,7 @@ int main() { invalid(); return 0; }
 )",
            "GTI-S2017", "borrow");
   negative(R"(
-#include <std/string>
+import std.string;
 #macro escape(std::string_view destination) {
   std::string local{"owned"};
   destination = local.view();
@@ -666,7 +666,7 @@ int main() {
 )",
            "GTI-S2045", "cannot be assigned");
   negative(R"(
-#include <std/string>
+import std.string;
 void consume(std::string value) {}
 #macro loop(std::string expression) {
   for (mut int i = 0; i < 2; ++i) { consume(expression); }
@@ -689,7 +689,7 @@ int main() {
            "int main() { outer(); return 0; }",
            "GTI-S2099", "within that macro");
   negative(R"(
-#include <std/string>
+import std.string;
 void consume(std::string value) {}
 #macro choose(bool enabled, std::string value) {
   if (enabled) { consume(value); }

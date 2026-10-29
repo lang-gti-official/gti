@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 int invoke<F>(F& callback, int argument) {
   int result = callback(argument);

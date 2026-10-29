@@ -3,8 +3,8 @@
 // class-scoped alias, instantiated for int32_t and double; generic algorithms
 // constrained by std::addable / std::vector_space applied to it; alias of a
 // specialization used to qualify the class-scoped alias.
-#include <std/format>
-#include <std/vector>
+import std.format;
+import std.vector;
 
 class Vec2<std::numeric T> {
 public:

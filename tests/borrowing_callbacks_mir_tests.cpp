@@ -328,7 +328,7 @@ bool namedRestorationReturnTests() {
         {standardLibraryRoot()});
   };
   const auto analyzed = application("named-restoration-return-proof.gti", R"gti(
-#include <std/memory>
+import std.memory;
 struct Reader {
   int& value;
   Reader(int& source) : value(source) {}
@@ -474,7 +474,7 @@ int main() {
   for (const auto &[name, source] :
        std::vector<std::pair<std::string, std::string>>{
            {"restoration-local-owner", R"gti(
-#include <std/memory>
+import std.memory;
 struct Reader { int& value; Reader(int& source) : value(source) {} };
 Reader& bad(int& source) {
   Reader local{source};
@@ -484,7 +484,7 @@ Reader& bad(int& source) {
 int main() { return 0; }
 )gti"},
            {"restoration-access-upgrade", R"gti(
-#include <std/memory>
+import std.memory;
 struct Reader { int& value; Reader(int& source) : value(source) {} };
 unsafe mut Reader& bad(std::erased_object& object) {
   unsafe { Reader& restored = std::restore_ref<Reader>(object); return restored; }
@@ -536,8 +536,8 @@ int main(int argc, char **argv) {
         {standardLibraryRoot()});
   };
   const auto erased = application("erased-user-wrapper-mir.gti", R"gti(
-#include <std/memory>
-#include <std/functional>
+import std.memory;
+import std.functional;
 class Inspection {
   std::erased_object& object;
 public:

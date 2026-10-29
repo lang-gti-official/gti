@@ -61,8 +61,8 @@ def main():
         shutil.copy2(helper, stdlib / "std/prefix_constructor_test.gti")
         source = root / fixture.name
         source.write_text(fixture.read_text().replace(
-            '#include "prefix_constructor_test.gti"',
-            '#include <std/prefix_constructor_test>'))
+            'import "prefix_constructor_test.gti";',
+            'import std.prefix_constructor_test;'))
         environment = dict(os.environ, GTI_STDLIB_PATH=str(stdlib))
         for mode, flags, native in modes:
             binary = root / mode

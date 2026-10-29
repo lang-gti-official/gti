@@ -1,8 +1,8 @@
 // @coverage-profile: concurrent
-#include <std/algorithm>
-#include <std/functional>
-#include <std/thread>
-#include <std/vector>
+import std.algorithm;
+import std.functional;
+import std.thread;
+import std.vector;
 
 namespace tasks {
 bool positive(int32_t& value) { return value > 0; }

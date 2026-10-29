@@ -1,6 +1,6 @@
-#include <std/resource_vector>
-#include <std/resource>
-#include <std/memory>
+import std.resource_vector;
+import std.resource;
+import std.memory;
 
 // Several owners lease from one resource binding inside a single class.
 class Inventory {

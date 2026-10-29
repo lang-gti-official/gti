@@ -4,8 +4,8 @@
 // dereference, and a c_string it never inspects. Callbacks capture no state,
 // so they communicate through globals. A nonzero callback result stops the
 // walk and is returned by ftw.
-#include <std/filesystem>
-#include <std/string>
+import std.filesystem;
+import std.string;
 
 [[c_opaque]] struct FileStat;
 using Visitor = (c_string, const FileStat*, int32_t) -> int32_t;

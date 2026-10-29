@@ -1,9 +1,9 @@
-#include <std/vector>
-#include <std/string>
-#include <std/span>
-#include <std/forward_list>
-#include <std/filesystem>
-#include <std/memory>
+import std.vector;
+import std.string;
+import std.span;
+import std.forward_list;
+import std.filesystem;
+import std.memory;
 
 extern "C" {
 void swap_observe_allocations();

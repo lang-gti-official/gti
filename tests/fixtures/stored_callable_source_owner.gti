@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/string>
-#include <std/functional>
+import std.memory;
+import std.string;
+import std.functional;
 
 // The pointer aliases this owner's heap allocation, never a caller's storage.
 // Moving transfers that allocation without changing its address; cleanup of

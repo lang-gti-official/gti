@@ -3,7 +3,7 @@
 // assertion (also one in a destructor) may reflect on its own instance or on
 // one that reflects back, and instances reached by constant evaluation or a
 // global initializer are checked in their isolated workers.
-#include <std/meta>
+import std.meta;
 
 class Box<T> {
   static_assert(!std::meta::type<T>().is_void(), "no void");

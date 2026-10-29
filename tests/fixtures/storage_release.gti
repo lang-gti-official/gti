@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/panic>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.panic;
+import std.string;
+import std.vector;
 
 // An ordinary owning class, not a C-layout record or a primitive. Allocation
 // derives its layout from the exact T and never asks application code for a

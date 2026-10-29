@@ -1,7 +1,7 @@
 // Unique and shared owners hold mutex-bearing values in their allocation;
 // the mutex keeps its native identity there and is destroyed with the owner.
-#include <std/memory>
-#include <std/mutex>
+import std.memory;
+import std.mutex;
 class Account {
 public:
   mut std::mutex<int32_t> balance;

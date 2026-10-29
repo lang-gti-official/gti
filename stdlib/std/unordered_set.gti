@@ -1,8 +1,9 @@
-#include <std/unordered_map>
-#include <std/functional>
-#include <std/utility>
+export module unordered_set;
 
-namespace std {
+import std.unordered_map;
+import std.functional;
+import std.utility;
+export namespace std {
 namespace detail {
 class unordered_set_key_iterator<K> {
   mut unordered_map_iterator<K, bool> cursor;

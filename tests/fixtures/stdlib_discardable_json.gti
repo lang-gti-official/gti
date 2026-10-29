@@ -1,7 +1,7 @@
-#include <std/json>
-#include <std/optional>
-#include <std/map>
-#include <std/string>
+import std.json;
+import std.optional;
+import std.map;
+import std.string;
 
 int main() {
   auto optional = std::json::decode<std::optional<int>>("7");

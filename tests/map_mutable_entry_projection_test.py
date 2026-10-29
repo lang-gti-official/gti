@@ -18,7 +18,7 @@ def run(command):
 
 
 def reject_invalid(compiler, fixtures, directory):
-    includes = "#include <std/map>\n#include <std/unordered_map>\n#include <std/string>\n#include <std/utility>\n"
+    includes = "import std.map;\nimport std.unordered_map;\nimport std.string;\nimport std.utility;\n"
     cases = {}
     for kind in ("map", "unordered_map"):
         setup = f"mut std::{kind}<int,int> values{{}}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();\n"

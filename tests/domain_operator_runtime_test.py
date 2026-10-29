@@ -18,7 +18,7 @@ def fail(process: subprocess.CompletedProcess[str]) -> int:
 
 
 SOURCE = """\
-#include <std/numeric>
+import std.numeric;
 
 class vec3 {
 public:

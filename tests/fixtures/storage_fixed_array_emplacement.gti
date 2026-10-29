@@ -1,6 +1,6 @@
 // Issue 84: exact fixed-array values retain their type through forwarding packs.
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 
 class ArrayHolder {
   int32_t values[3];

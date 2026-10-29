@@ -1,6 +1,7 @@
-#include <std/numeric>
+export module charconv;
 
-namespace gti_internal {
+import std.numeric;
+export namespace gti_internal {
 namespace runtime {
 extern "C" {
 uint32_t gti_rt_parse_f32_v1(text_view input, uint64_t offset, uint32_t format,
@@ -11,7 +12,7 @@ uint32_t gti_rt_parse_f64_v1(text_view input, uint64_t offset, uint32_t format,
 }
 }
 
-namespace std {
+export namespace std {
 enum class parse_errc {
   none,
   invalid_argument,

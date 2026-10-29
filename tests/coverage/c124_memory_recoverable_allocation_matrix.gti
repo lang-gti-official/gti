@@ -3,8 +3,8 @@
 // overflow and exhaustion as expected errors; zero-capacity storage needs no
 // host allocation and supports zero-count relocation; requested over-alignment
 // and layout queries are consistent; full arena/pool are recoverable too.
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 struct Wide { mut int64_t a = 0; mut int64_t b = 0; mut int64_t c = 0;  public: Wide() = default; };
 

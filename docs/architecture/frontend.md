@@ -26,45 +26,38 @@ matching `SourceManager` buffer instead of reconstructing source from AST names.
 ## Source Loading
 
 `SourceLoader` is declared in `include/gti/source_loader.h`; its canonical path,
-include-resolution, cycle, provenance, package, graph-recursion, and
+import-resolution, cycle, provenance, package, graph-recursion, and
 source-manager algorithms are compiled into `gti_compiler` from
 `src/compiler/source_loader.cpp`. The private `LoadedLexicalUnitLoader` owns
 one unit's file/overlay byte acquisition, stable digest, lexical cache lookup
 and publication, completion lexing, tokens, and exact lexical diagnostics. It
-has no include or graph authority. The private incremental
+has no import or graph authority. The private incremental
 `ConfigurationDirectiveProcessor` owns conditional frames, target/flag
 selection, `#define`/`#undef`, inactive spans, configuration tokens, and their
 existing diagnostics.
 `SourceGraph` traversal/mutation and `SourceManager` location work compile in
 `src/compiler/source_graph.cpp` and `src/compiler/diagnostic.cpp`. The loader
-canonicalizes source identity, lexes each unit, resolves `#include` directives,
-resolves target/configuration conditions in source order, and builds
-`SourceGraph`. `SourceLoader` advances the directive processor one lexical
-step at a time and may recurse for an include between steps. This preserves
-the existing compilation-wide flag ordering without giving the processor
-include resolution or graph ownership. The initial valueless flag set comes
-from `FrontendOptions`.
-Active `#define`/`#undef` directives update that set and are removed before
-parsing; they never substitute tokens. A definition before an include enters
-that unit, and active definitions made there remain visible when loading
-resumes. Definitions in an inactive branch do not leak. The loader records the
-source-ordered value on each `defined(NAME)` flag token while retaining every
-branch for the parser; semantic selection still owns target comparisons and
-boolean composition.
-Quoted paths are relative GTI files; `<std/name>` resolves only beneath the
-configured GTI standard-library roots. When the driver supplies an immutable
-package graph, `<alias/name>` resolves only through the including package's
-direct dependency aliases and declared source root. These package units retain
-stable package identity/path provenance but remain ordinary untrusted GTI
-source. A quoted include cannot cross an owning package boundary. Direct mode
-does not discover manifests or synthesize package roots. Includes are
-load-once dependency edges, not textual substitution. The implicit prelude is
-an edge to every ordinary unit.
-Successful source-written include edges also retain the exact path spelling and
-that directive's zero-based lexical occurrence. Those facts are not another
-resolution mechanism: the failure-metadata builder uses them only to derive a
-deterministic, host-path-free identity for a source outside the artifact's
-logical root.
+canonicalizes source identity, lexes each unit, rejects GTI `#include` with
+`GTI-I0014`, resolves imports and target/configuration conditions in source
+order, and builds `SourceGraph`. Rejected include directives do not load their
+target. `SourceLoader` advances the directive processor one lexical step at a
+time, retaining graph ownership. The initial valueless flag set comes from
+`FrontendOptions`; active source-local `#define`/`#undef` directives update it
+and are removed before parsing, without substituting tokens. Imported modules
+start from compiler-supplied flags and restore the importer's flag state on
+return. Definitions in an inactive branch do not leak. The loader records the
+source-ordered value on each `defined(NAME)` token while retaining every branch
+for the parser; semantic selection owns target comparisons and composition.
+
+Quoted imports select relative GTI interfaces within the owning package.
+Named package imports resolve only through the driver's immutable package graph
+and direct dependency aliases. Package units retain stable identity and path
+provenance but remain ordinary untrusted GTI source. Direct mode does not
+discover manifests or synthesize package roots. Imports are load-once edges,
+not textual substitution. The implicit prelude is an edge to every ordinary
+unit. Source-written dependency edges retain their exact spelling and lexical
+occurrence for deterministic, host-path-free failure metadata; these facts do
+not provide an alternative resolution mechanism.
 
 Ordinary `Frontend::analyze()` in `src/compiler/frontend.cpp` performs this load
 itself. The compiled driver also exposes `loadCompilationInputs` for
@@ -73,7 +66,7 @@ uses `SourceLoader`, retains the resulting `SourceGraph`, `SourceManager`, and
 source diagnostics as one snapshot, and either hashes that snapshot for a
 verified cache hit or moves it into `Frontend::analyzeLoaded` on a miss. The
 loaded entry point resumes the same parser/semantic/HIR/MIR pipeline; it is not
-a second include resolver or frontend representation.
+a second import resolver or frontend representation.
 
 Source files are opened in binary mode. Before tokenization, the lexer validates
 the complete source as strict UTF-8 and rejects a lone CR; this makes file,
@@ -91,8 +84,9 @@ Each `SourceUnit` retains its path, stable exact-source digest, logical import
 where applicable, tokens, token-granular inactive spans for editor
 presentation, dependency edges, and final declaration range in the combined
 transitional `Program`. Semantic
-visibility uses the graph: a unit sees itself, direct includes, and the
-prelude, not arbitrary declarations in the combined AST.
+visibility uses the graph: a unit sees itself, the exported surface of its
+imports and explicit re-exports, and the prelude, not arbitrary declarations in
+the combined AST.
 
 Explicit `export module name;` interfaces additionally retain their module
 declaration token. The loader consumes the header and resolves unconditional
@@ -105,30 +99,20 @@ imports only through supplied `PackageSourceRoot::modules` registrations and
 direct dependency aliases; quoted imports use the same canonical path and
 package-containment authority. The name `std` is reserved for the configured
 standard library in both direct and project compilation: `import std.name;`
-selects `<root>/modules/name.gti` beneath a standard-library root, a fixed
+selects `<root>/std/name.gti` beneath a standard-library root, a fixed
 layout rather than a search, and the loaded interface has the
-`StandardLibrary` role and the logical name `modules/name`. Its module name
+`StandardLibrary` role and the logical name `std/name`. Its module name
 does not collide with an application interface of the same name. The bare
 `import std;` selects `<root>/std.gti`, an ordinary interface re-exporting the
 portable public units. POSIX-only environment/process/TCP and experimental
 units remain explicit. Both paths retain canonical identity and module-header
 validation; neither searches arbitrary application files.
-Includes cannot load an interface and imports cannot load a legacy unit. An
-interface's `export #include` resolves exactly as an include, then records an
-`ExportInclude` edge that republishes that one legacy unit to importers. An imported interface starts from compiler-supplied
-configuration flags and restores the importer's flag state on return. Each
-legacy include runs once per module configuration domain. On reuse in a new
-domain, the loader processes the retained source snapshot through the same
-directive processor, including nested includes, while retaining one canonical
-source identity and dependency edge set. Repeated inclusion in that domain
-does not reapply flag mutations. The replay may start from different incoming
-flags; a unit that never observes the difference is shared. Replay that
-selects different syntax, in the unit or any nested include, is diagnosed
-rather than silently selecting the first module's context. Comparing incoming
-flags could not decide this anyway: equal flags do not prove compatibility
-when nested include history differs, and unequal flags rejected every
-application `#define` that preceded a standard-library include. Parsed and
-lexical cache reuse preserve this check, including unsaved source overlays.
+An import target must declare an explicit module interface. The former
+`ExportInclude` republication and per-module include-configuration replay paths
+are removed. This phase 1 conversion preserves canonical standard declaration
+paths and explicit exports; it does not relax compiler capability trust or
+private symbol visibility. Production module completeness and the library's
+public/internal export boundary remain phase 2 requirements.
 
 The parser retains an optional export token on declarations. Frontend assembly
 collects their exact ranges, including inherited namespace exports in selected
@@ -136,14 +120,13 @@ configuration branches, from the fresh or cached AST. These are syntax requests,
 not a separate symbol catalog.
 Semantic analysis validates export eligibility and publishes each declaration
 and overload through `SourceGraph::isDeclarationVisible`. Ordinary source
-edges remain direct-only; import edges also follow explicit re-export and
-republished-include edges. A republished legacy unit exposes all of its own
-declarations, as an include does, but not its nested includes.
+imports remain non-transitive; explicit re-export edges publish their imported
+surface. There is no legacy unit republication path.
 Definition-site generic context preserves private implementation lookup. A
 public result can retain an inferred private nominal type without exposing its
 name. Tooling consumes resolved semantic scope/occurrence facts rather than
 filtering reachable members by module name. Initialization, failure provenance
-and caches retain the ordered source graph, including all three module edge
+and caches retain the ordered source graph, including import and re-export edge
 kinds.
 HIR/MIR and C++ emission use existing executable contracts; this is not binary
 or separate compilation.
@@ -207,7 +190,7 @@ conservatively estimated storage. Coordinators advance only changed source
 generations; older rows become unreachable and are reclaimed by normal
 eviction. This keeps invalidation explicit without allowing a protocol thread
 to synchronously destroy a large cached tree. Source loading still rebuilds
-the dependency graph and resolves every include and import directive for every
+the dependency graph and resolves every import directive for every
 snapshot, so the cache cannot bypass path, overlay, visibility, or active-branch
 authority.
 
@@ -218,13 +201,12 @@ syntax. The processed form holds:
 
 - the post-directive token stream, shared and immutable;
 - its syntax digest and module declaration;
-- each import and include directive's own tokens plus one token of lookahead,
+- each import directive's own tokens plus one token of lookahead,
   which is all directive resolution reads, and its brace depth.
 
-Loading the unit again, in a later snapshot or in another configuration domain
-of the same load, re-resolves those directives in source order. Their
-dependency edges and diagnostics, such as including a module interface, are
-re-established. The unit's tokens are not copied or rescanned. Without this
+Loading the unit again in a later snapshot re-resolves those directives in
+source order. Their dependency edges and diagnostics, such as an unknown module,
+are re-established. The unit's tokens are not copied or rescanned. Without this
 form, every edit copied and rescanned the token stream of every loaded unit,
 roughly 1.5 million tokens for `import std;`. Units with configuration
 directives keep the full processing path.
@@ -239,7 +221,7 @@ closed rather than silently changing order.
 
 Semantics consumes those facts to build the separate immutable
 `ProgramInitializationPlan`: ordered prelude roots precede the entry walk,
-explicit include edges are followed in lexical dependency-first order with
+explicit import edges are followed in lexical dependency-first order with
 first-visit deduplication, and only declarations in selected compile-time
 branches are admitted in source order. Source-unit IDs, loader worklist order,
 `compilationOrder()`, and the combined declaration vector are therefore not
@@ -259,8 +241,8 @@ a dedicated token because the parser accepts it only in special-member policy.
 Identifier uses of either form receive `GTI-P0002` before semantic analysis or
 native C++ emission. `sizeof` and `alignof` have dedicated reserved token kinds
 and are classified as word operators, not ordinary identifiers or declaration
-keywords. Source loading still recognizes reserved spellings as components of
-`<std/...>` paths because those components are not identifiers.
+keywords. Source loading validates module import components independently
+from ordinary declaration identifiers.
 
 Decimal scanning retains an exact GTI-owned `BinaryFloat`: unsuffixed
 spellings select binary32 and `d`/`D` selects binary64. The compiled lexer
@@ -453,7 +435,7 @@ reanalysis) has finished rather than deep-copied.
 
 ## Boundaries
 
-- Change include behavior in `SourceLoader`/`SourceGraph`, not the parser or
+- Change source dependency behavior in `SourceLoader`/`SourceGraph`, not the parser or
   emitter.
 - Change grammar and recovery in `Parser`/AST, not semantic lookup.
 - Preserve source-unit identity and half-open byte spans for downstream

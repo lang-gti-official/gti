@@ -66,7 +66,7 @@ std::size_t countCode(const lang::FrontendResult &result,
                     }));
 }
 
-const std::string kPlayer = R"(#include <std/meta>
+const std::string kPlayer = R"(import std.meta;
 struct Player {
   uint32_t health = 100;
   float speed = 1.5;
@@ -117,7 +117,7 @@ int main() {
 
   // Every copy keeps its own locals; a reflection-free sequence works too.
   const auto locals = analyzeSource(root, directory, "locals.gti",
-                                    R"(#include <std/meta>
+                                    R"(import std.meta;
 int main() {
   mut uint64_t total = 0;
   constexpr for (auto element : std::meta::list<int32_t, bool>()) {
@@ -135,7 +135,7 @@ int main() {
 
   // Reflected access keeps the field's own mutability and access rules.
   const auto mutation = analyzeSource(root, directory, "mutation.gti",
-                                      R"(#include <std/meta>
+                                      R"(import std.meta;
 struct Counter { mut { uint32_t hits = 0; }  public: Counter() = default; };
 int main() {
   mut Counter counter = {.hits = uint32_t(1)};
@@ -152,7 +152,7 @@ int main() {
   expect(!hasCode(mutation, "GTI-S2007"), "writable field access is accepted");
 
   const auto privateAccess = analyzeSource(root, directory, "private.gti",
-                                           R"(#include <std/meta>
+                                           R"(import std.meta;
 class Secret {
   uint32_t hidden = 1;
 public:
@@ -224,7 +224,7 @@ void checkDiagnostics(const std::filesystem::path &root,
                  std::string::npos,
          "a diagnostic from a copy names its element");
 
-  std::string many = "#include <std/meta>\nint main() {\n  constexpr for (auto "
+  std::string many = "import std.meta;\nint main() {\n  constexpr for (auto "
                      "x : std::meta::list<";
   for (int count = 0; count < 1025; ++count) {
     many += count == 0 ? "int32_t" : ", int32_t";
@@ -243,7 +243,7 @@ int main() { return 0; }
 }
 
 void checkFormatter() {
-  const std::string source = R"(#include <std/meta>
+  const std::string source = R"(import std.meta;
 
 int main() {
   constexpr for (auto field : std::meta::fields_of<int>()) {
@@ -258,7 +258,7 @@ int main() {
   expect(formatter.format(formatted) == formatted, "formatting is idempotent");
 }
 
-const std::string kAttributes = R"(#include <std/meta>
+const std::string kAttributes = R"(import std.meta;
 namespace tags {
 [[attribute]] struct key { std::string_view name = "";  public: key() = default; };
 [[attribute]] struct skip { public: skip() = default; };
@@ -330,7 +330,7 @@ int main() {
   expect(hasCode(invalid, "GTI-S2116"),
          "reading an attribute the field does not apply is rejected");
   const auto payload = analyzeSource(root, directory, "attributes_payload.gti",
-                                     R"(#include <std/meta>
+                                     R"(import std.meta;
 enum class data { empty, boxed(int32_t item) };
 int main() {
   constexpr for (auto alt : std::meta::alternatives_of<data>()) {
@@ -367,7 +367,7 @@ int main() { return 0; }
          "are rejected");
 
   // Private fields: inaccessible through reflection unless the owner opts in.
-  const std::string accounts = R"(#include <std/meta>
+  const std::string accounts = R"(import std.meta;
 class Closed {
 public:
   int shown = 1;
@@ -479,7 +479,7 @@ void checkTypeFacts(const std::filesystem::path &root,
     }
   }
 
-  const std::string malformed = R"(#include <std/meta>
+  const std::string malformed = R"(import std.meta;
 int main() {
   auto invalid = gti_internal::meta_type_relation<int32_t, int32_t, 99>();
   return 0;
@@ -509,7 +509,7 @@ int main() {
   }
 
   const auto forwarded = analyzeSource(
-      root, directory, "predicate-fact-forwarding.gti", R"(#include <std/meta>
+      root, directory, "predicate-fact-forwarding.gti", R"(import std.meta;
 namespace queries {
   namespace reflected = std::meta;
   using Boolean = bool;
@@ -610,7 +610,7 @@ int main() { relay<MoveOnly>(); return 0; }
 
   const auto outerShape =
       analyzeSource(root, directory, "reflection-known-outer-shape.gti", R"(
-#include <std/meta>
+import std.meta;
 struct Envelope<T> { T value; };
 class Opaque<T> { public: Opaque() = default; };
 constexpr int32_t classify<T>() {
@@ -650,7 +650,7 @@ void checkPhase3(const std::filesystem::path &root,
   // GitHub #5: the owner argument must be the described type (or derive
   // from it); a same-named field of another type is rejected.
   const auto owner =
-      analyzeSource(root, directory, "wrong_owner.gti", R"(#include <std/meta>
+      analyzeSource(root, directory, "wrong_owner.gti", R"(import std.meta;
 struct First { int32_t payload = int32_t(1);  public: First() = default; };
 struct Second { double payload = 2.0d;  public: Second() = default; };
 class Base { public: int32_t payload = int32_t(3);  public: Base() = default; };
@@ -671,7 +671,7 @@ int main() {
   // GitHub #4: a receiver with effects is kept (semantics accepts it; the
   // runtime fixture proves the evaluation order).
   const auto receiver =
-      analyzeSource(root, directory, "receiver.gti", R"(#include <std/meta>
+      analyzeSource(root, directory, "receiver.gti", R"(import std.meta;
 mut int32_t observations = int32_t(0);
 struct Owner { mut { int32_t payload = int32_t(7); }  public: Owner() = default; };
 std::meta::field<Owner, 0> make_field() {
@@ -694,7 +694,7 @@ int main() {
 
   // Structural construction is limited to designated-eligible structs.
   const auto construct =
-      analyzeSource(root, directory, "construct.gti", R"(#include <std/meta>
+      analyzeSource(root, directory, "construct.gti", R"(import std.meta;
 class Guarded {
 public:
   Guarded(int32_t start) : value(start) {}
@@ -728,7 +728,7 @@ int main() {
 
   // Callable metadata: out-of-range indices and the trait selector.
   const auto callables =
-      analyzeSource(root, directory, "callables.gti", R"(#include <std/meta>
+      analyzeSource(root, directory, "callables.gti", R"(import std.meta;
 class Counter {
 public:
   Counter(uint32_t start) : value(start) {}
@@ -747,7 +747,7 @@ int main() {
 
   // Budget hardening: nested expansions over methods and parameters still
   // stop at the per-declaration copy budget with a located diagnostic.
-  std::string wide = "#include <std/meta>\nclass Wide {\npublic:\n";
+  std::string wide = "import std.meta;\nclass Wide {\npublic:\n";
   for (int index = 0; index < 70; ++index) {
     wide += "  void m" + std::to_string(index) + "(";
     for (int parameter = 0; parameter < 70; ++parameter) {
@@ -771,7 +771,7 @@ void checkDefaults(const std::filesystem::path &root,
                    const std::filesystem::path &directory) {
   // `default_value()` needs a declared initializer; `has_default()` tells.
   const auto defaults =
-      analyzeSource(root, directory, "defaults.gti", R"(#include <std/meta>
+      analyzeSource(root, directory, "defaults.gti", R"(import std.meta;
 struct Pair { int32_t first = int32_t(1); int32_t second; };
 int main() {
   static_assert(std::meta::field<Pair, 0>().has_default());
@@ -791,7 +791,7 @@ void checkClassAssertions(const std::filesystem::path &root,
   // and the reflected constants it requires stage through one worker that
   // instance discovery reuses. The driver's Reachable trusted-body mode also
   // wraps each concrete reanalysis in a late-demand probe, so run both modes.
-  const std::string box = R"(#include <std/meta>
+  const std::string box = R"(import std.meta;
 class Box<T> {
   static_assert(!std::meta::type<T>().is_void(), "no void");
   mut T value;
@@ -840,7 +840,7 @@ public:
     // reanalysis owns the assertion, which is not evaluated again there.
     const auto reflective =
         analyzeSource(root, directory, "class-assert-self-" + mode + ".gti",
-                      R"(#include <std/meta>
+                      R"(import std.meta;
 class Node<T> {
   static_assert(std::meta::type<Node<T>>().field_count() == uint64_t(1),
                 "one field");
@@ -886,7 +886,7 @@ int main() {
 
     const auto miscounted = analyzeSource(
         root, directory, "class-assert-self-false-" + mode + ".gti",
-        R"(#include <std/meta>
+        R"(import std.meta;
 class Node<T> {
   static_assert(std::meta::type<Node<T>>().field_count() == uint64_t(2),
                 "two fields");
@@ -907,7 +907,7 @@ int main() { Node<int32_t> node = Node<int32_t>(1); return 0; }
     // instances in isolated workers; their assertions behave the same there.
     const auto staged =
         analyzeSource(root, directory, "class-assert-staged-" + mode + ".gti",
-                      R"(#include <std/meta>
+                      R"(import std.meta;
 class Cell<T> {
   static_assert(!std::meta::type<T>().is_void(), "no void cell");
   T value;
@@ -930,7 +930,7 @@ int main() { return global_cell.get() - 3; }
 
     const auto stagedVoid = analyzeSource(
         root, directory, "class-assert-staged-void-" + mode + ".gti",
-        R"(#include <std/meta>
+        R"(import std.meta;
 class Tag<T> {
   static_assert(!std::meta::type<T>().is_void(), "no void tag");
 public:

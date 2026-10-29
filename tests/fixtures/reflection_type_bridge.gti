@@ -1,4 +1,4 @@
-#include <std/meta>
+import std.meta;
 
 struct Player {
   uint32_t health = 100;

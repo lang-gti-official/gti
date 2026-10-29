@@ -1,6 +1,5 @@
-#include <std/memory>
-#include <std/string>
-
+import std.memory;
+import std.string;
 class Value {
   std::string label;
   int number;

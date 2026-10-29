@@ -1,6 +1,6 @@
 // Interface dispatch through unique_ptr upcast and a polymorphic collection.
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 
 interface Shape {
   int32_t area();

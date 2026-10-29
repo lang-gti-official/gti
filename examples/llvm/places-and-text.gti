@@ -1,7 +1,6 @@
-#include <std/iterator>
-#include <std/memory>
-#include <std/string_view>
-
+import std.iterator;
+import std.memory;
+import std.string_view;
 int sum<Range>(Range& values) requires std::range_of<Range, int> {
   mut int result = 0;
   for (int& element : values) {

@@ -1,7 +1,7 @@
 // Spans over an owner: subspan, first/last, iteration and generic relay.
-#include <std/vector>
-#include <std/span>
-#include <std/memory>
+import std.vector;
+import std.span;
+import std.memory;
 
 int32_t sum_span(std::span<int32_t> view) {
   mut int32_t total = 0;

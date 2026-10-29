@@ -1,7 +1,8 @@
-#include <glad/glad>
-#include <glfw/glfw>
+export module window;
 
-namespace toy3d {
+import glad.glad;
+import glfw.glfw;
+export namespace toy3d {
 class Window {
   mut GLFWwindow* handle = nullptr;
   mut bool glfw_started = false;

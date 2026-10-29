@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/format>
-#include <std/vector>
-#include <std/string>
+import std.memory;
+import std.format;
+import std.vector;
+import std.string;
 
 class Probe {
 public:

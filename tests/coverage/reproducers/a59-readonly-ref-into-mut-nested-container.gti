@@ -3,7 +3,7 @@
 // is active". A read-only reference to an element of a *mutable* nested
 // container, then a read-only reference into that element. The same code
 // with an immutable owner compiles; a by-value read through `row` compiles.
-#include <std/vector>
+import std.vector;
 int main() {
   mut std::vector<std::vector<int>> g{};
   g.push_back(std::vector<int>({1}));

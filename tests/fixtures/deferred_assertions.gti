@@ -1,6 +1,6 @@
-#include <std/assert>
-#include <std/string>
-#include <std/source_location>
+import std.assert;
+import std.string;
+import std.source_location;
 
 struct Observations {
   static mut int conditions = 0;

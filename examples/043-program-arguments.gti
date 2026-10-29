@@ -1,6 +1,5 @@
-#include <std/string>
-#include <std/vector>
-
+import std.string;
+import std.vector;
 // Hosted command-line arguments are copied into GTI-owned strings before the
 // user entry body begins. argv[0] is the executable name when the host supplies
 // one, matching the conventional hosted main contract.

@@ -73,7 +73,7 @@ int main() {{
         root = pathlib.Path(directory)
         for name, (header, body, code) in cases.items():
             source = root / f"{name}.gti"
-            source.write_text(f"#include <std/{header}>\n" + body)
+            source.write_text(f"import std.{header};\n" + body)
             result = subprocess.run([str(compiler), str(source), "--emit-mir", "-o", str(root / "out.mir")],
                                     capture_output=True, text=True, timeout=60)
             assert result.returncode == 65 and f"error[{code}]" in result.stderr, (name, result.stderr)

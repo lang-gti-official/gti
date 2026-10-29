@@ -11,7 +11,7 @@ import tempfile
 def package(root, name, target, message):
     root.mkdir(parents=True)
     (root / "main.gti").write_text(
-        "#include <std/string>\n"
+        "import std.string;\n"
         f'int main() {{ std::println("{message}"); return 0; }}\n')
     (root / "check.gti").write_text("int main() { return 0; }\n")
     (root / "gti.toml").write_text(
@@ -68,7 +68,7 @@ def main():
         # Reinstalling the same package replaces it without --force; the PATH
         # note disappears once the directory is searched.
         (tool / "main.gti").write_text(
-            '#include <std/string>\nint main() { std::println("tool-v2"); return 0; }\n')
+            'import std.string;\nint main() { std::println("tool-v2"); return 0; }\n')
         replaced = run(["install", "--progress=never"],
                        extra={"PATH": f"{default_bin}:{search_path}"})
         assert replaced.stdout.startswith("Replaced tool [release, "), replaced.stdout

@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // A non-consuming virtual member called on a fresh temporary borrows that
 // temporary exactly as a non-virtual member does: the value is materialized in

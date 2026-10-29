@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 
 int read_vector(std::vector<int32_t>& values) {
   mut int total = values.front() + values.back() +

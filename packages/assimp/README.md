@@ -13,7 +13,7 @@ assimp = { git = "https://git.internal.howetotech.dev/gti-lang/assimp.git", rev 
 allow-build-scripts = ["gti-assimp@0.1.0"]
 ```
 
-Run `gti fetch`, include `#include <assimp/assimp>`, and call the imported C
+Run `gti fetch`, use `import assimp.assimp;`, and call the imported C
 adapter inside `unsafe`. An imported `aiScene*` is owned; release it exactly
 once with `assimp::gti_assimp_release`. Mesh, node, name, and error pointers are
 borrowed and become invalid when their owner is released.

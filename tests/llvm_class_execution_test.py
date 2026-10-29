@@ -174,7 +174,7 @@ int main() {
 }
 ''',
     "tls-object": r'''
-#include <std/panic>
+import std.panic;
 mut int events = 0;
 class Item {
   int id;
@@ -264,7 +264,7 @@ int main() {
 ''',
     # A type recursing through its own unique owner, built, read and destroyed.
     "recursive-owned-links": r'''
-#include <std/memory>
+import std.memory;
 mut int destroyed = 0;
 struct Link {
   mut int value;
@@ -605,7 +605,7 @@ int main() {
 ''',
     # A reference reborrowed from a carrier's stored reference designates the referent, and a payload returned with a borrowed view only states provenance.
     "carrier-reborrow-provenance": r'''
-#include <std/string>
+import std.string;
 struct Pair {
   int32_t& left;
   mut int32_t& right;
@@ -671,7 +671,7 @@ int main() {
 
 FAILURES = {
     "moved-argument-failure": (r'''
-#include <std/panic>
+import std.panic;
 mut int dropped = 0;
 class Ticket {
   int id;
@@ -695,7 +695,7 @@ int main() {
 }
 ''', "GTI-R0017", "argument failure"),
     "moved-constructor-argument-failure": (r'''
-#include <std/panic>
+import std.panic;
 mut int dropped = 0;
 class Ticket {
   int id;
@@ -723,7 +723,7 @@ int main() {
 }
 ''', "GTI-R0017", "constructor argument failure"),
     "moved-argument-callee-failure": (r'''
-#include <std/panic>
+import std.panic;
 mut int dropped = 0;
 class Ticket {
   int id;
@@ -749,7 +749,7 @@ int main() {
 }
 ''', "GTI-R0017", "callee failure"),
     "constructor-rollback": (r'''
-#include <std/panic>
+import std.panic;
 mut int events = 0;
 class Guard {
 public:

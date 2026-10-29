@@ -1,5 +1,5 @@
-#include <std/panic>
-#include <std/string>
+import std.panic;
+import std.string;
 
 enum ReadingState<T, E> { ready(T value), failed(E error) };
 class GenericReading<T, E> {

@@ -1,6 +1,6 @@
-#include <std/meta>
-#include <std/string>
-#include <std/panic>
+import std.meta;
+import std.string;
+import std.panic;
 
 // Public spelling remains prelude vocabulary, but all these results are source
 // classes. Neither the test nor its callers opt into an experimental carrier.

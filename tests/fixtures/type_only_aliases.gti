@@ -1,4 +1,4 @@
-#include <std/optional>
+import std.optional;
 
 struct Option { int value = 0;  public: Option() = default; };
 class Options {

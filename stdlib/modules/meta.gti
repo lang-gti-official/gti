@@ -1,3 +1,0 @@
-// Module std.meta: the public surface of <std/meta>.
-export module meta;
-export #include <std/meta>

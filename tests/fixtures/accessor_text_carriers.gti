@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/optional>
-#include <std/vector>
+import std.string;
+import std.optional;
+import std.vector;
 
 // A carrier built from the view an accessor returns stores a reference to
 // that returned view, whichever text owner it holds. The accessor's result

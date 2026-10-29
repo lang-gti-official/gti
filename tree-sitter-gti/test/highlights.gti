@@ -98,7 +98,7 @@ public:
 #error "Unsupported target."
 #endif
 
-#include <std/array>
+import std.array;
 
 int decompose(Pair value) {
   auto [first, second] = value;

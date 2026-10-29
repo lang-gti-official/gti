@@ -1,4 +1,4 @@
-#include <std/functional>
+import std.functional;
 
 struct Marker {
   mut int& slot;

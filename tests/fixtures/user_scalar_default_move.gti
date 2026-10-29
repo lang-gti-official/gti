@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/span>
-#include <std/vector>
+import std.string;
+import std.span;
+import std.vector;
 
 // A generic owner must preserve both passive and owning specializations when
 // its neighboring scalar fields have ordinary source-defined defaults.

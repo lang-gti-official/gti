@@ -1,10 +1,9 @@
-#include <std/thread>
-#include <std/memory>
-#include <std/mutex>
-#include <std/functional>
-#include <std/optional>
-#include <std/string>
-
+import std.thread;
+import std.memory;
+import std.mutex;
+import std.functional;
+import std.optional;
+import std.string;
 // A passive process payload needs only native-shell retirement after workers
 // and TLS finish. Source destructors/owning payloads still require local scope.
 std::mutex<int> global_progress{0};

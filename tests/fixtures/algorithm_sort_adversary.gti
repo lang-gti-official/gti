@@ -1,5 +1,5 @@
-#include <std/algorithm>
-#include <std/vector>
+import std.algorithm;
+import std.vector;
 
 // McIlroy's killer adversary ("A Killer Adversary for Quicksort", 1999)
 // decides element values lazily. When two undecided elements meet, it fixes

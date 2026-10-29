@@ -1,3 +1,0 @@
-// Module std.queue: the public surface of <std/queue>.
-export module queue;
-export #include <std/queue>

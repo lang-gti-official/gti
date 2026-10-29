@@ -1334,7 +1334,7 @@ void testPolymorphicStorageLayout(const std::filesystem::path &repository) {
   options.lowerLibraryReachableOnly = true;
   auto frontend = Frontend(options).analyze(
       repository / "tests/slot-layout-entry.gti",
-      "#include <std/polymorphic>\n"
+      "import std.polymorphic;\n"
       "int main() { return slot_layout_probe::run(); }\n",
       {repository / "stdlib/prelude.gti"}, {{library.string(), source}},
       {repository / "stdlib"});
@@ -1578,7 +1578,7 @@ int run() {
   options.lowerLibraryReachableOnly = true;
   auto frontend = Frontend(options).analyze(
       repository / "tests/payload-owner-entry.gti",
-      "#include <std/memory>\n"
+      "import std.memory;\n"
       "int main() { return payload_owner_probe::run(); }\n",
       {repository / "stdlib/prelude.gti"}, {{library.string(), source}},
       {repository / "stdlib"});

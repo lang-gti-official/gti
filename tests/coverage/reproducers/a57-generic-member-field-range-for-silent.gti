@@ -1,7 +1,7 @@
 // A57: the same in a method of a generic class.
 // Same silent failure through an ordinary shape: a method-local generic
 // predicate member that walks the class's own container field.
-#include <std/vector>
+import std.vector;
 class Holder {
   mut std::vector<int> items;
 public:

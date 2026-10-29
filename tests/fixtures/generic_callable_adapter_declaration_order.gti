@@ -1,6 +1,6 @@
-#include <std/functional>
-#include <std/string>
-#include <std/vector>
+import std.functional;
+import std.string;
+import std.vector;
 
 namespace api {
   // F is closure-bearing, so these owners retain native primary templates.

@@ -10,25 +10,18 @@ import tempfile
 from case_jobs import configured_jobs, run_cases
 
 
-def interface(name):
-    return (f"// Module std.{name}: the public surface of <std/{name}>.\n"
-            f"export module {name};\n"
-            f"export #include <std/{name}>\n")
-
-
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     stdlib = pathlib.Path(sys.argv[2]).resolve() / "stdlib"
     units = sorted(path.stem for path in (stdlib / "std").glob("*.gti"))
-    modules = sorted(path.stem for path in (stdlib / "modules").glob("*.gti"))
-    assert units == modules, (
-        "public units and module interfaces differ: "
-        f"units only {sorted(set(units) - set(modules))}, "
-        f"modules only {sorted(set(modules) - set(units))}")
+    modules = units
+    assert not (stdlib / "modules").exists(), "obsolete wrapper tree remains"
     for name in modules:
-        text = (stdlib / "modules" / f"{name}.gti").read_text(encoding="utf-8")
-        assert text == interface(name), f"stdlib/modules/{name}.gti is not canonical"
-    portable = sorted(set(units) - {"environment", "process", "tcp"})
+        text = (stdlib / "std" / f"{name}.gti").read_text(encoding="utf-8")
+        assert f"export module {name};" in text, f"std.{name} lacks its module declaration"
+        assert "#include" not in text, f"std.{name} uses a removed directive"
+    portable = sorted(set(units) - {"environment", "process", "tcp", "detail_iterator",
+                                    "detail_panic", "experimental_optional"})
     aggregate = (stdlib / "std.gti").read_text(encoding="utf-8")
     assert [line for line in aggregate.splitlines() if line.startswith("export import ")] == [
         f"export import std.{name};" for name in portable], "portable aggregate inventory drift"
@@ -48,7 +41,7 @@ def main():
 
         run_cases([(name, name) for name in modules], check, configured_jobs())
         source = root / "aggregate.gti"
-        source.write_text("import std;\nimport std.vector;\n#include <std/string>\n"
+        source.write_text("import std;\nimport std.vector;\nimport std.string;\n"
                           "int main() { mut std::vector<int> values{}; values.push_back(42); "
                           "return values[std::size_t(0)] - 42; }\n")
         result = subprocess.run(
