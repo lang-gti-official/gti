@@ -1741,6 +1741,27 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         / thread_descriptors["gti-sequential"]["source"]
     ).resolve()
 
+    require(sequential_report["sources"]["dependencies"],
+            "provenance fixture must have real source dependencies")
+    for kind in ("import", "export-import", "include", "standard-library", "package"):
+        dependency_report = copy.deepcopy(sequential_report)
+        dependency_report["sources"]["dependencies"][0]["kind"] = kind
+        dependency_path = root / "source-dependency-kind.json"
+        dependency_path.write_text(json.dumps(dependency_report), encoding="utf-8")
+        decoded = module.load_build_provenance(
+            dependency_path, selected_gti, selected_cxx, sequential_entry
+        )
+        require(decoded["build"]["sources"]["dependencies"][0]["kind"] == kind,
+                "current and historical provenance retain their source edge kind")
+    for kind in ("", "unknown", None, [], {}, 1):
+        dependency_report = copy.deepcopy(sequential_report)
+        dependency_report["sources"]["dependencies"][0]["kind"] = kind
+        dependency_path = root / "invalid-source-dependency-kind.json"
+        dependency_path.write_text(json.dumps(dependency_report), encoding="utf-8")
+        expect_benchmark_error(module, lambda: module.load_build_provenance(
+            dependency_path, selected_gti, selected_cxx, sequential_entry
+        ), ".kind is invalid")
+
     require(
         sequential_report.get("debug_info") is False,
         "benchmark sidecar did not record the default non-debug policy",

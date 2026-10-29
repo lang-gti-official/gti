@@ -147,15 +147,15 @@ def main():
             assert inspect(inspection, offset, 11)["error"]["code"] == -32801
             assert inspect(inspection, inspection.index("return 0"), 12)["result"] is None
 
-            # Dirty included macro definitions must supply both displayed
+            # Dirty imported macro definitions must supply both displayed
             # syntax and provenance; the server must not reread stale disk text.
             policy_path = (pathlib.Path(directory) / "policy.gti").resolve()
             policy_uri = policy_path.as_uri()
             policy_path.write_text((
                                        'export module policy;\n'
-                                       '#macro external(int value) { if (value == 1) {} }\n'
+                                       'export #macro external(int value) { if (value == 1) {} }\n'
                                    ))
-            overlay = "#macro external(int value) { if (value == 2) {} }\n"
+            overlay = "export module policy;\nexport #macro external(int value) { if (value == 2) {} }\n"
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
                 "textDocument": {"uri": policy_uri, "languageId": "gti", "version": 1, "text": overlay}}})
             included = 'import "policy.gti";\nint main() { external(7); return 0; }\n'

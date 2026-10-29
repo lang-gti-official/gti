@@ -10,8 +10,8 @@ namespace lang {
     return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
            value == '_';
   };
-  if (name.empty() || !letter(name.front()) || keywords.contains(name) ||
-      isCppReservedIdentifier(name))
+  if (name.empty() || !letter(name.front()) || name.starts_with("__gti_") ||
+      keywords.contains(name) || isCppReservedIdentifier(name))
     return false;
   for (char value : name)
     if (!letter(value) && !(value >= '0' && value <= '9'))

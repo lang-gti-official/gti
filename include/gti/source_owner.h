@@ -38,6 +38,9 @@ struct SourceOwnerDescriptor {
   std::optional<std::string> implicitAlias;
   std::vector<std::filesystem::path> additionalRoots;
   std::string defaultModule = "main";
+  // Authored absolute lookup paths are notification metadata, never authority.
+  // Canonical modules above remain the validated resolution identities.
+  std::vector<std::pair<std::string, std::filesystem::path>> moduleLookupPaths;
 };
 
 // Preserve the public frontend embedding API while all callers use the same

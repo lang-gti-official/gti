@@ -32,6 +32,6 @@ with tempfile.TemporaryDirectory(prefix="gti-bindgen-module-") as temporary:
     checked = subprocess.run([compiler, str(consumer), "--emit-mir", "-o", str(root / "main.mir")],
                              text=True, capture_output=True, env=environment)
     assert checked.returncode == 0, checked.stderr
-    for invalid in ("class", "name.", "a..b", "a b", "a/*x*/.b"):
+    for invalid in ("class", "__gti_hidden", "api.__gti_hidden", "name.", "a..b", "a b", "a/*x*/.b"):
         assert "--module requires" in run("--module", invalid, success=False).stderr
 print("bindgen module CLI checks passed")

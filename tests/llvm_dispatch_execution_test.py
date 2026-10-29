@@ -94,8 +94,8 @@ TRANSFER_ENDPOINTS = (
 
 CPP_LIMITATIONS = {
     "hierarchy-reference-results": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
-    "owner-reference-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_8743748746c3906f3cb32abc5c52a3d391e4507268de72665a366361f520203d_make_unique'",
-    "owner-failure-before-reference": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_1542b921ce78875e430a1cd950d1c99cce26c90908184496243024d42a33bfd9_make_unique'",
+    "owner-reference-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_718ceee65db96f7cff8e72a9aaae2e81296e2c764a42fcd20b2065657b3b2946_make_unique'",
+    "owner-failure-before-reference": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_9b4fd897cb8f33db86aa01a47e6bff940990cacf41954d99f2fab99265c14d9c_make_unique'",
     "shared-owner-reference": "wrapping atomic read-modify-write",
     "shared-polymorphic-owners": "wrapping atomic read-modify-write",
     "inline-hierarchy-fields": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",

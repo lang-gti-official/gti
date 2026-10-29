@@ -638,7 +638,7 @@ def numbered_examples() -> list[Path]:
          if source.is_file() and source.name.partition("-")[0].isdigit()),
         key=lambda source: (int(source.name.partition("-")[0]), source.name),
     )
-    module_entry = EXAMPLES_ROOT / "10-modules" / "main.gti"
+    module_entry = EXAMPLES_ROOT / "module-only" / "main.gti"
     if module_entry.is_file():
         sources.append(module_entry)
     return sources

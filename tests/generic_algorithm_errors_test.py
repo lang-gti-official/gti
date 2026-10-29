@@ -36,7 +36,7 @@ import std.string;
         mutation = 'x.clear();' if container != "array" else 'x.fill(3);'
         negatives[f"{container}-retained"] = f'int main() {{ {init} auto found = std::min_element(x.begin(), x.end()); {mutation} return *found; }}'
         negatives[f"{container}-range-alias"] = f'int main() {{ {init} for (mut auto& element : x) {{ {mutation} element = 2; }} return 0; }}'
-        cursor = f'std::detail::{container}_mut_iterator<int>' if container != "array" else 'std::detail::array_mut_iterator<int, 2>'
+        cursor = f'std::{container}<int>::iterator' if container != "array" else 'std::array<int, 2>::iterator'
         negatives[f"{container}-cursor-escape"] = f'{cursor} dangling() {{ {init} return x.begin_mut(); }} int main() {{ return 0; }}'
         negatives[f"{container}-cursor-alias"] = f'int main() {{ {init} mut auto cursor = x.begin_mut(); {mutation} return *cursor; }}'
     with tempfile.TemporaryDirectory(prefix="gti-algorithm-errors-") as directory:
@@ -48,6 +48,9 @@ import std.string;
                                      env=environment, capture_output=True, text=True, timeout=60)
             assert checked.returncode == 65 and "error[GTI-S" in checked.stderr, (name, checked)
             assert "GTI-B0001" not in checked.stderr, (name, checked.stderr)
+            if name.endswith("-cursor-escape"):
+                assert "error[GTI-S2045]" in checked.stderr and "borrowed return" in checked.stderr, checked.stderr
+                assert "GTI-S2024" not in checked.stderr, checked.stderr
             if name == "copy-owner":
                 assert "error[GTI-S2003]" in checked.stderr and "Cannot copy assign" in checked.stderr, checked.stderr
         for level in ("O0", "O3"):

@@ -104,13 +104,14 @@ def run(args, cwd, env, success=True, fragment=None):
 
 def package(root, name, version, source, dependencies="", native=False):
     manifest = f'manifest-version = 1\n[package]\nname = "gti-{name}"\nversion = "{version}"\n'
+    manifest += '[modules]\nunit = "src/unit.gti"\n'
     if native:
         manifest += '[package.native]\nc-standard = "c17"\nc-sources = ["native/account.c"]\n'
         write(root / "native/account.c", "#include <stdint.h>\nint64_t fixture_uid(void) { return 32; }\n")
     if dependencies:
         manifest += "[dependencies]\n" + dependencies
     write(root / "gti.toml", manifest)
-    write(root / "src/unit.gti", source)
+    write(root / "src/unit.gti", "export module unit;\n" + source)
     subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(root), "add", "gti.toml", "src", *(["native"] if native else [])], check=True, capture_output=True)
 
@@ -129,7 +130,7 @@ def main():
                        GTI_TEST_REGISTRY_TOKEN="fixture-secret", NO_COLOR="1")
             for version, number in [("1.0.0", 10), ("1.1.0", 20)]:
                 helper = root / ("helper-" + version)
-                package(helper, "helper", version, f"namespace helper {{ int64_t value() {{ return {number}; }} }}\n")
+                package(helper, "helper", version, f"export namespace helper {{ int64_t value() {{ return {number}; }} }}\n")
                 probe = helper / ".git/hooks/fsmonitor-probe"
                 marker = root / "fsmonitor-must-not-run"
                 write(probe, "#!/bin/sh\ntouch " + shlex.quote(str(marker)) + "\n")
@@ -139,7 +140,7 @@ def main():
                 run(["publish", "--name", "helper"], helper, env)
                 assert not marker.exists(), "publication ran a repository fsmonitor hook"
             libc = root / "libc"
-            package(libc, "libc", "0.2.0", 'import helper.unit;\nnamespace libc { extern "C" { int64_t fixture_uid(); } int64_t id() { return fixture_uid() + helper::value(); } }\n',
+            package(libc, "libc", "0.2.0", 'import helper.unit;\nnamespace libc { extern "C" { int64_t fixture_uid(); } export int64_t id() { return fixture_uid() + helper::value(); } }\n',
                     'helper = "^1.0"\n', native=True)
             run(["publish", "--name", "libc"], libc, env)
             run(["publish", "--name", "libc"], libc, env, False, "GTI-B1719")
@@ -197,7 +198,7 @@ def main():
             # A newly added direct dependency may upgrade its old transitive
             # lock. Its distinct version is not an integrity violation.
             upgraded_helper = root / "helper-1.2.0"
-            package(upgraded_helper, "helper", "1.2.0", "namespace helper { int64_t value() { return 20; } }\n")
+            package(upgraded_helper, "helper", "1.2.0", "export namespace helper { int64_t value() { return 20; } }\n")
             run(["publish", "--name", "helper"], upgraded_helper, env)
             changed_requirement = root / "changed-requirement"
             # Use a valid dotted dependency independently of the

@@ -144,7 +144,7 @@ int main() {
          "application spelling must not grant a private SIMD capability");
 }
 
-void testIncludeDiagnostics() {
+void testImportDiagnostics() {
   for (const std::string name : {"simd", "simd_mask"}) {
     const std::string source = "using lanes = std::" + name +
                                (name == "simd" ? "<float, 4>;\n" : "<4>;\n");
@@ -160,13 +160,14 @@ void testIncludeDiagnostics() {
                missing->primary.start == source.find(name) &&
                missing->primary.end == source.find(name) + name.size() &&
                !missing->hints.empty() &&
-               missing->hints.front().find("<std/simd>") != std::string::npos &&
+               missing->hints.front().find("import std.simd;") !=
+                   std::string::npos &&
                missing->fixes.size() == 1 &&
                missing->fixes.front().span.source == missing->primary.source &&
                missing->fixes.front().span.start == 0 &&
                missing->fixes.front().span.end == 0 &&
                missing->fixes.front().replacement == "import std.simd;\n",
-           "missing SIMD includes need an exact compiler-owned include fix");
+           "missing SIMD imports need an exact compiler-owned import fix");
   }
 }
 
@@ -205,7 +206,7 @@ void testAccessDiagnostics() {
 int main() {
   testContract();
   testInvalidPrograms();
-  testIncludeDiagnostics();
+  testImportDiagnostics();
   testAccessDiagnostics();
   if (failures)
     return 1;

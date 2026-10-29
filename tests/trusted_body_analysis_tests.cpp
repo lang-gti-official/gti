@@ -33,9 +33,10 @@ void checkFixtures(const std::filesystem::path &root) {
   // not granted compiler trust by the source loader.
   const auto library = root / "stdlib/std/cmath.gti";
   const std::string declarations =
+      "export module cmath;\n"
       "int unused_broken() { return missing_unused; }\n"
       "int leaf() { return missing_reached; }\n"
-      "int relay() { return leaf(); }\n";
+      "export int relay() { return leaf(); }\n";
   const auto analyzeSource = [&](std::string text, bool complete = false,
                                  bool libraryEntry = false,
                                  std::string extra = "") {
@@ -94,12 +95,14 @@ void checkFixtures(const std::filesystem::path &root) {
   // Concrete callable lookup may discover a callee that the open generic body
   // cannot select. The closure rule is not specific to a standard-library type.
   const std::string genericLibrary =
+      "export module cmath;\n"
       "int unused_broken() { return missing_unused; }\n"
       "int leaf() { return 42; }\n"
-      "class Producer { public: Producer() = default; int operator()(int n) { "
+      "export class Producer { public: Producer() = default; int "
+      "operator()(int n) { "
       "return leaf() + n; } "
       "};\n"
-      "int value_of<T>(T& value) { return value(0); }\n";
+      "export int value_of<T>(T& value) { return value(0); }\n";
   const std::string consumer =
       "import std.cmath;\n"
       "int main() { Producer value{}; return value_of(value) - 42; }\n";
@@ -147,7 +150,8 @@ void checkFixtures(const std::filesystem::path &root) {
           editor.preambleCache = std::move(preambles);
           return lang::Frontend(editor).analyze(
               entry, source, {root / "stdlib/prelude.gti"},
-              {{library.string(), libraryText}}, {root / "stdlib"});
+              {{library.string(), "export module cmath;\n" + libraryText}},
+              {root / "stdlib"});
         };
     lang::FrontendWorkMetrics completeWork;
     const auto complete = run(true, completeWork);
@@ -207,10 +211,11 @@ void checkFixtures(const std::filesystem::path &root) {
   };
   const std::string lateLibrary =
       "int leaf() { return 42; }\n"
-      "class Producer { public: Producer() = default; int operator()(int n) { "
+      "export class Producer { public: Producer() = default; int "
+      "operator()(int n) { "
       "return leaf() + n; } "
       "};\n"
-      "int value_of<T>(T& value) { return value(0); }\n";
+      "export int value_of<T>(T& value) { return value(0); }\n";
   editorCase("late demand", lateLibrary,
              "import std.cmath;\n"
              "int main() { Producer value{}; return value_of(value) - 42; }\n",
@@ -219,10 +224,10 @@ void checkFixtures(const std::filesystem::path &root) {
   // the request falls back to analysing the body in a repeated pass.
   editorCase("late demand reporting an error",
              "int leaf() { return missing_late; }\n"
-             "class Producer { public: Producer() = default; int "
+             "export class Producer { public: Producer() = default; int "
              "operator()(int n) { return leaf() + "
              "n; } };\n"
-             "int value_of<T>(T& value) { return value(0); }\n",
+             "export int value_of<T>(T& value) { return value(0); }\n",
              "import std.cmath;\n"
              "int main() { Producer value{}; return value_of(value) - 42; }\n",
              1, false);
@@ -240,10 +245,10 @@ void checkFixtures(const std::filesystem::path &root) {
   // when reached from a function instead of a persistent initializer.
   editorCase("late demand reporting an error behind a global initializer",
              "int leaf() { return missing_late; }\n"
-             "class Producer { public: Producer() = default; int "
+             "export class Producer { public: Producer() = default; int "
              "operator()(int n) { return leaf() + "
              "n; } };\n"
-             "int value_of<T>(T& value) { return value(0); }\n",
+             "export int value_of<T>(T& value) { return value(0); }\n",
              "import std.cmath;\n"
              "Producer producer{};\n"
              "int first = value_of(producer);\n"
@@ -324,17 +329,18 @@ void checkLibraryOnlyOmission(const std::filesystem::path &root) {
   const auto library = root / "stdlib/std/cmath.gti";
   // Probe<T> and checked<T> fail for every argument wider than a byte.
   const std::string declarations =
+      "export module cmath;\n"
       "class Probe<T> { public: Probe() = default;\n"
       "  static_assert(sizeof(T) == uint64_t(1), \"needs a byte\");\n"
       "};\n"
       "int inner<T>(T& value) { Probe<T> probe{}; return 0; }\n"
-      "int outer<T>(T& value) { return inner(value); }\n"
-      "int direct<T>(T& value) { Probe<T> probe{}; return 0; }\n"
-      "int checked<T>(T& value) {\n"
+      "export int outer<T>(T& value) { return inner(value); }\n"
+      "export int direct<T>(T& value) { Probe<T> probe{}; return 0; }\n"
+      "export int checked<T>(T& value) {\n"
       "  static_assert(sizeof(T) == uint64_t(1), \"needs a byte\");\n"
       "  return 0;\n"
       "}\n"
-      "int plain(int value) { return value + 1; }\n";
+      "export int plain(int value) { return value + 1; }\n";
   const auto run = [&](const std::string &text, bool complete,
                        lang::FrontendWorkMetrics &metrics) {
     lang::FrontendOptions options;
@@ -425,7 +431,7 @@ void checkLibraryOnlyOmission(const std::filesystem::path &root) {
 }
 
 // Registration publishes each declaration's visibility per consuming unit,
-// so a preamble is keyed by the whole include graph: two programs whose
+// so a preamble is keyed by the whole import graph: two programs whose
 // trusted prefix is the same prelude but whose later units differ must not
 // share one (the second would not see the prelude's concepts from its own
 // standard-library units).
@@ -434,7 +440,8 @@ void checkPreambleGraphs(const std::filesystem::path &root) {
   const auto first = root / "tests/preamble-graph-first.gti";
   const auto second = root / "tests/preamble-graph-second.gti";
   const std::string libraryText =
-      "int helper(int value) { return value + 1; }\n";
+      "export module preamble_graph_lib;\nexport int helper(int value) { "
+      "return value + 1; }\n";
   const std::unordered_map<std::string, std::string> overlays{
       {library.string(), libraryText},
       {first.string(), R"GTIMODULE(export module preamble_graph_first;
@@ -443,7 +450,7 @@ export int main() { return helper(0) - 1; }
 )GTIMODULE"},
       {second.string(), R"GTIMODULE(export module preamble_graph_second;
 import "preamble-graph-lib.gti";
-#include <std/memory>
+import std.memory;
 export int main() { std::unique_ptr<int> owner = std::make_unique<int>(helper(1)); return *owner - 2; }
 )GTIMODULE"}};
   auto preambles = std::make_shared<lang::SemanticPreambleCache>();
@@ -474,10 +481,10 @@ export int main() { std::unique_ptr<int> owner = std::make_unique<int>(helper(1)
     for (const auto &diagnostic : secondResult.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(secondResult.semanticValid && secondResult.hirValid,
-         "a program with another include graph does not share the preamble");
+         "a program with another import graph does not share the preamble");
   expect(firstWork.semanticPreambleBuilds == 1 &&
              secondWork.semanticPreambleBuilds == 1,
-         "each include graph builds its own preamble");
+         "each import graph builds its own preamble");
 }
 
 void checkEntry(const std::filesystem::path &root,

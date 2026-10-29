@@ -2627,8 +2627,11 @@ member access, static factories, renamed parameters, default arguments,
 constexpr calls, consuming receivers and borrowed-result contracts. Negative
 cases reject unmatched and duplicate definitions, altered signatures and
 receiver modes, misplaced namespaces, repeated declaration-only information,
-unsupported generic owners/methods, and mutation or consumption while a returned
-borrow remains live. A forged HIR body association must fail publication into
+and mutation or consumption while a returned borrow remains live. The initial
+0.416.0 slice rejected generic owners and methods; the module-only campaign
+extends their declaration/body association, with generic families and exact
+specializations covered by `module_semantic_identity` and cached composition by
+`module_preamble_identity`. A forged HIR body association must fail publication into
 LoweredProgram; definitions never add a second callable or backend row.
 
 `out_of_class_runtime` runs example 150 under C++20/C++23 at O0/O1/O3, and builds

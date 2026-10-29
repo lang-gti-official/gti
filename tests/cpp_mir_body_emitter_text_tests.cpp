@@ -4253,8 +4253,8 @@ import std.string;
 int32_t main() {
   mut std::string value = std::string("gti");
   mut auto iterator = value.begin();
-  std::detail::storage_iterator<char>& alias = iterator;
-  std::detail::storage_iterator<char>& second_alias = alias;
+  std::string::const_iterator& alias = iterator;
+  std::string::const_iterator& second_alias = alias;
   char first = *iterator;
   char second = *alias;
   char third = *second_alias;

@@ -3637,7 +3637,9 @@ def main():
                                'import "cycle_a.gti";\n'
                            ), encoding="utf-8")
         cycle = run([gti, str(cycle_a), "--emit-cpp"], 65)
-        assert "Include cycle detected" in cycle.stderr
+        assert "error[GTI-I0001]" in cycle.stderr
+        assert "Module import cycle detected" in cycle.stderr
+        assert "error[GTI-I0012]" not in cycle.stderr
 
         missing_standard = root / "missing-standard.gti"
         missing_standard.write_text(

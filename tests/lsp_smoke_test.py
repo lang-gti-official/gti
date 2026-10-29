@@ -4795,7 +4795,7 @@ def test_compiler_private_tooling_boundary(executable, root):
         assert public_move_token["modifiers"] & 8
 
         stdlib_path = (
-            discover_standard_library_root(executable) / "std" / "memory.gti"
+            discover_standard_library_root(executable) / "std" / "detail" / "memory_core.gti"
         )
         if stdlib_path.is_file():
             stdlib_source = stdlib_path.read_text(encoding="utf-8")
@@ -4843,10 +4843,12 @@ def test_compiler_private_tooling_boundary(executable, root):
                 stdlib_source,
             )
             assert trusted_definition is not None
-            assert trusted_definition["uri"] == stdlib_uri
-            private_declaration = stdlib_source.index("text_view_from_address<Owner>")
+            capability_path = stdlib_path.with_name("memory_capabilities.gti")
+            capability_source = capability_path.read_text(encoding="utf-8")
+            assert trusted_definition["uri"] == capability_path.resolve().as_uri()
+            private_declaration = capability_source.index("text_view_from_address<Owner>")
             assert trusted_definition["range"]["start"]["line"] == (
-                lsp_position(stdlib_source, private_declaration)["line"]
+                lsp_position(capability_source, private_declaration)["line"]
             )
     finally:
         session.close()
@@ -9100,7 +9102,7 @@ def test_canonical_document_identity(executable, root):
     real_path = root / "canonical-library.gti"
     alias_path = root / "canonical-alias.gti"
     entry_path = root / "canonical-root.gti"
-    dependency_source = "int overlay_value() { return 1; }\n"
+    dependency_source = "export module canonical_library;\nexport int overlay_value() { return 1; }\n"
     entry_source = (
         'import "canonical-alias.gti";\n'
         "int main() { return overlay_value(); }\n"
@@ -9164,7 +9166,7 @@ def test_canonical_document_identity(executable, root):
         )["result"]
         assert initial_definition["uri"] == alias_uri, initial_definition
 
-        renamed_source = "int renamed_value() { return 1; }\n"
+        renamed_source = "export module canonical_library;\nexport int renamed_value() { return 1; }\n"
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -9566,7 +9568,7 @@ def test_dependency_reanalysis_refreshes_tokens_only_when_changed(
         assert root_tokens(3) == held
 
         # The global becomes mutable, so the root's use loses `readonly`.
-        session.send(full_change(dependency_uri, 3, "mut int shared_counter = 1;\n"))
+        session.send(full_change(dependency_uri, 3, dependency_source.replace("export int", "export mut int")))
         refresh = session.receive_until(is_refresh, timeout=10)
         session.send({"jsonrpc": "2.0", "id": refresh["id"], "result": None})
         assert_no_message(session, is_refresh, timeout=0.5)
@@ -12164,7 +12166,7 @@ def main():
 
     token_data = by_id[2]["result"]["data"]
     assert token_data and len(token_data) % 5 == 0
-    assert token_data[3] == 13
+    assert token_data[:4] == [0, 0, len("import"), 0]
     assert {2, 4, 8, 9, 12, 13, 14, 15, 16}.issubset(
         set(token_data[3::5])
     )
@@ -12355,11 +12357,11 @@ def main():
     assert token_types_by_position[
         (direct_box_name_position["line"], direct_box_name_position["character"])
     ] == 7
-    standard_include = source.index("std/array")
+    standard_include = source.index("std.array")
     standard_include_position = lsp_position(source, standard_include)
     assert token_types_by_position[
         (standard_include_position["line"], standard_include_position["character"])
-    ] == 10
+    ] == 3
     assert token_modifiers_by_position[
         (standard_include_position["line"], standard_include_position["character"])
     ] & 8

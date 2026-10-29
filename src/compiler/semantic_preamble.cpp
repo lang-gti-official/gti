@@ -110,6 +110,9 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
       std::make_shared<ProgramConcreteEffectState>(
           *source.requestSession.programConcreteEffects);
   requestSession.rawResultQueries.reset();
+  // Prefix query summaries and worker catalogs belong to the prefix request;
+  // later declarations require a fresh journal owned by this resumed request.
+  requestSession.completeReturnQueries.reset();
   requestSession.openReanalyses.reset();
   requestSession.classAssertionOutcomes.clear();
   requestSession.trackAssertionDiagnostics = false;

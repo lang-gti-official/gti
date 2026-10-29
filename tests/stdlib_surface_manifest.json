@@ -58,7 +58,7 @@
     "stdlib/std/source_location.gti": "c748203afe96c27c06465ffd6b38728becb85bcceca6e8097f75a8460eb74f95",
     "stdlib/std/span.gti": "effe13ba9bd0beeb1f04c84f17b5bd4458686ff713e3eb6756a65a8b0e8a7409",
     "stdlib/std/string.gti": "9f59d0df17dc0fc737395e41851d56f5d264063129f96a5f8986e3ffe8be4082",
-    "stdlib/std/string_view.gti": "1d89367275d5ed93006019090199505acf79856cf8cc1191a15c48e9a6a1f9a9",
+    "stdlib/std/string_view.gti": "3a96eeaa90719fdc5c2202f5cbd4ee81ef215f702a848767d2a4c2cf82a94cd6",
     "stdlib/std/tcp.gti": "23022069c0f430cf86fa3c0bd567aa44cde7ef638d7bcb821148a0ac77959c04",
     "stdlib/std/testing.gti": "03e0324d888081b1ee77a626f73c45170a94aa337a214732ba829880204af618",
     "stdlib/std/thread.gti": "3fc42f30db431e05b406379bfc24999dc499a1105bee59c07fc1e794b350e77a",
@@ -6439,7 +6439,10 @@
         "std::string_view::rbegin",
         "std::string_view::rend",
         "std::string_view::rend_iterator",
-        "std::string_view::reverse_iterator_at"
+        "std::string_view::reverse_iterator_at",
+        "std::string_view_iterator",
+        "std::string_view_reverse_iterator",
+        "std::string_view_sentinel"
       ],
       "case_ids": [
         "iterator-text-view",
@@ -6456,7 +6459,7 @@
       "evidence": [
         "tests/fixtures/text_view_iterator_completion.gti",
         "tests/fixtures/text_view_iterator_module.gti",
-        "stdlib/modules/string_view.gti",
+        "stdlib/std/string_view.gti",
         "tests/text_view_iterator_runtime_test.py",
         "tests/text_view_iterator_compiler_tests.cpp",
         "examples/146-counted-text-view-iteration.gti"

@@ -1423,7 +1423,8 @@ still apply. No source directories are scanned, no implementation file needs
 to be imported directly by a consumer, and no independently linked GTI object is added.
 Direct mode still does not discover a manifest: use explicit source edges or
 project mode for registered implementations. `examples/window-factory` is a
-runnable project illustrating this arrangement.
+runnable project illustrating this arrangement: its factory and private concrete
+types share the `window` module across three registered implementation files.
 
 `ProjectPackage` and immutable `PackageSourceRoot` values carry these maps;
 `SourceLoader` owns language resolution. Registrations are part of project

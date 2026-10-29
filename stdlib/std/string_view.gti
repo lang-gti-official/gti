@@ -68,6 +68,14 @@ public:
 };
 }
 
+// Public names let ordinary adapters spell their return types while the
+// implementation classes remain private to this module.
+namespace std {
+export using string_view_iterator = detail::text_view_iterator<0>;
+export using string_view_reverse_iterator = detail::text_view_iterator<1>;
+export using string_view_sentinel = detail::text_view_sentinel;
+}
+
 namespace gti_internal {
 // Trusted declaration identities bind builtin member syntax to these ordinary
 // source functions. They do not become backend-known iteration operations.

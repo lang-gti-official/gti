@@ -1,7 +1,5 @@
 module window;
 import std.memory;
-import "desktop.gti";
-import "headless.gti";
 // This file is loaded by the module's registration. Importers need not name
 // it and cannot see its private concrete types through `import window`.
 std::unique_ptr<Window> Window::Create(window_backend backend) {

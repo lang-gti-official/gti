@@ -1,8 +1,6 @@
-export module headless;
+module window;
 
-import window;
-
-export class HeadlessWindow : public Window {
+class HeadlessWindow : public Window {
 public:
   HeadlessWindow() {}
   int Width() override { return 320; }

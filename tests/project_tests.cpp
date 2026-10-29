@@ -3528,11 +3528,20 @@ void testModuleManifest() {
   const auto moved = lang::driver::resolveProjectWorkspace(root);
   expect(moved.succeeded() && moved.workspace->modelIdentity() != identity,
          "moving a public module changes project/cache identity");
+  expect(writeFile(root / "src/http.gti", "export module net.http;\n") &&
+             writeFile(manifest,
+                       base + "\n[modules]\n\"net.http\" = \"src/http.gti\"\n"),
+         "dotted module fixture should be writable");
+  const auto dotted = lang::driver::loadProjectManifest(manifest);
+  expect(dotted.succeeded() && dotted.manifest->package().modules.size() == 1 &&
+             dotted.manifest->package().modules.front().first == "net.http",
+         "module maps accept dotted ordinary identifiers");
   for (const std::string registration :
        {"main = 42", "main = \"missing.gti\"", "main = \"\"",
         "main = \"/outside.gti\"", "main = \"C:/outside.gti\"",
         "main = \"src/api.cpp\"", "main = \"src\"", "import = \"src/api.gti\"",
-        "\"bad.name\" = \"src/api.gti\"", "__gti_hidden = \"src/api.gti\"",
+        "\"bad..name\" = \"src/api.gti\"", "__gti_hidden = \"src/api.gti\"",
+        "\"api.__gti_hidden\" = \"src/api.gti\"",
         "main = \"src/api.gti\"\nother = \"src/api.gti\"",
         "main = \"src/api.gti\"\nMAIN = \"src/other.gti\"",
         "std = \"src/api.gti\""}) {

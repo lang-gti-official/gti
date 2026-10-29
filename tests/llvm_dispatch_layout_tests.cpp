@@ -51,9 +51,11 @@ FrontendResult analyzeLegacyOwner(const std::filesystem::path &root,
                                   const std::string &source) {
   const auto library = root / "stdlib";
   const auto entry = library / name;
+  const std::string text =
+      "import \"std/detail/memory_capabilities.gti\"; " + source;
   return Frontend().analyze(
-      entry, source, {library / "prelude.gti", entry},
-      {{std::filesystem::weakly_canonical(entry).string(), source}}, {library});
+      entry, text, {library / "prelude.gti", entry},
+      {{std::filesystem::weakly_canonical(entry).string(), text}}, {library});
 }
 
 int failures = 0;

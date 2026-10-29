@@ -38,7 +38,7 @@ def main():
                 "textDocument": {"uri": uri},
                 "position": lsp_position(valid, valid.index("layout_of") + 2)}})
             definition = session.receive_until(lambda message: message.get("id") == 2)["result"]
-            assert definition and "memory.gti" in str(definition), definition
+            assert definition and definition["uri"].endswith("/std/detail/memory_core.gti"), definition
             invalid = valid.replace("layout_of<Pinned>", "layout_of<void>")
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": invalid}]}})

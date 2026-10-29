@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One conformance-header diagnostic, include help, UTF-16 spans and clearing."""
+"""One conformance-header diagnostic, import help, UTF-16 spans and clearing."""
 
 from pathlib import Path
 import sys
@@ -58,14 +58,20 @@ def main():
                 assert error["range"] == {
                     "start": lsp_position(source, start),
                     "end": lsp_position(source, start + len("measurable"))}, error
-                assert any(item["location"]["uri"] == concept.as_uri()
-                           for item in error.get("relatedInformation", [])), error
-                assert 'measure.gti' in error["message"], error
+                declaration = concept.read_text()
+                declared = declaration.index("measurable")
+                assert any(item["location"] == {
+                    "uri": concept.as_uri(),
+                    "range": {"start": lsp_position(declaration, declared),
+                              "end": lsp_position(declaration, declared + len("measurable"))}}
+                    for item in error.get("relatedInformation", [])), error
+                assert "import its public module interface" in error["message"], error
+                assert "help: Add an import of the defining interface" in error["message"], error
                 unknown = source.replace("measurable<Rope>", "missing<Rope>")
                 errors = [item for item in publish(unknown) if item.get("severity") == 1]
                 assert len(errors) == 1 and errors[0]["code"] == "GTI-S2123", errors
             valid = source.replace('"middle.gti"', '"measure.gti"')
-            assert (publish(valid) == []), "correcting the include clears the error"
+            assert (publish(valid) == []), "correcting the import clears the error"
         finally:
             session.close()
     return 0

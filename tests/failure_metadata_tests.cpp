@@ -1455,7 +1455,7 @@ void testContainerContractChecks() {
       "void check(bool valid) { std::key(valid); std::argument(valid); }\n",
       {standardLibraryPrelude()},
       {{(standardLibraryRoot() / "std/functional.gti").string(),
-        "namespace std {\n"
+        "export module functional;\nexport namespace std {\n"
         "void key(bool valid) { gti_internal::require_key(valid); }\n"
         "void argument(bool valid) { "
         "gti_internal::require_container_argument(valid); }\n}\n"}},
@@ -1516,7 +1516,9 @@ void testContainerContractChecks() {
         "import std.functional;\nvoid invoke() { std::invalid(); }\n",
         {standardLibraryPrelude()},
         {{(standardLibraryRoot() / "std/functional.gti").string(),
-          "namespace std { void invalid() { gti_internal::" + call + "; } }"}},
+          "export module functional; export namespace std { void invalid() { "
+          "gti_internal::" +
+              call + "; } }"}},
         {standardLibraryRoot()});
     expect(!invalid.canGenerateCode() &&
                std::any_of(invalid.diagnostics.begin(),
@@ -1813,7 +1815,8 @@ int main() { return checked(1); }
 void testModuleImplementationSourceIdentity() {
   const auto fixtureRoot = std::filesystem::weakly_canonical(
       std::filesystem::temp_directory_path() / "gti-module-source-identity");
-  const auto analyzeAt = [](const std::filesystem::path &root) {
+  const auto analyzeAt = [](const std::filesystem::path &root,
+                            std::string_view call = "Widget::read()") {
     const auto app = root / "app";
     const auto library = root / "library";
     const auto api = library / "api.gti";
@@ -1843,15 +1846,15 @@ struct Local { int value; };
 int Widget::read() { Local local{.value = helper()}; return local.value; })GTIMODULE"},
         {helper.string(), R"GTIMODULE(export module helpers;
 export int helper() { return 7; })GTIMODULE"}};
-    return lang::Frontend().analyze(
-        app / "main.gti",
-        "import lib.factory; int main() { return Widget::read(); }", {},
-        sources, {}, packages);
+    return lang::Frontend().analyze(app / "main.gti",
+                                    "import lib.factory; int main() { return " +
+                                        std::string(call) + "; }",
+                                    {}, sources, {}, packages);
   };
   const auto original = analyzeAt(fixtureRoot);
   const auto relocated = analyzeAt(fixtureRoot / "relocated");
   expect(original.canGenerateCode() && relocated.canGenerateCode(),
-         "dependency module implementations and their private includes need "
+         "dependency module implementations and their private imports need "
          "logical identities even without failure sites");
   if (!original.canGenerateCode() || !relocated.canGenerateCode()) {
     printDiagnostics(original);
@@ -1878,12 +1881,23 @@ export int helper() { return 7; })GTIMODULE"}};
     expect(identity && identity->logicalName.starts_with("<external>/") &&
                identity->logicalName.ends_with("/body.gti"),
            "a private dependency implementation has a stable external name");
-    expect(!original.sourceGraph.isVisible(original.sourceGraph.entryUnit(),
+    expect(
+        !original.sourceGraph.isVisible(original.sourceGraph.entryUnit(),
+                                        registration.implementationUnit) &&
+            original.sourceGraph.isVisible(registration.interfaceUnit,
                                            registration.implementationUnit) &&
-               !original.sourceGraph.isVisible(registration.interfaceUnit,
-                                               registration.implementationUnit),
-           "implementation provenance must not grant source visibility");
+            original.sourceGraph.sameModule(registration.interfaceUnit,
+                                            registration.implementationUnit),
+        "implementation membership grants same-module visibility only");
   }
+  const auto hiddenHelper = analyzeAt(fixtureRoot, "helper()");
+  expect(!hiddenHelper.canGenerateCode() && hiddenHelper.sourceValid &&
+             hiddenHelper.syntaxValid &&
+             std::any_of(
+                 hiddenHelper.diagnostics.begin(),
+                 hiddenHelper.diagnostics.end(),
+                 [](const auto &value) { return value.code == "GTI-S2024"; }),
+         "implementation imports must not expose private helpers to consumers");
 }
 
 void testCallerLocationAssignments() {
@@ -2783,8 +2797,9 @@ int main() {
                              diagnostic->primary.end -
                                  diagnostic->primary.start) == "make_unique" &&
               librarySource != nullptr &&
-              std::filesystem::path(library->span.source).filename() ==
-                  "memory.gti" &&
+              std::filesystem::weakly_canonical(library->span.source) ==
+                  std::filesystem::weakly_canonical(
+                      standardLibraryRoot() / "std/detail/memory_core.gti") &&
               librarySource->substr(library->span.start,
                                     library->span.end - library->span.start) ==
                   ")",
@@ -4020,6 +4035,10 @@ int main(int argc, char **argv) {
       testCheckedCallPlacePreparation();
     else if (name == "testModuleImplementationSourceIdentity")
       testModuleImplementationSourceIdentity();
+    else if (name == "testContainerContractChecks")
+      testContainerContractChecks();
+    else if (name == "testScalarUniqueAllocationContracts")
+      testScalarUniqueAllocationContracts();
     else {
       std::cerr << "unknown test: " << name << '\n';
       return 2;

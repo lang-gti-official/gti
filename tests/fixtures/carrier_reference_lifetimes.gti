@@ -58,8 +58,8 @@ Shared copied_return(Shared& source, int divisor) {
 int alias_iteration() {
   mut std::string text{"abc"};
   mut auto iterator = text.begin();
-  std::detail::storage_iterator<char>& alias = iterator;
-  std::detail::storage_iterator<char>& second = alias;
+  std::string::const_iterator& alias = iterator;
+  std::string::const_iterator& second = alias;
   if (*second != 'a') { return 1; }
   text.push_back('d');
   return text.size() == 4 ? 0 : 1;

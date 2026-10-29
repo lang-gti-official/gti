@@ -18,7 +18,7 @@ if __name__ == "__main__":
         # Constraints are part of the declaration, not the failure site's
         # identity. Select the exact class name before its generic parameters.
         begin = next(i for i, line in enumerate(span_lines)
-                     if line.startswith(f"class {class_name}<"))
+                     if line.removeprefix("export ").startswith(f"class {class_name}<"))
         method = next(i for i in range(begin, len(span_lines)) if signature in span_lines[i])
         return next(i + 1 for i in range(method + 1, len(span_lines))
                     if "gti_internal::index_bounds_check" in span_lines[i])

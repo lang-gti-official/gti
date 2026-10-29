@@ -33,15 +33,16 @@ int main(int argc, std::vector<std::string> argv) {
 #ifdef VERBOSE
   mask.append("V");
 #endif
+  if (config::configured) { mask.append("C"); }
+  if (dep::configured) { mask.append("D"); }
+  if (!dep::saw_app_local) { mask.append("I"); }
 #ifdef FROM_CONFIG
-  mask.append("C");
+  return 17; // Imported source flags must not leak into the application.
 #endif
 #ifdef DEP_DEFINED
-  mask.append("D");
+  return 18;
 #endif
-  if (dep::saw_app_local) {
-    mask.append("L");
-  }
+  if (!config::verbose_disabled) { return 19; }
   Settings settings{};
   std::println(mask);
   if (argc != 2) {
@@ -50,7 +51,7 @@ int main(int argc, std::vector<std::string> argv) {
   if (!(argv[std::size_t(1)] == mask)) {
     return 11;
   }
-  if (combo != 1) {
+  if (combo != 2) {
     return 12;
   }
   if (dep::feature_a_bonus() != 100) {

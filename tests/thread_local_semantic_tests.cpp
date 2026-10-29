@@ -1416,14 +1416,14 @@ void lateConcreteQueryContexts() {
   const auto trustedPath =
       std::filesystem::weakly_canonical(library / "std/functional.gti");
   const std::string declarations = R"(
-struct Relay<T> {
+export struct Relay<T> {
   void invoke<F>(F& callback, T value) { callback(value); }
   void invoke<F>(F& callback) { callback(); }
 public:
   Relay() = default;
 };
 F retain<F>(F& callback) { return callback; }
-void escape<F>(F& callback) { auto held = retain(callback); held(); }
+export void escape<F>(F& callback) { auto held = retain(callback); held(); }
 )";
   const std::string calls = R"(
 import std.functional;

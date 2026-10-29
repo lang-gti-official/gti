@@ -1029,7 +1029,11 @@ def load_build_provenance(
         target = require_integer(dependency["target"], f"{context}.target", 1)
         if source not in unit_ids or target not in unit_ids:
             raise BenchmarkError(f"{context} references an unknown unit")
-        if dependency["kind"] not in {"include", "prelude", "standard-library", "package"}:
+        # Baseline comparisons may read older compilers' provenance. These
+        # legacy data labels do not enable source-level include compatibility.
+        if not isinstance(dependency["kind"], str) or dependency["kind"] not in {
+            "prelude", "import", "export-import", "include", "standard-library", "package",
+        }:
             raise BenchmarkError(f"{context}.kind is invalid")
         if not isinstance(dependency["include_spelling"], str):
             raise BenchmarkError(f"{context}.include_spelling must be a string")

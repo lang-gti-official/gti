@@ -23,6 +23,12 @@
 namespace lang {
 namespace {
 
+std::filesystem::path authoredPath(const std::filesystem::path &path) {
+  std::error_code error;
+  const auto absolute = std::filesystem::absolute(path, error);
+  return (error ? path : absolute).lexically_normal();
+}
+
 void digestInteger(std::uint64_t &digest, std::uint64_t value) {
   for (unsigned shift = 0; shift < 64; shift += 8) {
     digest ^= static_cast<unsigned char>(value >> shift);
@@ -129,8 +135,15 @@ SourceGraph SourceLoader::load(
   for (auto &owner : owners) {
     owner.packageRoot = canonicalPath(owner.packageRoot);
     owner.sourceRoot = canonicalPath(owner.sourceRoot);
-    for (auto &[name, path] : owner.modules)
+    for (auto &[name, path] : owner.modules) {
+      if (std::none_of(owner.moduleLookupPaths.begin(),
+                       owner.moduleLookupPaths.end(),
+                       [&](const auto &entry) { return entry.first == name; }))
+        owner.moduleLookupPaths.emplace_back(name, authoredPath(path));
       path = canonicalPath(path);
+    }
+    for (auto &[name, path] : owner.moduleLookupPaths)
+      path = authoredPath(path);
     for (auto &root : owner.additionalRoots)
       root = canonicalPath(root);
     std::sort(owner.dependencies.begin(), owner.dependencies.end(),
@@ -216,8 +229,11 @@ SourceGraph SourceLoader::load(
         }
         if (std::none_of(
                 standard.modules.begin(), standard.modules.end(),
-                [&](const auto &module) { return module.first == name; }))
+                [&](const auto &module) { return module.first == name; })) {
           standard.modules.emplace_back(name, path);
+          standard.moduleLookupPaths.emplace_back(
+              name, authoredPath(root / relative));
+        }
       }
     }
     std::sort(standard.modules.begin(), standard.modules.end());
@@ -258,6 +274,17 @@ SourceGraph SourceLoader::load(
           actual->identity != owner.identity)
         invalidOwner("Public module registrations require unique valid names "
                      "and contained .gti interfaces.");
+    }
+    std::unordered_set<std::string> lookupNames;
+    for (const auto &[name, path] : owner.moduleLookupPaths) {
+      const auto registered =
+          std::find_if(owner.modules.begin(), owner.modules.end(),
+                       [&](const auto &entry) { return entry.first == name; });
+      if (!lookupNames.insert(name).second ||
+          registered == owner.modules.end() ||
+          canonicalPath(path) != registered->second)
+        invalidOwner("Authored module lookup paths must identify their "
+                     "canonical registration.");
     }
     std::unordered_set<std::string> dependencyAliases;
     for (const auto &dependency : owner.dependencies)
@@ -1174,7 +1201,9 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
     const std::filesystem::path relative(*spelling);
     if (relative.is_absolute() || relative.extension() != ".gti")
       return reject("A quoted module import must name a relative .gti file.");
-    path = canonicalPath(includingFile.parent_path() / relative);
+    sourceImport.authoredLookupPath =
+        authoredPath(includingFile.parent_path() / relative);
+    path = canonicalPath(*sourceImport.authoredLookupPath);
     const auto *targetOwner = packageForPath(path);
     if (owner == nullptr || targetOwner == nullptr ||
         owner->identity != targetOwner->identity)
@@ -1240,6 +1269,14 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
                     "' does not declare module '" + localName +
                     "' or dependency alias '" + names.front() + "'.");
     }
+    const auto authored = std::find_if(
+        target->moduleLookupPaths.begin(), target->moduleLookupPaths.end(),
+        [&](const auto &entry) { return entry.first == name; });
+    sourceImport.authoredLookupPath =
+        authored != target->moduleLookupPaths.end() ? authored->second : path;
+    if (canonicalPath(*sourceImport.authoredLookupPath) != path)
+      return reject("Module lookup changed after its registration was "
+                    "resolved; retry with current metadata.");
     const auto *resolvedOwner = packageForPath(path);
     if (!resolvedOwner || resolvedOwner->identity != target->identity ||
         path.extension() != ".gti")

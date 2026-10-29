@@ -27,7 +27,11 @@ void check(std::string_view source, std::string_view signature) {
              original.size() == formatted.size() &&
              std::equal(original.begin(), original.end(), formatted.begin(),
                         [](const auto &a, const auto &b) {
-                          return a.kind == b.kind && a.lexeme == b.lexeme;
+                          // EOF is a synthetic sentinel, not a source token.
+                          // Compare every actual source token exactly.
+                          return a.kind == b.kind &&
+                                 (a.kind == lang::TokenKind::END_OF_FILE ||
+                                  a.lexeme == b.lexeme);
                         }),
          "generic owner formatting preserves source tokens");
 }

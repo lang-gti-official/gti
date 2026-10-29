@@ -825,6 +825,7 @@ namespace std { export int override_only_value() { return 0; } }
       {{leakyKey,
         R"GTIMODULE(export module array;
 import std.memory;
+import "detail/memory_capabilities.gti";
 namespace std { export struct Leaky { public: gti_internal::unique_owner<int> capability; }; }
 )GTIMODULE"}},
       {standardLibraryRoot()});
@@ -841,6 +842,7 @@ namespace std { export struct Leaky { public: gti_internal::unique_owner<int> ca
       "std::leaked value;\nint main() { return 0; }\n",
       {standardLibraryPrelude()}, {{leakyKey, R"GTIMODULE(export module array;
 import std.memory;
+import "detail/memory_capabilities.gti";
 namespace std { export using leaked = gti_internal::unique_owner<int>; }
 )GTIMODULE"}},
       {standardLibraryRoot()});
@@ -858,6 +860,7 @@ namespace std { export using leaked = gti_internal::unique_owner<int>; }
       "return value.select(1.0); }\n",
       {standardLibraryPrelude()}, {{leakyKey, R"GTIMODULE(export module array;
 import std.memory;
+import "detail/memory_capabilities.gti";
 namespace std { export class Mixed { public: Mixed() {} int select(int value) { return value; } int select(gti_internal::unique_owner<int> value) { return 0; } }; }
 )GTIMODULE"}},
       {standardLibraryRoot()});
@@ -879,6 +882,7 @@ namespace std { export class Mixed { public: Mixed() {} int select(int value) { 
       {{leakyKey,
         R"GTIMODULE(export module array;
 import std.memory;
+import "detail/memory_capabilities.gti";
 namespace std { export class PrivateBase { public: PrivateBase() {} int select(gti_internal::unique_owner<int> value) { return 0; } }; }
 )GTIMODULE"}},
       {standardLibraryRoot()});
@@ -896,6 +900,7 @@ namespace std { export class PrivateBase { public: PrivateBase() {} int select(g
       {{leakyKey,
         R"GTIMODULE(export module array;
 import std.memory;
+import "detail/memory_capabilities.gti";
 namespace std { export class PrivateMethod { public: PrivateMethod() {} int secret(gti_internal::unique_owner<int> value) { return 0; } }; }
 )GTIMODULE"}},
       {standardLibraryRoot()});
@@ -1210,8 +1215,9 @@ void testPackageImports() {
   expect(!transitiveLeak.sourceValid &&
              hasDiagnosticCode(transitiveLeak.diagnostics, "GTI-I0012") &&
              hasDiagnostic(transitiveLeak.diagnostics,
-                           "no direct dependency alias 'hidden'"),
-         "package imports should expose only the including package's direct "
+                           "does not declare module 'hidden.value' or "
+                           "dependency alias 'hidden'"),
+         "package imports should expose only the importing package's direct "
          "dependency aliases");
 
   const lang::FrontendResult relativeEscape = lang::Frontend().analyze(
@@ -1222,8 +1228,8 @@ void testPackageImports() {
   expect(!relativeEscape.sourceValid &&
              hasDiagnosticCode(relativeEscape.diagnostics, "GTI-I0012") &&
              hasDiagnostic(relativeEscape.diagnostics,
-                           "cannot cross a package boundary"),
-         "quoted includes should not bypass declared package aliases");
+                           "cannot cross a source-owner boundary"),
+         "quoted imports should not bypass declared package aliases");
 }
 
 void testLoopControlStatements() {
@@ -3110,7 +3116,10 @@ int main() { return 0; }
       std::filesystem::temp_directory_path() / "gti-reachable-library-root");
   std::filesystem::create_directories(libraryRoot / "std");
   const auto libraryUnit = libraryRoot / "std" / "reachable_probe.gti";
-  const std::string libraryBase = "int library_used() { return 3; }\n";
+  std::ofstream(libraryRoot / "module-map.json")
+      << R"({"modules":{"reachable_probe":"std/reachable_probe.gti"}})";
+  const std::string libraryBase = "export module reachable_probe;\nexport int "
+                                  "library_used() { return 3; }\n";
   const auto writeLibrary = [&](const std::string &source) {
     std::ofstream output(libraryUnit);
     output << source;

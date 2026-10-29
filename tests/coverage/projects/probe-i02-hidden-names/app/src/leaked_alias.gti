@@ -1,4 +1,4 @@
-import lib;
+import lib.api;
 // util is lib's dependency alias, not app's; re-exports never leak aliases.
 import util;
 

@@ -171,9 +171,9 @@ def main():
         run([gti, composed, "-g", "-O1", "--std", "c++20", "--keep-cpp", "-o", executable], root)
         run([executable], root)
         text = generated.read_text(encoding="utf-8")
-        assert f'#line 2 "{support}"' in text  # Retained generic body.
-        assert f'#line 12 "{support}"' in text  # Ordinary method.
-        assert f'#line 18 "{support}"' in text  # Nested lambda.
+        assert f'#line 3 "{support}"' in text  # Retained generic body.
+        assert f'#line 13 "{support}"' in text  # Ordinary method.
+        assert f'#line 19 "{support}"' in text  # Nested lambda.
         rejected = run([gti, source, "--emit-mir", "-g"], root, ok=False)
         assert rejected.returncode and "debug info" in rejected.stderr
 

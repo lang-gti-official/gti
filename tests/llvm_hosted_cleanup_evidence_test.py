@@ -9,6 +9,7 @@ new native bindings, compiler-private access exemptions or failure seams exist.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
@@ -64,6 +65,17 @@ def inventory(directory: Path) -> dict[str, str]:
         if source.is_file():
             result[str(source.relative_to(directory))] = audit.file_digest(source)
     return result
+
+
+def install_trace_module(library: Path, source: Path) -> None:
+    """Publish only the disposable observation module in this alternative library."""
+    shutil.copyfile(source, library / TRACE_PATH)
+    map_path = library / "module-map.json"
+    mapping = json.loads(map_path.read_text(encoding="utf-8"))
+    name = "detail_llvm_hosted_cleanup_trace"
+    audit.require(name not in mapping["modules"], "trace module must remain test-only")
+    mapping["modules"][name] = TRACE_PATH
+    map_path.write_text(json.dumps(mapping, indent=2) + "\n", encoding="utf-8")
 
 
 def transformed_sources(root: Path, *, failures: bool, release_marker: bool) -> dict[str, str]:
@@ -278,9 +290,9 @@ def main() -> None:
         modified = transformed_sources(root, failures=failures, release_marker=release_marker)
         for relative, text in modified.items():
             (library / relative).write_text(text, encoding="utf-8")
-        shutil.copyfile(trace_source, library / TRACE_PATH)
+        install_trace_module(library, trace_source)
         transformed = inventory(library)
-        expected = {"std/string.gti"} if failures else set()
+        expected = {"module-map.json"} | ({"std/string.gti"} if failures else set())
         if release_marker:
             expected.add("std/detail/memory_storage.gti")
         validate_inventory(original, transformed, expected)

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position, without_include_advice
+from lsp_smoke_test import LspSession, lsp_position
 
 
 def run(compiler, server, root):

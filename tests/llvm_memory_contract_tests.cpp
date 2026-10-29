@@ -1,6 +1,10 @@
 #include "../src/compiler/llvm/memory.h"
 #include "cpp_backend_test_support.h"
+#include "private_stdlib_fixture.h"
+
 #include "gti/process_memory_runtime.h"
+#include <fstream>
+#include <iterator>
 
 #include <array>
 #include <filesystem>
@@ -104,20 +108,27 @@ void sourceProviderContracts(const std::filesystem::path &root) {
   options.requireFunctionDefinitions = true;
   options.lowerReachableOnly = true;
   options.lowerLibraryReachableOnly = true;
-  const auto frontend = Frontend(options).analyze(
-      root / "tests/fixtures/llvm_memory_provider.gti", std::nullopt,
-      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+  std::ifstream fixture(root / "tests/fixtures/llvm_memory_provider.gti");
+  const std::string source{std::istreambuf_iterator<char>(fixture), {}};
+  expect(fixture.good() || fixture.eof(),
+         "provider source fixture is readable");
+  const auto frontend = gti_test::analyzePrivateMemoryFixture(
+      "llvm_memory_provider.gti", source, options, root / "stdlib");
+  expect(
+      !frontend.sourceGraph.isCompilerTrusted(frontend.sourceGraph.entryUnit()),
+      "private lease fixture grants no compiler capability trust");
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-    expect(false, "public provider fixture produces verified MIR");
+    expect(false, "private lease provider fixture produces verified MIR");
     return;
   }
   std::vector<LoweredProgramIssue> issues;
   auto verified = verifiedLoweredProgram(
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
   if (!verified) {
-    expect(false, "public provider fixture produces a sealed lowered snapshot");
+    expect(false,
+           "private lease provider fixture produces a sealed lowered snapshot");
     return;
   }
   const auto &program = verified->program().mir();

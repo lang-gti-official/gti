@@ -1,7 +1,7 @@
 import frontend;
 #undef FAST
-// The modules loaded shared.gti with the build's FAST flag. Without it this
-// domain selects different declarations, so the shared unit cannot be replayed.
+// Every module gets the build flags independently. This local undef must not
+// alter the already imported shared module or select a second configuration.
 import "shared.gti";
 
-int main() { return engine::frontend_speed() - 102; }
+int main() { return engine::frontend_speed() - 102 + shared::mode() - 1; }

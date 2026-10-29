@@ -20,7 +20,7 @@ analyzePrivateMemoryFixture(std::string_view name, std::string source,
   const auto entry =
       root / "__private_tests__" / std::filesystem::path(name).filename();
   source.insert(0, "import std.memory; "
-                   "import \"../std/detail/memory_storage.gti\";\n");
+                   "import \"../std/detail/memory_storage.gti\"; ");
   return lang::Frontend(std::move(options))
       .analyze(entry, std::move(source), {root / "prelude.gti"}, {}, {root});
 }
@@ -35,7 +35,7 @@ analyzeTrustedPrivateMemoryFixture(std::string_view name, std::string source,
   const auto entry =
       root / "__private_tests__" / std::filesystem::path(name).filename();
   source.insert(0, "import std.memory; "
-                   "import \"../std/detail/memory_storage.gti\";\n");
+                   "import \"../std/detail/memory_storage.gti\"; ");
   return lang::Frontend(std::move(options))
       .analyze(entry, source, {root / "prelude.gti", entry},
                {{std::filesystem::weakly_canonical(entry).string(), source}},

@@ -916,6 +916,13 @@ borrowed carrier the same shell `Reference` loan, with the carrier's `Stored`
 loan as its stored dependency, that a reference of the carrier's own type gets,
 whether it binds the carrier or the result of a call relaying it.
 
+Pre-body constructor summaries resolve nested classes, payload enums, namespace
+aliases and callable contracts in the constructor's defining source, class and
+namespace context. They use the same requester-visible declaration indexes as
+ordinary lookup. Private homonyms in unrelated modules cannot select a different
+stored origin or ownerless-text contract; scoped context restoration also keeps
+recursive summaries and later caller analysis independent of import order.
+
 `ownerlessTextConstructorInputs`, the pre-body input contract checked at each
 construction, includes a base initializer that passes a formal to a base
 constructor storing that parameter. The derived class keeps its text fields

@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace {
 void expect(bool condition, const char *message) {
@@ -18,9 +21,181 @@ void expectValid(const lang::FrontendResult &result, const char *message) {
   expect(result.sourceValid && result.syntaxValid && result.semanticValid,
          message);
 }
+void testDeclarationScopedBorrowSummaries() {
+  using namespace lang;
+  const auto root = std::filesystem::current_path() / "module-borrow-fixture";
+  const auto stdlib =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto entry = root / "main.gti", left = root / "a.gti",
+             right = root / "b.gti";
+  struct Case {
+    std::string name, left, valid, invalid, code;
+  };
+  const std::vector<Case> cases{
+      {R"GTI(nested-class-mutation)GTI",
+       R"GTI(export module a;
+class ReadView { public: int& item; ReadView(int& item) : item(item) {} int& read() { return this.item; } };
+export int a() { return 0; }
+)GTI",
+       R"GTI(export module b;
+class ReadView { public: int& item; ReadView(int& item) : item(item) {} int& read() { return this.item; } };
+class Selected { ReadView view; public:
+Selected(ReadView unused, int& chosen) : view(ReadView(chosen)) {}
+int& read() { return this.view.read(); }
+};
+export int b() {
+mut int unused = 1;
+mut int chosen = 2;
+Selected selected{ReadView(unused), chosen};
+unused = 3;
+auto selected_copy = selected;
+if (selected.read() != 2 || selected_copy.read() != 2 || unused != 3) { return 7; }
+return 0;
+}
+)GTI",
+       R"GTI(export module b;
+class ReadView { public: int& item; ReadView(int& item) : item(item) {} int& read() { return this.item; } };
+class Selected { ReadView view; public:
+Selected(ReadView unused, int& chosen) : view(ReadView(chosen)) {}
+int& read() { return this.view.read(); }
+};
+export int b() {
+mut int unused = 1;
+mut int chosen = 2;
+Selected selected{ReadView(unused), chosen};
+chosen = 3;
+auto selected_copy = selected;
+if (selected.read() != 2 || selected_copy.read() != 2 || unused != 3) { return 7; }
+return 0;
+}
+)GTI",
+       R"GTI(GTI-S2017)GTI"},
+      {R"GTI(nested-class-escape)GTI",
+       R"GTI(export module a;
+class ReadView { public: int& item; ReadView(int& item) : item(item) {} int& read() { return this.item; } };
+export int a() { return 0; }
+)GTI",
+       R"GTI(export module b;
+class ReadView { public: int& item; ReadView(int& item) : item(item) {} int& read() { return this.item; } };
+class Selected { ReadView view; public:
+Selected(ReadView unused, int& chosen) : view(ReadView(chosen)) {}
+int& read() { return this.view.read(); }
+};
+export int b() {
+mut int unused = 1;
+mut int chosen = 2;
+Selected selected{ReadView(unused), chosen};
+unused = 3;
+auto selected_copy = selected;
+if (selected.read() != 2 || selected_copy.read() != 2 || unused != 3) { return 7; }
+return 0;
+}
+)GTI",
+       R"GTI(export module b;
+class ReadView { public: int& item; ReadView(int& item) : item(item) {} int& read() { return this.item; } };
+class Selected { ReadView view; public:
+Selected(ReadView unused, int& chosen) : view(ReadView(chosen)) {}
+int& read() { return this.view.read(); }
+};
+export int b() {
+mut int unused = 1;
+mut int chosen = 2;
+Selected selected{ReadView(unused), chosen};
+unused = 3;
+auto selected_copy = selected;
+if (selected.read() != 2 || selected_copy.read() != 2 || unused != 3) { return 7; }
+return 0;
+}
+
+export ReadView escape(){int local=1; return ReadView(local);}
+)GTI",
+       R"GTI(GTI-S2045)GTI"},
+      {R"GTI(enum)GTI",
+       R"GTI(export module a;
+enum Message { text(std::string_view value), none };)GTI",
+       R"GTI(export module b;
+enum Message { text(std::string_view value), none };
+class Label { Message message; public: Label(std::string_view value):message(Message::text(value)){} };
+export int b(){ Label label{"literal"}; return 0; }
+)GTI",
+       R"GTI(export module b; import std.string;
+enum Message { text(std::string_view value), none };
+class Label { Message message; public: Label(std::string_view value):message(Message::text(value)){} };
+export Label b(){ std::string owner{"dynamic"}; Label label{owner.view()}; return label; }
+)GTI",
+       R"GTI(GTI-S2045)GTI"},
+      {R"GTI(callable)GTI",
+       R"GTI(export module a;
+[[borrowed_from(first)]] int& relay(int& first,int& second){return first;})GTI",
+       R"GTI(export module b;
+[[borrowed_from(second)]] int& relay(int& first,int& second){return second;}
+class Selected { int& item; public: Selected(int& first,int& second):item(relay(first,second)){} int& read(){return this.item;} };
+export int b(){mut int first=1; mut int second=2; Selected selected{first,second}; first=3; return selected.read()==2 && first==3 ? 0:1;}
+)GTI",
+       R"GTI(export module b;
+[[borrowed_from(second)]] int& relay(int& first,int& second){return second;}
+class Selected { int& item; public: Selected(int& first,int& second):item(relay(first,second)){} int& read(){return this.item;} };
+export int b(){mut int first=1; mut int second=2; Selected selected{first,second}; second=3; return selected.read()==2 && first==3 ? 0:1;}
+)GTI",
+       R"GTI(GTI-S2017)GTI"},
+  };
+  for (const auto &test : cases) {
+    for (bool cached : {false, true}) {
+      FrontendOptions options;
+      options.suggestIncludes = false;
+      if (cached) {
+        options.cache = std::make_shared<FrontendCache>();
+        options.preambleCache = std::make_shared<SemanticPreambleCache>();
+        options.instanceCache = std::make_shared<InstanceAnalysisCache>();
+      }
+      for (const std::string imports :
+           {"import \"a.gti\"; import \"b.gti\";",
+            "import \"b.gti\"; import \"a.gti\";"}) {
+        // A failed overlay must not poison either the next declaration
+        // context or reusable syntax/preamble/instance state.
+        for (int edit = 0; edit != 3; ++edit) {
+          const bool valid = edit != 1;
+          const std::unordered_map<std::string, std::string> sources{
+              {left.string(), test.left},
+              {right.string(), valid ? test.valid : test.invalid}};
+          const auto result = Frontend(options).analyze(
+              entry, imports + " int main(){ auto result = b(); return 0; }",
+              {stdlib / "prelude.gti"}, sources, {stdlib});
+          if (valid) {
+            if (!result.canGenerateCode()) {
+              std::cerr << test.name << " cached=" << cached << '\n';
+              for (const auto &diagnostic : result.diagnostics)
+                std::cerr << diagnostic.code << ": " << diagnostic.message
+                          << '\n';
+            }
+            expect(result.canGenerateCode(),
+                   "constructor summaries use defining-module identities in "
+                   "either import order");
+          } else {
+            expect(result.sourceValid && result.syntaxValid &&
+                       !result.semanticValid &&
+                       std::any_of(result.diagnostics.begin(),
+                                   result.diagnostics.end(),
+                                   [&](const auto &diagnostic) {
+                                     return diagnostic.code == test.code;
+                                   }) &&
+                       std::none_of(result.diagnostics.begin(),
+                                    result.diagnostics.end(),
+                                    [](const auto &diagnostic) {
+                                      return diagnostic.code == "GTI-B0001";
+                                    }),
+                   "exact retained origins reject mutation/escape before MIR");
+          }
+        }
+      }
+    }
+  }
+}
+
 } // namespace
 
 int main() {
+  testDeclarationScopedBorrowSummaries();
   const auto root = std::filesystem::current_path() / "module-identity-fixture";
   const auto entry = root / "main.gti";
   const auto left = root / "left.gti";

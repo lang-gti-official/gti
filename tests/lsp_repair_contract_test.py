@@ -122,7 +122,7 @@ def run(executable, root):
         source = "// \U0001f600\r\nint main() { return api::value(); }\r\n"
         repair(source, "GTI-S2089", 'import "api.gti";\r\n' + source)
         # Different valid includes are alternatives, not an atomic combined edit.
-        (root / "other.gti").write_text("namespace api { int value() { return 8; } }\n")
+        (root / "other.gti").write_text("export module other;\nexport namespace api { int value() { return 8; } }\n")
         notify("workspace/didChangeWatchedFiles", {"changes": [
             {"uri": (root / "other.gti").as_uri(), "type": 1}]})
         diagnostic = next(d for d in change(source) if d.get("data", {}).get("fixes"))

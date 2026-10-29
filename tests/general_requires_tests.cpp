@@ -1123,6 +1123,9 @@ int main() {
 import std.meta;
 import std.polymorphic;
 import std.string;
+struct PayloadProbe<Model, Base> {
+  bool matches() requires std::inline_polymorphic_payload<Model, Base> { return true; }
+};
 interface Measure { int read(); };
 class Point : public Measure {
 public:
@@ -1149,10 +1152,10 @@ int main() {
   static_assert(!std::meta::has_active_cleanup<int>());
   static_assert(std::meta::has_active_cleanup<Noisy>());
   static_assert(std::meta::type<Owning>().has_active_cleanup());
-  static_assert(requires(std::detail::inline_payload_probe<Point, Measure>& p) {
+  static_assert(requires(PayloadProbe<Point, Measure>& p) {
     { p.matches() } -> bool;
   });
-  static_assert(!(requires(std::detail::inline_payload_probe<Noisy, Measure>& p) {
+  static_assert(!(requires(PayloadProbe<Noisy, Measure>& p) {
     { p.matches() } -> bool;
   }));
   return 0;

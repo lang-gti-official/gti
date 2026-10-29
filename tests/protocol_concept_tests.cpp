@@ -493,21 +493,22 @@ export concept measurable<T> { int measure(T& item); bool is_empty(T& item); };
                                       item.code == "GTI-S2049";
                              }) == 1,
            "an invisible concept reports once from its block");
-    expect(diagnostic != invisible.diagnostics.end() &&
-               diagnostic->primary.start == source.find("measurable") &&
-               diagnostic->missingIncludeName == "measurable" &&
-               std::any_of(diagnostic->related.begin(),
-                           diagnostic->related.end(),
-                           [&](const auto &related) {
-                             return related.span.source == conceptPath.string();
-                           }) &&
-               std::any_of(diagnostic->hints.begin(), diagnostic->hints.end(),
-                           [](const auto &hint) {
-                             return hint.find("import \"measure.gti\";") !=
-                                    std::string::npos;
-                           }),
-           "an invisible concept retains declaration and include help even "
-           "without operations");
+    expect(
+        diagnostic != invisible.diagnostics.end() &&
+            diagnostic->primary.start == source.find("measurable") &&
+            diagnostic->missingIncludeName == "measurable" &&
+            std::any_of(diagnostic->related.begin(), diagnostic->related.end(),
+                        [&](const auto &related) {
+                          return related.span.source == conceptPath.string();
+                        }) &&
+            std::any_of(diagnostic->hints.begin(), diagnostic->hints.end(),
+                        [](const auto &hint) {
+                          return hint.find(
+                                     "import of the defining interface") !=
+                                 std::string::npos;
+                        }),
+        "an invisible concept retains declaration and module import help even "
+        "without operations");
   }
   rejected(measurable + R"gti(
 for <T> concept measurable<Crate<T>> {

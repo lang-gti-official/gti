@@ -35,8 +35,11 @@ namespace std {
 concept copyable<T> = requires(T& source) { { T(source) } -> T; };
 }
 )");
+    write(root / "module-map.json",
+          R"({"modules":{"sample":"std/sample.gti"}})");
     write(root / "std/sample.gti", R"(
-namespace std {
+export module sample;
+export namespace std {
 /// Requires a copyable value.
 concept sample_copyable<T> = std::copyable<T>;
 

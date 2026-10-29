@@ -83,7 +83,7 @@ class UserAdapter {
   IndependentText& text;
 public:
   UserAdapter(IndependentText& text) : text(text) {}
-  std::detail::text_view_iterator<0> cursor() { return std::begin(this.text); }
+  std::string_view_iterator cursor() { return std::begin(this.text); }
 };
 int main() {
   IndependentText view = "abc";

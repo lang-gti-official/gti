@@ -2,6 +2,9 @@
 """Shared exhaustion aborts; ordinary final-release failure obeys MIR cleanup."""
 
 import argparse
+import os
+import shutil
+from unittest.mock import patch
 from pathlib import Path
 import tempfile
 
@@ -27,6 +30,15 @@ def main():
     if arguments.mode:
         modes = [mode for mode in modes if mode[0] in arguments.mode]
     with tempfile.TemporaryDirectory(prefix="gti-shared-failure-") as temporary:
+        # The overflow probes deliberately inspect a private control block.
+        # A disposable interface exposes a test alias; shipped API stays private.
+        library = Path(temporary) / "stdlib"
+        shutil.copytree(fixtures.parent.parent / "stdlib", library)
+        with (library / "std/memory.gti").open("a", encoding="utf-8") as output:
+            output.write("\nexport using gti_test_shared_control = std::detail::shared_control;\n")
+        weak_source = Path(temporary) / "weak_ownership_failure.gti"
+        weak_source.write_text((fixtures / "weak_ownership_failure.gti").read_text().replace(
+            "std::detail::shared_control", "gti_test_shared_control"), encoding="utf-8")
         for name, flags, native in modes:
             binary = Path(temporary) / name
             cpp_limitation = "--std" in flags
@@ -71,8 +83,9 @@ def main():
             assert "runtime error[GTI-R0002]" in result.stderr, (name, result)
             print(f"shared ownership constructor rollback: {name} passed", flush=True)
             weak_binary = Path(temporary) / f"weak-{name}"
-            built = run([str(compiler), str(fixtures / "weak_ownership_failure.gti"),
-                         *flags, "-o", str(weak_binary)])
+            with patch.dict(os.environ, {"GTI_STDLIB_PATH": str(library)}):
+                built = run([str(compiler), str(weak_source),
+                             *flags, "-o", str(weak_binary)])
             assert built.returncode == 0, (name, built.stdout, built.stderr)
             for args, status, output, code in [
                     ([], 70, "7\n99\n", "GTI-R0002"),

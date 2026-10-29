@@ -140,4 +140,50 @@ int main() { Box<int> box{.value=42}; return answer() + box.read() + identity(1)
            "an incomplete constexpr prefix falls back to complete program "
            "analysis");
   }
+  // A prefix global forces an enum-return query and retains a reusable worker
+  // catalog. The resumed body adds declarations and asks for a different key;
+  // it must never reuse the prefix's catalog or mutate its query journal.
+  const std::unordered_map<std::string, std::string> borrowing{
+      {api.string(), R"GTI(export module api;
+export enum class Choice { one };
+export Choice pick<T>(T value) { return Choice::one; }
+Choice early = pick(1);
+)GTI"}};
+  auto borrowCache = std::make_shared<lang::SemanticPreambleCache>();
+  for (int round = 0; round != 3; ++round) {
+    const bool invalid = round == 1;
+    for (int mode = 0; mode != 3; ++mode) {
+      lang::FrontendWorkMetrics work;
+      lang::FrontendOptions options;
+      options.cache = syntax;
+      options.preambleCache =
+          mode == 0   ? nullptr
+          : mode == 1 ? std::make_shared<lang::SemanticPreambleCache>()
+                      : borrowCache;
+      options.workMetrics = &work;
+      options.requireFunctionDefinitions = true;
+      options.requireEntryPoint = true;
+      options.suggestIncludes = false;
+      const std::string entry =
+          "module api; int main() { auto later = pick(true); return " +
+          std::string(invalid ? "missing" : "0") + "; }";
+      const auto result = lang::Frontend(options).analyze(
+          body, entry, {api}, borrowing, {}, {owner});
+      expect(invalid ? !result.semanticValid &&
+                           std::any_of(result.diagnostics.begin(),
+                                       result.diagnostics.end(),
+                                       [](const auto &diagnostic) {
+                                         return diagnostic.code == "GTI-S2001";
+                                       })
+                     : result.canGenerateCode(),
+             "complete-result query workers belong to each resumed request, "
+             "including independent valid analysis after an invalid overlay");
+      if (mode != 0)
+        expect(work.semanticPreambleAdoptions == 1,
+               "the borrow-query regression must adopt its reusable prefix");
+      if (mode == 2 && round != 0)
+        expect(work.semanticPreambleBuilds == 0,
+               "valid and invalid consumers reuse the immutable query prefix");
+    }
+  }
 }

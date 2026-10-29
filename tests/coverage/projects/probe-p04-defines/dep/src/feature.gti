@@ -1,5 +1,5 @@
 export module feature;
-// Compiler-supplied flags (manifest + -D) and includer flags are visible here.
+// Compiler-supplied flags are visible; importer source-local flags are not.
 #ifdef FEATURE_A
 namespace dep {
   export int feature_a_bonus() { return 100; }
@@ -21,3 +21,11 @@ namespace dep {
 #endif
 
 #define DEP_DEFINED
+
+namespace dep {
+#ifdef DEP_DEFINED
+  export constexpr bool configured = true;
+#else
+  export constexpr bool configured = false;
+#endif
+}

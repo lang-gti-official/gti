@@ -4,6 +4,21 @@
 
 namespace lang {
 namespace {
+// Declaration summaries reuse normal source-visible lookup without retaining
+// the caller's context. Moving the replacement before mutation makes unwind
+// restore each changed field, including nested summary requests.
+template <class Value> class ScopedLookupValue {
+  Value &target;
+  Value previous;
+
+public:
+  ScopedLookupValue(Value &target, Value replacement)
+      : target(target),
+        previous(std::exchange(target, std::move(replacement))) {}
+  ~ScopedLookupValue() { target = std::move(previous); }
+  ScopedLookupValue(const ScopedLookupValue &) = delete;
+  ScopedLookupValue &operator=(const ScopedLookupValue &) = delete;
+};
 void preserveStorageConstructorParameters(
     const SemanticModel &model, const Call &call, std::size_t storageArguments,
     std::vector<SemanticType> &parameters) {
@@ -4247,6 +4262,13 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
   const ClassInfo *owner = classInfo(type);
   if (owner == nullptr || constructor == nullptr)
     return result;
+  // A pre-body contract belongs to its declaration, not the current caller
+  // or the first same-spelled declaration in the whole-program catalog.
+  ScopedLookupValue sourceContext(currentSourceUnit,
+                                  sourceUnitFor(constructor->name()));
+  ScopedLookupValue classContext(currentClass,
+                                 std::optional<ClassId>(owner->id));
+  ScopedLookupValue namespaceContext(currentNamespace, owner->namespaceScope);
   const auto textType = [](const SemanticType &candidate) {
     return candidate.kind == SemanticType::StringView ||
            candidate.kind == SemanticType::CString ||
@@ -4262,12 +4284,12 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     const auto &path = name->name();
     const NamePath qualifier(
         std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
-    const auto resolved = resolveNamespacePathGlobally(qualifier, scope);
+    const auto resolved = resolveNamespacePath(qualifier, scope);
     if (!resolved)
       return false;
     const auto found =
-        activeNamespaceSymbols().find(*resolved + "::" + path.last().lexeme);
-    return found != activeNamespaceSymbols().end() &&
+        currentNamespaceSymbols().find(*resolved + "::" + path.last().lexeme);
+    return found != currentNamespaceSymbols().end() &&
            found->second.overloads.size() == 1 &&
            found->second.overloads.front().record().intrinsic ==
                IntrinsicKind::Move;
@@ -4503,10 +4525,10 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     const auto &path = callee->name();
     if (path.segments.size() < 2)
       continue;
-    const auto enumId = resolveEnumPathGlobally(
-        NamePath(
-            std::vector<Token>(path.segments.begin(), path.segments.end() - 1)),
-        owner->namespaceScope);
+    const auto enumId =
+        resolveEnumPath(NamePath(std::vector<Token>(path.segments.begin(),
+                                                    path.segments.end() - 1)),
+                        owner->namespaceScope);
     const auto variant = std::find_if(
         enumeration->enumerators.begin(), enumeration->enumerators.end(),
         [&](const auto &candidate) {
@@ -6244,6 +6266,11 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
         std::find(visiting.begin(), visiting.end(), constructor) !=
             visiting.end())
       return {};
+    ScopedLookupValue sourceContext(currentSourceUnit,
+                                    sourceUnitFor(constructor->name()));
+    ScopedLookupValue classContext(currentClass,
+                                   std::optional<ClassId>(owner->id));
+    ScopedLookupValue namespaceContext(currentNamespace, owner->namespaceScope);
     visiting.push_back(constructor);
     struct Pop {
       std::vector<const ConstructorDecl *> &stack;
@@ -6267,11 +6294,11 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
             const NamePath qualifier(std::vector<Token>(
                 path.segments.begin(), path.segments.end() - 1));
             const auto scope =
-                resolveNamespacePathGlobally(qualifier, owner->namespaceScope);
+                resolveNamespacePath(qualifier, owner->namespaceScope);
             if (scope) {
-              const auto found = activeNamespaceSymbols().find(
+              const auto found = currentNamespaceSymbols().find(
                   *scope + "::" + path.last().lexeme);
-              if (found != activeNamespaceSymbols().end())
+              if (found != currentNamespaceSymbols().end())
                 callee = &found->second;
             }
           } else if (const auto *name =
@@ -6285,9 +6312,9 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
               return std::nullopt;
             for (std::size_t depth = owner->namespaceScope.size() + 1;
                  depth > 0 && callee == nullptr; --depth) {
-              const auto found = activeNamespaceSymbols().find(qualifiedName(
+              const auto found = currentNamespaceSymbols().find(qualifiedName(
                   owner->namespaceScope, depth - 1, name->name().lexeme));
-              if (found != activeNamespaceSymbols().end())
+              if (found != currentNamespaceSymbols().end())
                 callee = &found->second;
             }
           }
@@ -6377,11 +6404,11 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
                           return p.name.lexeme == name->name().lexeme;
                         }))
           return {};
-        target = resolveClassPathGlobally(NamePath(name->name()),
-                                          owner->namespaceScope);
+        target =
+            resolveClassPath(NamePath(name->name()), owner->namespaceScope);
       } else if (const auto *name =
                      exprAs<QualifiedName>(call->callee().get())) {
-        target = resolveClassPathGlobally(name->name(), owner->namespaceScope);
+        target = resolveClassPath(name->name(), owner->namespaceScope);
       }
       // Call analysis checks visibility and exact generic arguments. This
       // declaration summary must still find a private implementation type

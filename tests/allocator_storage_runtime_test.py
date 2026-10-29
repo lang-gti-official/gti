@@ -26,7 +26,7 @@ int main() {
   return 2;
 }
 """,
-        ("GTI-R0007", "index_out_of_bounds", "private_storage"),
+        ("GTI-R0007", "index_out_of_bounds", "private_storage", "<std/memory>"),
     ),
     "duplicate-construction": (
         """\
@@ -42,7 +42,8 @@ int main() {
   return 2;
 }
 """,
-        ("GTI-R0010", "invalid_storage_state", "duplicate_construction"),
+        ("GTI-R0010", "invalid_storage_state", "duplicate_construction",
+         "<std/detail/memory_storage>"),
     ),
     "uninitialized-access": (
         """\
@@ -56,7 +57,8 @@ int main() {
   return values.get(std::size_t(0));
 }
 """,
-        ("GTI-R0010", "invalid_storage_state", "uninitialized_access"),
+        ("GTI-R0010", "invalid_storage_state", "uninitialized_access",
+         "<std/detail/memory_storage>"),
     ),
     "uninitialized-destruction": (
         """\
@@ -71,7 +73,8 @@ int main() {
   return 2;
 }
 """,
-        ("GTI-R0010", "invalid_storage_state", "uninitialized_access"),
+        ("GTI-R0010", "invalid_storage_state", "uninitialized_access",
+         "<std/detail/memory_storage>"),
     ),
 }
 
@@ -225,7 +228,6 @@ def main() -> int:
                     executed.returncode != 70
                     or executed.stdout != ""
                     or any(fragment not in executed.stderr for fragment in fragments)
-                    or "<std/detail/memory_storage>" not in executed.stderr
                 ):
                     return fail(
                         f"run {label} {standard} {optimization}", executed

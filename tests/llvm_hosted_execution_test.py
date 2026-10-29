@@ -108,7 +108,7 @@ def source_literals(gti, root, scratch, endpoints, env):
     declarations = library / "std/source_location.gti"
     with declarations.open("a", encoding="utf-8") as stream:
         stream.write("""
-namespace llvm_source_metadata {
+export namespace llvm_source_metadata {
   bool file(std::string_view expected, std::size_t bytes,
             std::string_view value = gti_internal::source_file_name()) {
     return value == expected && value.size() == bytes;

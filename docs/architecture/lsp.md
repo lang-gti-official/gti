@@ -159,8 +159,15 @@ including dotted logical names; it never scans dependency-private files. The
 loader retains resolved, unresolved, and incomplete import facts with exact
 name spans and a token-derived completion prefix. Hover, definition, and
 references consume those facts and registered implementation membership.
-Unresolved imports have no invented definition target. Authorized lookup paths
-remain dependencies even when the interface is absent, so opening an unsaved
+Unresolved imports have no invented definition target. Semantic tokens classify
+retained module-name segments as namespaces, including incomplete names; only a
+resolved compiler-trusted standard target receives the default-library modifier.
+Interface header names additionally carry the declaration modifier. These tokens
+consume the loader's ranges rather than reparsing module syntax. Authorized lookup paths
+and separate authored lookup paths remain notification dependencies even when an
+interface is absent. Incomplete recovery retains only the last valid dependency
+snapshot for unchanged root text plus current incomplete facts, bounding repeated
+invalid retargets without retaining stale semantic output. Opening an unsaved
 interface or creating it on disk refreshes consumers. Publication checks their
 captured source generations to reject stale creation/deletion results. Protocol ranges convert
 retained byte spans to UTF-16, including comments and non-ASCII text before names.

@@ -2296,6 +2296,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
           continue;
         }
         package.modules.emplace_back(name, resolved);
+        package.moduleLookupPaths.emplace_back(
+            name, (packageRoot / relative).lexically_normal());
       }
     }
   }

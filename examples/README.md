@@ -380,7 +380,7 @@ is a teaching helper, not a production server.
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
-| `146-counted-text-view-iteration.gti` | dynamically owned text-view cursors, checked reverse/positional access, generic distance, and retained view-shell lifetime |
+| `146-counted-text-view-iteration.gti` | dynamically owned text-view cursors, public iterator aliases for application wrappers, checked reverse/positional access, and retained view-shell lifetime |
 | `147-standard-library-import.gti` | one portable standard-library import, vector, owning strings and formatting, without importing platform-only APIs |
 | `148-nested-configuration.gti` | named nested structs/classes, public qualified type paths, three-level nesting, and recursive reflected JSON configuration decoding and encoding |
 | `149-interface-static-factories.gti` | concrete static interface factories, recoverable backend selection, explicit owning upcasts and ordinary virtual dispatch |
@@ -388,7 +388,7 @@ is a teaching helper, not a production server.
 | `150-out-of-class-methods.gti` | optional split method definitions, private receiver state, declaration defaults, constexpr statics and receiver-borrowed results |
 | `151-c-string-import.gti` | unsafe C-string construction, recoverable null/allocation errors, independent owned copies and an unrelated unsafe constructor |
 | `152-unsafe-expressions.gti` | directly initialized owned results from unsafe expressions, checked factory results, and an unrelated raw reader |
-| `window-factory/` | a static interface factory defined in a registered private implementation file, selecting concrete window types without circular imports; run `gti run` in the directory |
+| `window-factory/` | a static interface factory and private concrete window types sharing one module across registered implementation files without circular imports; run `gti run` in the directory |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run

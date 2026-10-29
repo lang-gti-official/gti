@@ -16,6 +16,14 @@ def main():
     repository = pathlib.Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix="gti-module-system-") as temporary:
         for backend in ("llvm", "cpp"):
+            # Direct mode also owns a shipped example: relative imports and
+            # private helpers must work without a project manifest.
+            direct = pathlib.Path(temporary) / f"direct-{backend}"
+            shutil.copytree(repository / "examples/module-only", direct)
+            direct_binary = direct / ("program.exe" if sys.platform == "win32" else "program")
+            run([compiler, str(direct / "main.gti"), "--backend", backend,
+                 "-O2", "-o", str(direct_binary)])
+            run([str(direct_binary)])
             app = pathlib.Path(temporary) / backend
             shutil.copytree(repository / "examples/module-system", app)
             command = [compiler, "build", "--release", "--backend", backend,

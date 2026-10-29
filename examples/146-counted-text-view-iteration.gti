@@ -1,7 +1,20 @@
 // Counted views keep the same checked owner dependency during iteration.
-// Include the view unit directly, or get it through <std/string>.
+// Import the view interface to name its public iterator aliases.
 import std.string;
+import std.string_view;
 import std.iterator;
+// An application wrapper names the public iterator types without importing
+// the library's private implementation namespace.
+class TextRange {
+  std::string_view& text;
+public:
+  TextRange(std::string_view& text) : text(text) {}
+  std::string_view_iterator begin() { return this.text.begin(); }
+  std::string_view_sentinel end() { return this.text.end(); }
+  std::string_view_reverse_iterator rbegin() { return this.text.rbegin(); }
+  std::string_view_sentinel rend() { return this.text.rend(); }
+};
+
 int main() {
   std::string owner{"systems"};
   std::string_view text = owner.view();
@@ -13,7 +26,10 @@ int main() {
   }
   if (count != std::size_t(7)) { return 2; }
 
-  mut auto reverse = text.rbegin();
+  TextRange wrapped{text};
+  if (std::distance(wrapped.begin(), wrapped.end()) != std::ptrdiff_t(7)) { return 8; }
+  if (std::distance(wrapped.rbegin(), wrapped.rend()) != std::ptrdiff_t(7)) { return 9; }
+  mut auto reverse = wrapped.rbegin();
   if (*reverse != 's') { return 3; }
   reverse += std::ptrdiff_t(2);
   if (*reverse != 'e') { return 4; }

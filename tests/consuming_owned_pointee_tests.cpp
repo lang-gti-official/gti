@@ -352,11 +352,12 @@ int main() { return 0; }
 )gti";
   const auto root =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
-  const auto path =
-      std::filesystem::temp_directory_path() / "named-owned-accessor.gti";
+  const auto path = root / "named-owned-accessor.gti";
+  const std::string text =
+      "import \"std/detail/memory_capabilities.gti\"; " + named;
   const auto key = std::filesystem::weakly_canonical(path).string();
   const auto frontend = lang::Frontend().analyze(
-      path, named, {root / "prelude.gti", path}, {{key, named}}, {root});
+      path, text, {root / "prelude.gti", path}, {{key, text}}, {root});
   expect(frontend.canGenerateCode(), "named transparent source accessor works "
                                      "without a unique_ptr name check");
   bool retained = false;

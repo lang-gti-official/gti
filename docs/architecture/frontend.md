@@ -114,6 +114,15 @@ not confer compiler trust: canonical trusted standard paths still establish
 `StandardLibrary` provenance independently. Logical owner identities and module
 maps join build cache identity without embedding relocatable checkout roots.
 
+Canonical interface paths remain the owner registry's authorization and identity
+facts. Separate authored lookup paths retain the declared spelling through
+symlinks. Import records expose both paths: the authored path is only a filesystem
+notification key, including when a target is missing or rejected. Loading always
+revalidates canonical ownership; notification metadata grants no source access.
+Editors retain prior observed dependency keys only for unchanged root text during
+incomplete recovery, so deleting and recreating a registered interface refreshes
+diagnostics without retaining stale semantic output.
+
 An import target must declare an explicit module interface. The former
 `ExportInclude` republication and per-module include-configuration replay paths
 are removed; `#include` is recognized only to emit the removal diagnostic.
@@ -172,6 +181,9 @@ cached preamble or retain a candidate pointing at the preamble's incomplete
 record. After registration resumes, declaration indexes refresh from the complete
 catalog while existing variable flow facts retain their declaration identity.
 This keeps added overloads and ambiguities equivalent to uncached analysis.
+Resuming also starts fresh raw-result and complete-return query journals: their
+mutable summaries, budgets and pooled worker catalogs belong to one request,
+so a prefix-only worker cannot be reused after the declaration catalog expands.
 A prefix that produces semantic errors is not cached: it may be incomplete
 without a later implementation body, as with a separate constexpr definition.
 The frontend then analyzes the complete program and publishes only those

@@ -104,13 +104,17 @@ def test_signature_type_visibility(executable):
     with tempfile.TemporaryDirectory(prefix="gti-split-type-lsp-") as temporary:
         root = pathlib.Path(temporary)
         api, body = root / "api.gti", root / "body.gti"
-        write(api, "import std.memory;\nnamespace demo { interface Factory {\n"
+        write(api, "export module api;\nimport std.memory;\nnamespace demo { export interface Factory {\n"
               "  static std::unique_ptr<Factory> make();\n}; }\n")
-        source = ('import "api.gti";\nnamespace demo {\n'
+        source = ('module api;\nnamespace demo {\n'
                   '/* UTF-16: 🦉 */ std::unique_ptr<Factory> Factory::make() {\n'
                   '  return std::unique_ptr<Factory>(nullptr);\n}\n}\n'
                   'int main() { auto owner = demo::Factory::make(); return 0; }\n')
         write(body, source)
+        write(root / "gti.toml", 'manifest-version = 1\n[package]\nname = "split-signature"\n'
+              'version = "0.1.0"\n[modules]\napi = "api.gti"\n'
+              '[module-implementations]\napi = ["body.gti"]\n'
+              '[targets.signature]\nkind = "executable"\nroot = "body.gti"\n')
         session = LspSession(executable)
         try:
             initialize_session(session, capabilities={
@@ -145,10 +149,10 @@ def test_signature_type_visibility(executable):
             document = fixes[0]["edit"]["documentChanges"][0]
             assert document["textDocument"] == {"uri": uri, "version": 1}, document
             assert document["edits"] == [{
-                "range": {"start": {"line": 0, "character": 0},
-                          "end": {"line": 0, "character": 0}},
+                "range": {"start": {"line": 1, "character": 0},
+                          "end": {"line": 1, "character": 0}},
                 "newText": "import std.memory;\n"}], document
-            corrected = "import std.memory;\n" + source
+            corrected = source.replace("module api;\n", "module api;\nimport std.memory;\n", 1)
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2},
                 "contentChanges": [{"text": corrected}]}})

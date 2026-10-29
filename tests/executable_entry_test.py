@@ -90,8 +90,8 @@ def main():
             errors = diagnostics_for(session, uri, 1)
             diagnostic = next(item for item in errors if item.get("code") == CODE)
             assert diagnostic["range"] == {
-                "start": {"line": 1, "character": 29},
-                "end": {"line": 1, "character": 33}}, diagnostic
+                "start": {"line": 2, "character": 36},
+                "end": {"line": 2, "character": 40}}, diagnostic
             assert "global 'main'" in diagnostic["message"], diagnostic
 
             helper_uri = open_document(session, helper, SOURCE)

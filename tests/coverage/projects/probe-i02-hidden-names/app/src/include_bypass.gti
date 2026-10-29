@@ -1,3 +1,3 @@
-import lib.api;
+import "../../lib/src/api.gti";
 
 int main() { return lib::internal_helper() - 40; }

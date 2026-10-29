@@ -242,10 +242,10 @@ int main() {
 namespace std {
 void receive_states<States...>(States... states) {}
 void forward_states<States...>(States... states) { receive_states(states...); }
-void error_state<Error>(Error error) {
+export void error_state<Error>(Error error) {
   forward_states([value = std::move(error)]() -> void {});
 }
-void owner_states<T>() {
+export void owner_states<T>() {
   gti_internal::unique_owner<T> owner = nullptr;
   gti_internal::unique_owner<T> result_owner = nullptr;
   expected<gti_internal::unique_owner<T>, int> result = std::move(result_owner);

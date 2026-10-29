@@ -1394,6 +1394,15 @@ dynamic storage, or used to construct a nested dependency graph. Mutable,
 multi-owner, nested, and generally reseatable views remain deliberately
 unsupported.
 
+`std.string_view` exports `std::string_view_iterator`,
+`std::string_view_reverse_iterator`, and `std::string_view_sentinel` so application
+wrappers can spell forward, reverse, and end return types. These aliases name the
+same checked cursor implementations returned by the member and free iterator
+operations. They preserve the view-shell and dynamic-owner loans; returning a
+cursor into a local view shell remains invalid. The implementation names in
+`std::detail` remain private. See the
+[counted text iteration example](../../examples/146-counted-text-view-iteration.gti).
+
 `std::string::c_string()` exposes the same live bytes as a non-null
 NUL-terminated `c_string`. Embedded NUL bytes are allowed and cause ordinary C
 operations to observe the prefix ending at the first one.

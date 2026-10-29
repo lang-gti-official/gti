@@ -794,8 +794,8 @@ std::filesystem::path canonicalPath(const std::filesystem::path &path) {
   return error ? absolute.lexically_normal() : canonical;
 }
 
-std::string fileUriFromPath(const std::filesystem::path &path) {
-  const std::string text = canonicalPath(path).generic_string();
+std::string authoredFileUriFromPath(const std::filesystem::path &path) {
+  const std::string text = path.lexically_normal().generic_string();
   constexpr char hex[] = "0123456789ABCDEF";
   std::string uri = "file://";
   for (unsigned char character : text) {
@@ -812,6 +812,22 @@ std::string fileUriFromPath(const std::filesystem::path &path) {
     }
   }
   return uri;
+}
+
+std::string fileUriFromPath(const std::filesystem::path &path) {
+  return authoredFileUriFromPath(canonicalPath(path));
+}
+
+// Compare incidental URI aliases without replacing the retained authored key.
+// The final component is never resolved: a file symlink may now point
+// elsewhere. Intermediate symlinks remain in the key, so retargeting them still
+// matches their authored spelling even when the resolved parent directory
+// changes.
+bool sameNotificationEntry(const std::filesystem::path &left,
+                           const std::filesystem::path &right) {
+  return left.filename() == right.filename() &&
+         canonicalPath(left.parent_path()) ==
+             canonicalPath(right.parent_path());
 }
 
 std::string documentKeyFromUri(std::string_view uri) {
@@ -1471,6 +1487,40 @@ collectSemanticTokens(std::string_view source,
     }
     applyResolvedSymbolClassifications(tokens, classifications, *snapshot,
                                        sourceUnit);
+    const auto moduleName = [&](const lang::SourceSpan &span,
+                                std::uint32_t modifiers) {
+      auto token =
+          std::lower_bound(tokens.begin(), tokens.end(), span.start,
+                           [](const lang::Token &token, std::size_t start) {
+                             return token.position < start;
+                           });
+      for (; token != tokens.end() && token->position < span.end; ++token)
+        if (token->kind == lang::TokenKind::IDENTIFIER)
+          classifications[static_cast<std::size_t>(token - tokens.begin())] =
+              SemanticClassification{Namespace, modifiers};
+    };
+    const auto standardModule = [&](const lang::SourceUnit *target) {
+      return target && target->role == lang::SourceUnitRole::StandardLibrary &&
+             snapshot->sourceGraph.isCompilerTrusted(target->id);
+    };
+    for (const auto &import : snapshot->sourceGraph.imports()) {
+      if (import.requester != sourceUnit || import.quoted)
+        continue;
+      const auto *target = import.target
+                               ? snapshot->sourceGraph.findUnit(*import.target)
+                               : nullptr;
+      const std::uint32_t modifiers =
+          standardModule(target) ? DefaultLibrary : 0;
+      for (const auto &span : import.segmentSpans)
+        moduleName(span, modifiers);
+    }
+    if (unit) {
+      const std::uint32_t modifiers = standardModule(unit) ? DefaultLibrary : 0;
+      if (unit->moduleDeclarationSpan)
+        moduleName(*unit->moduleDeclarationSpan, modifiers | Declaration);
+      if (unit->implementationDeclarationSpan)
+        moduleName(*unit->implementationDeclarationSpan, modifiers);
+    }
   }
   for (std::size_t index = 0; index < configurationRoles.size(); ++index) {
     if (!configurationRoles[index]) {
@@ -2332,6 +2382,8 @@ private:
       analysisSnapshots.erase(uri);
       diagnosticsByRoot.erase(uri);
       dependenciesByRoot.erase(uri);
+      dependencyRootDigests.erase(uri);
+      lastValidDependenciesByRoot.erase(uri);
       pendingAnalyses.erase(uri);
       ++contentGenerations[uri];
       invalidateDependentsLocked(uri, requests);
@@ -2373,15 +2425,23 @@ private:
           projectModelChanged = true;
           continue;
         }
-        // Dirty open buffers remain authoritative over filesystem events.
-        if (documents.contains(uri)) {
+        const std::string authoredUri =
+            changedPath ? authoredFileUriFromPath(*changedPath) : uri;
+        // An open target's buffer still owns its text, but a different
+        // authored symlink path may have changed which target it denotes.
+        const bool dirty = documents.contains(uri);
+        if (dirty && authoredUri == uri)
           continue;
-        }
         if (changedPath) {
-          const std::string canonical = canonicalPath(*changedPath).string();
-          invalidateFrontendSourceLocked(canonical);
+          if (!dirty)
+            invalidateFrontendSourceLocked(
+                canonicalPath(*changedPath).string());
+          if (authoredUri != uri)
+            invalidateFrontendSourceLocked(
+                changedPath->lexically_normal().string());
         }
-        invalidateDependentsLocked(uri, requests);
+        invalidateDependentsLocked(dirty ? authoredUri : uri, requests,
+                                   std::nullopt, authoredUri);
       }
       if (projectModelChanged) {
         invalidateProjectSnapshotsLocked(requests);
@@ -3416,6 +3476,10 @@ private:
     for (const auto &import : analysis.sourceGraph.imports()) {
       if (import.lookupPath && import.lookupPath->string() != rootPath)
         result.dependencies.try_emplace(fileUriFromPath(*import.lookupPath), 0);
+      if (import.authoredLookupPath &&
+          import.authoredLookupPath->string() != rootPath)
+        result.dependencies.try_emplace(
+            authoredFileUriFromPath(*import.authoredLookupPath), 0);
     }
     for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
       if (project.warnings.suppresses(diagnostic) ||
@@ -3466,14 +3530,26 @@ private:
   // sees a range from a superseded version of an open file.
   void invalidateDependentsLocked(
       const std::string &changedUri, std::vector<AnalysisRequest> &requests,
-      std::optional<std::uint64_t> openedDigest = std::nullopt) {
+      std::optional<std::uint64_t> openedDigest = std::nullopt,
+      const std::string &authoredUri = {}) {
     for (const auto &[rootUri, dependencies] : dependenciesByRoot) {
       const auto snapshot = analysisSnapshots.find(rootUri);
       const bool discovering = snapshot != analysisSnapshots.end() &&
                                snapshot->second.includeSuggestionsRequested;
       const auto dependency = dependencies.find(changedUri);
-      if (rootUri == changedUri ||
-          (dependency == dependencies.end() && !discovering)) {
+      const auto authoredPath = filePathFromUri(authoredUri);
+      const bool authoredDependency =
+          !authoredUri.empty() &&
+          (dependencies.contains(authoredUri) ||
+           (dependency == dependencies.end() && authoredPath &&
+            std::any_of(dependencies.begin(), dependencies.end(),
+                        [&](const auto &entry) {
+                          const auto path = filePathFromUri(entry.first);
+                          return path &&
+                                 sameNotificationEntry(*path, *authoredPath);
+                        })));
+      if (rootUri == changedUri || (dependency == dependencies.end() &&
+                                    !authoredDependency && !discovering)) {
         continue;
       }
       if (openedDigest && dependency != dependencies.end() &&
@@ -4134,6 +4210,22 @@ private:
                 request.uri + ":" + std::to_string(request.generation);
         }
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
+        const auto rootDigest = lang::sourceTextDigest(request.source);
+        // Recovery keeps one last-valid graph for unchanged root text, never
+        // a growing union of previous invalid targets. Notification keys do
+        // not authorize loading or retain any previous semantic output.
+        if (analysis.frontend && analysis.frontend->sourceValid) {
+          lastValidDependenciesByRoot[request.uri] = analysis.dependencies;
+          dependencyRootDigests[request.uri] = rootDigest;
+        } else if (dependencyRootDigests.contains(request.uri) &&
+                   dependencyRootDigests.at(request.uri) == rootDigest) {
+          for (const auto &[path, digest] :
+               lastValidDependenciesByRoot[request.uri])
+            analysis.dependencies.try_emplace(path, digest);
+        } else {
+          lastValidDependenciesByRoot.erase(request.uri);
+          dependencyRootDigests.erase(request.uri);
+        }
         dependenciesByRoot[request.uri] = std::move(analysis.dependencies);
         if (const auto audit = auditDiagnosticsByRoot.find(request.uri);
             audit != auditDiagnosticsByRoot.end() &&
@@ -4852,6 +4944,10 @@ private:
   std::unordered_map<std::string,
                      std::unordered_map<std::string, std::uint64_t>>
       dependenciesByRoot;
+  std::unordered_map<std::string, std::uint64_t> dependencyRootDigests;
+  std::unordered_map<std::string,
+                     std::unordered_map<std::string, std::uint64_t>>
+      lastValidDependenciesByRoot;
   std::unordered_map<std::string, std::uint64_t> analysisGenerations;
   // Advances only when an open document's own text or overlay presence
   // changes (open, change, close). Analysis generations also advance when a

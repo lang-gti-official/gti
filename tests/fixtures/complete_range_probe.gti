@@ -8,15 +8,15 @@ class number_range {
 public:
   number_range() = default;
 
-  std::detail::vector_iterator<int32_t> begin() {
+  std::vector<int32_t>::const_iterator begin() {
     return this.values.begin();
   }
 
-  std::detail::vector_mut_iterator<int32_t> begin_mut() mut {
+  std::vector<int32_t>::iterator begin_mut() mut {
     return this.values.begin_mut();
   }
 
-  std::detail::vector_sentinel end() {
+  std::vector<int32_t>::sentinel end() {
     return this.values.end();
   }
 

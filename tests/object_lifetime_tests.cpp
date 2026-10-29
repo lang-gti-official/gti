@@ -22,13 +22,18 @@ void expect(bool condition, std::string_view label) {
 }
 lang::FrontendResult analyze(const std::string &source, bool trusted = false) {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
-  const auto entry = root / "object-lifetime-test.gti";
+  const auto entry =
+      trusted ? root / "stdlib/__private_tests__/object-lifetime-test.gti"
+              : root / "object-lifetime-test.gti";
+  std::string text = source;
+  if (trusted)
+    text.insert(0, "import \"../std/detail/memory_capabilities.gti\"; ");
   std::vector<std::filesystem::path> preludes{root / "stdlib/prelude.gti"};
   if (trusted)
     preludes.push_back(entry);
   return lang::Frontend().analyze(
-      entry, source, preludes,
-      {{std::filesystem::weakly_canonical(entry).string(), source}},
+      entry, text, preludes,
+      {{std::filesystem::weakly_canonical(entry).string(), text}},
       {root / "stdlib"});
 }
 void diagnostics(const lang::FrontendResult &result) {

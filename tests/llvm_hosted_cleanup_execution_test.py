@@ -16,7 +16,7 @@ import sys
 import tempfile
 
 from llvm_hosted_cleanup_evidence_test import (
-    TRACE_PATH, anchor_controls, inventory, transformed_sources, validate_inventory,
+    TRACE_PATH, anchor_controls, install_trace_module, inventory, transformed_sources, validate_inventory,
 )
 
 
@@ -119,9 +119,8 @@ def main():
         for name, text in transformed_sources(root, failures=failures,
                                                release_marker=markers).items():
             (library / name).write_text(text, encoding="utf-8")
-        shutil.copyfile(root / "tests/fixtures/llvm_hosted_cleanup_trace.gti",
-                        library / TRACE_PATH)
-        changed = {"std/string.gti"} if failures else set()
+        install_trace_module(library, root / "tests/fixtures/llvm_hosted_cleanup_trace.gti")
+        changed = {"module-map.json"} | ({"std/string.gti"} if failures else set())
         if markers:
             changed.add("std/detail/memory_storage.gti")
         transformed = inventory(library)

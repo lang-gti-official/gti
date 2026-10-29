@@ -1,6 +1,7 @@
 #include "gti/frontend.h"
 #include "gti/source_loader.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -143,6 +144,86 @@ int main() {
   escaping.modules.front().second = app / "local.gti";
   expect(fails("", {application, escaping}),
          "invalid unused public maps fail closed");
+
+  {
+    const auto lookupRoot =
+        std::filesystem::weakly_canonical(
+            std::filesystem::temp_directory_path()) /
+        ("gti-owner-lookup-" +
+         std::to_string(
+             std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(lookupRoot / "app");
+    std::filesystem::create_directories(lookupRoot / "library");
+    const auto canonical = lookupRoot / "library/api.gti";
+    const auto authored = lookupRoot / "library/public.gti";
+    const auto other = lookupRoot / "library/other.gti";
+    const auto outside = lookupRoot / "app/outside.gti";
+    std::ofstream(canonical) << "export module api;";
+    std::ofstream(other) << "export module other;";
+    std::ofstream(outside) << "export module outside;";
+    std::filesystem::create_symlink(canonical.filename(), authored);
+    lang::SourceOwnerDescriptor client{.identity = "client",
+                                       .name = "client",
+                                       .packageRoot = lookupRoot / "app",
+                                       .sourceRoot = lookupRoot / "app",
+                                       .dependencies = {{"dep", "dependency"}}};
+    lang::SourceOwnerDescriptor mappedOwner{
+        .identity = "dependency",
+        .name = "dependency",
+        .packageRoot = lookupRoot / "library",
+        .sourceRoot = lookupRoot / "library",
+        .modules = {{"api", canonical}},
+        .moduleLookupPaths = {{"api", lookupRoot / "library/./public.gti"}}};
+    lang::SourceLoader valid;
+    const auto graph =
+        valid.load(lookupRoot / "app/main.gti", "import dep.api;", {}, {}, {},
+                   std::nullopt, {client, mappedOwner});
+    expect(!valid.hadError() && graph.imports().size() == 1,
+           "authored symlink metadata may identify its canonical public "
+           "interface");
+    const auto &import = graph.imports().front();
+    const auto *registered = graph.sourceOwners()->find("dependency");
+    expect(import.lookupPath == canonical &&
+               import.authoredLookupPath == authored && registered &&
+               registered->modules.front().second == canonical &&
+               registered->moduleLookupPaths.front().second == authored &&
+               import.target && !graph.isCompilerTrusted(*import.target),
+           "authored lexical identity is retained separately without granting "
+           "trust");
+    const auto rejected = [&](const lang::SourceOwnerDescriptor &owner,
+                              std::string_view message) {
+      lang::SourceLoader invalid;
+      invalid.load(lookupRoot / "app/main.gti", "", {}, {}, {}, std::nullopt,
+                   {client, owner});
+      expect(invalid.hadError() &&
+                 std::any_of(invalid.errors().begin(), invalid.errors().end(),
+                             [&](const auto &diagnostic) {
+                               return diagnostic.code == "GTI-I0012" &&
+                                      diagnostic.message.find(message) !=
+                                          std::string::npos;
+                             }),
+             "invalid unused authored metadata must fail owner validation");
+    };
+    auto duplicateLookup = mappedOwner;
+    duplicateLookup.moduleLookupPaths.push_back({"api", authored});
+    rejected(duplicateLookup, "Authored module lookup paths");
+    auto unregisteredLookup = mappedOwner;
+    unregisteredLookup.moduleLookupPaths.push_back({"other", other});
+    rejected(unregisteredLookup, "Authored module lookup paths");
+    auto mismatchedLookup = mappedOwner;
+    mismatchedLookup.moduleLookupPaths.front().second = other;
+    rejected(mismatchedLookup, "Authored module lookup paths");
+    auto redirectedLookup = mappedOwner;
+    redirectedLookup.moduleLookupPaths.front().second = outside;
+    rejected(redirectedLookup, "Authored module lookup paths");
+    // Even matching metadata cannot turn a foreign path into a contained
+    // canonical public module registration.
+    auto foreignRegistration = mappedOwner;
+    foreignRegistration.modules.front().second = outside;
+    foreignRegistration.moduleLookupPaths.front().second = outside;
+    rejected(foreignRegistration, "contained .gti interfaces");
+    std::filesystem::remove_all(lookupRoot);
+  }
 
   const auto mapRoot =
       std::filesystem::temp_directory_path() /

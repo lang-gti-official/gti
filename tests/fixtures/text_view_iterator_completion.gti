@@ -89,8 +89,10 @@ class UserTextRange {
   UserCountedText& text;
 public:
   UserTextRange(UserCountedText& text) : text(text) {}
-  std::detail::text_view_iterator<0> begin() { return std::begin(this.text); }
-  std::detail::text_view_sentinel end() { return std::end(this.text); }
+  std::string_view_iterator begin() { return std::begin(this.text); }
+  std::string_view_sentinel end() { return std::end(this.text); }
+  std::string_view_reverse_iterator rbegin() { return std::rbegin(this.text); }
+  std::string_view_sentinel rend() { return std::rend(this.text); }
 };
 
 void require_random<I>(I iterator) requires std::random_access_iterator<I> {}
@@ -169,6 +171,10 @@ int inspect(std::string_view& view) {
   for (mut char character : view) { character = 'z'; }
   if (view[std::size_t(0)] != 'a') { return 28; }
   UserTextRange wrapped{view};
+  { auto reverse_cursor = wrapped.rbegin();
+    auto reverse_end = wrapped.rend();
+    if (*reverse_cursor != 'e' || std::distance(reverse_cursor, reverse_end) != std::ptrdiff_t(5)) { return 41; }
+  }
   mut std::size_t wrapped_count = 0;
   for (auto& character : wrapped) {
     if (character != view[wrapped_count]) { return 16; }

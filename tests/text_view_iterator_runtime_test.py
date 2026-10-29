@@ -76,6 +76,12 @@ def main():
                 print(f"{source.stem}: {name} passed", flush=True)
 
         invalid = {
+            "private-iterator-name": ('import std.string_view;\n'
+                'std::detail::text_view_iterator<0> cursor(std::string_view& view) { return view.begin(); } '
+                'int main() { return 0; }', "GTI-S2024"),
+            "private-sentinel-name": ('import std.string_view;\n'
+                'std::detail::text_view_sentinel finish(std::string_view& view) { return view.end(); } '
+                'int main() { return 0; }', "GTI-S2024"),
             "owner-invalidation": ('import std.string;\nint main() { mut std::string owner{"abc"}; '
                 'std::string_view view = owner.view(); auto cursor = view.begin(); owner.clear(); return int(*cursor); }', "GTI-S2017"),
             "argument-invalidates-owner": ('import std.string;\nstd::size_t erase(mut std::string& owner) { '
@@ -83,7 +89,7 @@ def main():
                 'std::string_view view = owner.view(); auto cursor = view.iterator_at(erase(owner)); return int(*cursor); }', "GTI-S2017"),
             "readonly-element": ('import std.string_view;\nint main() { std::string_view view = "abc"; '
                 'mut auto cursor = view.begin(); *cursor = \'z\'; return 0; }', "GTI-S2002"),
-            "escaped-view-shell": ('import std.string;\nimport std.string_view;\nstd::detail::text_view_iterator<0> escape(std::string& owner) { '
+            "escaped-view-shell": ('import std.string;\nimport std.string_view;\nstd::string_view_iterator escape(std::string& owner) { '
                 'std::string_view view = owner.view(); return view.begin(); } int main() { return 0; }', "GTI-S2045"),
             "temporary-view-shell": ('import std.string_view;\nint main() { auto cursor = "abc".begin(); return int(*cursor); }', "GTI-S2017"),
             "ordinary-value-temporary-reference": ('import std.string_view;\nint main() { std::string_view view = "abc"; '

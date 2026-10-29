@@ -84,6 +84,9 @@ struct SourceImport {
   // Authorized canonical lookup, including an interface that does not yet
   // exist. Editors track its creation/overlay without inventing a target.
   std::optional<std::filesystem::path> lookupPath;
+  // Authored path is retained even when a symlink target is missing or denied.
+  // It is a notification key only; it never authorizes reading source text.
+  std::optional<std::filesystem::path> authoredLookupPath;
   std::optional<SourceUnitId> target;
   SourceImportResolution resolution = SourceImportResolution::Unresolved;
 };
