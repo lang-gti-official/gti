@@ -1,5 +1,5 @@
-#include <std/panic>
-#include <std/memory>
+import std.panic;
+import std.memory;
 mut int trace = 0;
 class Marker {
   int value;

@@ -1,7 +1,6 @@
-#include <std/atomic>
-#include <std/thread>
-#include <std/cthread>
-
+import std.atomic;
+import std.thread;
+import std.cthread;
 // A native event hook may re-enter on this same attached GTI thread, even
 // while other workers run. First conversion binds this process-lifetime
 // adapter to the current thread; calling it from another thread terminates.

@@ -238,12 +238,12 @@ void testDiagnosticsAndBoundaries() {
       "int main() { unsafe { Callback f = raw; } return 0; }",
       "GTI-S2076",
       "even an unsafe block cannot erase the contract in a callback");
-  expectRejected("#include <std/functional>\n"
+  expectRejected("import std.functional;\n"
                  "unsafe void raw() {}\n"
                  "int main() { unsafe { std::invoke_once(raw); } return 0; }",
                  "GTI-S2090",
                  "a confined callable cannot erase the unsafe contract");
-  expectRejected("#include <std/thread>\n"
+  expectRejected("import std.thread;\n"
                  "unsafe void raw() {}\n"
                  "int main() { unsafe { auto task = std::thread::start(raw); } "
                  "return 0; }",
@@ -768,19 +768,19 @@ int main() {
                     "Generic<int>(1); return x.value; }; return f(); } }",
       "GTI-S2055", "nested lambdas cannot inherit constructor permission");
   expectRejected(
-      "#include <std/vector>\n" + declaration +
+      "import std.vector;\n" + declaration +
           "int main() { mut std::vector<Generic<int>> values{}; "
           "[[discard]] values.emplace_back(1); return 0; }",
       "GTI-S2055",
       "safe generic emplacement cannot conceal an unsafe constructor");
   expectRejected(
-      "#include <std/memory>\n" + declaration +
+      "import std.memory;\n" + declaration +
           "int main() { mut std::uninitialized<Generic<int>> storage{}; "
           "unsafe { std::construct_at(storage.data(), 1); } return 0; }",
       "GTI-S2055",
       "raw lifetime permission does not imply a constructor contract");
   const auto completedValue =
-      analyze("#include <std/memory>\n" + declaration +
+      analyze("import std.memory;\n" + declaration +
               "int main() { mut std::uninitialized<Generic<int>> storage{}; "
               "unsafe { std::construct_at(storage.data(), Generic<int>(1)); "
               "std::destroy_at(storage.data()); } return 0; }");

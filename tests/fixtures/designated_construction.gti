@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 struct Command {
   mut {

@@ -1,11 +1,10 @@
 // Sparse owners visit only live slots; arenas visit their occupied prefix.
 // Fixed SIMD values and masks expose checked, allocation-free lane cursors.
-#include <std/memory>
-#include <std/resource>
-#include <std/simd>
-#include <std/string>
-#include <std/format>
-
+import std.memory;
+import std.resource;
+import std.simd;
+import std.string;
+import std.format;
 int main() {
   mut int total = 0;
   std::allocator allocator{};

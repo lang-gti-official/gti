@@ -2,6 +2,7 @@
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "private_stdlib_fixture.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -22,10 +23,10 @@ void expect(bool condition, std::string_view message) {
 auto analyze(std::string source) -> lang::FrontendResult {
   const auto stdlib =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
-  return lang::Frontend().analyze(
-      "resource-client.gti",
-      "#include <std/resource>\n#include <std/memory>\n" + source,
-      {stdlib / "prelude.gti"}, {}, {stdlib});
+  return lang::Frontend().analyze("resource-client.gti",
+                                  "import std.resource;\nimport std.memory;\n" +
+                                      source,
+                                  {stdlib / "prelude.gti"}, {}, {stdlib});
 }
 void diagnostics(const lang::FrontendResult &result) {
   for (const auto &diagnostic : result.diagnostics)
@@ -52,8 +53,16 @@ void diagnostics(const lang::FrontendResult &result) {
     }
   }
 }
-void positive(const std::string &source, std::string_view message) {
-  const auto result = analyze(source);
+auto analyzePrivateResource(const std::string &source) -> lang::FrontendResult {
+  return gti_test::analyzePrivateMemoryFixture(
+      "resource-private-client.gti",
+      "import std.resource; import \"../std/detail/resource_lease.gti\";\n" +
+          source);
+}
+void positive(const std::string &source, std::string_view message,
+              bool privateSource = false) {
+  const auto result =
+      privateSource ? analyzePrivateResource(source) : analyze(source);
   if (!result.canGenerateCode())
     diagnostics(result);
   expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
@@ -69,8 +78,9 @@ void positive(const std::string &source, std::string_view message) {
   }
 }
 void negative(const std::string &source, std::string_view code,
-              std::string_view message) {
-  const auto result = analyze(source);
+              std::string_view message, bool privateSource = false) {
+  const auto result =
+      privateSource ? analyzePrivateResource(source) : analyze(source);
   const bool matched = std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(),
       [&](const auto &diagnostic) { return diagnostic.code == code; });
@@ -247,7 +257,7 @@ int main() {
   return 0;
 }
 )",
-           "empty process leases can be moved and destroyed safely");
+           "empty process leases can be moved and destroyed safely", true);
   for (const auto *operation :
        {"auto result = lease.allocate(std::layout(uint64_t(8), uint64_t(8)));",
         "lease.attach(std::raw_allocation(nullptr, uint64_t(0), uint64_t(1), "
@@ -255,15 +265,16 @@ int main() {
     negative(
         std::string("int main() { mut std::detail::process_lease lease{}; ") +
             operation + "return 0; }",
-        "GTI-S2055", "process lease raw allocation and adoption remain unsafe");
+        "GTI-S2055", "process lease raw allocation and adoption remain unsafe",
+        true);
     negative(
         std::string(
             "void use(std::resource_ref<std::process_resource> resource) { "
             "mut std::detail::resource_lease<std::process_resource> "
             "lease{resource}; ") +
             operation + " } int main() { return 0; }",
-        "GTI-S2055",
-        "resource lease raw allocation and adoption remain unsafe");
+        "GTI-S2055", "resource lease raw allocation and adoption remain unsafe",
+        true);
   }
   negative(R"(
 int main() {
@@ -274,7 +285,7 @@ int main() {
 }
 )",
            "GTI-S2058",
-           "process descriptor adoption cannot forge a private token");
+           "process descriptor adoption cannot forge a private token", true);
   negative(R"(
 void use(std::resource_ref<std::process_resource> resource) {
   std::detail::resource_lease<std::process_resource> lease{
@@ -284,7 +295,7 @@ void use(std::resource_ref<std::process_resource> resource) {
 int main() { return 0; }
 )",
            "GTI-S2058",
-           "resource descriptor adoption cannot forge a private token");
+           "resource descriptor adoption cannot forge a private token", true);
   negative(R"(
 int main() {
   std::process_resource resource{};
@@ -364,7 +375,7 @@ int main() { return 0; }
     for (const bool iterator : {false, true}) {
       negative(
           R"(
-#include <std/resource_vector>
+import std.resource_vector;
 int use(std::resource_ref<std::process_resource> resource) {
   mut std::resource_vector<int,std::process_resource> values{resource};
   values.emplace_back(42);
@@ -429,7 +440,7 @@ int main() { return 0; }
            "a resource binding cannot outlive its checked resource");
 
   const std::string resettable = R"(
-#include <std/resource_vector>
+import std.resource_vector;
 struct Resource {
   unsafe expected<std::raw_allocation,std::alloc_errc> allocate(std::layout request) {
     return unexpected(std::alloc_errc::resource_exhausted);
@@ -489,7 +500,7 @@ int main() {
         std::string("mut int& slot = values.get_mut(std::size_t(0));\n"
                     "  slot = 9;")}) {
     negative(R"(
-#include <std/resource_vector>
+import std.resource_vector;
 int use(std::resource_ref<std::process_resource> resource) {
   mut std::resource_vector<int,std::process_resource> values{resource};
   values.emplace_back(42);
@@ -505,7 +516,7 @@ int main() { return 0; }
                  operation);
   }
   negative(R"(
-#include <std/resource_vector>
+import std.resource_vector;
 int& leak(std::resource_ref<std::process_resource> resource) {
   mut std::resource_vector<int,std::process_resource> values{resource};
   values.emplace_back(42);

@@ -1,7 +1,8 @@
-#include <std/vector>
+export module detail_accumulate;
+import std.vector;
 
 namespace mid::detail {
-  int accumulate(std::vector<int>& values) {
+  export int accumulate(std::vector<int>& values) {
     mut int total = 0;
     for (int value : values) {
       total = total + value;

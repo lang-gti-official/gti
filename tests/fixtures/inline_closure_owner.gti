@@ -1,6 +1,6 @@
-#include <std/format>
-#include <std/memory>
-#include <std/string>
+import std.format;
+import std.memory;
+import std.string;
 
 // An application-defined cell keeps one closure in erased inline bytes using
 // the general object-lifetime helpers. A raw address of the closure-bearing

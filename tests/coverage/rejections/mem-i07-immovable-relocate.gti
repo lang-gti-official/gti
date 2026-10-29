@@ -1,6 +1,6 @@
 // Invalid: relocate_to requires std::relocatable<T>; an immovable element type
 // must be rejected at the call, not in the backend.
-#include <std/memory>
+import std.memory;
 class Pinned {
   int32_t v;
 public:

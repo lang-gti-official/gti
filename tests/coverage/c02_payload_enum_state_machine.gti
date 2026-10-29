@@ -1,6 +1,6 @@
 // Payload enums driving a small state machine with generics and strings.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 enum class Token {
   end,

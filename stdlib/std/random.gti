@@ -1,6 +1,7 @@
-#include <std/numeric>
+export module random;
 
-namespace gti_internal {
+import std.numeric;
+export namespace gti_internal {
 namespace runtime {
 extern "C" {
 int32_t gti_rt_random_bytes(uint8_t* out, uint64_t count);
@@ -14,7 +15,7 @@ int32_t gti_rt_random_bytes(uint8_t* out, uint64_t count);
 }
 }
 
-namespace std {
+export namespace std {
   class random_device {
     mut uint8_t buffer[32] = {};
     mut uint64_t position = 32;

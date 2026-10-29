@@ -358,34 +358,35 @@ int main() { return gti_rt_native_size_max_v1() == uint64_t(0) ? 1 : 0; }
   std::filesystem::create_directories(copy);
   std::filesystem::copy(root / "stdlib", copy / "stdlib",
                         std::filesystem::copy_options::recursive);
-  const auto memory = copy / "stdlib/std/memory.gti";
-  std::string text;
-  {
-    std::ifstream input(memory);
-    text.assign(std::istreambuf_iterator<char>(input), {});
-  }
-  const auto replace = [&](std::string_view from, std::string_view to) {
+  const auto capabilities = copy / "stdlib/std/detail/memory_capabilities.gti";
+  const auto storage = copy / "stdlib/std/detail/memory_storage.gti";
+  const auto read = [](const std::filesystem::path &path) {
+    std::ifstream input(path);
+    return std::string{std::istreambuf_iterator<char>(input), {}};
+  };
+  std::string declarations = read(capabilities);
+  std::string policy = read(storage);
+  const auto replace = [&](std::string &text, std::string_view from,
+                           std::string_view to) {
     const auto position = text.find(from);
     expect(position != std::string::npos, "patched stdlib text exists");
-    if (position != std::string::npos) {
+    if (position != std::string::npos)
       text.replace(position, from.size(), to);
-    }
   };
   // Wrong pointer access on release; still callable from its source body.
-  replace("void gti_rt_posix_free_v1(void* address);",
+  replace(declarations, "void gti_rt_posix_free_v1(void* address);",
           "void gti_rt_posix_free_v1(const void* address);");
-  // Not compiler-private: the same declaration outside gti_internal.
-  replace("int32_t gti_rt_posix_enomem_v1();", "");
-  replace("namespace gti_internal {\n// Source policy seal",
-          "namespace std::detail::process_probe {\nextern \"C\" {\nint32_t "
-          "gti_rt_posix_enomem_v1();\n}\n}\nnamespace gti_internal {\n"
-          "// Source policy seal");
-  replace("gti_internal::runtime::gti_rt_posix_enomem_v1()",
+  // Keep the declaration in the trusted capability unit, but outside the
+  // compiler-private namespace. Its explicit export lets the source policy
+  // call it without granting the runtime operation's declaration contract.
+  replace(declarations, "int32_t gti_rt_posix_enomem_v1();", "");
+  replace(declarations, "namespace gti_internal {",
+          "export namespace std::detail::process_probe {\nextern \"C\" {\n"
+          "int32_t gti_rt_posix_enomem_v1();\n}\n}\nnamespace gti_internal {");
+  replace(policy, "gti_internal::runtime::gti_rt_posix_enomem_v1()",
           "std::detail::process_probe::gti_rt_posix_enomem_v1()");
-  {
-    std::ofstream output(memory, std::ios::trunc);
-    output << text;
-  }
+  std::ofstream(capabilities, std::ios::trunc) << declarations;
+  std::ofstream(storage, std::ios::trunc) << policy;
   const auto patched =
       analyze(targetOptions("linux"),
               root / "tests/fixtures/process_resource_policy.gti", std::nullopt,

@@ -3,12 +3,12 @@
 // Cleanup must destroy the elements, return the single object region
 // (printed by the verbose bump resource), then the outer
 // guard -- all before the report.
-#include <std/resource_vector>
-#include <std/resource>
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
-#include "support/bump.gti"
+import std.resource_vector;
+import std.resource;
+import std.memory;
+import std.string;
+import std.vector;
+import "support/bump.gti";
 
 class Tag {
   int32_t id;

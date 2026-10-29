@@ -1,8 +1,8 @@
-#include <std/string>
-#include <std/vector>
-#include <std/span>
-#include <std/resource_vector>
-#include <std/resource>
+import std.string;
+import std.vector;
+import std.span;
+import std.resource_vector;
+import std.resource;
 
 class Cell {
   mut int number;

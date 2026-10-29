@@ -1,6 +1,6 @@
-#include <std/paired_span>
-#include <std/span>
-#include <std/vector>
+import std.paired_span;
+import std.span;
+import std.vector;
 
 std::paired_span<int, int> make_pairs(std::span<int> left, std::span<int> right) {
   return std::paired_span<int, int>(std::move(left), std::move(right));

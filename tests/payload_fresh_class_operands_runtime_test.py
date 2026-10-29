@@ -38,8 +38,8 @@ int main() {
 # A failing sibling constructor runs after the first sibling was staged. The
 # defined failure must report, clean up the enclosing guard, and exit 70.
 SIBLING_FAILURE = """\
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 mut int32_t live = 0;
 class Guard {
 public:

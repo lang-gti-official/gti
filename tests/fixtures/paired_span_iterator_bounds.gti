@@ -1,6 +1,6 @@
-#include <std/paired_span>
-#include <std/vector>
-#include <std/string>
+import std.paired_span;
+import std.vector;
+import std.string;
 int main(int argc, std::vector<std::string> argv) {
   std::vector<int> left = {1, 2, 3};
   std::vector<int> right = {4, 5};

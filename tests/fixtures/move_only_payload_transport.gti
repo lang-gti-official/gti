@@ -1,6 +1,6 @@
-#include <std/experimental/optional>
-#include <std/string>
-#include <std/vector>
+import std.experimental.optional;
+import std.string;
+import std.vector;
 
 // Move-only payload transport. `token` deletes its copy constructor and has
 // no destructor, so a `slot` holding one needs no cleanup yet cannot be

@@ -5,7 +5,7 @@
 // scalar-capturing and struct-capturing closures, including when a loop
 // constructs the same local again. Closures created outside and inside a loop
 // of a non-generic body are also copied into a local on every iteration.
-#include <std/utility>
+import std.utility;
 
 class Holder<F> {
 public:

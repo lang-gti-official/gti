@@ -96,11 +96,15 @@ std::vector<Token> Lexer::scanForCompletion(std::string sourceText,
               std::count(source.begin(), source.begin() + byteOffset, '\n'));
   Token completion(TokenKind::IDENTIFIER, "", std::monostate{}, byteOffset,
                    completionLine, this->sourceName, true);
+  // The cursor marker must precede EOF even when the last real token ends
+  // before trailing whitespace. Ordinary EOF tokens need not start at the
+  // cursor, and inserting after EOF makes the marker unreachable to loading
+  // and parsing (notably for an empty `import ` prefix).
   const auto insertion =
-      std::lower_bound(result.begin(), result.end(), byteOffset,
-                       [](const Token &token, std::size_t offset) {
-                         return token.position < offset;
-                       });
+      std::find_if(result.begin(), result.end(), [&](const Token &token) {
+        return token.kind == TokenKind::END_OF_FILE ||
+               token.position >= byteOffset;
+      });
   result.insert(insertion, std::move(completion));
   return result;
 }

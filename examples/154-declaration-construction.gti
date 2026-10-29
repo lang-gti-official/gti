@@ -1,5 +1,4 @@
-#include <std/string>
-
+import std.string;
 // A constructor declared `implicit` lets a declaration construct its class
 // from one value of another type. The declaration selects the constructor
 // `T name{value}` would, so ownership, failure and cleanup are exactly those

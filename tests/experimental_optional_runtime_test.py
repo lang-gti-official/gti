@@ -47,8 +47,8 @@ def main():
             # promoted declaration and its tryable implementation are exported.
             text = source.read_text().replace("std::experimental::", "std::")
             text = text.replace(
-                "#include <std/experimental/optional>\n#include <std/string>\n"
-                "#include <std/vector>", "import std;")
+                "import std.experimental.optional;\nimport std.string;\n"
+                "import std.vector;", "import std;")
             source = pathlib.Path(directory) / "optional_protocol_import.gti"
             source.write_text(text)
         for name, flags, native in modes:

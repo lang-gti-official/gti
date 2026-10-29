@@ -13,8 +13,8 @@ from native_fixture_build import build_fixture
 
 
 def negative_sources():
-    headers = """#include <std/paired_span>
-#include <std/vector>
+    headers = """import std.paired_span;
+import std.vector;
 """
     setup = """mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};
 auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());

@@ -1,4 +1,4 @@
-#include <std/algorithm>
+import std.algorithm;
 
 class sentinel { public: sentinel() = default; };
 

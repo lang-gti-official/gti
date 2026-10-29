@@ -152,7 +152,7 @@ You do not need to read the entire sequence to find an API pattern:
 | I want to… | Start here |
 | --- | --- |
 | Select an owned implementation through an interface factory | [149: interface static factories](149-interface-static-factories.gti) |
-| Use the standard library through imports instead of includes | [134: standard-library modules](134-standard-library-modules.gti) |
+| Use explicit standard-library modules | [134: standard-library modules](134-standard-library-modules.gti) |
 | Own small polymorphic objects without allocating | [135: inline polymorphic values](135-inline-polymorphic-values.gti) |
 | Annotate fields with attributes and read them in a generic encoder | [137: declared attributes](137-declared-attributes.gti) |
 | Decode a struct field by field without writing a constructor | [138: structural construction](138-structural-construction.gti) |
@@ -201,7 +201,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Traverse, search, or modify containers | [90: algorithms](090-generic-algorithms.gti), [87: dictionaries](087-associative-containers.gti) |
 | Model an owner and its checked views | [41: owner dependencies](041-owner-dependencies.gti), [42: reborrows](042-exclusive-reborrows.gti) |
 
-Each recipe is a complete program, includes the modules it names, checks
+Each recipe is a complete program, imports the modules it names, checks
 recoverable errors, and returns nonzero if its demonstrated invariant fails.
 The numbered examples run without arguments or external services. The HTTP
 recipe opts into networking only when you supply a URL. Its local test server
@@ -220,7 +220,8 @@ is a teaching helper, not a production server.
 | `007-generics.gti` | type generics, exact inference, and class value parameters |
 | `008-expected.gti` | explicit recoverable errors and `?` propagation with `expected<T, E>` |
 | `009-target-selection.gti` | compile-time host selection and active `#error` guards |
-| `10-modules/main.gti` | loading another GTI source file with `#include` |
+| `module-only/main.gti` | relative module imports, explicit exports, and a private implementation helper |
+| `module-system/` | hierarchical package modules, registered implementation bodies, isolated private names, and inferred private return types |
 | `011-overloads.gti` | exact overloads and explicit numeric conversions |
 | `012-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields and receiver element-field projections |
 | `013-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
@@ -274,7 +275,7 @@ is a teaching helper, not a production server.
 | `scoped-configuration/` | package, target and profile defines; run `gti run game`, `gti run game --release` and `gti test unit` in the directory |
 | `061-global-borrow-returns.gti` | checked mutable borrows returned from exact global and static storage |
 | `062-native-c-boundaries.gti` | fixed-array C records, link-name aliases, NUL-terminated strings, pointer-count results, and exact callbacks |
-| `063-random-engine.gti` | deterministic seeded pseudo-random sequences from `<std/random>` |
+| `063-random-engine.gti` | deterministic seeded pseudo-random sequences from `std.random` |
 | `064-restricted-arithmetic-operators.gti` | independently declared read-only arithmetic and mutable compound operators |
 | `065-mutable-ranges.gti` | exclusive in-place iteration over fixed arrays and `std::vector` |
 | `066-managed-threads.gti` | move-only threads, transfer-qualified erased jobs, shared mutex state, native-only process mutex retirement, scoped disjoint borrows, explicit join, and mandatory autojoin |
@@ -343,11 +344,11 @@ is a teaching helper, not a production server.
 | `134-standard-library-modules.gti` | standard-library units imported as `std.name` modules instead of included, with each import exposing exactly its own unit |
 | `135-inline-polymorphic-values.gti` | an application interface owned by `std::inline_polymorphic`, with small sensors inline, an owning sensor boxed, state preserved across vector growth, and replacement |
 | `136-inline-closure-cells.gti` | an application-defined inline cell holding a bitwise-relocatable closure through raw-address lifetime helpers and `std::layout_of`, moved by its bytes |
-| `137-declared-attributes.gti` | `[[attribute]]` structs applied to fields and types with constant arguments, read through `<std/meta>` by a text encoder and a binary writer, with enumerator metaobjects and the `std::meta::reflectable` constraint |
+| `137-declared-attributes.gti` | `[[attribute]]` structs applied to fields and types with constant arguments, read through `std.meta` by a text encoder and a binary writer, with enumerator metaobjects and the `std::meta::reflectable` constraint |
 | `138-structural-construction.gti` | `std::meta::construct` building structs field by field from a byte reader and a text reader, with `expected` failures stopping production before construction |
 | `139-ordered-search.gti` | partition-point discovery and comparator bounds/binary search over application records without `operator<`, using the same descending order as sorting |
 | `140-environment-configuration.gti` | read-only owned environment configuration, missing versus explicitly empty values, and invalid-name rejection; try `GTI_DEMO_PROFILE=development` when running it |
-| `141-reflected-json.gti` | `<std/experimental/json>` encoding and decoding a reflectable struct with nested structs, vectors, an enum, an optional, a renamed and an ignored field, pretty output, and a decoding failure with its kind, path and offset |
+| `141-reflected-json.gti` | `std.experimental_json` encoding and decoding a reflectable struct with nested structs, vectors, an enum, an optional, a renamed and an ignored field, pretty output, and a decoding failure with its kind, path and offset |
 | `142-constexpr-builders.gti` | checked mutable constexpr references, result propagation, constructor reference arguments/defaults, generated defaults, enum states, mutable arrays and reflection-driven field mutation, with runtime parity |
 | `153-constexpr-allocation.gti` | transient exclusive allocation, source-defined destruction and a passive result that survives constant evaluation, with runtime parity |
 | `154-declaration-construction.gti` | `implicit` constructors letting declarations construct `std::string` from a literal and an application class from an `int`, a field default and constructor initializer doing the same, a constructor without `implicit` called explicitly, and `std::string` assignment from a view |
@@ -381,7 +382,7 @@ is a teaching helper, not a production server.
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
-| `146-counted-text-view-iteration.gti` | dynamically owned text-view cursors, checked reverse/positional access, generic distance, and retained view-shell lifetime |
+| `146-counted-text-view-iteration.gti` | dynamically owned text-view cursors, public iterator aliases for application wrappers, checked reverse/positional access, and retained view-shell lifetime |
 | `147-standard-library-import.gti` | one portable standard-library import, vector, owning strings and formatting, without importing platform-only APIs |
 | `148-nested-configuration.gti` | named nested structs/classes, public qualified type paths, three-level nesting, and recursive reflected JSON configuration decoding and encoding |
 | `149-interface-static-factories.gti` | concrete static interface factories, recoverable backend selection, explicit owning upcasts and ordinary virtual dispatch |
@@ -389,7 +390,7 @@ is a teaching helper, not a production server.
 | `150-out-of-class-methods.gti` | optional split method definitions, private receiver state, declaration defaults, constexpr statics and receiver-borrowed results |
 | `151-c-string-import.gti` | unsafe C-string construction, recoverable null/allocation errors, independent owned copies and an unrelated unsafe constructor |
 | `152-unsafe-expressions.gti` | directly initialized owned results from unsafe expressions, checked factory results, and an unrelated raw reader |
-| `window-factory/` | a static interface factory defined in a registered private implementation file, selecting concrete window types without circular imports; run `gti run` in the directory |
+| `window-factory/` | a static interface factory and private concrete window types sharing one module across registered implementation files without circular imports; run `gti run` in the directory |
 | `libc-region-provider/` | an unrelated source-defined raw byte owner over libc, libc `malloc`/`free` bound directly with C's exact `size_t`, explicit native-size conversion, zero-size policy, ownership movement and exactly-once matching release; run `gti run` in the directory |
 
 ## Build and run
@@ -530,7 +531,7 @@ integer out-count parameter, and a named callback accepts only an exact
 namespace-scope GTI function with a body.
 
 `063-random-engine.gti` uses only the deterministic seeded engine so the example
-corpus remains reproducible. `<std/random>` also provides `std::random_device`
+corpus remains reproducible. `std.random` also provides `std::random_device`
 for fallible host entropy when a program explicitly needs nondeterminism.
 
 `064-restricted-arithmetic-operators.gti` defines read-only value-producing

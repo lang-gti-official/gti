@@ -69,7 +69,7 @@ void printDiagnostics(const lang::FrontendResult &result) {
 
 std::string validProgram() {
   return R"(
-#include <std/mutex>
+import std.mutex;
 
 std::mutex<int32_t> program_value{1};
 
@@ -197,7 +197,7 @@ void testDormantImport() {
   for (const lang::TargetInfo &target : {single, concurrentTarget()}) {
     const lang::FrontendResult frontend =
         analyze("dormant-mutex-import.gti",
-                "#include <std/mutex>\nint main() { return 0; }\n", target);
+                "import std.mutex;\nint main() { return 0; }\n", target);
     if (!frontend.canGenerateCode()) {
       printDiagnostics(frontend);
     }
@@ -309,9 +309,9 @@ void testPublicPipeline() {
 
 void testNativeProcessRetirement() {
   const auto frontend = analyze("native-process-retirement.gti", R"gti(
-#include <std/mutex>
-#include <std/cthread>
-#include <std/panic>
+import std.mutex;
+import std.cthread;
+import std.panic;
 class Box {
   std::mutex<int> value;
 public:
@@ -420,7 +420,7 @@ int main() {
         "class Owned { public: ~Owned() {} Owned() = default; }; "
         "std::mutex<Owned> global{Owned()};"}) {
     const std::string source =
-        "#include <std/mutex>\n" + declaration + "\nint main() { return 0; }\n";
+        "import std.mutex;\n" + declaration + "\nint main() { return 0; }\n";
     const auto denied = analyze("source-process-cleanup-rejected.gti", source);
     expect(
         !denied.canGenerateCode() && hasCode(denied, "GTI-S2061"),
@@ -586,7 +586,7 @@ retainedNativeInitializerFailure(const lang::MirProgram &program,
 
 void testPreparedMutexPayload() {
   const auto frontend = analyze("mutex-prepared-payload.gti", R"gti(
-#include <std/mutex>
+import std.mutex;
 class payload {
   int value;
 public:
@@ -762,7 +762,7 @@ int exercise() { std::mutex<payload> value{payload(4)}; return 0; }
 
 void testPassiveClosureParameterStorage() {
   const auto frontend = analyze("passive-closure-storage.gti", R"gti(
-#include <std/thread>
+import std.thread;
 struct MoveOnly {
   int number = 42;
   MoveOnly() = default;
@@ -846,8 +846,8 @@ int main() {
 
 void testMutexCleanupRecipe() {
   const auto frontend = analyze("mutex-cleanup-recipe.gti", R"gti(
-#include <std/memory>
-#include <std/mutex>
+import std.memory;
+import std.mutex;
 class item {
 public:
   item() {}
@@ -893,7 +893,7 @@ int main() {
 
 void testPassiveMutexShellRecipe() {
   const auto frontend = analyze("passive-mutex-shell.gti", R"gti(
-#include <std/mutex>
+import std.mutex;
 class Cell {
   std::mutex<int32_t> value;
 public:
@@ -950,7 +950,7 @@ int main() {
 
 void testSemanticBoundaries() {
   const std::string use = R"(
-#include <std/mutex>
+import std.mutex;
 int main() {
   std::mutex<int32_t> value{1};
   std::mutex_guard<int32_t> guard = value.lock();
@@ -979,7 +979,7 @@ int main() {
 
   const lang::FrontendResult privateStorage =
       analyze("mutex-private-storage.gti", R"(
-#include <std/mutex>
+import std.mutex;
 int main() {
   gti_internal::mutex_storage<int32_t> storage{1};
   return 0;
@@ -991,7 +991,7 @@ int main() {
          "application code should not name private mutex storage");
 
   const lang::FrontendResult copied = analyze("mutex-copy.gti", R"(
-#include <std/mutex>
+import std.mutex;
 int main() {
   std::mutex<int32_t> first{1};
   std::mutex<int32_t> second = first;
@@ -1002,7 +1002,7 @@ int main() {
          "the public mutex owner should be move-only");
 
   const lang::FrontendResult relocked = analyze("mutex-relock.gti", R"(
-#include <std/mutex>
+import std.mutex;
 int main() {
   std::mutex<int32_t> value{1};
   std::mutex_guard<int32_t> first = value.lock();
@@ -1015,7 +1015,7 @@ int main() {
          "an outstanding guard should statically exclude relocking its owner");
 
   const lang::FrontendResult movedOwner = analyze("mutex-move-owner.gti", R"(
-#include <std/mutex>
+import std.mutex;
 int main() {
   std::mutex<int32_t> value{1};
   std::mutex_guard<int32_t> guard = value.lock();
@@ -1029,13 +1029,13 @@ int main() {
 
   for (const auto &[name, source] :
        std::vector<std::pair<std::string, std::string>>{{"temporary", R"(
-#include <std/mutex>
+import std.mutex;
 int32_t& escape(std::mutex<int32_t>& value) {
   return value.lock().get();
 }
 )"},
                                                         {"local", R"(
-#include <std/mutex>
+import std.mutex;
 int32_t& escape(std::mutex<int32_t>& value) {
   std::mutex_guard<int32_t> guard = value.lock();
   return guard.get();
@@ -1050,8 +1050,8 @@ int32_t& escape(std::mutex<int32_t>& value) {
   }
 
   const lang::FrontendResult transferred = analyze("mutex-transfer.gti", R"(
-#include <std/mutex>
-#include <std/thread>
+import std.mutex;
+import std.thread;
 int main() {
   std::mutex<int32_t> value{1};
   mut std::mutex_guard<int32_t> guard = value.lock();
@@ -1067,7 +1067,7 @@ void testPayloadConcurrencyCapabilities() {
   for (const std::string policy : {"", "[[no_share]]", "[[no_transfer]]"}) {
     const auto frontend =
         analyze("mutex-payload-capabilities.gti",
-                "#include <std/mutex>\n#include <std/memory>\n" + policy + R"(
+                "import std.mutex;\nimport std.memory;\n" + policy + R"(
 struct Payload { mut int value = 0;  public: Payload() = default; };
 int main() {
   auto owned = std::make_shared<std::mutex<Payload>>(Payload());
@@ -1121,9 +1121,9 @@ int main() {
     }
   }
   const auto denied = analyze("mutex-affine-worker.gti", R"(
-#include <std/mutex>
-#include <std/memory>
-#include <std/thread>
+import std.mutex;
+import std.memory;
+import std.thread;
 [[no_transfer]] struct Affine { int value = 0;  public: Affine() = default; };
 int main() {
   auto owner = std::make_shared<std::mutex<Affine>>(Affine());
@@ -1193,7 +1193,7 @@ void testVerifierMutations() {
 
 void testStoredReceiverPublication() {
   const std::string source = R"gti(
-#include <std/mutex>
+import std.mutex;
 class User {
   std::mutex<int32_t>& owner;
 public:
@@ -1522,7 +1522,7 @@ int main() {
     }
   }
   const auto nested = analyze("mutex-nested-receiver.gti", R"gti(
-#include <std/mutex>
+import std.mutex;
 class Holder {
 public:
   std::mutex<int32_t>& owner;
@@ -1572,7 +1572,7 @@ int main() {
              lang::verifyMirProgram(mutableCarrier.mir).valid(),
          "unrelated mutable stored-reference construction remains valid");
   const auto disjoint = analyze("disjoint-stored-exclusion.gti", R"gti(
-#include <std/mutex>
+import std.mutex;
 void see(std::mutex<int32_t>& value) {}
 class User {
   std::mutex<int32_t>& left;
@@ -1648,7 +1648,7 @@ void testSynchronizedGuardsThroughFormals() {
     return loans;
   };
   check("guard-through-reference-capture", R"(
-#include <std/mutex>
+import std.mutex;
 int main() {
   std::mutex<int32_t> passive{4};
   auto reader = [&passive]() -> int32_t {
@@ -1673,7 +1673,7 @@ int main() {
           expect(root, "a captured mutex guard is a root loan on the referent");
         });
   check("guard-through-returned-reference-formal", R"(
-#include <std/mutex>
+import std.mutex;
 std::mutex<int32_t>& touch(std::mutex<int32_t>& shared) {
   {
     auto guard = shared.lock();
@@ -1702,8 +1702,8 @@ int main() {
           expect(root, "a guard through a shared entry formal is a root loan");
         });
   check("guard-through-mutable-owner-accessor", R"(
-#include <std/memory>
-#include <std/mutex>
+import std.memory;
+import std.mutex;
 int32_t drain(mut std::unique_ptr<std::mutex<int32_t>>& vault) {
   mut auto guard = vault->lock();
   int32_t value = guard.get();
@@ -1744,7 +1744,7 @@ int main() {
 
 void testStoredPublicationRecursion() {
   const auto frontend = analyze("mutex-recursive-publication.gti", R"gti(
-#include <std/mutex>
+import std.mutex;
 class Owner {
   std::mutex<int32_t> value{7};
 public:

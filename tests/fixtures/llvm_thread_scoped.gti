@@ -1,4 +1,4 @@
-#include <std/thread>
+import std.thread;
 
 // Scoped tasks borrow disjoint caller state and are cleaned in reverse
 // argument order on the caller after every worker joined.

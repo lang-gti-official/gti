@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 int32_t rounds() { return 20000; }
 int32_t width() { return 5000; }

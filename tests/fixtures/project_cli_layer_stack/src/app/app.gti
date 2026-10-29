@@ -1,11 +1,12 @@
-#include "../core/application.gti"
-#include "../core/layer.gti"
-#include "../core/layer_stack.gti"
-#include "app_layer.gti"
-#include <std/memory>
+export module app;
+import "../core/application.gti";
+import "../core/layer.gti";
+import "../core/layer_stack.gti";
+import "app_layer.gti";
+import std.memory;
 
 namespace game {
-  class App : public psych::Application {
+  export class App : public psych::Application {
     mut bool started = false;
     mut bool stopped = false;
 

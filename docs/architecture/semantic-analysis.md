@@ -916,6 +916,13 @@ borrowed carrier the same shell `Reference` loan, with the carrier's `Stored`
 loan as its stored dependency, that a reference of the carrier's own type gets,
 whether it binds the carrier or the result of a call relaying it.
 
+Pre-body constructor summaries resolve nested classes, payload enums, namespace
+aliases and callable contracts in the constructor's defining source, class and
+namespace context. They use the same requester-visible declaration indexes as
+ordinary lookup. Private homonyms in unrelated modules cannot select a different
+stored origin or ownerless-text contract; scoped context restoration also keeps
+recursive summaries and later caller analysis independent of import order.
+
 `ownerlessTextConstructorInputs`, the pre-body input contract checked at each
 construction, includes a base initializer that passes a formal to a base
 constructor storing that parameter. The derived class keeps its text fields
@@ -1428,7 +1435,7 @@ does not rediscover endpoints from lowered statement kinds.
 
 Semantics additionally owns one immutable `ProgramInitializationPlan`. It
 visits configured prelude roots in their preserved order and then the entry
-unit, follows explicit include edges in lexical dependency-first order with
+unit, follows explicit import edges in lexical dependency-first order with
 first-visit deduplication, and excludes inactive compile-time branches. Namespace
 globals and non-generic static fields then enter the plan in source order. Each
 storage step has an explicit `DataOnly` or `Initializer` role: implicit zero
@@ -1895,9 +1902,9 @@ and an analysis with the raw-pointer audit enabled never uses it.
   the program's declaration list. A `SemanticPreambleKey` names the analysis
   configuration, every prefix unit by identity, path, digests and exact
   parsed declarations, and the whole source graph by unit identity and
-  include edges (registration publishes each declaration's visibility per
+  import/re-export edges (registration publishes each declaration's visibility per
   consuming unit, so a program with other units cannot share the tables), so
-  a changed or re-parsed library unit, or another include graph, selects
+  a changed or re-parsed library unit, or another import graph, selects
   another preamble (the cache keeps a few, least recently used first).
 - **Building.** `SemanticVisitor::buildPreamble` analyses the prefix
   declarations as a program of their own with complete trusted bodies, then
@@ -1937,7 +1944,7 @@ and an analysis with the raw-pointer audit enabled never uses it.
   (`SemanticPreamble::ConceptProofKey`), shared by every analysis that adopts
   it. Eligible are a named preamble concept, or a requirement written in a
   prefix declaration and queried with that declaration's lookup scope; both
-  are evaluated in their declaring unit, which sees only its direct includes,
+  are evaluated in their declaring unit, which sees only its own declarations, visible import exports and prelude,
   so no later unit can change them. Only satisfied requirements are recorded,
   and only from an evaluation without assumptions over closed arguments: when
   a substituted instance's constraint is active, the query is evaluated once

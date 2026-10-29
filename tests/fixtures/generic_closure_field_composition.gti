@@ -4,8 +4,8 @@
 // take ownership of other parameters. The closure is copied or moved from the
 // formal, for captureless, scalar-capturing and struct-capturing closures of
 // one class.
-#include <std/string>
-#include <std/utility>
+import std.string;
+import std.utility;
 
 class Holder<F> {
 public:

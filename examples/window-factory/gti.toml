@@ -8,7 +8,7 @@ version = "0.1.0"
 window = "src/window.gti"
 
 [module-implementations]
-window = ["src/window_factory.gti"]
+window = ["src/desktop.gti", "src/headless.gti", "src/window_factory.gti"]
 
 [targets.window-factory]
 kind = "executable"

@@ -6,13 +6,13 @@ passed to and returned from functions, sorted in place, and std::array of
 classes.
 """
 
-PRELUDE = """#include <std/array>
-#include <std/algorithm>
-#include <std/memory>
-#include <std/string>
-#include <std/format>
-#include <std/utility>
-#include <std/atomic>
+PRELUDE = """import std.array;
+import std.algorithm;
+import std.memory;
+import std.string;
+import std.format;
+import std.utility;
+import std.atomic;
 std::atomic<int32_t> destroyed{0};
 std::atomic<int32_t> order{0};
 class Slot {

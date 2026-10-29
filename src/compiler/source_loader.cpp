@@ -3,7 +3,12 @@
 #include "diagnostic_registry.h"
 
 #include "configuration_directive_processor.h"
+#include "gti/module_name.h"
 #include "loaded_lexical_unit.h"
+
+#include <fstream>
+#include <llvm/Support/JSON.h>
+#include <sstream>
 
 #include <algorithm>
 #include <cctype>
@@ -17,6 +22,12 @@
 
 namespace lang {
 namespace {
+
+std::filesystem::path authoredPath(const std::filesystem::path &path) {
+  std::error_code error;
+  const auto absolute = std::filesystem::absolute(path, error);
+  return (error ? path : absolute).lexically_normal();
+}
 
 void digestInteger(std::uint64_t &digest, std::uint64_t value) {
   for (unsigned shift = 0; shift < 64; shift += 8) {
@@ -100,6 +111,7 @@ SourceGraph SourceLoader::load(
     ConfigurationFlags declaredConfigurationFlags) {
   diagnostics.clear();
   states.clear();
+  flagIndependentUnits.clear();
   graph.clear();
   sourceManager.clear();
   this->entrySource = std::move(entrySource);
@@ -113,23 +125,177 @@ SourceGraph SourceLoader::load(
   declaredFlags.insert(declaredConfigurationFlags.begin(),
                        declaredConfigurationFlags.end());
   initialFlags = activeFlags;
-  configurationDomain = 0;
   this->sourceOverrides = &sourceOverrides;
   this->standardLibraryRoots.clear();
   this->standardLibraryRoots.reserve(standardLibraryRoots.size());
   for (const std::filesystem::path &root : standardLibraryRoots) {
     this->standardLibraryRoots.emplace_back(canonicalPath(root));
   }
-  this->packageSourceRoots = packageSourceRoots;
-  for (PackageSourceRoot &package : this->packageSourceRoots) {
-    package.packageRoot = canonicalPath(package.packageRoot);
-    package.sourceRoot = canonicalPath(package.sourceRoot);
-    std::sort(package.dependencies.begin(), package.dependencies.end(),
-              [](const PackageSourceDependency &left,
-                 const PackageSourceDependency &right) {
+  std::vector<SourceOwnerDescriptor> owners = packageSourceRoots;
+  for (auto &owner : owners) {
+    owner.packageRoot = canonicalPath(owner.packageRoot);
+    owner.sourceRoot = canonicalPath(owner.sourceRoot);
+    for (auto &[name, path] : owner.modules) {
+      if (std::none_of(owner.moduleLookupPaths.begin(),
+                       owner.moduleLookupPaths.end(),
+                       [&](const auto &entry) { return entry.first == name; }))
+        owner.moduleLookupPaths.emplace_back(name, authoredPath(path));
+      path = canonicalPath(path);
+    }
+    for (auto &[name, path] : owner.moduleLookupPaths)
+      path = authoredPath(path);
+    for (auto &root : owner.additionalRoots)
+      root = canonicalPath(root);
+    std::sort(owner.dependencies.begin(), owner.dependencies.end(),
+              [](const auto &left, const auto &right) {
                 return left.alias < right.alias;
               });
   }
+  const bool directMode =
+      std::none_of(owners.begin(), owners.end(), [](const auto &owner) {
+        return owner.kind == SourceOwnerKind::Package ||
+               owner.kind == SourceOwnerKind::Generated;
+      });
+  if (directMode)
+    owners.push_back({.identity = "direct",
+                      .name = "direct",
+                      .kind = SourceOwnerKind::Direct});
+  // Toolchain roots supply resolution metadata only. Canonical trusted-source
+  // provenance continues to be established separately when a unit is loaded.
+  if (!this->standardLibraryRoots.empty() &&
+      std::none_of(owners.begin(), owners.end(), [](const auto &owner) {
+        return owner.implicitAlias && *owner.implicitAlias == "std";
+      })) {
+    SourceOwnerDescriptor standard{
+        .identity = "toolchain:std",
+        .name = "std",
+        .packageRoot = this->standardLibraryRoots.front(),
+        .sourceRoot = this->standardLibraryRoots.front(),
+        .kind = SourceOwnerKind::Toolchain,
+        .implicitAlias = "std"};
+    for (const auto &root : this->standardLibraryRoots) {
+      if (root != standard.packageRoot)
+        standard.additionalRoots.push_back(root);
+      const auto mapPath = root / "module-map.json";
+      std::ifstream input(mapPath, std::ios::binary);
+      if (!input)
+        continue; // Missing maps never authorize a directory-based public API.
+      std::ostringstream buffer;
+      buffer << input.rdbuf();
+      const std::string text = buffer.str();
+      sourceManager.set(mapPath.string(), text);
+      const auto failMap = [&](std::string message) {
+        diagnostics.push_back(
+            makeDiagnostic("GTI-I0012", DiagnosticPhase::SourceLoading,
+                           {mapPath.string(), 0, text.empty() ? 0U : 1U, 1},
+                           std::move(message)));
+      };
+      auto parsed = llvm::json::parse(text);
+      if (!parsed) {
+        failMap("Invalid source module map: " +
+                llvm::toString(parsed.takeError()));
+        continue;
+      }
+      const auto *object = parsed->getAsObject();
+      const auto *modules = object ? object->getObject("modules") : nullptr;
+      if (modules == nullptr) {
+        failMap("A source module map requires a 'modules' object.");
+        continue;
+      }
+      if (object->get("default") && !object->getString("default"))
+        failMap("The default module must be a valid module name.");
+      if (const auto defaultName = object->getString("default")) {
+        if (!isModuleName(defaultName->str()))
+          failMap("The default module must be a valid module name.");
+        else
+          standard.defaultModule = defaultName->str();
+      }
+      for (const auto &[key, value] : *modules) {
+        const std::string name = key.str();
+        const auto spelling = value.getAsString();
+        if (!isModuleName(name) || !spelling || spelling->empty() ||
+            spelling->find('\0') != llvm::StringRef::npos) {
+          failMap("A public module map entry requires a module name and "
+                  "relative .gti path.");
+          continue;
+        }
+        const std::filesystem::path relative(spelling->str());
+        const auto path = canonicalPath(root / relative);
+        if (relative.is_absolute() || relative.extension() != ".gti" ||
+            !pathIsWithin(root, path)) {
+          failMap(
+              "A public module interface must remain inside its source owner.");
+          continue;
+        }
+        if (std::none_of(
+                standard.modules.begin(), standard.modules.end(),
+                [&](const auto &module) { return module.first == name; })) {
+          standard.modules.emplace_back(name, path);
+          standard.moduleLookupPaths.emplace_back(
+              name, authoredPath(root / relative));
+        }
+      }
+    }
+    std::sort(standard.modules.begin(), standard.modules.end());
+    owners.push_back(std::move(standard));
+  }
+  sourceOwners = std::make_shared<const SourceOwnerRegistry>(std::move(owners),
+                                                             directMode);
+  const auto invalidOwner = [&](std::string message) {
+    diagnostics.push_back(makeDiagnostic(
+        "GTI-I0012", DiagnosticPhase::SourceLoading,
+        {canonicalPath(entryPath).string(), 0, 0, 1}, std::move(message)));
+  };
+  std::unordered_set<std::string> identities;
+  std::unordered_set<std::string> aliases;
+  std::unordered_set<std::string> roots;
+  for (const auto &owner : sourceOwners->owners()) {
+    if (owner.identity.empty() || !identities.insert(owner.identity).second)
+      invalidOwner("Source owner identities must be nonempty and unique.");
+    if (owner.implicitAlias && (!isModuleNameComponent(*owner.implicitAlias) ||
+                                !aliases.insert(*owner.implicitAlias).second))
+      invalidOwner("Configured source owner aliases must be valid and unique.");
+    if (owner.kind == SourceOwnerKind::Direct)
+      continue;
+    if (!roots.insert(owner.packageRoot.string()).second)
+      invalidOwner(
+          "Distinct source owners cannot claim the same canonical root.");
+    for (const auto &root : owner.additionalRoots)
+      if (!roots.insert(root.string()).second)
+        invalidOwner(
+            "Distinct source owners cannot claim the same canonical root.");
+    std::unordered_set<std::string> names;
+    std::unordered_set<std::string> interfaces;
+    for (const auto &[name, path] : owner.modules) {
+      const auto *actual = sourceOwners->ownerForPath(path);
+      if (!isModuleName(name) || !names.insert(name).second ||
+          !interfaces.insert(path.string()).second ||
+          path.extension() != ".gti" || actual == nullptr ||
+          actual->identity != owner.identity)
+        invalidOwner("Public module registrations require unique valid names "
+                     "and contained .gti interfaces.");
+    }
+    std::unordered_set<std::string> lookupNames;
+    for (const auto &[name, path] : owner.moduleLookupPaths) {
+      const auto registered =
+          std::find_if(owner.modules.begin(), owner.modules.end(),
+                       [&](const auto &entry) { return entry.first == name; });
+      if (!lookupNames.insert(name).second ||
+          registered == owner.modules.end() ||
+          canonicalPath(path) != registered->second)
+        invalidOwner("Authored module lookup paths must identify their "
+                     "canonical registration.");
+    }
+    std::unordered_set<std::string> dependencyAliases;
+    for (const auto &dependency : owner.dependencies)
+      if (!isModuleNameComponent(dependency.alias) ||
+          !dependencyAliases.insert(dependency.alias).second ||
+          sourceOwners->find(dependency.targetIdentity) == nullptr ||
+          sourceOwners->findImplicitAlias(dependency.alias) != nullptr)
+        invalidOwner("Direct dependency aliases must be valid, unique, and "
+                     "refer to a registered source owner.");
+  }
+  graph.setSourceOwners(sourceOwners);
   entrySourceConsumed = false;
   std::vector<SourceUnitId> preludes;
   const std::filesystem::path canonicalEntry = canonicalPath(entryPath);
@@ -147,14 +313,36 @@ SourceGraph SourceLoader::load(
                entryStandardLibraryName ? SourceUnitRole::StandardLibrary
                                         : SourceUnitRole::Application);
 
-  // Complete the private implementation closure only after ordinary imports
-  // finish. A body can import its interface without creating an artificial
-  // interface -> implementation -> interface import cycle.
+  if (const auto *entryUnit = graph.findUnit(entry);
+      entryUnit && entryUnit->implementationDeclaration) {
+    const auto *owner = packageForPath(canonicalEntry);
+    const std::string name = entryUnit->implementationDeclaration->lexeme;
+    if (owner) {
+      const auto implementation = std::find_if(
+          owner->moduleImplementations.begin(),
+          owner->moduleImplementations.end(), [&](const auto &item) {
+            return item.first == name &&
+                   std::any_of(item.second.begin(), item.second.end(),
+                               [&](const auto &path) {
+                                 return canonicalPath(path) == canonicalEntry;
+                               });
+          });
+      const auto interface =
+          std::find_if(owner->modules.begin(), owner->modules.end(),
+                       [&](const auto &item) { return item.first == name; });
+      if (implementation != owner->moduleImplementations.end() &&
+          interface != owner->modules.end())
+        loadFile(interface->second, false, false, nullptr);
+    }
+  }
+
+  // Complete registered implementations after ordinary imports. Membership
+  // makes the interface available without an artificial dependency cycle.
   std::unordered_set<std::string> loadedImplementations;
   for (std::size_t index = 0; index < graph.sourceUnits().size(); ++index) {
     const auto moduleDeclaration = graph.sourceUnits()[index].moduleDeclaration;
     const auto unitPath = graph.sourceUnits()[index].path;
-    if (!moduleDeclaration || !graph.sourceUnits()[index].packageIdentity)
+    if (!moduleDeclaration)
       continue;
     const auto *package = packageForPath(unitPath);
     if (package == nullptr)
@@ -181,33 +369,89 @@ SourceGraph SourceLoader::load(
           continue;
         }
         if (!loadedImplementations.insert(canonical.string()).second) {
-          graph.implementationRoots.push_back(
-              {.interfaceUnit = graph.sourceUnits()[index].id,
-               .implementationUnit =
-                   graph.sourceUnitForPath(canonical.string())});
+          if (!graph.attachModuleImplementation(
+                  graph.sourceUnits()[index].id,
+                  graph.sourceUnitForPath(canonical.string())))
+            report(*moduleDeclaration,
+                   "An implementation file cannot belong to two modules.",
+                   "GTI-I0012");
           continue;
         }
         auto savedFlags = activeFlags;
-        const auto savedDomain = configurationDomain;
         activeFlags = initialFlags;
-        const auto existing = graph.sourceUnitForPath(canonical.string());
-        configurationDomain =
-            existing != 0 ? existing : graph.sourceUnits().size() + 1;
         const auto implementation =
             loadFile(canonical, false, false, &*moduleDeclaration);
         activeFlags = std::move(savedFlags);
-        configurationDomain = savedDomain;
-        if (graph.findUnit(implementation)->moduleDeclaration) {
-          report(*moduleDeclaration,
-                 "A registered implementation is an ordinary source file, not "
-                 "another module interface.",
+        const auto *implementationUnit = graph.findUnit(implementation);
+        if (!implementationUnit ||
+            !implementationUnit->implementationDeclaration ||
+            implementationUnit->implementationDeclaration->lexeme != name) {
+          report(implementationUnit &&
+                         implementationUnit->implementationDeclaration
+                     ? *implementationUnit->implementationDeclaration
+                     : *moduleDeclaration,
+                 "A registered implementation must begin with 'module " + name +
+                     ";'.",
                  "GTI-I0012");
           continue;
         }
-        graph.implementationRoots.push_back(
-            {.interfaceUnit = graph.sourceUnits()[index].id,
-             .implementationUnit = implementation});
+        if (!graph.attachModuleImplementation(graph.sourceUnits()[index].id,
+                                              implementation))
+          report(*moduleDeclaration,
+                 "An implementation file cannot belong to two modules.",
+                 "GTI-I0012");
       }
+    }
+  }
+
+  for (const auto &unit : graph.sourceUnits()) {
+    if (unit.implementationDeclaration && unit.moduleId == 0)
+      report(*unit.implementationDeclaration,
+             "A module implementation must be registered with its matching "
+             "interface by its source owner.",
+             "GTI-I0012");
+  }
+
+  // File loading alone cannot detect cycles whose edges originate in different
+  // registered bodies: their interfaces may already be completely loaded.
+  // Validate imports after membership is complete, treating each interface and
+  // all its bodies as one module. Prelude layering is not an explicit import.
+  if (!hadError()) {
+    const auto group = [&](SourceUnitId unit) {
+      const auto *module = graph.findModule(graph.moduleForUnit(unit));
+      return module ? module->interfaceUnit : unit;
+    };
+    std::unordered_map<SourceUnitId, std::vector<const SourceImport *>>
+        outgoing;
+    for (const auto &import : graph.imports()) {
+      if (import.target && group(import.requester) != group(*import.target))
+        outgoing[group(import.requester)].push_back(&import);
+    }
+    std::unordered_map<SourceUnitId, LoadState> visited;
+    std::function<bool(SourceUnitId)> visit = [&](SourceUnitId unit) {
+      visited.emplace(unit, LoadState::Visiting);
+      if (const auto edges = outgoing.find(unit); edges != outgoing.end()) {
+        for (const auto *import : edges->second) {
+          const auto target = group(*import->target);
+          const auto prior = visited.find(target);
+          if (prior != visited.end() && prior->second == LoadState::Visiting) {
+            diagnostics.push_back(makeDiagnostic(
+                "GTI-I0001", DiagnosticPhase::SourceLoading, import->name,
+                "Module import cycle detected for '" + import->spelling +
+                    "'."));
+            return false;
+          }
+          if (prior == visited.end() && !visit(target))
+            return false;
+        }
+      }
+      visited[unit] = LoadState::Loaded;
+      return true;
+    };
+    for (const auto &unit : graph.sourceUnits()) {
+      const auto identity = group(unit.id);
+      if (!visited.contains(identity) && !visit(identity))
+        break;
     }
   }
 
@@ -266,12 +510,6 @@ SourceGraph SourceLoader::load(
       diagnostics.emplace_back(std::move(diagnostic));
     }
   }
-  // Replays within this load are complete; leave the processed forms to the
-  // graph and cache so an unshared token vector can move into the parser.
-  for (auto &[path, state] : states) {
-    (void)path;
-    state.processed.reset();
-  }
   return std::move(graph);
 }
 
@@ -313,10 +551,6 @@ bool SourceLoader::isImportPathSegment(std::string_view segment) {
          std::all_of(segment.begin() + 1, segment.end(), validPart);
 }
 
-bool SourceLoader::isImportPathSegment(const Token &token) {
-  return isImportPathSegment(token.lexeme);
-}
-
 bool SourceLoader::pathIsWithin(const std::filesystem::path &root,
                                 const std::filesystem::path &candidate) {
   auto rootPart = root.begin();
@@ -332,30 +566,12 @@ bool SourceLoader::pathIsWithin(const std::filesystem::path &root,
 
 const PackageSourceRoot *
 SourceLoader::packageForPath(const std::filesystem::path &path) const {
-  const PackageSourceRoot *selected = nullptr;
-  std::size_t selectedDepth = 0;
-  for (const PackageSourceRoot &package : packageSourceRoots) {
-    if (!pathIsWithin(package.packageRoot, path)) {
-      continue;
-    }
-    const std::size_t depth = static_cast<std::size_t>(
-        std::distance(package.packageRoot.begin(), package.packageRoot.end()));
-    if (selected == nullptr || depth > selectedDepth) {
-      selected = &package;
-      selectedDepth = depth;
-    }
-  }
-  return selected;
+  return sourceOwners ? sourceOwners->ownerForPath(path) : nullptr;
 }
 
 const PackageSourceRoot *
 SourceLoader::packageByIdentity(std::string_view identity) const {
-  const auto found =
-      std::find_if(packageSourceRoots.begin(), packageSourceRoots.end(),
-                   [identity](const PackageSourceRoot &package) {
-                     return package.identity == identity;
-                   });
-  return found == packageSourceRoots.end() ? nullptr : &*found;
+  return sourceOwners ? sourceOwners->find(identity) : nullptr;
 }
 
 std::optional<std::string> SourceLoader::standardLibraryNameForExistingPath(
@@ -423,21 +639,12 @@ std::optional<std::string> SourceLoader::standardLibraryNameForExistingPath(
 std::optional<std::string> SourceLoader::standardModuleNameForExistingPath(
     const std::filesystem::path &path) const {
   for (const std::filesystem::path &root : standardLibraryRoots) {
-    if (path == canonicalPath(root / "std.gti")) {
+    if (path == canonicalPath(root / "std.gti"))
       return "std";
-    }
-    const std::filesystem::path directory = canonicalPath(root / "modules");
-    if (path.parent_path() != directory || path.extension() != ".gti" ||
-        !isImportPathSegment(path.stem().string())) {
-      continue;
-    }
-    std::error_code error;
-    if (std::filesystem::is_regular_file(path, error) ||
-        sourceOverrides->contains(path.string())) {
-      return "modules/" + path.stem().string();
-    }
   }
-  return std::nullopt;
+  // Interfaces retain their established standard-library source identities;
+  // trust still requires a path under a configured standard-library root.
+  return standardLibraryNameForExistingPath(path);
 }
 
 SourceUnitId
@@ -447,11 +654,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
                        SourceUnitRole role) {
   const std::string key = path.string();
   SourceUnitId unitId = 0;
-  bool replayConfiguration = false;
   if (const auto state = states.find(key); state != states.end()) {
     unitId = state->second.unit;
     if (state->second.state == LoadState::Visiting && includeToken != nullptr) {
-      report(*includeToken, "Include cycle detected for '" + key + "'.",
+      report(*includeToken, "Module import cycle detected for '" + key + "'.",
              "GTI-I0001");
     }
     if (SourceUnit *unit = graph.findUnit(unitId)) {
@@ -465,29 +671,18 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       if (standardLibraryName) {
         unit->standardLibraryName = std::move(standardLibraryName);
       }
-      // A new module domain replays the unit's directives under its own
-      // flags. Incoming flags may differ when the unit never observes them;
-      // the canonical-syntax comparison after replay rejects any difference
-      // that selects other tokens, here or in a nested include.
-      if (!unit->moduleDeclaration && includeToken != nullptr &&
-          state->second.state == LoadState::Loaded &&
-          !state->second.configurationDomains.contains(configurationDomain)) {
-        replayConfiguration = true;
-        state->second.state = LoadState::Visiting;
-        state->second.configurationDomains.insert(configurationDomain);
-      }
     }
     if (isEntry) {
       graph.entry = unitId;
     }
-    if (!replayConfiguration) {
-      return unitId;
-    }
+    return unitId;
   } else {
     std::optional<std::string> packageIdentity;
     std::optional<std::string> packageRelativePath;
     if (role == SourceUnitRole::Application) {
-      if (const PackageSourceRoot *package = packageForPath(path)) {
+      if (const PackageSourceRoot *package = packageForPath(path);
+          package && package->kind != SourceOwnerKind::Direct &&
+          package->kind != SourceOwnerKind::Toolchain) {
         packageIdentity = package->identity;
         packageRelativePath =
             path.lexically_relative(package->packageRoot).generic_string();
@@ -497,31 +692,15 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
         path, isEntry, isPrelude, std::move(standardLibraryName), role,
         std::move(packageIdentity), std::move(packageRelativePath));
     states.emplace(key,
-                   FileState{.state = LoadState::Visiting,
-                             .unit = unitId,
-                             .configurationDomains = {configurationDomain}});
+                   FileState{.state = LoadState::Visiting, .unit = unitId});
   }
   std::shared_ptr<const ProcessedSourceUnit> processed;
-  if (replayConfiguration) {
-    // A flag-independent unit selects the same syntax in every domain; only
-    // its nested directives need this domain.
-    processed = states[key].processed;
-  }
   std::shared_ptr<const std::vector<Token>> lexedTokens;
   std::optional<LoadedLexicalUnit> lexical;
   if (!processed) {
     std::optional<std::string_view> exactSource;
     std::optional<std::size_t> unitCompletionOffset;
-    if (replayConfiguration) {
-      // Replay the exact snapshot already loaded, including unsaved overlays.
-      // Reuse the directive processor rather than approximating nested
-      // include effects with a saved output flag set: a child may already be
-      // included in this domain and must not reapply an earlier #define after
-      // an #undef.
-      if (const std::string *source = sourceManager.find(key)) {
-        exactSource = *source;
-      }
-    } else if (isEntry && entrySource && !entrySourceConsumed) {
+    if (isEntry && entrySource && !entrySourceConsumed) {
       entrySourceConsumed = true;
       exactSource = *entrySource;
       unitCompletionOffset = completionOffset;
@@ -560,7 +739,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       Diagnostic forwarded = diagnostic;
       if (includeToken != nullptr) {
         forwarded.related.push_back(
-            {tokenSpan(*includeToken), "Included from here."});
+            {tokenSpan(*includeToken), "Imported from here."});
       }
       diagnostics.emplace_back(std::move(forwarded));
     }
@@ -574,57 +753,95 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   static const std::vector<Token> noTokens;
   const std::vector<Token> &lexed = lexedTokens ? *lexedTokens : noTokens;
 
-  const bool moduleInterface =
-      processed ? processed->moduleDeclaration.has_value()
-                : lexed.size() >= 4 && lexed[0].kind == TokenKind::EXPORT &&
-                      lexed[1].kind == TokenKind::MODULE &&
-                      lexed[2].kind == TokenKind::IDENTIFIER &&
-                      lexed[3].kind == TokenKind::SEMICOLON;
-  std::unordered_set<std::string> importerFlags;
-  const SourceUnitId importerDomain = configurationDomain;
-  if (moduleInterface) {
-    graph.findUnit(unitId)->moduleDeclaration =
-        processed ? *processed->moduleDeclaration : lexed[2];
-    const Token &moduleName = *graph.findUnit(unitId)->moduleDeclaration;
-    importerFlags = activeFlags;
-    activeFlags = initialFlags;
-    configurationDomain = unitId;
-    // Module names are owned by one package, the standard library, or the
-    // direct-compilation application; the standard library's `vector` does
-    // not collide with an application's interface of that name.
-    const SourceUnit &interfaceUnit = *graph.findUnit(unitId);
-    const auto standardOwned = [](const SourceUnit &unit) {
-      return unit.role == SourceUnitRole::StandardLibrary;
-    };
-    for (const SourceUnit &other : graph.sourceUnits()) {
-      if (other.id != unitId && other.moduleDeclaration &&
-          other.packageIdentity == interfaceUnit.packageIdentity &&
-          standardOwned(other) == standardOwned(interfaceUnit) &&
-          other.moduleDeclaration->lexeme == moduleName.lexeme) {
-        Diagnostic diagnostic = makeDiagnostic(
-            "GTI-I0012", DiagnosticPhase::SourceLoading, moduleName,
-            "Module '" + moduleName.lexeme +
-                "' has more than one interface in this package.");
-        diagnostic.related.push_back(
-            {tokenSpan(*other.moduleDeclaration), "First interface is here."});
-        diagnostics.push_back(std::move(diagnostic));
+  std::optional<Token> moduleDeclaration;
+  std::optional<SourceSpan> moduleDeclarationSpan;
+  std::optional<Token> implementationDeclaration;
+  std::optional<SourceSpan> implementationDeclarationSpan;
+  std::size_t moduleHeaderEnd = 0;
+  if (processed) {
+    moduleDeclaration = processed->moduleDeclaration;
+    moduleDeclarationSpan = processed->moduleDeclarationSpan;
+    implementationDeclaration = processed->implementationDeclaration;
+    implementationDeclarationSpan = processed->implementationDeclarationSpan;
+  } else if (lexed.size() >= 3 && (lexed[0].kind == TokenKind::MODULE ||
+                                   (lexed[0].kind == TokenKind::EXPORT &&
+                                    lexed[1].kind == TokenKind::MODULE))) {
+    const bool interface = lexed[0].kind == TokenKind::EXPORT;
+    const std::size_t nameStart = interface ? 2 : 1;
+    std::size_t at = nameStart;
+    std::string name;
+    while (at < lexed.size() && lexed[at].kind == TokenKind::IDENTIFIER) {
+      name += lexed[at++].lexeme;
+      if (at >= lexed.size() || lexed[at].kind != TokenKind::DOT)
+        break;
+      name += '.';
+      ++at;
+    }
+    if (isModuleName(name) && at < lexed.size() &&
+        lexed[at].kind == TokenKind::SEMICOLON) {
+      Token declaration = lexed[nameStart];
+      declaration.lexeme = name;
+      const SourceSpan span{key, lexed[nameStart].position,
+                            lexed[at - 1].position +
+                                lexed[at - 1].lexeme.size(),
+                            lexed[nameStart].line};
+      if (interface) {
+        moduleDeclaration = declaration;
+        moduleDeclarationSpan = span;
+      } else {
+        implementationDeclaration = declaration;
+        implementationDeclarationSpan = span;
       }
+      moduleHeaderEnd = at + 1;
     }
   }
+  graph.findUnit(unitId)->implementationDeclaration = implementationDeclaration;
+  graph.findUnit(unitId)->implementationDeclarationSpan =
+      implementationDeclarationSpan;
+  const bool moduleInterface = moduleDeclaration.has_value();
+  std::unordered_set<std::string> importerFlags;
+  if (moduleInterface) {
+    graph.findUnit(unitId)->moduleDeclaration = moduleDeclaration;
+    graph.findUnit(unitId)->moduleDeclarationSpan = moduleDeclarationSpan;
+    const Token &moduleName = *moduleDeclaration;
+    importerFlags = activeFlags;
+    activeFlags = initialFlags;
+    const auto *owner = packageForPath(path);
+    const std::string ownerIdentity = owner ? owner->identity : "direct";
+    if (graph.registerModule(unitId, ownerIdentity, moduleName.lexeme) == 0) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-I0012", DiagnosticPhase::SourceLoading,
+          moduleDeclarationSpan.value_or(tokenSpan(moduleName)),
+          "Module '" + moduleName.lexeme +
+              "' has more than one interface in this source owner.");
+      for (const auto &other : graph.sourceUnits())
+        if (other.id != unitId && other.moduleDeclaration &&
+            other.moduleDeclaration->lexeme == moduleName.lexeme &&
+            packageForPath(other.path) &&
+            packageForPath(other.path)->identity == ownerIdentity) {
+          diagnostic.related.push_back(
+              {other.moduleDeclarationSpan.value_or(
+                   tokenSpan(*other.moduleDeclaration)),
+               "First interface is here."});
+          break;
+        }
+      diagnostics.push_back(std::move(diagnostic));
+    }
+  }
+
   const auto finishLoad = [&] {
     states[key].state = LoadState::Loaded;
     if (moduleInterface) {
       activeFlags = std::move(importerFlags);
-      configurationDomain = importerDomain;
     }
     return unitId;
   };
 
   std::size_t includeOccurrence = 0;
-  // Resolves the import or include directive starting at `index` and records
-  // its dependency edge, returning the directive's last token. First loading
-  // and replay of a processed unit share it; replay presents only the
-  // directive's own tokens.
+  // Resolves the import directive or diagnoses retired include syntax at
+  // `index` and records its dependency edge, returning the directive's last
+  // token. First loading and replay of a processed unit share it; replay
+  // presents only the directive's own tokens.
   const auto resolveDirective = [&](const std::vector<Token> &tokens,
                                     std::size_t index, int braceDepth,
                                     int conditionalDepth) {
@@ -639,10 +856,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
                "interface.",
                "GTI-I0012");
       }
-      const ResolvedInclude imported =
+      const ResolvedImport imported =
           resolveImport(tokens, index + (exportImport ? 1 : 0), path,
                         braceDepth, conditionalDepth, exportImport);
-      if (imported.dependency != 0 && !replayConfiguration) {
+      if (imported.dependency != 0) {
         graph.addDependency({.source = unitId,
                              .target = imported.dependency,
                              .kind = imported.kind,
@@ -652,68 +869,33 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       }
       return imported.directiveEnd;
     }
-    // `export #include` keeps include resolution and direct visibility for
-    // this interface, then deliberately republishes that one legacy unit to
-    // importers. The unit's own nested includes are not republished.
-    const bool exportInclude = token.kind == TokenKind::EXPORT;
-    if (exportInclude && !moduleInterface) {
-      report(token,
-             "Republishing an include requires an 'export module name;' "
-             "interface.",
-             "GTI-I0012");
+    const bool exported = token.kind == TokenKind::EXPORT;
+    const Token &includeToken = tokens[index + (exported ? 1 : 0)];
+    Diagnostic diagnostic =
+        makeDiagnostic(DiagnosticId::RemovedInclude, includeToken);
+    diagnostic.hints.push_back(
+        "Import an explicit module interface instead. Use 'import std.name;' "
+        "for a standard module, or 'import \"path.gti\";' for a relative "
+        "interface; publish its API with 'export module name;' and exports.");
+    diagnostics.push_back(std::move(diagnostic));
+    // Do not resolve or load a rejected legacy dependency. Keep scanning the
+    // following source lines so independent dependency errors remain visible.
+    std::size_t end = index + (exported ? 1 : 0);
+    while (end + 1 < tokens.size() &&
+           tokens[end + 1].kind != TokenKind::END_OF_FILE &&
+           tokens[end + 1].line == includeToken.line) {
+      ++end;
     }
-    const Token &includeToken = tokens[index + (exportInclude ? 1 : 0)];
-    const bool warnInclude = warnLegacyIncludes &&
-                             !states[key].includeWarningEmitted &&
-                             (isEntry || role == SourceUnitRole::Application);
-    states[key].includeWarningEmitted = true;
-    const std::size_t occurrence = includeOccurrence++;
-    const ResolvedInclude include =
-        resolveInclude(tokens, index + (exportInclude ? 1 : 0), path,
-                       braceDepth, conditionalDepth);
-    if (include.dependency != 0) {
-      if (graph.findUnit(include.dependency)->moduleDeclaration) {
-        report(includeToken,
-               exportInclude
-                   ? "A module interface is republished with 'export "
-                     "import', not 'export #include'."
-                   : "A module interface must be imported, not included; "
-                     "use 'import' to respect its exports.",
-               "GTI-I0012");
-      }
-      if (!replayConfiguration) {
-        graph.addDependency({.source = unitId,
-                             .target = include.dependency,
-                             .kind = exportInclude && moduleInterface
-                                         ? SourceDependencyKind::ExportInclude
-                                         : include.kind,
-                             .directive = tokenSpan(includeToken),
-                             .includeSpelling = include.includeSpelling,
-                             .includeOccurrence = occurrence});
-      }
-    }
-    if (warnInclude) {
-      Diagnostic warning =
-          makeDiagnostic(DiagnosticId::LegacyInclude, includeToken);
-      warning.hints.push_back(
-          "Use 'import std;' or a named module import where available. "
-          "Legacy source files may need a module interface first.");
-      diagnostics.push_back(std::move(warning));
-    }
-    return include.directiveEnd;
+    return end;
   };
 
   const auto publish = [&](std::shared_ptr<const ProcessedSourceUnit> unit) {
-    if (replayConfiguration) {
-      return;
-    }
     SourceUnit *loadedUnit = graph.findUnit(unitId);
     loadedUnit->syntaxDigest = unit->syntaxDigest;
     loadedUnit->tokens = unit->tokens;
     loadedUnit->inactiveSpans = unit->inactiveSpans;
     loadedUnit->configurationTokens = unit->configurationTokens;
     flagIndependentUnits.insert(unitId);
-    states[key].processed = std::move(unit);
   };
 
   if (processed) {
@@ -758,10 +940,6 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     publish(std::move(shared));
   };
   if (!requiresDirectiveProcessing) {
-    if (replayConfiguration) {
-      states[key].state = LoadState::Loaded;
-      return unitId;
-    }
     if (configurationFree) {
       store({.tokens = lexedTokens, .syntaxDigest = lexical->sourceDigest});
     } else {
@@ -784,7 +962,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   int braceDepth = 0;
   ConfigurationDirectiveProcessor directiveProcessor(
       fileTokens, targetInfo, activeFlags, declaredFlags, diagnostics);
-  for (std::size_t index = moduleInterface ? 4 : 0; index < fileTokens.size();
+  for (std::size_t index = moduleHeaderEnd; index < fileTokens.size();
        ++index) {
     Token &token = fileTokens[index];
     if (token.kind == TokenKind::END_OF_FILE) {
@@ -811,10 +989,10 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
          fileTokens[index + 1].kind == TokenKind::LESS);
     if (legacyInclude) {
       tokenDiagnostic = true;
-      report(token,
-             "GTI include directives use '#include'; plain 'include' is "
-             "not a directive.",
-             "GTI-I0009");
+      report(
+          token,
+          "Source inclusion has been removed; use an explicit module import.",
+          "GTI-I0009");
     }
 
     const bool exported =
@@ -853,10 +1031,12 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
         (token.kind == TokenKind::EXPORT && index + 1 < fileTokens.size() &&
          fileTokens[index + 1].kind == TokenKind::MODULE)) {
       tokenDiagnostic = true;
-      report(token,
-             "A module interface must begin with exactly one 'export module "
-             "name;' declaration.",
-             "GTI-I0012");
+      report(
+          token,
+          "A module header must be the first declaration: 'export module "
+          "name;' "
+          "for an interface or 'module name;' for a registered implementation.",
+          "GTI-I0012");
       while (index + 1 < fileTokens.size() &&
              fileTokens[index].kind != TokenKind::SEMICOLON &&
              fileTokens[index + 1].kind != TokenKind::END_OF_FILE) {
@@ -889,26 +1069,18 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   }
   SourceUnit *loadedUnit = graph.findUnit(unitId);
   const std::uint64_t selectedSyntax = syntaxDigest(output);
-  if (replayConfiguration) {
-    if (loadedUnit->syntaxDigest != selectedSyntax) {
-      report(*includeToken,
-             "A shared legacy source unit selects different syntax across "
-             "module configuration domains; use common include ordering and "
-             "flags or separate interfaces.",
-             "GTI-I0012");
-    }
-  } else if (configurationFree && !tokenDiagnostic &&
-             std::none_of(output.begin(), output.end(), [](const Token &token) {
-               return token.configurationFlagReference;
-             })) {
-    std::optional<Token> moduleDeclaration;
-    if (moduleInterface) {
-      moduleDeclaration = lexed[2];
-    }
+  if (configurationFree && !tokenDiagnostic &&
+      std::none_of(output.begin(), output.end(), [](const Token &token) {
+        return token.configurationFlagReference;
+      })) {
     store(
         {.tokens = std::make_shared<std::vector<Token>>(std::move(output)),
          .syntaxDigest = selectedSyntax,
          .moduleDeclaration = std::move(moduleDeclaration),
+         .moduleDeclarationSpan = std::move(moduleDeclarationSpan),
+         .implementationDeclaration = std::move(implementationDeclaration),
+         .implementationDeclarationSpan =
+             std::move(implementationDeclarationSpan),
          .directives = std::move(directives),
          .inactiveSpans = directiveProcessor.takeInactiveSpans(),
          .configurationTokens = directiveProcessor.takeConfigurationTokens()});
@@ -923,283 +1095,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   return finishLoad();
 }
 
-SourceLoader::ResolvedInclude
-SourceLoader::resolveInclude(const std::vector<Token> &tokens,
-                             std::size_t index,
-                             const std::filesystem::path &includingFile,
-                             int braceDepth, int conditionalDepth) {
-  const Token includeToken = tokens[index];
-  const bool hasRelativePath =
-      index + 1 < tokens.size() &&
-      tokens[index + 1].kind == TokenKind::STRING_LITERAL;
-  const bool hasStandardPath =
-      index + 1 < tokens.size() && tokens[index + 1].kind == TokenKind::LESS;
-  const bool hasPath = hasRelativePath || hasStandardPath;
-  std::size_t directiveEnd = hasPath ? index + 1 : index;
-  if (hasRelativePath && index + 2 < tokens.size() &&
-      tokens[index + 2].kind == TokenKind::SEMICOLON) {
-    directiveEnd = index + 2;
-  }
-
-  if (braceDepth != 0) {
-    report(includeToken, "Include directives are only allowed at top level.",
-           "GTI-I0004");
-    return {.directiveEnd = directiveEnd};
-  }
-  if (conditionalDepth != 0) {
-    report(includeToken,
-           "Include directives cannot appear inside '#if' blocks.",
-           "GTI-I0004");
-    return {.directiveEnd = directiveEnd};
-  }
-  if (!hasPath) {
-    report(includeToken,
-           "Expect a quoted .gti path, <std/name>, or a declared "
-           "<dependency/name> after '#include'.",
-           "GTI-I0005");
-    return {.directiveEnd = directiveEnd};
-  }
-
-  if (hasStandardPath) {
-    ResolvedInclude result =
-        resolveAngleInclude(tokens, index, includeToken, includingFile);
-    if (result.dependency != 0) {
-      for (std::size_t spellingIndex = index + 1;
-           spellingIndex <= result.directiveEnd &&
-           tokens[spellingIndex].kind != TokenKind::SEMICOLON;
-           ++spellingIndex) {
-        result.includeSpelling += tokens[spellingIndex].lexeme;
-      }
-    }
-    return result;
-  }
-
-  const Token &pathToken = tokens[index + 1];
-  const auto *pathText = std::get_if<std::string>(&pathToken.literal);
-  if (pathText == nullptr || pathText->empty()) {
-    report(pathToken, "Include path cannot be empty.", "GTI-I0006");
-    return {.directiveEnd = directiveEnd};
-  }
-
-  const std::filesystem::path requestedPath(*pathText);
-  if (requestedPath.is_absolute()) {
-    report(pathToken, "Include path must be relative to the including file.",
-           "GTI-I0006");
-    return {.directiveEnd = directiveEnd};
-  }
-  if (requestedPath.extension() != ".gti") {
-    report(pathToken, "Included source file must use the .gti extension.",
-           "GTI-I0006");
-    return {.directiveEnd = directiveEnd};
-  }
-
-  const std::filesystem::path resolved =
-      canonicalPath(includingFile.parent_path() / requestedPath);
-  if (!packageSourceRoots.empty()) {
-    const PackageSourceRoot *includingPackage =
-        packageForPath(canonicalPath(includingFile));
-    const PackageSourceRoot *targetPackage = packageForPath(resolved);
-    if (includingPackage != nullptr && targetPackage != includingPackage) {
-      report(pathToken,
-             "A quoted include cannot cross the owning package boundary; "
-             "declare the package dependency and use its angle-include "
-             "alias.",
-             "GTI-I0010");
-      return {.directiveEnd = directiveEnd};
-    }
-  }
-  std::error_code error;
-  if (!std::filesystem::is_regular_file(resolved, error) &&
-      !sourceOverrides->contains(resolved.string())) {
-    report(pathToken,
-           "Included source file '" + requestedPath.generic_string() +
-               "' was not found.",
-           "GTI-I0008");
-    return {.directiveEnd = directiveEnd};
-  }
-  const std::optional<std::string> trustedImport =
-      standardLibraryNameForExistingPath(resolved);
-  return {.directiveEnd = directiveEnd,
-          .dependency =
-              loadFile(resolved, false, false, &includeToken, trustedImport,
-                       trustedImport ? SourceUnitRole::StandardLibrary
-                                     : SourceUnitRole::Application),
-          .includeSpelling = pathToken.lexeme};
-}
-
-SourceLoader::ResolvedInclude
-SourceLoader::resolveAngleInclude(const std::vector<Token> &tokens,
-                                  std::size_t index, const Token &includeToken,
-                                  const std::filesystem::path &includingFile) {
-  std::size_t current = index + 2;
-  std::vector<std::string> segments;
-  while (current < tokens.size() && isImportPathSegment(tokens[current])) {
-    segments.emplace_back(tokens[current].lexeme);
-    ++current;
-    if (current >= tokens.size() || tokens[current].kind != TokenKind::SLASH) {
-      break;
-    }
-    ++current;
-  }
-
-  const bool closed =
-      current < tokens.size() && tokens[current].kind == TokenKind::GREATER;
-  std::size_t directiveEnd = closed ? current : index + 1;
-  if (closed && current + 1 < tokens.size() &&
-      tokens[current + 1].kind == TokenKind::SEMICOLON) {
-    directiveEnd = current + 1;
-  }
-
-  if (!closed || segments.size() < 2) {
-    report(includeToken,
-           "Angle includes use a standard-library or declared package path "
-           "such as '#include <std/array>' or '#include <math/vector>'.",
-           "GTI-I0007");
-    return {.directiveEnd = directiveEnd,
-            .kind = SourceDependencyKind::StandardLibrary};
-  }
-
-  if (segments.front() != "std") {
-    return resolvePackageInclude(segments, directiveEnd, includeToken,
-                                 includingFile);
-  }
-  if (standardLibraryRoots.empty()) {
-    report(includeToken,
-           "Cannot resolve standard-library include because no standard "
-           "library root is configured.",
-           "GTI-I0007");
-    return {.directiveEnd = directiveEnd,
-            .kind = SourceDependencyKind::StandardLibrary};
-  }
-
-  std::filesystem::path relative;
-  std::string importName;
-  for (const std::string &segment : segments) {
-    relative /= segment;
-    if (!importName.empty()) {
-      importName += '/';
-    }
-    importName += segment;
-  }
-  relative += ".gti";
-
-  for (const std::filesystem::path &root : standardLibraryRoots) {
-    const std::filesystem::path candidate = canonicalPath(root / relative);
-    std::error_code error;
-    if (std::filesystem::is_regular_file(candidate, error) ||
-        sourceOverrides->contains(candidate.string())) {
-      const std::optional<std::string> trustedImport =
-          standardLibraryNameForExistingPath(candidate);
-      return {.directiveEnd = directiveEnd,
-              .dependency = loadFile(
-                  candidate, false, false, &includeToken, trustedImport,
-                  trustedImport ? SourceUnitRole::StandardLibrary
-                                : SourceUnitRole::Application),
-              .kind = SourceDependencyKind::StandardLibrary};
-    }
-  }
-
-  report(includeToken,
-         "Standard-library unit '<" + importName + ">' was not found.",
-         "GTI-I0007");
-  return {.directiveEnd = directiveEnd,
-          .kind = SourceDependencyKind::StandardLibrary};
-}
-
-SourceLoader::ResolvedInclude SourceLoader::resolvePackageInclude(
-    const std::vector<std::string> &segments, std::size_t directiveEnd,
-    const Token &includeToken, const std::filesystem::path &includingFile) {
-  const PackageSourceRoot *includingPackage =
-      packageForPath(canonicalPath(includingFile));
-  if (includingPackage == nullptr) {
-    report(includeToken,
-           "Package include '<" + segments.front() +
-               "/...>' is unavailable because this compilation has no "
-               "owning package graph.",
-           "GTI-I0010");
-    return {.directiveEnd = directiveEnd,
-            .kind = SourceDependencyKind::Package};
-  }
-
-  const auto dependency =
-      std::find_if(includingPackage->dependencies.begin(),
-                   includingPackage->dependencies.end(),
-                   [&segments](const PackageSourceDependency &candidate) {
-                     return candidate.alias == segments.front();
-                   });
-  if (dependency == includingPackage->dependencies.end()) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-I0010", DiagnosticPhase::SourceLoading, includeToken,
-        "Package '" + includingPackage->name +
-            "' has no direct dependency alias '" + segments.front() + "'.");
-    if (!includingPackage->dependencies.empty()) {
-      std::string aliases;
-      for (const PackageSourceDependency &candidate :
-           includingPackage->dependencies) {
-        if (!aliases.empty()) {
-          aliases += ", ";
-        }
-        aliases += candidate.alias;
-      }
-      diagnostic.hints.push_back(
-          "Declared direct dependency aliases: " + aliases + ".");
-    }
-    diagnostics.push_back(std::move(diagnostic));
-    return {.directiveEnd = directiveEnd,
-            .kind = SourceDependencyKind::Package};
-  }
-
-  const PackageSourceRoot *target =
-      packageByIdentity(dependency->targetIdentity);
-  if (target == nullptr) {
-    report(includeToken,
-           "Dependency alias '" + dependency->alias +
-               "' refers to a package that is absent from the resolved "
-               "package graph.",
-           "GTI-I0010");
-    return {.directiveEnd = directiveEnd,
-            .kind = SourceDependencyKind::Package};
-  }
-
-  std::filesystem::path relative;
-  for (std::size_t index = 1; index < segments.size(); ++index) {
-    relative /= segments[index];
-  }
-  relative += ".gti";
-  const std::filesystem::path candidate =
-      canonicalPath(target->sourceRoot / relative);
-  if (!pathIsWithin(target->sourceRoot, candidate)) {
-    report(includeToken,
-           "Package include escapes dependency source root for alias '" +
-               dependency->alias + "'.",
-           "GTI-I0010");
-    return {.directiveEnd = directiveEnd,
-            .kind = SourceDependencyKind::Package};
-  }
-  std::error_code error;
-  if (!std::filesystem::is_regular_file(candidate, error) &&
-      !sourceOverrides->contains(candidate.string())) {
-    std::string importName;
-    for (const std::string &segment : segments) {
-      if (!importName.empty()) {
-        importName += '/';
-      }
-      importName += segment;
-    }
-    report(includeToken,
-           "Package unit '<" + importName + ">' was not found beneath '" +
-               target->sourceRoot.string() + "'.",
-           "GTI-I0010");
-    return {.directiveEnd = directiveEnd,
-            .kind = SourceDependencyKind::Package};
-  }
-
-  return {.directiveEnd = directiveEnd,
-          .dependency = loadFile(candidate, false, false, &includeToken),
-          .kind = SourceDependencyKind::Package};
-}
-
-SourceLoader::ResolvedInclude
+SourceLoader::ResolvedImport
 SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
                             const std::filesystem::path &includingFile,
                             int braceDepth, int conditionalDepth,
@@ -1207,6 +1103,7 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
   const Token &keyword = tokens[index];
   std::size_t current = index + 1;
   std::vector<std::string> names;
+  std::vector<SourceSpan> segmentSpans;
   const bool quoted = current < tokens.size() &&
                       tokens[current].kind == TokenKind::STRING_LITERAL;
   if (quoted) {
@@ -1214,160 +1111,216 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
   } else {
     while (current < tokens.size() &&
            tokens[current].kind == TokenKind::IDENTIFIER) {
+      segmentSpans.push_back(tokenSpan(tokens[current]));
       names.push_back(tokens[current++].lexeme);
-      if (current >= tokens.size() || tokens[current].kind != TokenKind::DOT) {
+      if (current >= tokens.size() || tokens[current].kind != TokenKind::DOT)
         break;
-      }
       ++current;
     }
   }
   const bool terminated =
       current < tokens.size() && tokens[current].kind == TokenKind::SEMICOLON;
   const std::size_t end = terminated ? current : current - 1;
-  ResolvedInclude result{.directiveEnd = end,
-                         .kind = reexport ? SourceDependencyKind::ExportImport
-                                          : SourceDependencyKind::Import};
+  ResolvedImport result{.directiveEnd = end,
+                        .kind = reexport ? SourceDependencyKind::ExportImport
+                                         : SourceDependencyKind::Import};
+  for (std::size_t part = index + 1; part < current; ++part)
+    result.includeSpelling += tokens[part].lexeme;
+  const auto tokenEnd = [](const Token &token) {
+    return token.position + token.lexeme.size();
+  };
+  const auto &begin = reexport && index > 0 ? tokens[index - 1] : keyword;
+  const auto nameStart =
+      current > index + 1 ? tokens[index + 1].position : tokenEnd(keyword);
+  const auto nameEnd =
+      current > index + 1 ? tokenEnd(tokens[current - 1]) : nameStart;
+  SourceImport sourceImport{
+      .requester = graph.sourceUnitForPath(includingFile.string()),
+      .declaration = {keyword.source, begin.position, tokenEnd(tokens[end]),
+                      begin.line},
+      .name = {keyword.source, nameStart, nameEnd,
+               current > index + 1 ? tokens[index + 1].line : keyword.line},
+      .spelling = result.includeSpelling,
+      .segments = names,
+      .segmentSpans = std::move(segmentSpans),
+      .quoted = quoted,
+      .reexport = reexport,
+      .resolution = terminated ? SourceImportResolution::Unresolved
+                               : SourceImportResolution::Incomplete};
+  const auto *requester = graph.findUnit(sourceImport.requester);
+  if (!quoted && requester && requester->entry && completionOffset &&
+      *completionOffset >= tokenEnd(keyword) &&
+      (current >= tokens.size() ||
+       tokens[current].kind == TokenKind::END_OF_FILE ||
+       *completionOffset <= tokens[current].position)) {
+    const bool active =
+        std::any_of(tokens.begin() + static_cast<std::ptrdiff_t>(index + 1),
+                    tokens.begin() + static_cast<std::ptrdiff_t>(current),
+                    [](const Token &token) { return token.completion; });
+    if (active) {
+      std::string prefix;
+      for (std::size_t part = index + 1; part < current; ++part) {
+        const auto &token = tokens[part];
+        if (token.position >= *completionOffset)
+          break;
+        prefix += token.lexeme.substr(0, *completionOffset - token.position);
+      }
+      sourceImport.completionPrefix = std::move(prefix);
+    }
+  }
   const auto reject = [&](std::string message) {
+    graph.addImport(sourceImport);
     report(keyword, std::move(message), "GTI-I0012");
     return result;
   };
-  if (!terminated ||
-      (!quoted && (names.empty() || names.size() > 2 ||
-                   tokens[current - 1].kind == TokenKind::DOT))) {
-    return reject("Expect 'import name;', 'import dependency.name;', or "
-                  "'import \"path.gti\";'.");
-  }
-  if (braceDepth != 0 || conditionalDepth != 0) {
+  if (!terminated || (!quoted && (names.empty() ||
+                                  tokens[current - 1].kind == TokenKind::DOT)))
+    return reject(
+        "Expect a module name or quoted relative .gti path followed by ';'.");
+  if (braceDepth != 0 || conditionalDepth != 0)
     return reject(
         "Module imports are unconditional source-unit-level declarations.");
-  }
-  for (std::size_t part = index + 1; part < current; ++part) {
-    result.includeSpelling += tokens[part].lexeme;
-  }
-  const PackageSourceRoot *owner = packageForPath(includingFile);
+
+  const auto joinNames = [&](std::size_t first) {
+    std::string name;
+    for (std::size_t part = first; part < names.size(); ++part) {
+      if (!name.empty())
+        name += '.';
+      name += names[part];
+    }
+    return name;
+  };
+  const SourceOwnerDescriptor *owner = packageForPath(includingFile);
   std::filesystem::path path;
   std::optional<std::string> expectedName;
-  std::optional<std::string> standardModule;
-  if (!quoted && names.front() == "std") {
-    // The configured standard library owns the reserved `std` module
-    // namespace in direct and project compilation alike. Its interfaces have
-    // one fixed location beneath each root, so a name never triggers search.
-    const bool aggregate = names.size() == 1;
-    const std::string &name = aggregate ? names.front() : names[1];
-    for (const std::filesystem::path &root : standardLibraryRoots) {
-      const std::filesystem::path candidate = canonicalPath(
-          aggregate ? root / "std.gti" : root / "modules" / (name + ".gti"));
-      std::error_code error;
-      if (std::filesystem::is_regular_file(candidate, error) ||
-          sourceOverrides->contains(candidate.string())) {
-        path = candidate;
-        break;
-      }
-    }
-    if (path.empty()) {
-      return reject(
-          standardLibraryRoots.empty()
-              ? "Cannot resolve standard-library module because no standard "
-                "library root is configured."
-          : aggregate
-              ? "Standard-library aggregate module 'std' was not found; "
-                "install a standard library providing std.gti or import "
-                "individual units."
-              : "Standard-library module 'std." + name +
-                    "' was not found; each public <std/name> unit is "
-                    "imported as 'std.name'.");
-    }
-    expectedName = name;
-    standardModule = standardModuleNameForExistingPath(path);
-  } else if (quoted) {
+  if (quoted) {
     const auto *spelling = std::get_if<std::string>(&tokens[index + 1].literal);
     if (spelling == nullptr || spelling->empty() ||
-        spelling->find('\0') != std::string::npos) {
+        spelling->find('\0') != std::string::npos)
       return reject("A quoted module import requires a nonempty .gti path.");
-    }
     const std::filesystem::path relative(*spelling);
-    if (relative.is_absolute() || relative.extension() != ".gti") {
+    if (relative.is_absolute() || relative.extension() != ".gti")
       return reject("A quoted module import must name a relative .gti file.");
-    }
-    path = canonicalPath(includingFile.parent_path() / relative);
-    if (!packageSourceRoots.empty() &&
-        (owner == nullptr || packageForPath(path) != owner)) {
-      return reject("A quoted import cannot cross a package boundary; use a "
-                    "declared dependency alias.");
-    }
-    standardModule = standardModuleNameForExistingPath(path);
+    sourceImport.authoredLookupPath =
+        authoredPath(includingFile.parent_path() / relative);
+    path = canonicalPath(*sourceImport.authoredLookupPath);
+    const auto *targetOwner = packageForPath(path);
+    if (owner == nullptr || targetOwner == nullptr ||
+        owner->identity != targetOwner->identity)
+      return reject("A quoted import cannot cross a source-owner boundary; use "
+                    "a declared dependency alias.");
   } else {
-    if (owner == nullptr) {
-      return reject("Named module imports require an owning package graph; "
-                    "direct compilation can use a quoted import.");
+    const std::string localName = joinNames(0);
+    const auto local =
+        owner ? std::find_if(owner->modules.begin(), owner->modules.end(),
+                             [&](const auto &module) {
+                               return module.first == localName;
+                             })
+              : std::vector<std::pair<std::string,
+                                      std::filesystem::path>>::const_iterator{};
+    const bool hasLocal = owner && local != owner->modules.end();
+    const SourceOwnerDescriptor *target =
+        sourceOwners->findImplicitAlias(names.front());
+    if (owner) {
+      const auto dependency = std::find_if(
+          owner->dependencies.begin(), owner->dependencies.end(),
+          [&](const auto &edge) { return edge.alias == names.front(); });
+      if (dependency != owner->dependencies.end()) {
+        if (target)
+          return reject("Dependency alias '" + names.front() +
+                        "' conflicts with a configured source owner.");
+        target = packageByIdentity(dependency->targetIdentity);
+        if (!target)
+          return reject(
+              "Imported source owner is absent from the resolved graph.");
+      }
     }
-    const auto local = std::find_if(
-        owner->modules.begin(), owner->modules.end(),
-        [&](const auto &module) { return module.first == names.front(); });
-    const auto dependency = std::find_if(
-        owner->dependencies.begin(), owner->dependencies.end(),
-        [&](const auto &edge) { return edge.alias == names.front(); });
-    if (names.size() == 1 && local != owner->modules.end() &&
-        dependency != owner->dependencies.end()) {
+    const std::string dependencyName =
+        target && names.size() == 1 ? target->defaultModule : joinNames(1);
+    const std::pair<std::string, std::filesystem::path> *dependencyModule =
+        nullptr;
+    if (target) {
+      const auto candidate = std::find_if(
+          target->modules.begin(), target->modules.end(),
+          [&](const auto &module) { return module.first == dependencyName; });
+      if (candidate != target->modules.end())
+        dependencyModule = &*candidate;
+    }
+    if (hasLocal && dependencyModule)
       return reject(
-          "Module name '" + names.front() +
+          "Module name '" + localName +
           "' is ambiguous with a dependency alias; rename the alias.");
+    std::string name;
+    if (hasLocal) {
+      target = owner;
+      name = localName;
+      path = canonicalPath(local->second);
+    } else if (target) {
+      name = dependencyName;
+      if (!dependencyModule)
+        return reject("Source owner '" + target->name +
+                      "' does not declare public module '" + name + "'.");
+      path = canonicalPath(dependencyModule->second);
+    } else {
+      if (!owner || owner->kind == SourceOwnerKind::Direct)
+        return reject("Named module imports require a registered source owner; "
+                      "direct compilation can use a quoted import.");
+      return reject("Source owner '" + owner->name +
+                    "' does not declare module '" + localName +
+                    "' or dependency alias '" + names.front() + "'.");
     }
-    const PackageSourceRoot *target = owner;
-    std::string name = names.front();
-    if (dependency != owner->dependencies.end()) {
-      target = packageByIdentity(dependency->targetIdentity);
-      name = names.size() == 1 ? "main" : names[1];
-    } else if (names.size() == 2) {
-      return reject("Package '" + owner->name +
-                    "' has no direct dependency alias '" + names.front() +
-                    "'.");
-    }
-    if (target == nullptr) {
-      return reject(
-          "Imported package is absent from the resolved package graph.");
-    }
-    const auto module =
-        std::find_if(target->modules.begin(), target->modules.end(),
-                     [&](const auto &entry) { return entry.first == name; });
-    if (module == target->modules.end()) {
-      return reject("Package '" + target->name +
-                    "' does not declare public module '" + name +
-                    "' in [modules].");
-    }
-    path = canonicalPath(module->second);
-    if (!pathIsWithin(target->packageRoot, path) ||
-        path.extension() != ".gti" || packageForPath(path) != target) {
-      return reject("Module interface path escapes its owning package or is "
-                    "not a .gti file.");
-    }
-    expectedName = name;
+    const auto authored = std::find_if(
+        target->moduleLookupPaths.begin(), target->moduleLookupPaths.end(),
+        [&](const auto &entry) { return entry.first == name; });
+    sourceImport.authoredLookupPath =
+        authored != target->moduleLookupPaths.end() ? authored->second : path;
+    if (canonicalPath(*sourceImport.authoredLookupPath) != path)
+      return reject("Module lookup changed after its registration was "
+                    "resolved; retry with current metadata.");
+    const auto *resolvedOwner = packageForPath(path);
+    if (!resolvedOwner || resolvedOwner->identity != target->identity ||
+        path.extension() != ".gti")
+      return reject("Module interface path escapes its owning source root or "
+                    "is not a .gti file.");
+    expectedName = std::move(name);
   }
+  sourceImport.lookupPath = path;
   std::error_code error;
   if (!std::filesystem::is_regular_file(path, error) &&
       !sourceOverrides->contains(path.string())) {
+    const auto *targetOwner = packageForPath(path);
+    if (targetOwner && targetOwner->kind == SourceOwnerKind::Generated)
+      return reject(
+          "Generated module interface '" + path.string() +
+          "' is unavailable; run 'gti check' or 'gti build' to generate it.");
     return reject("Module interface '" + path.string() + "' was not found.");
   }
+  const auto trustedName = standardModuleNameForExistingPath(path);
   const SourceUnitId loaded =
-      loadFile(path, false, false, &keyword, standardModule,
-               standardModule ? SourceUnitRole::StandardLibrary
-                              : SourceUnitRole::Application);
+      loadFile(path, false, false, &keyword, trustedName,
+               trustedName ? SourceUnitRole::StandardLibrary
+                           : SourceUnitRole::Application);
   const SourceUnit *unit = graph.findUnit(loaded);
-  if (unit == nullptr || !unit->moduleDeclaration) {
-    return reject("An import must name an explicit 'export module name;' "
-                  "interface; legacy units still use '#include'.");
-  }
+  if (unit == nullptr || !unit->moduleDeclaration)
+    return reject(
+        "An import must name an explicit 'export module name;' interface; add "
+        "a module header and explicit exports to the dependency.");
   if (expectedName && unit->moduleDeclaration->lexeme != *expectedName) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-I0012", DiagnosticPhase::SourceLoading, keyword,
         "Imported module '" + *expectedName + "' declares itself as '" +
             unit->moduleDeclaration->lexeme + "'.");
-    diagnostic.related.push_back({tokenSpan(*unit->moduleDeclaration),
+    diagnostic.related.push_back({unit->moduleDeclarationSpan.value_or(
+                                      tokenSpan(*unit->moduleDeclaration)),
                                   "Interface declaration is here."});
     diagnostics.push_back(std::move(diagnostic));
+    graph.addImport(sourceImport);
     return result;
   }
   result.dependency = loaded;
+  sourceImport.target = loaded;
+  sourceImport.resolution = SourceImportResolution::Resolved;
+  graph.addImport(std::move(sourceImport));
   return result;
 }
 

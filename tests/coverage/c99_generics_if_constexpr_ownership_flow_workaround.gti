@@ -2,8 +2,8 @@
 // consumed only in some instances, a generic class destructor selects its
 // cleanup by a value parameter, and the discarded branch would be invalid
 // for that instance.
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 mut int32_t cleanup_log = 0;
 

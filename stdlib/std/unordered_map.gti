@@ -1,103 +1,18 @@
-#include <std/vector>
-#include <std/memory>
-#include <std/functional>
-#include <std/utility>
-#include <std/cmath>
+export module unordered_map;
+import "detail/map_entry.gti";
+import "detail/unordered_map_iterators.gti";
 
+import std.vector;
+import std.memory;
+import std.functional;
+import std.utility;
+import std.cmath;
 namespace std {
-namespace detail {
-struct unordered_map_node<K, V> {
-  mut map_entry<K, V> entry;
-  size_t hash;
-  mut size_t next;
 
-  unordered_map_node(K key, V value, size_t hash, size_t next)
-      : entry(map_entry<K, V>(std::move(key), std::move(value))),
-        hash(hash), next(next) {}
-};
-
-class unordered_map_sentinel {
-  size_t limit;
-public:
-  unordered_map_sentinel(size_t limit) : limit(limit) {}
-  size_t position() { return this.limit; }
-};
-
-class unordered_map_iterator<K, V> {
-  vector<unique_ptr<unordered_map_node<K, V>>>& nodes;
-  mut size_t current;
-public:
-  unordered_map_iterator(vector<unique_ptr<unordered_map_node<K, V>>>& nodes,
-                         size_t position) : nodes(nodes), current(position) {}
-  map_entry<K, V>& operator*() {
-    gti_internal::require_container_argument(this.current < this.nodes.size());
-    return this.nodes[this.current]->entry;
-  }
-  map_entry<K, V>& operator->() { return *this; }
-  void operator++() mut {
-    gti_internal::require_container_argument(this.current < this.nodes.size());
-    this.current++;
-    while (this.current < this.nodes.size() &&
-           this.nodes[this.current] == nullptr) { this.current++; }
-  }
-  bool operator!=(unordered_map_sentinel end) { return this.current != end.position(); }
-  bool operator==(unordered_map_sentinel end) { return this.current == end.position(); }
-  bool operator!=(unordered_map_iterator<K, V>& other) { return this.current != other.current; }
-  bool operator==(unordered_map_iterator<K, V>& other) { return this.current == other.current; }
-};
-
-class unordered_map_entry_projection<K, V> {
-  mut vector<unique_ptr<unordered_map_node<K, V>>>& nodes;
-  mut size_t current;
-public:
-  unordered_map_entry_projection(mut vector<unique_ptr<unordered_map_node<K, V>>>& nodes,
-                             size_t position) : nodes(nodes), current(position) {}
-  map_entry<K, V>& read_entry() {
-    gti_internal::require_container_argument(this.current < this.nodes.size());
-    return this.nodes[this.current]->entry;
-  }
-  K& first() { return this.read_entry().first; }
-  K& key() { return this.first(); }
-  V& second() { return this.read_entry().second; }
-  mut V& second() mut {
-    gti_internal::require_container_argument(this.current < this.nodes.size());
-    return this.nodes[this.current]->entry.second;
-  }
-  V& mapped() { return this.second(); }
-  mut V& mapped() mut { return this.second(); }
-  size_t index() { return this.current; }
-  size_t limit() { return this.nodes.size(); }
-  void advance() mut {
-    gti_internal::require_container_argument(this.current < this.nodes.size());
-    this.current++;
-    while (this.current < this.nodes.size() &&
-           this.nodes[this.current] == nullptr) { this.current++; }
-  }
-};
-
-class unordered_map_mut_iterator<K, V> {
-  mut unordered_map_entry_projection<K, V> projection;
-public:
-  unordered_map_mut_iterator(mut vector<unique_ptr<unordered_map_node<K, V>>>& nodes,
-                             size_t position)
-      : projection(unordered_map_entry_projection<K, V>(nodes, position)) {}
-  map_entry<K, V>& operator*() { return this.projection.read_entry(); }
-  mut unordered_map_entry_projection<K, V>& operator*() mut {
-    gti_internal::require_container_argument(this.projection.index() < this.projection.limit());
-    return this.projection;
-  }
-  map_entry<K, V>& operator->() { return *this; }
-  mut unordered_map_entry_projection<K, V>& operator->() mut { return *this; }
-  K& key() { return this.projection.key(); }
-  void operator++() mut { this.projection.advance(); }
-  bool operator!=(unordered_map_sentinel end) { return this.projection.index() != end.position(); }
-  bool operator==(unordered_map_sentinel end) { return this.projection.index() == end.position(); }
-};
-}
 
 /// Owning hash table with cached hashes and separately owned stable entries.
 /// Links are slot indexes (index + 1), never untracked pointers.
-class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
+export class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
   mut vector<unique_ptr<detail::unordered_map_node<K, V>>> nodes{};
   mut vector<size_t> free_slots{};
   mut vector<size_t> buckets{};

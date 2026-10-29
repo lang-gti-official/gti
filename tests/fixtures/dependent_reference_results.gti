@@ -3,7 +3,7 @@
 // place, through the call or through reference locals bound to it, also
 // when the call may return either of two fields. Over literal text the same
 // references may be passed and stored.
-#include <std/string>
+import std.string;
 
 mut std::string_view kept = "";
 

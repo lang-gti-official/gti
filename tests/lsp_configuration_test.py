@@ -8,7 +8,7 @@ import tempfile
 from lsp_project_facts_test import (
     completion_labels, diagnostics_for, initialize, open_document, write,
 )
-from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position, semantic_tokens_by_position
+from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
 
 
 def test_profiles(executable, root):
@@ -23,7 +23,7 @@ def test_profiles(executable, root):
         '[profiles.analysis]\ndefines = ["PSYCH_DEBUG"]\n'
     )
     source = (
-        '#include "core/service.gti"\n'
+        'import "core/service.gti";\n'
         '#ifdef PSYCH_DEBUG\n'
         '/* 😀 */ int debug_branch() { return 0; }\n'
         '#else\n'
@@ -32,13 +32,16 @@ def test_profiles(executable, root):
         'int main() { Counter counter{}; return counter.value(); }\n'
     )
     dependency = (
-        '#ifdef TARGET_FEATURE\n#ifdef PSYCH_DEBUG\n'
-        'class Counter { public: Counter() = default; int value() { return 0; } '
-        'int dev_only() { return 1; } };\n'
-        '#else\n'
-        'class Counter { public: Counter() = default; int value() { return 0; } '
-        'int release_only() { return 2; } };\n'
-        '#endif\n#endif\n'
+        (
+            'export module service;\n'
+            '#ifdef TARGET_FEATURE\n'
+            '#ifdef PSYCH_DEBUG\n'
+            'export class Counter { public: Counter() = default; int value() { return 0; } int dev_only() { return 1; } };\n'
+            '#else\n'
+            'export class Counter { public: Counter() = default; int value() { return 0; } int release_only() { return 2; } };\n'
+            '#endif\n'
+            '#endif\n'
+        )
     )
     path = project / "src/main.gti"
     dependency_path = project / "src/core/service.gti"
@@ -51,7 +54,7 @@ def test_profiles(executable, root):
         legend = initial["result"]["capabilities"]["semanticTokensProvider"]["legend"]
         inactive_mask = 1 << legend["tokenModifiers"].index("inactiveCode")
         uri = open_document(session, path, source)
-        assert has_only_include_advice(diagnostics_for(session, uri, version=1))
+        assert (diagnostics_for(session, uri, version=1) == [])
         next_id = 2
 
         def tokens(document_uri=uri):
@@ -114,7 +117,7 @@ def test_profiles(executable, root):
         select("dev")
         select("release")
         select("analysis")
-        assert has_only_include_advice(diagnostics_for(session, uri, predicate=has_only_include_advice))
+        assert (diagnostics_for(session, uri, predicate=lambda items: not items) == [])
         assert_profile(True)
         assert "dev_only" in labels() and "dirty_release" not in labels()
         for invalid in (True, "", "../release"):
@@ -148,7 +151,7 @@ def test_profiles(executable, root):
             "jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
             "params": {"changes": [{"uri": manifest_path.resolve().as_uri(), "type": 2}]},
         })
-        diagnostics_for(session, uri, predicate=has_only_include_advice)
+        diagnostics_for(session, uri, predicate=lambda items: not items)
         assert_profile(True)
         write(manifest_path, manifest)
         session.send({
@@ -191,11 +194,11 @@ def test_selected_profile_policies(executable, root):
         'manifest-version = 1\n[package]\nname = "policies"\nversion = "0.1.0"\n'
         '[targets.policies]\nkind = "executable"\nroot = "main.gti"\n'
         '[profiles.dev]\nexecution-profile = "single-threaded"\n'
-        'raw-pointer-audit = "off"\ndisabled-warnings = ["unused-mut", "legacy-include"]\n'
+        'raw-pointer-audit = "off"\ndisabled-warnings = ["unused-mut"]\n'
         '[profiles.release]\nexecution-profile = "concurrent"\nraw-pointer-audit = "warn"\n'
     ))
     source = (
-        '#include <std/thread>\n'
+        'import std.thread;\n'
         'int warning() { mut int value = 0; return value; }\n'
         'int dangling() { mut const int* pointer = nullptr; '
         '{ int value = 7; pointer = &value; } unsafe { return *pointer; } }\n'
@@ -216,13 +219,13 @@ def test_selected_profile_policies(executable, root):
         dev = diagnostics_for(session, uri, version=1)
         codes = {d.get("code") for d in dev}
         assert "GTI-S2084" in codes, dev
-        assert not codes.intersection({"GTI-S2096", "GTI-S2101", "GTI-I0013"}), dev
+        assert not codes.intersection({"GTI-S2096", "GTI-S2101"}), dev
         session.send({
             "jsonrpc": "2.0", "method": "workspace/didChangeConfiguration",
             "params": {"settings": {"gti": {"profile": "release"}}},
         })
         release = diagnostics_for(session, uri, predicate=lambda items:
-            {"GTI-S2096", "GTI-S2101", "GTI-I0013"}.issubset({d.get("code") for d in items}))
+            {"GTI-S2096", "GTI-S2101"}.issubset({d.get("code") for d in items}))
         assert not any(d.get("severity") == 1 for d in release), release
         assert all(d["severity"] == 2 for d in release if d.get("code") == "GTI-S2101")
     finally:

@@ -1,6 +1,6 @@
-#include <std/map>
-#include <std/string>
-#include <std/vector>
+import std.map;
+import std.string;
+import std.vector;
 
 // Failure-free observers applied directly to a view produced by a call. The
 // call's result loan keeps its owner borrowed; the observer reads only the

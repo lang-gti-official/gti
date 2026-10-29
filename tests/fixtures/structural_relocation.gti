@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/array>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.array;
+import std.string;
+import std.vector;
 
 class Particle {
   int identity;

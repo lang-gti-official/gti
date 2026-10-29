@@ -211,7 +211,7 @@ int main() {
 )",
            "GTI-S2002");
   positive("erased-reference-round-trip", R"(
-#include <std/memory>
+import std.memory;
 int main() {
   mut int owner = 3;
   mut std::erased_object& erased = std::erase_mut(owner);
@@ -223,7 +223,7 @@ int main() {
 }
 )");
   positive("erased-reference-user-wrapper", R"(
-#include <std/memory>
+import std.memory;
 class Inspection {
   std::erased_object& object;
 public:
@@ -235,7 +235,7 @@ public:
 int main() { int owner = 7; Inspection view{owner}; return view.read() - 7; }
 )");
   positive("gti-invocation-pointer", R"(
-#include <std/functional>
+import std.functional;
 int increment(int value) { return value + 1; }
 int main() {
   std::function_ptr<int(int)> first{increment};
@@ -244,7 +244,7 @@ int main() {
 }
 )");
   positive("restore-through-ordinary-helper-chain", R"(
-#include <std/memory>
+import std.memory;
 struct Reader {
   int& value;
   Reader(int& source) : value(source) {}
@@ -270,7 +270,7 @@ unsafe T& restore<T>(std::erased_object& object) {
 }
 )");
   positive("read-function-ref", R"(
-#include <std/functional>
+import std.functional;
 int apply(std::function_ref<int(int)>& operation) { return operation(4); }
 int main() {
   int offset = 3;
@@ -280,7 +280,7 @@ int main() {
 }
 )");
   positive("mutable-restoration-helper-alias", R"(
-#include <std/memory>
+import std.memory;
 struct Writer {
   mut int& value;
   Writer(mut int& source) : value(source) {}
@@ -304,7 +304,7 @@ int main() {
 }
 )");
   negative("restoration-alias-cannot-return-local-owner", R"(
-#include <std/memory>
+import std.memory;
 struct Reader {
   int& value;
   Reader(int& source) : value(source) {}
@@ -321,7 +321,7 @@ int main() { return 0; }
 )",
            "GTI-S2017");
   negative("restoration-alias-cannot-upgrade-return-access", R"(
-#include <std/memory>
+import std.memory;
 struct Reader {
   int& value;
   Reader(int& source) : value(source) {}
@@ -336,7 +336,7 @@ int main() { return 0; }
 )",
            "GTI-S2017");
   positive("mutable-function-ref", R"(
-#include <std/functional>
+import std.functional;
 int main() {
   mut int value = 3;
   mut auto callback = [mut &value](int amount) -> int { value += amount; return value; };
@@ -347,7 +347,7 @@ int main() {
 }
 )");
   positive("function-ref-preserves-independent-capture-origins", R"(
-#include <std/functional>
+import std.functional;
 int main() {
   mut int left = 2;
   mut int right = 3;
@@ -363,7 +363,7 @@ int main() {
 }
 )");
   negative("restore-requires-unsafe", R"(
-#include <std/memory>
+import std.memory;
 int main() {
   int owner = 3;
   std::erased_object& erased = std::erase_ref(owner);
@@ -373,12 +373,12 @@ int main() {
 )",
            "GTI-S2055");
   negative("erased-referent-cannot-be-constructed", R"(
-#include <std/memory>
+import std.memory;
 int main() { std::erased_object forged{}; return 0; }
 )",
            "GTI-S2019");
   negative("erased-private-factory-remains-private", R"(
-#include <std/memory>
+import std.memory;
 int main() {
   int owner = 3;
   auto& erased = gti_internal::erase_reference(owner);
@@ -387,18 +387,18 @@ int main() {
 )",
            "GTI-S2058");
   negative("erased-referent-cannot-be-a-base", R"(
-#include <std/memory>
+import std.memory;
 class Derived : public std::erased_object { public: Derived() = default; };
 int main() { Derived forged{}; return 0; }
 )",
            "GTI-S2040");
   negative("invocation-pointer-has-no-default", R"(
-#include <std/functional>
+import std.functional;
 int main() { std::function_ptr<int()> pointer{}; return pointer(); }
 )",
            "GTI-S2012");
   negative("erased-reference-owner-conflict", R"(
-#include <std/memory>
+import std.memory;
 int main() {
   mut int owner = 3;
   std::erased_object& erased = std::erase_ref(owner);
@@ -408,7 +408,7 @@ int main() {
 )",
            "GTI-S2017");
   negative("erased-reference-retains-capture-origin", R"(
-#include <std/memory>
+import std.memory;
 int main() {
   mut int owner = 3;
   auto callback = [&owner]() -> int { return owner; };
@@ -419,7 +419,7 @@ int main() {
 )",
            "GTI-S2017");
   positive("erased-reference-local-shell-in-scope", R"(
-#include <std/memory>
+import std.memory;
 struct Reader {
   int& value;
   Reader(int& value) : value(value) {}
@@ -440,7 +440,7 @@ Reader borrow(int& value) { Reader local{value}; return local; }
 int main() { int value = 3; auto reader = borrow(value); return reader.value - 3; }
 )");
   negative("erased-reference-cannot-escape-local-shell", R"(
-#include <std/memory>
+import std.memory;
 struct Reader {
   int& value;
   Reader(int& value) : value(value) {}
@@ -454,13 +454,13 @@ int main() { return 0; }
 )",
            "GTI-S2017");
   negative("erased-reference-is-not-layout-storage", R"(
-#include <std/memory>
+import std.memory;
 void require_layout<T>() requires std::layout_queryable<T> {}
 int main() { require_layout<std::erased_object>(); return 0; }
 )",
            "GTI-S2029");
   negative("function-ref-cannot-outlive-local-callable", R"(
-#include <std/functional>
+import std.functional;
 std::function_ref<int()> bad() {
   auto callback = []() -> int { return 1; };
   return std::function_ref<int()>(callback);
@@ -469,7 +469,7 @@ int main() { return 0; }
 )",
            "GTI-S2045");
   negative("function-ref-retains-shared-capture-origin", R"(
-#include <std/functional>
+import std.functional;
 int main() {
   mut int owner = 3;
   auto callback = [&owner]() -> int { return owner; };
@@ -480,7 +480,7 @@ int main() {
 )",
            "GTI-S2017");
   negative("invocation-pointer-capturing-target", R"(
-#include <std/functional>
+import std.functional;
 int main() {
   int value = 3;
   auto callback = [value]() -> int { return value; };
@@ -490,7 +490,7 @@ int main() {
 )",
            "GTI-S2093");
   negative("invocation-pointer-signature-mismatch", R"(
-#include <std/functional>
+import std.functional;
 int main() {
   std::function_ptr<int(int)> pointer{[](bool value) -> int { return value ? 1 : 0; }};
   return pointer(3);
@@ -516,7 +516,7 @@ int main() {
 }
 )");
   positive("invocation-pointer-reference-result", R"(
-#include <std/functional>
+import std.functional;
 int& left(int& value, int ignored) { return value; }
 int main() {
   int cell = 4;
@@ -526,7 +526,7 @@ int main() {
 }
 )");
   positive("signature-erased-reference-result", R"(
-#include <std/functional>
+import std.functional;
 int main() {
   int cell = 4;
   auto same = [](int& value) -> int& { return value; };
@@ -573,7 +573,7 @@ int main() {
 )",
            "GTI-S2017");
   negative("invocation-pointer-ambiguous-origin", R"(
-#include <std/functional>
+import std.functional;
 [[borrowed_from(a)]]
 int& first(int& a, int& b) { return a; }
 int main() {
@@ -583,8 +583,8 @@ int main() {
 )",
            "GTI-S2093");
   negative("invocation-pointer-origin-mismatch", R"(
-#include <std/functional>
-#include <std/memory>
+import std.functional;
+import std.memory;
 [[borrowed_from(object)]]
 int& pick(std::erased_object& object, int& value) {
   unsafe { return std::restore_ref<int>(object); }
@@ -596,8 +596,8 @@ int main() {
 )",
            "GTI-S2093");
   negative("invocation-pointer-owning-result", R"(
-#include <std/functional>
-#include <std/string>
+import std.functional;
+import std.string;
 std::string label(int value) { return std::string("label"); }
 int main() {
   std::function_ptr<std::string(int)> pointer{label};
@@ -606,7 +606,7 @@ int main() {
 )",
            "GTI-S2093");
   negative("erased-reference-cannot-invent-mutable-access", R"(
-#include <std/memory>
+import std.memory;
 int main() {
   int owner = 3;
   std::erased_object& erased = std::erase_ref(owner);
@@ -619,7 +619,7 @@ int main() {
 )",
            "GTI-S2017");
   negative("borrowed-callable-outlives-owner", R"(
-#include <std/functional>
+import std.functional;
 std::function_ref<int()> bad() {
   int owner = 3;
   auto callback = [&owner]() -> int { return owner; };
@@ -629,7 +629,7 @@ int main() { auto escaped = bad(); return escaped(); }
 )",
            "GTI-S2045");
   negative("exclusive-function-ref-conflicting-call", R"(
-#include <std/functional>
+import std.functional;
 int invoke(mut std::function_ref<int() mut>& callback, mut int& owner) {
   owner += 1;
   return callback();
@@ -643,7 +643,7 @@ int main() {
 )",
            "GTI-S2017");
   negative("mutable-function-ref-copy", R"(
-#include <std/functional>
+import std.functional;
 int main() {
   mut int value = 3;
   mut auto callback = [mut &value]() -> int { value += 1; return value; };
@@ -930,7 +930,7 @@ int main() {
   // capture's loan, as a range over a reference formal does, for read-only
   // and mutable traversal and for library and user ranges alike.
   positive("captured-reference-ranges", R"(
-#include <std/vector>
+import std.vector;
 class Count {
   mut int current;
 public:
@@ -968,7 +968,7 @@ int main() {
   // The capture's loan stays the parent of that reborrow: using the captured
   // container while the traversal is live remains a borrow conflict.
   negative("captured-range-growth", R"(
-#include <std/vector>
+import std.vector;
 int main() {
   mut std::vector<int> values{};
   values.push_back(4);
@@ -981,7 +981,7 @@ int main() {
 )",
            "GTI-S2017");
   negative("captured-mutable-range-clear", R"(
-#include <std/vector>
+import std.vector;
 int main() {
   mut std::vector<int> values{};
   values.push_back(4);

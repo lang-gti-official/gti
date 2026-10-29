@@ -1,5 +1,5 @@
 import plugins;
-#include "builtin.gti"
+import "builtin.gti";
 
 int main() {
   mut plugins::Registry registry{};

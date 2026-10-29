@@ -1,6 +1,6 @@
-#include <std/vector>
-#include <std/span>
-#include <std/array>
+import std.vector;
+import std.span;
+import std.array;
 int32_t sum_span(std::span<int32_t>& view) {
   mut int32_t total = 0;
   for (mut std::size_t i = std::size_t(0); i < view.size(); i++) { total = total + view[i]; }

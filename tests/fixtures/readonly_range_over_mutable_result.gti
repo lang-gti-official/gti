@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 // A readonly element may iterate a range reached through a mutable reference
 // returned by a call: the hidden range family shares that call's mutable

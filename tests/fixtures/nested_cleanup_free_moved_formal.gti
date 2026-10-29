@@ -1,4 +1,4 @@
-#include <std/utility>
+import std.utility;
 
 // Cleanup-free borrow carriers moved from a constructor formal into a nested
 // native member initializer. Lease and Cursor declare no destructor, so the

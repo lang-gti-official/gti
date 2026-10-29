@@ -350,7 +350,7 @@ int main() {
 
 void testOwnedPipeline() {
   const auto result = analyze(R"(
-#include <std/panic>
+import std.panic;
 struct Resource {
   int id;
   Resource(int value) : id(value) {}

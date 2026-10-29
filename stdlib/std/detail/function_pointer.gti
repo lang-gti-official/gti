@@ -1,5 +1,7 @@
+export module detail_function_pointer_impl;
+
 // Leaf invocation vocabulary shared by memory and owning callable policy.
-namespace gti_internal {
+export namespace gti_internal {
 // Non-null GTI invocation address with its defined-failure convention. This
 // is not a C function pointer and never retains a callable environment.
 class function_pointer<Signature> {};

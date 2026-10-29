@@ -1,6 +1,6 @@
-#include <std/resource>
-#include <std/memory>
-#include <std/panic>
+import std.resource;
+import std.memory;
+import std.panic;
 
 // Single-threaded instrumentation independent of the provider shell. Both
 // requested and returned descriptors are retained to prove matching release.

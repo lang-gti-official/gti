@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""One conformance-header diagnostic, include help, UTF-16 spans and clearing."""
+"""One conformance-header diagnostic, import help, UTF-16 spans and clearing."""
 
 from pathlib import Path
 import sys
 import tempfile
 
-from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position
+from lsp_smoke_test import LspSession, lsp_position
 
 
 def main():
     with tempfile.TemporaryDirectory(prefix="gti-conformance-header-") as directory:
         root = Path(directory).resolve()
         concept = root / "measure.gti"
-        concept.write_text("concept measurable<T> { int measure(T& item); "
-                           "bool is_empty(T& item); };\n")
-        (root / "middle.gti").write_text('#include "measure.gti"\n')
+        concept.write_text((
+                               'export module measure;\n'
+                               'export concept measurable<T> { int measure(T& item); bool is_empty(T& item); };\n'
+                           ))
+        (root / "middle.gti").write_text((
+                                             'export module middle;\n'
+                                             'import "measure.gti";\n'
+                                         ))
         uri = (root / "main.gti").as_uri()
         session = LspSession(sys.argv[1])
         version = 0
@@ -44,7 +49,7 @@ def main():
             session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
             for members in ("", "int measure(Rope& item) { return 1; }\n"
                                 "bool is_empty(Rope& item) { return false; }\n"):
-                source = ('#include "middle.gti"\nstruct Rope {};\n'
+                source = ('import "middle.gti";\nstruct Rope {};\n'
                           '/* 😀 */ for concept measurable<Rope> {\n' + members + '};\n')
                 errors = [item for item in publish(source) if item.get("severity") == 1]
                 assert len(errors) == 1 and errors[0]["code"] == "GTI-S2024", errors
@@ -53,14 +58,20 @@ def main():
                 assert error["range"] == {
                     "start": lsp_position(source, start),
                     "end": lsp_position(source, start + len("measurable"))}, error
-                assert any(item["location"]["uri"] == concept.as_uri()
-                           for item in error.get("relatedInformation", [])), error
-                assert 'measure.gti' in error["message"], error
+                declaration = concept.read_text()
+                declared = declaration.index("measurable")
+                assert any(item["location"] == {
+                    "uri": concept.as_uri(),
+                    "range": {"start": lsp_position(declaration, declared),
+                              "end": lsp_position(declaration, declared + len("measurable"))}}
+                    for item in error.get("relatedInformation", [])), error
+                assert "import its public module interface" in error["message"], error
+                assert "help: Add an import of the defining interface" in error["message"], error
                 unknown = source.replace("measurable<Rope>", "missing<Rope>")
                 errors = [item for item in publish(unknown) if item.get("severity") == 1]
                 assert len(errors) == 1 and errors[0]["code"] == "GTI-S2123", errors
             valid = source.replace('"middle.gti"', '"measure.gti"')
-            assert has_only_include_advice(publish(valid)), "correcting the include clears the error"
+            assert (publish(valid) == []), "correcting the import clears the error"
         finally:
             session.close()
     return 0

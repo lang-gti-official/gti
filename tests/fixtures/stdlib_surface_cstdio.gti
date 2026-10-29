@@ -1,5 +1,5 @@
-#include <std/cstdio>
-#include <std/string>
+import std.cstdio;
+import std.string;
 
 expected<std::string, std::io_errc> read_all(mut std::FILE& stream) {
   mut std::string result = std::string("");

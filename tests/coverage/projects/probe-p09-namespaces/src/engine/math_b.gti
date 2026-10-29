@@ -1,12 +1,13 @@
+export module math_b;
 namespace engine {
   namespace math {
     static int helper() { return 2; }
 
-    int add(int a, int b, int c) { return a + b + c; }
-    int from_b() { return helper(); }
+    export int add(int a, int b, int c) { return a + b + c; }
+    export int from_b() { return helper(); }
   }
 
   namespace math::detail {
-    int depth() { return 3; }
+    export int depth() { return 3; }
   }
 }

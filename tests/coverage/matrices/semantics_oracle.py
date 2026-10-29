@@ -107,11 +107,11 @@ CASES = {
 """, "5 1\n"),
 }
 
-HEAD = """#include <std/vector>
-#include <std/string>
-#include <std/algorithm>
-#include <std/span>
-#include <std/numeric>
+HEAD = """import std.vector;
+import std.string;
+import std.algorithm;
+import std.span;
+import std.numeric;
 
 enum class calc_errc { divide_by_zero };
 expected<int32_t, calc_errc> divide(int32_t a, int32_t b) {

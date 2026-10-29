@@ -1,14 +1,14 @@
 # GTI standard library
 
-`<std/io>` supplies checked reader/writer concepts, exact-read/all-write/copy
+`std.io` supplies checked reader/writer concepts, exact-read/all-write/copy
 helpers, line reading, memory and process-stream adapters, reusable buffering,
-and `std::byte_buffer`. `<std/span>` adds exclusive `mutable_span<T>` views
+and `std::byte_buffer`. `std.span` adds exclusive `mutable_span<T>` views
 from initialized vector/string elements. Buffered output must be explicitly
 flushed; see [I/O](../docs/language/io.md#composable-buffered-io),
 [mutable views](../docs/language/ranges.md#mutable-contiguous-views), and
 examples 107/108 for ownership and partial-progress behavior.
 
-`<std/simd>` provides fixed float/double lane values and masks, checked
+`std.simd` provides fixed float/double lane values and masks, checked
 `std::array` copying, arithmetic, explicit lane comparisons and ordered
 reductions. See [the SIMD contract](../docs/language/standard-library.md#fixed-lane-simd)
 for examples, native/fallback behavior, and the initial slice's bounds.
@@ -25,7 +25,7 @@ or call-site spelling recognized by the compiler.
 GTI loads `prelude.gti` automatically. Its public API lives under `std`, while
 compiler-owned declarations under `gti_internal` bind to the native runtime.
 `std::print` and `std::println` accept `std::string_view`, `char`, and every
-fixed-width integer type. `<std/string>` adds a read-only `std::string&`
+fixed-width integer type. `std.string` adds a read-only `std::string&`
 overload for named owners and an owning `std::string` overload for fresh
 results. The latter transfers a temporary directly into the call, so an
 expression such as `std::println(path.string())` needs neither a named local
@@ -44,7 +44,7 @@ The prelude also defines transparent aliases `std::size_t = uint64_t` and
 remain checked ABI-boundary representations rather than GTI source semantics.
 Unique ownership is not injected implicitly: source that names
 `std::unique_ptr`, `std::make_unique`, or `std::upcast_unique` imports
-`<std/memory>` directly.
+`std.memory` directly.
 
 Native runtime entries are low-level target services, not user-facing
 built-ins. Add formatting and other portable behavior in GTI, then cross the
@@ -55,7 +55,7 @@ See
 [`docs/language/native-c-interop.md`](../docs/language/native-c-interop.md) for the exact
 source and ABI contract.
 
-`<std/cstdio>` provides the byte-oriented host-I/O foundation with
+`std.cstdio` provides the byte-oriented host-I/O foundation with
 C++-familiar names and typed policy: counted stdout/stderr, bounded owned stdin
 and file chunks, file writes, seek/tell, explicit close, and the move-only RAII
 class `std::FILE`. Familiar `r/w/a` mode spellings and their `+`/`b` variants
@@ -66,7 +66,7 @@ forgeable native handle. The public layer exposes no native descriptor or raw
 buffer. See
 [`docs/language/io.md`](../docs/language/io.md) for the exact contract.
 
-`<std/tcp>` provides the first POSIX-only public networking ownership slice.
+`std.tcp` provides the first POSIX-only public networking ownership slice.
 `std::tcp::open()` returns
 `expected<std::tcp::socket, std::tcp::errc>` by forwarding to the public static
 factory `std::tcp::socket::open()`. The move-only socket keeps its descriptor
@@ -74,7 +74,7 @@ behind the compiler-private implementation detail
 `gti_internal::tcp_socket_handle`, and its descriptor-adopting constructor is
 private as a second factory-boundary check. Application source cannot name the
 handle or the adopting constructor; only compiler-trusted standard-library
-source can construct it. Both the TCP handle and the `<std/cstdio>` file
+source can construct it. Both the TCP handle and the `std.cstdio` file
 handle use
 `[[no_transfer, no_share]]`, so their native thread affinity is explicit even
 though each current representation is only an integer descriptor.
@@ -88,7 +88,7 @@ through the public wrapper; the `gti_internal` declarations remain
 compiler-private implementation details. See
 [`docs/language/tcp.md`](../docs/language/tcp.md) for the exact contract.
 
-`<std/http>` provides an owned move-only URL abstraction and a synchronous
+`std.http` provides an owned move-only URL abstraction and a synchronous
 reusable HTTP/HTTPS client. URLs parse absolute HTTP(S) text, build encoded
 path segments and query parameters from raw components, expose receiver-tied
 views or owned copies, and can be cloned before per-request mutation. Requests
@@ -101,7 +101,7 @@ error policy are GTI source over a private versioned runtime ABI that
 dynamically loads libcurl without exposing its types. See
 [`docs/language/http.md`](../docs/language/http.md) for the exact contract.
 
-`<std/json>` is entirely source-defined over `<std/meta>`. It encodes and
+`std.json` is entirely source-defined over `std.meta`. It encodes and
 decodes application types through reflection (structs, optionals, vectors,
 string-keyed maps, enums, exact numbers, strict UTF-8 text) and `codec<T>`
 specializations for other types, with deterministic compact and pretty output,
@@ -111,14 +111,14 @@ invalid Unicode. The source-defined operations execute through verified MIR
 and the native C++ backend. See
 [`docs/language/json.md`](../docs/language/json.md) for the exact contract.
 
-`<std/random>` provides a deterministic source-defined `std::random_engine`
+`std.random` provides a deterministic source-defined `std::random_engine`
 initialized from an explicit `uint64_t` seed and a fallible
 `std::random_device` for nondeterministic host entropy. The engine owns and
 advances its four-word state in GTI; only `random_device` crosses the bounded
 `gti_rt_random_bytes` C boundary to refill its private fixed buffer. Its call
 returns `expected<uint32_t, int>` so an entropy-source failure is explicit.
 
-`<std/chrono>` provides exact signed nanoseconds and nominally distinct steady
+`std.chrono` provides exact signed nanoseconds and nominally distinct steady
 and system time points. `steady_clock::now()` supports nondecreasing elapsed
 measurement without giving its epoch portable meaning; `system_clock::now()`
 returns signed Unix nanoseconds and normalizes negative timestamps with
@@ -128,7 +128,7 @@ Generic units, sleep, calendars, formatting, and time zones remain outside the
 first slice; see
 [`docs/language/chrono.md`](../docs/language/chrono.md).
 
-`<std/process>` provides a reusable exact-argv `std::process::command`. It does
+`std.process` provides a reusable exact-argv `std::process::command`. It does
 not invoke or emulate a shell. `run()` waits synchronously, inherits the current
 environment, working directory, and standard streams, and returns either a
 structured `exit_status` or a stable `process::errc`. Ordinary exit and signal
@@ -139,7 +139,7 @@ ABI. Capture, redirection, environment/directory overrides, asynchronous child
 ownership, and Windows support remain later slices; see
 [`docs/language/process.md`](../docs/language/process.md).
 
-`<std/thread>` provides the first public managed-thread slice as an ordinary
+`std.thread` provides the first public managed-thread slice as an ordinary
 source-defined `std::thread`. `std::thread::start(task)` consumes one exact
 transfer-safe `void()` lambda or callable object and returns
 `expected<std::thread, std::thread_errc>`. The move-only handle may be joined
@@ -156,7 +156,7 @@ captures or results are rejected before lowering. Detach, stop tokens,
 separate argument packs, scoped cross-thread borrows, and foreign-thread entry
 remain outside this surface.
 
-`<std/atomic>` provides move-only `std::atomic<T>` for `bool` and every
+`std.atomic` provides move-only `std::atomic<T>` for `bool` and every
 fixed-width signed and unsigned integer. Construction, load, store, exchange,
 strong compare/exchange, and the fixed-width integer `fetch_add`, `fetch_sub`,
 `fetch_and`, `fetch_or`, and `fetch_xor` families default to sequential
@@ -169,7 +169,7 @@ add/subtract retain GTI's defined checked-overflow failure rather than wrapping.
 Atomic values are transfer- and
 share-capable, but no lock-free, stable-layout, or native ABI promise is made.
 
-`<std/mutex>` provides noncopyable `std::mutex<T>` and the move-only,
+`std.mutex` provides noncopyable `std::mutex<T>` and the move-only,
 non-transferable `std::mutex_guard<T>`. `lock()` creates one owner-tied scoped
 guard; `get()` exposes a read-only or mutable loan no longer than that guard;
 and deterministic cleanup unlocks exactly once, including before a defined
@@ -181,7 +181,7 @@ All three concurrency modules require
 `--execution-profile concurrent`; project profiles use
 `execution-profile = "concurrent"`.
 
-`<std/filesystem>` provides `std::filesystem::path` for lexical pathname
+`std.filesystem` provides `std::filesystem::path` for lexical pathname
 manipulation alongside recoverable host filesystem operations. The path carries C++'s decomposition and
 `has_*` query set, the modifiers, `assign`/`append`/`concat`, directory joining
 through `/` and `/=`, element-wise `compare` with ordering and equality
@@ -197,17 +197,25 @@ copying, renaming, removal, links, working-directory access, and canonical
 resolution. They return `expected` values; see
 [the filesystem contract](../docs/language/filesystem.md).
 
-Optional facilities live under `stdlib/std/` and are imported through logical
-standard-library paths such as `#include <std/array>`. These imports resolve
-against the compiler installation, not relative to the application or through
-the native C++ header search path. Library files remain ordinary independently
-parsed GTI source units and do not re-export their own dependencies.
+Optional facilities live under `stdlib/std/` as explicit source module
+interfaces. `import std.array;` resolves `stdlib/std/array.gti` beneath the
+configured installation, not relative to the application or through a native
+C++ header search path. Each interface declares `export module array;` and
+explicitly exports its public declarations. Ordinary imports do not re-export
+their dependencies; `export import` deliberately republishes an interface.
 
-`stdlib/modules/` holds one module interface per public unit, so
-`import std.array;` is the import spelling of `#include <std/array>`. Each
-interface is `export module name;` followed by `export #include <std/name>`,
-and `stdlib_modules_test.py` keeps the two directories in exact
-correspondence. Add a module interface whenever a public unit is added. See
+This branch is the unreleased coordinated module-only transition. The former
+`stdlib/modules/` wrappers and their republished includes have been removed.
+The installed `module-map.json` is the explicit public module registry;
+private files have no named-import fallback. The implicit prelude remains a
+compiler-supplied source unit.
+
+`std.experimental.optional` is the public dotted name for the experimental
+optional interface. Iterator and panic implementation interfaces remain private;
+ordinary standard-library modules import them with same-owner relative paths.
+Tests that directly exercise those helpers install explicit temporary test
+maps instead of expanding the production API. The remaining exported detail
+surface and production validation are tracked in the phase 2 plan. See
 [standard-library modules](../docs/language/standard-library.md#standard-library-modules).
 
 Comparison algorithms and function objects use source-defined
@@ -246,7 +254,7 @@ lifetime boundary.
 
 `std::string` is implemented in `std/string.gti` over
 an ordinary source-defined terminated prefix owner, imported with
-`#include <std/string>`. It is a
+`import std.string;`. It is a
 move-only owner: construction and append accept `std::string_view`, mutable
 indexing requires a mutable receiver, and allocating duplication is explicit
 through `clone()` or `std::string(begin, end, other)`. The indexed constructor
@@ -284,7 +292,7 @@ bytes are preserved and C observes the prefix before the first one.
 NUL. Both pointers retain a checked read-only dependency on the string until
 their last use, but native code that retains one beyond a call still requires a
 binding-specific lifetime contract.
-`<std/format>` implements heterogeneous automatic or numeric-indexed fields
+`std.format` implements heterogeneous automatic or numeric-indexed fields
 for booleans, characters, fixed-width integers, binary32/binary64 values,
 string views, and explicitly transferred owning strings, plus escaped
 `{{`/`}}`. Fields support fill/alignment, sign, alternate form, zero-padding,
@@ -304,7 +312,7 @@ Front/back, mutable `at`, resize, shrink-to-fit, pop-back, and constant-time
 storage `swap` are implemented. Swap also exchanges size and capacity without
 copying characters or allocating.
 
-`<std/encoding>` provides source-defined binary-to-text codecs over counted
+`std.encoding` provides source-defined binary-to-text codecs over counted
 `std::string_view` input. `std::encoding::base64` emits and accepts strict
 standard-alphabet RFC 4648 text with canonical `=` padding;
 `std::encoding::hex` emits lowercase and accepts either letter case. Decoders
@@ -322,7 +330,7 @@ UTF-16 and grapheme segmentation are not part of this first phase. See
 
 `std::vector<T>` is implemented in `std/vector.gti` as an ordinary source-defined
 class over a source-defined prefix owner and imported with
-`#include <std/vector>`. `T` must satisfy `std::vector_element<T>`: storage-eligible
+`import std.vector;`. `T` must satisfy `std::vector_element<T>`: storage-eligible
 with generated relocation; element assignment is not required. The vector itself
 is move-only. The first working
 surface includes default and size construction,
@@ -393,7 +401,7 @@ capabilities. The compiler recognizes the capabilities by trusted semantic
 identity; it should not hard-code public wrapper names such as
 `std::unique_ptr` or `std::vector` into a backend.
 
-`<std/memory>` owns `std::unique_ptr<T>` and its related functions. Its
+`std.memory` owns `std::unique_ptr<T>` and its related functions. Its
 source-defined operators wrap `gti_internal::unique_owner<T>`, and
 `std::make_unique<T>(args...)` is a
 source-defined variadic factory resolved through the same generic machinery as
@@ -431,7 +439,7 @@ its addresses or slot-state mutation. Container lifecycle is derived from
 ordinary field metadata; declared cleanup and generated active-state moves
 prevent moved-from owners from running cleanup twice.
 
-Application code may import `<std/memory>` for the direct public
+Application code may import `std.memory` for the direct public
 `std::allocator`, `std::storage<T>`, `std::alignment`, `std::alloc_errc`,
 `std::arena<T>`, and `std::pool<T>` surface. Allocation returns `expected`, and
 the move-only storage owner provides checked capacity, initialization,
@@ -448,7 +456,7 @@ final-address construction and failure boundary.
 The public types are ordinary GTI wrappers: neither compiler nor backend
 recognizes their names, and no raw address or manual deallocation is exposed.
 
-`<std/optional>` provides a production move-only `std::optional<T>` over one
+`std.optional` provides a production move-only `std::optional<T>` over one
 declaration-bound inline slot. It supports empty and engaged construction,
 checked read-only and mutable access, `has_value`, contextual `bool`,
 dereference/arrow, `value_or`, reset, emplacement, move-only payloads, and move
@@ -466,8 +474,8 @@ GTI can express a source-defined conditional special-member assignment body.
 Intrinsic behavior is restricted to exact compiler-trusted declaration
 identities. Shared text and core constraints remain
 prelude-owned. Unique-owner, uninitialized-storage and object-lifetime identities
-belong to `<std/memory>`; managed-thread and defined-integer identities belong to the
-exact installed `<std/thread>` and `<std/numeric>` units. Atomic, iterator, and
+belong to `std.memory`; managed-thread and defined-integer identities belong to the
+exact installed `std.thread` and `std.numeric` units. Atomic, iterator, and
 callable constraints likewise live in their canonical units, so none of these
 module inventories are present when the module is not imported. The root
 `gti_internal` namespace and
@@ -482,7 +490,7 @@ undecided.
 
 ## Numeric boundary utilities
 
-The ordinary `<std/numeric>` gcd/lcm/midpoint templates handle their full
+The ordinary `std.numeric` gcd/lcm/midpoint templates handle their full
 fixed-width domains: gcd and lcm return nonnegative results, zero inputs are
 defined, and an unrepresentable result takes checked failure after cleanup.
 Integral midpoint avoids intermediate overflow and rounds toward its first
@@ -491,7 +499,7 @@ spurious overflow. See [Standard Library §7.3.2](../docs/language/standard-libr
 
 ## Binary32 mathematics
 
-`<std/cmath>` implements its complete declared `float` surface: `abs`,
+`std.cmath` implements its complete declared `float` surface: `abs`,
 `isfinite`, `isinf`, `isnan`, `floor`, `ceil`, `round`, `trunc`, `sqrt`,
 `cbrt`, `pow`, `fmod`, `exp`, `log`, `log10`, `sin`, `cos`, `tan`, `asin`,
 `acos`, `atan`, and `atan2`. Public wrappers are ordinary GTI; the narrow
@@ -502,7 +510,7 @@ The exact rounding, signed-zero, and portability contract is in
 
 ## C-style threading
 
-`<std/cthread>` currently implements `std::thrd_yield()`: a scheduling hint
+`std.cthread` currently implements `std::thrd_yield()`: a scheduling hint
 that may let another thread run. It is usable from the initial or a managed
 thread in either execution profile and grants no synchronization, fairness,
 or minimum-delay guarantee. It has no parameters or result and raises no
@@ -558,7 +566,7 @@ move the same by-value callable parameter after repeated confined invocation;
 `std::for_each` uses that rule without storage or type erasure. Implemented
 predicate and numeric algorithms retain their callable by value in one confined
 mutable local. They accept read-callable and mut-callable targets, may invoke
-them repeatedly, and reject consuming once-callables. `<std/functional>` now
+them repeatedly, and reject consuming once-callables. `std.functional` now
 exposes those same exact relationships as public `read_callable`,
 `mut_callable`, `once_callable`, unary/binary predicate and operation,
 comparator, indirect iterator predicate/operation, and `once_action` concepts.
@@ -580,17 +588,17 @@ underpin the ordinary source wrappers. See
 
 | Include | Scaffolded surface |
 | --- | --- |
-| `<std/algorithm>` | Search, bounds, extrema, sortedness, sequence/prefix comparison, contains/count and predicate algorithms; whole-range fill/replace; confined output copy/filter/replace/remove-copy families; vector transform/reverse/sort. See [range contracts](../docs/language/ranges.md#searching-and-rewriting-containers) for exact forms and remaining boundaries. |
-| `<std/forward_list>` | Front operations, final-address emplacement, iterative cleanup, resize, reverse, stable merge/sort, remove, unique, swap, and checked shared/exclusive forward iteration |
-| `<std/functional>` | Public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, comparison function objects, and source-defined read-only, mutable, and consuming `function` / `move_only_function`; declaration-only `hash` |
-| `<std/iterator>` | Structural input/output, forward, bidirectional, signed-jump and sized-sentinel capabilities, exact element relations, complete-range concepts, `advance`, `distance`, `next`, and `prev` |
-| `<std/list>` | Executable doubly-linked slot-owned nodes, checked indexed mutation, ends, emplacement, read traversal, reverse, remove, unique, merge, sort, and iterative cleanup |
-| `<std/deque>` / `<std/queue>` | Circular per-element-owned double-ended storage and its FIFO adapter, with checked access and deterministic cleanup |
-| `<std/set>` / `<std/unordered_set>` | Unique immutable keys over AVL/hash dictionaries, checked insertion results and traversal, lookup/erase, bounds or hash capacity controls |
-| `<std/memory>` | Implemented `unique_ptr` with reset/swap, `make_unique`, `upcast_unique`, explicit-clone `shared_ptr`, `make_shared`, and `upcast_shared`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable storage factories; source-defined `weak_ptr` with explicit clone, lock, expiry, reset and swap |
-| `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
-| `<std/span>` | Checked read-only `span<T>` and exclusive move-only `mutable_span<T>` over initialized prefix storage, with vector/string factories, subviews and checked iteration; mutable views support retained shared projections. No raw-address `data()` API or fixed-array factory. |
-| `<std/utility>` | Implemented `pair`, `make_pair`, explicit `clone`, and restoring `swap`/`exchange` for structurally relocatable initialized places; compiler-defined `std::move` remains implicitly available |
+| `std.algorithm` | Search, bounds, extrema, sortedness, sequence/prefix comparison, contains/count and predicate algorithms; whole-range fill/replace; confined output copy/filter/replace/remove-copy families; vector transform/reverse/sort. See [range contracts](../docs/language/ranges.md#searching-and-rewriting-containers) for exact forms and remaining boundaries. |
+| `std.forward_list` | Front operations, final-address emplacement, iterative cleanup, resize, reverse, stable merge/sort, remove, unique, swap, and checked shared/exclusive forward iteration |
+| `std.functional` | Public exact callable/predicate/operation/comparator concepts, consuming `invoke_once`, comparison function objects, and source-defined read-only, mutable, and consuming `function` / `move_only_function`; declaration-only `hash` |
+| `std.iterator` | Structural input/output, forward, bidirectional, signed-jump and sized-sentinel capabilities, exact element relations, complete-range concepts, `advance`, `distance`, `next`, and `prev` |
+| `std.list` | Executable doubly-linked slot-owned nodes, checked indexed mutation, ends, emplacement, read traversal, reverse, remove, unique, merge, sort, and iterative cleanup |
+| `std.deque` / `std.queue` | Circular per-element-owned double-ended storage and its FIFO adapter, with checked access and deterministic cleanup |
+| `std.set` / `std.unordered_set` | Unique immutable keys over AVL/hash dictionaries, checked insertion results and traversal, lookup/erase, bounds or hash capacity controls |
+| `std.memory` | Implemented `unique_ptr` with reset/swap, `make_unique`, `upcast_unique`, explicit-clone `shared_ptr`, `make_shared`, and `upcast_shared`, typed `allocator`, `storage<T>`, `alignment`, `alloc_errc`, fixed-capacity `arena<T>`/`pool<T>`, and recoverable storage factories; source-defined `weak_ptr` with explicit clone, lock, expiry, reset and swap |
+| `std.numeric` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
+| `std.span` | Checked read-only `span<T>` and exclusive move-only `mutable_span<T>` over initialized prefix storage, with vector/string factories, subviews and checked iteration; mutable views support retained shared projections. No raw-address `data()` API or fixed-array factory. |
+| `std.utility` | Implemented `pair`, `make_pair`, explicit `clone`, and restoring `swap`/`exchange` for structurally relocatable initialized places; compiler-defined `std::move` remains implicitly available |
 
 Empty constructor bodies in these scaffolds are placeholders because GTI does
 not yet support declaration-only constructor syntax. Replace them when adding
@@ -606,7 +614,7 @@ Some familiar C++ facilities are deliberately not scaffolded yet:
   reserved language forms. That naming decision should be resolved before a
   standard-library wrapper is promised.
 - Owning callbacks have source-defined read-only, mutable, and consuming forms in
-  `<std/functional>`: `std::function<R(Args...)>` requires a copy-constructible
+  `std.functional`: `std::function<R(Args...)>` requires a copy-constructible
   target and supports explicit deep `clone()`, while `std::move_only_function`
   also accepts move-only captures. The wrappers are themselves move-only and
   support construction, empty observation, reset, replacement and invocation.
@@ -625,7 +633,7 @@ Some familiar C++ facilities are deliberately not scaffolded yet:
 - buffered streams still require an owner/view buffer model and a decision on
   `<<` and `>>` customization; type traits require constant evaluation and
   substantially more compile-time reflection. The unbuffered byte-oriented
-  `<std/cstdio>` layer does not promise that eventual stream design.
+  `std.cstdio` layer does not promise that eventual stream design.
 - associative containers should wait for stable hashing, comparison,
   allocation, and iterator-invalidation contracts rather than exposing hollow
   classes whose eventual semantics are unknown.

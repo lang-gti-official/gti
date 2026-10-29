@@ -1,5 +1,6 @@
 #include "../src/compiler/cpp_representation.h"
 #include "cpp_mir_body_emitter_test_fixture.h"
+#include "private_stdlib_fixture.h"
 
 #include <cctype>
 
@@ -1810,7 +1811,7 @@ void testForwardListEmplacementPublication() {
   // destructor can fail after the returned borrow forms still abandons it.
   const auto returned =
       analyzeWithStandardLibrary("unpublished-return-cleanup.gti", R"(
-#include <std/format>
+import std.format;
 class Guard {
   int32_t divisor;
 public:
@@ -1866,10 +1867,10 @@ int main() {
 
 void testContainerSwapStorageAndMemberResults() {
   const auto frontend =
-      analyzeWithStandardLibrary("container-swap-slots.gti", R"(
-#include <std/memory>
-#include <std/vector>
-#include <std/forward_list>
+      gti_test::analyzePrivateMemoryFixture("container-swap-slots.gti", R"(
+import std.memory;
+import std.vector;
+import std.forward_list;
 class Item {
 public:
   int key;
@@ -2000,7 +2001,7 @@ int main() {
 void testToyEngineConstructorInitializers() {
   const auto frontend =
       analyzeWithStandardLibrary("toy-engine-initializers.gti", R"(
-#include <std/memory>
+import std.memory;
 mut int destroyed = 0;
 class Resource { public: Resource() {} ~Resource() { destroyed += 1; } };
 class Point { float x; public: Point(float value) : x(value) {} };
@@ -2111,7 +2112,7 @@ int main() {
 void testFallibleFieldInitializerPropagation() {
   const auto frontend =
       analyzeWithStandardLibrary("fallible-field-initializer.gti", R"(
-#include <std/memory>
+import std.memory;
 class Resource { public: Resource() {} };
 class Application {
   std::unique_ptr<Resource> resource = std::make_unique<Resource>();
@@ -2206,7 +2207,7 @@ int main() { Application application = Application(); return 0; }
 
   const auto mixed =
       analyzeWithStandardLibrary("mixed-generic-field-initializers.gti", R"(
-#include <std/memory>
+import std.memory;
 class Record<T> {
   T value;
   int status = 7;
@@ -2633,7 +2634,7 @@ int main() {
 void testContainedOwningFieldConstructor() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-body-owning-field-constructor.gti", R"(
-#include <std/vector>
+import std.vector;
 
 class Holder {
   mut std::vector<int32_t> values = std::vector<int32_t>();
@@ -2754,7 +2755,7 @@ int32_t main() {
 void testConstructedPrvalueCheckedFieldReplacement() {
   const auto frontend =
       analyzeWithStandardLibrary("constructed-prvalue-checked-field.gti", R"(
-#include <std/memory>
+import std.memory;
 class Payload {
   mut std::unique_ptr<int32_t> data;
 public:
@@ -2882,7 +2883,7 @@ int main() {
 void testConstructorBorrowedInputReplacement() {
   const auto frontend =
       analyzeWithStandardLibrary("constructor-input-loan.gti", R"(
-#include <std/string>
+import std.string;
 struct Item {
   mut std::string text;
   Item(std::string_view input) : text(std::string(input)) {}
@@ -2968,7 +2969,7 @@ int main() {
 void testConstructorBorrowedInputReborrowReplacement() {
   const auto frontend =
       analyzeWithStandardLibrary("constructor-input-reborrow.gti", R"(
-#include <std/string>
+import std.string;
 struct Source {
   std::string text{"new"};
   std::string& get() { return this.text; }
@@ -3609,7 +3610,7 @@ int main() { Only value{}; return 0; }
          "erasing both target and generated body cannot restore native "
          "default construction");
   const std::string inPlaceSource = R"gti(
-#include <std/memory>
+import std.memory;
 struct Element { int value = 1;  public: Element() = default; };
 int main() {
   unsafe {
@@ -3625,7 +3626,7 @@ int main() {
 )gti";
   // Source containers and direct raw construction share the same exact
   // ObjectConstruct contract; no trusted fixture or container opcode exists.
-  const auto inPlace = analyzeWithStandardLibrary(
+  const auto inPlace = gti_test::analyzePrivateMemoryFixture(
       "generated-in-place-obligation.gti", inPlaceSource);
   if (!inPlace.canGenerateCode())
     for (const auto &diagnostic : inPlace.diagnostics)
@@ -3919,7 +3920,7 @@ int main() { Wrapped<int> value{}; return 0; }
   }
   const auto genericDefaults =
       analyzeWithStandardLibrary("generated-generic-default.gti", R"gti(
-#include <std/memory>
+import std.memory;
 class GenericPointer<T> { std::unique_ptr<T> value = std::unique_ptr<T>();  public: GenericPointer() = default; };
 int main() { GenericPointer<int> first{}; GenericPointer<bool> second{}; return 0; }
 )gti");
@@ -4152,7 +4153,7 @@ int main() { Derived value{}; return 0; }
 void testGeneratedOwningStringFieldConstructor() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-body-owning-string-field-constructor.gti", R"(
-#include <std/string>
+import std.string;
 
 class StringHolder {
 public:
@@ -4348,7 +4349,7 @@ void testBodyOrderedOwnedParameterConstructor() {
     const bool declaredDestructor = shape != 0;
     const bool interfaceBase = shape == 2;
     std::string source = R"(
-#include <std/string>
+import std.string;
 
 class OrderedPath {
 public:
@@ -4837,15 +4838,15 @@ void testRawOwnedFieldReplacement() {
   expect(!gti_test::emitCpp(frontend).contents.empty(),
          "raw owning field replacement reaches native emission");
   for (const auto &invalid : {
-           R"(#include <std/string>
+           R"(import std.string;
 struct State { mut std::string text{};  public: State() = default; };
 void Set(State* state) { state->text = std::string("new"); }
 int main() { return 0; })",
-           R"(#include <std/string>
+           R"(import std.string;
 struct State { mut std::string text{};  public: State() = default; };
 void Set(const State* state) { unsafe { state->text = std::string("new"); } }
 int main() { return 0; })",
-           R"(#include <std/string>
+           R"(import std.string;
 struct State { std::string text{};  public: State() = default; };
 void Set(State* state) { unsafe { state->text = std::string("new"); } }
 int main() { return 0; })"})
@@ -5592,7 +5593,7 @@ void testCrossBlockDefiniteMoveRetiresShell() {
   // its type's destructor can fail. Restoring that edge breaks verification.
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cross-block-moved-parameter.gti", R"(
-#include <std/utility>
+import std.utility;
 class Pool {
   int32_t live;
 public:
@@ -5733,7 +5734,7 @@ void testMoveOnlyClassResultReceiverFieldTransfer() {
 
   const lang::FrontendResult classFields =
       analyzeWithStandardLibrary("cpp-mir-class-owned-parameter-fields.gti", R"(
-#include <std/memory>
+import std.memory;
 class Passive {
 public:
   int32_t value;
@@ -6004,7 +6005,7 @@ int main() {
 
   const auto observableDefault =
       analyzeWithStandardLibrary("cpp-mir-observable-default-order.gti", R"(
-#include <std/memory>
+import std.memory;
 mut int32_t order = 0;
 std::unique_ptr<int32_t> make_next() {
   order = order * 10 + 2;
@@ -6065,7 +6066,7 @@ int main() { Ordered value{}; return order - 12; }
 
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-move-only-result-field-transfer.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class Node {
 public:
@@ -6340,8 +6341,8 @@ int main() {
 void testMoveOnlyReceiverFieldLifecycleSchedules() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-forward-list-field-lifecycles.gti", R"(
-#include <std/forward_list>
-#include <std/memory>
+import std.forward_list;
+import std.memory;
 
 class ResetOwner {
   mut std::unique_ptr<int32_t> value = std::unique_ptr<int32_t>();
@@ -6695,7 +6696,7 @@ int main() {
 void testNestedReceiverFieldProjection() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-body-nested-receiver-field.gti", R"(
-#include <std/string>
+import std.string;
 
 struct Component {
   mut std::size_t offset = 0;
@@ -6794,8 +6795,8 @@ int main() {
 void testContainedAbstractBaseConstructor() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-body-contained-abstract-base.gti", R"(
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 
 class Item {
 public:
@@ -7858,7 +7859,7 @@ int main() {
 void testConcreteGenericConstructorAndMemberPackPublication() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-concrete-generic-overloads.gti", R"(
-#include <std/vector>
+import std.vector;
 
 class extent {
   uint64_t count;
@@ -8131,7 +8132,7 @@ int32_t main() {
 void testOwningFixedArrayAggregateAndCheckedMove() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-owning-fixed-array.gti", R"(
-#include <std/memory>
+import std.memory;
 
 struct record {
   int32_t value;
@@ -8890,7 +8891,7 @@ int32_t main() {
 void testConditionalClassReturnAndPreparedResultStage() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-conditional-class-return.gti", R"(
-#include <std/memory>
+import std.memory;
 
 struct Reading {
   int32_t value;
@@ -9654,7 +9655,7 @@ int32_t main() {
 void testUniqueOwnerUpcastFailureBody() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-unique-owner-upcast.gti", R"(
-#include <std/memory>
+import std.memory;
 
 interface Base {
   int32_t value();
@@ -10094,8 +10095,8 @@ void testCleanupFreeExpectedMemberProducer() {
 void testExpectedLifetimeSlotObserverFusion() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-expected-slot-observer.gti", R"(
-#include <std/format>
-#include <std/string>
+import std.format;
+import std.string;
 
 int32_t main() {
   auto formatted = std::try_format("value={}", int32_t(7));
@@ -10215,7 +10216,7 @@ int32_t main() {
 void testExpectedOwningPayloadPublicationAndForwarding() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-expected-owning-payload.gti", R"(
-#include <std/tcp>
+import std.tcp;
 
 int main() {
   auto opened = std::tcp::open();
@@ -10943,7 +10944,7 @@ int main() {
 void testConstructedArgumentTemporaryBorrow() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-constructed-argument-temporary-borrow.gti", R"(
-#include <std/string>
+import std.string;
 class Text {
   std::string data;
 public:
@@ -11140,7 +11141,7 @@ int32_t main() {
 void testFailureCapableClassReturnTemporaryReceiver() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-class-return-temporary-receiver.gti", R"(
-#include <std/string>
+import std.string;
 
 int32_t main() {
   if (std::to_string(int8_t(0)) != "0") {
@@ -13204,7 +13205,7 @@ void testProvenanceOnlyReceiverFields() {
 void testConservativeConstructorAssignmentFusion() {
   const auto frontend = analyzeWithStandardLibrary(
       "cpp-mir-conservative-constructor-assignment.gti", R"gti(
-#include <std/memory>
+import std.memory;
 interface Operation { int call(int value); };
 class Passive : public Operation {
 public:
@@ -15276,7 +15277,7 @@ int main() {
 void testMovedPlaceFieldView() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-moved-place-field-view.gti", R"(
-#include <std/utility>
+import std.utility;
 
 mut int32_t drops = 0;
 
@@ -15719,7 +15720,7 @@ int main() {
 
   const lang::FrontendResult moveOnly =
       analyzeWithStandardLibrary("cpp-mir-assignment-result-move-only.gti", R"(
-#include <std/utility>
+import std.utility;
 class Tracked {
 public:
   int32_t x;
@@ -16106,7 +16107,7 @@ int main() {
 void testClassStoresIntoNamedPlaces() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-class-store-named-places.gti", R"(
-#include <std/vector>
+import std.vector;
 struct Point {
   int32_t x;
   int32_t y;
@@ -16674,7 +16675,7 @@ int main() {
 void testNestedClassResultFieldView() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-nested-class-result-field-view.gti", R"(
-#include <std/utility>
+import std.utility;
 struct Inner {
   int32_t id;
   Inner(int32_t raw) : id(raw) {}

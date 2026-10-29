@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/thread>
-#include <std/atomic>
+import std.memory;
+import std.thread;
+import std.atomic;
 
 void retain_many(std::shared_ptr<int> owner, std::shared_ptr<std::atomic<int>> counter) {
   for (mut int index = 0; index < 200; index++) {

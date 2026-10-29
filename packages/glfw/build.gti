@@ -1,7 +1,6 @@
-#include <std/build>
-#include <std/string>
-#include <std/vector>
-
+import std.build;
+import std.string;
+import std.vector;
 std::string joined(std::string& base, std::string_view suffix) {
   mut std::string value = std::string(base.view());
   value.append(suffix);

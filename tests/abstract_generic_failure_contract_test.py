@@ -7,7 +7,7 @@ from lambda_pack_invocation_runtime_test import main
 
 
 if __name__ == "__main__":
-    memory = Path(__file__).parent.parent / "stdlib/std/memory.gti"
+    memory = Path(__file__).parent.parent / "stdlib/std/detail/memory_core.gti"
     lines = memory.read_text().splitlines()
     read = [i for i, line in enumerate(lines, 1)
             if "return gti_internal::unique_owner_borrow(" in line]
@@ -16,7 +16,7 @@ if __name__ == "__main__":
     assert len(read) == len(mutable) == 2
 
     def empty(site):
-        return (f"<std/memory>:{site}: runtime error[GTI-R0008]: "
+        return (f"<std/detail/memory_core>:{site}: runtime error[GTI-R0008]: "
                 "empty_owner_access in member_access\n")
 
     main(names=("abstract_generic_failure_contract",), cases={

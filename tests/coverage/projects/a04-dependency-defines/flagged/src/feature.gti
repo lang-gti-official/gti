@@ -1,7 +1,8 @@
+export module feature;
 namespace flagged {
 #ifdef DEP_FLAG
-constexpr bool feature_enabled = true;
+export constexpr bool feature_enabled = true;
 #else
-constexpr bool feature_enabled = false;
+export constexpr bool feature_enabled = false;
 #endif
 }

@@ -76,7 +76,7 @@ def main():
         run([binary], environment, output="")
 
         dangling = scratch / "dangling.gti"
-        dangling.write_text('#include <std/environment>\n#include <std/string>\n'
+        dangling.write_text('import std.environment;\nimport std.string;\n'
                             'std::string_view bad() {\n'
                             'auto lookup = std::environment::get("PATH");\n'
                             'auto value = std::move(lookup).expect("environment lookup");\n'

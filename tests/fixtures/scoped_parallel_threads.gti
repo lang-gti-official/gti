@@ -1,7 +1,7 @@
-#include <std/thread>
-#include <std/panic>
-#include <std/memory>
-#include <std/functional>
+import std.thread;
+import std.panic;
+import std.memory;
+import std.functional;
 
 class Write {
   mut int& target;

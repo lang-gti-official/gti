@@ -2,8 +2,8 @@
 // operand is evaluated. Its full-expression drop at the join is conditional:
 // it must run exactly once when the temporary was constructed and not at all
 // when the operand was skipped.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 mut int drops = 0;
 

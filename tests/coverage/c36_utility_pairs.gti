@@ -1,6 +1,6 @@
 // pair construction, access, nesting and generic propagation.
-#include <std/utility>
-#include <std/vector>
+import std.utility;
+import std.vector;
 
 std::pair<T, T> ordered_pair<std::totally_ordered T>(T a, T b) requires std::copyable<T> {
   if (b < a) { return std::make_pair(std::move(b), std::move(a)); }

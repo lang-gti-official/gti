@@ -1,5 +1,5 @@
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 
 std::optional<std::string> lookup(uint64_t index) {
   if (index % uint64_t(4) == uint64_t(0))

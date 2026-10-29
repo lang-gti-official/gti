@@ -3,8 +3,8 @@
 // call arguments, compound assignments, `?` propagation, owned string
 // results, nested through an application field, and interleaved with direct
 // owner access between full expressions.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 enum class auth_errc { locked };
 

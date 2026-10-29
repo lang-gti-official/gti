@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // A lambda invocation returning a class without a default constructor
 // publishes its result into exactly the storage a source call's result uses:

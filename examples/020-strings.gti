@@ -1,5 +1,4 @@
-#include <std/string>
-
+import std.string;
 int main() {
   std::string_view literal = "engine";
   if (literal.size() != 6 or literal.empty() or literal[0] != 'e') {

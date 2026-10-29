@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 // A second failure during cleanup of a completed base
 // with two owners must retain the constructor's primary failure (GTI-R0014).

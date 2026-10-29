@@ -69,7 +69,7 @@ def main():
 
         manifest_path = project / "gti.toml"
         manifest = manifest_path.read_text()
-        registration = 'window = ["src/window_factory.gti"]'
+        registration = 'window = ["src/desktop.gti", "src/headless.gti", "src/window_factory.gti"]'
         for replacement, code in (
             ('unknown = ["src/window_factory.gti"]', "GTI-B1005"),
             ('window = "src/window_factory.gti"', "GTI-B1004"),
@@ -102,7 +102,7 @@ def main():
         manifest_path.write_text(manifest)
 
         # A dependency's registered bodies are loaded without exposing their
-        # dependencies or requiring consumers to include implementation files.
+        # dependencies or requiring consumers to import implementation files.
         app = root / "app"
         app.mkdir()
         (app / "main.gti").write_text(before.replace("import window;", "import factory.window;"))

@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/atomic>
-#include <std/functional>
-#include <std/simd>
+import std.memory;
+import std.atomic;
+import std.functional;
+import std.simd;
 
 struct Empty {};
 struct Pair { uint8_t tag = 0; uint64_t value = 0; public: Pair() = default; };

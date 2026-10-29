@@ -318,8 +318,8 @@ def render(container: str, element: Element, body: str) -> str:
             f"}};\n\n"
         )
     return (
-        "#include <std/vector>\n"
-        "#include <std/utility>\n\n"
+        "import std.vector;\n"
+        "import std.utility;\n\n"
         f"{element.declaration}\n"
         f"{support}"
         "int main() {\n"

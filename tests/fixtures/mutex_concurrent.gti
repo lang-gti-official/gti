@@ -1,5 +1,5 @@
-#include <std/mutex>
-#include <std/thread>
+import std.mutex;
+import std.thread;
 
 std::mutex<int32_t> shared_count{0};
 

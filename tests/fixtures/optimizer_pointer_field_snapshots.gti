@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 extern "C" { void opaque_pointer_effect(int* pointer); }
 
 unsafe void initialize_cell(int* pointer) {

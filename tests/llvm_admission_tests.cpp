@@ -483,7 +483,7 @@ void testVerifiedRestorationRelay() {
   using namespace lang;
 
   const auto verified = lower(R"(
-#include <std/memory>
+import std.memory;
 class Cell {
   mut int& value;
 public:
@@ -1026,7 +1026,7 @@ int main() {
          "constructor-publication requirement");
 
   const auto emptyOwner = lower(R"(
-#include <std/memory>
+import std.memory;
 int main() {
   std::unique_ptr<int> owner = nullptr;
   return owner == nullptr ? 0 : 1;
@@ -1234,7 +1234,7 @@ void testStoredFieldPublicationPlan() {
   using native_llvm::StoredFieldPublicationKind;
 
   const auto verified = lower(R"(
-#include <std/memory>
+import std.memory;
 class Holder<F> {
   mut F callable;
 public:
@@ -2251,7 +2251,7 @@ void testShapeWitnesses() {
   };
 
   const auto ownedCallable = lang::planLlvmAdmission(lower(R"(
-#include <std/memory>
+import std.memory;
 F retain<F>(F callable) { return std::move(callable); }
 int main() {
   auto stored = retain([]() -> int { return 0; });
@@ -3092,7 +3092,7 @@ void testVirtualTextRelayReturns() {
   using namespace lang;
   const auto relay = [](bool dispatched) {
     return std::string(R"(
-#include <std/string>
+import std.string;
 class Base {
 public:
   std::string text;
@@ -3195,9 +3195,9 @@ void testSelectedResultRelays() {
                                (interface ? " override" : "") + " { " +
                                result.member + " }";
     return std::string(R"(
-#include <std/span>
-#include <std/string>
-#include <std/vector>
+import std.span;
+import std.string;
+import std.vector;
 class Record {
 public:
   std::string name;
@@ -3587,7 +3587,7 @@ void accept(Outer& value) {}
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto owned =
       Frontend().analyze(root / "llvm-owned-field-control.gti", R"(
-#include <std/memory>
+import std.memory;
 class Outer {
   std::unique_ptr<int> owner = std::unique_ptr<int>(nullptr);
 public:
@@ -3924,8 +3924,8 @@ void testDispatchPerUseWitnesses() {
   expect(copiedThreadLocal.admitted(),
          "a thread-local copy of program storage is a generated copy: " +
              copiedThreadLocal.limitation());
-  const auto copiedElement = threadLocal(
-      "};\n P values[2] = {P(), P()};\n P value = values[1];");
+  const auto copiedElement =
+      threadLocal("};\n P values[2] = {P(), P()};\n P value = values[1];");
   expect(!copiedElement.admitted() &&
              std::any_of(copiedElement.requirements().begin(),
                          copiedElement.requirements().end(),

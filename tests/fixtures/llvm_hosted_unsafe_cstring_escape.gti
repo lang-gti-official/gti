@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 c_string escape() {
   int owner = 0;
   char bytes[2] = {'a', '\0'};

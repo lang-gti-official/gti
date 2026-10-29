@@ -1,4 +1,4 @@
-import lib;
+import lib.api;
 
 int main() {
   lib::Secret secret = lib::make_secret();

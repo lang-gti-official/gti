@@ -153,8 +153,25 @@ both declaration and definition. Body parameter names belong to that body and
 can be renamed locally. The existing conservative restriction on renaming
 public/non-local symbols remains in force. The protocol does not independently
 match signatures or load implementation files.
-Unrelated semantic errors do not suppress module completion. Import-path/module-
-name completion and import-directive navigation are not added by this slice.
+Unrelated semantic errors do not suppress module completion. Named-import
+completion uses the source owner’s public module map and direct aliases,
+including dotted logical names; it never scans dependency-private files. The
+loader retains resolved, unresolved, and incomplete import facts with exact
+name spans and a token-derived completion prefix. Hover, definition, and
+references consume those facts and registered implementation membership.
+Unresolved imports have no invented definition target. Semantic tokens classify
+retained module-name segments as namespaces, including incomplete names; only a
+resolved compiler-trusted standard target receives the default-library modifier.
+Interface header names additionally carry the declaration modifier. These tokens
+consume the loader's ranges rather than reparsing module syntax. Authorized lookup paths
+and separate authored lookup paths remain notification dependencies even when an
+interface is absent. Incomplete recovery retains only the last valid dependency
+snapshot for unchanged root text plus current incomplete facts, bounding repeated
+invalid retargets without retaining stale semantic output. Opening an unsaved
+interface or creating it on disk refreshes consumers. Publication checks their
+captured source generations to reject stale creation/deletion results. Protocol ranges convert
+retained byte spans to UTF-16, including comments and non-ASCII text before names.
+Module rename remains conservative; no textual path-rewrite fallback exists.
 
 `FrontendResult` retains the recovered AST, `SemanticModel`, `SemanticDatabase`,
 HIR/MIR, source graph, source text, and diagnostics together. The LSP retains a
@@ -310,7 +327,7 @@ C-style create/join, manual mutexes, conditions, and once initialization use tha
 Their `GTI-S2084` profile requirement is derived by semantics from the resolved
 private runtime call graph, and `GTI-S2055` retains the ordinary unsafe caller contract. The
 editor publishes both without recognizing public `std::thrd_*`, `std::mtx_*`, or `std::cnd_*`
-spellings or `std::call_once`; hover and definition select the ordinary wrapper in `<std/cthread>`.
+spellings or `std::call_once`; hover and definition select the ordinary wrapper in `std.cthread`.
 
 Function-declaration and selected-call hover also append compiler-owned
 callable-parameter contracts from `FunctionInfo`. Confined notes identify
@@ -428,7 +445,7 @@ the private source factory's injected receiver. Normalization remains inside
 the immutable frontend snapshot; the LSP protocol adapter performs no
 name-based dispatch or argument-index repair.
 
-The checked integer functions are ordinary `<std/numeric>` declarations.
+The checked integer functions are ordinary `std.numeric` declarations.
 Hover, definition, and completion therefore consume the same selected overload
 and source-unit records as other standard-library functions; the protocol layer
 does not recognize `checked_add/sub/mul` by spelling.
@@ -647,8 +664,9 @@ compiler work.
   from a superseded version. A dependant's diagnostics located in an edited
   file therefore disappear with the edit and return with the dependant's new
   result; its diagnostics in unchanged files stay visible throughout.
-- The dynamic file watcher covers `**/*.gti`, `**/gti.toml`, and `**/gti.lock`.
-  A manifest or lockfile change invalidates semantic-token caches and
+- The dynamic file watcher covers `**/*.gti`, `**/gti.toml`, `**/gti.lock`,
+  and `**/module-map.json`, plus the installed standard-library map’s absolute
+  path. A manifest, lockfile, or public module map change invalidates snapshots and
   reanalyses every open document, so configuration, package aliases, and
   materialized locked dependencies cannot leave a stale project snapshot.
 
@@ -818,11 +836,11 @@ frontend trace reports `semanticLateDemandBodies`,
 
 The LSP also owns a `SemanticPreambleCache` beside its parse and instance
 caches and passes it through `FrontendOptions::preambleCache`: the open
-file's standard-library prefix is analysed once per include graph and every
+file's standard-library prefix is analysed once per import graph and every
 later snapshot resumes from a copy of that analysis, registering and
 analysing only the file's own declarations (see "Trusted Prefix Preamble" in
 [semantic-analysis.md](semantic-analysis.md)). The first snapshot of a new
-include graph pays for the build; a changed or re-parsed library unit selects
+import graph pays for the build; a changed or re-parsed library unit selects
 a new preamble. The trace reports `preambleBuilds`,
 `preambleBuildMicroseconds`, `preambleAdoptions`,
 `preambleAdoptMicroseconds`, `preambleBodies`, `preambleReachedBodies`, the
@@ -869,7 +887,7 @@ generation has only lexical/empty query recovery, not fabricated default-profile
 semantics or inactive spans. Selecting a valid/default profile clears it.
 Standalone documents retain their prior analysis defaults; named project
 profiles do not invent a manifest for them.
-Package angle includes therefore use only declared direct aliases, including
+Named package imports therefore use only declared direct aliases, including
 already-materialized checksum-verified Git dependencies. Resolution runs no
 process, performs no fetch or build, and creates no project state. Registry
 dependencies use the same verified cached closure, logical source identities
@@ -946,7 +964,7 @@ selected project profile when present and otherwise remains
 single-threaded.
 
 This keeps standalone and concurrent-project diagnostics and the public
-`<std/thread>`, `<std/atomic>`, and `<std/mutex>` surfaces aligned with
+`std.thread`, `std.atomic`, and `std.mutex` surfaces aligned with
 compiler-driver workflows. Analysis work
 additionally runs inside `lang::runGuarded`, and that boundary is deliberately
 narrow. Only compiler work runs under the guard: `runIsolatedAnalysis` builds
@@ -970,7 +988,7 @@ shared `FrontendCache` inside `runIsolatedAnalysis`, and its lookup/store method
 acquire their own mutex. A fatal signal during one of those critical sections
 can skip the lock destructor or interrupt a cache update. In-process recovery
 therefore cannot guarantee that the cache or future workers remain usable.
-`test_worker_survives_failed_analysis` covers missing-include failures followed
+`test_worker_survives_failed_analysis` covers missing-dependency failures followed
 by healthy analysis/hover; it does not inject a crash under a cache lock. The
 parser-depth regression proves bounded diagnostic recovery, not arbitrary fault
 recovery. A stronger promise needs a state/lock-safe recovery design and
@@ -990,11 +1008,11 @@ required; it is tracked in
 
 ## Protocol Boundary
 
-Editor snapshots enable the compiler's `legacy-include` warning
-(`GTI-I0013`) once per file, at its first `#include`. Each new snapshot recomputes
-that location, so removing the first include moves the warning to the next one,
-and removing all includes clears it. The usual warning policy can suppress the
-group. Module conversion has no automatic fix because it can change visibility.
+Editor snapshots publish the compiler-owned `GTI-I0014` error for removed GTI
+include syntax using the same source-loading rule as build/check requests. The
+former optional `legacy-include` migration warning is removed. Module conversion
+has no automatic fix because dependencies require explicit interfaces and
+exports and conversion can change visibility.
 
 `src/lsp/main.cpp` owns JSON-RPC IDs, capabilities, URIs, UTF-8 byte to LSP
 position conversion, request/result serialization, diagnostic publication,
@@ -1079,7 +1097,7 @@ Quick fixes come only from compiler `Diagnostic::fixes` associated with the
 current source/generation, an intersecting request range, and an exact
 client-provided diagnostic. Position conversion is tested at the protocol
 edge; compiler source spans remain half-open UTF-8 byte ranges.
-Unresolved declarations publish compiler-validated missing-include fixes through
+Unresolved declarations publish compiler-validated missing-import fixes through
 this same path. This covers project functions such as `example::test()`, types,
 aliases, values, scoped enumerators, static members, and concepts, not a catalog
 of standard-library type spellings. Semantics marks the unresolved lookup on
@@ -1087,12 +1105,16 @@ the diagnostic; the protocol adapter never extracts names from its message.
 
 The driver supplies search roots for the selected package and its declared
 direct dependency aliases. Standalone files search their parent directory;
-standard-library public units use the same discovery mechanism. Discovery
-recurses through `.gti` files, excluding hidden/build directories, nested
+dependency and standard-library candidates come only from explicit public
+module maps. Same-owner discovery recurses through `.gti` files, excluding hidden/build directories, nested
 packages without their own search authority, and symlink escapes. Unsaved
-files and dirty overlays participate. Dependency fixes use the declared angle
-alias; same-package fixes use a relative quoted path. Module interfaces are
-not include candidates, including exported interfaces: those require imports.
+files and dirty overlays participate. Candidates must be explicit module
+interfaces. Dependency fixes use the direct alias and declared module name;
+standard fixes use `std.name`; same-package fixes use a relative quoted import.
+Public facades contribute their explicit re-export closure, including declarations
+whose bodies live in registered implementations. Candidate discovery remains a
+syntax filter; a speculative compile validates the selected canonical exported
+symbol and the actual requesting program before offering an edit.
 
 `include_suggestions.cpp` uses the lexer as a cheap candidate filter and the
 existing source loader/parser to discover declaration names. `FrontendPhase::Parsing`
@@ -1106,10 +1128,10 @@ unrelated errors may remain; a candidate that reveals additional errors is
 conservatively withheld until those errors are addressed. No discovery runs
 for a snapshot without unresolved-name requests, with source-loading or parser
 errors, or for completion-marker analysis. Parser recovery still supplies its
-ordinary diagnostics and semantic queries, but an include edit cannot repair
+ordinary diagnostics and semantic queries, but an import edit cannot repair
 syntax in the frozen source graph. Skipping discovery in that case avoids a
 workspace-wide scan whose speculative edits would all be rejected; fixing the
-syntax restores include suggestions on the next snapshot.
+syntax restores import suggestions on the next snapshot.
 
 The service shares the bounded parsed-unit cache but retains no semantic IDs
 across snapshots. Edits preserve BOM/CRLF and follow a module header when the
@@ -1126,8 +1148,12 @@ persistent background project index.
 
 ## Incomplete Source
 
-Editor analysis enables parser recovery and semantic analysis of recovered
-declarations. Completion runs a dedicated frontend analysis with a cursor
+Editor analysis opts into source-graph recovery as well as parser recovery and
+semantic analysis of recovered declarations. A missing import retains the
+available units for independent diagnostics and queries; it does not make the
+source graph valid. Such snapshots never produce HIR/MIR, cache semantic
+preambles/instances, or synthesize a test entry. Ordinary compilation remains
+fail-closed at source loading. Completion runs a dedicated frontend analysis with a cursor
 marker so the parser/analyzer can capture real scope, receiver, visibility, and
 overload candidates in fragments such as `object.` or `foo(`. A variable
 initializer that consumes this marker remains available to semantic completion

@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // An Expected<Class, E> call temporary observed in place: tested for its
 // state, or read once through a checked value() or error(). The success class

@@ -1,6 +1,6 @@
 // F7 regression: the former declaration-only weak_ptr is now implemented.
 // Its empty state must execute successfully; missing user bodies remain errors.
-#include <std/memory>
+import std.memory;
 int main() {
   std::weak_ptr<int32_t> observer{};
   return observer.expired() ? 0 : 1;

@@ -5,10 +5,10 @@
 //          panic is the primary failure; remaining slots and locals are still
 //          destroyed exactly once.
 //  argc 3: pool.erase of a failing element; arena and other owners cleaned.
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
-#include <std/panic>
+import std.memory;
+import std.string;
+import std.vector;
+import std.panic;
 
 mut bool armed = false;
 

@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/optional>
-#include <std/vector>
+import std.string;
+import std.optional;
+import std.vector;
 
 // `x->m(...)` calls member `m` of the place the selected `operator->`
 // returns. A builtin text referent supplies its own members exactly as it

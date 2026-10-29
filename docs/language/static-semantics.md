@@ -202,13 +202,36 @@ declarations and its explicit re-exports. Publication is per declaration and
 overload, not per spelling: exporting one overload does not export the others.
 Private implementation declarations and private imports remain usable while
 checking their defining bodies and concrete generic instances. Consumers cannot
-name a private declaration through qualification or an include bypass. A public
+name a private declaration through qualification or a dependency-loading bypass. A public
 function can return a private nominal type; an inferred value retains that exact
 type and ordinary member access, without making its private type name visible.
-Modules do not introduce namespaces or change existing program-wide
-qualified-name uniqueness, ownership, borrowing, or lifecycle rules. The
+Declarations belong to a logical module identity composed of the source owner
+and the declared module name. Its interface and registered `module name;`
+implementation units share that identity and their private declarations.
+`static` namespace declarations retain source-file linkage. Different modules
+can declare the same qualified type, alias or function name without merging
+their identities. Import lookup considers only declarations visible in the
+requesting source: unused conflicting imports are permitted, naming distinct
+visible declarations is ambiguous, and visible function overloads compose by
+their ordinary signatures. An inferred result retains its nominal identity
+even when another imported module exports an identically spelled type.
+Modules do not introduce namespaces or change ownership, borrowing, or
+lifecycle rules. Dots in a module name convey no namespace or privilege
+hierarchy. The
 [source syntax](lexical-and-syntax.md#explicit-module-interfaces) specifies
-import resolution and the initial single-interface boundary.
+import resolution and explicit interface/implementation membership.
+
+An interface may export an ordinary function prototype and complete it in a
+registered implementation unit. The interface is available to its own
+implementations without a redundant import. The definition must match the
+resolved parameter signature, return type, `constexpr`, `unsafe`, `static` and
+macro qualifiers; parameter and generic parameter names may differ. Defaults,
+attributes and constraints belong to the declaration. A second body or a
+conflicting contract is rejected. The declaration and body share one callable
+identity through semantic analysis, generic instantiation, HIR, MIR and native
+emission. Generic bodies, default arguments and constant evaluation retain the
+defining source context; importing an API never grants access to its private
+names.
 
 Function-signature types use `R(Args...)` syntax, for example `void()` and
 `bool(int)`. They may be alias targets and generic type arguments, including
@@ -259,8 +282,10 @@ value parameters or defaults in a pattern head. A name may have disjoint
 single-signature definitions for the read-only, `mut`, and `&&` receiver
 qualifiers. Each qualifier admits at most one definition, even when result or
 argument patterns differ. All definitions must have the same class/struct kind
-and belong to the same package ownership domain. Each has a distinct class
-identity and member scope; selection requires that definition to be visible.
+and belong to the same logical module. Each has a distinct class identity and
+member scope. Importing the public family makes its selected implementation
+reachable; private components in registered implementation files do not publish
+additional names.
 The qualifier selects the definition before exact component matching, including
 after generic substitution. There is no ranking, fallback between qualifiers,
 or overlap with an ordinary `class Name<T>` primary. Exact qualified concrete
@@ -281,7 +306,7 @@ with void, checked-reference and raw-pointer profiles, for example
 contains bare type binders, `void`, reference binders, or one raw-pointer layer
 over a binder (`T*`, `const T*`); it has no packs, defaults, value parameters,
 deeper pointer patterns or nested patterns.
-All definitions have the same public arity, class/struct kind and package owner.
+All definitions have the same public arity, class/struct kind and module owner.
 Non-fallback profiles must be mutually disjoint: `Packet<T&, E>` and
 `Packet<T, E&>` overlap and cannot form a family. At most one ordinary definition
 is the fallback. Selection is independent of declaration order and precedes
@@ -1257,7 +1282,7 @@ demonstrates event-handler state and an unrelated generic counter.
 
 ### Optional out-of-class method definitions
 
-An ordinary named method may keep its signature in a non-generic class, struct
+An ordinary named method may keep its signature in a class, struct
 or interface and put its body at namespace scope:
 
 ```gti
@@ -1265,17 +1290,46 @@ interface Factory { static int create(int value = 7); };
 int Factory::create(int result) { return result; }
 ```
 
+Generic owners spell their parameter bindings on the owner, and generic
+methods spell theirs after the method name:
+
+```gti
+struct Box<T> { T value; T read(); U convert<U>(U input); };
+V Box<V>::read() { return value; }
+R Box<V>::convert<R>(R result) { return result; }
+```
+
+Owner bindings correspond positionally to the primary's type/value parameters
+and packs. A pack is expanded with `...`. These bindings may be renamed but
+must be distinct. A definition-family component repeats its declared structural
+pattern, renaming only its formal leaves: `R Callback<R(Args...)>::read(...)`
+binds the callable-signature component, while `int Holder<U&>::tag()` binds a
+declared reference component. Fixed types, pointer access, signature receiver
+qualifiers and pack positions retain their canonical meaning. A body cannot
+invent a new family pattern or replace an ordinary primary's parameters with
+concrete arguments. Method bindings are separate and cannot shadow owner bindings.
+The compiler preserves canonical generic parameter identities through body
+checking and concrete instantiation; spelling changes do not create a second
+class or method.
+
+An explicitly declared exact specialization can also define its methods
+separately, for example `int Key<int>::code() { ... }`. This attaches to the
+canonical specialized class, rather than specializing a method of an ordinary
+primary. The body belongs to the module owning that specialization, which may
+be the nominal argument's module under the ordinary coherence rule.
+
 The definition completes that exact method; it cannot introduce another member.
 Parameter types, return type, receiver qualifier (`mut` or `&&`), `constexpr`
 and `unsafe` must match. Parameter names may differ. Access, `static`, `virtual`,
 `override`, attributes, constraints and default arguments stay on the original
 declaration. A definition must be in the owner's namespace or an enclosing
-namespace and in the same package ownership domain. Duplicate/mismatched
-definitions and foreign-package definitions are errors (`GTI-S2120`).
-The definition's source file must directly include or import the types it
-spells, including return and parameter types. Including the owner's declaration
-does not make that declaration's includes transitively visible; an invisible
-signature type reports `GTI-S2024` with its direct-include guidance.
+namespace and in the same module ownership domain. A registered implementation
+unit declares that membership with `module name;`. Duplicate/mismatched
+definitions and definitions outside that module are errors (`GTI-S2120`).
+The definition's source file must directly import the types it
+spells, including return and parameter types. Sharing the owner's module
+does not make that declaration's imports transitively visible; an invisible
+signature type reports `GTI-S2024` with its direct-import guidance.
 
 A `borrowed_from` parameter name is resolved on that original declaration and
 retained by parameter position. Renaming parameters in the definition does not
@@ -1291,8 +1345,8 @@ constexpr body must be available before a constant-evaluated call. Borrowed
 results, consuming receivers, unsafe obligations and deterministic cleanup
 retain their ordinary semantics, independent of the body's file.
 
-Generic owners/methods, constructors, destructors and operators keep their
-existing inline spelling for now. This is an optional source organization
+Constructors, destructors and operators retain their existing inline spelling.
+This is an optional source organization
 facility, not a separate-compilation or native linker contract. See
 [module registration](../architecture/build-and-driver.md#source-module-registration)
 for automatically loading a private factory implementation when its interface
@@ -1422,12 +1476,16 @@ application has that key, including after generic substitution. A nonmatching
 application keeps the primary class identity. Requirements do not rank or
 select specializations.
 
-Package coherence permits a specialization only when its declaring package
+Module coherence permits a specialization only when its declaring module
 owns the primary or owns at least one top-level nominal class, struct, or enum
 type argument. A nominal hidden inside another generic argument does not grant
 ownership, and value arguments never grant ownership. This admits an
 application's `std::hash<Widget>` while rejecting its `std::hash<int>`, and it
-prevents two unrelated packages from defining the same foreign/foreign key.
+prevents unrelated modules, including siblings in one package, from defining
+the same foreign/foreign key. Registered implementation closure loads the
+owner's components with its interface. Selection remains canonical for the
+whole program, never dependent on the requester's import list. Conformance
+blocks follow the corresponding concept-or-nominal-argument module rule.
 Canonical duplicates and coherence failures use `GTI-S2078`.
 
 Exact specialization is not partial specialization, specialization ranking,
@@ -2201,7 +2259,7 @@ there is no run-time loop and no run-time sequence value.
 
 ### 3.12.2 Reflection Metaobjects
 
-`<std/meta>` describes GTI declarations with ordinary values. A metaobject is
+`std.meta` describes GTI declarations with ordinary values. A metaobject is
 an empty value whose generic arguments carry the canonical identity of what it
 describes: `std::meta::type<T>` for a type and `std::meta::field<T, I>` for
 instance field `I` of `T` in declaration order. `std::meta::fields_of<T>()`
@@ -2259,7 +2317,7 @@ Reflection consumed at compile time leaves no run-time representation:
 metaobjects are empty values, queries fold to constants, and reflected access
 lowers to ordinary projections. A name used at run time is an ordinary string
 literal. `@compiler_type("...")` and the `gti_internal::meta_*` operations
-that `<std/meta>` is built on are compiler-bound declarations of that trusted
+that `std.meta` is built on are compiler-bound declarations of that trusted
 unit and are unavailable to application code (`GTI-S2049`, `GTI-S2058`).
 
 ### 3.12.3 Declared Attributes

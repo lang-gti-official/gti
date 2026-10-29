@@ -1,8 +1,8 @@
-#include <std/mutex>
-#include <std/thread>
-#include <std/memory>
-#include <std/polymorphic>
-#include <std/string>
+import std.mutex;
+import std.thread;
+import std.memory;
+import std.polymorphic;
+import std.string;
 
 // Mutex storage protecting hierarchy payloads: a polymorphic object whose
 // interface view sits at a nonzero offset, a record holding one, and an

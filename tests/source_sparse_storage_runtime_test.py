@@ -10,13 +10,13 @@ import tempfile
 def main():
     emitter, cxx, runtime = map(pathlib.Path, sys.argv[1:4])
     root = pathlib.Path(__file__).resolve().parent.parent
-    policy = root / "stdlib/std/memory.gti"
+    policy = root / "stdlib/std/detail/memory_storage.gti"
     fixture = root / "tests/fixtures/source_sparse_slots.gti"
 
     def failure(source, fragment, code, reason):
         line = next(i for i, text in enumerate(source.read_text().splitlines(), 1)
                     if fragment in text)
-        name = "<std/memory>" if source == policy else "<prelude>"
+        name = "<std/detail/memory_storage>" if source == policy else "<prelude>"
         return f"{name}:{line}: runtime error[GTI-R{code:04}]: {reason}\n"
 
     cases = [((), 0, "3\n2\n1\n", "")]

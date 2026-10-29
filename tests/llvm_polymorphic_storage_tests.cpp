@@ -71,7 +71,7 @@ struct Holder {
 public:
   Holder() = default;
 };
-int run(int mode) {
+export int run(int mode) {
   Plain plain{};
   Holder holder{};
   if (mode == 2) {
@@ -105,7 +105,7 @@ int run(int mode) {
   options.lowerLibraryReachableOnly = true;
   const auto frontend = Frontend(options).analyze(
       root / "tests/slot-operation-entry.gti",
-      "#include <std/polymorphic>\nint main() { return "
+      "import std.polymorphic;\nint main() { return "
       "slot_operation_probe::run(0); }\n",
       {root / "stdlib/prelude.gti"}, {{library.string(), source}},
       {root / "stdlib"});

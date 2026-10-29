@@ -1,7 +1,7 @@
 // Upcast arguments to interface and base-class parameters and a call
 // relaying an interface view of a carrier, each ending before the carrier
 // moves; the remaining upcast forms are in carrier_upcast_references.gti.
-#include <std/utility>
+import std.utility;
 
 interface Gauge { int32_t read(); };
 

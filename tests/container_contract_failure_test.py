@@ -15,10 +15,10 @@ def main():
     environment = dict(os.environ, GTI_STDLIB_PATH=str(repository / "stdlib"),
                        ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
-    prefix = """#include <std/memory>
-#include <std/string>
-#include <std/unordered_map>
-#include <std/cmath>
+    prefix = """import std.memory;
+import std.string;
+import std.unordered_map;
+import std.cmath;
 class Guard {
   std::unique_ptr<int> token;
 public:
@@ -67,7 +67,7 @@ public:
             assert result.returncode == 65 and "GTI-S" in result.stderr and "GTI-B0001" not in result.stderr, result
         for name, (statement, code, category, detail) in cases.items():
             source = root / f"{name}.gti"
-            includes = "#include <std/map>\n" if name.startswith("map-") else ""
+            includes = "import std.map;\n" if name.startswith("map-") else ""
             source.write_text(includes + prefix + f"int main() {{ Guard guard{{}}; {statement} return 0; }}\n")
             for label, flags, native in modes:
                 executable = root / f"{name}-{label}"

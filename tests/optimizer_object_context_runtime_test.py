@@ -7,6 +7,7 @@ import shutil
 import tempfile
 
 from lambda_pack_invocation_runtime_test import main
+from internal_module_fixture import register_modules, private_source
 
 
 if __name__ == "__main__":
@@ -314,9 +315,18 @@ if __name__ == "__main__":
         library = pathlib.Path(temporary) / "stdlib"
         shutil.copytree(pathlib.Path(os.environ.get("GTI_STDLIB_PATH",
             fixture.parent.parent.parent / "stdlib")), library)
+        register_modules(library, {
+            "detail.memory_storage": "std/detail/memory_storage.gti",
+            "optimizer_boolean_guards": "std/optimizer_boolean_guards.gti",
+        })
+        paths["source_prefix_fields"] = private_source(
+            paths["source_prefix_fields"], pathlib.Path(temporary) / "optimizer_source_prefix_fields.gti",
+            ("detail.memory_storage",))
         module, entry = guard_source.split("int main() {", 1)
+        module = "export module optimizer_boolean_guards; " + module
+        module = module.replace("\nuint64_t ", "\nexport uint64_t ")
         (library / "std" / guard.name).write_text(module)
-        entry_source = "#include <std/optimizer_boolean_guards>\nint main() {" + entry
+        entry_source = "import std.optimizer_boolean_guards;\nint main() {" + entry
         sites = [index for index, text in enumerate(guard_source.splitlines(), 1)
                  if text.strip() == "return input + uint64_t(1);"]
         assert len(sites) == 3

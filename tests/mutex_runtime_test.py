@@ -12,9 +12,9 @@ import tempfile
 
 
 FAILURE_CLEANUP_SOURCE = """\
-#include <std/atomic>
-#include <std/mutex>
-#include <std/thread>
+import std.atomic;
+import std.mutex;
+import std.thread;
 
 std::mutex<int32_t> protected_value{0};
 std::atomic<bool> worker_locked{false};

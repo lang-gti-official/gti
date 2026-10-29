@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/string>
-#include <std/string_view>
-#include <std/utility>
+import std.memory;
+import std.string;
+import std.string_view;
+import std.utility;
 
 // Base and interface views of borrow carriers: classes that hold a reference
 // beside their own state. A view borrows the carrier object; its loan's only

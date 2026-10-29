@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gti/source_owner.h"
+
 #include "gti/diagnostic.h"
 #include "gti/token.h"
 
@@ -19,17 +21,25 @@
 
 namespace lang {
 
+class SourceOwnerRegistry;
+
 using SourceUnitId = std::size_t;
+using ModuleId = std::size_t;
+
+// A language identity shared by an interface and its registered definitions.
+// SourceUnitId remains the identity of a file (including source-local statics).
+// Trust and physical containment belong to source ownership, not ModuleId.
+struct SourceModule {
+  ModuleId id = 0;
+  std::string ownerIdentity;
+  std::string name;
+  SourceUnitId interfaceUnit = 0;
+};
 
 enum class SourceDependencyKind {
-  Include,
   Prelude,
-  StandardLibrary,
-  Package,
   Import,
   ExportImport,
-  // An interface's deliberate republication of one legacy include unit.
-  ExportInclude,
 };
 
 enum class SourceUnitRole {
@@ -51,14 +61,39 @@ struct ConfigurationToken {
 struct SourceDependency {
   SourceUnitId source = 0;
   SourceUnitId target = 0;
-  SourceDependencyKind kind = SourceDependencyKind::Include;
+  SourceDependencyKind kind = SourceDependencyKind::Import;
   std::optional<SourceSpan> directive;
   std::string includeSpelling;
   std::size_t includeOccurrence = 0;
 };
 
+enum class SourceImportResolution { Resolved, Unresolved, Incomplete };
+
+// Source loading retains imports independently of successful resolution so
+// compiler queries can explain incomplete documents using the same graph.
+struct SourceImport {
+  SourceUnitId requester = 0;
+  SourceSpan declaration;
+  SourceSpan name;
+  std::string spelling;
+  std::vector<std::string> segments;
+  std::vector<SourceSpan> segmentSpans;
+  std::optional<std::string> completionPrefix;
+  bool quoted = false;
+  bool reexport = false;
+  // Authorized canonical lookup, including an interface that does not yet
+  // exist. Editors track its creation/overlay without inventing a target.
+  std::optional<std::filesystem::path> lookupPath;
+  // Authored path is retained even when a symlink target is missing or denied.
+  // It is a notification key only; it never authorizes reading source text.
+  std::optional<std::filesystem::path> authoredLookupPath;
+  std::optional<SourceUnitId> target;
+  SourceImportResolution resolution = SourceImportResolution::Unresolved;
+};
+
 struct SourceUnit {
   SourceUnitId id = 0;
+  ModuleId moduleId = 0;
   std::filesystem::path path;
   // Post-directive tokens for the parser. Unchanged units share them with
   // the frontend cache, so they are immutable here.
@@ -80,6 +115,9 @@ struct SourceUnit {
   std::vector<ConfigurationToken> configurationTokens;
   // Source-level interfaces only; no backend or binary-module identity.
   std::optional<Token> moduleDeclaration;
+  std::optional<SourceSpan> moduleDeclarationSpan;
+  std::optional<Token> implementationDeclaration;
+  std::optional<SourceSpan> implementationDeclarationSpan;
   // Parser-derived declaration ranges carrying an explicit/inherited export.
   // Namespace names are retained separately so exporting one child does not
   // expose its private siblings. Invalid exports are rejected by semantics.
@@ -105,29 +143,17 @@ struct SourceImplementation {
   SourceUnitId implementationUnit = 0;
 };
 
-struct PackageSourceDependency {
-  std::string alias;
-  std::string targetIdentity;
-};
-
-struct PackageSourceRoot {
-  std::string identity;
-  std::string name;
-  std::filesystem::path packageRoot;
-  std::filesystem::path sourceRoot;
-  std::vector<PackageSourceDependency> dependencies;
-  // Public package-local module name -> absolute, contained interface path.
-  std::vector<std::pair<std::string, std::filesystem::path>> modules;
-  // Private executable source roots loaded when the corresponding interface
-  // participates in this compilation. They never grant importer visibility.
-  std::vector<std::pair<std::string, std::vector<std::filesystem::path>>>
-      moduleImplementations;
-};
-
 class SourceGraph {
 public:
   [[nodiscard]] SourceUnitId entryUnit() const;
   [[nodiscard]] const std::vector<SourceUnit> &sourceUnits() const;
+  [[nodiscard]] const std::vector<SourceModule> &sourceModules() const;
+  [[nodiscard]] const SourceModule *findModule(ModuleId id) const;
+  [[nodiscard]] ModuleId moduleForUnit(SourceUnitId id) const;
+  [[nodiscard]] bool sameModule(SourceUnitId left, SourceUnitId right) const;
+  [[nodiscard]] const std::vector<SourceImport> &imports() const;
+  [[nodiscard]] const std::shared_ptr<const SourceOwnerRegistry> &
+  sourceOwners() const;
   [[nodiscard]] const std::vector<SourceDependency> &dependencyEdges() const;
   [[nodiscard]] const std::vector<SourceImplementation> &
   moduleImplementations() const;
@@ -159,6 +185,13 @@ private:
           std::optional<std::string> packageRelativePath = std::nullopt);
 
   void addDependency(SourceDependency dependency);
+  void addImport(SourceImport import);
+  void setSourceOwners(std::shared_ptr<const SourceOwnerRegistry> owners);
+
+  ModuleId registerModule(SourceUnitId interfaceUnit, std::string ownerIdentity,
+                          std::string name);
+  bool attachModuleImplementation(SourceUnitId interfaceUnit,
+                                  SourceUnitId implementationUnit);
 
   void addPreludeRoot(SourceUnitId id);
 
@@ -169,6 +202,9 @@ private:
                                        SourceUnitId target) const;
 
   std::vector<SourceUnit> units;
+  std::vector<SourceModule> modules;
+  std::vector<SourceImport> sourceImports;
+  std::shared_ptr<const SourceOwnerRegistry> owners;
   std::vector<SourceDependency> dependencies;
   std::vector<SourceUnitId> configuredPreludeRoots;
   std::vector<SourceImplementation> implementationRoots;

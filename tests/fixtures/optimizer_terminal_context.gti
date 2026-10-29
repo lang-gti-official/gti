@@ -1,5 +1,5 @@
-#include <std/panic>
-#include <std/format>
+import std.panic;
+import std.format;
 
 class Cleanup {
 public:

@@ -158,6 +158,62 @@ SemanticVisitor::Impl::SemanticCatalog::SemanticCatalog(
   *this = other;
 }
 
+auto SemanticVisitor::Impl::SemanticCatalog::rebindCallables(
+    Symbol &symbol) const -> void {
+  for (auto &candidate : symbol.overloads) {
+    if (candidate.declarationRecord == nullptr)
+      continue;
+    const auto found =
+        callableDeclarationsBySyntax.find(candidate.declarationRecord->syntax);
+    if (found == callableDeclarationsBySyntax.end())
+      throw std::logic_error(
+          "copied callable candidate lacks an owned declaration");
+    candidate.declarationRecord = found->second;
+  }
+}
+
+auto SemanticVisitor::Impl::SemanticCatalog::rebindCallables() -> void {
+  const auto rebind = [&](Symbol &symbol) { rebindCallables(symbol); };
+  namespaceSymbols.forEachValue(rebind);
+  for (auto &[_, symbols] : internalNamespaceSymbols)
+    symbols.forEachValue(rebind);
+  for (auto &[_, symbols] : visibleNamespaceSymbols)
+    symbols.forEachValue(rebind);
+  for (auto &owner : classes)
+    for (auto &[_, member] : owner.members)
+      rebind(member.symbol);
+  for (auto &conformance : conformances)
+    for (auto &operation : conformance.operations)
+      rebind(operation);
+  for (auto &owner : enums)
+    for (auto &[_, enumerator] : owner.enumerators)
+      rebind(enumerator.symbol);
+}
+
+auto SemanticVisitor::Impl::ValueFlowState::rebindCallables(
+    const SemanticCatalog &catalog) -> void {
+  const auto rebind = [&](Symbol &symbol) { catalog.rebindCallables(symbol); };
+  const auto rebindScopes = [&](ScopeStack &stack) {
+    for (auto &scope : stack)
+      for (auto &[_, symbol] : scope)
+        rebind(symbol);
+  };
+  rebindScopes(scopes);
+  for (auto &context : controlFlow) {
+    for (auto &state : context.breakStates)
+      rebindScopes(state);
+    for (auto &state : context.continueStates)
+      rebindScopes(state);
+  }
+  namespaceSymbols.forEachValue(rebind);
+  for (auto &[_, symbols] : internalNamespaceSymbols)
+    symbols.forEachValue(rebind);
+  for (auto &[_, symbols] : visibleNamespaceSymbols)
+    symbols.forEachValue(rebind);
+  for (auto &[_, symbol] : staticFieldSymbols)
+    rebind(symbol);
+}
+
 auto SemanticVisitor::Impl::SemanticCatalog::operator=(
     const SemanticCatalog &other) -> SemanticCatalog & {
   if (this == &other)
@@ -165,6 +221,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   SemanticCatalog copy;
   copy.compilerTypeClasses = other.compilerTypeClasses;
   copy.namespaces = other.namespaces;
+  copy.ambiguousPublications = other.ambiguousPublications;
   copy.namespaceToolingSymbols = other.namespaceToolingSymbols;
   copy.namespaceAliases = other.namespaceAliases;
   copy.compilerPrivateNamespaceSymbol = other.compilerPrivateNamespaceSymbol;
@@ -186,11 +243,16 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.classDeclIds = other.classDeclIds;
   copy.conceptDeclIds = other.conceptDeclIds;
   copy.functionGenericParameters = other.functionGenericParameters;
+  copy.definitionOwnerGenericParameters =
+      other.definitionOwnerGenericParameters;
   copy.constraintPredicateDeclarations = other.constraintPredicateDeclarations;
   for (const auto &declaration : other.callableDeclarations) {
     auto owned = std::make_unique<CallableDeclaration>(*declaration);
     copy.callableDeclarationsBySyntax.insert_or_assign(owned->syntax,
                                                        owned.get());
+    if (owned->definition != nullptr)
+      copy.callableDeclarationsBySyntax.insert_or_assign(owned->definition,
+                                                         owned.get());
     copy.callableDeclarations.emplace_back(std::move(owned));
   }
   copy.constructorGenericParameters = other.constructorGenericParameters;
@@ -212,6 +274,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.nextFunctionId = other.nextFunctionId;
   copy.sealed = other.sealed;
   copy.sealedShape = other.sealedShape;
+  copy.rebindCallables();
   *this = std::move(copy);
   return *this;
 }
@@ -222,6 +285,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   SemanticCatalog copy;
   copy.compilerTypeClasses = compilerTypeClasses;
   copy.namespaces = namespaces;
+  copy.ambiguousPublications = ambiguousPublications;
   copy.namespaceToolingSymbols = namespaceToolingSymbols;
   copy.namespaceAliases = namespaceAliases;
   copy.compilerPrivateNamespaceSymbol = compilerPrivateNamespaceSymbol;
@@ -243,6 +307,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.classDeclIds = classDeclIds;
   copy.conceptDeclIds = conceptDeclIds;
   copy.functionGenericParameters = functionGenericParameters;
+  copy.definitionOwnerGenericParameters = definitionOwnerGenericParameters;
   copy.constraintPredicateDeclarations = constraintPredicateDeclarations;
   for (const auto &declaration : callableDeclarations) {
     (void)copy.registerCallable(*declaration);
@@ -264,6 +329,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.nextConstructorId = nextConstructorId;
   copy.nextDefaultArgumentEffectOwner = nextDefaultArgumentEffectOwner;
   copy.nextFunctionId = nextFunctionId;
+  copy.rebindCallables();
   copy.seal();
   assert(copy.sealedShape == sealedShape);
   return copy;
@@ -478,6 +544,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.impl->semanticModel.setFunctionDemandSink(nullptr);
     worker.impl->semanticModel.setCallJournal(nullptr);
     worker.impl->valueFlow = valueFlow;
+    worker.impl->valueFlow.rebindCallables(worker.impl->catalog);
     for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
       if (declaredBeforeCurrent(definition))
         worker.impl->constexprDefinitionsAnalyzed.insert(definition);

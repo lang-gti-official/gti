@@ -1,8 +1,7 @@
-#include <std/format>
-#include <std/polymorphic>
-#include <std/string>
-#include <std/vector>
-
+import std.format;
+import std.polymorphic;
+import std.string;
+import std.vector;
 namespace application {
 interface sensor {
   std::string name();

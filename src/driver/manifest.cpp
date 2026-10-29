@@ -1,6 +1,7 @@
 #include "gti/driver/manifest.h"
 #include "gti/driver/registry.h"
 #include "gti/driver/semver.h"
+#include "gti/module_name.h"
 
 #include "gti/driver/dependencies.h"
 #include "manifest_source.h"
@@ -950,17 +951,7 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
 }
 
 bool isImportAlias(std::string_view alias) {
-  const auto alphabetic = [](char character) {
-    return (character >= 'A' && character <= 'Z') ||
-           (character >= 'a' && character <= 'z') || character == '_';
-  };
-  const auto digit = [](char character) {
-    return character >= '0' && character <= '9';
-  };
-  return !alias.empty() && alphabetic(alias.front()) &&
-         std::all_of(alias.begin() + 1, alias.end(), [&](char character) {
-           return alphabetic(character) || digit(character);
-         });
+  return isModuleNameComponent(alias);
 }
 
 std::optional<std::filesystem::path> resolvePackageDirectory(
@@ -2245,14 +2236,14 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
       for (const auto &[moduleKey, pathNode] : *modules) {
         const std::string name(moduleKey.str());
         const SourceSpan declaration = sourceSpan(sourceName, source, pathNode);
-        if (!isImportAlias(name) || keywords.contains(name) ||
-            isCppReservedIdentifier(name) || name.starts_with("__gti_")) {
+        if (!isModuleName(name)) {
           result.diagnostics.push_back(buildDiagnostic(
               "GTI-B1005", sourceSpan(sourceName, source, moduleKey),
-              "Module names must be ordinary ASCII GTI identifiers."));
+              "Module names must be dot-separated ordinary ASCII GTI "
+              "identifiers."));
           continue;
         }
-        if (name == "std") {
+        if (name == "std" || name.starts_with("std.")) {
           result.diagnostics.push_back(buildDiagnostic(
               "GTI-B1005", sourceSpan(sourceName, source, moduleKey),
               "The module name 'std' is reserved for the standard library."));
@@ -2305,6 +2296,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath,
           continue;
         }
         package.modules.emplace_back(name, resolved);
+        package.moduleLookupPaths.emplace_back(
+            name, (packageRoot / relative).lexically_normal());
       }
     }
   }

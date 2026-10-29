@@ -110,9 +110,9 @@ private:
     consume(TokenKind::IMPORT, "Expect 'import' after 'export'.");
     if (!match({TokenKind::STRING_LITERAL})) {
       consume(TokenKind::IDENTIFIER, "Expect a module name after 'import'.");
-      if (match({TokenKind::DOT})) {
+      while (match({TokenKind::DOT})) {
         consume(TokenKind::IDENTIFIER,
-                "Expect a module name after the dependency alias.");
+                "Expect a module name component after '.'.");
       }
     }
     consume(TokenKind::SEMICOLON, "Expect ';' after a module import.");
@@ -1347,20 +1347,29 @@ private:
     } else {
       name = consume(TokenKind::IDENTIFIER, "Expect declaration name.");
     }
-    std::optional<NamePath> definitionOwner;
-    if (check(TokenKind::SCOPE)) {
+    std::optional<TypeRef> definitionOwner;
+    if (check(TokenKind::SCOPE) || isGenericOwnerStart()) {
       if (!allowFunction || allowOperators || operatorName) {
         throw error(
             peek(),
             "An out-of-class method definition must be at namespace scope.");
       }
       std::vector<Token> owner;
-      while (match({TokenKind::SCOPE})) {
+      std::vector<TypeRef> ownerArguments;
+      while (check(TokenKind::SCOPE) || isGenericOwnerStart()) {
         owner.push_back(name);
+        if (check(TokenKind::LESS))
+          ownerArguments = typeArgumentList();
+        consume(TokenKind::SCOPE, "Expect '::' after method owner.");
         name = consume(TokenKind::IDENTIFIER,
                        "Expect a method or owner name after '::'.");
+        if (!ownerArguments.empty() && check(TokenKind::SCOPE))
+          throw error(
+              peek(),
+              "A generic method owner cannot contain another owner type.");
       }
-      definitionOwner.emplace(std::move(owner));
+      definitionOwner.emplace(NamePath(std::move(owner)),
+                              std::move(ownerArguments));
     }
     std::vector<GenericParameter> genericParameters;
     if (!operatorName && check(TokenKind::LESS)) {
@@ -1495,7 +1504,7 @@ private:
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
       std::vector<FunctionAttribute> functionAttributes = {},
-      std::optional<NamePath> definitionOwner = std::nullopt) {
+      std::optional<TypeRef> definitionOwner = std::nullopt) {
     std::optional<RequiresClause> blockRequirement =
         std::exchange(conformanceRequirement, std::nullopt);
     std::vector<Parameter> parameters = parameterList();

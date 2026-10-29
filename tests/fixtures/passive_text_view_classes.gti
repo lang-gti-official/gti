@@ -9,9 +9,9 @@
 // join of two of them and a copy assigned into a field take the same passive
 // routes. Moving one after a fallible field, joining two and assigning a copy
 // into a field were GTI-B0001.
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 mut int stage = 0;
 

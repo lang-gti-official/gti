@@ -6,12 +6,12 @@ functions over nested instances, generic containers of generic owners and
 value-parameterized generics.
 """
 
-PRELUDE = """#include <std/vector>
-#include <std/memory>
-#include <std/string>
-#include <std/format>
-#include <std/utility>
-#include <std/atomic>
+PRELUDE = """import std.vector;
+import std.memory;
+import std.string;
+import std.format;
+import std.utility;
+import std.atomic;
 std::atomic<int32_t> live{0};
 class Token {
   int32_t id;

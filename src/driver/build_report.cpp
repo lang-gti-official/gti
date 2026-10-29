@@ -99,46 +99,26 @@ std::optional<SourceUnitRole> parseSourceRoleName(std::string_view name) {
 
 std::string_view sourceDependencyKindName(SourceDependencyKind kind) {
   switch (kind) {
-  case SourceDependencyKind::Include:
-    return "include";
   case SourceDependencyKind::Prelude:
     return "prelude";
-  case SourceDependencyKind::StandardLibrary:
-    return "standard-library";
-  case SourceDependencyKind::Package:
-    return "package";
   case SourceDependencyKind::Import:
     return "import";
   case SourceDependencyKind::ExportImport:
     return "export-import";
-  case SourceDependencyKind::ExportInclude:
-    return "export-include";
   }
-  return "include";
+  return "import";
 }
 
 std::optional<SourceDependencyKind>
 parseSourceDependencyKindName(std::string_view name) {
-  if (name == "include") {
-    return SourceDependencyKind::Include;
-  }
   if (name == "prelude") {
     return SourceDependencyKind::Prelude;
-  }
-  if (name == "standard-library") {
-    return SourceDependencyKind::StandardLibrary;
-  }
-  if (name == "package") {
-    return SourceDependencyKind::Package;
   }
   if (name == "import") {
     return SourceDependencyKind::Import;
   }
   if (name == "export-import") {
     return SourceDependencyKind::ExportImport;
-  }
-  if (name == "export-include") {
-    return SourceDependencyKind::ExportInclude;
   }
   return std::nullopt;
 }

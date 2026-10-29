@@ -58,7 +58,7 @@ def boundary_source() -> str:
             )
     return "\n".join(
         [
-            "#include <std/numeric>",
+            "import std.numeric;",
             "",
             "constexpr expected<int8_t, std::arithmetic_errc> compile_success = std::checked_add(int8_t(40), int8_t(2));",
             "constexpr expected<int8_t, std::arithmetic_errc> compile_failure = std::checked_add(int8_t(127), int8_t(1));",

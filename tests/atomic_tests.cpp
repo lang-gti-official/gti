@@ -77,7 +77,7 @@ std::string fixtureSource(std::string_view name) {
 
 std::string validProgram() {
   return R"(
-#include <std/atomic>
+import std.atomic;
 
 std::atomic<int32_t> program_count{0};
 
@@ -172,7 +172,7 @@ void testDormantImport() {
   for (const lang::TargetInfo &target : {single, concurrentTarget()}) {
     const lang::FrontendResult frontend =
         analyze("dormant-atomic-import.gti",
-                "#include <std/atomic>\nint main() { return 0; }\n", target);
+                "import std.atomic;\nint main() { return 0; }\n", target);
     if (!frontend.canGenerateCode()) {
       printDiagnostics(frontend);
     }
@@ -291,7 +291,7 @@ void testPublicPipeline() {
 
 void testScalarDomain() {
   const lang::FrontendResult valid = analyze("atomic-scalar-domain.gti", R"(
-#include <std/atomic>
+import std.atomic;
 int main() {
   std::atomic<bool> b{false};
   std::atomic<int8_t> i8{int8_t(1)};
@@ -332,7 +332,7 @@ int main() {
             : "";
     const lang::FrontendResult invalid =
         analyze("atomic-invalid-" + name + ".gti",
-                "#include <std/atomic>\n" + declarations +
+                "import std.atomic;\n" + declarations +
                     "int main() {\n  "
                     "std::atomic<" +
                     type + "> value{" + initializer + "};\n  return 0;\n}\n");
@@ -347,7 +347,7 @@ int main() {
 
 void testSemanticBoundaries() {
   const std::string use = R"(
-#include <std/atomic>
+import std.atomic;
 int main() {
   std::atomic<int32_t> value{1};
   return value.load();
@@ -370,7 +370,7 @@ int main() {
 
   const lang::FrontendResult privateStorage =
       analyze("atomic-private-storage.gti", R"(
-#include <std/atomic>
+import std.atomic;
 int main() {
   gti_internal::atomic_storage<int32_t> storage{1};
   return 0;
@@ -383,7 +383,7 @@ int main() {
          "storage");
 
   const lang::FrontendResult copied = analyze("atomic-copy.gti", R"(
-#include <std/atomic>
+import std.atomic;
 int main() {
   std::atomic<int32_t> first{1};
   std::atomic<int32_t> second = first;
@@ -525,7 +525,7 @@ void testExplicitOrders() {
                                       const std::string &expression) {
     const lang::FrontendResult invalid =
         analyze("atomic-invalid-order-" + name + ".gti",
-                "#include <std/atomic>\nint main() {\n  std::atomic<int32_t> "
+                "import std.atomic;\nint main() {\n  std::atomic<int32_t> "
                 "value{0};\n  " +
                     expression + ";\n  return 0;\n}\n");
     expect(!invalid.canGenerateCode() && !invalid.diagnostics.empty() &&
@@ -683,7 +683,7 @@ void testFetchOperations() {
   for (const std::string operation : {"fetch_add", "fetch_or"}) {
     const lang::FrontendResult invalid =
         analyze("atomic-bool-" + operation + ".gti",
-                "#include <std/atomic>\nint main() {\n  std::atomic<bool> "
+                "import std.atomic;\nint main() {\n  std::atomic<bool> "
                 "flag{false};\n  [[discard]] flag." +
                     operation + "(true);\n  return 0;\n}\n");
     expect(!invalid.canGenerateCode() && !invalid.diagnostics.empty() &&
@@ -695,7 +695,7 @@ void testFetchOperations() {
 
 void testWaiting() {
   const std::string source = R"(
-#include <std/atomic>
+import std.atomic;
 class Completion {
   std::atomic<int32_t> state{1};
 public:
@@ -760,7 +760,7 @@ int main() { Completion completion{}; completion.wait(); completion.wake(); retu
   for (const std::string order : {"release", "acq_rel"}) {
     auto invalid =
         analyze("invalid-wait.gti",
-                "#include <std/atomic>\nint main() { std::atomic<int32_t> "
+                "import std.atomic;\nint main() { std::atomic<int32_t> "
                 "a{0}; a.wait(0, std::memory_order_" +
                     order + "()); return 0; }");
     expect(!invalid.canGenerateCode() && !hasCode(invalid, "GTI-B0001"),
@@ -891,7 +891,7 @@ void testWrappingOperations() {
         "std::atomic<int> x{0}; x.fetch_add_wrapping(1, 0);"}) {
     const auto invalid = analyze(
         "bad-wrapping.gti",
-        "#include <std/atomic>\nint main() { " + body + " return 0; }", target);
+        "import std.atomic;\nint main() { " + body + " return 0; }", target);
     expect(!invalid.canGenerateCode() && !hasCode(invalid, "GTI-B0001"),
            "invalid wrapping calls reject in semantics");
   }

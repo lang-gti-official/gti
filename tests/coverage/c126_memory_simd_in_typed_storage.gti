@@ -2,9 +2,9 @@
 // relocate_to between allocations, and stored as fields of an owning class
 // whose objects live at fixed slots. Lane math must be unchanged by
 // relocation and by allocation-owner movement.
-#include <std/simd>
-#include <std/memory>
-#include <std/string>
+import std.simd;
+import std.memory;
+import std.string;
 
 class Body {
   std::string name;

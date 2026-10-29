@@ -1,5 +1,4 @@
-#include <std/string>
-
+import std.string;
 // Fresh results initialize their destination directly, even when the type
 // cannot move. Typed wrappers and parentheses do not create another object.
 class Anchor {

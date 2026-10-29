@@ -5,7 +5,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position
+from lsp_smoke_test import LspSession, lsp_position
 
 
 def check(executable, concurrent, selected="thrd_join"):
@@ -17,7 +17,7 @@ def check(executable, concurrent, selected="thrd_join"):
     locals = ("std::once_flag flag{}; " if selected == "call_once" else
               "std::thrd_t handle = 0; mut int32_t result = 0; "
               if selected == "thrd_join" else "std::thrd_t handle = 0; ")
-    source = ("// 😀 source-position control\n#include <std/cthread>\n"
+    source = ("// 😀 source-position control\nimport std.cthread;\n"
               + declarations + "int main() { " + locals
               + (call if concurrent else "unsafe { " + call + " }") + " }\n")
     with tempfile.TemporaryDirectory(prefix="gti-cthread-lsp-") as directory:
@@ -47,10 +47,10 @@ def check(executable, concurrent, selected="thrd_join"):
             assert error["range"] == {"start": lsp_position(source, closing),
                                       "end": lsp_position(source, closing + 1)}, error
             valid = source.replace(call, "unsafe { " + call + " }") if concurrent else (
-                "#include <std/cthread>\nint main() { std::thrd_yield(); return 0; }\n")
+                "import std.cthread;\nint main() { std::thrd_yield(); return 0; }\n")
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": valid}]}})
-            assert has_only_include_advice(diagnostics(2))
+            assert (diagnostics(2) == [])
             if concurrent:
                 position = lsp_position(valid, valid.index(selected) + 2)
                 session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
@@ -68,7 +68,7 @@ def check(executable, concurrent, selected="thrd_join"):
 
 
 def check_confined(executable):
-    source = ("// 😀 callback contract\n#include <std/cthread>\n"
+    source = ("// 😀 callback contract\nimport std.cthread;\n"
               "using Callback = (int32_t) -> int32_t;\n"
               "int32_t transform(int32_t value) { return value; }\n"
               "int main() { Callback callback = transform; return 0; }\n")
@@ -97,7 +97,7 @@ def check_confined(executable):
                 if version == 3:
                     assert any(d["code"] == "GTI-S2099" for d in errors), errors
                 else:
-                    assert has_only_include_advice(errors), errors
+                    assert (errors == []), errors
             session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
                 "textDocument": {"uri": uri}, "position": lsp_position(valid, valid.index("transform") + 2)}})
             hover = session.receive_until(lambda message: message.get("id") == 2)["result"]

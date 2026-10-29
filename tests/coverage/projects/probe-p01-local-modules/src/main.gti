@@ -1,6 +1,6 @@
 import main;
 import util;
-#include "helpers.gti"
+import "helpers.gti";
 
 class Square {
   int side;

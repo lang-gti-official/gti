@@ -1,4 +1,4 @@
-#include <std/mutex>
+import std.mutex;
 
 // Cleanup-bound carriers produced by a method of a by-reference capture's
 // referent. The closure body borrows that referent through the capture's

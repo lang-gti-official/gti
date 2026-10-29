@@ -11,8 +11,8 @@ from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
 
 
 def reject_invalid_sources(compiler: pathlib.Path) -> None:
-    prefix = """#include <std/utility>
-#include <std/string>
+    prefix = """import std.utility;
+import std.string;
 class ReadView {
   int& item;
 public:
@@ -27,7 +27,7 @@ public:
 };
 """
     cases = {
-        "nested-lifecycle-guard": """#include <std/mutex>
+        "nested-lifecycle-guard": """import std.mutex;
 int main() {
   std::mutex<int> owner{1};
   auto result = std::pair<std::mutex_guard<int>, bool>(owner.lock(), true);

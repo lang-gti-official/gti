@@ -1,4 +1,4 @@
-#include <std/atomic>
+import std.atomic;
 int main() {
   std::atomic<int8_t> n0{int8_t(127)};
   if (n0.fetch_add_wrapping(int8_t(1)) != int8_t(127) || n0.load() != int8_t(-128)) { return 1; }

@@ -20,7 +20,7 @@ void expect(bool condition, const std::string &name) {
   }
 }
 const std::string prefix = R"gti(
-#include <std/utility>
+import std.utility;
 mut int observed = 0;
 struct Resource {
   mut int value = 7;
@@ -390,8 +390,8 @@ int main() { Resource a{}; Resource b{}; Both both{a, b}; return 0; }
 )gti");
   positive("cleanup-bound buffering retains an adapter shell and its owner",
            R"gti(
-#include <std/io>
-#include <std/string>
+import std.io;
+import std.string;
 int main() {
   std::byte_buffer bytes = {uint8_t(97)};
   auto view = bytes.as_span();

@@ -1,4 +1,4 @@
-import window;
+module window;
 
 class DesktopWindow : public Window {
 public:

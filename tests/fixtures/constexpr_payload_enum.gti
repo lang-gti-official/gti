@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 enum Signal<T> { empty, value(T payload), error(int code) };
 enum Content<T> { value(T payload) };

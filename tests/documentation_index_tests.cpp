@@ -35,8 +35,11 @@ namespace std {
 concept copyable<T> = requires(T& source) { { T(source) } -> T; };
 }
 )");
+    write(root / "module-map.json",
+          R"({"modules":{"sample":"std/sample.gti"}})");
     write(root / "std/sample.gti", R"(
-namespace std {
+export module sample;
+export namespace std {
 /// Requires a copyable value.
 concept sample_copyable<T> = std::copyable<T>;
 
@@ -108,7 +111,7 @@ lang::FrontendResult analyze(const TemporaryStandardLibrary &library,
   options.toolingOccurrences = toolingOccurrences;
   return lang::Frontend(options).analyze(library.root / "reference-entry.gti",
                                          R"(
-#include <std/sample>
+import std.sample;
 int main() {
   std::widget item{3};
   return std::twice(item.value());

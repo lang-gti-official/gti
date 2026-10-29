@@ -1,5 +1,5 @@
-#include <std/algorithm>
-#include <std/vector>
+import std.algorithm;
+import std.vector;
 
 class observer {
 public:

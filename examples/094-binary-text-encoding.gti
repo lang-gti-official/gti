@@ -1,6 +1,5 @@
-#include <std/encoding>
-#include <std/string>
-
+import std.encoding;
+import std.string;
 int main() {
   // string_view is counted bytes here, not a NUL-terminated C string.
   std::string_view bytes = "A\0B";

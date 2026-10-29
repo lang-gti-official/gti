@@ -1,5 +1,4 @@
-#include <hooks/bindings>
-
+import hooks.bindings;
 int main() {
   unsafe {
     mut auto callback = native::obtain_operation();

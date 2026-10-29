@@ -1,14 +1,15 @@
+export module core;
 namespace base::core {
-  mut int calls = 0;
+  export mut int calls = 0;
 
-  int twice(int value) {
+  export int twice(int value) {
     calls = calls + 1;
     return value * 2;
   }
 
-  int seed() { return 5; }
+  export int seed() { return 5; }
 
-  interface Shape {
+  export interface Shape {
     int area();
     int sides();
   };

@@ -1,7 +1,7 @@
 // INVALID: a move-only record is pushed into a vector on some loop
 // iterations and then read after the loop (maybe-moved use).
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 class Entry {
   std::string name_;

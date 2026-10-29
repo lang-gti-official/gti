@@ -2,8 +2,8 @@
 // through an `auto&` payload binding; a class holding a stored read-only
 // interface reference; moving the owning enum through a function by value
 // and destruction of the erased payload when the enum is replaced.
-#include <std/format>
-#include <std/memory>
+import std.format;
+import std.memory;
 
 static mut int32_t widget_drops = 0;
 

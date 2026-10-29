@@ -1,11 +1,11 @@
-#include <std/vector>
-#include <std/deque>
-#include <std/list>
-#include <std/forward_list>
-#include <std/map>
-#include <std/set>
-#include <std/unordered_map>
-#include <std/unordered_set>
+import std.vector;
+import std.deque;
+import std.list;
+import std.forward_list;
+import std.map;
+import std.set;
+import std.unordered_map;
+import std.unordered_set;
 
 int test_vector() {
   mut std::vector<int> values{};

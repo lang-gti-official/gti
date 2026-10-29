@@ -20,9 +20,9 @@ MODES += [("no-elide", ["--std", "c++23", "-O0"], ["-fno-elide-constructors"]),
 
 
 def negative_sources():
-    headers = """#include <std/algorithm>
-#include <std/functional>
-#include <std/vector>
+    headers = """import std.algorithm;
+import std.functional;
+import std.vector;
 class OncePredicate {
 public:
   bool operator()(int& value) && { return value < 2; }
@@ -51,7 +51,7 @@ public:
     }
     result = {name: headers + "int main() { " + setup + body + " return 0; }\n"
               for name, body in negatives.items()}
-    result["cursor-escape"] = headers + """std::detail::vector_iterator<int> escape(std::vector<int>& external) {
+    result["cursor-escape"] = headers + """std::vector<int>::const_iterator escape(std::vector<int>& external) {
   std::vector<int> values = {1, 2, 3};
   return std::partition_point(values.begin(), values.end(), [](int& value) -> bool { return value < 2; });
 }

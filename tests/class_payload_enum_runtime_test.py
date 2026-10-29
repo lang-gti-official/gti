@@ -18,7 +18,7 @@ def fail(process: subprocess.CompletedProcess[str]) -> int:
 
 
 SOURCE = """\
-#include <std/string>
+import std.string;
 
 class Point {
 public:

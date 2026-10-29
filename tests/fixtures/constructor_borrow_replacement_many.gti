@@ -1,7 +1,7 @@
-#include <std/filesystem>
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.filesystem;
+import std.memory;
+import std.string;
+import std.vector;
 
 struct Pair {
   mut std::string first;

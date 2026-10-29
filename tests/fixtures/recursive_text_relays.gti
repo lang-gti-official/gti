@@ -1,6 +1,6 @@
 // Recursive and mutually recursive functions relay a dynamic text formal, a
 // formal's text field and the receiver's, as non-recursive relays do.
-#include <std/string>
+import std.string;
 
 class Token {
 public:

@@ -1,4 +1,4 @@
-#include <std/functional>
+import std.functional;
 
 class Counter {
   mut int value = 0;

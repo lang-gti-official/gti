@@ -79,8 +79,8 @@ void printDiagnostics(const lang::FrontendResult &result) {
 
 std::string validProgram() {
   return R"(
-#include <std/thread>
-#include <std/memory>
+import std.thread;
+import std.memory;
 
 class resource {
   int32_t value;
@@ -192,7 +192,7 @@ void testDormantImportInSingleThreadedProfile() {
   single.executionProfile = lang::ExecutionProfile::SingleThreaded;
   const lang::FrontendResult frontend =
       analyze("single-threaded-thread-import.gti",
-              "#include <std/thread>\nint main() { return 0; }\n", single);
+              "import std.thread;\nint main() { return 0; }\n", single);
   if (!frontend.canGenerateCode()) {
     printDiagnostics(frontend);
   }
@@ -409,7 +409,7 @@ void testPublicPipelineAndInventory() {
 
 void testTypedResultPipeline() {
   const lang::FrontendResult frontend = analyze("managed-thread-result.gti", R"(
-#include <std/thread>
+import std.thread;
 
 class result_task {
   int32_t value;
@@ -485,7 +485,7 @@ int main() {
 void testClassTypedResultPipeline() {
   const lang::FrontendResult frontend =
       analyze("managed-thread-class-result.gti", R"(
-#include <std/thread>
+import std.thread;
 
 class result_value {
   int32_t value;
@@ -628,7 +628,7 @@ void expectThreadRejection(std::string_view name, std::string source,
 
 void testSemanticRejections() {
   const std::string basic = R"(
-#include <std/thread>
+import std.thread;
 int main() {
   auto started = std::thread::start([]() -> void {});
   return 0;
@@ -659,7 +659,7 @@ int main() {
       "threads before lowering");
 
   expectThreadRejection("nonvoid-thread-task.gti", R"(
-#include <std/thread>
+import std.thread;
 int main() {
   auto started = std::thread::start([]() -> int32_t { return 1; });
   return 0;
@@ -667,7 +667,7 @@ int main() {
 )",
                         "exact void() task");
   expectThreadRejection("parameter-thread-task.gti", R"(
-#include <std/thread>
+import std.thread;
 int main() {
   auto started = std::thread::start([](int32_t value) -> void {});
   return 0;
@@ -675,7 +675,7 @@ int main() {
 )",
                         "exact void() task");
   expectThreadRejection("borrowed-thread-capture.gti", R"(
-#include <std/thread>
+import std.thread;
 int main() {
   std::string_view text = "borrowed";
   auto task = [text]() -> void {};
@@ -685,7 +685,7 @@ int main() {
 )",
                         "transfer-safe exact void() task", true);
   expectThreadRejection("raw-thread-capture.gti", R"(
-#include <std/thread>
+import std.thread;
 int main() {
   int32_t value = 1;
   unsafe {
@@ -698,7 +698,7 @@ int main() {
 )",
                         "transfer-safe exact void() task", true, true);
   expectThreadRejection("nontransfer-thread-capture.gti", R"(
-#include <std/thread>
+import std.thread;
 [[no_transfer, no_share]] class local_only { int32_t value = 0;  public: local_only() = default; };
 int main() {
   local_only state = local_only();
@@ -710,7 +710,7 @@ int main() {
                         "transfer-safe exact void() task", true);
 
   expectThreadRejection("mismatched-thread-result-task.gti", R"(
-#include <std/thread>
+import std.thread;
 int main() {
   mut std::thread_result<int32_t> worker =
       std::thread_result<int32_t>();
@@ -721,7 +721,7 @@ int main() {
                         "return type matches");
   const lang::FrontendResult borrowedResultType =
       analyze("borrowed-thread-result.gti", R"(
-#include <std/thread>
+import std.thread;
 int main() {
   mut std::thread_result<int32_t&> worker =
       std::thread_result<int32_t&>();
@@ -737,7 +737,7 @@ int main() {
          "a borrowed result should fail at the owned managed-thread result "
          "boundary before MIR lowering");
   expectThreadRejection("raw-thread-result.gti", R"(
-#include <std/thread>
+import std.thread;
 int main() {
   mut std::thread_result<int32_t*> worker =
       std::thread_result<int32_t*>();
@@ -746,7 +746,7 @@ int main() {
 )",
                         "owned non-void value type");
   expectThreadRejection("nontransfer-thread-result.gti", R"(
-#include <std/thread>
+import std.thread;
 class local_result {
   int32_t value;
 public:
@@ -768,7 +768,7 @@ int main() {
 
   const lang::FrontendResult missingMove =
       analyze("thread-task-needs-move.gti", R"(
-#include <std/thread>
+import std.thread;
 int main() {
   auto task = []() -> void {};
   auto started = std::thread::start(task);
@@ -781,7 +781,7 @@ int main() {
          "a named thread task should require one explicit ownership move");
 
   const lang::FrontendResult copiedHandle = analyze("copy-thread.gti", R"(
-#include <std/thread>
+import std.thread;
 int main() {
   auto started = std::thread::start([]() -> void {});
   if (!started.has_value()) { return 1; }
@@ -795,7 +795,7 @@ int main() {
 
   const lang::FrontendResult assignedHandle =
       analyze("move-assign-thread.gti", R"(
-#include <std/thread>
+import std.thread;
 int main() {
   auto first_started = std::thread::start([]() -> void {});
   auto second_started = std::thread::start([]() -> void {});
@@ -840,7 +840,7 @@ lang::MirInstruction *findIntrinsic(lang::MirProgram &program,
 
 void testTransferQualifiedCallables() {
   const auto packed = analyze("empty-pack-task.gti", R"(
-#include <std/thread>
+import std.thread;
 struct PackedTask<Args...> {
   int operator()(Args... arguments) { return 42; }
 public:
@@ -859,7 +859,7 @@ int main() {
   expect(packed.canGenerateCode(),
          "a concrete empty parameter pack is an exact zero-argument task");
   expectThreadRejection("nonempty-pack-task.gti", R"(
-#include <std/thread>
+import std.thread;
 struct PackedTask<Args...> {
   int operator()(Args... arguments) { return 42; }
 public:
@@ -873,14 +873,14 @@ int main() {
 )",
                         "transfer-safe exact task");
   for (const std::string suffix : {"", " mut", " &&"}) {
-    const auto frontend = analyze(
-        "transfer-function.gti",
-        "#include <std/functional>\n#include <std/thread>\n" + std::string(R"(
+    const auto frontend =
+        analyze("transfer-function.gti",
+                "import std.functional;\nimport std.thread;\n" + std::string(R"(
 struct Task { Task() = default; int operator()())") +
-            suffix + R"( { return 42; } };
+                    suffix + R"( { return 42; } };
 int main() {
   std::transfer_function<int())" +
-            suffix + R"(> callback{Task()};
+                    suffix + R"(> callback{Task()};
   mut std::thread_result<int> worker{};
   auto started = worker.start(std::move(callback));
   if (!started) return 1;
@@ -919,7 +919,7 @@ int main() {
   for (const std::string suffix : {"", " mut", " &&"}) {
     const auto rejected =
         analyze("affine-erased-task.gti",
-                "#include <std/functional>\n[[no_transfer]] "
+                "import std.functional;\n[[no_transfer]] "
                 "struct Task { Task() = default; int operator()()" +
                     suffix + R"( { return 42; } };
 int main() {
@@ -934,7 +934,7 @@ int main() {
            "erasure must reject a non-transferable target at construction");
     const auto replacement =
         analyze("affine-erased-replacement.gti",
-                "#include <std/functional>\n[[no_transfer]] struct Task { "
+                "import std.functional;\n[[no_transfer]] struct Task { "
                 "Task() = default; int "
                 "operator()()" +
                     suffix + R"( { return 42; } };
@@ -954,7 +954,7 @@ int main() {
     const std::string secondCall =
         suffix == " &&" ? "std::move(second)()" : "second()";
     const auto local = analyze("local-erased-affine-target.gti",
-                               "#include <std/functional>\n[[no_transfer]] "
+                               "import std.functional;\n[[no_transfer]] "
                                "struct Task { Task() = default; int "
                                "operator()()" +
                                    suffix + R"( { return 42; } };
@@ -975,8 +975,8 @@ int main() {
   }
   // This is an ordinary interface contract, not a stdlib type-name rule.
   const auto unrelated = analyze("unrelated-transfer-interface.gti", R"(
-#include <std/memory>
-#include <std/thread>
+import std.memory;
+import std.thread;
 [[transfer]] interface Job { int perform(); };
 class Work : public Job { public: int perform() override { return 42; }  public: Work() = default; };
 class Runner {

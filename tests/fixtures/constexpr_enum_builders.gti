@@ -1,4 +1,4 @@
-#include <std/array>
+import std.array;
 
 enum class Mode : int8_t { stopped = -128, ready = 0, running = 127 };
 enum class Wide : uint64_t { low = 0, high = 18446744073709551615 };

@@ -1,11 +1,11 @@
 // User generic functions that forward generic element types, predicates and
 // comparators into stdlib algorithms, instantiated with built-ins and with a
 // user class satisfying ordering/equality.
-#include <std/algorithm>
-#include <std/functional>
-#include <std/iterator>
-#include <std/numeric>
-#include <std/vector>
+import std.algorithm;
+import std.functional;
+import std.iterator;
+import std.numeric;
+import std.vector;
 
 class Version {
   int32_t major;

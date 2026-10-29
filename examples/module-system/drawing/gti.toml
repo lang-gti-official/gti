@@ -1,0 +1,9 @@
+manifest-version = 1
+[package]
+name = "drawing"
+version = "0.1.0"
+source-root = "src"
+[modules]
+"graphics.geometry" = "src/api.gti"
+[module-implementations]
+"graphics.geometry" = ["src/implementation.gti"]

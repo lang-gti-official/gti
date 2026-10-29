@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 interface VoidInvoker<R, Args...> { R invoke(Args... args); };
 class VoidSignature<S> { public: VoidSignature() = default; };

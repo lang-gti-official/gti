@@ -3,3 +3,6 @@ manifest-version = 1
 [package]
 name = "base"
 version = "1.2.0"
+
+[modules]
+core = "src/core.gti"

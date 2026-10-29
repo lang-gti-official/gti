@@ -104,7 +104,7 @@ def main():
                   f"C++={binary.with_suffix('.gti.cpp').stat().st_size} bytes, "
                   f"build={build_seconds:.3f}s", flush=True)
 
-        prefix = """#include <std/forward_list>
+        prefix = """import std.forward_list;
 class UserMutableField {
   mut int32_t value = 1;
 public:
@@ -150,7 +150,7 @@ struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = de
 
         source = directory / "escape.gti"
         source.write_text(prefix + """
-std::detail::forward_list_iterator<int32_t> escaped() {
+std::forward_list<int32_t>::const_iterator escaped() {
   mut std::forward_list<int32_t> values{};
   values.push_front(1);
   return values.begin();
@@ -159,7 +159,8 @@ int main() { auto cursor = escaped(); return *cursor; }
 """)
         result = run([str(compiler), str(source), "--emit-mir", "-o", str(directory / "escape.mir")])
         assert result.returncode == 65 and "GTI-S" in result.stderr and "GTI-B0001" not in result.stderr, result
-        assert "borrow" in result.stderr, result.stderr
+        assert "GTI-S2045" in result.stderr and "borrow" in result.stderr, result.stderr
+        assert "GTI-S2024" not in result.stderr, result.stderr
         print("forward-list lifetime local-owner-escape: rejected", flush=True)
 
 

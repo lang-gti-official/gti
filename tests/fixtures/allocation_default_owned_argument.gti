@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.vector;
 
 mut int argument_divisor = 1;
 mut int constructor_divisor = 1;

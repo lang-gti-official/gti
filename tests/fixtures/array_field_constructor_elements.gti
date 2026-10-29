@@ -5,8 +5,8 @@
 // element is copied or moved once, straight into the array's storage, and
 // fields are read at a run-time index; with an argument the first index is
 // out of range and fails with GTI-R0007.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 mut int32_t live = 0;
 mut int32_t destroyed = 0;

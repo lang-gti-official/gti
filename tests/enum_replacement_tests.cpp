@@ -154,7 +154,7 @@ void checkReplacementProof() {
 
 void checkBorrowBoundary() {
   const std::string prefix = R"gti(
-#include <std/string>
+import std.string;
 enum BorrowedEvent { empty, borrowed(int& owner), owned(std::string value) };
 )gti";
   const auto valid =

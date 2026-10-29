@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 extern "C" { int32_t debug_input(); void debug_checkpoint(int32_t value); }
 mut int released = 0;
 struct Node {

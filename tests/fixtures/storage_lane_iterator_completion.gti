@@ -1,8 +1,8 @@
-#include <std/memory>
-#include <std/resource>
-#include <std/simd>
-#include <std/iterator>
-#include <std/algorithm>
+import std.memory;
+import std.resource;
+import std.simd;
+import std.iterator;
+import std.algorithm;
 
 void require_random<I>(I cursor) requires std::random_access_iterator<I> {}
 void require_bidirectional<I>(I cursor) requires std::bidirectional_iterator<I> {}

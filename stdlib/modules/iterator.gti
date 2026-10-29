@@ -1,3 +1,0 @@
-// Module std.iterator: the public surface of <std/iterator>.
-export module iterator;
-export #include <std/iterator>

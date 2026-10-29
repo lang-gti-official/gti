@@ -1,6 +1,6 @@
-#include <std/chrono>
-#include <std/string>
-#include <std/vector>
+import std.chrono;
+import std.string;
+import std.vector;
 
 // A passive class argument is built before its field's constructor consumes
 // it. There is no default constructor or assignment route to substitute.

@@ -2,7 +2,7 @@
 // std::string_view is required, but its help suggests
 // 'std::string_view(value)', which is itself rejected (GTI-S2030). The
 // working form is 'word.view()'.
-#include <std/string>
+import std.string;
 
 int main() {
   std::string word = std::string("abc");

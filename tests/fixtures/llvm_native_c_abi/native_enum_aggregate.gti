@@ -1,4 +1,4 @@
-#include "bindings.gti"
+import "bindings.gti";
 
 int main() {
   auto request = native_flags::flags_make(

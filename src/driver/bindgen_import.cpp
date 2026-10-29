@@ -79,7 +79,7 @@ readFileText(const std::filesystem::path &path) {
                                    std::string_view triple,
                                    std::string_view preprocessed) {
   Sha256 hash;
-  hash.update("gti-bindgen-import-v1\n");
+  hash.update("gti-bindgen-import-v2-modules\n");
   hash.update(toolIdentity);
   hash.update("\ntriple:");
   hash.update(triple);
@@ -208,6 +208,7 @@ void generateImport(const BindgenImportPlan &import,
           ? lang::bindgen::CDataModel::Llp64
           : lang::bindgen::CDataModel::Lp64);
   lang::bindgen::BindingOptions options;
+  options.moduleName = "bindings";
   options.namespaceName = import.namespaceName;
   for (const std::string &pattern : import.allowPatterns) {
     options.allow.push_back({pattern});

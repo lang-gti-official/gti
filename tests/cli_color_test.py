@@ -142,7 +142,7 @@ def main():
         assert "\x1b" not in result.stdout
         main_source = project / "src/main.gti"
         main_source.write_text(
-            '#include <std/string>\n#include <std/vector>\n'
+            'import std.string;\nimport std.vector;\n'
             'int main(int argc, std::vector<std::string> argv) {\n'
             '  mut int unused_mut = 0;\n'
             '  if (argc > 1) { std::println(argv[std::size_t(1)]); }\n'
@@ -190,10 +190,10 @@ def main():
             '[targets.b_success]\nkind = "test"\nroot = "success.gti"\n')
         failure = root / "failure.gti"
         failure.write_text(
-            '#include <std/string>\nint main() {\n'
+            'import std.string;\nint main() {\n'
             '  std::println("failure-program-output"); return 7;\n}\n')
         (root / "success.gti").write_text(
-            '#include <std/string>\nint main() {\n'
+            'import std.string;\nint main() {\n'
             '  std::println("success-program-output"); return 0;\n}\n')
         plain = run(["test"], 7)
         assert "\x1b" not in plain.stdout + plain.stderr
@@ -257,11 +257,11 @@ def main():
             '[targets.bounds]\nkind = "test"\nroot = "bounds.gti"\n'
             '[targets.panic]\nkind = "test"\nroot = "panic.gti"\n')
         (root / "panic.gti").write_text(
-            '#include <std/panic>\nint main() {\n'
+            'import std.panic;\nint main() {\n'
             '  std::println("before-panic");\n'
             '  std::panic("colour test panic");\n}\n')
         (root / "bounds.gti").write_text(
-            '#include <std/string>\n#include <std/vector>\n'
+            'import std.string;\nimport std.vector;\n'
             'int main(int argc, std::vector<std::string> argv) {\n'
             '  int values[1] = {42};\n  std::println("before-bounds");\n'
             '  return values[argc];\n}\n')

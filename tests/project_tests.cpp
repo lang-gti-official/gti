@@ -1575,7 +1575,7 @@ void testWorkspaceAndPathDependencies() {
   expect(
       writeFile(root / "src/main.gti", "int main() { return 0; }\n") &&
           writeFile(app / "src/main.gti",
-                    "#include <math/add>\nint main() { return 0; }\n") &&
+                    "import math.add;\nint main() { return 0; }\n") &&
           writeFile(math / "lib/add.gti",
                     "namespace math { int add(int a, int b) { return a + b; } "
                     "}\n"),
@@ -1813,7 +1813,7 @@ void testProjectFacts() {
   const std::filesystem::path math = root / "packages/math";
   expect(writeFile(root / "src/main.gti", "int main() { return 0; }\n") &&
              writeFile(app / "src/main.gti",
-                       "#include <math/add>\nint main() { return 0; }\n") &&
+                       "import math.add;\nint main() { return 0; }\n") &&
              writeFile(math / "lib/add.gti",
                        "namespace math { int add(int a, int b) { return a + b; "
                        "} }\n"),
@@ -2102,7 +2102,7 @@ void testProjectFactsDiagnostics() {
   const std::filesystem::path consumer = temporary.root() / "consumer";
   const std::filesystem::path library = temporary.root() / "library";
   expect(writeFile(consumer / "src/main.gti",
-                   "#include <lib/unit>\nint main() { return 0; }\n") &&
+                   "import lib.unit;\nint main() { return 0; }\n") &&
              writeFile(library / "src/unit.gti",
                        "namespace lib { int value() { return 1; } }\n") &&
              writeFile(consumer / "gti.toml",
@@ -2138,8 +2138,8 @@ void testProjectFactsDiagnostics() {
 
 void testProjectScaffolding(const std::filesystem::path &testExecutable) {
   TemporaryDirectory temporary;
-  const std::string expectedSource = R"(#include <std/string>
-#include <std/vector>
+  const std::string expectedSource = R"(import std.string;
+import std.vector;
 
 int main(int argc, std::vector<std::string> argv) {
   std::println("Hello, GTI!");
@@ -3528,11 +3528,20 @@ void testModuleManifest() {
   const auto moved = lang::driver::resolveProjectWorkspace(root);
   expect(moved.succeeded() && moved.workspace->modelIdentity() != identity,
          "moving a public module changes project/cache identity");
+  expect(writeFile(root / "src/http.gti", "export module net.http;\n") &&
+             writeFile(manifest,
+                       base + "\n[modules]\n\"net.http\" = \"src/http.gti\"\n"),
+         "dotted module fixture should be writable");
+  const auto dotted = lang::driver::loadProjectManifest(manifest);
+  expect(dotted.succeeded() && dotted.manifest->package().modules.size() == 1 &&
+             dotted.manifest->package().modules.front().first == "net.http",
+         "module maps accept dotted ordinary identifiers");
   for (const std::string registration :
        {"main = 42", "main = \"missing.gti\"", "main = \"\"",
         "main = \"/outside.gti\"", "main = \"C:/outside.gti\"",
         "main = \"src/api.cpp\"", "main = \"src\"", "import = \"src/api.gti\"",
-        "\"bad.name\" = \"src/api.gti\"", "__gti_hidden = \"src/api.gti\"",
+        "\"bad..name\" = \"src/api.gti\"", "__gti_hidden = \"src/api.gti\"",
+        "\"api.__gti_hidden\" = \"src/api.gti\"",
         "main = \"src/api.gti\"\nother = \"src/api.gti\"",
         "main = \"src/api.gti\"\nMAIN = \"src/other.gti\"",
         "std = \"src/api.gti\""}) {
@@ -3586,7 +3595,8 @@ void testBackendProfileAuthority() {
         temporary.root(), "app", "dev", TargetInfo::host(), overrides));
   };
   // An omitted backend is the target's default: LLVM on arm64 macOS and
-  // x86_64 Linux, C++ elsewhere. Retaining C++ output configures the C++ backend instead.
+  // x86_64 Linux, C++ elsewhere. Retaining C++ output configures the C++
+  // backend instead.
   const auto omitted = resolve();
   const BackendKind hostDefault = defaultBackend(TargetInfo::host());
   expect(omitted.succeeded() && omitted.plan->backend() == hostDefault &&

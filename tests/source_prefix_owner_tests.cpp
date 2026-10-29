@@ -3,6 +3,7 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "private_stdlib_fixture.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -12,9 +13,9 @@
 
 int main() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
-  const auto frontend = lang::Frontend().analyze(
-      root / "source-prefix-contract.gti", R"gti(
-#include <std/memory>
+  const auto frontend =
+      gti_test::analyzePrivateMemoryFixture("source-prefix-contract.gti", R"gti(
+import std.memory;
 int main() {
   mut std::detail::prefix_owner<int> source{uint64_t(4)};
   source.append_value(3);
@@ -25,8 +26,12 @@ int main() {
   destination.erase(uint64_t(0));
   return destination.read(uint64_t(0)) == 5 ? 0 : 1;
 }
-)gti",
-      {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+)gti");
+  if (frontend.sourceGraph.isCompilerTrusted(
+          frontend.sourceGraph.entryUnit())) {
+    std::cerr << "private library fixture acquired compiler trust\n";
+    return 1;
+  }
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -81,8 +86,8 @@ int main() {
   }
   const auto hosted = lang::Frontend().analyze(
       root / "source-prefix-hosted-contract.gti", R"gti(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 int main(int argc, std::vector<std::string> argv) { return argc; }
 )gti",
       {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
@@ -123,9 +128,8 @@ int main(int argc, std::vector<std::string> argv) { return argc; }
   std::ifstream forwardedInput(forwardedPath);
   const std::string forwardedSource{
       std::istreambuf_iterator<char>(forwardedInput), {}};
-  const auto forwarded = lang::Frontend().analyze(
-      forwardedPath, forwardedSource, {root / "stdlib/prelude.gti"}, {},
-      {root / "stdlib"});
+  const auto forwarded = gti_test::analyzePrivateMemoryFixture(
+      forwardedPath.string(), forwardedSource);
   if (!forwarded.canGenerateCode() ||
       gti_test::emitCppText(forwarded).find(
           "GTI MIR unpublished return cleanup") == std::string::npos) {
@@ -184,9 +188,8 @@ int main(int argc, std::vector<std::string> argv) { return argc; }
   std::ifstream payloadInput(payloadPath);
   const std::string payloadSource{std::istreambuf_iterator<char>(payloadInput),
                                   {}};
-  const auto payload = lang::Frontend().analyze(payloadPath, payloadSource,
-                                                {root / "stdlib/prelude.gti"},
-                                                {}, {root / "stdlib"});
+  const auto payload = gti_test::analyzePrivateMemoryFixture(
+      payloadPath.string(), payloadSource);
   if (!payload.canGenerateCode() ||
       gti_test::emitCppText(payload).find(
           "GTI MIR unpublished return cleanup") == std::string::npos) {

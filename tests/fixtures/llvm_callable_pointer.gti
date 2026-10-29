@@ -1,4 +1,4 @@
-#include <std/functional>
+import std.functional;
 
 int increment(int value) { return value + 1; }
 int answer() { return 42; }

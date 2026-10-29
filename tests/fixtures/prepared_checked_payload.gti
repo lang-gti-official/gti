@@ -1,6 +1,6 @@
-#include <std/format>
-#include <std/string>
-#include <std/vector>
+import std.format;
+import std.string;
+import std.vector;
 
 struct Item {
   int32_t number;

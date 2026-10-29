@@ -2,10 +2,10 @@
 // insert of fresh owners, mutable access through at()->, read-only
 // traversal, extraction via std::exchange on a mapped value, erase, and
 // moving the whole registry.
-#include <std/map>
-#include <std/memory>
-#include <std/string>
-#include <std/utility>
+import std.map;
+import std.memory;
+import std.string;
+import std.utility;
 
 mut int g_released = 0;
 

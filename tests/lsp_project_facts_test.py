@@ -8,7 +8,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import has_only_include_advice, LspSession, lsp_position, semantic_tokens_by_position
+from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
 
 
 def write(path, text):
@@ -40,11 +40,15 @@ def initialize(session, watched_files=False, initialization_options=None):
         watchers = registration["params"]["registrations"][0]["registerOptions"][
             "watchers"
         ]
-        assert watchers == [
+        assert watchers[:4] == [
             {"globPattern": "**/*.gti"},
             {"globPattern": "**/gti.toml"},
             {"globPattern": "**/gti.lock"},
+            {"globPattern": "**/module-map.json"},
         ], watchers
+        assert len(watchers) == 5, watchers
+        installed_map = pathlib.Path(watchers[4]["globPattern"])
+        assert installed_map.is_absolute() and installed_map.name == "module-map.json", watchers
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -128,22 +132,25 @@ def test_path_dependency_tooling(executable, root):
     dependency_path = dependency / "lib/counter.gti"
 
     app_source = (
-        "#include <math/counter>\n"
+        "import math.counter;\n"
         "int main() {\n"
         "  math::Counter counter = math::Counter();\n"
         "  return counter.value();\n"
         "}\n"
     )
     dependency_source = (
-        "#if defined(PROJECT_FEATURE)\n"
-        "namespace math {\n"
-        "class Counter {\n"
-        "public: Counter() = default;\n"
-        "  int value() { return 7; }\n"
-        "  int doubled() { return 14; }\n"
-        "};\n"
-        "}\n"
-        "#endif\n"
+        (
+            'export module counter;\n'
+            '#if defined(PROJECT_FEATURE)\n'
+            'namespace math {\n'
+            'export class Counter {\n'
+            'public: Counter() = default;\n'
+            '  int value() { return 7; }\n'
+            '  int doubled() { return 14; }\n'
+            '};\n'
+            '}\n'
+            '#endif\n'
+        )
     )
     write(app_path, app_source)
     write(dependency_path, dependency_source)
@@ -161,13 +168,20 @@ def test_path_dependency_tooling(executable, root):
     )
     write(
         dependency / "gti.toml",
-        "manifest-version = 1\n\n"
-        "[package]\n"
-        'name = "math"\n'
-        'version = "1.0.0"\n'
-        'source-root = "lib"\n\n'
-        "[build]\n"
-        'defines = ["PROJECT_FEATURE"]\n',
+        (
+            'manifest-version = 1\n'
+            '\n'
+            '[package]\n'
+            'name = "math"\n'
+            'version = "1.0.0"\n'
+            'source-root = "lib"\n'
+            '\n'
+            '[build]\n'
+            'defines = ["PROJECT_FEATURE"]\n'
+            '\n'
+            '[modules]\n'
+            'counter = "lib/counter.gti"\n'
+        ),
     )
 
     session = LspSession(executable)
@@ -178,7 +192,7 @@ def test_path_dependency_tooling(executable, root):
         ]
         app_uri = open_document(session, app_path, app_source)
         initial_diagnostics = diagnostics_for(session, app_uri, version=1)
-        assert has_only_include_advice(initial_diagnostics), initial_diagnostics
+        assert (initial_diagnostics == []), initial_diagnostics
 
         labels = completion_labels(session, 2, app_uri, app_source)
         assert {"value", "doubled"}.issubset(labels), labels
@@ -281,7 +295,7 @@ def test_path_dependency_tooling(executable, root):
             }
         )
         updated_diagnostics = diagnostics_for(session, app_uri, version=2)
-        assert has_only_include_advice(updated_diagnostics), updated_diagnostics
+        assert (updated_diagnostics == []), updated_diagnostics
         labels = completion_labels(session, 6, app_uri, updated_app)
         assert "answer" in labels and "value" not in labels, labels
 
@@ -311,10 +325,13 @@ def test_dependency_warning_policy(executable, root):
     app_path = app / "src/main.gti"
     dependency_path = dependency / "src/value.gti"
     app_source = (
-        "#include <library/value>\n"
+        "import library.value;\n"
         "int main() { mut int own = 0; return library::value() + own; }\n")
     dependency_source = (
-        "namespace library { int value() { mut int value = 0; return value; } }\n")
+        (
+            'export module value;\n'
+            'namespace library { export int value() { mut int value = 0; return value; } }\n'
+        ))
     write(app_path, app_source)
     write(dependency_path, dependency_source)
     manifest_path = app / "gti.toml"
@@ -324,8 +341,17 @@ def test_dependency_warning_policy(executable, root):
         '[targets.app]\nkind = "executable"\nroot = "src/main.gti"\n')
     write(manifest_path, base_manifest)
     write(dependency / "gti.toml",
-          'manifest-version = 1\n[package]\nname = "warning_library"\n'
-          'version = "1.0.0"\n[profiles.dev]\ndependency-warnings = false\n')
+          (
+              'manifest-version = 1\n'
+              '[package]\n'
+              'name = "warning_library"\n'
+              'version = "1.0.0"\n'
+              '[profiles.dev]\n'
+              'dependency-warnings = false\n'
+              '\n'
+              '[modules]\n'
+              'value = "src/value.gti"\n'
+          ))
 
     session = LspSession(executable)
     try:
@@ -349,7 +375,7 @@ def test_dependency_warning_policy(executable, root):
             return publications
 
         initial = publications_for_both()
-        assert [item.get("code") for item in initial[app_uri]] == ["GTI-I0013", "GTI-S2096"], initial
+        assert [item.get("code") for item in initial[app_uri]] == ["GTI-S2096"], initial
         assert [item.get("code") for item in initial[dependency_uri]] == ["GTI-S2096"], initial
 
         quiet_profile = "\n[profiles.dev]\ndependency-warnings = false\n"
@@ -362,7 +388,7 @@ def test_dependency_warning_policy(executable, root):
 
         changed_manifest(base_manifest + quiet_profile)
         suppressed = publications_for_both()
-        assert [item.get("code") for item in suppressed[app_uri]] == ["GTI-I0013", "GTI-S2096"], suppressed
+        assert [item.get("code") for item in suppressed[app_uri]] == ["GTI-S2096"], suppressed
         assert suppressed[dependency_uri] == [], suppressed
         session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
                       "params": {"textDocument": {"uri": app_uri},
@@ -372,16 +398,19 @@ def test_dependency_warning_policy(executable, root):
 
         changed_manifest(base_manifest + quiet_profile + 'disabled-warnings = ["unused-mut"]\n')
         grouped = diagnostics_for(session, app_uri, version=1,
-                                  predicate=has_only_include_advice)
-        assert has_only_include_advice(grouped), grouped
+                                  predicate=lambda items: not items)
+        assert (grouped == []), grouped
         changed_manifest(base_manifest + quiet_profile)
         retained = diagnostics_for(session, app_uri, version=1,
                                    predicate=lambda items: any(
                                        item.get("code") == "GTI-S2096" for item in items))
-        assert [d["code"] for d in retained] == ["GTI-I0013", "GTI-S2096"], retained
+        assert [d["code"] for d in retained] == ["GTI-S2096"], retained
 
         write(dependency_path,
-              "namespace library { int value() { return missing; } }\n")
+              (
+                  'export module value;\n'
+                  'namespace library { export int value() { return missing; } }\n'
+              ))
         session.send({"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles",
                       "params": {"changes": [{"uri": dependency_uri, "type": 2}]}})
         error = diagnostics_for(session, dependency_uri,
@@ -393,7 +422,7 @@ def test_dependency_warning_policy(executable, root):
                       "params": {"changes": [{"uri": dependency_uri, "type": 2}]}})
         recovered = publications_for_both()
         assert recovered[dependency_uri] == [], recovered
-        assert [item.get("code") for item in recovered[app_uri]] == ["GTI-I0013", "GTI-S2096"], recovered
+        assert [item.get("code") for item in recovered[app_uri]] == ["GTI-S2096"], recovered
 
         # A dependency opened as its own project is now the selected package;
         # its own warnings must remain visible even though the app suppressed it.
@@ -410,7 +439,7 @@ def test_dependency_warning_policy(executable, root):
 def test_read_only_git_failure(executable, root):
     project = root / "locked-app"
     source_path = project / "src/main.gti"
-    source = "#include <missing/unit>\nint main() { return 0; }\n"
+    source = "import missing.unit;\nint main() { return 0; }\n"
     write(source_path, source)
     manifest_path = project / "gti.toml"
     write(

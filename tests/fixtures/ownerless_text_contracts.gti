@@ -1,4 +1,4 @@
-#include "ownerless_text_contracts_helper.gti"
+import "ownerless_text_contracts_helper.gti";
 
 // Deliberately precede the callee definition: requirement discovery must not
 // depend on source declaration order or on which literal caller is visited.

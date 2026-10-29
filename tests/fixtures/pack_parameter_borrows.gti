@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 void count<T>(mut int& total, T& value) {
   total++;
 }

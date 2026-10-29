@@ -1,60 +1,71 @@
 {
   "schema": "gti-stdlib-surface-v1",
   "source_fingerprints": {
-    "stdlib/prelude.gti": "b042b0195cce00131177e78a59ab358927c6174ae9ce256aec8900204c70d6e8",
-    "stdlib/std/algorithm.gti": "e99485de4cf40d0e1e5be0d10f86780bc38f170c388473b994bb1a6f786ba656",
-    "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
-    "stdlib/std/assert.gti": "3a2ce83cc942a9d506e3934de5bc14290b532a4d6258d6fb55fb691656e17015",
-    "stdlib/std/atomic.gti": "543457c8b30ec699b1b78fdec625baa0ca2a7340f7db5901fb80dbc8f0bc94be",
-    "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
-    "stdlib/std/charconv.gti": "546221ebd010d869a41ca0829f4cd823c27c7773dc5e66c27bea53d22ec8d474",
-    "stdlib/std/chrono.gti": "cd8448851fa4e487b0c62c0db24d429d31d195863bc74a1290839c484470c75a",
-    "stdlib/std/cmath.gti": "ce64a3e07f35f48079a95b6784d4e5aa11c7829691f6436d18a3932319e2773d",
-    "stdlib/std/cstdio.gti": "8081db343694df6698be59fbc91574fb92cc366e0471681daff43ea17cc7e7f3",
-    "stdlib/std/cthread.gti": "8980aedce805131cd3f0a528b55ec31b8e3626b267bfb4321501e236138217d9",
-    "stdlib/std/deque.gti": "c0e5fd8a5be59682871b2ded7e2d7e1b066ceec1fb18372288d9f12da2010c80",
-    "stdlib/std/detail/function_pointer.gti": "1fd2aa328643ea7b349c12cad075214b3a4f817534df05c10a2b049fcd66c0e2",
-    "stdlib/std/detail/iterator.gti": "37ee100c51eb970cdf06df5f79a8a27afab75f977787ec148b752f1a8bb9aab9",
-    "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
-    "stdlib/std/encoding.gti": "7a2eeea4faadd7aad158f65dc6f9514a06388a4c8336b9fed54ae0bf6c27b633",
-    "stdlib/std/environment.gti": "474b13122fcc87ea29fb629afcd5d59d12045882dc31ce39fa5e828c573a3aad",
-    "stdlib/std/experimental/optional.gti": "2e246b16188526f1f9975cbb54757320c361b04a8df84c58038301b75e7b523b",
-    "stdlib/std/filesystem.gti": "c023d1f5d67afe2662bc2c84c1eff7cde9b285b9dba3025735c28e04c4dcb932",
-    "stdlib/std/format.gti": "3056831bf5b91b866384f874f985a7aadc6cac481abfdad07f79fbdaa30f3d06",
-    "stdlib/std/forward_list.gti": "46402534f8f4f5ec078811048969c8cf40093e6362a47c3f8b222040dd2b87c1",
-    "stdlib/std/functional.gti": "07eecd2698574372b70d02d26dd71ded78b3d82eed3b2b0c5a9b8aba970f8959",
-    "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
-    "stdlib/std/io.gti": "84572488c7ccdf86d43e3b3af198177da6c8929fdf96a643a9b298738e1d9983",
-    "stdlib/std/iterator.gti": "da61f366c29fe12d500c93a0774efb3922e0013dbd9b545125b656bc98ecc5de",
-    "stdlib/std/json.gti": "5deec99fb3912e33e69f418c8b617eb0731abb38cfc0367fa0330ccd698e48bf",
-    "stdlib/std/list.gti": "f5dab29ebf10d717fe59d25597d5e1cdd2cea6bcf829acada1265741180c09fe",
-    "stdlib/std/map.gti": "0bef1551a41df59a757d08d0d147af5ec656b495af02f8a6d996713556a19564",
-    "stdlib/std/memory.gti": "5e193aef424cfae10107941f2116f1d389901e6438c5bc5eaa5df5ff347ec528",
-    "stdlib/std/meta.gti": "9161b27d6fea75f7e7fda0b7cfc47fc79c3e5fc8216060b69005383c5099ac71",
-    "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
-    "stdlib/std/numeric.gti": "e5a9c1c5d786b02b97f57c822f552d3af9695b3746e94530261c212429a8e347",
-    "stdlib/std/optional.gti": "f05d089bc8ca91d13ad34b19336eab3e147548da976d2e388673a7cfc50ec23e",
-    "stdlib/std/paired_span.gti": "cc4ebd074bb8149a2accc863df73d845ca16451e6f23fdc0e64249da566b72f1",
-    "stdlib/std/panic.gti": "1dec2c0948ee11aa1d75e0e14628fca5c0c3abb382f88eac6658bf6d796cebf0",
-    "stdlib/std/polymorphic.gti": "a005133d85f45df799923ab4518c159893d798487ee13a33613909d66d78d34d",
-    "stdlib/std/process.gti": "844b344e44f3440d77c8711264e6487c5bd79eb9c8ee93d2958d6b31acc5e065",
-    "stdlib/std/queue.gti": "aa3ce07548d92e58357e88da1dd56234258a8b65c941a45eb406ca2d61771061",
-    "stdlib/std/random.gti": "ca27028a226fa939b8da601faa1f826e3b10ccf650df643e29c4ab2fa2d5aadc",
-    "stdlib/std/resource.gti": "54fc9c2e5dfe54e81d48f58b1c30d007176d4779fab9d78e34e695c28c21cf2d",
-    "stdlib/std/resource_vector.gti": "168647ac6a6b78f5559884bd2860dfb2b6f52e5187914ac445fe4d7dbb8910c3",
-    "stdlib/std/set.gti": "79607e9740ba8b226c6c58773fbd5dc6dce6df1197cd6b1e867efd52b97ab2fa",
-    "stdlib/std/simd.gti": "9db37c0d480f519cfcfb44b22a478cf51f19e0c11334e85caf76e23bbe107f3b",
-    "stdlib/std/source_location.gti": "8d27724cadabe286d7ac2ced211f61bc93fafea12aa5b2f324de39ef0e58be56",
-    "stdlib/std/span.gti": "430adc5e18fd0325a8e7abba92c7edfa031d956d64c16fbb7327da3776d21c6e",
-    "stdlib/std/string.gti": "dc1fd20fbff133f166ae2f7b5d9ada2724f556fefbde914ed3109b588edb7d4c",
-    "stdlib/std/string_view.gti": "db84934530d41115374ab9f76978a276e7c2c6789b6f2848a25dacf295beba27",
-    "stdlib/std/tcp.gti": "5bc1ac802f78ee73d8c8ef3d97f3395c0ffbce422617815e05eaf8c6f3218cd4",
-    "stdlib/std/testing.gti": "ddcea5b0cfb4928bab496de35a203fe715063a73fcee5bd181e28d1e2264b385",
-    "stdlib/std/thread.gti": "34553ae1d585d24b6eb4e6cd41f749b29da53fb907656614c614935f705f4aa4",
-    "stdlib/std/unordered_map.gti": "64818406362ff0b99c30986dc7a0c25f30018eb8c28f4e1f4a3adb2d12571692",
-    "stdlib/std/unordered_set.gti": "53125c982b172a3a0fc8264551d67faa34deaacd46fe1fe187b2a0a220d2b536",
-    "stdlib/std/utility.gti": "959b87c2cd332ad51a4d1711fb4e94b83ab752cb8af886e2aa3bbf2658815e7d",
-    "stdlib/std/vector.gti": "84d0df8e90673d1f034b5947da58b352f9df1a3aaf98ad2b837f8398dfda061e"
+    "stdlib/prelude.gti": "ff426a31d12405cd7a6f09ad46cf76c14f7d3b0a1fadef595c6ad7a4d4d3f831",
+    "stdlib/std.gti": "6bf76540ce1d32024871a3fce4b9512fd6fd494511f919db63450e2b4796a0f7",
+    "stdlib/std/algorithm.gti": "826401e08ec574c7d8c441d579223f2fd0b1ad348bd6fbd4f512c289f1dda74f",
+    "stdlib/std/array.gti": "affed4f1d587a71a098ef7c9b381e6c255d8b639492abbe9a46b31e00115adde",
+    "stdlib/std/assert.gti": "c34ddabb3ce77983232aa13452cf036dba6202cdbd8d2bb7e1c0d9f0a8b6d78d",
+    "stdlib/std/atomic.gti": "d51045256225848941363200bff10a2fe1bf30b66915a06b89e1fce546d1aed1",
+    "stdlib/std/build.gti": "686b681a0da828fadd4bc8ab78dac6fc910da74c12dd5b3eff97f80fda1f8141",
+    "stdlib/std/charconv.gti": "e01943092dfd86a7e2f67a31d422db1fbaa4fd2f91e0ea1ea9f891b5bb43499f",
+    "stdlib/std/chrono.gti": "f21be16ba6043d6d3b3678d0c6a268e448a3a9b44cd64773b7695f816688663a",
+    "stdlib/std/cmath.gti": "dd5dd0b3f8005e4aa02da9e4cacf958269ac392ae8ad28e1ded8a756b65dad83",
+    "stdlib/std/cstdio.gti": "5e76cfb1de246b3793166886bb8c2dc07abaa7218d87950b1a168ce7d27c3492",
+    "stdlib/std/cthread.gti": "18dad8820d74e9caed0d11aca7e4e4bc970304e9fe52ae5908832a1d0ab88d30",
+    "stdlib/std/deque.gti": "733408fd8d0e2922772b2e3fc6d594273961479afd1672f7b397496a7f1e993e",
+    "stdlib/std/detail/charconv_parse.gti": "fd7c40e70656ba6525d9ef03caf622ff3df739f9b07d786296f4a0a7a0415940",
+    "stdlib/std/detail/charconv_types.gti": "f95bc5d90d09bec1fc814eb2a463bd781a2f78777f1bcc214050f58577298afd",
+    "stdlib/std/detail/function_pointer.gti": "e50ccd32727edd5436ae961d9a22e3c4cc7be9674a224493ac6a24ea32856fd4",
+    "stdlib/std/detail/iterator.gti": "3b40fd44d87c647be20245b57e670c460547a3b9808438aee0333d7864d4d491",
+    "stdlib/std/detail/map_entry.gti": "18d397281e03301cf5cb9758b7c6b55415720a6cf346bf14660667ee869d62d6",
+    "stdlib/std/detail/map_iterators.gti": "1865894665173a692f71381a1190056f1c6f8f1d868590c8a84de887045f5047",
+    "stdlib/std/detail/memory_capabilities.gti": "f4add458d438acc7f60ab55c981fd046db11d3fb51b8d81f371892f86243702f",
+    "stdlib/std/detail/memory_core.gti": "4fbde597a84587a8108230d8ee58d8b62d7e4cd6c0791a4b22a3ea16b3ed4e37",
+    "stdlib/std/detail/memory_storage.gti": "18f1377bc1972da20eab16a141500c5995919a97b46e2f379706603301f76c71",
+    "stdlib/std/detail/panic.gti": "c78f8a45be7af44e0379ff3c9c77448f5271538859789f252b658abb4b950154",
+    "stdlib/std/detail/resource_core.gti": "3af137631b16e0c323850cafa4e43bcbb25eb168cb332d95fbecdd4301e53135",
+    "stdlib/std/detail/resource_lease.gti": "f1a66da927f3a040de99b66c55cf2af1bb76779cb75f541c719d06a45c2443f4",
+    "stdlib/std/detail/unordered_map_iterators.gti": "42bbf9226971876d0388a6a32ebed8e82c7ccbfdcd1f0f1404960da2fdd7bf96",
+    "stdlib/std/encoding.gti": "36608d332ccdc334f6834f07188e123609576122ee51894c298bc9e520dd5a77",
+    "stdlib/std/environment.gti": "3a8c583446b14f97b3c3f3b1ae9dad7c206c830222bd31e8b1650e6f4d0cd826",
+    "stdlib/std/experimental/optional.gti": "9ef1e87987c636fa141de4f844c264f07147e816db9c365d98f334f32689c083",
+    "stdlib/std/filesystem.gti": "a579044390fadec9e7854eccd4d5901f13ab85288bf71a19ee97cadad2693de6",
+    "stdlib/std/format.gti": "6bb96b2a640689505878eeafc4ed2b75989c5821638e12114d5661ecdbe0ea67",
+    "stdlib/std/forward_list.gti": "8d39227073b9f98eb6bc83a7a7103bc630497345830bc7e618dcc01fccb917ef",
+    "stdlib/std/functional.gti": "ac30b788f1bfcc1c91091f162bbbb47d89ba8da7c3a4579564b83a6a523f80f1",
+    "stdlib/std/http.gti": "7810cf7acaee803670f346e0103fa6c0cdfca62aca8edda538cfa880e8ae3521",
+    "stdlib/std/io.gti": "8c28bff6f539a82e47f507db2cff429e74307b0dbe6128de48c0b47fd329c0b3",
+    "stdlib/std/iterator.gti": "586855579c50031612b0136d001e21dd31c4387dcf115c9fe4485bd12d2577e3",
+    "stdlib/std/json.gti": "85e0213cd253a521937160a0cac1d3e5be1eaa622f34442831a4d2dbffe7b812",
+    "stdlib/std/list.gti": "d8c0a951c3ef5a9fefb8fd69882c8d2b313c9b502d32df906e8e38da809f7923",
+    "stdlib/std/map.gti": "73bbf9e8c529c923f3391b94b83e330b90c02b933a7b2cfd9f3c171ee01a6955",
+    "stdlib/std/memory.gti": "cf4a99569c5e3d3ddd352ae4a6019586a64ff5fe27e2d637a6bf1c91e4bd62c1",
+    "stdlib/std/meta.gti": "02145583fabe6e6e5598ea9bf3762d27b5d18b4a2c42cd706d42ac14f51c438c",
+    "stdlib/std/mutex.gti": "d761ef5ca158c5da39f60c2c6c2d66004f6a02a9ea5903bbf4db015e9a77eb11",
+    "stdlib/std/numeric.gti": "fa0d3a929076f3f614ebef4c10c897c513e91712332d00b24fc58e78af5bd0cf",
+    "stdlib/std/optional.gti": "a67d746ef0f8f5eb14c256b5595725febe56425cfec76fea484f5717fd1ca0d1",
+    "stdlib/std/paired_span.gti": "06244b15782f49e35b229fa20238489c578305d8b09a70e9b22ba77f7d5dfffa",
+    "stdlib/std/panic.gti": "3d57fe9c9292a04c6671534abaa3fd9b9287c47247f5c2d40e686344c25cd222",
+    "stdlib/std/polymorphic.gti": "af7011cfbe7c6977b0be78787f762f26191e61b0c9632439cdfa94794e398cb3",
+    "stdlib/std/process.gti": "632b0c183f363b66872ae2c17a00516ac9b103bfd580527fc639fd0996e1324b",
+    "stdlib/std/queue.gti": "38c9d92a49aa37fcd56dadaa3c2639e5c963b79efa5286f30b407016bc909eed",
+    "stdlib/std/random.gti": "41d83ba6833118988fcc0559abde9042cd423a201b468c77b6f33da3cd2eabec",
+    "stdlib/std/resource.gti": "dbc11a50bbad24af5830001cb8d99025e21e1054bde19c2fc43ab0338234370c",
+    "stdlib/std/resource_vector.gti": "8858e551fbebd2e2e9806a71f6ee97b39a9acb43cc8b9584f681fd9b1d811f77",
+    "stdlib/std/set.gti": "51dda8c0219afea2cca82160d7f3a062f1eefac41b5959455b887dfcd277f1ae",
+    "stdlib/std/simd.gti": "c525bc03c27ff0f3921aaaa7ff03931dacad40578895dac142b0863f1b5fb9ce",
+    "stdlib/std/source_location.gti": "c748203afe96c27c06465ffd6b38728becb85bcceca6e8097f75a8460eb74f95",
+    "stdlib/std/span.gti": "effe13ba9bd0beeb1f04c84f17b5bd4458686ff713e3eb6756a65a8b0e8a7409",
+    "stdlib/std/string.gti": "9f59d0df17dc0fc737395e41851d56f5d264063129f96a5f8986e3ffe8be4082",
+    "stdlib/std/string_view.gti": "3a96eeaa90719fdc5c2202f5cbd4ee81ef215f702a848767d2a4c2cf82a94cd6",
+    "stdlib/std/tcp.gti": "23022069c0f430cf86fa3c0bd567aa44cde7ef638d7bcb821148a0ac77959c04",
+    "stdlib/std/testing.gti": "03e0324d888081b1ee77a626f73c45170a94aa337a214732ba829880204af618",
+    "stdlib/std/thread.gti": "3fc42f30db431e05b406379bfc24999dc499a1105bee59c07fc1e794b350e77a",
+    "stdlib/std/unordered_map.gti": "7e1066725b42affa19324597126a44fb608416b63bfc778d38526ed9b795e1ed",
+    "stdlib/std/unordered_set.gti": "beefd607c3c90ac64cae71baec51e9808919b7fe6a5f362ec7c2e29351138da0",
+    "stdlib/std/utility.gti": "983e0584b5bf5c1850f0f648ebc579a53586e1e0f5f5d28c23d4fc88155343b5",
+    "stdlib/std/vector.gti": "f3ae234c51396beff612177dcb5b907c543abc6502fe57744fe14d7f2518a3e5"
   },
   "cases": [
     {
@@ -1348,7 +1359,10 @@
         "exit_code": 0,
         "stdout": "",
         "stderr": ""
-      }
+      },
+      "private_modules": [
+        "detail_iterator"
+      ]
     },
     {
       "id": "iterator-paired",
@@ -1379,7 +1393,10 @@
         "exit_code": 0,
         "stdout": "",
         "stderr": ""
-      }
+      },
+      "private_modules": [
+        "detail.map_entry"
+      ]
     },
     {
       "id": "iterator-reverse",
@@ -2360,6 +2377,20 @@
       }
     },
     {
+      "id": "std-aggregate",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_aggregate.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "storage-discardable-result",
       "mode": "run",
       "source": "examples/115-discardable-results.gti",
@@ -3193,8 +3224,28 @@
       "source": "stdlib/std/charconv.gti",
       "status": "executable",
       "operations": [
+        "std::from_chars"
+      ],
+      "case_ids": [
+        "charconv-integer",
+        "charconv-float"
+      ],
+      "required_instantiations": [
+        "all fixed-width integers",
+        "float",
+        "double"
+      ],
+      "evidence": [
+        "tests/charconv_runtime_test.py",
+        "tests/runtime_charconv_tests.cpp"
+      ]
+    },
+    {
+      "id": "charconv.vocabulary",
+      "source": "stdlib/std/detail/charconv_types.gti",
+      "status": "executable",
+      "operations": [
         "std::chars_format",
-        "std::from_chars",
         "std::from_chars_result",
         "std::parse_errc"
       ],
@@ -3482,6 +3533,24 @@
       ]
     },
     {
+      "id": "detail.charconv-parse",
+      "source": "stdlib/std/detail/charconv_parse.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::numeric_format",
+        "std::detail::parse_float",
+        "std::detail::parse_integer"
+      ],
+      "case_ids": [
+        "charconv-integer",
+        "charconv-float",
+        "string"
+      ],
+      "evidence": [
+        "tests/stdlib_module_boundaries_test.py"
+      ]
+    },
+    {
       "id": "detail.function-pointer-core",
       "source": "stdlib/std/detail/function_pointer.gti",
       "status": "executable",
@@ -3501,6 +3570,62 @@
       ]
     },
     {
+      "id": "detail.map-entry",
+      "source": "stdlib/std/detail/map_entry.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::map_entry"
+      ],
+      "case_ids": [
+        "associative-map",
+        "unordered-map-core"
+      ],
+      "evidence": [
+        "tests/map_mutable_entry_projection_test.py",
+        "tests/stdlib_module_boundaries_test.py"
+      ]
+    },
+    {
+      "id": "detail.memory-capabilities",
+      "source": "stdlib/std/detail/memory_capabilities.gti",
+      "status": "executable",
+      "operations": [
+        "gti_internal::shared_owner",
+        "gti_internal::uninitialized_storage",
+        "gti_internal::unique_owner"
+      ],
+      "case_ids": [
+        "unique-ptr",
+        "shared-ptr",
+        "allocator-storage"
+      ],
+      "evidence": [
+        "tests/llvm_memory_execution_test.py",
+        "tests/stdlib_module_boundaries_test.py"
+      ]
+    },
+    {
+      "id": "detail.memory-storage",
+      "source": "stdlib/std/detail/memory_storage.gti",
+      "status": "executable",
+      "operations": [
+        "gti_internal::prefix_slots",
+        "gti_internal::sparse_slots",
+        "std::detail::prefix_owner",
+        "std::detail::process_lease"
+      ],
+      "case_ids": [
+        "allocator-storage",
+        "resource-container-usage",
+        "string"
+      ],
+      "evidence": [
+        "tests/source_prefix_owner_tests.cpp",
+        "tests/source_sparse_storage_tests.cpp",
+        "tests/stdlib_module_boundaries_test.py"
+      ]
+    },
+    {
       "id": "detail.panic-core",
       "source": "stdlib/std/detail/panic.gti",
       "status": "executable",
@@ -3514,6 +3639,22 @@
       "evidence": [
         "tests/panic_runtime_test.py",
         "tests/panic_adoption_runtime_test.py"
+      ]
+    },
+    {
+      "id": "detail.resource-lease",
+      "source": "stdlib/std/detail/resource_lease.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::resource_lease"
+      ],
+      "case_ids": [
+        "resource-container-usage",
+        "resource-programmable"
+      ],
+      "evidence": [
+        "tests/source_resource_prefix_runtime_test.py",
+        "tests/stdlib_module_boundaries_test.py"
       ]
     },
     {
@@ -4450,10 +4591,6 @@
       "source": "stdlib/std/map.gti",
       "status": "executable",
       "operations": [
-        "std::detail::map_entry_projection::first",
-        "std::detail::map_entry_projection::key",
-        "std::detail::map_entry_projection::mapped",
-        "std::detail::map_entry_projection::second",
         "std::map::cbegin",
         "std::map::cend",
         "std::map::crbegin",
@@ -4544,8 +4681,38 @@
       ]
     },
     {
+      "id": "map.private-mapped-projection",
+      "source": "stdlib/std/detail/map_iterators.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::map_entry_projection::first",
+        "std::detail::map_entry_projection::key",
+        "std::detail::map_entry_projection::mapped",
+        "std::detail::map_entry_projection::second"
+      ],
+      "case_ids": [
+        "iterator-checked-position",
+        "iterator-projected-map",
+        "iterator-reverse"
+      ],
+      "required_instantiations": [
+        "readonly key",
+        "exclusive scalar and owning mapped value",
+        "noncopyable exclusive cursor",
+        "reverse mapped projection"
+      ],
+      "evidence": [
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/fixtures/container_reverse_probe.gti",
+        "tests/fixtures/map_mutable_entry_projection.gti",
+        "tests/container_iterator_movement_test.py",
+        "tests/map_mutable_entry_projection_test.py",
+        "examples/087-associative-containers.gti"
+      ]
+    },
+    {
       "id": "memory.c-string-bytes",
-      "source": "stdlib/std/memory.gti",
+      "source": "stdlib/std/detail/memory_core.gti",
       "status": "executable",
       "operations": [
         "std::c_string_bytes"
@@ -4565,7 +4732,7 @@
     },
     {
       "id": "memory.checked-erasure",
-      "source": "stdlib/std/memory.gti",
+      "source": "stdlib/std/detail/memory_core.gti",
       "status": "executable",
       "operations": [
         "std::erase_mut",
@@ -4590,55 +4757,17 @@
       ]
     },
     {
-      "id": "memory.executable",
-      "source": "stdlib/std/memory.gti",
+      "id": "memory.core-primitives",
+      "source": "stdlib/std/detail/memory_core.gti",
       "status": "executable",
       "operations": [
         "std::alignment",
         "std::alignment::bytes",
         "std::alloc_errc",
-        "std::allocator",
-        "std::allocator::try_storage<T>(size_t)",
-        "std::allocator::try_storage<T>(size_t,std::alignment)",
-        "std::arena<T>",
-        "std::arena<T>::capacity",
-        "std::arena<T>::empty",
-        "std::arena<T>::full",
-        "std::arena<T>::get",
-        "std::arena<T>::get_mut",
-        "std::arena<T>::reset",
-        "std::arena<T>::size",
-        "std::arena<T>::try_insert",
-        "std::arena_errc",
         "std::assume_mut<T,Owner>",
         "std::assume_ref<T,Owner>",
         "std::erase_address<T>",
-        "std::pool<T>",
-        "std::pool<T>::capacity",
-        "std::pool<T>::clear",
-        "std::pool<T>::contains",
-        "std::pool<T>::empty",
-        "std::pool<T>::erase",
-        "std::pool<T>::full",
-        "std::pool<T>::get",
-        "std::pool<T>::get_mut",
-        "std::pool<T>::size",
-        "std::pool<T>::try_insert",
-        "std::pool_errc",
-        "std::storage<T>",
-        "std::storage<T>::capacity",
-        "std::storage<T>::clear",
-        "std::storage<T>::construct",
-        "std::storage<T>::destroy",
-        "std::storage<T>::emplace",
-        "std::storage<T>::get",
-        "std::storage<T>::get_mut",
-        "std::storage<T>::initialized",
-        "std::storage<T>::release",
-        "std::storage<T>::relocate_to",
         "std::storage_element<T>",
-        "std::try_make_arena<T>",
-        "std::try_make_pool<T>",
         "std::typed_address<T>"
       ],
       "case_ids": [
@@ -4687,8 +4816,97 @@
       ]
     },
     {
-      "id": "memory.layout",
+      "id": "memory.executable",
       "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": [
+        "std::allocator",
+        "std::allocator::try_storage<T>(size_t)",
+        "std::allocator::try_storage<T>(size_t,std::alignment)",
+        "std::arena<T>",
+        "std::arena<T>::capacity",
+        "std::arena<T>::empty",
+        "std::arena<T>::full",
+        "std::arena<T>::get",
+        "std::arena<T>::get_mut",
+        "std::arena<T>::reset",
+        "std::arena<T>::size",
+        "std::arena<T>::try_insert",
+        "std::arena_errc",
+        "std::pool<T>",
+        "std::pool<T>::capacity",
+        "std::pool<T>::clear",
+        "std::pool<T>::contains",
+        "std::pool<T>::empty",
+        "std::pool<T>::erase",
+        "std::pool<T>::full",
+        "std::pool<T>::get",
+        "std::pool<T>::get_mut",
+        "std::pool<T>::size",
+        "std::pool<T>::try_insert",
+        "std::pool_errc",
+        "std::storage<T>",
+        "std::storage<T>::capacity",
+        "std::storage<T>::clear",
+        "std::storage<T>::construct",
+        "std::storage<T>::destroy",
+        "std::storage<T>::emplace",
+        "std::storage<T>::get",
+        "std::storage<T>::get_mut",
+        "std::storage<T>::initialized",
+        "std::storage<T>::release",
+        "std::storage<T>::relocate_to",
+        "std::try_make_arena<T>",
+        "std::try_make_pool<T>"
+      ],
+      "case_ids": [
+        "allocator-storage",
+        "storage-discardable-result",
+        "storage-final-address",
+        "storage-immovable",
+        "storage-owning-view",
+        "storage-release",
+        "arena-pool",
+        "raw-owner-witness",
+        "raw-pointer-conversion",
+        "structural-relocation",
+        "owned-error-pipelines",
+        "resource-programmable",
+        "resource-region-contracts"
+      ],
+      "required_instantiations": [
+        "std::alignment(64)",
+        "std::arena<int32_t>",
+        "std::arena<tracked_value>",
+        "std::pool<int32_t>",
+        "std::pool<tracked_value>",
+        "std::storage<int32_t>",
+        "std::storage<tracked>",
+        "std::storage<immovable object> with final-address emplacement",
+        "std::alloc_errc invalid_region and invalid_state"
+      ],
+      "evidence": [
+        "tests/allocator_storage_runtime_test.py",
+        "tests/storage_final_address_runtime_test.py",
+        "tests/fixtures/storage_final_address.gti",
+        "tests/fixtures/storage_release.gti",
+        "tests/arena_pool_runtime_test.py",
+        "tests/fixtures/allocator_storage.gti",
+        "tests/fixtures/arena_pool.gti",
+        "tests/fixtures/structural_relocation.gti",
+        "tests/structural_relocation_runtime_test.py",
+        "examples/120-immovable-storage.gti",
+        "tests/fixtures/programmable_allocators.gti",
+        "tests/fixtures/resource_region_contracts.gti",
+        "tests/source_sparse_storage_tests.cpp",
+        "tests/source_sparse_storage_runtime_test.py",
+        "tests/fixtures/source_sparse_slots.gti",
+        "stdlib/std/memory.gti"
+      ]
+    },
+    {
+      "id": "memory.layout",
+      "source": "stdlib/std/detail/memory_core.gti",
       "status": "executable",
       "operations": [
         "std::layout",
@@ -4744,7 +4962,7 @@
     },
     {
       "id": "memory.manual-lifetimes",
-      "source": "stdlib/std/memory.gti",
+      "source": "stdlib/std/detail/memory_core.gti",
       "status": "executable",
       "operations": [
         "std::construct_at",
@@ -4816,7 +5034,7 @@
     },
     {
       "id": "memory.text-owner-views",
-      "source": "stdlib/std/memory.gti",
+      "source": "stdlib/std/detail/memory_core.gti",
       "status": "executable",
       "operations": [
         "std::assume_c_string<Owner>",
@@ -4842,7 +5060,7 @@
     },
     {
       "id": "memory.unique-ptr",
-      "source": "stdlib/std/memory.gti",
+      "source": "stdlib/std/detail/memory_core.gti",
       "status": "executable",
       "operations": [
         "std::make_unique",
@@ -4872,7 +5090,7 @@
     },
     {
       "id": "memory.unique-ptr-upcast",
-      "source": "stdlib/std/memory.gti",
+      "source": "stdlib/std/detail/memory_core.gti",
       "status": "executable",
       "operations": [
         "std::unique_ptr::upcast",
@@ -5850,7 +6068,7 @@
     },
     {
       "id": "resource.protocol",
-      "source": "stdlib/std/resource.gti",
+      "source": "stdlib/std/detail/resource_core.gti",
       "status": "executable",
       "operations": [
         "std::bind_resource",
@@ -6201,6 +6419,21 @@
       ]
     },
     {
+      "id": "std.aggregate",
+      "source": "stdlib/std.gti",
+      "status": "executable",
+      "operations": [
+        "std module portable aggregate re-exports"
+      ],
+      "case_ids": [
+        "std-aggregate"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_aggregate.gti",
+        "stdlib/module-map.json"
+      ]
+    },
+    {
       "id": "string-view.checked-value-iteration",
       "source": "stdlib/std/string_view.gti",
       "status": "executable",
@@ -6224,7 +6457,10 @@
         "std::string_view::rbegin",
         "std::string_view::rend",
         "std::string_view::rend_iterator",
-        "std::string_view::reverse_iterator_at"
+        "std::string_view::reverse_iterator_at",
+        "std::string_view_iterator",
+        "std::string_view_reverse_iterator",
+        "std::string_view_sentinel"
       ],
       "case_ids": [
         "iterator-text-view",
@@ -6241,7 +6477,7 @@
       "evidence": [
         "tests/fixtures/text_view_iterator_completion.gti",
         "tests/fixtures/text_view_iterator_module.gti",
-        "stdlib/modules/string_view.gti",
+        "stdlib/std/string_view.gti",
         "tests/text_view_iterator_runtime_test.py",
         "tests/text_view_iterator_compiler_tests.cpp",
         "examples/146-counted-text-view-iteration.gti"
@@ -6543,14 +6779,39 @@
       "source": "stdlib/std/unordered_map.gti",
       "status": "executable",
       "operations": [
-        "std::detail::unordered_map_entry_projection::first",
-        "std::detail::unordered_map_entry_projection::key",
-        "std::detail::unordered_map_entry_projection::mapped",
-        "std::detail::unordered_map_entry_projection::second",
         "std::unordered_map::cbegin",
         "std::unordered_map::cend",
         "std::unordered_map::end_iterator",
         "std::unordered_map::end_mut"
+      ],
+      "case_ids": [
+        "iterator-checked-position",
+        "iterator-projected-map"
+      ],
+      "required_instantiations": [
+        "readonly key",
+        "exclusive mapped scalar and owning value",
+        "vacant bucket skipping",
+        "no fabricated reverse category",
+        "independently advanced shared copies and by-value sentinel equality"
+      ],
+      "evidence": [
+        "tests/fixtures/map_mutable_entry_projection.gti",
+        "tests/fixtures/container_iterator_movement.gti",
+        "tests/container_iterator_movement_test.py",
+        "tests/map_mutable_entry_projection_test.py",
+        "examples/087-associative-containers.gti"
+      ]
+    },
+    {
+      "id": "unordered-map.private-mapped-projection",
+      "source": "stdlib/std/detail/unordered_map_iterators.gti",
+      "status": "executable",
+      "operations": [
+        "std::detail::unordered_map_entry_projection::first",
+        "std::detail::unordered_map_entry_projection::key",
+        "std::detail::unordered_map_entry_projection::mapped",
+        "std::detail::unordered_map_entry_projection::second"
       ],
       "case_ids": [
         "iterator-checked-position",

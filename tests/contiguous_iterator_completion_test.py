@@ -45,11 +45,11 @@ def sanitizer_partitions(source):
 
 
 def negative_sources():
-    headers = """#include <std/string>
-#include <std/vector>
-#include <std/span>
-#include <std/resource_vector>
-#include <std/resource>
+    headers = """import std.string;
+import std.vector;
+import std.span;
+import std.resource_vector;
+import std.resource;
 """
     return {
         "vector-snapshot-invalidation": headers + """int main() {

@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/memory>
-#include <std/vector>
+import std.string;
+import std.memory;
+import std.vector;
 
 struct Point {
   mut int32_t value;

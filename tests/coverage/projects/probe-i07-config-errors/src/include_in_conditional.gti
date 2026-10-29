@@ -1,5 +1,5 @@
 #ifdef FAST
-#include "shared.gti"
+import "shared.gti";
 #endif
 
 int main() { return shared::mode() - 1; }

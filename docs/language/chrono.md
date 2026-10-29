@@ -2,7 +2,7 @@
 
 Status: Implemented bounded nanosecond clock slice.
 
-`<std/chrono>` provides exact signed nanosecond values, a process-local
+`std.chrono` provides exact signed nanosecond values, a process-local
 monotonic clock for elapsed-time measurement, and a wall clock for Unix
 timestamps. It deliberately keeps the two time-point families nominally
 distinct so a timestamp cannot accidentally participate in monotonic timing.

@@ -1,6 +1,6 @@
-#include <std/resource>
-#include <std/memory>
-#include <std/utility>
+import std.resource;
+import std.memory;
+import std.utility;
 
 // The three provider forwarding forms reported in issue #212, each returning
 // a named Expected local from inside an unsafe block.

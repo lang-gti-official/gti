@@ -10,6 +10,7 @@
 #include "gti/optimizer.h"
 
 #include "cpp_backend_test_support.h"
+#include "private_stdlib_fixture.h"
 
 #include <array>
 #include <cstdio>
@@ -40,11 +41,7 @@ std::string environmentPath(const char *name) {
 lang::FrontendResult analyzeTrusted(const std::string &name,
                                     const std::string &source) {
   const std::filesystem::path stdlibRoot = environmentPath("GTI_STDLIB_PATH");
-  const std::filesystem::path entry =
-      std::filesystem::temp_directory_path() / ("gti-prefix-" + name);
-  return lang::Frontend().analyze(entry, "#include <std/memory>\n" + source,
-                                  {stdlibRoot / "prelude.gti"}, {},
-                                  {stdlibRoot});
+  return gti_test::analyzePrivateMemoryFixture(name, source, {}, stdlibRoot);
 }
 
 std::string readFile(const std::filesystem::path &path) {

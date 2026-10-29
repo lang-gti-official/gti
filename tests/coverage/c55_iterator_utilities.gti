@@ -1,6 +1,6 @@
 // Iterator protocol: begin/end, manual advance, and the for-each shape.
-#include <std/vector>
-#include <std/iterator>
+import std.vector;
+import std.iterator;
 
 class Countdown {
   mut int32_t remaining = 0;

@@ -1,6 +1,6 @@
-#include <std/forward_list>
-#include <std/string>
-#include <std/vector>
+import std.forward_list;
+import std.string;
+import std.vector;
 
 class item {
 public:

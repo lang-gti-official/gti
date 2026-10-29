@@ -1,8 +1,8 @@
 // A class-owned type pack forwarding into std::function targets stored in a
 // vector, generic variadic invocation of lambdas / function items / nominal
 // callables.
-#include <std/functional>
-#include <std/vector>
+import std.functional;
+import std.vector;
 
 namespace ops {
 int32_t add3(int32_t a, int32_t b, int32_t c) { return a + b + c; }

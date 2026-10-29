@@ -127,8 +127,7 @@ const char *const kFindCaller = R"(int main() {
 
 void checkFixtures(const std::filesystem::path &root,
                    const std::filesystem::path &directory) {
-  const std::string includes =
-      "#include <std/iterator>\n#include <std/list>\n\n";
+  const std::string includes = "import std.iterator;\nimport std.list;\n\n";
 
   // The moved-return fact of a generic callee: both orders accept the program
   // and conclude the same thing.
@@ -229,7 +228,7 @@ void checkFixtures(const std::filesystem::path &root,
   return hits == 2 ? 0 : 1;
 }
 )";
-  const std::string metaIncludes = includes + "#include <std/meta>\n";
+  const std::string metaIncludes = includes + "import std.meta;\n";
   const auto expansionCalleeFirst =
       analyzeSource(root, directory, "expansion-callee-first.gti",
                     metaIncludes + kGenericFind + "\n" + expandingCaller);

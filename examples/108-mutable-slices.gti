@@ -1,6 +1,5 @@
-#include <std/span>
-#include <std/vector>
-
+import std.span;
+import std.vector;
 void increment(mut std::mutable_span<int>& elements) {
   for (mut int& element : elements) { element += 1; }
 }

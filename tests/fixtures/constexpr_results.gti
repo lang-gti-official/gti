@@ -1,5 +1,5 @@
-#include <std/numeric>
-#include <std/array>
+import std.numeric;
+import std.array;
 
 enum class parse_error { empty, invalid };
 

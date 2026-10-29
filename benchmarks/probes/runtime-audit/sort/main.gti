@@ -1,6 +1,6 @@
-#include <std/algorithm>
-#include <std/string>
-#include <std/vector>
+import std.algorithm;
+import std.string;
+import std.vector;
 int main() {
   mut uint64_t state = uint64_t(88172645463325252);
   mut uint64_t checksum = 0;

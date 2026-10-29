@@ -1,9 +1,9 @@
-#include <std/list>
-#include <std/deque>
-#include <std/queue>
-#include <std/set>
-#include <std/unordered_set>
-#include <std/memory>
+import std.list;
+import std.deque;
+import std.queue;
+import std.set;
+import std.unordered_set;
+import std.memory;
 
 mut int constructed = 0;
 mut int destroyed = 0;

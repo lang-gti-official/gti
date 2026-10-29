@@ -3,11 +3,10 @@
 // field by move, so owning payloads such as strings are matched without a
 // copy or a borrow, and the consumed enum is gone afterwards. A `switch` over
 // a named enum still only observes it: its bindings copy, and `auto&` borrows.
-#include <std/format>
-#include <std/panic>
-#include <std/string>
-#include <std/vector>
-
+import std.format;
+import std.panic;
+import std.string;
+import std.vector;
 enum class message {
   quit,
   ping,

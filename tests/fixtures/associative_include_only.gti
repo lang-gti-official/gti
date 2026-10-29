@@ -1,5 +1,5 @@
-#include <std/map>
-#include <std/unordered_map>
+import std.map;
+import std.unordered_map;
 
 // Concrete signature dependencies must exist even when the generic owner is
 // never instantiated. This is deliberately not a pair/map construction test.

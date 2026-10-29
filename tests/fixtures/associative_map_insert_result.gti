@@ -1,5 +1,5 @@
-#include <std/map>
-#include <std/utility>
+import std.map;
+import std.utility;
 
 using Dictionary = std::map<int, int>;
 

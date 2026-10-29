@@ -1,3 +1,4 @@
+export module two;
 namespace util {
-  int helper(int input) { return input + 2; }
+  export int helper(int input) { return input + 2; }
 }

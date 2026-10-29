@@ -1,4 +1,4 @@
-#include <std/meta>
+import std.meta;
 
 // A contextual construction whose initializer is a reflected expression, here
 // a conversion to a field's reflected type, receives the value that

@@ -1,6 +1,6 @@
-#include <std/utility>
-#include <std/string>
-#include <std/functional>
+import std.utility;
+import std.string;
+import std.functional;
 
 [[c_abi]] struct NativeAddress {
   mut const int* pointer;

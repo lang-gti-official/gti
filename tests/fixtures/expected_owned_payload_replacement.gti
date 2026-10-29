@@ -1,9 +1,9 @@
-#include <std/memory>
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
-#include <std/format>
-#include <std/panic>
+import std.memory;
+import std.string;
+import std.utility;
+import std.vector;
+import std.format;
+import std.panic;
 
 mut int cleanup_mode = 0;
 class Probe {

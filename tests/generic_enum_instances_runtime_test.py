@@ -18,8 +18,8 @@ enum Event<T, U = T, uint64_t Channel = 3> {
 """
 
 OWNING = """
-#include <std/vector>
-#include <std/optional>
+import std.vector;
+import std.optional;
 
 mut int32_t drops = 0;
 mut int32_t cleanup_divisor = 1;
@@ -346,7 +346,7 @@ int main() {
 }
 """, 0, ""),
         "receiver-pattern-loans": ("""
-#include <std/vector>
+import std.vector;
 enum Buffer<std::vector_element T> { data(std::vector<T> values) };
 class Inbox<std::vector_element T> {
   mut Buffer<T> message = Buffer<T>::data(std::vector<T>());

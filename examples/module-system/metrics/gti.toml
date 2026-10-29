@@ -1,0 +1,7 @@
+manifest-version = 1
+[package]
+name = "metrics"
+version = "0.1.0"
+source-root = "src"
+[modules]
+geometry = "src/api.gti"

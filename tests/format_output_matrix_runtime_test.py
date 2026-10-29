@@ -34,7 +34,7 @@ FLOAT_SPECS = ["", ":.3f", ":e", ":10.2f", ":<12g", ":+.1e", ":08.3f", ":^14.4E"
 
 
 def program() -> str:
-    lines = ["#include <std/format>", "#include <std/string>",
+    lines = ["import std.format;", "import std.string;",
              "void show(expected<std::string, std::format_errc> result) {\n"
              "  if (result.has_value()) { std::println(result.value().view()); }\n"
              "  else { std::println(\"error\"); }\n}", "int main() {"]

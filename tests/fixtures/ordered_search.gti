@@ -1,10 +1,10 @@
-#include <std/algorithm>
-#include <std/array>
-#include <std/deque>
-#include <std/functional>
-#include <std/iterator>
-#include <std/list>
-#include <std/vector>
+import std.algorithm;
+import std.array;
+import std.deque;
+import std.functional;
+import std.iterator;
+import std.list;
+import std.vector;
 
 class Below {
   int limit;

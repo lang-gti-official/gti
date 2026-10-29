@@ -1,5 +1,5 @@
-#include <std/detail/iterator>
-#include <std/panic>
+import std.detail_iterator;
+import std.panic;
 
 mut int dropped = 0;
 class Ticket {

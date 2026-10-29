@@ -1,3 +1,0 @@
-// Module std.paired_span: the public surface of <std/paired_span>.
-export module paired_span;
-export #include <std/paired_span>

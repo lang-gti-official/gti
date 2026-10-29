@@ -14,7 +14,7 @@ struct CppMirRepresentationSnapshotTestAccess {
 namespace {
 std::string source(std::string_view destructor) {
   return R"gti(
-#include <std/string>
+import std.string;
 class Token {
 public:
   Token() = default;

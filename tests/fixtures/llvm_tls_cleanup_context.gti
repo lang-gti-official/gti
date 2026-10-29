@@ -1,4 +1,4 @@
-#include <std/panic>
+import std.panic;
 
 mut int divisor = 1;
 mut int outer_divisor = 1;

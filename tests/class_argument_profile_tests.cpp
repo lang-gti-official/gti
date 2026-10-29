@@ -171,7 +171,7 @@ int main() { return 0; }
 )",
            "GTI-S2013", "ambiguous");
   accepted(R"(
-#include <std/meta>
+import std.meta;
 static_assert(std::meta::type<void>().is_void());
 static_assert(!std::meta::type<int>().is_void());
 static_assert(std::meta::type<int&>().is_reference());
@@ -179,7 +179,7 @@ static_assert(!std::meta::type<int>().is_reference());
 int main() { return 0; }
 )");
   accepted(R"(
-#include <std/meta>
+import std.meta;
 class Reply<T, E> {
 public:
   Reply() {}

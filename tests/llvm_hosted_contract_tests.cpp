@@ -619,7 +619,7 @@ void classOwnerRawReferenceContract(const std::filesystem::path &repository,
   require(seen[0] && seen[1], "both class-witness access modes are exercised");
 
   const std::string owner = R"(
-#include <std/memory>
+import std.memory;
 struct Owner {
   mut int value;
   std::unique_ptr<int> token;
@@ -659,7 +659,7 @@ struct Owner {
         "owner death, movement and overlapping mutation remain rejected");
   }
   const std::string nestedOwner = R"(
-#include <std/memory>
+import std.memory;
 struct Referent {
   mut int value = 7;
   std::unique_ptr<int> token;
@@ -704,7 +704,7 @@ struct Owner {
         "class referent cannot outlive, move or overlap its owner loan");
   }
   const auto unsupported = analyze("unsupported-owner-layout.gti", R"(
-#include <std/memory>
+import std.memory;
 struct Owner {
   int value = 7;
   virtual int observe() { return this.value; }
@@ -729,7 +729,7 @@ int main() {
   // Move this control to another unsupported referent as LLVM coverage grows.
   const auto unsupportedReferent =
       analyze("unsupported-referent-layout.gti", R"(
-#include <std/memory>
+import std.memory;
 interface Shape { int area(); };
 class Square : public Shape {
   int side;
@@ -838,8 +838,8 @@ void classOwnerTextContract(const std::filesystem::path &repository) {
       }
   require(seen[0] && seen[1], "both fundamental text construction proofs run");
   const std::string owner = R"(
-#include <std/memory>
-#include <std/string_view>
+import std.memory;
+import std.string_view;
 struct Owner {
   mut int tag = 22;
   std::unique_ptr<int> token;
@@ -885,8 +885,8 @@ struct Owner {
     // metadata: no owner bytes are read or copied.
     const auto polymorphic = analyze("polymorphic-text-owner.gti", std::string(
                                                                        R"(
-#include <std/memory>
-#include <std/string_view>
+import std.memory;
+import std.string_view;
 struct Owner {
   Owner() = default;
   int tag = 22;
@@ -907,8 +907,8 @@ int main() {
     // An interface view of the owner is an address too: the selected view
     // carries the owner's dispatch metadata, never its bytes.
     const auto viewed = analyze("interface-text-owner.gti", std::string(R"(
-#include <std/memory>
-#include <std/string_view>
+import std.memory;
+import std.string_view;
 interface Observed {
   int observe();
 };
@@ -937,9 +937,9 @@ int main() {
     const auto mutexOwner = Frontend(concurrent)
                                 .analyze("mutex-text-owner.gti",
                                          std::string(R"(
-#include <std/memory>
-#include <std/mutex>
-#include <std/string_view>
+import std.memory;
+import std.mutex;
+import std.string_view;
 int main() {
   std::mutex<int> owner{1};
   char bytes[3] = {'a', '\0', 'b'};

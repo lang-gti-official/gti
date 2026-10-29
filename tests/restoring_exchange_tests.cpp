@@ -309,8 +309,8 @@ int main() {
   expect(seen == 4, "both operations are instantiated for scalar and resource");
   const auto escapedView =
       analyzeWithStandardLibrary("restoring-view-escape.gti", R"(
-#include <std/utility>
-#include <std/string>
+import std.utility;
+import std.string;
 std::string_view bad() {
   std::string owner = std::string("local");
   mut std::string_view view = owner.view();
@@ -323,8 +323,8 @@ int main() { std::println(bad()); return 0; }
          "dependency");
   const auto swappedView =
       analyzeWithStandardLibrary("restoring-view-swap.gti", R"(
-#include <std/utility>
-#include <std/string>
+import std.utility;
+import std.string;
 int main() {
   std::string left = std::string("left");
   mut std::string right = std::string("right");
@@ -360,7 +360,7 @@ int main() {
         "int take(mut int& value) { return std::move(value); } "
         "int main() { mut int x = 1; return take(x); }"}) {
     const auto denied = analyzeWithStandardLibrary(
-        "restoring-eligibility.gti", "#include <std/utility>\n" + program);
+        "restoring-eligibility.gti", "import std.utility;\n" + program);
     expect(!denied.canGenerateCode(), "deleted movement and arbitrary "
                                       "reference consumption remain forbidden");
   }
@@ -374,7 +374,7 @@ int main() {
     // The last case exercises the unchanged baseline, not a negative case.
     const auto probe = analyzeWithStandardLibrary(
         "restoring-borrow.gti",
-        "#include <std/utility>\nint main() { " + body + " return 0; }");
+        "import std.utility;\nint main() { " + body + " return 0; }");
     const bool ordinaryMove = body == "mut int x = 1; return std::move(x);";
     expect(probe.canGenerateCode() == ordinaryMove,
            "self-alias, immutable storage and outstanding loans are rejected");
@@ -550,7 +550,7 @@ int main() {
         "escaped = std::move(v[std::size_t(0)]);"}) {
     const auto denied = analyzeWithStandardLibrary(
         "restoring-indexed-borrow.gti",
-        "#include <std/vector>\n#include <std/array>\n"
+        "import std.vector;\nimport std.array;\n"
         "class Resource { public: Resource(int id) {} Resource(Resource& "
         "other) = delete; };\n"
         "int main() { " +
@@ -565,8 +565,8 @@ int main() {
   // A restoring swap or exchange of a polymorphic class that another class
   // derives from is rejected for now: a reference to it may name the base
   // part of a derived object, whose dispatch state relocation would replace.
-  const std::string hierarchy = R"(#include <std/utility>
-#include <std/vector>
+  const std::string hierarchy = R"(import std.utility;
+import std.vector;
 class Base {
 public:
   int value;

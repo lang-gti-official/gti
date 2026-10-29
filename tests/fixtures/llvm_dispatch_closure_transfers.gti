@@ -8,7 +8,7 @@
 // parameter, through a return into its caller's destination, or into its
 // slot of another closure, which invokes it in place. Destructors record
 // explicit IDs.
-#include <std/utility>
+import std.utility;
 
 mut int events = 0;
 mut int expected_cleanup = 0;

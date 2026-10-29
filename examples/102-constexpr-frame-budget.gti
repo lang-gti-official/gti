@@ -1,5 +1,4 @@
-#include <std/chrono>
-
+import std.chrono;
 struct AssetWork {
   std::string_view name;
   std::chrono::nanoseconds budget;

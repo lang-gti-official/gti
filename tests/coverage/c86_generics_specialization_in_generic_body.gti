@@ -1,6 +1,6 @@
 // Exact qualified specializations selected after generic substitution, through
 // aliases, with value-argument keys, and inside a constrained generic class.
-#include <std/vector>
+import std.vector;
 
 namespace codec {
 class traits<T> {

@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/functional>
+import std.vector;
+import std.functional;
 
 class Container<K, C = std::less<K>> {
   mut std::vector<int> data{};

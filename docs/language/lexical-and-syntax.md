@@ -102,7 +102,7 @@ spelling that is already part of GTI retains its GTI meaning; otherwise its use
 as a source identifier is ill-formed. This boundary prevents valid GTI syntax
 from becoming invalid only after translation to the native C++ backend. A
 component of a compiler-managed standard-library path, such as `template` in
-`<std/template>`, is a path component rather than an identifier and remains
+`std.template`, is a path component rather than an identifier and remains
 permitted.
 
 The spellings `int8_t` through `int64_t` and `uint8_t` through `uint64_t` are
@@ -164,37 +164,50 @@ documentation. Compiler queries expose the same retained value at declaration,
 type-use, member-use, construction, and selected-call sites; an editor protocol
 must not rescan nearby source text to infer documentation.
 
-## 2.6 Source Units And Includes
+## 2.6 Source Units And Modules
 
-An `#include` directive appears only at source-unit top level and names a quoted
-`.gti` dependency, a compiler-managed `<std/name>` unit, or a project-provided
-`<alias/name>` package unit. A package alias resolves only when the compilation
-request supplies the including package's direct dependency graph; the compiler
-does not search nearby manifests. Loading is canonicalized, load-once, and
-cycle-checked. It is not textual substitution and does not introduce macros or
-include guards.
+GTI 0.493.0 implements the module-only language transition. GTI
+`#include` and `export #include` are rejected with `GTI-I0014`; they do not load
+a dependency. Source dependencies use explicit module interfaces and imports.
+The campaign plan records the completed phase 2 implementation, targeted
+acceptance and owner-authorized deferral of final full-suite validation.
 
-A source unit can name declarations from:
+A source unit can name declarations from itself, exported declarations of its
+imports and their explicit re-exports, and the implicit standard prelude.
+Ordinary imports do not re-export their dependencies. Loading is canonicalized,
+load-once, and cycle-checked; it is not textual substitution. Only the entry
+source unit may define `main`.
 
-- itself;
-- its direct includes;
-- exported declarations of its imports and their explicit re-exports,
-  including the legacy units those interfaces republish; and
-- the implicit standard prelude.
+### Migrating Existing Source
 
-An included unit does not re-export its own dependencies. Only the entry source
-unit may define `main`.
+Replace `#include <vector>` with `import std.vector;`. A local dependency such
+as `#include "geometry.gti"` becomes `import "geometry.gti";`, and that file
+must start with `export module geometry;`. Mark the declarations its callers
+use with `export`; imports do not expose every declaration automatically.
+Replace `export #include` with `export import` only when that dependency is
+intended to be part of the importing interface's public API.
 
-When package roots are active, a quoted include must remain within the
-including unit's owning package. Cross-package access uses a declared angle
-alias. Package provenance does not make source compiler-trusted.
+For a package API, register the interface in `[modules]` in `gti.toml` and import
+its registered name, qualified by the dependency alias when appropriate. Keep
+private interfaces inside their owner's root and import them with quoted paths;
+do not register them merely to work around visibility. Register implementation
+files with their interface and use the matching `module name;` header. See the
+[module-system example](../../examples/module-system/README.md) for a complete
+package with split generic bodies and unrelated private names.
+
+Native C/C++ headers used by bindgen and the native toolchain retain their
+native meaning. The change removes GTI source includes, not native header input.
+There is no compatibility switch that restores GTI include behavior.
 
 ### Explicit Module Interfaces
 
 A module interface starts with `export module name;` before other tokens.
-Comments and whitespace may precede it. `name` is one ordinary ASCII identifier;
-it is package-local and does not introduce a namespace. Legacy include units
-and ordinary consumers do not need a module declaration.
+Comments and whitespace may precede it. `name` is one or more ordinary ASCII
+identifiers separated by dots, such as `graphics.geometry`. It is owner-local
+and does not introduce a namespace, nested ownership, or ancestor access. An
+ordinary entry does not require a header; an imported target must be an
+interface. A registered implementation starts with `module name;`, matching
+its interface exactly.
 
 ```gti
 // src/api.gti
@@ -229,18 +242,20 @@ specifiers in their written order.
 `import "api.gti";` imports a relative interface, including in direct compilation.
 With an explicit package graph, `import local;` selects `[modules].local` in the
 owning package, `import dependency.name;` selects a module of a direct dependency,
-and `import dependency;` selects that dependency's `main` module. A collision
-between a local name and a dependency alias is diagnosed. The registered name
+and `import dependency;` selects that dependency's `main` module. If a full spelling identifies both a local module and a dependency module,
+resolution diagnoses the ambiguity. The registered name
 must match the target's module declaration. Names never trigger filesystem
 search or implicit manifest discovery. Quoted imports cannot cross package
 boundaries. See the [manifest contract](../architecture/build-and-driver.md#source-module-registration).
 
-`[module-implementations]` may register ordinary private source files alongside
-an interface. Importing that interface loads its registered implementations;
-they explicitly import the interface and can define its existing ordinary
-methods using `ReturnType Owner::method(...) { ... }`. This is optional, and
-does not introduce a second module-header form, implicit source discovery or
-visibility of private helpers to importers. See
+`[module-implementations]` registers private implementation source files
+alongside an interface. Importing the interface loads that explicit closure.
+Each implementation declares `module name;` and sees the interface implicitly.
+The interface and implementations share one logical module identity, including
+private declarations. Ordinary and generic function bodies can be separated
+from their interface declarations; method definitions use
+`ReturnType Owner::method(...) { ... }` (including `Owner<T>` for generic owners).
+Registration does not discover files or expose private helpers to importers. See
 [out-of-class definitions](static-semantics.md#optional-out-of-class-method-definitions).
 
 `export import ...;` is allowed only in an interface and deliberately re-exports
@@ -248,48 +263,29 @@ the imported public surface. Ordinary imports do not re-export. Import cycles
 and multiple interface files declaring the same name in one package are errors.
 All three declarations require their terminating semicolon.
 
-An interface cannot be loaded with `#include`, and a legacy include unit cannot
-be loaded with `import`. Existing includes keep their original behavior. An
-interface can instead republish one legacy unit with `export #include`:
-
-```gti
-// src/geometry.gti
-export module geometry;
-export #include "legacy_geometry.gti"
-```
-
-The directive includes the unit exactly as `#include` does, then publishes all
-of that unit's declarations to the interface's importers, as if each were
-exported. The unit's own includes are not republished, matching include
-visibility. `export #include` outside an interface, or naming an interface, is
-an error; an interface is re-exported with `export import`. Republishing lets
-a library offer an import before its implementation is migrated to explicit
-exports.
-
 The name `std` is reserved for the standard library, in direct and project
-compilation alike. Every public `<std/name>` unit is also the module
-`std.name`, whose interface republishes that unit, so `import std.vector;`
-makes the declarations of `<std/vector>` visible. See
-[standard-library modules](standard-library.md#standard-library-modules).
-There is no aggregate `import std;`. A package cannot register a module named
-`std`, and a dependency alias cannot be `std`.
+compilation alike. `import std.name;` selects the interface registered in the
+installed `stdlib/module-map.json`. `import std;` selects that map’s default
+aggregate interface, which re-exports portable public standard modules.
+Private standard-library files are not discoverable through named imports. A package
+cannot register a module named `std`, and a dependency alias cannot be `std`.
+See [standard-library modules](standard-library.md#standard-library-modules).
 
 Source-local configuration flags neither enter nor escape imported modules;
-compiler-supplied flags still apply. A legacy include processes its flag
-directives once in each module, including directives in its nested includes.
-Repeating an include within that module does not reapply a previous definition
-after an `#undef`. A legacy include can be shared across module boundaries even
-when the incoming source-local flags differ. Sharing is diagnosed only when a
-module's flags select different syntax in that unit or one of its nested
-includes, for example an `#ifdef` on a flag that one module defines.
+compiler-supplied flags still apply. Imports are unconditional. Removing the
+include-based sharing path does not grant access to private declarations or
+compiler capabilities. Source ownership and compiler trust are separate facts;
+being in a package, or spelling a module like a standard module, grants no
+compiler capability.
 
-This initial implementation controls visibility, not separate compilation or
-module linkage. Program-wide qualified-name uniqueness still applies, including
-to private types; libraries should retain their ordinary namespaces. Private
-declarations remain available to their defining bodies and generic instances.
-The keywords `import` and `module` are newly reserved in this pre-1.0 minor
-release; rename existing identifiers using those spellings. `export` was
-already reserved. [ADR 024](../decisions/024-source-module-interfaces.md) records
+Declarations carry their logical module identity. Unrelated modules may use
+the same private names and may independently export the same qualified names.
+Importing both is valid until an ambiguous name is used. Private declarations
+remain available to their defining bodies and generic instances. A private type
+returned by an exported function remains usable through inference without
+exporting its name. Source-local `static` declarations remain file-local.
+The source module contract does not require binary module artifacts.
+The keywords `import`, `module`, and `export` are reserved. [ADR 024](../decisions/024-source-module-interfaces.md) records
 the proposal and the intentionally unimplemented binary-module boundary.
 
 ## 2.7 Grammar Presentation

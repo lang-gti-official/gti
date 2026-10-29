@@ -1,7 +1,8 @@
-#include <std/mutex>
-#include <std/string>
+export module enum_replacement_support;
+import std.mutex;
+import std.string;
 
-class ReplacementResource {
+export class ReplacementResource {
   std::mutex<std::string> storage;
   int32_t identity;
   int32_t divisor;
@@ -17,13 +18,13 @@ public:
   }
 };
 
-enum ReplacementEvent {
+export enum ReplacementEvent {
   idle,
   held(ReplacementResource value),
   other(ReplacementResource value),
 };
 
-class ReplacementGuard {
+export class ReplacementGuard {
 public:
   ReplacementGuard() {}
   ~ReplacementGuard() { std::println(9); }

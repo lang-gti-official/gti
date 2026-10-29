@@ -1,5 +1,4 @@
-#include <foreign_variables/bindings>
-
+import foreign_variables.bindings;
 int main() {
   // Forming a raw address creates no checked loan or native read.
   auto counter_address = &native::counter;

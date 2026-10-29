@@ -7,7 +7,7 @@ from lambda_pack_invocation_runtime_test import main
 
 
 if __name__ == "__main__":
-    memory = pathlib.Path(__file__).parent.parent / "stdlib/std/memory.gti"
+    memory = pathlib.Path(__file__).parent.parent / "stdlib/std/detail/memory_storage.gti"
     lines = memory.read_text().splitlines()
     capacity = next(i + 1 for i, line in enumerate(lines)
                     if "require_relocation_capacity(count <= this.slots" in line)
@@ -18,7 +18,7 @@ if __name__ == "__main__":
     read = next(i + 1 for i, line in enumerate(lines)
                 if "require_live_storage(this.initialized(index))" in line)
     def failure(line, detail, stdout=""):
-        return (70, stdout, f"<std/memory>:{line}: runtime error[GTI-R0010]: "
+        return (70, stdout, f"<std/detail/memory_storage>:{line}: runtime error[GTI-R0010]: "
                 f"invalid_storage_state in {detail}\n")
     main(names=("structural_relocation",), cases={"structural_relocation": [
         ((), (0, "71\n82\n81\nrelocation passed\n", "")),

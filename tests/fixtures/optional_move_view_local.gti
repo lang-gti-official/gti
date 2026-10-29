@@ -1,5 +1,5 @@
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 
 int main() {
   std::optional<std::string_view> empty{};

@@ -142,21 +142,38 @@ def main():
         assert '#line ' not in generated.read_text(encoding="utf-8")
         support = root / "support.gti"
         support.write_text(
-            "T identity<T>(T value) {\n  return value;\n}\n"
-            "class Counter {\n  int stored;\npublic:\n"
-            "  Counter(int value) : stored(value) {\n    int observed = value;\n    [[discard]] identity(observed);\n  }\n"
-            "  int read() {\n    return this.stored;\n  }\n};\n"
-            "int helper() {\n  Counter counter{41};\n"
-            "  auto read = [](int value) -> int {\n    return identity(value);\n  };\n"
-            "  return read(counter.read());\n}\n", encoding="utf-8")
+            (
+                'export module support;\n'
+                'export T identity<T>(T value) {\n'
+                '  return value;\n'
+                '}\n'
+                'export class Counter {\n'
+                '  int stored;\n'
+                'public:\n'
+                '  Counter(int value) : stored(value) {\n'
+                '    int observed = value;\n'
+                '    [[discard]] identity(observed);\n'
+                '  }\n'
+                '  int read() {\n'
+                '    return this.stored;\n'
+                '  }\n'
+                '};\n'
+                'export int helper() {\n'
+                '  Counter counter{41};\n'
+                '  auto read = [](int value) -> int {\n'
+                '    return identity(value);\n'
+                '  };\n'
+                '  return read(counter.read());\n'
+                '}\n'
+            ), encoding="utf-8")
         composed = root / "composed.gti"
-        composed.write_text('#include "support.gti"\nint main() { return helper() - 41; }\n', encoding="utf-8")
+        composed.write_text('import "support.gti";\nint main() { return helper() - 41; }\n', encoding="utf-8")
         run([gti, composed, "-g", "-O1", "--std", "c++20", "--keep-cpp", "-o", executable], root)
         run([executable], root)
         text = generated.read_text(encoding="utf-8")
-        assert f'#line 2 "{support}"' in text  # Retained generic body.
-        assert f'#line 12 "{support}"' in text  # Ordinary method.
-        assert f'#line 18 "{support}"' in text  # Nested lambda.
+        assert f'#line 3 "{support}"' in text  # Retained generic body.
+        assert f'#line 13 "{support}"' in text  # Ordinary method.
+        assert f'#line 19 "{support}"' in text  # Nested lambda.
         rejected = run([gti, source, "--emit-mir", "-g"], root, ok=False)
         assert rejected.returncode and "debug info" in rejected.stderr
 

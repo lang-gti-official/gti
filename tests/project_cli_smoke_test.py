@@ -94,29 +94,55 @@ def test_dependency_warning_policy(gti, root):
     for path in (source, own, library_source, leaf_source):
         path.parent.mkdir(parents=True, exist_ok=True)
     source.write_text(
-        '#include <library/value>\n#include "build/gti/deps/owned.gti"\n'
+        'import library.value;\nimport "build/gti/deps/owned.gti";\n'
         "int main() { mut int own = 0; return library::value() + owned() + own; }\n",
         encoding="utf-8",
     )
     own.write_text(
-        "int owned() { mut int own = 0; return own; }\n", encoding="utf-8")
+        (
+            'export module owned;\n'
+            'export int owned() { mut int own = 0; return own; }\n'
+        ), encoding="utf-8")
     library_text = (
-        "#include <leaf/value>\nnamespace library { int value() { "
-        "mut int value = 0; return leaf::value() + value; } }\n")
+        (
+            'export module value;\n'
+            'import leaf.value;\n'
+            'namespace library { export int value() { mut int value = 0; return leaf::value() + value; } }\n'
+        ))
     library_source.write_text(library_text, encoding="utf-8")
     leaf_source.write_text(
-        "namespace leaf { int value() { mut int value = 0; return value; } }\n",
+        (
+            'export module value;\n'
+            'namespace leaf { export int value() { mut int value = 0; return value; } }\n'
+        ),
         encoding="utf-8",
     )
     # Dependencies cannot impose their diagnostic preferences on the consumer.
     (library / "gti.toml").write_text(
-        'manifest-version = 1\n[package]\nname = "warning_library"\n'
-        'version = "1.0.0"\n[dependencies]\nleaf = { path = "../warning-leaf" }\n'
-        '[profiles.dev]\ndependency-warnings = false\n'
-        'disabled-warnings = ["unused-mut"]\n', encoding="utf-8")
+        (
+            'manifest-version = 1\n'
+            '[package]\n'
+            'name = "warning_library"\n'
+            'version = "1.0.0"\n'
+            '[dependencies]\n'
+            'leaf = { path = "../warning-leaf" }\n'
+            '[profiles.dev]\n'
+            'dependency-warnings = false\n'
+            'disabled-warnings = ["unused-mut"]\n'
+            '\n'
+            '[modules]\n'
+            'value = "src/value.gti"\n'
+        ), encoding="utf-8")
     (leaf / "gti.toml").write_text(
-        'manifest-version = 1\n[package]\nname = "warning_leaf"\n'
-        'version = "1.0.0"\n', encoding="utf-8")
+        (
+            'manifest-version = 1\n'
+            '[package]\n'
+            'name = "warning_leaf"\n'
+            'version = "1.0.0"\n'
+            '\n'
+            '[modules]\n'
+            'value = "src/value.gti"\n'
+        ), encoding="utf-8")
     base_manifest = manifest(
         '[dependencies]\nlibrary = { path = "../warning-library" }\n'
         '[targets.app]\nkind = "executable"\nroot = "src/main.gti"\n')
@@ -168,7 +194,10 @@ def test_dependency_warning_policy(gti, root):
     direct = run([gti, str(direct_source), "--emit-mir"], cwd=project)
     assert direct.stderr.count("warning[GTI-S2096]") == 1, direct.stderr
     library_source.write_text(
-        "namespace library { int value() { return missing; } }\n", encoding="utf-8")
+        (
+            'export module value;\n'
+            'namespace library { export int value() { return missing; } }\n'
+        ), encoding="utf-8")
     error = run([gti, "check"], expected=65, cwd=project)
     assert "error[GTI-S2001]" in error.stderr and str(library_source) in error.stderr
     library_source.write_text(library_text, encoding="utf-8")
@@ -217,8 +246,8 @@ def main():
     for variable in GIT_REPOSITORY_ENVIRONMENT:
         os.environ.pop(variable, None)
     scaffold_source = (
-        "#include <std/string>\n"
-        "#include <std/vector>\n"
+        "import std.string;\n"
+        "import std.vector;\n"
         "\n"
         "int main(int argc, std::vector<std::string> argv) {\n"
         '  std::println("Hello, GTI!");\n'
@@ -1266,8 +1295,8 @@ def main():
         run_project = root / "run-project"
         run_project.mkdir()
         (run_project / "main.gti").write_text(
-            "#include <std/string>\n"
-            "#include <std/vector>\n"
+            "import std.string;\n"
+            "import std.vector;\n"
             "int main(int argc, std::vector<std::string> argv) { "
             "if (argc != 4 or argv.size() != std::size_t(4)) { return 8; } "
             'if (argv[std::size_t(1)] != "alpha" or '
@@ -1377,31 +1406,43 @@ def main():
             "int main() { return 0; }\n", encoding="utf-8"
         )
         (app_package / "src/main.gti").write_text(
-            "#include <math/add>\n"
+            "import math.add;\n"
             "int main() { return math::add(2, 3) == 5 ? 0 : 1; }\n",
             encoding="utf-8",
         )
         (math_package / "src/add.gti").write_text(
-            "#include <util/value>\n"
-            "namespace math {\n"
-            "int add(int left, int right) { return left + right + util::zero(); }\n"
-            "}\n",
+            (
+                'export module add;\n'
+                'import util.value;\n'
+                'namespace math {\n'
+                'export int add(int left, int right) { return left + right + util::zero(); }\n'
+                '}\n'
+            ),
             encoding="utf-8",
         )
         (util_package / "src/value.gti").write_text(
-            "namespace util { int zero() { return 0; } }\n",
+            (
+                'export module value;\n'
+                'namespace util { export int zero() { return 0; } }\n'
+            ),
             encoding="utf-8",
         )
         (workspace / "gti.toml").write_text(
-            "manifest-version = 1\n\n"
-            "[package]\n"
-            'name = "workspace_root"\n'
-            'version = "0.1.0"\n\n'
-            "[targets.root]\n"
-            'kind = "executable"\n'
-            'root = "src/main.gti"\n\n'
-            "[workspace]\n"
-            'members = ["packages/math", "packages/app"]\n',
+            (
+                'manifest-version = 1\n'
+                '\n'
+                '[package]\n'
+                'name = "workspace_root"\n'
+                'version = "0.1.0"\n'
+                '\n'
+                '[targets.root]\n'
+                'kind = "executable"\n'
+                'root = "src/main.gti"\n'
+                '\n'
+                '[workspace]\n'
+                'members = ["packages/math", "packages/app"]\n'
+                '\n'
+            ),
             encoding="utf-8",
         )
         (app_package / "gti.toml").write_text(
@@ -1417,19 +1458,32 @@ def main():
             encoding="utf-8",
         )
         (math_package / "gti.toml").write_text(
-            "manifest-version = 1\n\n"
-            "[package]\n"
-            'name = "math"\n'
-            'version = "2.0.0"\n\n'
-            "[dependencies]\n"
-            'util = { path = "../../shared/util" }\n',
+            (
+                'manifest-version = 1\n'
+                '\n'
+                '[package]\n'
+                'name = "math"\n'
+                'version = "2.0.0"\n'
+                '\n'
+                '[dependencies]\n'
+                'util = { path = "../../shared/util" }\n'
+                '\n'
+                '[modules]\n'
+                'add = "src/add.gti"\n'
+            ),
             encoding="utf-8",
         )
         (util_package / "gti.toml").write_text(
-            "manifest-version = 1\n\n"
-            "[package]\n"
-            'name = "util"\n'
-            'version = "3.0.0"\n',
+            (
+                'manifest-version = 1\n'
+                '\n'
+                '[package]\n'
+                'name = "util"\n'
+                'version = "3.0.0"\n'
+                '\n'
+                '[modules]\n'
+                'value = "src/value.gti"\n'
+            ),
             encoding="utf-8",
         )
 
@@ -1466,7 +1520,7 @@ def main():
             expected=65,
             cwd=app_package,
         )
-        assert "error[GTI-I0010]" in direct_package_include.stderr
+        assert "error[GTI-I0012]" in direct_package_include.stderr
         unknown_package = run(
             [gti, "build", "--package", "missing"], expected=65, cwd=workspace
         )
@@ -1637,11 +1691,13 @@ def main():
                 "manifest-version = 1\n\n"
                 "[package]\n"
                 f'name = "{name}"\n'
-                'version = "0.1.0"\n',
+                'version = "0.1.0"\n'
+                '[modules]\nadd = "src/add.gti"\n',
                 encoding="utf-8",
             )
             (path / "src/add.gti").write_text(
-                f"namespace {name} {{\n"
+                "export module add;\n"
+                f"export namespace {name} {{\n"
                 f"int add(int left, int right) {{ mut int bias = {add_bias}; "
                 "return left + right + bias; }\n"
                 "}\n",
@@ -1674,7 +1730,7 @@ def main():
 
         write_app_manifest(first_revision)
         (git_app / "src/main.gti").write_text(
-            "#include <mathdep/add>\n\n"
+            "import mathdep.add;\n\n"
             "int main() {\n"
             "  return mathdep::add(2, 3) == 5 ? 0 : 1;\n"
             "}\n",
@@ -1726,9 +1782,12 @@ def main():
 
         # Upstream advancing cannot change a pinned build.
         (upstream / "src/add.gti").write_text(
-            "namespace mathdep {\n"
-            "int add(int left, int right) { return left + right + 100; }\n"
-            "}\n",
+            (
+                'export module add;\n'
+                'namespace mathdep {\n'
+                'export int add(int left, int right) { return left + right + 100; }\n'
+                '}\n'
+            ),
             encoding="utf-8",
         )
         git_in(upstream, "commit", "-qam", "bias")
@@ -1886,14 +1945,19 @@ def main():
             'name = "middledep"\n'
             'version = "0.2.0"\n\n'
             "[dependencies]\n"
-            f'mathdep = {{ git = "{upstream}", rev = "{second_revision}" }}\n',
+            f'mathdep = {{ git = "{upstream}", rev = "{second_revision}" }}\n'
+            '[modules]\ntwice = "src/twice.gti"\n',
             encoding="utf-8",
         )
         (middle_upstream / "src/twice.gti").write_text(
-            "#include <mathdep/add>\n\n"
-            "namespace middledep {\n"
-            "int twice(int value) { return mathdep::add(value, value); }\n"
-            "}\n",
+            (
+                'export module twice;\n'
+                'import mathdep.add;\n'
+                '\n'
+                'namespace middledep {\n'
+                'export int twice(int value) { return mathdep::add(value, value); }\n'
+                '}\n'
+            ),
             encoding="utf-8",
         )
         run([git, "init", "-q", str(middle_upstream)])
@@ -1919,7 +1983,7 @@ def main():
             encoding="utf-8",
         )
         (chained_app / "src/main.gti").write_text(
-            "#include <middledep/twice>\n\n"
+            "import middledep.twice;\n\n"
             "int main() {\n"
             "  return middledep::twice(3) == 106 ? 0 : 1;\n"
             "}\n",
@@ -2400,15 +2464,21 @@ def main():
             "int main() { return 0; }\n", encoding="utf-8"
         )
         (dep_native / "gti.toml").write_text(
-            "manifest-version = 1\n\n"
-            "[package]\n"
-            'name = "cache_dependency_root"\n'
-            'version = "0.1.0"\n\n'
-            "[targets.root]\n"
-            'kind = "executable"\n'
-            'root = "src/main.gti"\n\n'
-            "[workspace]\n"
-            'members = ["packages/nativedep", "packages/app"]\n',
+            (
+                'manifest-version = 1\n'
+                '\n'
+                '[package]\n'
+                'name = "cache_dependency_root"\n'
+                'version = "0.1.0"\n'
+                '\n'
+                '[targets.root]\n'
+                'kind = "executable"\n'
+                'root = "src/main.gti"\n'
+                '\n'
+                '[workspace]\n'
+                'members = ["packages/nativedep", "packages/app"]\n'
+                '\n'
+            ),
             encoding="utf-8",
         )
         (dep_app / "gti.toml").write_text(
@@ -2424,18 +2494,25 @@ def main():
             encoding="utf-8",
         )
         (dep_app / "src/main.gti").write_text(
-            "#include <nativedep/api>\n"
+            "import nativedep.api;\n"
             "int main() { return nativedep::scaled(21) == 42 ? 0 : 1; }\n",
             encoding="utf-8",
         )
         (dep_lib / "gti.toml").write_text(
-            "manifest-version = 1\n\n"
-            "[package]\n"
-            'name = "nativedep"\n'
-            'version = "2.0.0"\n\n'
-            "[package.native]\n"
-            'include-dirs = ["native/include"]\n'
-            'c-sources = ["native/dep.c"]\n',
+            (
+                'manifest-version = 1\n'
+                '\n'
+                '[package]\n'
+                'name = "nativedep"\n'
+                'version = "2.0.0"\n'
+                '\n'
+                '[package.native]\n'
+                'include-dirs = ["native/include"]\n'
+                'c-sources = ["native/dep.c"]\n'
+                '\n'
+                '[modules]\n'
+                'api = "src/api.gti"\n'
+            ),
             encoding="utf-8",
         )
         dep_header = dep_lib / "native/include/dep.h"
@@ -2449,12 +2526,16 @@ def main():
             encoding="utf-8",
         )
         (dep_lib / "src/api.gti").write_text(
-            'extern "C" {\n'
-            "int dep_scale(int value);\n"
-            "}\n\n"
-            "namespace nativedep {\n"
-            "int scaled(int value) { return dep_scale(value); }\n"
-            "}\n",
+            (
+                'export module api;\n'
+                'export extern "C" {\n'
+                'int dep_scale(int value);\n'
+                '}\n'
+                '\n'
+                'namespace nativedep {\n'
+                'export int scaled(int value) { return dep_scale(value); }\n'
+                '}\n'
+            ),
             encoding="utf-8",
         )
 
@@ -2660,28 +2741,38 @@ def main():
         scripted = root / "scripted-native"
         (scripted / "src").mkdir(parents=True)
         (scripted / "gti.toml").write_text(
-            "manifest-version = 1\n\n"
-            "[package]\n"
-            'name = "scripted-native"\n'
-            'version = "0.1.0"\n\n'
-            "[package.build-script]\n"
-            'source = "build.gti"\n'
-            'inputs = []\n',
+            (
+                'manifest-version = 1\n'
+                '\n'
+                '[package]\n'
+                'name = "scripted-native"\n'
+                'version = "0.1.0"\n'
+                '\n'
+                '[package.build-script]\n'
+                'source = "build.gti"\n'
+                'inputs = []\n'
+                '\n'
+                '[modules]\n'
+                'scripted = "src/scripted.gti"\n'
+            ),
             encoding="utf-8",
         )
         (scripted / "src/scripted.gti").write_text(
-            "namespace scripted {\n"
-            'extern "C" {\n'
-            "int scripted_value();\n"
-            "}\n"
-            "}\n",
+            (
+                'export module scripted;\n'
+                'namespace scripted {\n'
+                'export extern "C" {\n'
+                'int scripted_value();\n'
+                '}\n'
+                '}\n'
+            ),
             encoding="utf-8",
         )
         (scripted / "build.gti").write_text(
-            "#include <std/build>\n"
-            "#include <std/cstdio>\n"
-            "#include <std/string>\n"
-            "#include <std/vector>\n\n"
+            "import std.build;\n"
+            "import std.cstdio;\n"
+            "import std.string;\n"
+            "import std.vector;\n\n"
             "int main(int argc, std::vector<std::string> argv) {\n"
             "  if (argc != 11) { return 64; }\n"
             "  mut std::build::context context = "
@@ -2723,7 +2814,7 @@ def main():
             scripted_manifest, encoding="utf-8"
         )
         (scripted_app / "src/main.gti").write_text(
-            "#include <scripted/scripted>\n\n"
+            "import scripted.scripted;\n\n"
             "int main() {\n"
             "  unsafe { return scripted::scripted_value() == 42 ? 0 : 1; }\n"
             "}\n",
@@ -2789,6 +2880,7 @@ def main():
                 "[package]\n"
                 'name = "wrapper"\n'
                 'version = "0.1.0"\n\n'
+                "[modules]\nwrap = \"src/wrap.gti\"\n\n"
                 "[package.native]\n" + native_lines,
                 encoding="utf-8",
             )
@@ -2809,12 +2901,16 @@ def main():
             encoding="utf-8",
         )
         (wrapper / "src/wrap.gti").write_text(
-            'extern "C" {\n'
-            "int wrap_add(int left, int right);\n"
-            "}\n\n"
-            "namespace wrap {\n"
-            "int add(int left, int right) { return wrap_add(left, right); }\n"
-            "}\n",
+            (
+                'export module wrap;\n'
+                'export extern "C" {\n'
+                'int wrap_add(int left, int right);\n'
+                '}\n'
+                '\n'
+                'namespace wrap {\n'
+                'export int add(int left, int right) { return wrap_add(left, right); }\n'
+                '}\n'
+            ),
             encoding="utf-8",
         )
 
@@ -2833,7 +2929,7 @@ def main():
             encoding="utf-8",
         )
         (composed_app / "src/main.gti").write_text(
-            "#include <wrap/wrap>\n\n"
+            "import wrap.wrap;\n\n"
             "int main() {\n"
             "  return wrap::add(2, 3) == 12 ? 0 : 1;\n"
             "}\n",
@@ -2945,14 +3041,22 @@ def main():
         (middle_package / "src").mkdir(parents=True)
         (middle_package / "native").mkdir()
         (middle_package / "gti.toml").write_text(
-            "manifest-version = 1\n\n"
-            "[package]\n"
-            'name = "middledep"\n'
-            'version = "0.1.0"\n\n'
-            "[package.native]\n"
-            'c-sources = ["native/middle.c"]\n\n'
-            "[dependencies]\n"
-            'basedep = { path = "../native-base" }\n',
+            (
+                'manifest-version = 1\n'
+                '\n'
+                '[package]\n'
+                'name = "middledep"\n'
+                'version = "0.1.0"\n'
+                '\n'
+                '[package.native]\n'
+                'c-sources = ["native/middle.c"]\n'
+                '\n'
+                '[dependencies]\n'
+                'basedep = { path = "../native-base" }\n'
+                '\n'
+                '[modules]\n'
+                'mid = "src/mid.gti"\n'
+            ),
             encoding="utf-8",
         )
         (middle_package / "native/middle.c").write_text(
@@ -2961,12 +3065,16 @@ def main():
             encoding="utf-8",
         )
         (middle_package / "src/mid.gti").write_text(
-            'extern "C" {\n'
-            "int middle_value();\n"
-            "}\n\n"
-            "namespace middle {\n"
-            "int value() { return middle_value(); }\n"
-            "}\n",
+            (
+                'export module mid;\n'
+                'export extern "C" {\n'
+                'int middle_value();\n'
+                '}\n'
+                '\n'
+                'namespace middle {\n'
+                'export int value() { return middle_value(); }\n'
+                '}\n'
+            ),
             encoding="utf-8",
         )
 
@@ -2985,7 +3093,7 @@ def main():
             encoding="utf-8",
         )
         (chained_native_app / "src/main.gti").write_text(
-            "#include <middledep/mid>\n\n"
+            "import middledep.mid;\n\n"
             "int main() {\n"
             "  return middle::value() == 42 ? 0 : 1;\n"
             "}\n",
@@ -3028,15 +3136,23 @@ def main():
         (vendored_upstream / "native").mkdir(parents=True)
         (vendored_upstream / "src").mkdir(parents=True)
         (vendored_upstream / "gti.toml").write_text(
-            "manifest-version = 1\n\n"
-            "[package]\n"
-            'name = "checksum"\n'
-            'version = "0.1.0"\n\n'
-            "[package.native]\n"
-            'include-dirs = ["native"]\n'
-            'c-sources = ["native/checksum.c"]\n\n'
-            "[bindgen.checksum_c]\n"
-            'header = "native/checksum.h"\n',
+            (
+                'manifest-version = 1\n'
+                '\n'
+                '[package]\n'
+                'name = "checksum"\n'
+                'version = "0.1.0"\n'
+                '\n'
+                '[package.native]\n'
+                'include-dirs = ["native"]\n'
+                'c-sources = ["native/checksum.c"]\n'
+                '\n'
+                '[bindgen.checksum_c]\n'
+                'header = "native/checksum.h"\n'
+                '\n'
+                '[modules]\n'
+                'lib = "src/lib.gti"\n'
+            ),
             encoding="utf-8",
         )
         (vendored_upstream / "native/checksum.h").write_text(
@@ -3060,18 +3176,21 @@ def main():
             encoding="utf-8",
         )
         (vendored_upstream / "src/lib.gti").write_text(
-            "#include <checksum_c/bindings>\n"
-            "\n"
-            "// Wrapped so dependents never touch the raw C ABI.\n"
-            "int32_t checksum_of_bytes(uint8_t* bytes, int32_t count) {\n"
-            "  unsafe {\n"
-            "    return checksum_of(bytes, count);\n"
-            "  }\n"
-            "}\n"
-            "\n"
-            "int32_t checksum_seed() {\n"
-            "  return CHECKSUM_SEED;\n"
-            "}\n",
+            (
+                'export module lib;\n'
+                'import checksum_c.bindings;\n'
+                '\n'
+                '// Wrapped so dependents never touch the raw C ABI.\n'
+                'export int32_t checksum_of_bytes(uint8_t* bytes, int32_t count) {\n'
+                '  unsafe {\n'
+                '    return checksum_of(bytes, count);\n'
+                '  }\n'
+                '}\n'
+                '\n'
+                'export int32_t checksum_seed() {\n'
+                '  return CHECKSUM_SEED;\n'
+                '}\n'
+            ),
             encoding="utf-8",
         )
         run([git, "init", "-q", str(vendored_upstream)])
@@ -3097,7 +3216,7 @@ def main():
             encoding="utf-8",
         )
         (vendored_app / "src/main.gti").write_text(
-            "#include <checksum/lib>\n"
+            "import checksum.lib;\n"
             "\n"
             "int main() {\n"
             "  mut uint8_t data[3] = {uint8_t(1), uint8_t(2), uint8_t(3)};\n"
@@ -3119,7 +3238,7 @@ def main():
         run([gti, "run"], cwd=vendored_app)
         # The consumer must not reach the dependency's bindgen alias.
         (vendored_app / "src/main.gti").write_text(
-            "#include <checksum_c/bindings>\n"
+            "import checksum_c.bindings;\n"
             "\n"
             "int main() {\n"
             "  return 0;\n"
@@ -3187,7 +3306,7 @@ def main():
             encoding="utf-8",
         )
         (bindgen_project / "src/main.gti").write_text(
-            "#include <counter/bindings>\n"
+            "import counter.bindings;\n"
             "\n"
             "int main() {\n"
             "  unsafe {\n"
@@ -3211,7 +3330,10 @@ def main():
             bindgen_project / "build/gti/bindgen/bindgen-project/counter/bindings.gti"
         )
         assert generated_bindings.is_file()
-        assert "COUNTER_LIMIT" in generated_bindings.read_text(encoding="utf-8")
+        generated_source = generated_bindings.read_text(encoding="utf-8")
+        assert "COUNTER_LIMIT" in generated_source
+        assert "export module bindings;" in generated_source
+        assert 'export extern "C" {' in generated_source
         run([gti, "run"], cwd=bindgen_project)
         # An unchanged header reuses the published bindings silently.
         bindgen_rebuild = run([gti, "build"], cwd=bindgen_project)
@@ -3294,7 +3416,7 @@ def main():
             encoding="utf-8",
         )
         (policy_project / "src/main.gti").write_text(
-            "#include <points/bindings>\n"
+            "import points.bindings;\n"
             "\n"
             "int main() {\n"
             "  unsafe {\n"
@@ -3320,6 +3442,7 @@ def main():
             policy_project
             / "build/gti/bindgen/bindgen-policy/points/bindings.gti"
         ).read_text(encoding="utf-8")
+        assert "export module bindings;" in policy_bindings
         assert "struct PointStore {" in policy_bindings
         assert "[[c_array(count)]] const Point* points_all(" in policy_bindings
         assert "points_internal_debug" not in policy_bindings
@@ -3513,10 +3636,13 @@ def main():
             encoding="utf-8",
         )
         (verify_project / "src/support.gti").write_text(
-            "int support_value() { return 0; }\n", encoding="utf-8"
+            (
+                'export module support;\n'
+                'export int support_value() { return 0; }\n'
+            ), encoding="utf-8"
         )
         (verify_project / "src/main.gti").write_text(
-            '#include "support.gti"\n'
+            'import "support.gti";\n'
             "int main() { return support_value(); }\n",
             encoding="utf-8",
         )
@@ -3562,8 +3688,11 @@ def main():
         # content identities, and the rebuilt executable differs too. The
         # change is to reachable code: unreachable code is not emitted.
         (verify_project / "src/support.gti").write_text(
-            "int support_extra() { return 1; }\n"
-            "int support_value() { return support_extra() - 1; }\n",
+            (
+                'export module support;\n'
+                'export int support_extra() { return 1; }\n'
+                'export int support_value() { return support_extra() - 1; }\n'
+            ),
             encoding="utf-8",
         )
         diverged = run(

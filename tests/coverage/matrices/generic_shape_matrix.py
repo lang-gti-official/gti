@@ -10,8 +10,8 @@ import pathlib, subprocess, sys
 GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
 OUT = pathlib.Path("/tmp/genmx"); OUT.mkdir(exist_ok=True)
 
-HEAD = """#include <std/vector>
-#include <std/string>
+HEAD = """import std.vector;
+import std.string;
 
 class Plain { mut int32_t n = 0; public: Plain(int32_t n) : n(n) {} int32_t get() { return this.n; } };
 class Owning { mut std::vector<int32_t> v; public: Owning(int32_t n) : v(std::vector<int32_t>()) {} int32_t get() { return int32_t(this.v.size()); } };

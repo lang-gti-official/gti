@@ -1,9 +1,9 @@
-#include <std/resource>
-#include <std/resource_vector>
-#include <std/memory>
-#include <std/string>
-#include <std/numeric>
-#include "../../examples/allocator-support/arena.gti"
+import std.resource;
+import std.resource_vector;
+import std.memory;
+import std.string;
+import std.numeric;
+import "../../examples/allocator-support/arena.gti";
 
 struct Counts {
   mut uint64_t attempts = 0;

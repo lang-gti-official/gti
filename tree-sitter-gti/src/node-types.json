@@ -2995,6 +2995,10 @@
         "required": true,
         "types": [
           {
+            "type": "generic_scoped_identifier",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -3561,26 +3565,6 @@
         "types": [
           {
             "type": "module_name",
-            "named": true
-          },
-          {
-            "type": "string_literal",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
-    "type": "include_directive",
-    "named": true,
-    "fields": {
-      "path": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "standard_library_path",
             "named": true
           },
           {
@@ -4321,7 +4305,7 @@
         "required": true,
         "types": [
           {
-            "type": "identifier",
+            "type": "module_name",
             "named": true
           }
         ]
@@ -4522,11 +4506,6 @@
         ]
       }
     }
-  },
-  {
-    "type": "nullptr_literal",
-    "named": true,
-    "fields": {}
   },
   {
     "type": "numeric_conversion",
@@ -5404,10 +5383,6 @@
           "named": true
         },
         {
-          "type": "include_directive",
-          "named": true
-        },
-        {
           "type": "module_declaration",
           "named": true
         }
@@ -5432,36 +5407,6 @@
           }
         ]
       }
-    }
-  },
-  {
-    "type": "standard_library_component",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "identifier",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "standard_library_path",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "standard_library_component",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -6212,10 +6157,6 @@
     "named": false
   },
   {
-    "type": "#include",
-    "named": false
-  },
-  {
     "type": "#macro",
     "named": false
   },
@@ -6609,8 +6550,8 @@
     "named": false
   },
   {
-    "type": "nullptr",
-    "named": false
+    "type": "nullptr_literal",
+    "named": true
   },
   {
     "type": "nullptr_t",

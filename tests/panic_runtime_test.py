@@ -53,7 +53,7 @@ def main():
     functional = fixtures.parent.parent / "stdlib" / "std" / "functional.gti"
     functional_lines = functional.read_text().splitlines()
     model_start = next(index for index, line in enumerate(functional_lines)
-                       if line.startswith("class function_model<"))
+                       if line.removeprefix("export ").startswith("class function_model<"))
     model_call = next(index + 1 for index, line in enumerate(functional_lines)
                       if index > model_start and "return this.callable(args...)" in line)
     stored_library_panic = (

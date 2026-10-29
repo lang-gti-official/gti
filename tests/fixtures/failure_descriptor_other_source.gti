@@ -1,3 +1,4 @@
-int32_t other_source_add(int32_t left, int32_t right) {
+export module failure_descriptor_other_source;
+export int32_t other_source_add(int32_t left, int32_t right) {
   return left + right;
 }

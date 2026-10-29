@@ -1,6 +1,5 @@
-#include <std/memory>
-#include <std/vector>
-
+import std.memory;
+import std.vector;
 struct ValueBox<T> {
   using value_type = T;
 public:

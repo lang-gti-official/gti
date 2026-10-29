@@ -13,17 +13,36 @@ auto *instruction(Body &body, lang::MirInstructionId id) {
       nullptr);
 }
 
+// These two white-box clients use ordinary source ownership, not capability
+// trust. Keep the helper and entry in the same virtual std owner so its private
+// storage import is explicit and unavailable to ordinary application clients.
+lang::FrontendResult analyzePrefixFixture(const std::filesystem::path &path,
+                                          std::string source,
+                                          const std::filesystem::path &stdlib) {
+  std::ifstream input(path.parent_path() / "prefix_constructor_test.gti");
+  std::string helper{std::istreambuf_iterator<char>(input), {}};
+  const auto header = helper.find(';');
+  expect(header != std::string::npos,
+         "prefix fixture has an explicit interface");
+  if (header != std::string::npos)
+    helper.insert(header + 1, " import \"../std/detail/memory_storage.gti\";");
+  const auto entry = stdlib / "__private_tests__" / path.filename();
+  const auto dependency = entry.parent_path() / "prefix_constructor_test.gti";
+  auto result = lang::Frontend().analyze(
+      entry, std::move(source), {stdlib / "prelude.gti"},
+      {{dependency.string(), helper}}, {stdlib});
+  expect(!result.sourceGraph.isCompilerTrusted(result.sourceGraph.entryUnit()),
+         "ordinary prefix fixture does not receive compiler capability trust");
+  return result;
+}
+
 void testPreparedPrefixConstructor() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/vector_prepared_constructor_failure.gti";
   std::ifstream input(path);
   const std::string source{std::istreambuf_iterator<char>(input), {}};
   const auto stdlib = path.parent_path().parent_path().parent_path() / "stdlib";
-  const auto frontend = lang::Frontend().analyze(
-      path, source,
-      {stdlib / "prelude.gti",
-       path.parent_path() / "prefix_constructor_test.gti"},
-      {}, {stdlib});
+  const auto frontend = analyzePrefixFixture(path, source, stdlib);
   expect(frontend.canGenerateCode() && frontend.mir.valid(),
          "source prefix owning/reference/text/raw constructor inputs verify");
   if (!frontend.canGenerateCode())
@@ -161,7 +180,7 @@ void testPrefixPointerInputRejection() {
   for (const auto &[parameter, argument] :
        {std::pair{"int*", "const int*"}, std::pair{"const int*", "float*"}}) {
     const std::string source =
-        "#include <std/vector>\nclass Entry { public: Entry(" +
+        "import std.vector;\nclass Entry { public: Entry(" +
         std::string(parameter) + " value) {} };\nint main() { " + argument +
         " value = nullptr; mut std::vector<Entry> values{}; "
         "[[discard]] values.emplace_back(value); return 0; }\n";
@@ -181,11 +200,7 @@ void testGeneratedPrefixTransport() {
   std::ifstream input(path);
   const std::string source{std::istreambuf_iterator<char>(input), {}};
   const auto stdlib = path.parent_path().parent_path().parent_path() / "stdlib";
-  const auto frontend = lang::Frontend().analyze(
-      path, source,
-      {stdlib / "prelude.gti",
-       path.parent_path() / "prefix_constructor_test.gti"},
-      {}, {stdlib});
+  const auto frontend = analyzePrefixFixture(path, source, stdlib);
   expect(frontend.canGenerateCode() &&
              lang::verifyMirProgram(frontend.mir).valid(),
          "direct and pack-generated prefix transport have verified MIR");
@@ -312,7 +327,7 @@ void testSparseFinalAddressConstructor() {
   }
   expect(checked != 0, "fixture exercises sparse final-address construction");
   for (const std::string &source : {std::string(R"(
-#include <std/memory>
+import std.memory;
 int main() {
   std::allocator allocator{};
   mut auto slots = allocator.try_storage<int>(std::size_t(1)).expect("allocation");
@@ -321,7 +336,7 @@ int main() {
   return value;
 })"),
                                     std::string(R"(
-#include <std/memory>
+import std.memory;
 int& escape() {
   std::allocator allocator{};
   mut auto slots = allocator.try_storage<int>(std::size_t(1)).expect("allocation");

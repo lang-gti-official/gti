@@ -1,5 +1,5 @@
-#include "wrap_one.gti"
-#include "wrap_two.gti"
+import "wrap_one.gti";
+import "wrap_two.gti";
 
-// util::helper(int) is declared twice program-wide, but no single unit sees both.
+// Independent modules may export the same signature when no caller sees both.
 int main() { return via_one() + via_two() - 3; }

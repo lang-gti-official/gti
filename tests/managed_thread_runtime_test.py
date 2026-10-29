@@ -12,8 +12,8 @@ import tempfile
 
 
 SUCCESS_SOURCE = """\
-#include <std/thread>
-#include <std/memory>
+import std.thread;
+import std.memory;
 
 class resource {
   int32_t value;
@@ -73,7 +73,7 @@ int main() {
 """
 
 TYPED_RESULT_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 class result_task {
   int32_t value;
@@ -99,7 +99,7 @@ int main() {
 """
 
 TYPED_CLASS_RESULT_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 class result_value {
   int32_t value;
@@ -126,7 +126,7 @@ int main() {
 """
 
 TYPED_CLASS_RESULT_CLEANUP_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 [[unsafe_transfer]] class result_value {
   int32_t value;
@@ -155,7 +155,7 @@ int main() {
 """
 
 TYPED_RESULT_CLEANUP_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 [[unsafe_transfer]] class result_value {
   int32_t value;
@@ -186,7 +186,7 @@ int main() {
 """
 
 TYPED_RESULT_FAILURE_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 class failing_result_task {
 public:
@@ -209,7 +209,7 @@ int main() {
 """
 
 CLASS_FAILURE_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 class failing_task {
 public:
@@ -232,7 +232,7 @@ int main() {
 """
 
 FAILURE_BODY = """\
-#include <std/thread>
+import std.thread;
 
 int main() {
   auto started = std::thread::start([]() -> void {
@@ -247,7 +247,7 @@ int main() {
 """
 
 CLEANUP_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 class first_cleanup {
 public:
@@ -278,7 +278,7 @@ int main() {
 """
 
 CLEANUP_EMERGENCY_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 class cleanup_failure {
 public:
@@ -304,7 +304,7 @@ int main() {
 """
 
 TASK_CLEANUP_EMERGENCY_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 [[unsafe_transfer]] class task_cleanup_failure {
 public:
@@ -331,7 +331,7 @@ int main() {
 """
 
 TASK_CLEANUP_FAILURE_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 [[unsafe_transfer]] class task_cleanup_failure {
 public:
@@ -355,7 +355,7 @@ int main() {
 """
 
 TASK_INTERNAL_CLEANUP_EMERGENCY_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 class secondary_cleanup_failure {
 public:
@@ -390,7 +390,7 @@ int main() {
 """
 
 STRESS_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 int main() {
   for (mut int32_t index = 0; index < 128; index++) {
@@ -405,8 +405,8 @@ int main() {
 """
 
 AUTOMATIC_JOIN_HOST_FAILURE_SOURCE = """\
-#include <std/thread>
-#include <std/mutex>
+import std.thread;
+import std.mutex;
 
 std::mutex<int32_t> process_value{7};
 
@@ -438,7 +438,7 @@ int main() {
 """
 
 NESTED_FAILURE_SOURCE = """\
-#include <std/thread>
+import std.thread;
 
 int main() {
   auto outer_started = std::thread::start([]() -> void {

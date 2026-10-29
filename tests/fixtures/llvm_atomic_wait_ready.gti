@@ -1,4 +1,4 @@
-#include <std/atomic>
+import std.atomic;
 
 bool ready<std::atomic_scalar T>(T old, T changed) {
   std::atomic<T> value{changed};

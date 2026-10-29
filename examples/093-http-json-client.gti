@@ -1,8 +1,7 @@
-#include <std/http>
-#include <std/json>
-#include <std/string>
-#include <std/vector>
-
+import std.http;
+import std.json;
+import std.string;
+import std.vector;
 // No arguments: offline URL recipe. URL: GET. URL post: POST a JSON object.
 // See README.md for a reproducible local-server demo (no credentials needed).
 struct named {

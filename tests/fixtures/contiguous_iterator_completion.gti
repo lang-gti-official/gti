@@ -1,10 +1,10 @@
-#include <std/string>
-#include <std/vector>
-#include <std/span>
-#include <std/resource_vector>
-#include <std/resource>
-#include <std/algorithm>
-#include <std/iterator>
+import std.string;
+import std.vector;
+import std.span;
+import std.resource_vector;
+import std.resource;
+import std.algorithm;
+import std.iterator;
 
 extern "C" {
   void adoption_count_begin();

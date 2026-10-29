@@ -1,4 +1,4 @@
-#include <std/array>
+import std.array;
 constexpr int32_t square(int32_t v) { return v * v; }
 static_assert(sizeof(int32_t) == uint64_t(4), "int32_t is four bytes");
 static_assert(alignof(int64_t) == uint64_t(8), "int64_t aligns to eight");

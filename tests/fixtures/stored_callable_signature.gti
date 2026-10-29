@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 interface SignatureInvoker<R, Args...> { R invoke(Args... args); };
 class SignatureTag<S> { public: SignatureTag() = default; };

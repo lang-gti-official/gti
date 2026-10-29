@@ -1,4 +1,4 @@
-#include <std/atomic>
+import std.atomic;
 
 bool roundtrip<std::atomic_scalar T>(T first, T second, T third) {
   std::atomic<T> value{first};

@@ -1,7 +1,7 @@
-#include <std/cstdio>
-#include <std/panic>
-#include <std/string>
-#include <std/vector>
+import std.cstdio;
+import std.panic;
+import std.string;
+import std.vector;
 
 void trace(std::string_view label) {
   [[discard]] std::try_write_stderr(label);

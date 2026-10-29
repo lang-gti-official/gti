@@ -1,8 +1,8 @@
 // A55: list/deque/queue emplacement with a move-only constructor argument is a backend ICE.
 // ICE through the public API: list/deque/queue emplacement with a move-only
 // constructor argument. vector::emplace_back with the same arguments works.
-#include <std/list>
-#include <std/string>
+import std.list;
+import std.string;
 class Task {
   int p;
   std::string name_;

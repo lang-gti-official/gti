@@ -1,4 +1,4 @@
-#include <std/build>
+import std.build;
 
 int main() {
   mut std::build::command command = std::build::command("true");

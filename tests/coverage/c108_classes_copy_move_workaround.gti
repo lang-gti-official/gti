@@ -3,8 +3,8 @@
 // counters, move-only values in vectors and fields, implicit move on return,
 // move assignment dropping the old value, and structured bindings over
 // struct results of functions, methods and fixed arrays of structs.
-#include <std/format>
-#include <std/vector>
+import std.format;
+import std.vector;
 
 class Ticket {
   int32_t id;

@@ -1,9 +1,9 @@
-#include <std/panic>
-#include <std/format>
-#include <std/functional>
-#include <std/string>
-#include <std/thread>
-#include <std/vector>
+import std.panic;
+import std.format;
+import std.functional;
+import std.string;
+import std.thread;
+import std.vector;
 
 struct Guard {
   int id;

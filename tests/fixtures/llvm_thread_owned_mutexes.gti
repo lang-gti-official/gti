@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/mutex>
-#include <std/thread>
+import std.memory;
+import std.mutex;
+import std.thread;
 
 // Mutex storage as the pointee of unique and shared owners. The owners move
 // only their handles; each mutex is built, locked and retired in place.

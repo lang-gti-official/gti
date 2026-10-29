@@ -1,6 +1,6 @@
-#include <std/vector>
-#include <std/string>
-#include <std/utility>
+import std.vector;
+import std.string;
+import std.utility;
 // Ranges over by-reference captures: library and user ranges, read-only and
 // mutable traversal, and owning elements.
 class Count {

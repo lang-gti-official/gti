@@ -3,8 +3,8 @@
 // compound append (+=), comparison against string_view, subscript returning
 // a char reference, unary ~ producing an owned value, and observable
 // destruction counts proving consumed temporaries are not double-dropped.
-#include <std/format>
-#include <std/string>
+import std.format;
+import std.string;
 
 static mut int32_t paths_dropped = 0;
 static mut int32_t consuming_calls = 0;

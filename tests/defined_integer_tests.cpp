@@ -253,7 +253,7 @@ void printDiagnostics(const lang::FrontendResult &result) {
 
 void testPublicApiAndLowering() {
   const std::string source = R"(
-#include <std/numeric>
+import std.numeric;
 
 constexpr int8_t wrap_i8 = std::wrapping_add(int8_t(127), int8_t(1));
 constexpr int16_t wrap_i16 = std::wrapping_add(int16_t(32767), int16_t(1));
@@ -451,7 +451,7 @@ bool hasMessage(const lang::FrontendResult &result, std::string_view text) {
 
 void testFailedConstexprObservation() {
   const std::string source = R"(
-#include <std/numeric>
+import std.numeric;
 constexpr int8_t invalid =
     std::checked_add(int8_t(127), int8_t(1)).value();
 int after = 42;
@@ -501,7 +501,7 @@ void testHelpersRequireExpectedSurface() {
 void testPublicApiRejectsUnsupportedTypes() {
   const lang::FrontendResult floating =
       analyze("defined-integer-float.gti",
-              "#include <std/numeric>\n"
+              "import std.numeric;\n"
               "int main() { [[discard]] std::wrapping_add(float(1), float(2)); "
               "return 0; }\n");
   expect(!floating.canGenerateCode() && hasMessage(floating, "No overload"),
@@ -509,7 +509,7 @@ void testPublicApiRejectsUnsupportedTypes() {
 
   const lang::FrontendResult mixed = analyze(
       "defined-integer-mixed.gti",
-      "#include <std/numeric>\n"
+      "import std.numeric;\n"
       "int main() { [[discard]] std::saturating_add(int8_t(1), int16_t(2)); "
       "return 0; }\n");
   expect(!mixed.canGenerateCode() && hasMessage(mixed, "No overload"),

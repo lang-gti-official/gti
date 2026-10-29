@@ -1,6 +1,8 @@
-#include <std/memory>
-#include <std/detail/iterator>
+export module span;
+import "detail/memory_storage.gti";
 
+import std.memory;
+import "detail/iterator.gti";
 namespace std {
 namespace detail {
 class span_sentinel {
@@ -204,7 +206,7 @@ public:
 }
 
 /// A checked read-only view over one source-defined contiguous owner.
-class span<std::storage_element T> {
+export class span<std::storage_element T> {
   std::detail::prefix_owner<T>& data;
   size_t first_position;
   size_t element_count;
@@ -316,7 +318,7 @@ public:
 
 /// An exclusive, move-only view of initialized contiguous elements.
 /// Reborrowing a subspan suspends access through its parent until the child ends.
-class mutable_span<std::storage_element T> {
+export class mutable_span<std::storage_element T> {
   mut std::detail::prefix_owner<T>& data;
   size_t first_position;
   size_t element_count;

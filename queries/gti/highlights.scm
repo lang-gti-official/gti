@@ -7,7 +7,6 @@
 
 (string_literal) @string
 (character_literal) @character
-(standard_library_path) @string
 (integer_literal) @number
 (float_literal) @number.float
 (boolean_literal) @boolean
@@ -173,12 +172,14 @@
     name: (identifier) @module))
 
 (generic_scoped_identifier
-  scope: (identifier) @type
-  name: (identifier) @constant)
+  scope: (identifier) @type)
 (generic_scoped_identifier
   scope: (scoped_identifier
-    name: (identifier) @type)
-  name: (identifier) @constant)
+    name: (identifier) @type))
+(primary_expression
+  (generic_scoped_identifier name: (identifier) @constant))
+(function_declaration
+  name: (generic_scoped_identifier name: (identifier) @function.method))
 
 (member_expression
   member: (identifier) @variable.member)
@@ -222,12 +223,8 @@
 (static_assert_declaration
   "static_assert" @keyword)
 
-[
-  "#include"
-  "import"
-] @keyword.import
+"import" @keyword.import
 
-(module_declaration name: (identifier) @module)
 (module_name (identifier) @module)
 
 [

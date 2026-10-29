@@ -71,6 +71,9 @@ struct ProcessedSourceUnit {
   std::shared_ptr<const std::vector<Token>> tokens;
   std::uint64_t syntaxDigest = 0;
   std::optional<Token> moduleDeclaration;
+  std::optional<SourceSpan> moduleDeclarationSpan;
+  std::optional<Token> implementationDeclaration;
+  std::optional<SourceSpan> implementationDeclarationSpan;
   std::vector<Directive> directives;
   std::vector<SourceSpan> inactiveSpans;
   std::vector<ConfigurationToken> configurationTokens;

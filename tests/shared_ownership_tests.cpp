@@ -23,7 +23,7 @@ analyze(const std::string &source,
   options.target = lang::TargetInfo::host();
   options.target.runtimeCapabilities.threads = true;
   return lang::Frontend(options).analyze(
-      "shared-owner-check.gti", "#include <std/memory>\n" + source,
+      "shared-owner-check.gti", "import std.memory;\n" + source,
       {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
 }
 

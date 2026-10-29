@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 class Tally {
   mut uint64_t count = uint64_t(0);

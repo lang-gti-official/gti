@@ -1,4 +1,4 @@
-#include <std/forward_list>
+import std.forward_list;
 
 int read_list(std::forward_list<int32_t>& values) {
   return values.front();

@@ -1,8 +1,8 @@
-#include <std/vector>
+import std.vector;
 
-std::detail::vector_iterator<int32_t> ambiguous_owner(
-    bool select_first, mut std::detail::vector_iterator<int32_t> first,
-    mut std::detail::vector_iterator<int32_t> second) {
+std::vector<int32_t>::const_iterator ambiguous_owner(
+    bool select_first, mut std::vector<int32_t>::const_iterator first,
+    mut std::vector<int32_t>::const_iterator second) {
   if (select_first) {
     return std::move(first);
   }

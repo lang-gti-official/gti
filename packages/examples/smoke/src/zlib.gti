@@ -1,5 +1,4 @@
-#include <zlib/zlib>
-
+import zlib.zlib;
 int main() {
   mut uint8_t source[4] = {1, 2, 3, 4};
   mut uint8_t packed[64] = {};

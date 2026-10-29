@@ -159,7 +159,7 @@ void testOwnershipAndMissingIncludeDiagnostics() {
                                     {standardLibraryPrelude()}, {},
                                     {standardLibraryRoot()});
   };
-  const std::string prefix = "#include <std/string>\n";
+  const std::string prefix = "import std.string;\n";
   const std::string moved = prefix + R"(
 int main() {
   std::string original = std::string("hello");
@@ -340,7 +340,7 @@ public:
       lang::ExecutionProfile::Concurrent;
   concurrentOptions.target.runtimeCapabilities.threads = true;
   const std::string guarded = R"(
-#include <std/mutex>
+import std.mutex;
 int main() {
   std::mutex<int32_t> owner{1};
   std::mutex_guard<int32_t> first = owner.lock();
@@ -370,7 +370,7 @@ int main() {
   for (bool nested : {false, true}) {
     const std::string receiver = nested ? "this.holder.owner" : "this.owner";
     const std::string prefix =
-        "#include <std/mutex>\n"
+        "import std.mutex;\n"
         "void see(std::mutex<int32_t>& value) {}\n" +
         (nested ? std::string(
                       "class Holder { public:\n"
@@ -558,7 +558,7 @@ void examine() {
   }
 
   const std::string dereferencePrefix = R"(
-#include <std/string>
+import std.string;
 class Slot {
   mut std::string value = std::string("old");
 public:
@@ -600,8 +600,8 @@ int main() {
   }
 
   const std::string ownershipSource = R"(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 class Options {
   std::vector<std::string> arguments;
@@ -632,7 +632,7 @@ public:
          "without offering an intent-changing edit");
 
   const std::string returnSource = R"(
-#include <std/string>
+import std.string;
 
 std::string return_named(std::string result) {
   return result;
@@ -648,7 +648,7 @@ std::string return_named(std::string result) {
          "publishing the former copy diagnostic");
 
   const std::string expectedReturnSource = R"(
-#include <std/string>
+import std.string;
 enum class error { failed };
 expected<std::string, error> value() {
   std::string text = std::string("tea");
@@ -741,7 +741,7 @@ int main() { return 0; }
          "parser recovery retains both syntax and unresolved-name diagnostics");
   expect(!recovered.includeSuggestionsRequested &&
              recovered.includeSuggestionInputs.empty() &&
-             !hasDiagnosticHint(recovered.diagnostics, "#include <std/vector>"),
+             !hasDiagnosticHint(recovered.diagnostics, "import std.vector;"),
          "unrepairable syntax prevents speculative include discovery");
   const auto repaired = recoveredFrontend.analyze(
       "recovered-missing-include.gti",
@@ -753,7 +753,7 @@ int main() { return 0; }
              !repaired.includeSuggestionInputs.empty() &&
              repairedInclude != nullptr && repairedInclude->fixes.size() == 1 &&
              repairedInclude->fixes.front().replacement ==
-                 "#include <std/vector>\n",
+                 "import std.vector;\n",
          "repairing syntax restores the compiler-owned missing-include fix");
   const lang::FrontendResult missing = lang::Frontend().analyze(
       "missing-vector-include.gti", missingSource, {standardLibraryPrelude()},
@@ -765,13 +765,13 @@ int main() { return 0; }
              include->primary.end ==
                  missingSource.find("vector") + std::string("vector").size() &&
              include->message == "Unknown type 'std::vector'." &&
-             hasDiagnosticHint(missing.diagnostics, "#include <std/vector>") &&
+             hasDiagnosticHint(missing.diagnostics, "import std.vector;") &&
              include->fixes.size() == 1 &&
              include->fixes.front().span.source == include->primary.source &&
              include->fixes.front().span.start == 0 &&
              include->fixes.front().span.end == 0 &&
-             include->fixes.front().replacement == "#include <std/vector>\n" &&
-             include->fixes.front().message == "Add #include <std/vector>",
+             include->fixes.front().replacement == "import std.vector;\n" &&
+             include->fixes.front().message == "Add import std.vector;",
          "an unresolved canonical standard-library type should carry one "
          "compiler-owned include fix");
 
@@ -788,12 +788,12 @@ int main() { return 0; }
             missingCallback->primary.end == source.find(name) + name.size() &&
             missingCallback->fixes.size() == 1 &&
             missingCallback->fixes.front().replacement ==
-                "#include <std/functional>\n" &&
+                "import std.functional;\n" &&
             missingCallback->fixes.front().span.start == 0 &&
             missingCallback->fixes.front().span.end == 0,
         "owning callback types should offer the canonical functional include");
     const lang::FrontendResult corrected = lang::Frontend().analyze(
-        "missing-callback-include.gti", "#include <std/functional>\n" + source,
+        "missing-callback-include.gti", "import std.functional;\n" + source,
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(
         corrected.canGenerateCode(),
@@ -811,7 +811,7 @@ int main() { return 0; }
         {}, {standardLibraryRoot()});
     const lang::Diagnostic *diagnostic =
         findDiagnosticByCode(missingMap.diagnostics, "GTI-S2089");
-    const std::string directive = "#include <std/" + name + ">\n";
+    const std::string directive = "import std." + name + ";\n";
     expect(!missingMap.canGenerateCode() && diagnostic != nullptr &&
                diagnostic->primary.start == source.find(name) &&
                diagnostic->primary.end == source.find(name) + name.size() &&
@@ -830,7 +830,7 @@ int main() { return 0; }
   }
 
   const std::string compoundBorrow = R"(
-#include <std/unordered_set>
+import std.unordered_set;
 int main() {
   mut std::unordered_set<int> values{};
   int key = 7;
@@ -853,7 +853,7 @@ int main() {
          "the full expression ends and receives a source diagnostic");
 
   const std::string scalarReads = R"(
-#include <std/string>
+import std.string;
 int main() {
   mut std::string text = std::string("ab");
   text.push_back('c');
@@ -899,7 +899,7 @@ int main() {
 
   const lang::FrontendResult indirect = lang::Frontend().analyze(
       "indirect-memory-include.gti",
-      "#include <std/cstdio>\nusing owner = std::unique_ptr<int>;\n",
+      "import std.cstdio;\nusing owner = std::unique_ptr<int>;\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const lang::Diagnostic *invisible =
       findDiagnosticByCode(indirect.diagnostics, "GTI-S2024");
@@ -907,9 +907,8 @@ int main() {
              invisible->fixes.size() == 1 &&
              invisible->fixes.front().span.start == 0 &&
              invisible->fixes.front().span.end == 0 &&
-             invisible->fixes.front().replacement ==
-                 "#include <std/memory>\n" &&
-             invisible->fixes.front().message == "Add #include <std/memory>",
+             invisible->fixes.front().replacement == "import std.memory;\n" &&
+             invisible->fixes.front().message == "Add import std.memory;",
          "a loaded but non-visible standard declaration should carry the "
          "same direct-include fix");
 
@@ -1584,7 +1583,7 @@ T first<T>(T left, T right) {
 }
 int main() { return first(Record(), Record()).value; }
 )"},
-      {"mut Point point", "GTI-S2112", R"(#include <std/meta>
+      {"mut Point point", "GTI-S2112", R"(import std.meta;
 struct Point {
   mut int x = 1;
   mut int y = 2;
@@ -1698,8 +1697,8 @@ int main() { return print(0); }
 }
 
 void testFormatting() {
-  const std::string source = R"(#include   "math.gti"
-#include   < std / array >
+  const std::string source = R"(import "math.gti";
+import std.array;
 
 namespace engine{class Counter{mut int value=0;
 #if target.arch=="arm64"
@@ -1715,8 +1714,8 @@ int main(){[[discard]] engine::run();return 0;}
 #endif
 )";
 
-  const std::string expected = R"(#include "math.gti"
-#include <std/array>
+  const std::string expected = R"(import "math.gti";
+import std.array;
 
 namespace engine {
   class Counter {
@@ -3198,7 +3197,7 @@ void testRejectedInstanceCascades() {
   // A consumed receiver cannot keep a returned borrow alive, so the selected
   // signature is rejected once, naming its result. The fresh argument that
   // result would have borrowed is not checked against it as well.
-  const std::string consumingSource = R"(#include <std/meta>
+  const std::string consumingSource = R"(import std.meta;
 class Source {
 public:
   Source() {}
@@ -3451,7 +3450,7 @@ void testOverloadFailureGuidance() {
       analyzeDiagnosticFixture("a60-println-format-missing-include");
   const auto *include = findDiagnosticByCode(missing.diagnostics, "GTI-S2089");
   expect(!missing.canGenerateCode() && include && include->fixes.size() == 1 &&
-             include->fixes.front().replacement == "#include <std/format>\n" &&
+             include->fixes.front().replacement == "import std.format;\n" &&
              hasDiagnosticHint(missing.diagnostics, "argument count") &&
              !hasDiagnosticHint(missing.diagnostics, "convert"),
          "an arity mismatch discovers a missing overload through ordinary "
@@ -3510,7 +3509,7 @@ void testConversionDiagnosticGuidance() {
          "edit");
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto valid = lang::Frontend().analyze("applied-view-guidance.gti", R"(
-#include <std/string>
+import std.string;
 int main() {
   std::string word = std::string("abc");
   mut std::string output{};

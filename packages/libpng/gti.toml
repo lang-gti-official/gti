@@ -22,3 +22,6 @@ c-sources = [
 [[package.native.platforms]]
 os = "linux"
 libraries = ["m"]
+
+[modules]
+libpng = "src/libpng.gti"

@@ -1,0 +1,44 @@
+export module detail.resource_lease;
+
+import "memory_core.gti";
+import "memory_storage.gti";
+import "resource_core.gti";
+
+namespace std::detail {
+export class resource_lease<std::memory_resource R> {
+  std::resource_ref<R> resource;
+  mut std::raw_allocation allocation;
+public:
+  resource_lease(std::resource_ref<R> resource)
+      : resource(resource),
+        allocation(std::raw_allocation()) {}
+  resource_lease(gti_internal::resource_binding token, std::resource_ref<R> resource, std::raw_allocation allocation)
+      : resource(resource), allocation(allocation) {}
+  resource_lease(resource_lease<R>& other) = delete;
+  resource_lease(resource_lease<R>&& other) = default;
+  std::resource_ref<R> binding() {
+      return this.resource;
+  }
+  uint64_t alignment() { return this.allocation.alignment; }
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe { return this.resource.get().allocate(request); }
+  }
+  std::raw_allocation take() mut {
+    std::raw_allocation previous = this.allocation;
+    this.allocation = std::raw_allocation();
+    return previous;
+  }
+  unsafe void attach(std::raw_allocation allocation) mut { this.allocation = allocation; }
+  void release() mut {
+    std::raw_allocation previous = this.take();
+    if (previous.address != nullptr) {
+      unsafe { this.resource.get().release(previous); }
+    }
+  }
+  ~resource_lease() {
+    if (this.allocation.address != nullptr) {
+      unsafe { this.resource.get().release(this.allocation); }
+    }
+  }
+};
+}

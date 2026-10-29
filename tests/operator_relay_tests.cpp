@@ -402,10 +402,10 @@ int main() {
                         "held=records.at(std::size_t(0)); records.add(); "
                         "std::println(held);}");
   // Direct observation does not relax view lifetimes or exclusivity.
-  checkNegative("#include <std/string>\n",
+  checkNegative("import std.string;\n",
                 "std::size_t bad(){std::string_view held = "
                 "std::string(\"tmp\").view(); return held.size();}");
-  checkNegative("#include <std/string>\n",
+  checkNegative("import std.string;\n",
                 "std::size_t bad(){mut std::string text = std::string(\"ab\"); "
                 "std::string_view held = text.view(); text.append(\"c\"); "
                 "return held.size();}");

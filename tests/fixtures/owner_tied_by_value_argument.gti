@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/iterator>
+import std.vector;
+import std.iterator;
 
 // A named owner-tied iterator local (a copyable class value holding a
 // reference field) passed BY VALUE into generic functions. The named

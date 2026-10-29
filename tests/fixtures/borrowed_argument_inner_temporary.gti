@@ -5,8 +5,8 @@
 // when its operand ran, and never when the operand was skipped. A failing
 // producer publishes nothing; a failing nested call or later argument
 // destroys the object and each live local once.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // How many times `flag` was passed.
 int32_t seen(std::vector<std::string>& argv, std::string_view flag) {

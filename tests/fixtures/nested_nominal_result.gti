@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/vector>
-#include <std/functional>
+import std.string;
+import std.vector;
+import std.functional;
 
 class Packet {
   int value;

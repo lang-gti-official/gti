@@ -457,10 +457,10 @@ void checkContainer(const std::filesystem::path &root,
   (void)root;
 }
 
-const char *const kLibraryUser = R"(#include <std/string>
-#include <std/vector>
-#include <std/set>
-#include <std/format>
+const char *const kLibraryUser = R"(import std.string;
+import std.vector;
+import std.set;
+import std.format;
 
 class Point {
   int x;
@@ -489,9 +489,9 @@ int main() {
 // request finalizes. An instance analysis's own finalization must not look up
 // the functions they name: a user function it consulted would make every
 // later library instance unreusable.
-const char *const kViewRelayUser = R"(#include <std/string>
-#include <std/vector>
-#include <std/format>
+const char *const kViewRelayUser = R"(import std.string;
+import std.vector;
+import std.format;
 
 class Token {
 public:

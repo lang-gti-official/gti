@@ -1,6 +1,5 @@
-#include <glfw/glfw>
-#include <glad/glad>
-
+import glfw.glfw;
+import glad.glad;
 int main() {
   unsafe {
     if (glfwInit() == GLFW_FALSE) { return 1; }

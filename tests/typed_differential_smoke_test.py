@@ -77,7 +77,7 @@ def main() -> int:
                                  "110-enum.gti", "1000-future.gti"],
                     "audit example selection must include arbitrary digit counts",
                     str(selected))
-            module = examples / "10-modules" / "main.gti"
+            module = examples / "module-only" / "main.gti"
             module.parent.mkdir()
             module.touch()
             require(language_audit.numbered_examples()[-1] == module,

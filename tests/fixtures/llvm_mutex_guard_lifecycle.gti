@@ -1,4 +1,4 @@
-#include <std/mutex>
+import std.mutex;
 
 extern "C" {
   void gti_test_guard_begin();

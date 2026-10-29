@@ -1,9 +1,9 @@
-#include <std/assert>
-#include <std/panic>
-#include <std/cstdio>
-#include <std/string>
-#include <std/thread>
-#include <std/vector>
+import std.assert;
+import std.panic;
+import std.cstdio;
+import std.string;
+import std.thread;
+import std.vector;
 
 struct Guard {
   int number;

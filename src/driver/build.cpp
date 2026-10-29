@@ -917,6 +917,8 @@ bool addSourceIdentity(IdentityBuilder &identity,
     return false;
   }
   detail::appendBuildSourceMaterialsIdentity(identity, *projection);
+  if (const auto &owners = inputs.sourceGraph.sourceOwners())
+    identity.add("source.owner-registry", owners->resolutionIdentity());
   return true;
 }
 

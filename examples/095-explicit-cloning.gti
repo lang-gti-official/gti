@@ -1,7 +1,6 @@
-#include <std/string>
-#include <std/vector>
-#include <std/utility>
-
+import std.string;
+import std.vector;
+import std.utility;
 // Exact read-member requirements let a generic function call a user operation.
 concept snapshot_source<T> = requires(T& value) { { value.snapshot() } -> T; };
 T snapshot<T>(T& value) requires snapshot_source<T> { return value.snapshot(); }

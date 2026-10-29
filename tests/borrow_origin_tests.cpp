@@ -72,7 +72,7 @@ void checkStaticReturnAlternatives() {
          "receiver, parameter and unsafe raw relay alternatives are exercised");
   const auto invalid =
       analyzeWithStandardLibrary("invalid-static-return-alternative.gti", R"gti(
-#include <std/string>
+import std.string;
 std::string_view Dangling(bool empty) {
   if (empty) { return ""; }
   std::string local{"expired"};
@@ -210,7 +210,7 @@ void checkStoredViewReturns() {
 
   const auto invalid =
       analyzeWithStandardLibrary("invalid-stored-view-return.gti", R"gti(
-#include <std/string>
+import std.string;
 struct Inner { std::string_view name = "inner";  public: Inner() = default; };
 class Holder {
   std::string_view name = "stored";

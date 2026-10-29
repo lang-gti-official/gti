@@ -3,13 +3,13 @@
 // mut), generic member pruning with a predicate (collect keys, then erase),
 // generic free helpers over maps and complete ranges, and set algebra over
 // two std::set<int> via ordered traversal.
-#include <std/map>
-#include <std/set>
-#include <std/memory>
-#include <std/vector>
-#include <std/algorithm>
-#include <std/iterator>
-#include <std/functional>
+import std.map;
+import std.set;
+import std.memory;
+import std.vector;
+import std.algorithm;
+import std.iterator;
+import std.functional;
 
 interface Shape {
   int area();

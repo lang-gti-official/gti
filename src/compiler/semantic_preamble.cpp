@@ -19,6 +19,11 @@ SemanticVisitor::buildPreamble(Program prefix) {
   impl->buildingPreamble = true;
   (void)impl->check(prefix);
   impl->buildingPreamble = false;
+  // A prefix can be incomplete even when the full program is valid (for
+  // example a constexpr prototype completed by a later implementation unit).
+  // Its provisional diagnostics must not become cached program diagnostics.
+  if (impl->hadError())
+    return nullptr;
   impl->freezePreamble();
   // The caller's graph, sources and metrics die with this analysis; a
   // resumed analysis supplies its own.
@@ -96,6 +101,7 @@ auto SemanticVisitor::Impl::blankLikeThis() const -> std::unique_ptr<Impl> {
 auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   const Impl &source = *adoptedPreamble->state;
   requestSession = source.requestSession;
+  valueFlow.rebindCallables(catalog);
   // Request-local budgets and query states are never shared with the
   // preamble or with another resumed analysis.
   requestSession.constexprWork.reset();
@@ -104,6 +110,9 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
       std::make_shared<ProgramConcreteEffectState>(
           *source.requestSession.programConcreteEffects);
   requestSession.rawResultQueries.reset();
+  // Prefix query summaries and worker catalogs belong to the prefix request;
+  // later declarations require a fresh journal owned by this resumed request.
+  requestSession.completeReturnQueries.reset();
   requestSession.openReanalyses.reset();
   requestSession.classAssertionOutcomes.clear();
   requestSession.trackAssertionDiagnostics = false;
@@ -164,10 +173,49 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
 
   const auto registrationStart = std::chrono::steady_clock::now();
   registerDeclarations(resumeDeclarations);
+  // Prefix globals already passed their body declaration phase. Validate
+  // those declarations against newly registered names using the same rules
+  // as an ordinary check, without moving their mutable value facts into the
+  // declaration catalog or running their initializers again.
+  bool prefixDeclarationsValid = true;
+  const auto validateGlobal = [&](const Symbol &symbol) {
+    if (symbol.variableDeclaration == nullptr)
+      return;
+    std::vector<std::string> scope;
+    std::size_t start = 0;
+    for (auto separator = symbol.qualifiedName.find("::");
+         separator != std::string::npos;
+         separator = symbol.qualifiedName.find("::", start)) {
+      scope.push_back(symbol.qualifiedName.substr(start, separator - start));
+      start = separator + 2;
+    }
+    struct RestoreSource {
+      SourceUnitId &current;
+      SourceUnitId previous;
+      ~RestoreSource() { current = previous; }
+    } restore{currentSourceUnit, currentSourceUnit};
+    currentSourceUnit = symbol.sourceUnit;
+    prefixDeclarationsValid =
+        declareNamespaceSymbol(scope, symbol.declaration, symbol, true) &&
+        prefixDeclarationsValid;
+  };
+  for (const auto &[_, symbol] : valueFlow.namespaceSymbols)
+    validateGlobal(symbol);
+  for (const auto &[_, symbols] : valueFlow.internalNamespaceSymbols)
+    for (const auto &[name, symbol] : symbols)
+      validateGlobal(symbol);
+  if (!prefixDeclarationsValid) {
+    // The prefix's initializer/effect facts were established before the new
+    // conflicting declaration existed. Refuse the entire adoption rather
+    // than salvaging selected indexes from an invalid partial analysis.
+    adoptedPreamble.reset();
+    adoptedPrefixDeclarations = 0;
+    return false;
+  }
   catalog.seal();
   registrationSymbolCeiling = semanticModel.database().symbolIdentityCeiling();
-  // The prefix's body phase declared its globals; only add what the rest of
-  // the program registered.
+  // Refresh the declaration catalogs while preserving prefix globals and
+  // their established value/loan facts.
   valueFlow.extendBody(catalog);
   throwIfCancelled();
   if (workMetrics != nullptr) {

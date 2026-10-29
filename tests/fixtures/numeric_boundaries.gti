@@ -1,4 +1,4 @@
-#include <std/numeric>
+import std.numeric;
 
 // Independent native arithmetic oracles; no host function implements a GTI
 // operation. The byte-sized domains are exhaustive; wider domains mix edges

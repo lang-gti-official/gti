@@ -109,7 +109,7 @@ int main() {
 }
 void owningResults() {
   const auto result = analyze(R"gti(
-#include <std/string>
+import std.string;
 #macro std::string select(bool enabled, std::string first, std::string second) {
   if (enabled) { return first; }
   return second;
@@ -1082,7 +1082,7 @@ int main() { return observe(fresh(1)); }
 )gti",
              "declaration-only call target");
   diagnostic(R"gti(
-#include <std/utility>
+import std.utility;
 class Owner {
 public:
   Owner() {}
@@ -1104,7 +1104,7 @@ int main() {
 
 void callerConversionsAndPropagation() {
   const auto result = analyze(R"gti(
-#include <std/source_location>
+import std.source_location;
 mut int cleaned = 0;
 struct Guard { ~Guard() { cleaned += 1; }  public: Guard() = default; };
 struct Box {
@@ -1211,13 +1211,13 @@ int main(int argc, char **argv) {
   diagnostic("#macro int& bad() { int saved = 1; return saved; }\n"
              "int main() { int& value = bad(); return value; }",
              "cannot export a reference");
-  diagnostic("#include <std/string>\n#macro std::string identity(std::string "
+  diagnostic("import std.string;\n#macro std::string identity(std::string "
              "value) { return value; }\n"
              "int main() { std::string value{\"owned\"}; std::string moved = "
              "identity(value); return 0; }",
              "macro result");
   diagnostic(R"gti(
-#include <std/string>
+import std.string;
 #macro std::string inner(std::string argument) { return argument; }
 #macro std::string outer() { std::string saved{"owned"}; return inner(saved); }
 int main() { std::string value = outer(); return 0; }

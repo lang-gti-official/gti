@@ -1,5 +1,4 @@
-#include <std/atomic>
-
+import std.atomic;
 // Wrapping is explicit: unlike fetch_add/fetch_sub, these operations use
 // modulo arithmetic. Their result is the value before the atomic update.
 // They need neither the concurrent profile nor a host thread runtime.

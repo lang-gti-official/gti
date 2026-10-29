@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 // Ordinary functions return checked base/interface views. Owning an ordinary
 // record does not change the identity or cleanup of its inline hierarchy.
 

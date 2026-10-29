@@ -1,5 +1,4 @@
-#include <std/functional>
-
+import std.functional;
 // One signature accepts different callable types without taking ownership.
 // The view borrows its callable; the callable may itself borrow other objects.
 int sample(std::function_ref<int(int)>& callback) {

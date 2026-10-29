@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 mut int releases = 0;
 // A library-independent owner shape. A null first field makes the entire

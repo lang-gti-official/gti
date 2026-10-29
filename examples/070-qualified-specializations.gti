@@ -1,5 +1,4 @@
-#include <std/functional>
-
+import std.functional;
 class Widget {
   int identifier = 42;
 

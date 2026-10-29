@@ -1,4 +1,4 @@
-#include <std/iterator>
+import std.iterator;
 
 Function candidate_for_each<Iterator, Function>(mut Iterator first,
                                                 Iterator last,

@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/vector>
-#include <std/string>
+import std.memory;
+import std.vector;
+import std.string;
 mut int one = 1;
 mut int two = 2;
 mut int three = 3;

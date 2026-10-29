@@ -1,7 +1,9 @@
-#include <std/map>
-#include <std/functional>
-#include <std/utility>
+export module set;
+import "detail/map_iterators.gti";
 
+import std.map;
+import std.functional;
+import std.utility;
 namespace std {
 namespace detail {
 /// Projects immutable keys while preserving the underlying iterator's loan.
@@ -32,7 +34,7 @@ public:
 }
 
 /// Unique immutable keys ordered by an ordinary AVL dictionary.
-class set<K, Compare = std::less<K>> {
+export class set<K, Compare = std::less<K>> {
   mut map<K, bool, Compare> entries;
   map<K, bool, Compare> replace(map<K, bool, Compare> value) mut {
     auto previous = std::move(this.entries);

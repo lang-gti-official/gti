@@ -9,7 +9,7 @@ import pathlib, subprocess, sys
 GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
 OUT = pathlib.Path("/tmp/flowmx"); OUT.mkdir(exist_ok=True)
 
-PRELUDE = """#include <std/vector>
+PRELUDE = """import std.vector;
 
 mut int32_t drops = 0;
 

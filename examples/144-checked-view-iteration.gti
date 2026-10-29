@@ -1,10 +1,9 @@
-#include <std/string>
-#include <std/vector>
-#include <std/span>
-#include <std/paired_span>
-#include <std/resource_vector>
-#include <std/resource>
-
+import std.string;
+import std.vector;
+import std.span;
+import std.paired_span;
+import std.resource_vector;
+import std.resource;
 // Cursor direction does not change its access permission: these read-only
 // cursors can be copied independently while keeping their owner borrowed.
 int main() {

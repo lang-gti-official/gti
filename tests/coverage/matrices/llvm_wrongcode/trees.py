@@ -6,12 +6,12 @@ owners; a long owned list destroyed; polymorphic expression trees; and a
 reference into the tree returned out of a recursive search.
 """
 
-PRELUDE = """#include <std/memory>
-#include <std/vector>
-#include <std/string>
-#include <std/format>
-#include <std/utility>
-#include <std/atomic>
+PRELUDE = """import std.memory;
+import std.vector;
+import std.string;
+import std.format;
+import std.utility;
+import std.atomic;
 std::atomic<int32_t> live{0};
 class Node {
 public:

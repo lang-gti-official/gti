@@ -8,5 +8,5 @@ version = "0.1.0"
 util = { path = "../util" }
 
 [modules]
-main = "src/api.gti"
+api = "src/api.gti"
 extra = "src/extra.gti"

@@ -1,7 +1,8 @@
-#include <corelib/core>
+export module shapes;
+import corelib.core;
 
 namespace app::shapes {
-  class Tri : public base::core::Shape {
+  export class Tri : public base::core::Shape {
     int base_len;
     int height;
 
@@ -11,7 +12,7 @@ namespace app::shapes {
     int sides() override { return 3; }
   };
 
-  class Quad : public base::core::Shape {
+  export class Quad : public base::core::Shape {
     int w;
     int h;
 

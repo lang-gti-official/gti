@@ -381,7 +381,7 @@ int main() { mut int owner = 3; return update(owner); }
                           }),
          "nested borrowed-value handoff rejects in semantics, not as an ICE");
   const std::string observedPrefix = R"gti(
-#include <std/string>
+import std.string;
 enum Observed { ready(int& value), failed(std::string error) };
 [[borrowed_from(owner)]] Observed produce(int& owner, bool fail) {
   if (fail) return Observed::failed(std::string("bad"));
@@ -568,7 +568,7 @@ int main() {
   }
   const auto referenceEntry = lang::Frontend().analyze(
       root / "tests" / "reference-payload-formal.gti", R"gti(
-#include <std/string>
+import std.string;
 enum Reading { ready(int& value), failed(std::string error) };
 bool has_value(Reading& result) {
   switch (result) {
@@ -980,7 +980,7 @@ int main() { return 0; }
   }
   {
     const std::string wrapper = R"gti(
-#include <std/panic>
+import std.panic;
 enum Cell { empty, value(int& owner) };
 class View {
   mut Cell cell;
@@ -1036,7 +1036,7 @@ int main() { return 0; }
   }
   {
     const std::string generic = R"gti(
-#include <std/panic>
+import std.panic;
 enum BorrowedCell<T> { empty, value(T& owner) };
 class GenericView<T> {
   mut BorrowedCell<T> cell;
@@ -1083,7 +1083,7 @@ int main() { return 0; }
            "deferred conditional selection does not hide unrelated "
            "local-reference errors");
     const auto ownedErrorCopy = analyze(R"gti(
-#include <std/string>
+import std.string;
 enum CopyState<T, E> { ready(T& owner), failed(E error) };
 class CopyView<T, E> {
   mut CopyState<T, E> state;

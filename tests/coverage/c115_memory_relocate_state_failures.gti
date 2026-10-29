@@ -2,9 +2,9 @@
 // transferring anything. Each argument count selects one documented
 // invalid_storage_state failure. Live elements in BOTH storages, plus an
 // unrelated outer guard, must be destroyed exactly once before the report.
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.vector;
 
 class Noisy {
   std::string tag;

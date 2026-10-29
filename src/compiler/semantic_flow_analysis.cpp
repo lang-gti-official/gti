@@ -641,6 +641,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             worker->macroLookupBase = macroLookupBase;
             worker->nextExpansion = nextExpansion;
             worker->valueFlow = valueFlow;
+            worker->valueFlow.rebindCallables(worker->catalog);
             // Initializer effects close over the completed program, so every
             // analysed constexpr definition is available to the concrete
             // instances they reach, exactly as to their HIR reanalysis.
@@ -2502,35 +2503,43 @@ auto SemanticVisitor::Impl::programInitializationUnitOrder() const
   }
   std::unordered_set<SourceUnitId> visited;
   const std::function<void(SourceUnitId)> visit = [&](SourceUnitId unit) {
-    if (unit == 0 || !visited.insert(unit).second) {
+    // A logical module is one initialization group. Dependencies used only by
+    // a body must be ready even when an interface initializer calls that body.
+    if (const auto *module =
+            sourceGraph->findModule(sourceGraph->moduleForUnit(unit)))
+      unit = module->interfaceUnit;
+    if (unit == 0 || !visited.insert(unit).second)
       return;
-    }
-    std::vector<const SourceDependency *> dependencies;
-    for (const SourceDependency &dependency : sourceGraph->dependencyEdges()) {
-      if (dependency.source == unit &&
-          dependency.kind != SourceDependencyKind::Prelude) {
-        dependencies.push_back(&dependency);
+    std::vector<SourceUnitId> members{unit};
+    for (const auto &implementation : sourceGraph->moduleImplementations())
+      if (implementation.interfaceUnit == unit)
+        members.push_back(implementation.implementationUnit);
+    for (const auto member : members) {
+      std::vector<const SourceDependency *> dependencies;
+      for (const SourceDependency &dependency :
+           sourceGraph->dependencyEdges()) {
+        if (dependency.source == member &&
+            dependency.kind != SourceDependencyKind::Prelude)
+          dependencies.push_back(&dependency);
       }
-    }
-    std::sort(dependencies.begin(), dependencies.end(),
-              [](const SourceDependency *left, const SourceDependency *right) {
-                if (left->includeOccurrence != right->includeOccurrence) {
-                  return left->includeOccurrence < right->includeOccurrence;
-                }
-                const std::size_t leftStart =
-                    left->directive ? left->directive->start : 0;
-                const std::size_t rightStart =
-                    right->directive ? right->directive->start : 0;
-                return leftStart != rightStart ? leftStart < rightStart
-                                               : left->target < right->target;
-              });
-    std::unordered_set<SourceUnitId> direct;
-    for (const SourceDependency *dependency : dependencies) {
-      if (direct.insert(dependency->target).second) {
+      std::sort(
+          dependencies.begin(), dependencies.end(),
+          [](const SourceDependency *left, const SourceDependency *right) {
+            if (left->includeOccurrence != right->includeOccurrence)
+              return left->includeOccurrence < right->includeOccurrence;
+            const std::size_t leftStart =
+                left->directive ? left->directive->start : 0;
+            const std::size_t rightStart =
+                right->directive ? right->directive->start : 0;
+            return leftStart != rightStart ? leftStart < rightStart
+                                           : left->target < right->target;
+          });
+      for (const SourceDependency *dependency : dependencies)
         visit(dependency->target);
-      }
     }
-    result.push_back(unit);
+    // Module dependency cycles are rejected by source loading. On a valid
+    // graph every external group is complete before these ordered members.
+    result.insert(result.end(), members.begin(), members.end());
   };
   for (const SourceUnitId prelude : sourceGraph->preludeRoots()) {
     visit(prelude);
@@ -5283,7 +5292,7 @@ auto SemanticVisitor::Impl::isMemoryLibraryUnit(SourceUnitId sourceUnit) const
   }
   const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
   return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
-         unit->standardLibraryName == "std/memory";
+         unit->standardLibraryName == "std/detail/memory_capabilities";
 }
 
 auto SemanticVisitor::Impl::isOptionalLibraryUnit(SourceUnitId sourceUnit) const
@@ -5828,21 +5837,35 @@ auto SemanticVisitor::Impl::recordQualifiedPathUses(
   }
   const std::size_t namespaceSegments =
       finalSegmentIsNamespace ? path.segments.size() : path.segments.size() - 1;
+  NamePath prefix(std::vector<Token>{});
+  for (std::size_t index = 0; index < namespaceSegments; ++index) {
+    prefix.segments.push_back(path.segments[index]);
+    if (index == 0 && resolveTypeParameter(prefix))
+      break; // A lexical generic parameter shadows imported source names.
+    if (reportAmbiguousName(path.segments[index], pathSpelling(prefix)))
+      return;
+  }
   const NamePath namespacePath(std::vector<Token>(
       path.segments.begin(), path.segments.begin() + namespaceSegments));
   const std::vector<ResolvedNamespaceSegment> resolvedSegments =
       resolveNamespaceSegments(namespacePath, currentNamespace);
   for (std::size_t index = 0; index < resolvedSegments.size(); ++index) {
-    const auto symbol =
-        namespaceToolingSymbols.find(resolvedSegments[index].declaration);
-    if (symbol == namespaceToolingSymbols.end() || symbol->second == 0) {
+    SymbolId symbol = 0;
+    if (const auto *alias =
+            findNamespaceAlias(resolvedSegments[index].declaration))
+      symbol = alias->symbol;
+    else if (const auto found = namespaceToolingSymbols.find(
+                 resolvedSegments[index].declaration);
+             found != namespaceToolingSymbols.end())
+      symbol = found->second;
+    if (symbol == 0) {
       continue;
     }
     const Token &token = path.segments[index];
     semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                     .span = tokenSpan(token),
                                     .kind = SemanticOccurrenceKind::Symbol,
-                                    .symbol = symbol->second,
+                                    .symbol = symbol,
                                     .roles = OccurrenceRole::Reference,
                                     .name = token.lexeme});
   }
@@ -6310,6 +6333,12 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
 auto SemanticVisitor::Impl::declareNamespaceSymbol(
     const std::vector<std::string> &scope, const Token &name, Symbol symbol)
     -> bool {
+  return declareNamespaceSymbol(scope, name, std::move(symbol), false);
+}
+
+auto SemanticVisitor::Impl::declareNamespaceSymbol(
+    const std::vector<std::string> &scope, const Token &name, Symbol symbol,
+    bool validateOnly) -> bool {
   const std::string qualified = qualifiedName(scope, name.lexeme);
   symbol.qualifiedName = qualified;
   if (symbol.variableDeclaration != nullptr && !instanceAnalysisActive) {
@@ -6341,9 +6370,11 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
   const bool sourceLocal = symbol.internalLinkage && sourceGraph != nullptr &&
                            currentSourceUnit != 0;
   bool categoryConflict =
-      namespaces.contains(qualified) || namespaceAliases.contains(qualified) ||
-      typeAliasIds.contains(qualified) || enumIds.contains(qualified) ||
-      conceptIds.contains(qualified);
+      namespaceIsVisible(qualified) ||
+      namespaceAliases.contains(qualified, declarationOwner()) ||
+      typeAliasIds.contains(qualified, declarationOwner()) ||
+      enumIds.contains(qualified, declarationOwner()) ||
+      conceptIds.contains(qualified, declarationOwner());
   if (sourceLocal) {
     categoryConflict = namespaceIsVisible(qualified) ||
                        findNamespaceAlias(qualified) != nullptr ||
@@ -6375,7 +6406,8 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
       return false;
     }
     const auto &namespaceIndex = activeNamespaceSymbols();
-    if (const auto external = namespaceIndex.find(qualified);
+    if (const auto external =
+            namespaceIndex.find(qualified, declarationOwner());
         external != namespaceIndex.end() &&
         declarationVisible(declarationSourceUnit(external->second),
                            external->second.declaration)) {
@@ -6385,6 +6417,8 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
              "GTI-S2006");
       return false;
     }
+    if (validateOnly)
+      return true;
     publishNamespaceSymbol(qualified, symbol);
     unitSymbols.emplace(qualified, std::move(symbol));
     return true;
@@ -6402,7 +6436,7 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
   }
 
   auto &namespaceIndex = activeNamespaceSymbols();
-  const auto existing = namespaceIndex.find(qualified);
+  const auto existing = namespaceIndex.find(qualified, declarationOwner());
   if (existing != namespaceIndex.end()) {
     const Symbol published = symbol;
     if (appendFunctionOverload(existing->second, std::move(symbol), name)) {
@@ -6417,8 +6451,10 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
     diagnostics.emplace_back(std::move(diagnostic));
     return false;
   }
+  if (validateOnly)
+    return true;
   publishNamespaceSymbol(qualified, symbol);
-  namespaceIndex.emplace(qualified, std::move(symbol));
+  namespaceIndex.emplace(qualified, std::move(symbol), declarationOwner());
   return true;
 }
 
@@ -6634,7 +6670,7 @@ auto SemanticVisitor::Impl::appendNamespaceChildren(
     if (found != visibleNamespaceAliases.end()) {
       return found->second;
     }
-    static const std::unordered_map<std::string, NamespaceAliasInfo> empty;
+    static const DeclarationIndex<NamespaceAliasInfo> empty;
     return empty;
   }();
   for (const auto &[qualified, _] : visibleAliases) {
@@ -7067,6 +7103,9 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
     }
   }
   for (std::size_t depth = lookup.size() + 1; depth > 0; --depth) {
+    if (symbols.ambiguousCandidates(
+            qualifiedName(lookup, depth - 1, name.lexeme)))
+      return nullptr;
     const auto found =
         symbols.find(qualifiedName(lookup, depth - 1, name.lexeme));
     if (found != symbols.end() && symbolVisibleAt(found->second, name)) {
@@ -7095,8 +7134,7 @@ auto SemanticVisitor::Impl::resolvePlaceSymbol(const Token &name) -> Symbol * {
     // as its qualified spelling.
     return staticFieldFlowSymbol(*local);
   }
-  std::unordered_map<std::string, Symbol> *symbols =
-      currentNamespaceSymbolsMutable();
+  DeclarationIndex<Symbol> *symbols = currentNamespaceSymbolsMutable();
   const auto *context = macroContext(name);
   const auto &lookup = context ? context->namespaceScope : currentNamespace;
   if (context && sourceGraph && context->sourceUnit) {
@@ -7251,8 +7289,7 @@ auto SemanticVisitor::Impl::resolveQualifiedPlaceSymbol(const NamePath &path)
                : nullptr;
   }
 
-  std::unordered_map<std::string, Symbol> *symbols =
-      currentNamespaceSymbolsMutable();
+  DeclarationIndex<Symbol> *symbols = currentNamespaceSymbolsMutable();
   if (context && sourceGraph && context->sourceUnit) {
     auto &visible = activeVisibleNamespaceSymbols();
     const auto unit = visible.find(context->sourceUnit);
@@ -7378,6 +7415,8 @@ auto SemanticVisitor::Impl::declarationSourceUnit(const Symbol &symbol) const
 auto SemanticVisitor::Impl::reportInvisibleDeclaration(
     const Token &use, std::string name, const Token &declaration,
     SourceUnitId declarationUnit) -> bool {
+  if (reportAmbiguousName(use, name))
+    return true;
   if (sourceGraph == nullptr || currentSourceUnit == 0 ||
       declarationUnit == 0 ||
       declarationVisible(declarationUnit, declaration)) {
@@ -7387,8 +7426,8 @@ auto SemanticVisitor::Impl::reportInvisibleDeclaration(
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2024", DiagnosticPhase::Semantics, use,
       "Declaration '" + name +
-          "' is not visible from this source file; include its file "
-          "directly.");
+          "' is not visible from this source file; import its public module "
+          "interface.");
   diagnostic.related.push_back(
       {tokenSpan(declaration), "Declaration is in this source unit."});
   const SourceUnit *requester = sourceGraph->findUnit(currentSourceUnit);
@@ -7405,6 +7444,7 @@ auto SemanticVisitor::Impl::reportInvisibleDeclaration(
       diagnostic.message =
           "Declaration '" + name +
           "' is not visible; import its public module interface.";
+      diagnostic.missingIncludeName = use.lexeme;
       diagnostic.hints.emplace_back(
           "Add an import of the defining interface or a module that explicitly "
           "re-exports it.");
@@ -7414,21 +7454,9 @@ auto SemanticVisitor::Impl::reportInvisibleDeclaration(
   }
   if (requester != nullptr && target != nullptr) {
     diagnostic.missingIncludeName = use.lexeme;
-    // The defining unit is known even when adding it would expose other
-    // errors (for example, missing operations in a conformance block). Give
-    // that information as a hint; automatic edits still require a successful
-    // include-suggestion trial.
-    const std::string relative =
-        target->path.lexically_relative(requester->path.parent_path())
-            .generic_string();
-    if (!relative.empty() &&
-        relative.find_first_of("\r\n\"") == std::string::npos) {
-      const std::string spelling =
-          target->standardLibraryName ? "<" + *target->standardLibraryName + ">"
-                                      : "\"" + relative + "\"";
-      diagnostic.hints.push_back("Add #include " + spelling +
-                                 " to this source file.");
-    }
+    diagnostic.hints.push_back(
+        "Publish this declaration from an explicit module interface and import "
+        "that interface.");
   }
   diagnostics.push_back(std::move(diagnostic));
   return true;
@@ -7438,6 +7466,8 @@ auto SemanticVisitor::Impl::reportInvisibleSymbol(const Token &use,
                                                   std::string name,
                                                   const Symbol *symbol)
     -> bool {
+  if (reportAmbiguousName(use, name))
+    return true;
   return symbol != nullptr &&
          reportInvisibleDeclaration(use, std::move(name), symbol->declaration,
                                     declarationSourceUnit(*symbol));
@@ -7533,6 +7563,9 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
         return std::nullopt;
     }
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+      if (visibleAliases.ambiguousCandidates(
+              qualifiedName(fromScope, depth - 1, path.last().lexeme)))
+        return std::nullopt;
       const auto found = visibleAliases.find(
           qualifiedName(fromScope, depth - 1, path.last().lexeme));
       if (found != visibleAliases.end()) {
@@ -7544,6 +7577,9 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
 
   const std::string written = pathSpelling(path);
   for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+    if (visibleAliases.ambiguousCandidates(
+            qualifiedName(fromScope, depth - 1, written)))
+      return std::nullopt;
     const auto found =
         visibleAliases.find(qualifiedName(fromScope, depth - 1, written));
     if (found != visibleAliases.end()) {
@@ -7647,6 +7683,9 @@ auto SemanticVisitor::Impl::resolveConceptPath(
   const auto &visibleConcepts = currentConceptIds();
   if (path.segments.size() == 1) {
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+      if (visibleConcepts.ambiguousCandidates(
+              qualifiedName(fromScope, depth - 1, path.last().lexeme)))
+        return std::nullopt;
       const auto found = visibleConcepts.find(
           qualifiedName(fromScope, depth - 1, path.last().lexeme));
       if (found != visibleConcepts.end()) {
@@ -7715,6 +7754,9 @@ auto SemanticVisitor::Impl::resolveClassPath(
     }
   }
   for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+    if (visibleClasses.ambiguousCandidates(
+            qualifiedName(fromScope, depth - 1, pathSpelling(path))))
+      return std::nullopt;
     const auto found = visibleClasses.find(
         qualifiedName(fromScope, depth - 1, pathSpelling(path)));
     if (found != visibleClasses.end())
@@ -7801,6 +7843,9 @@ auto SemanticVisitor::Impl::resolveEnumPath(
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
       const std::string qualified =
           qualifiedName(fromScope, depth - 1, path.last().lexeme);
+      if (visibleEnums.ambiguousCandidates(qualified) ||
+          visibleAliases.ambiguousCandidates(qualified))
+        return std::nullopt;
       const auto found = visibleEnums.find(qualified);
       if (found != visibleEnums.end()) {
         return found->second;
@@ -11196,6 +11241,7 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   worker->macroLookupBase = macroLookupBase;
   worker->nextExpansion = nextExpansion;
   worker->valueFlow = valueFlow;
+  worker->valueFlow.rebindCallables(worker->catalog);
   // Cached summaries must describe global pointer inputs, not freeze the
   // first caller's current value. Direct addresses of globals stay ordinary
   // absolute places; only raw values loaded from their storage are symbolic.

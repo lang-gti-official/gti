@@ -55,7 +55,7 @@ def main():
         # including bytes beyond the first cache line and embedded zero bytes.
         message = "abcdefghijklmnopqrstuvwxyz0123456789" * 12
         panic = scratch / "copied-panic.gti"
-        panic.write_text('''#include <std/panic>
+        panic.write_text('''import std.panic;
 class Marker {
   char code;
 public:
@@ -79,7 +79,7 @@ int main() { Marker local{'O'}; middle(); return 0; }
 
         secondary_message = message[::-1]
         nested = scratch / "copied-secondary.gti"
-        nested.write_text('''#include <std/panic>
+        nested.write_text('''import std.panic;
 class Outer { public: Outer() = default; ~Outer() { std::print('O'); } };
 class Failing { public: Failing() = default; ~Failing() {
   std::print('D');

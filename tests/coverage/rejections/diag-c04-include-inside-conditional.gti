@@ -1,6 +1,6 @@
 #define WANT_MEMORY
 #ifdef WANT_MEMORY
-#include <std/memory> //!ERR
+import std.memory; //!ERR
 #endif
 
 int main() {

@@ -1,14 +1,15 @@
 #include "../src/compiler/semantic_diagnostics.h"
 #include "compiler_test_fixture.h"
 #include "native_symbol_spelling.h"
+#include "private_stdlib_fixture.h"
 
 namespace {
 
 void testConstructorTextStorageContracts() {
   const std::string declarations = R"gti(
-#include <std/string>
-#include <std/utility>
-#include <std/memory>
+import std.string;
+import std.utility;
+import std.memory;
 struct Label {
   std::string_view text;
   constexpr Label(std::string_view input = "default") : text((input)) {}
@@ -155,13 +156,13 @@ int main() {
 
 void testContainerScaffoldSurfaces() {
   const std::string source = R"(
-#include <std/array>
-#include <std/forward_list>
-#include <std/iterator>
-#include <std/list>
-#include <std/span>
-#include <std/string>
-#include <std/vector>
+import std.array;
+import std.forward_list;
+import std.iterator;
+import std.list;
+import std.span;
+import std.string;
+import std.vector;
 
 int count_range<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::input_iterator<Iterator> &&
@@ -256,8 +257,8 @@ int main() {
 
   const lang::FrontendResult invalidatedSpan = lang::Frontend().analyze(
       "invalidated-span.gti",
-      "#include <std/vector>\n"
-      "#include <std/span>\n"
+      "import std.vector;\n"
+      "import std.span;\n"
       "int main() {\n"
       "  mut std::vector<int> values = std::vector<int>({1, 2});\n"
       "  std::span<int> view = values.as_span();\n"
@@ -275,8 +276,8 @@ int main() {
 
   const lang::FrontendResult movedOwner = lang::Frontend().analyze(
       "moved-span-owner.gti",
-      "#include <std/vector>\n"
-      "#include <std/span>\n"
+      "import std.vector;\n"
+      "import std.span;\n"
       "int main() {\n"
       "  mut std::vector<int> values = std::vector<int>({1, 2});\n"
       "  std::span<int> view = values.as_span();\n"
@@ -293,8 +294,8 @@ int main() {
 
   const lang::FrontendResult escapedSpan = lang::Frontend().analyze(
       "escaped-span.gti",
-      "#include <std/vector>\n"
-      "#include <std/span>\n"
+      "import std.vector;\n"
+      "import std.span;\n"
       "std::span<int> escape() {\n"
       "  mut std::vector<int> values = std::vector<int>({1, 2});\n"
       "  return values.as_span();\n"
@@ -310,7 +311,7 @@ int main() {
 
   const lang::FrontendResult invalidatedTextView = lang::Frontend().analyze(
       "invalidated-string-view.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "T relay<T>(T value) { return value; }\n"
       "int main() {\n"
       "  mut std::string text = std::string(\"abc\");\n"
@@ -329,7 +330,7 @@ int main() {
 
   const lang::FrontendResult movedTextOwner = lang::Frontend().analyze(
       "moved-string-view-owner.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() {\n"
       "  mut std::string text = std::string(\"abc\");\n"
       "  std::string_view view = text.view();\n"
@@ -346,7 +347,7 @@ int main() {
          "rejected");
 
   const std::string textOwner = R"(
-#include <std/string>
+import std.string;
 class Label {
   mut std::string text = std::string("abc");
 public:
@@ -408,7 +409,7 @@ int main() {
             "static std::string_view view() { return text.view(); }")}) {
     const auto rejected = lang::Frontend().analyze(
         "shadowed-field-view.gti",
-        "#include <std/string>\nclass Owner { std::string text{\"field\"}; "
+        "import std.string;\nclass Owner { std::string text{\"field\"}; "
         "public: " +
             method + " };",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -422,7 +423,7 @@ int main() {
 
   const auto parameterShadow = lang::Frontend().analyze(
       "parameter-shadow-field.gti", R"(
-#include <std/string>
+import std.string;
 class Owner {
   mut std::string text{"field"};
 public:
@@ -445,7 +446,7 @@ int main() {
          "a same-named read-only parameter retains its own origin, not this");
 
   const auto staticText = lang::Frontend().analyze("static-field-view.gti", R"(
-#include <std/string>
+import std.string;
 class StaticText {
   static std::string_view text = "static";
 public:
@@ -466,7 +467,7 @@ int main() {
 
   const lang::FrontendResult escapedTextView = lang::Frontend().analyze(
       "escaped-string-view.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "std::string_view escape() {\n"
       "  mut std::string text = std::string(\"abc\");\n"
       "  return text.view();\n"
@@ -484,7 +485,7 @@ int main() {
   // obligation of the helper; a caller passing dynamic text is rejected.
   const lang::FrontendResult storedTextView = lang::Frontend().analyze(
       "stored-string-view.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "mut std::string_view saved = \"\";\n"
       "void retain(std::string_view value) { saved = value; }\n"
       "int main() { std::string owner = std::string(\"abc\");\n"
@@ -497,12 +498,10 @@ int main() {
       "an opaque string_view parameter must not be retained in global "
       "storage without an expressible dependency graph");
 
-  const lang::FrontendResult nestedTextView = lang::Frontend().analyze(
-      // Use an existing trusted unit that is not in string's dependency graph;
-      // overriding memory.gti here would create an include cycle.
-      standardLibraryRoot() / "std/cmath.gti", R"(
-#include <std/string>
-#include <std/memory>
+  const lang::FrontendResult nestedTextView =
+      gti_test::analyzePrivateMemoryFixture("nested-text-view.gti", R"(
+import std.string;
+import std.memory;
 
 int main() {
   mut std::string text = std::string("abc");
@@ -511,8 +510,7 @@ int main() {
   stored.append_value(text.view());
   return 0;
 }
-)",
-      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+)");
   expect(!nestedTextView.canGenerateCode() &&
              hasDiagnosticCode(nestedTextView.diagnostics, "GTI-S2045") &&
              hasDiagnostic(nestedTextView.diagnostics,
@@ -526,7 +524,7 @@ int main() {
 
   const lang::FrontendResult validCString = lang::Frontend().analyze(
       "string-c-string.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() {\n"
       "  mut std::string text = std::string(\"abc\");\n"
       "  c_string unchecked = text.c_string();\n"
@@ -541,7 +539,7 @@ int main() {
 
   const lang::FrontendResult invalidatedCString = lang::Frontend().analyze(
       "invalidated-c-string.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "int main() {\n"
       "  mut std::string text = std::string(\"abc\");\n"
       "  c_string pointer = text.c_string();\n"
@@ -559,7 +557,7 @@ int main() {
 
   const lang::FrontendResult relayedCString = lang::Frontend().analyze(
       "relayed-c-string.gti",
-      "#include <std/string>\n"
+      "import std.string;\n"
       "c_string relay(c_string value) { return value; }\n"
       "int main() {\n"
       "  mut std::string text = std::string(\"abc\");\n"
@@ -574,7 +572,7 @@ int main() {
          "parameter and return should preserve its source loan");
 
   const std::string escapedCStringSource =
-      "#include <std/string>\n"
+      "import std.string;\n"
       "c_string escape() {\n"
       "  mut std::string text = std::string(\"abc\");\n"
       "  return text.c_string();\n"
@@ -2154,6 +2152,13 @@ int Cell::take() && { return this.number; }
            "a separate method must not mutate or consume a receiver with a "
            "live borrowed result");
   }
+  const auto genericMethod = lang::Frontend().analyze(
+      "split-generic-method.gti",
+      "struct A { static T read<T>(T x); }; "
+      "U A::read<U>(U x) { return x; } int main() { return A::read(0); }",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(genericMethod.canGenerateCode(),
+         "a generic method may have a separate alpha-renamed definition");
   for (const auto &[source, message] :
        std::vector<std::pair<std::string, std::string>>{
            {"int Missing::read() { return 1; }", "visible"},
@@ -2182,10 +2187,6 @@ int Cell::take() && { return this.number; }
            {"struct A { int read() mut;  public: A() = default; }; int "
             "A::read() { return 1; }",
             "receiver qualifier"},
-           {"struct A { static T read<T>(T x);  public: A() = default; }; T "
-            "A::read<T>(T x) { return "
-            "x; }",
-            "non-generic"},
            {"struct A { int read();  public: A() = default; }; namespace wrong "
             "{ int A::read() { "
             "return 1; } }",
@@ -2206,8 +2207,8 @@ int Cell::take() && { return this.number; }
   const auto canonical = [](const std::filesystem::path &path) {
     return std::filesystem::weakly_canonical(path).string();
   };
-  const std::string types =
-      "namespace demo { struct Parcel<T> { T value; }; }\n";
+  const std::string types = "export module types;\nexport namespace demo { "
+                            "struct Parcel<T> { T value; }; }\n";
   for (const auto &[signature, definition] :
        std::vector<std::pair<std::string, std::string>>{
            {"Parcel<int> make();",
@@ -2219,14 +2220,22 @@ int Cell::take() && { return this.number; }
             "int Factory::make(Parcel<int>* input) { return 7; }"}}) {
     const std::unordered_map<std::string, std::string> units{
         {canonical(root / "types.gti"), types},
-        {canonical(root / "api.gti"), "#include \"types.gti\"\nnamespace demo "
-                                      "{ interface Factory { static " +
-                                          signature + " }; }\n"}};
-    const std::string source = "#include \"api.gti\"\nnamespace demo { " +
-                               definition + " }\nint main() { return 0; }\n";
+        {canonical(root / "api.gti"),
+         "export module api;\nimport \"types.gti\";\nnamespace demo "
+         "{ export interface Factory { static " +
+             signature + " }; }\n"}};
+    const lang::PackageSourceRoot package{
+        .identity = "split-signature",
+        .name = "split-signature",
+        .packageRoot = root,
+        .sourceRoot = root,
+        .modules = {{"api", root / "api.gti"}},
+        .moduleImplementations = {{"api", {root / "main.gti"}}}};
+    const std::string source = "module api;\nnamespace demo { " + definition +
+                               " }\nint main() { return 0; }\n";
     const auto hidden = lang::Frontend().analyze(
         root / "main.gti", source, {standardLibraryPrelude()}, units,
-        {standardLibraryRoot()});
+        {standardLibraryRoot()}, {package});
     const auto *diagnostic =
         findDiagnosticByCode(hidden.diagnostics, "GTI-S2024");
     expect(!hidden.canGenerateCode() && diagnostic != nullptr &&
@@ -2234,24 +2243,25 @@ int Cell::take() && { return this.number; }
            "invisible split signature types must diagnose visibility, not "
            "signature mismatch");
     if (diagnostic != nullptr) {
-      expect(
-          diagnostic->phase == lang::DiagnosticPhase::Semantics &&
-              diagnostic->severity == lang::DiagnosticSeverity::Error &&
-              diagnostic->message.find("Parcel") != std::string::npos &&
-              diagnostic->primary.source == canonical(root / "main.gti") &&
-              diagnostic->primary.start == source.find("Parcel") &&
-              diagnostic->primary.end == source.find("Parcel") + 6 &&
-              diagnostic->related.size() == 1 &&
-              diagnostic->related.front().span.source ==
-                  canonical(root / "types.gti") &&
-              diagnostic->related.front().span.start == types.find("Parcel") &&
-              hasDiagnosticHint(hidden.diagnostics, "#include \"types.gti\""),
-          "split signature visibility errors retain the type span, "
-          "declaration note and direct-include hint");
+      expect(diagnostic->phase == lang::DiagnosticPhase::Semantics &&
+                 diagnostic->severity == lang::DiagnosticSeverity::Error &&
+                 diagnostic->message.find("Parcel") != std::string::npos &&
+                 diagnostic->primary.source == canonical(root / "main.gti") &&
+                 diagnostic->primary.start == source.find("Parcel") &&
+                 diagnostic->primary.end == source.find("Parcel") + 6 &&
+                 diagnostic->related.size() == 1 &&
+                 diagnostic->related.front().span.source ==
+                     canonical(root / "types.gti") &&
+                 diagnostic->related.front().span.start ==
+                     types.find("Parcel") &&
+                 hasDiagnosticHint(hidden.diagnostics, "import \"types.gti\";"),
+             "split signature visibility errors retain the type span, "
+             "declaration note and direct-include hint");
     }
     const auto visible = lang::Frontend().analyze(
-        root / "main.gti", "#include \"types.gti\"\n" + source,
-        {standardLibraryPrelude()}, units, {standardLibraryRoot()});
+        root / "main.gti",
+        "module api;\nimport \"types.gti\";\n" + source.substr(12),
+        {standardLibraryPrelude()}, units, {standardLibraryRoot()}, {package});
     expect(visible.canGenerateCode(),
            "directly included split signature types bind normally");
   }
@@ -2262,7 +2272,8 @@ int Cell::take() && { return this.number; }
         "Parcel<Missing> Factory::make() { return 0; }"}) {
     const auto invalid = lang::Frontend().analyze(
         "split-unknown-type.gti",
-        "namespace demo { struct Parcel<T> { T value; }; "
+        "export module types;\nexport namespace demo { struct Parcel<T> { T "
+        "value; }; "
         "interface Factory { static int make(); }; " +
             std::string(definition) +
             " } int neighboring() { return absent; } int main(){ return 0; }",
@@ -3949,7 +3960,7 @@ class demo::Value<int, bool> {};
       std::filesystem::temp_directory_path() / "gti-exact-specialization";
   const lang::FrontendResult standardHash = lang::Frontend().analyze(
       root / "hash.gti", R"(
-#include <std/functional>
+import std.functional;
 class Widget {
   int value = 42;
 public:
@@ -3976,7 +3987,7 @@ int main() {
 
   const lang::FrontendResult orphanHash = lang::Frontend().analyze(
       root / "orphan-hash.gti", R"(
-#include <std/functional>
+import std.functional;
 class std::hash<int> {
 public:
   size_t operator()(int& value) { return size_t(value); }
@@ -3989,14 +4000,14 @@ int main() { return 0; }
           hasDiagnosticCode(orphanHash.diagnostics, "GTI-S2078") &&
           hasDiagnostic(orphanHash.diagnostics,
                         "owns neither the primary nor a top-level nominal") &&
-          hasDiagnosticHint(orphanHash.diagnostics, "primary's package"),
+          hasDiagnosticHint(orphanHash.diagnostics, "primary's module"),
       "the coherence rule should reject a std::hash specialization for a "
       "builtin type owned by neither side");
 
   const lang::FrontendResult nestedOrphanHash = lang::Frontend().analyze(
       root / "nested-orphan-hash.gti", R"(
-#include <std/functional>
-#include <std/vector>
+import std.functional;
+import std.vector;
 class Widget { public: Widget() = default; };
 class std::hash<std::vector<Widget>> {
 public:
@@ -4761,8 +4772,8 @@ int main() {
 
 void testConcurrencyTypeCapabilities() {
   const std::string source = R"(
-#include <std/cstdio>
-#include <std/memory>
+import std.cstdio;
+import std.memory;
 
 struct Scalar {
   int value = 0;
@@ -5010,7 +5021,7 @@ int main() {
          "emitted C++ traits or spellings");
 
   const std::string invalidSource = R"(
-#include <std/memory>
+import std.memory;
 
 class RawBox { int* address = nullptr;  public: RawBox() = default; };
 class Cleanup {
@@ -5638,8 +5649,8 @@ int main() { int value = 1; return snapshot(value); }
 
   const auto impossibleClone = lang::Frontend().analyze(
       "noncloneable-owner.gti", R"(
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 int main() {
   std::vector<std::unique_ptr<int>> owners{};
   auto copy = owners.clone();
@@ -5887,7 +5898,7 @@ int main() { Overloaded r{}; int value = 7; bool condition = true;
          "only a member name or result");
 
   const std::string formatPrefix =
-      "#include <std/format>\n#include <std/string>\nstruct Item { public: "
+      "import std.format;\nimport std.string;\nstruct Item { public: "
       "Item() = default; };\n";
   for (const auto &call :
        {"std::format(\"{}\", Item())", "std::try_format(\"{}\", Item())",
@@ -6058,13 +6069,14 @@ int main() { return 0; }
     return std::filesystem::weakly_canonical(path).string();
   };
   const std::string conceptsSource = R"(
-namespace capabilities {
+export module concepts;
+export namespace capabilities {
 concept signed_value<T> = std::signed_numeric<T>;
 }
 )";
   lang::FrontendResult visible = lang::Frontend().analyze(
       visibilityEntry,
-      "#include \"concepts.gti\"\n"
+      "import \"concepts.gti\";\n"
       "namespace cap = capabilities;\n"
       "T use<cap::signed_value T>(T value) { return value; }\n"
       "int main() { return use(1) - 1; }\n",
@@ -6075,16 +6087,17 @@ concept signed_value<T> = std::signed_numeric<T>;
 
   lang::FrontendResult hidden = lang::Frontend().analyze(
       visibilityEntry,
-      "#include \"wrapper.gti\"\n"
+      "import \"wrapper.gti\";\n"
       "T use<capabilities::signed_value T>(T value) { return value; }\n"
       "int main() { return use(1) - 1; }\n",
       {standardLibraryPrelude()},
-      {{canonical(wrapperUnit), "#include \"concepts.gti\"\n"},
+      {{canonical(wrapperUnit),
+        "export module wrapper;\nimport \"concepts.gti\";\n"},
        {canonical(conceptsUnit), conceptsSource}},
       {standardLibraryRoot()});
   expect(!hidden.canGenerateCode() &&
              hasDiagnosticCode(hidden.diagnostics, "GTI-S2024") &&
-             hasDiagnosticHint(hidden.diagnostics, "#include \"concepts.gti\""),
+             hasDiagnosticHint(hidden.diagnostics, "import \"concepts.gti\";"),
          "concept declarations should obey direct-include visibility without "
          "transitive re-export");
 
@@ -6445,7 +6458,7 @@ int main() { return 0; }
 
   const lang::FrontendResult structuralCommon = lang::Frontend().analyze(
       "requires-disjunction-structural.gti", R"(
-#include <std/functional>
+import std.functional;
 class readable {
 public:
   int32_t operator()(int32_t& value) { return value + 1; }
@@ -6501,7 +6514,7 @@ int okay() { return 0; }
 void testDomainValueOperatorCapabilities() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "domain-operator-capabilities.gti", R"(
-#include <std/numeric>
+import std.numeric;
 
 class vec3 {
 public:
@@ -6636,9 +6649,9 @@ int main() { holder h = holder(1.0); holder r = twice(h); return 0; }
 
 void testStructuralRequiresAndAccumulate() {
   const std::string source = R"(
-#include <std/iterator>
-#include <std/numeric>
-#include <std/vector>
+import std.iterator;
+import std.numeric;
+import std.vector;
 
 concept compatible_sentinel<Sentinel, Iterator> =
     std::sentinel_for<Sentinel, Iterator>;
@@ -6916,7 +6929,7 @@ public:
 
   const lang::FrontendResult unprovenForward = lang::Frontend().analyze(
       "unproven-structural-forward.gti", R"(
-#include <std/numeric>
+import std.numeric;
 T invalid_forward<Iterator, Sentinel, std::numeric T>(
     mut Iterator first, Sentinel last, mut T init) {
   return std::accumulate(std::move(first), std::move(last), std::move(init));
@@ -6949,8 +6962,8 @@ T invalid_forward<Iterator, Sentinel, std::numeric T>(
 
   const lang::FrontendResult exactSentinelBridges = lang::Frontend().analyze(
       "exact-sentinel-bridges.gti", R"(
-#include <std/numeric>
-#include <std/iterator>
+import std.numeric;
+import std.iterator;
 
 class BaseEnd {
 public:
@@ -7075,8 +7088,8 @@ int main() {
 
   const lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-structural-requires.gti", R"(
-#include <std/iterator>
-#include <std/numeric>
+import std.iterator;
+import std.numeric;
 
 class End {
   int limit = 1;
@@ -7176,7 +7189,7 @@ int main() {
 
   const lang::FrontendResult missingIncrement = lang::Frontend().analyze(
       "missing-increment.gti", R"(
-#include <std/numeric>
+import std.numeric;
 
 class End {
   int limit = 1;
@@ -7213,7 +7226,7 @@ int main() {
 
   const lang::FrontendResult mutableOnlyDereference = lang::Frontend().analyze(
       "mutable-only-dereference.gti", R"(
-#include <std/numeric>
+import std.numeric;
 
 class End {
   int limit = 1;
@@ -7251,7 +7264,7 @@ int main() {
 
   const lang::FrontendResult wrongArity = lang::Frontend().analyze(
       "wrong-requires-arity.gti", R"(
-#include <std/iterator>
+import std.iterator;
 T invalid<I, T>(I iterator, T value)
   requires std::input_iterator<I, T> {
   return value;
@@ -7271,8 +7284,8 @@ void invalid_pack<Args...>(Args... args)
 
   const lang::FrontendResult duplicate = lang::Frontend().analyze(
       "duplicate-structural-overload.gti", R"(
-#include <std/iterator>
-#include <std/numeric>
+import std.iterator;
+import std.numeric;
 T select<I, S, T>(I iterator, S sentinel, T value)
   requires std::input_iterator<I> && std::sentinel_for<S, I> {
   return value;
@@ -7368,7 +7381,7 @@ int32_t after() {
 void testCallableConceptCapabilities() {
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "callable-concepts.gti", R"(
-#include <std/functional>
+import std.functional;
 
 class reader {
 public:
@@ -7479,7 +7492,7 @@ int main() {
   };
 
   rejects("mutable-target-at-read-site.gti", R"(
-#include <std/functional>
+import std.functional;
 class mutable_only {
 public:
   bool operator()(int32_t& value) mut { return value > 0; }
@@ -7497,7 +7510,7 @@ int main() { return inspect(1, mutable_only()) ? 0 : 1; }
           "use site");
 
   rejects("once-target-at-repeatable-site.gti", R"(
-#include <std/functional>
+import std.functional;
 class once_only {
 public:
   bool operator()(int32_t& value) && { return value > 0; }
@@ -7515,7 +7528,7 @@ int main() { return inspect(1, once_only()) ? 0 : 1; }
           "site");
 
   rejects("wrong-predicate-result.gti", R"(
-#include <std/functional>
+import std.functional;
 class integer_result {
 public:
   int32_t operator()(int32_t& value) { return value; }
@@ -7532,7 +7545,7 @@ int main() { return inspect(1, integer_result()) ? 0 : 1; }
           "a predicate should require an exact owned bool result");
 
   rejects("borrowed-operation-result.gti", R"(
-#include <std/functional>
+import std.functional;
 class borrowed_result {
 public:
   int32_t& operator()(int32_t& value) { return value; }
@@ -7551,7 +7564,7 @@ int main() { return transform(1, borrowed_result()) - 1; }
 
   const auto ambiguous = lang::Frontend().analyze(
       "ambiguous-callable-use.gti", R"(
-#include <std/functional>
+import std.functional;
 class ambiguous {
 public:
   bool operator()(int32_t value) { return value > 0; }
@@ -7575,7 +7588,7 @@ int main() { return inspect(1, ambiguous()) ? 0 : 1; }
   // its public operator() is inspected through ordinary substitution.
   const lang::FrontendResult dependent = lang::Frontend().analyze(
       "dependent-callable-concepts.gti", R"(
-#include <std/functional>
+import std.functional;
 
 class less_of<std::totally_ordered T> {
 public:
@@ -7653,7 +7666,7 @@ bool order<T, Compare>(T& left, T& right, mut Compare compare)
 }
 )";
   rejects("dependent-callable-arity.gti", R"(
-#include <std/functional>
+import std.functional;
 class unary_of<std::totally_ordered T> {
 public:
   unary_of() {}
@@ -7669,7 +7682,7 @@ int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
           "a dependent unary target should not satisfy a binary comparator");
 
   rejects("dependent-callable-result.gti", R"(
-#include <std/functional>
+import std.functional;
 class distance_of<std::totally_ordered T> {
 public:
   distance_of() {}
@@ -7685,7 +7698,7 @@ int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
           "a dependent comparator should still require an exact bool result");
 
   rejects("closed-callable-open-argument.gti", R"(
-#include <std/functional>
+import std.functional;
 class less_int {
 public:
   less_int() {}
@@ -7702,7 +7715,7 @@ int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
           "argument");
 
   rejects("dependent-callable-receiver.gti", R"(
-#include <std/functional>
+import std.functional;
 class counting_less<std::totally_ordered T> {
   mut int32_t calls;
 
@@ -7728,7 +7741,7 @@ int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 
   const lang::FrontendResult missingClassFact = lang::Frontend().analyze(
       "dependent-callable-class-requirement.gti", R"(
-#include <std/functional>
+import std.functional;
 class less_of<std::totally_ordered T> {
 public:
   less_of() {}
@@ -7759,8 +7772,8 @@ int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }
 
 void testSymbolicAutoLocalBinding() {
   const std::string source = R"(
-#include <std/iterator>
-#include <std/vector>
+import std.iterator;
+import std.vector;
 
 bool first_less_than_next<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::input_iterator<Iterator> &&
@@ -7867,7 +7880,7 @@ int main() {
 
   const lang::FrontendResult uninstantiated = lang::Frontend().analyze(
       "uninstantiated-symbolic-auto-local.gti", R"(
-#include <std/iterator>
+import std.iterator;
 
 bool first_less_than_next<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::input_iterator<Iterator> &&
@@ -7987,7 +8000,7 @@ int main() { Item item = construct<Item>(Item(7)); return item.value() - 7; }
          "cleanup-free pack movement must not require an active result drop");
 
   const auto reused = lang::Frontend().analyze("reused-special-pack.gti", R"(
-#include <std/string>
+import std.string;
 void twice<T, Args...>(Args... args) {
   T first = T(args...);
   T second = T(args...);
@@ -8075,7 +8088,7 @@ void testConstructorLocalTypeGenerics() {
       std::filesystem::temp_directory_path() /
           "gti-constructor-pack-in-place.gti",
       R"(
-#include <std/memory>
+import std.memory;
 enum class InPlaceTag { value };
 class Immovable {
 public:
@@ -8153,8 +8166,8 @@ int main() {
   expect(packBindings == 5 && emptyPacks == 1,
          "all concrete node constructor packs need exact binding metadata");
   const std::string source = R"(
-#include <std/string>
-#include <std/memory>
+import std.string;
+import std.memory;
 
 class Capture {
 public:
@@ -8522,8 +8535,8 @@ int main() { return 0; }
 
   const lang::FrontendResult wrongElement =
       analyze("string-range-wrong-element.gti", R"(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 int main() {
   mut std::vector<int> values = std::vector<int>();
   std::string text = std::string(values.begin(), values.end());
@@ -8541,7 +8554,7 @@ int main() {
 
   const lang::FrontendResult closedRequirement =
       analyze("constructor-closed-requirement.gti", R"(
-#include <std/iterator>
+import std.iterator;
 class CharacterIterator {
   char value = 'x';
 public:
@@ -9411,7 +9424,7 @@ int main() {
 
   const lang::FrontendResult movePack = lang::Frontend().analyze(
       "move-pack.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class PackedValue { public: PackedValue() = default; };
 
@@ -9444,7 +9457,7 @@ int main() {
 
   const lang::FrontendResult reusedMovePack = lang::Frontend().analyze(
       "reused-move-pack.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class PackedValue { public: PackedValue() = default; };
 
@@ -10560,7 +10573,7 @@ int main() {
 
   const lang::FrontendResult moveOnly = lang::Frontend().analyze(
       "move-only-auto.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class Value {
 public:
@@ -10585,7 +10598,7 @@ int main() {
 
   const lang::FrontendResult movedOwner = lang::Frontend().analyze(
       "moved-auto.gti", R"(
-#include <std/memory>
+import std.memory;
 
 class Value {
 public:
@@ -12856,7 +12869,7 @@ int main() { unsafe { accept(callback); } return 0; }
          "transport");
 
   const auto owned = lang::Frontend().analyze("tracked-owned-callback.gti", R"(
-#include <std/functional>
+import std.functional;
 [[track_caller]] int callback(int value) { return value; }
 int main() { std::function<int(int)> erased{callback}; return erased(1); }
 )",

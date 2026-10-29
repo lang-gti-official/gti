@@ -13,7 +13,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:855: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
+          "stderr": "<std/detail/memory_storage>:510: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
           "stdout": "target 1\nsource 1\nsource 0\nouter guard\n"
         },
         {
@@ -21,7 +21,7 @@
             "a"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:854: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
+          "stderr": "<std/detail/memory_storage>:509: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
           "stdout": "source 1\nsource 0\nouter guard\n"
         },
         {
@@ -30,7 +30,7 @@
             "b"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:852: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
+          "stderr": "<std/detail/memory_storage>:507: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
           "stdout": "source 2\nsource 1\nsource 0\nouter guard\n"
         }
       ]
@@ -39,7 +39,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:820: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/detail/memory_storage>:475: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -47,7 +47,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:821: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
+          "stderr": "<std/detail/memory_storage>:476: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -56,7 +56,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:1590: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:368: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\nconstruct 10\ndrop 10\ndrop 0\n"
         },
         {
@@ -66,7 +66,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:840: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
+          "stderr": "<std/detail/memory_storage>:495: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
           "stdout": "construct 0\nconstruct 10\nconstruct 20\ndrop 20\ndrop 10\ndrop 0\n"
         }
       ]
@@ -85,7 +85,7 @@
       "cases": [
         {
           "exit": "abort",
-          "stderr": "<std/memory>:392: runtime error\\[GTI-R0011\\]: allocation_failure in private_storage\\n",
+          "stderr": "<std/detail/memory_storage>:46: runtime error\\[GTI-R0011\\]: allocation_failure in private_storage\\n",
           "stdout": "full\n"
         }
       ]
@@ -285,7 +285,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:280: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
+          "stderr": "<std/detail/memory_core>:208: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
           "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
         },
         {
@@ -293,7 +293,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:288: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
+          "stderr": "<std/detail/memory_core>:216: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
           "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
         }
       ]
@@ -440,7 +440,7 @@
           ],
           "cwd": "app",
           "exit": 65,
-          "pattern": "error\\[GTI-I0010\\]"
+          "pattern": "error\\[GTI-I0012\\]"
         },
         {
           "command": [
@@ -449,7 +449,7 @@
           ],
           "cwd": "app",
           "exit": 65,
-          "pattern": "error\\[GTI-I0010\\]"
+          "pattern": "error\\[GTI-I0012\\]"
         },
         {
           "command": [
@@ -563,15 +563,16 @@
             "dup_function"
           ],
           "exit": 65,
-          "pattern": "error\\[GTI-S2011\\]"
+          "pattern": "error\\[GTI-S2013\\]"
         },
         {
           "command": [
-            "check",
-            "dup_private_type"
+            "run",
+            "dup_private_type",
+            "--backend",
+            "llvm"
           ],
-          "exit": 65,
-          "pattern": "error\\[GTI-S2006\\]"
+          "exit": 0
         },
         {
           "command": [
@@ -599,11 +600,12 @@
         },
         {
           "command": [
-            "check",
-            "hidden_dup"
+            "run",
+            "hidden_dup",
+            "--backend",
+            "llvm"
           ],
-          "exit": 65,
-          "pattern": "error\\[GTI-S2011\\]"
+          "exit": 0
         }
       ]
     },
@@ -655,11 +657,10 @@
       "steps": [
         {
           "command": [
-            "check",
+            "run",
             "shared_flags"
           ],
-          "exit": 65,
-          "pattern": "error\\[GTI-I0012\\]"
+          "exit": 0
         },
         {
           "command": [
@@ -667,7 +668,7 @@
             "include_in_conditional"
           ],
           "exit": 65,
-          "pattern": "error\\[GTI-I0004\\]"
+          "pattern": "error\\[GTI-I0012\\]"
         },
         {
           "command": [
@@ -767,11 +768,11 @@
           "command": [
             "run",
             "--",
-            "ACDL"
+            "AVCDI"
           ],
           "cwd": "app",
           "exit": 0,
-          "pattern": "^ACDL"
+          "pattern": "^AVCDI"
         },
         {
           "command": [
@@ -779,11 +780,11 @@
             "-D",
             "FEATURE_B",
             "--",
-            "ABCDL"
+            "ABVCDI"
           ],
           "cwd": "app",
           "exit": 0,
-          "pattern": "^ABCDL"
+          "pattern": "^ABVCDI"
         },
         {
           "command": [
@@ -793,21 +794,21 @@
             "-D",
             "FEATURE_B",
             "--",
-            "ABCDL"
+            "ABVCDI"
           ],
           "cwd": "app",
           "exit": 0,
-          "pattern": "^ABCDL"
+          "pattern": "^ABVCDI"
         },
         {
           "command": [
             "run",
             "--",
-            "ACDL"
+            "AVCDI"
           ],
           "cwd": "app",
           "exit": 0,
-          "pattern": "^ACDL"
+          "pattern": "^AVCDI"
         }
       ]
     },
@@ -1191,7 +1192,7 @@
       "outcome": "rejected"
     },
     "diag-c04-include-inside-conditional": {
-      "code": "GTI-I0004",
+      "code": "GTI-I0012",
       "outcome": "rejected"
     },
     "diag-c05-syntax-error-in-inactive-branch": {

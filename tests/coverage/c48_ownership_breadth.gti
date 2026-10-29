@@ -1,7 +1,7 @@
 // Move-only types, sink parameters, owning containers and explicit transfer.
-#include <std/memory>
-#include <std/vector>
-#include <std/string>
+import std.memory;
+import std.vector;
+import std.string;
 
 class Buffer {
   mut std::string data;

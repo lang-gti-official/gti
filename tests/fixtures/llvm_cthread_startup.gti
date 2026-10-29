@@ -1,3 +1,3 @@
-#include <std/cthread>
+import std.cthread;
 
 int main() { return 0; }

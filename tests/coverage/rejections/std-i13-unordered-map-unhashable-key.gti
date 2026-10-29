@@ -1,5 +1,5 @@
 // INVALID: an unordered_map key type without a std::hash specialization.
-#include <std/unordered_map>
+import std.unordered_map;
 struct Point {
   int x;
   int y;

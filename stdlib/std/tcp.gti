@@ -1,3 +1,5 @@
+export module tcp;
+
 #if target.os == "windows"
 #error "std/tcp currently exposes only the POSIX socket ABI."
 #endif
@@ -6,7 +8,7 @@
 #error "std/tcp requires a supported POSIX target."
 #endif
 
-namespace gti_internal {
+export namespace gti_internal {
 [[no_transfer, no_share]] class tcp_socket_handle {
   mut int32_t descriptor;
 
@@ -34,7 +36,7 @@ int32_t close(int32_t descriptor);
 }
 }
 
-namespace std {
+export namespace std {
 namespace tcp {
 enum class errc {
   open_failed,

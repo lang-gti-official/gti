@@ -1,12 +1,12 @@
-#include <std/iterator>
-#include <std/vector>
-#include <std/array>
-#include <std/deque>
-#include <std/list>
-#include <std/map>
-#include <std/set>
-#include <std/unordered_map>
-#include <std/unordered_set>
+import std.iterator;
+import std.vector;
+import std.array;
+import std.deque;
+import std.list;
+import std.map;
+import std.set;
+import std.unordered_map;
+import std.unordered_set;
 
 bool random_cursor<I>(I cursor) requires std::random_access_iterator<I> {
   mut I copy = cursor;

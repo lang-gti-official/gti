@@ -1,4 +1,4 @@
-#include <std/thread>
+import std.thread;
 
 // The first failing worker in argument order supplies the propagated record
 // after every worker joined and every task value was cleaned.

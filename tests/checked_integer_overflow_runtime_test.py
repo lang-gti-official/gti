@@ -45,11 +45,11 @@ def boundary_values(bits: int, signed: bool) -> list[int]:
 
 def program() -> str:
     lines = [
-        "#include <std/charconv>",
-        "#include <std/numeric>",
-        "#include <std/panic>",
-        "#include <std/string>",
-        "#include <std/vector>",
+        "import std.charconv;",
+        "import std.numeric;",
+        "import std.panic;",
+        "import std.string;",
+        "import std.vector;",
         "",
     ]
     for name, (spelling, _, _) in TYPES.items():

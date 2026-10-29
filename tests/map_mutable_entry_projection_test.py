@@ -11,6 +11,7 @@ import tempfile
 import time
 
 from native_fixture_build import build_fixture
+from internal_module_fixture import private_library, private_source
 
 
 def run(command):
@@ -18,7 +19,7 @@ def run(command):
 
 
 def reject_invalid(compiler, fixtures, directory):
-    includes = "#include <std/map>\n#include <std/unordered_map>\n#include <std/string>\n#include <std/utility>\n"
+    includes = "import std.detail.map_entry;\nimport std.map;\nimport std.unordered_map;\nimport std.string;\nimport std.utility;\n"
     cases = {}
     for kind in ("map", "unordered_map"):
         setup = f"mut std::{kind}<int,int> values{{}}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();\n"
@@ -66,6 +67,7 @@ def reject_invalid(compiler, fixtures, directory):
         checked = run([str(compiler), str(path), "--emit-mir", "-o", str(path.with_suffix(".mir"))])
         assert checked.returncode == 65 and "error[GTI-S" in checked.stderr, (name, checked.stdout, checked.stderr)
         assert "GTI-B0001" not in checked.stderr, (name, checked.stderr)
+        assert "GTI-S2024" not in checked.stderr and "GTI-I0012" not in checked.stderr, (name, checked.stderr)
     print(f"mutable entry projection: {len(cases)} key/owner/access bypasses rejected", flush=True)
 
 
@@ -111,6 +113,8 @@ def main():
     fixtures = repository / "tests" / "fixtures"
     with tempfile.TemporaryDirectory(prefix="gti-map-entry-projection-") as temporary:
         directory = pathlib.Path(temporary)
+        os.environ["GTI_STDLIB_PATH"] = str(private_library(
+            repository, directory / "stdlib", ("detail.map_entry",)))
         if len(sys.argv) == 3 and sys.argv[2] == "--cost-only":
             measure_projection(compiler, fixtures, directory)
             return
@@ -126,7 +130,10 @@ def main():
                             "associative_map_insert_result", "unordered_map_insert_result",
                             "associative_map_iteration", "unordered_map_iteration", "map_mutable_entry_failure"):
                 binary = directory / f"{fixture}-{mode}"
-                built = run([str(compiler), str(fixtures / f"{fixture}.gti"), "--keep-cpp", "-o", str(binary), *flags])
+                source = fixtures / f"{fixture}.gti"
+                if fixture == "map_mutable_entry_projection":
+                    source = private_source(source, directory / source.name, ("detail.map_entry",))
+                built = run([str(compiler), str(source), "--keep-cpp", "-o", str(binary), *flags])
                 assert built.returncode == 0, (fixture, mode, built.stdout, built.stderr)
                 assert "// GTI verified-MIR body:" in binary.with_suffix(".gti.cpp").read_text(), (fixture, mode)
                 if fixture.endswith("failure"):

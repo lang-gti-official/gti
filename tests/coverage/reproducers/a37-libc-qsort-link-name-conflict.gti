@@ -1,5 +1,5 @@
 // A37: the same conflict for qsort; [[link_name]] does not isolate it.
-#include <std/memory>
+import std.memory;
 using Compare = (const void*, const void*) -> int32_t;
 extern "C" {
   [[link_name("qsort")]] void sort_raw(void* base, uint64_t count, uint64_t size, Compare compare);

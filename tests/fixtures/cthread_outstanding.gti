@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 extern "C" {
   void cthread_install_terminal();
   void cthread_block();

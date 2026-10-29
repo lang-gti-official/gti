@@ -1,9 +1,9 @@
 // Invalid: a provider cannot be mutated (exclusive access) while a
 // resource_vector built from its binding is still live; the owner retains a
 // shared checked provider borrow through its cleanup.
-#include <std/resource_vector>
-#include <std/resource>
-#include <std/memory>
+import std.resource_vector;
+import std.resource;
+import std.memory;
 
 class Counting {
   std::process_resource process{};

@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/panic>
+import std.string;
+import std.panic;
 
 enum Reading { ready(int& value), failed(std::string error) };
 for concept std::tryable<Reading> {

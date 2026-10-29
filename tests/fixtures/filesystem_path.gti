@@ -7,8 +7,8 @@
 // neither stem nor extension, parent_path() of "/" is "/", and
 // lexically_normal() leaves a trailing separator behind a resolved dot-dot.
 
-#include <std/filesystem>
-#include <std/string>
+import std.filesystem;
+import std.string;
 
 mut uint64_t failures = 0;
 

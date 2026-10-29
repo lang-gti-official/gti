@@ -1,8 +1,8 @@
 // Bounded 2-3 unit source-loader harness (Q-FUZZ-01B).
 //
 // The harness uses Frontend's production sourceOverrides seam: no files are
-// written and no second include parser exists. One input bit selects a two- or
-// three-unit quoted-include chain; the remaining arbitrary bytes are the leaf
+// written and no second import parser exists. One input bit selects a two- or
+// three-unit quoted-import chain; the remaining arbitrary bytes are the leaf
 // unit. Two fresh snapshots must agree on diagnostics, phase flags, and the
 // complete source graph, and every diagnostic range must belong to loaded
 // source text.
@@ -121,13 +121,14 @@ SourceSet makeSources(const std::uint8_t *data, std::size_t size) {
 
   SourceSet result;
   result.entry = entry;
-  result.entrySource = "#include \"a.gti\"\nint main() { return 0; }\n";
+  result.entrySource = "import \"a.gti\";\nint main() { return 0; }\n";
   if (threeUnits) {
-    result.overrides.emplace(first.string(), "#include \"b.gti\"\n");
-    result.overrides.emplace(second.string(), payload);
+    result.overrides.emplace(first.string(),
+                             "export module a;\nimport \"b.gti\";\n");
+    result.overrides.emplace(second.string(), "export module b;\n" + payload);
     result.expectedUnits = 3;
   } else {
-    result.overrides.emplace(first.string(), payload);
+    result.overrides.emplace(first.string(), "export module a;\n" + payload);
     result.expectedUnits = 2;
   }
   return result;
@@ -151,7 +152,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t *data,
   const lang::FrontendResult second = analyze(sources);
   if (first.sourceGraph.sourceUnits().size() != sources.expectedUnits ||
       second.sourceGraph.sourceUnits().size() != sources.expectedUnits) {
-    gti_fuzz::fail("source-loader", "bounded include chain was not retained");
+    gti_fuzz::fail("source-loader", "bounded import chain was not retained");
   }
   const std::string firstSnapshot = snapshot(first);
   std::string secondSnapshot = snapshot(second);

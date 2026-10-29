@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 // Consuming members of hierarchy classes. A moved owned receiver lives in its
 // own value storage for the call, and the caller drops it at the end of the

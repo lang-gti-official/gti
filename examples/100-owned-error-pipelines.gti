@@ -1,6 +1,5 @@
-#include <std/json>
-#include <std/string>
-
+import std.json;
+import std.string;
 // A CLI keeps failures recoverable while translating a library error into
 // its own owning application error. Nothing here relies on implicit copying.
 class ConfigError {

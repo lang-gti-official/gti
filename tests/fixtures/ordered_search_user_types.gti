@@ -1,6 +1,6 @@
-#include <std/algorithm>
-#include <std/iterator>
-#include <std/string>
+import std.algorithm;
+import std.iterator;
+import std.string;
 
 mut int payload_drops = 0;
 mut int callback_drops = 0;

@@ -31,21 +31,22 @@ SITES["protocol_concepts.gti"] = {
     "scale": "int scale() { return 10 / this.divisor; }",
 }
 
-LIBRARY = """concept shaped<T> {
+LIBRARY = """export module shapes;
+export concept shaped<T> {
   typename size_type;
   size_type size(T& value);
 };
-class Square {
+export class Square {
 public:
   int side;
   Square(int length) : side(length) {}
 };
-concept fits<Item, Space> {
+export concept fits<Item, Space> {
   bool holds(Space& space, Item& item);
 };
 """
 
-OWNED = """#include <lib/shapes>
+OWNED = """import lib.shapes;
 class Circle {
 public:
   int radius;
@@ -86,7 +87,7 @@ int main() {
 }
 """
 
-FOREIGN = """#include <lib/shapes>
+FOREIGN = """import lib.shapes;
 for concept shaped<Square> {
   using size_type = int;
   int size(Square& value) { return value.side; }
@@ -108,7 +109,8 @@ def coherence(compiler, directory):
     library = root / "lib"
     (library / "src").mkdir(parents=True)
     (library / "gti.toml").write_text(
-        'manifest-version = 1\n[package]\nname = "lib"\nversion = "0.1.0"\n')
+        'manifest-version = 1\n[package]\nname = "lib"\nversion = "0.1.0"\n'
+        '[modules]\nshapes = "src/shapes.gti"\n')
     (library / "src/shapes.gti").write_text(LIBRARY)
     app = root / "app"
     app.mkdir()

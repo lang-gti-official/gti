@@ -6,9 +6,9 @@
 // The same shapes beside a division by a stage-selected divisor keep the
 // failure form. A failure exits with the division diagnostic, and every
 // Tracked built before it is dropped exactly once.
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 mut int stage = 0;
 

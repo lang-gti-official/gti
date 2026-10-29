@@ -1,5 +1,5 @@
-#include <std/encoding>
-#include <std/string>
+import std.encoding;
+import std.string;
 
 bool bytes_equal(std::string& value, uint8_t first, uint8_t second,
                  uint8_t third) {

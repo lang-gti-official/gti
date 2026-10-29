@@ -6,9 +6,9 @@
 // constructor template. A closure field after another field, and a struct
 // parameter copied into a field and passed on again, take the same route.
 // The last call fails inside the constructor body when given an argument.
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 int call<F>(F f) { return f(); }
 

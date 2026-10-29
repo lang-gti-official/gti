@@ -1,4 +1,4 @@
-#include <std/meta>
+import std.meta;
 
 [[borrowed_from(value)]]
 std::meta::callable_return_type<F> borrow<F>(F& function, int& value) {

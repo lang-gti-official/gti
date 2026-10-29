@@ -1,7 +1,7 @@
 // INVALID: a mutable reference into an optional payload is used after the
 // optional is reset.
-#include <std/memory>
-#include <std/optional>
+import std.memory;
+import std.optional;
 
 int main() {
   mut std::optional<std::unique_ptr<int>> slot{std::make_unique<int>(1)};

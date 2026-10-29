@@ -1,8 +1,9 @@
-#include <std/string>
-#include <std/vector>
+export module texts;
+import std.string;
+import std.vector;
 
 namespace storage {
-class Texts {
+export class Texts {
   mut std::vector<std::string> first = std::vector<std::string>();
   mut std::vector<std::string> second = std::vector<std::string>();
 public:

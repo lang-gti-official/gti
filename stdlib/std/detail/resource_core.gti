@@ -1,0 +1,56 @@
+export module detail.resource_core;
+
+import "memory_core.gti";
+import "memory_storage.gti";
+
+namespace std {
+/// Passive provider descriptor; copying it does not duplicate release authority.
+export using raw_allocation = std::detail::raw_allocation;
+
+/// Signature/effect contract only; satisfying this concept is not a proof that
+/// returned addresses supply disjoint, writable regions until matching release.
+export concept memory_resource<R> = requires(R& resource, layout request) {
+  unsafe { resource.allocate(request) } -> expected<std::detail::raw_allocation, alloc_errc>;
+} && requires(R& resource, std::detail::raw_allocation allocation) {
+  unsafe { resource.release(allocation) } -> void;
+};
+
+/// Reusable checked shared borrow of an explicitly trusted resource.
+/// It retains the provider's lifetime, not ownership or synchronization rights.
+export class resource_ref<memory_resource R> {
+  R& resource;
+public:
+  resource_ref(gti_internal::resource_binding token, R& resource)
+      : resource(resource) {}
+  R& get() { return this.resource; }
+};
+
+/// The caller proves the provider contract for every future use through this
+/// binding and its copies, including overlapping live leases. Successful
+/// nonempty allocations are writable, sufficiently aligned, large enough,
+/// disjoint from all outstanding regions, and contain no preexisting objects
+/// whose lifetime adoption would overwrite. Their addresses and descriptors
+/// remain valid until matching release; release retires exactly that region
+/// and does not access destroyed elements. Raw aliases, independent reset,
+/// reentrant calls and concurrent calls must not violate these promises.
+/// Shared borrowing checks the provider shell's lifetime; it cannot validate
+/// raw memory or add locks.
+export unsafe resource_ref<R> bind_resource<R>(R& resource) requires memory_resource<R> {
+  return resource_ref<R>(gti_internal::resource_binding::trusted, resource);
+}
+
+
+/// Portable process allocation. Direct calls retain the unsafe byte contract.
+export class process_resource {
+public:
+  process_resource() {}
+  unsafe expected<raw_allocation, alloc_errc> allocate(layout request) {
+    gti_internal::process_resource process{};
+    unsafe { return process.allocate(request); }
+  }
+  unsafe void release(raw_allocation allocation) {
+    gti_internal::process_resource process{};
+    unsafe { process.release(allocation); }
+  }
+};
+}

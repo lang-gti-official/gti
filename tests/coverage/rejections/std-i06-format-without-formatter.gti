@@ -1,6 +1,6 @@
 // INVALID: formatting an application type that has no std::formatter.
-#include <std/format>
-#include <std/string>
+import std.format;
+import std.string;
 struct Point {
   int x;
   int y;

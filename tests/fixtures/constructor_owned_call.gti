@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.vector;
 
 mut int32_t failure_phase = 0;
 mut int32_t zero = 0;

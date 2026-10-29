@@ -2,9 +2,9 @@
 // on several branches and from inside loops, generic relays, expected success
 // payloads with explicit moves, early returns that drop other live owners,
 // and returned owners captured by a class.
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.vector;
 
 mut int g_dropped = 0;
 

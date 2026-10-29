@@ -100,7 +100,7 @@ int main() {
 '''
 
 GLOBAL_ARRAYS = r'''
-#include <std/string_view>
+import std.string_view;
 mut int grid[2][2] = {{1, 2}, {3, 4}};
 bool flags[2] = {true, false};
 std::string_view label = "a\0b";
@@ -148,7 +148,7 @@ int main() {
 # A sealed integral enum is stored as its underlying integer: a vector of one,
 # raw element reads/writes, pointer arithmetic and local array indexing.
 INTEGRAL_ENUM_POINTERS = r'''
-#include <std/vector>
+import std.vector;
 enum class Event { dial, ack, data, hangup, reset };
 enum class Phase : uint8_t { idle = 1, open = 3, closed = 9 };
 int main() {
@@ -193,7 +193,7 @@ int main() {
 '''
 
 TEXT = r'''
-#include <std/string_view>
+import std.string_view;
 std::string_view relay(std::string_view value) { return value; }
 std::string_view choose(bool condition) { return condition ? "a\0bc" : "xy"; }
 int inspect(std::string_view value, uint64_t index) {
@@ -218,7 +218,7 @@ int main() {
 '''
 
 NESTED_TEXT_RETURN = r'''
-#include <std/string_view>
+import std.string_view;
 std::string_view relay(std::string_view value) { return value; }
 int inspect(std::string_view value) {
   if (value.size() != uint64_t(4) || value[1] != '\0' || value[3] != 'c') { return 1; }
@@ -228,7 +228,7 @@ int main() { std::string_view text = "a\0bc"; return inspect(relay(text)); }
 '''
 
 OWNER_ADDRESSES = r'''
-#include <std/memory>
+import std.memory;
 [[borrowed_from(owner)]] unsafe mut int& claim(int* address, mut int& owner) {
   unsafe { return *address; }
 }
@@ -261,7 +261,7 @@ int main() {
 '''
 
 ERASED_REFERENCES = r'''
-#include <std/memory>
+import std.memory;
 struct Record { mut int value = 7;  public: Record() = default; };
 int main() {
   mut Record object{};
@@ -278,7 +278,7 @@ int main() {
 '''
 
 ERASED_REFERENCE_CLEANUP = r'''
-#include <std/memory>
+import std.memory;
 mut int destroyed = 0;
 struct Record {
   mut int value = 7;
@@ -315,7 +315,7 @@ int main() {
 '''
 
 UNSAFE_WRAPPER = r'''
-#include <std/string_view>
+import std.string_view;
 unsafe std::string_view different(const char* address, uint64_t count, int& owner) {
   return "not the address";
 }
@@ -354,7 +354,7 @@ int main() {
 # A fixed-array extent query is a sealed constant: range-for and size() over
 # class, owning-class and payload elements never read an element to count.
 ARRAY_EXTENT_QUERIES = r'''
-#include <std/string>
+import std.string;
 struct Counter {
   int count;
   Counter(int number) : count(number) {}
@@ -401,7 +401,7 @@ int main() {
 # One-dimensional arrays of sealed integral enums use their fixed-width
 # underlying integer storage in a user-defined owner and in std::array.
 INTEGRAL_ENUM_ARRAYS = r'''
-#include <std/array>
+import std.array;
 enum class phase : uint8_t { idle, loading, running };
 enum class reach : int64_t { near = 7, far = 6000000000 };
 phase next(phase current) {
@@ -454,7 +454,7 @@ int main() {
 
 
 TEXT_VIEW_ARRAYS = r'''
-#include <std/string_view>
+import std.string_view;
 enum class Level : int32_t { low = 1, high = 9 };
 bool holds(std::string_view names[3], uint64_t index, std::string_view text) { return names[index] == text; }
 int32_t total(std::string_view names[3]) {
@@ -537,8 +537,8 @@ int main() {
 
 
 NATIVE_RECORD_REFERENCES = r'''
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 [[c_abi]]
 struct QuotRem {
   int64_t quot;
@@ -569,7 +569,7 @@ int main() {
 
 
 NESTED_TEXT_VIEW_ARRAYS = r'''
-#include <std/string_view>
+import std.string_view;
 // Nested and `{}`-formed text view arrays: each element is a view, and a
 // view copied out of one is ownerless, so it may be returned.
 std::string_view pick(std::string_view names[3], uint64_t index) { return names[index]; }
@@ -602,7 +602,7 @@ int main() {
 
 
 TEXT_VIEW_POINTERS = r'''
-#include <std/string_view>
+import std.string_view;
 // A text view reached through a raw pointer moves as one bitwise value; the
 // bytes it designates stay where they are.
 std::string_view viewAt(std::string_view* item) { unsafe { return *item; } }
@@ -704,15 +704,15 @@ def failure_cases() -> dict[str, str]:
         'array-negative': 'int get(int data[2], int i) { return data[i]; } int main() { return get({1, 2}, -1); }',
         'array-borrow': 'int main() { mut int data[2] = {1, 2}; mut int i = 2; mut int& value = data[i]; return value; }',
         'nested-array': 'int get(int data[2][2], int i) { return data[1][i]; } int main() { return get({{1, 2}, {3, 4}}, 2); }',
-        'text-high': '#include <std/string_view>\nchar get(std::string_view s, uint64_t i) { return s[i]; } int main() { [[discard]] get("ab", uint64_t(2)); return 0; }',
-        'text-empty': '#include <std/string_view>\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("", 0); return 0; }',
-        'text-negative': '#include <std/string_view>\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("ab", -1); return 0; }',
+        'text-high': 'import std.string_view;\nchar get(std::string_view s, uint64_t i) { return s[i]; } int main() { [[discard]] get("ab", uint64_t(2)); return 0; }',
+        'text-empty': 'import std.string_view;\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("", 0); return 0; }',
+        'text-negative': 'import std.string_view;\nchar get(std::string_view s, int i) { return s[i]; } int main() { [[discard]] get("ab", -1); return 0; }',
         'reference-failure': 'mut int& get(mut int& v, int n) { v = v / n; return v; } int main() { mut int x = 2; get(x, 0) = 4; return 0; }',
-        'text-array-high': '#include <std/string_view>\nuint64_t size(std::string_view names[2], uint64_t i) { return names[i].size(); } int main() { std::string_view names[2] = {"a", "b"}; [[discard]] size(names, uint64_t(2)); return 0; }',
+        'text-array-high': 'import std.string_view;\nuint64_t size(std::string_view names[2], uint64_t i) { return names[i].size(); } int main() { std::string_view names[2] = {"a", "b"}; [[discard]] size(names, uint64_t(2)); return 0; }',
         # Container checks report the container MIR recorded for the check.
-        'vector-index-high': '#include <std/vector>\nint get(std::vector<int>& values, uint64_t i) { return values[i]; } int main() { mut std::vector<int> values = std::vector<int>(); values.push_back(1); return get(values, uint64_t(1)); }',
-        'string-index-high': '#include <std/string>\nchar get(std::string& text, uint64_t i) { return text[i]; } int main() { std::string text = std::string("ab"); [[discard]] get(text, uint64_t(2)); return 0; }',
-        'string-position-high': '#include <std/string>\nint main() { std::string text = std::string("abc"); [[discard]] text.substr(text.size() + uint64_t(1)); return 0; }',
+        'vector-index-high': 'import std.vector;\nint get(std::vector<int>& values, uint64_t i) { return values[i]; } int main() { mut std::vector<int> values = std::vector<int>(); values.push_back(1); return get(values, uint64_t(1)); }',
+        'string-index-high': 'import std.string;\nchar get(std::string& text, uint64_t i) { return text[i]; } int main() { std::string text = std::string("ab"); [[discard]] get(text, uint64_t(2)); return 0; }',
+        'string-position-high': 'import std.string;\nint main() { std::string text = std::string("abc"); [[discard]] text.substr(text.size() + uint64_t(1)); return 0; }',
     }
 
 
@@ -723,9 +723,9 @@ def rejection_cases() -> dict[str, str]:
         'expired-reference': 'int& expired() { int local = 1; return local; } int main() { return expired(); }',
         'overlapping-mutable': 'int main() { mut int value = 1; mut int& first = value; mut int& second = value; return first + second; }',
         'read-only-reference': 'void change(int& value) { value = 2; } int main() { return 0; }',
-        'erased-restore-unsafe': '#include <std/memory>\nint main() { int value = 1; std::erased_object& erased = std::erase_ref(value); return std::restore_ref<int>(erased); }',
-        'erased-overlapping-mutable': '#include <std/memory>\nint main() { mut int value = 1; mut std::erased_object& first = std::erase_mut(value); mut std::erased_object& second = std::erase_mut(value); unsafe { return std::restore_mut<int>(first) + std::restore_mut<int>(second); } }',
-        'erased-escape': '#include <std/memory>\nstd::erased_object& escape() { int value = 1; return std::erase_ref(value); } int main() { std::erased_object& erased = escape(); return 0; }',
+        'erased-restore-unsafe': 'import std.memory;\nint main() { int value = 1; std::erased_object& erased = std::erase_ref(value); return std::restore_ref<int>(erased); }',
+        'erased-overlapping-mutable': 'import std.memory;\nint main() { mut int value = 1; mut std::erased_object& first = std::erase_mut(value); mut std::erased_object& second = std::erase_mut(value); unsafe { return std::restore_mut<int>(first) + std::restore_mut<int>(second); } }',
+        'erased-escape': 'import std.memory;\nstd::erased_object& escape() { int value = 1; return std::erase_ref(value); } int main() { std::erased_object& erased = escape(); return 0; }',
         'enum-reference-escape': 'enum class E { first }; E& expired() { E value = E::first; return value; } int main() { return 0; }',
         'enum-reference-mutation': 'enum class E { first, second }; void change(E& value) { value = E::second; } int main() { return 0; }',
     }
@@ -734,7 +734,7 @@ def rejection_cases() -> dict[str, str]:
 def native_rejection_cases(root: Path) -> dict[str, str]:
     return {
         'array-comparison': 'int main() { int left[2] = {1, 2}; int right[2] = {1, 2}; return left == right ? 0 : 1; }',
-        'dynamic-c-string': '#include <std/string_view>\nvoid consume(c_string text) {} void relay(std::string_view text) { consume(text); } int main() { relay("hello"); return 0; }',
+        'dynamic-c-string': 'import std.string_view;\nvoid consume(c_string text) {} void relay(std::string_view text) { consume(text); } int main() { relay("hello"); return 0; }',
         'nul-c-string': 'void consume(c_string text) {} int main() { consume("a\\0b"); return 0; }',
     }
 

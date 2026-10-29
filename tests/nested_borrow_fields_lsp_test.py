@@ -6,13 +6,13 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import without_include_advice, LspSession, test_missing_standard_library_include_code_action
+from lsp_smoke_test import LspSession, test_missing_standard_library_include_code_action
 
 
 def main():
     repository = pathlib.Path(__file__).resolve().parent.parent
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
-    source = """#include <std/utility>
+    source = """import std.utility;
 class View {
 public:
   int& item;
@@ -42,10 +42,10 @@ int main() {
             return reply["result"]
 
         def diagnostics(version):
-            return without_include_advice(session.receive_until(lambda message:
+            return session.receive_until(lambda message:
                 message.get("method") == "textDocument/publishDiagnostics"
                 and message["params"].get("uri") == uri
-                and message["params"].get("version") == version)["params"]["diagnostics"])
+                and message["params"].get("version") == version)["params"]["diagnostics"]
 
         def change(version, text):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",

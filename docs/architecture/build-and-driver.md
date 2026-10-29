@@ -398,8 +398,8 @@ always includes total elapsed time. A heartbeat means the operation remains
 pending, not that the compiler or native subprocess is proven to be advancing.
 There are no estimated overall percentages or completion times.
 
-Speculative header probes and proposed include-fix checks do not inherit the
-user compilation's progress observer. Include suggestions and their validated
+Speculative module probes and proposed import-fix checks do not inherit the
+user compilation's progress observer. Import suggestions and their validated
 diagnostic fixes remain available, but internal recovery analyses do not emit
 additional top-level `Loading`, `Parsing` or `Checking` sequences, including
 under `--verbose`.
@@ -582,7 +582,7 @@ move into the frontend. It records every consumed unit's role, canonical and
 available logical/package identities, byte count and SHA-256 over consumed
 text, entry and prelude roots, dependency edges, and dependency-first
 compilation order. The driver reuses its source-identity projection; no report
-consumer resolves includes again. Its aggregate digest uses stable logical
+consumer resolves imports again. Its aggregate digest uses stable logical
 unit order, role and entry/prelude flags, consumed content size/hash, ordered
 prelude roots, and sorted logical dependency edges. Canonical paths and
 ephemeral source-unit identifiers remain explicit sidecar facts but do not
@@ -980,7 +980,7 @@ publish from unique sibling staging paths rather than following a leaf link.
 
 `new` and a source-creating `init` scaffold the implemented owned-argument
 entry form, `int main(int argc, std::vector<std::string> argv)`, with the
-required standard string and vector includes. `init` continues to preserve an
+required standard string and vector imports. `init` continues to preserve an
 existing regular entry source rather than modernizing or replacing it. An
 explicit `gti init --git` additionally initializes a standalone Git repository
 at the package root and writes the canonical GTI `.gitignore`, which ignores
@@ -1249,12 +1249,23 @@ markers preserved, then the in-process importer applying provenance-based
 import policy) into
 `build/gti/bindgen/<package>/<alias>/bindings.gti`, published atomically
 through a staged sibling. The declaring package's sources reach them as
-`#include <alias/bindings>`: the generated directory is a synthetic package
-source root joined to the declaring package by an ordinary alias edge, so
+`import alias.bindings;`: the generated file declares `export module bindings;`
+and explicitly exports the imported declarations. Its directory is a synthetic
+package source root with a registered `bindings` module, joined to the declaring
+package by an ordinary alias edge, so
 resolution, visibility, and cache identity follow the existing package
 mechanism and the alias shares the dependency-alias namespace (a collision
 is a manifest diagnostic). Every package in the resolved graph generates its
-own imports; aliases do not leak to dependents.
+own imports; aliases do not leak to dependents. The read-only project-facts path
+registers these same synthetic owners without generating files or fetching
+dependencies. Before generation, resolution reports the missing artifact and
+asks for `gti check` or `gti build`; after generation, editor analysis uses it.
+
+Direct `gti bindgen` accepts `--module net.http`. Without that option it derives
+a valid module name from the output file stem, or the header stem when writing
+to stdout, replacing punctuation and protecting reserved names. Distinct output
+names can therefore coexist in one direct compilation. Project bindgen pins the
+registered name `bindings`; namespaces remain an independent API choice.
 
 Imported enums retain the selected native integer family and evaluated values,
 including unsigned high-bit flags and supported 64-bit ranges. See
@@ -1281,8 +1292,8 @@ loaded source, and the declared import joins the project model identity.
 Import `defines` scope to the import's preprocessing only; native
 compilation of declared C/C++ sources keeps its own `c-compile-args`
 authority. Clang selection follows `GTI_CLANG`, then `clang` — bindgen
-requires Clang specifically. Editor analysis of a package include whose
-bindings have never been generated reports an unresolved include until the
+requires Clang specifically. Editor analysis of a package import whose
+bindings have never been generated reports an unresolved import until the
 first project build or check.
 
 Project and direct modes construct the same `CompilationRequest` and
@@ -1336,13 +1347,16 @@ it preserves the older recovery behavior and cleans only the nearest literal
 package subtree.
 
 `CompilationRequest` carries immutable `PackageSourceRoot` values produced by
-`gti_driver`. `SourceLoader` remains the only include resolver. In a project
-compilation, `#include <math/add>` resolves `math` only through the including
-package's direct dependency aliases and loads `<math-source-root>/add.gti` as
-ordinary untrusted GTI source. Transitive aliases do not leak, and quoted
-includes cannot cross an owning package boundary to bypass the manifest edge.
-Direct mode receives no package graph and therefore rejects package angle
-includes without consulting nearby manifests.
+`gti_driver`. `SourceLoader` remains the only source dependency resolver. In a
+project compilation, `import math.add;` resolves `math` through the importing
+package's direct dependency aliases and `add` through that dependency's module
+map. The selected interface remains ordinary untrusted GTI source. Transitive
+aliases do not leak, and quoted imports cannot cross an owning package boundary
+to bypass the manifest edge. Direct mode receives no package graph and therefore
+rejects package imports without consulting nearby manifests. GTI `#include` is
+rejected with `GTI-I0014` and does not load a dependency. An immutable source-owner
+registry gives packages, generated bindings, and the configured toolchain the same
+containment and public-map rules; compiler trust remains a separate provenance fact.
 
 ### Source Module Registration
 
@@ -1354,19 +1368,31 @@ main = "src/api.gti"
 geometry = "src/geometry_api.gti"
 ```
 
-Each key is one non-reserved GTI identifier other than `std`, which names the
-standard library's modules (`import std.vector;`). Each value is a package-relative
+Each key is a dot-separated sequence of non-reserved GTI identifiers. The
+`std` prefix is reserved for the configured standard library (`import std.vector;`).
+Dotted TOML keys must be quoted, for example `"net.http" = "src/http.gti"`. Each value is a package-relative
 path to an existing regular `.gti` interface. Canonical paths must remain inside
 the package, including through symlinks. Duplicate physical files, portable
 case-fold name collisions, invalid names/types and missing paths are rejected
 by manifest loading. The frontend additionally requires the file to begin with
 `export module` using the registered name. Paths need not be under `source-root`;
-that field continues to control legacy angle includes, not public module names.
+public module resolution uses these explicit registrations rather than deriving
+paths from that field. For example, the registered geometry interface is:
+
+```gti
+// src/geometry_api.gti
+export module geometry;
+export namespace geometry {
+  int answer() { return 42; }
+}
+```
 
 The owning package writes `import geometry;`. Consumers write
 `import dependency.geometry;`, using their declared dependency alias. The
 shorter `import dependency;` selects the dependency's `main` module. An
-unqualified local-name/dependency-alias collision is an error. Only direct
+exact local-name/dependency-alias-prefix collision is an error. For example,
+`import net.http;` is ambiguous if both local module `net.http` and direct alias
+`net` exposes module `http`; directory structure never resolves that ambiguity. Only direct
 dependency aliases resolve; re-exporting declarations never leaks aliases.
 Direct compilation remains manifest-independent and can write a relative
 quoted import instead.
@@ -1381,8 +1407,9 @@ geometry = ["src/geometry_impl.gti"]
 Each key must already occur in `[modules]`. Values are arrays of existing,
 package-contained, relative `.gti` file paths. Duplicate physical registration,
 interface/implementation overlap, non-files and symlink escapes are rejected.
-An implementation is ordinary source, not another `export module` interface;
-it explicitly imports its interface and the dependencies its bodies use.
+An implementation begins with `module geometry;`, matching its registered
+interface name. Its interface is implicitly available through shared module
+identity; imports are still required for other dependencies used by its bodies.
 Importing the registered interface automatically loads these files, including
 when it is reached through a dependency package. Unused module registrations
 do not load bodies. Consumers gain no visibility into implementation helpers.
@@ -1393,10 +1420,11 @@ snapshot invalidation. Private implementation roots are traversed before the
 entry root in deterministic registration/discovery order, with their own
 ordinary source dependencies first. Existing initialization/lifetime rules
 still apply. No source directories are scanned, no implementation file needs
-to be included by a consumer, and no independently linked GTI object is added.
+to be imported directly by a consumer, and no independently linked GTI object is added.
 Direct mode still does not discover a manifest: use explicit source edges or
 project mode for registered implementations. `examples/window-factory` is a
-runnable project illustrating this arrangement.
+runnable project illustrating this arrangement: its factory and private concrete
+types share the `window` module across three registered implementation files.
 
 `ProjectPackage` and immutable `PackageSourceRoot` values carry these maps;
 `SourceLoader` owns language resolution. Registrations are part of project
@@ -1495,9 +1523,9 @@ writes the versioned output manifest consumed by the same validation path as
 an external command.
 
 ```gti
-#include <std/build>
-#include <std/string>
-#include <std/vector>
+import std.build;
+import std.string;
+import std.vector;
 
 int main(int argc, std::vector<std::string> argv) {
   if (argc != 11) { return 64; }
@@ -1558,8 +1586,9 @@ CLI11 remains header-only behind one exception-containing C++ adapter, so it
 needs no prepared archive or system library. Its reviewed public declarations
 spell the compiler-defined counted-text bridge directly because C bindgen
 deliberately rejects the reserved `gti_c_string_view` record.
-Generated public bindings are direct source units because including a private
-bindgen unit does not re-export its declarations. See
+Generated public bindings are explicit module interfaces. A package facade
+exposes a private bindgen dependency only through deliberate exports or
+`export import`; an ordinary import does not re-export its declarations. See
 [`packages/README.md`](../../packages/README.md) for commands and API limits.
 
 The directly compilable GLAD, SQLite3, cimgui, zlib, libpng, and CLI11 packages
@@ -1597,7 +1626,7 @@ searched for or installed on the machine by this workflow.
 
 Two existing rules do the load-bearing work and are worth restating here.
 Bindgen aliases are per-package, so a consumer cannot reach
-`#include <checksum_c/bindings>`; it sees only what the dependency chose to
+`import checksum_c.bindings;`; it sees only what the dependency chose to
 expose in GTI, which keeps the raw C ABI an implementation detail of the
 package that vendors it. And a dependency's native group scopes its include
 directories and macros to its own declared sources, so a vendored library
@@ -1708,7 +1737,7 @@ was already transitively locked, then inserts a caret requirement such as
 unrelated bytes/comments, and publishes the exact closure to the workspace's
 `gti.lock`. `gti add libc@=0.1.0` requests an exact requirement. An already
 matching declaration is a no-op; another source/requirement requires an explicit
-manifest edit. Hyphens in registry names become underscores in default include
+manifest edit. Hyphens in registry names become underscores in default dependency
 aliases. The table form allows separate identity and alias:
 
 ```toml

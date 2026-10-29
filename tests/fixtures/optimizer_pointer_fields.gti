@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 unsafe void initialize_field_target(int* address, int value) {
   unsafe { std::construct_at(address, value); }

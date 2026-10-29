@@ -1,8 +1,8 @@
-#include <std/filesystem>
-#include <std/string>
-#include <std/vector>
-#include <std/cstdio>
-#include <std/memory>
+import std.filesystem;
+import std.string;
+import std.vector;
+import std.cstdio;
+import std.memory;
 
 namespace fs = std::filesystem;
 

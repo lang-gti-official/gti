@@ -1,6 +1,6 @@
 // Interfaces, implementations, dynamic dispatch and owning polymorphism.
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 
 interface Shape {
   int32_t area();

@@ -1,8 +1,8 @@
 // Return initialization is the same selected call as explicit construction.
-#include <std/meta>
-#include <std/optional>
-#include <std/string>
-#include <std/vector>
+import std.meta;
+import std.optional;
+import std.string;
+import std.vector;
 
 class Tracked {
   int id;

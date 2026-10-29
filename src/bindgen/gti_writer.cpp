@@ -13,16 +13,17 @@ namespace lang::bindgen {
 namespace {
 
 void writeItem(const BindingItem &item, std::string_view indent,
-               std::ostream &out) {
+               std::string_view exportPrefix, std::ostream &out) {
   switch (item.kind) {
   case BindingItemKind::Opaque:
     if (!item.reason.empty()) {
       out << indent << "// Layout not imported: " << item.reason << '\n';
     }
-    out << indent << "[[c_opaque]] struct " << item.name << ";\n\n";
+    out << indent << exportPrefix << "[[c_opaque]] struct " << item.name
+        << ";\n\n";
     return;
   case BindingItemKind::Record:
-    out << indent << "[[c_abi]]\n"
+    out << indent << exportPrefix << "[[c_abi]]\n"
         << indent << (item.recordIsUnion ? "union " : "struct ") << item.name
         << " {\n";
     for (const BindingField &field : item.fields) {
@@ -36,15 +37,15 @@ void writeItem(const BindingItem &item, std::string_view indent,
     // name to alias.
     const bool anonymous = item.name.empty();
     if (!anonymous) {
-      out << indent << "using " << item.name << " = " << item.aliasSpelling
-          << ";\n";
+      out << indent << exportPrefix << "using " << item.name << " = "
+          << item.aliasSpelling << ";\n";
     }
     const std::string_view constantType =
         anonymous ? std::string_view(item.aliasSpelling)
                   : std::string_view(item.name);
     for (const BindingConstant &constant : item.constants) {
-      out << indent << "constexpr " << constantType << ' ' << constant.name
-          << " = " << constantType << '(';
+      out << indent << exportPrefix << "constexpr " << constantType << ' '
+          << constant.name << " = " << constantType << '(';
       // The minimum signed value has no positive signed literal counterpart.
       // Form it with checked, representable operands in the selected type.
       if (constant.value == "-9223372036854775808") {
@@ -58,12 +59,12 @@ void writeItem(const BindingItem &item, std::string_view indent,
     return;
   }
   case BindingItemKind::Alias:
-    out << indent << "using " << item.name << " = " << item.aliasSpelling
-        << ";\n\n";
+    out << indent << exportPrefix << "using " << item.name << " = "
+        << item.aliasSpelling << ";\n\n";
     return;
   case BindingItemKind::Constant:
-    out << indent << "constexpr " << item.aliasSpelling << ' ' << item.name
-        << " = ";
+    out << indent << exportPrefix << "constexpr " << item.aliasSpelling << ' '
+        << item.name << " = ";
     switch (item.constantKind) {
     case NativeConstantKind::Integer:
       // The negative wrapping matches the enum emission: a conversion keeps
@@ -98,7 +99,7 @@ void writeItem(const BindingItem &item, std::string_view indent,
       out << indent
           << "// Synthesized name for an inline function-pointer shape.\n";
     }
-    out << indent << "using " << item.name << " = (";
+    out << indent << exportPrefix << "using " << item.name << " = (";
     for (std::size_t index = 0; index < item.parameters.size(); ++index) {
       out << (index != 0 ? ", " : "") << item.parameters[index].spelling;
     }
@@ -145,10 +146,11 @@ std::string writeGtiBindings(const BindingPlan &plan,
   out << "// Imported declarations: " << plan.importedCount()
       << "; skipped: " << plan.skippedCount() << ".\n\n";
 
+  out << "export module " << plan.options.moduleName << ";\n\n";
   const bool namespaced = !plan.options.namespaceName.empty();
   const std::string_view indent = namespaced ? "  " : "";
   if (namespaced) {
-    out << "namespace " << plan.options.namespaceName << " {\n\n";
+    out << "export namespace " << plan.options.namespaceName << " {\n\n";
   }
 
   bool hasExternalDeclarations = false;
@@ -158,10 +160,10 @@ std::string writeGtiBindings(const BindingPlan &plan,
       hasExternalDeclarations = true;
       continue;
     }
-    writeItem(item, indent, out);
+    writeItem(item, indent, namespaced ? "" : "export ", out);
   }
   if (hasExternalDeclarations) {
-    out << indent << "extern \"C\" {\n";
+    out << indent << (namespaced ? "" : "export ") << "extern \"C\" {\n";
     for (const BindingItem &item : plan.items) {
       if (item.kind == BindingItemKind::Function ||
           item.kind == BindingItemKind::Variable) {

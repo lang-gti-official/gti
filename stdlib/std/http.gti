@@ -1,9 +1,10 @@
-#include <std/string>
-#include <std/vector>
+export module http;
 
+import std.string;
+import std.vector;
 namespace gti_internal {
   namespace runtime {
-    extern "C" {
+    export extern "C" {
       uint32_t gti_rt_http_client_create_v1(int64_t* output_client);
       void gti_rt_http_client_destroy_v1(int64_t client);
       uint32_t gti_rt_http_client_send_v1(int64_t client, uint32_t method, gti_internal::text_view url, gti_internal::text_view encoded_headers, uint64_t header_count, gti_internal::text_view body, uint64_t connect_timeout_ms, uint64_t request_timeout_ms, uint64_t max_response_bytes, gti_internal::text_view ca_bundle_path, int64_t* output_response, int32_t* output_native_code);
@@ -21,7 +22,7 @@ namespace gti_internal {
     }
   }
 
-  [[no_transfer, no_share]] class http_client_handle {
+  export [[no_transfer, no_share]] class http_client_handle {
     mut int64_t value = 0;
 
   public:
@@ -44,7 +45,7 @@ namespace gti_internal {
     }
   };
 
-  [[no_transfer, no_share]] class http_response_handle {
+  export [[no_transfer, no_share]] class http_response_handle {
     mut int64_t value = 0;
 
   public:
@@ -550,7 +551,7 @@ namespace gti_internal {
 namespace std {
   namespace http {
     /// HTTP methods supported by the first synchronous client surface.
-    enum class method {
+    export enum class method {
       get,
       post,
       put,
@@ -560,7 +561,7 @@ namespace std {
     };
 
     /// Recoverable request construction and transport outcomes.
-    enum class errc {
+    export enum class errc {
       invalid_url,
       invalid_header,
       unsupported_scheme,
@@ -575,7 +576,7 @@ namespace std {
     };
 
     /// Recoverable absolute-URL parsing and construction outcomes.
-    enum class url_errc {
+    export enum class url_errc {
       invalid_scheme,
       missing_host,
       invalid_host,
@@ -587,7 +588,7 @@ namespace std {
 
     /// An owned absolute HTTP(S) URL. Parsed path and query bytes retain their
     /// spelling; builder inputs are encoded as individual path/query components.
-    class url {
+    export class url {
       mut std::string scheme_text;
       mut std::string host_text;
       bool explicit_port;
@@ -803,7 +804,7 @@ namespace std {
     /// One owned header field. Names compare case-insensitively through request
     /// and response lookup, while original spelling and duplicate response fields
     /// remain available in `response::headers()`.
-    class header {
+    export class header {
       string field_name;
       mut string field_value;
 
@@ -831,7 +832,7 @@ namespace std {
 
     /// An owned, reusable request description. URL, headers, body, and CA path are
     /// copied into the request; no caller view escapes the constructing call.
-    class request {
+    export class request {
       method request_method;
       mut string request_url;
       mut vector<header> request_headers;
@@ -971,7 +972,7 @@ namespace std {
     /// 5xx are successful responses; only construction/transport failures use the
     /// `errc` channel. The private runtime owner stores the already-buffered bytes;
     /// no socket, transfer, or libcurl identity is exposed through this type.
-    class response {
+    export class response {
       mut gti_internal::http_response_handle handle;
 
       string read_text(uint32_t kind, uint64_t index, uint64_t length) {
@@ -1097,7 +1098,7 @@ namespace std {
   namespace http {
     /// A reusable synchronous client. One mutable borrow permits one request at a
     /// time; the native easy handle retains its connection pool between calls.
-    class client {
+    export class client {
       mut gti_internal::http_client_handle handle;
       mut int32_t backend_code = int32_t(0);
 

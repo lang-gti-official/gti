@@ -1,4 +1,4 @@
-#include <std/process>
+import std.process;
 
 int main() {
   mut std::process::command success = std::process::command("true");

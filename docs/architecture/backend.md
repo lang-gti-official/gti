@@ -707,6 +707,19 @@ cleanup fails during unwinding; native destruction does not choose that policy.
 
 ## C++ Backend
 
+The module-only transition introduces distinct declarations with identical
+qualified names in different modules. LLVM represents those identities directly.
+The retained C++ representation still names types, aliases and namespace storage
+by qualified spelling. Its preflight reports `GTI-B0003` for conflicting names
+at the conflicting declaration before invoking the native compiler or publishing
+an artifact. Existing class definition families and exact specializations retain
+their shared primary identity (including primary chains), so this boundary does
+not reject their supported representation. Module tests execute the full LLVM
+contract and a clearly identified C++ comparison subset. Repeated identical
+aliases, module-private functions and source-local static storage retain their
+supported representation. Tests verify that a rejected build preserves the
+previous executable.
+
 `CppBackend::generate` verifies the lowered value and constructs
 `CppEmitter(program, standard)`. The emitter then:
 
@@ -748,7 +761,7 @@ Capability support has two levels. A lowered class declaration whose
 compiler capability kind is shared owner, atomic storage, mutex storage, or
 mutex lock token selects only a forward declaration of the backend class
 template that represents it. Declarations retained without an instance, such
-as the generic library classes left by an unused `#include`, still emit
+as the generic library classes left by an unused module import, still emit
 uninstantiated C++ class templates whose members spell those qualified
 template names, and C++ resolves a qualified template name where the
 template is defined. The complete definitions and their native headers
@@ -756,7 +769,7 @@ template is defined. The complete definitions and their native headers
 verified capability operation. The managed-thread handle representation is
 not a template, so a retained thread-handle declaration selects its complete
 support. `dormant_capability_runtime` builds and runs each family's
-include-only program natively.
+import-only program natively.
 
 Scoped groups select the same managed-thread support from the verified
 `ThreadScope` operation. The body plan retains its ordered adapter identities,

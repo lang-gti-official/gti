@@ -32,7 +32,7 @@ capability, that selection exposes the bounded production source-defined
 `std::thread`, `std::thread_result<Result>`, ordered scalar `std::atomic<T>`
 (including fixed-width integer fetch operations), and scoped
 `std::mutex<T>`/`std::mutex_guard<T>` surfaces. Separately,
-`<std/cthread>` provides scheduling, sleep, and identity operations in either
+`std.cthread` provides scheduling, sleep, and identity operations in either
 profile and, in the concurrent profile with the `threads` capability, unsafe
 manual create/join, once-initialization, mutex, and condition-variable
 operations. Neither surface exposes detach, a safe scoped condition-variable
@@ -181,11 +181,13 @@ successful meaning. Ill-formed programs, incomplete-source recovery, and
 behavior after an `unsafe` proof obligation is violated are outside the
 compatibility guarantee.
 
-Edition 1 preserves `#include` as a load-once, non-textual, direct-visibility
-dependency. Future module vocabulary shall use new explicit syntax and shall
-not reinterpret Edition 1 includes. The selected C++ backend standard,
-manifest schema, package version, metadata schema, and installed compiler-
-library version are not GTI language editions.
+The coordinated module-only change explicitly revises the earlier pre-1.0
+promise to preserve `#include`. This unreleased phase 1 prototype rejects that
+syntax; it does not silently reinterpret it as an import. Phase 2 must complete
+the production module contract before this breaking change is merged or
+released. The selected C++ backend standard, manifest schema, package version,
+metadata schema, and installed compiler-library version are not GTI language
+editions.
 
 The release, selector, correction, deprecation, and removal policy is recorded
 with its rationale in

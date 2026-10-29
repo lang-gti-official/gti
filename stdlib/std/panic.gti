@@ -1,10 +1,11 @@
+export module panic;
+
 // Public, cleanup-preserving terminal failures. Formatting uses the same
 // source-defined formatter as other APIs; message capture itself never formats.
-#include <std/format>
-#include <std/string>
-#include <std/detail/panic>
-
-namespace std {
+import std.format;
+import std.string;
+import "detail/panic.gti";
+export namespace std {
   /// Stops normal execution after preserving the message and running cleanup.
   [[noreturn, track_caller]]
   void panic(string_view message) {

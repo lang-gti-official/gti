@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 int main(int argc, std::vector<std::string> argv) {
   if (argc != 1 or argv.size() != std::size_t(1)) {

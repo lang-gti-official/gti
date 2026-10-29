@@ -1,7 +1,7 @@
-#include <m/stats>
-#include <m/detail/accumulate>
-#include <std/vector>
-#include "shapes.gti"
+import m.stats;
+import m.detail_accumulate;
+import std.vector;
+import "shapes.gti";
 
 int main() {
   if (mid::stats::start != 50) {

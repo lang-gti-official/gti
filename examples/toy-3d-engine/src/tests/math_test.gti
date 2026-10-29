@@ -1,6 +1,5 @@
-#include "../engine/math.gti"
-#include "../engine/scene.gti"
-
+import "../engine/math.gti";
+import "../engine/scene.gti";
 int main() {
   mut toy3d::Camera camera = toy3d::Camera();
   camera.move(1.0, -2.0, 0.5);

@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/thread>
-#include <std/panic>
-#include <std/atomic>
+import std.memory;
+import std.thread;
+import std.panic;
+import std.atomic;
 std::atomic<int> drops{0};
 std::atomic<int> ready{0};
 std::atomic<bool> begin{false};

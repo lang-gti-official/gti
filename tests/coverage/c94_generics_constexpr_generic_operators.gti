@@ -2,9 +2,9 @@
 // both in constant contexts (scalar instances) and at runtime with an owning
 // type, std::array/std::min/std::clamp in constant expressions, and a
 // constexpr generic factory.
-#include <std/algorithm>
-#include <std/array>
-#include <std/string>
+import std.algorithm;
+import std.array;
+import std.string;
 
 struct Vec2<std::numeric T> {
   T x;

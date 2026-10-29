@@ -333,7 +333,7 @@ void exactRestorationRemainsAvailable() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-mir-persistent-storage/restore.gti", R"(
-#include <std/utility>
+import std.utility;
 thread_local mut int value = 1;
 int main() { int previous = std::exchange(value, 2); return previous + value; }
 )",

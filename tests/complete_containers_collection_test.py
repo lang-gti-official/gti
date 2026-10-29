@@ -30,8 +30,8 @@ def main():
         for kind in ("list", "deque", "queue", "set", "unordered_set"):
             # Owning string is a valid comparable/hashable move-only element.
             negatives[f"copied-{kind}"] = (f"""
-#include <std/{kind}>
-#include <std/string>
+import std.{kind};
+import std.string;
 int main() {{
   std::string named{{"owned"}};
   std::{kind}<std::string> values = {{named}};
@@ -39,7 +39,7 @@ int main() {{
 }}
 """, "GTI-S2092")
         negatives["nondefault-order"] = ("""
-#include <std/set>
+import std.set;
 class Policy {
   int value;
 public:
@@ -49,7 +49,7 @@ public:
 int main() { std::set<int, Policy> values = {1, 2}; return int(values.size()); }
 """, "GTI-S2029")
         negatives["nondefault-hash"] = ("""
-#include <std/unordered_set>
+import std.unordered_set;
 class Policy {
   int value;
 public:

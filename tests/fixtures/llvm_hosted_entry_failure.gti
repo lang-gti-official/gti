@@ -1,4 +1,4 @@
-#include <std/panic>
+import std.panic;
 mut int trace = 0;
 class Marker {
   int value;

@@ -90,9 +90,9 @@ def source_text(http_url: str, https_url: str, certificate: pathlib.Path) -> str
     https_teapot = json.dumps(https_url + "teapot")
     https_base = json.dumps(https_url)
     certificate_literal = json.dumps(str(certificate))
-    return f'''#include <std/http>
-#include <std/string>
-#include <std/vector>
+    return f'''import std.http;
+import std.string;
+import std.vector;
 
 int main() {{
   mut auto created = std::http::client::create();

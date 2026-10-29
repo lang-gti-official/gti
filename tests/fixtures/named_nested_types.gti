@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 namespace application {
 using Item = int;

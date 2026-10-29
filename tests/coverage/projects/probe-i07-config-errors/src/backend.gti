@@ -1,5 +1,5 @@
 export module backend;
-#include "shared.gti"
+import "shared.gti";
 
 #ifdef MAIN_LOCAL
 #error "an importer's source-local flag entered the module"

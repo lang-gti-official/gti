@@ -13,7 +13,7 @@ export namespace shape {
 ---
 
 (source_file
-  (module_declaration (identifier))
+  (module_declaration (module_name (identifier)))
   (import_declaration (module_name (identifier)))
   (import_declaration (module_name (identifier) (identifier)))
   (import_declaration (string_literal))
@@ -32,24 +32,21 @@ export namespace shape {
                   (literal (integer_literal)))))))))))
 
 ==================
-Republished includes and standard-library modules
+Re-exported standard-library and relative modules
 ==================
 
 export module vector;
-export #include <std/vector>
+export import std.vector;
 import std.span;
-#include "local.gti"
+import "local.gti";
 
 ---
 
 (source_file
-  (module_declaration (identifier))
-  (include_directive
-    (standard_library_path
-      (standard_library_component (identifier))
-      (standard_library_component (identifier))))
+  (module_declaration (module_name (identifier)))
   (import_declaration (module_name (identifier) (identifier)))
-  (include_directive (string_literal)))
+  (import_declaration (module_name (identifier) (identifier)))
+  (import_declaration (string_literal)))
 
 ==================
 Export precedes declaration attributes and specifiers
@@ -62,7 +59,7 @@ export unsafe int raw() { return 0; }
 ---
 
 (source_file
-  (module_declaration (identifier))
+  (module_declaration (module_name (identifier)))
   (export_declaration
     (function_declaration
       (function_contract_attribute)
@@ -81,3 +78,31 @@ export unsafe int raw() { return 0; }
           (initializer_expression
             (primary_expression
               (literal (integer_literal)))))))))
+
+==================
+Hierarchical module names and qualified dependency imports
+==================
+
+export module graphics.geometry;
+import graphics.numeric;
+export import rendering.graphics.mesh;
+
+---
+
+(source_file
+  (module_declaration (module_name (identifier) (identifier)))
+  (import_declaration (module_name (identifier) (identifier)))
+  (import_declaration (module_name (identifier) (identifier) (identifier))))
+
+==================
+Explicit implementation unit membership
+==================
+
+module graphics.geometry;
+import graphics.numeric;
+
+---
+
+(source_file
+  (module_declaration (module_name (identifier) (identifier)))
+  (import_declaration (module_name (identifier) (identifier))))

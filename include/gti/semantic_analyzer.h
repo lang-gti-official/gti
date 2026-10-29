@@ -87,6 +87,8 @@ public:
   SemanticVisitor(SemanticVisitor &&) noexcept;
   SemanticVisitor &operator=(SemanticVisitor &&) noexcept;
 
+  // A subsequent check invalidates references borrowed from model() or
+  // errors(), including when a rejected preamble adoption restarts the request.
   bool check(const Program &program);
   // Stops check(program) at its next safe point once `cancellation` is set;
   // check then returns false and cancelled() reports why.

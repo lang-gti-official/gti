@@ -1,12 +1,13 @@
-#include "layer.gti"
-#include <std/memory>
-#include <std/vector>
+export module layer_stack;
+import "layer.gti";
+import std.memory;
+import std.vector;
 
 namespace psych {
 // LayerStack owns every registered layer. Indexed mutable access is sufficient
 // for lifecycle dispatch while mutable range iteration remains unavailable.
 // Ordinary layers occupy [0, layer_insert_index); overlays follow them.
-class LayerStack {
+export class LayerStack {
   mut std::vector<std::unique_ptr<Layer>> entries =
       std::vector<std::unique_ptr<Layer>>();
   mut uint64_t layer_insert_index = 0;

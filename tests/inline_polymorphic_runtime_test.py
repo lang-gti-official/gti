@@ -68,7 +68,7 @@ def main():
     fixtures = Path(__file__).resolve().parent / "fixtures"
     source = fixtures / "inline_polymorphic_lifecycle.gti"
     native = fixtures / "inline_polymorphic_allocations.cpp"
-    memory = fixtures.parent.parent / "stdlib/std/memory.gti"
+    memory = fixtures.parent.parent / "stdlib/std/detail/memory_core.gti"
     allocation_site = line_of(
         memory, "return unique_ptr<T>(gti_internal::allocate_unique_owner")
     located = lambda text, failure: (
@@ -76,7 +76,7 @@ def main():
     cases = [
         (0, SUCCESS, ""),
         (ABORT_STATUS, "",
-         f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
+         f"<std/detail/memory_core>:{allocation_site}: runtime error[GTI-R0011]: "
          "allocation_failure in unique_owner\n"),
         (70, "~tracked 5\n",
          located("return value / by;",

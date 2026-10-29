@@ -2,10 +2,10 @@
 // vector of strings (construction-only, no move assignment) stored in a
 // vector, deep std::clone of the vector, independent mutation of the copy,
 // nested vector<vector<string>> clone, and optional<record> clone.
-#include <std/optional>
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.optional;
+import std.string;
+import std.utility;
+import std.vector;
 
 class Record {
   std::string name_;

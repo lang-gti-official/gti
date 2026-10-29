@@ -1,6 +1,6 @@
-#include <std/array>
-#include <std/string>
-#include <std/vector>
+import std.array;
+import std.string;
+import std.vector;
 
 // Both ordinary nested records and source-defined array wrappers have the
 // same generated passive copy/destruction contract.

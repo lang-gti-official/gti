@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 // A user-defined owner can expose compact checked text views without any
 // compiler-private string/vector storage. The unsafe boundary asserts that
 // these readable bytes (and, for c_string, their NUL) remain valid for the

@@ -1,3 +1,0 @@
-// Module std.assert: the public surface of <std/assert>.
-export module assert;
-export #include <std/assert>

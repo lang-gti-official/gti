@@ -13,10 +13,10 @@ a call resolves as if the dynamic type were C.
 import itertools
 import re
 
-PRELUDE = """#include <std/format>
-#include <std/memory>
-#include <std/utility>
-#include <std/atomic>
+PRELUDE = """import std.format;
+import std.memory;
+import std.utility;
+import std.atomic;
 std::atomic<int32_t> position{0};
 std::atomic<int32_t> first_bad{-1};
 int32_t expected_at(int32_t index) {

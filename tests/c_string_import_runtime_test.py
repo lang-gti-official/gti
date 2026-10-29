@@ -65,7 +65,7 @@ def main():
         for expression in ("std::string(p)", "std::string::try_from_c_string(p)",
                            "std::c_string_bytes(p)"):
             source = root / "missing-unsafe.gti"
-            source.write_text('#include <std/string>\n#include <std/memory>\nint main() { c_string p = nullptr; auto text = '
+            source.write_text('import std.string;\nimport std.memory;\nint main() { c_string p = nullptr; auto text = '
                               + expression + '; return 0; }\n')
             artifact = root / "invalid.mir"
             checked = subprocess.run([compiler, source, "--emit-mir", "-o", artifact,

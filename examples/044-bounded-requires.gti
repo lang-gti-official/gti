@@ -1,7 +1,6 @@
-#include <std/iterator>
-#include <std/numeric>
-#include <std/vector>
-
+import std.iterator;
+import std.numeric;
+import std.vector;
 concept readable_as<Iterator, T> =
     std::input_iterator<Iterator> &&
     std::accumulates_into<Iterator, T>;

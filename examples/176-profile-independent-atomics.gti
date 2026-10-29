@@ -1,5 +1,4 @@
-#include <std/atomic>
-
+import std.atomic;
 // Ordinary source policy can use atomics in the default single-threaded
 // profile. The same operations retain atomic semantics in concurrent programs.
 // This does not enable thread creation or atomic wait/notification.

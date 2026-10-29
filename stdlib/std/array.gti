@@ -1,6 +1,7 @@
-#include <std/memory>
-#include <std/detail/iterator>
+export module array;
 
+import std.memory;
+import "detail/iterator.gti";
 // The value and indexed core is implemented without pointer decay or hidden
 // allocation. Nominal cursors borrow the array owner, never decay its storage.
 namespace std {
@@ -81,7 +82,7 @@ public:
   }
 };
 }
-class array<T, uint64_t N> {
+export class array<T, uint64_t N> {
   mut T values[N];
 
 public:

@@ -51,9 +51,11 @@ FrontendResult analyzeLegacyOwner(const std::filesystem::path &root,
                                   const std::string &source) {
   const auto library = root / "stdlib";
   const auto entry = library / name;
+  const std::string text =
+      "import \"std/detail/memory_capabilities.gti\"; " + source;
   return Frontend().analyze(
-      entry, source, {library / "prelude.gti", entry},
-      {{std::filesystem::weakly_canonical(entry).string(), source}}, {library});
+      entry, text, {library / "prelude.gti", entry},
+      {{std::filesystem::weakly_canonical(entry).string(), text}}, {library});
 }
 
 int failures = 0;
@@ -1481,7 +1483,7 @@ void testCleanupCompositionProofs() {
 
   const auto lambdaFrontend =
       Frontend().analyze("llvm-cleanup-lambda-identity.gti", R"(
-#include <std/utility>
+import std.utility;
 class Token {
 public:
   Token() {}
@@ -1670,7 +1672,7 @@ int main() { Field value{}; return value.read() + owned() - 34; }
   // is covered independently by the ownership and dispatch native matrices.
   const auto hierarchyOwnerFrontend =
       analyzeLegacyOwner(root, "llvm-cleanup-hierarchy-owner.gti", R"(
-#include <std/memory>
+import std.memory;
 class Base {
 public:
   Base() {}
@@ -1888,7 +1890,7 @@ int main() {
   const auto privateFrontend =
       Frontend(std::move(privateOptions))
           .analyze("llvm-private-cleanup-fallback.gti", R"(
-#include <std/mutex>
+import std.mutex;
 int main() { std::mutex<int32_t> value{1}; return 0; }
 )",
                    {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
@@ -4221,7 +4223,7 @@ void testInertRelocation() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto frontend =
       analyzeLegacyOwner(root, "inert-relocation.gti", std::string(R"(
-#include <std/memory>
+import std.memory;
 interface First {};
 interface Second {};
 class Parent : public First { public: mut int number = 17;  public: Parent() = default; };

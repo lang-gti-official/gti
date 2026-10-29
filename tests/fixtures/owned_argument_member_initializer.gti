@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // A member initializer constructing its field from an owning
 // Expected<Class, E> call result passed directly by value. The member's

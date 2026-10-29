@@ -1,3 +1,0 @@
-// Module std.map: the public surface of <std/map>.
-export module map;
-export #include <std/map>

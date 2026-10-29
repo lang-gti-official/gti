@@ -1,6 +1,5 @@
-#include <cli11/cli11>
-#include <std/string>
-
+import cli11.cli11;
+import std.string;
 int main() {
   std::string dynamic_count = std::string("42");
   std::string dynamic_name = std::string("tea");

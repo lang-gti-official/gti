@@ -1,5 +1,5 @@
 // string_view construction from literals and owners, comparison and iteration.
-#include <std/string>
+import std.string;
 
 std::size_t count_char(std::string_view text, char target) {
   mut std::size_t seen = std::size_t(0);

@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/string>
-#include <std/thread>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.thread;
+import std.vector;
 
 // A managed worker fails while a different set of its own resources is
 // live in each phase. The worker releases them, the join hands its original

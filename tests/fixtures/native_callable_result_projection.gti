@@ -1,4 +1,4 @@
-#include <std/meta>
+import std.meta;
 using PointerGetter = () -> int32_t*;
 using ReadOnlyGetter = () -> const int32_t*;
 using ScalarGetter = () -> int32_t;

@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 int32_t step(int32_t x, int32_t k) {
   return (x * 3 + k) % 1000003;
 }

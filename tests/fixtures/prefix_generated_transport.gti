@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/vector>
-#include "prefix_constructor_test.gti"
+import std.string;
+import std.vector;
+import "prefix_constructor_test.gti";
 
 mut bool fail_cleanup = false;
 

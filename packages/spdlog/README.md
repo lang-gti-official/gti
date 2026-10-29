@@ -22,7 +22,7 @@ spdlog = { git = "https://git.internal.howetotech.dev/gti-lang/spdlog.git", rev 
 Then run `gti fetch`, commit `gti.lock`, and include the public unit:
 
 ```gti
-#include <spdlog/spdlog>
+import spdlog.spdlog;
 
 int main() {
   spdlog::logger_ptr log = spdlog::stdout_color_mt("tea");

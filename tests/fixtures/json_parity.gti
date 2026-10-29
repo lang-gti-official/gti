@@ -2,12 +2,12 @@
 // null, string-keyed maps, exact number lexemes and range checks, strict
 // strings (UTF-8, escapes, surrogates), codec specializations, pretty
 // printing, structured errors with paths and locations, and decode limits.
-#include <std/json>
-#include <std/map>
-#include <std/optional>
-#include <std/string>
-#include <std/unordered_map>
-#include <std/vector>
+import std.json;
+import std.map;
+import std.optional;
+import std.string;
+import std.unordered_map;
+import std.vector;
 
 namespace ej = std::json;
 

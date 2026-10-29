@@ -1,29 +1,29 @@
+export module algorithm;
+
 // Algorithms that need ordering, input iteration, confined predicates, one
 // exact-return callable, writable output iteration, or whole-range in-place
 // element rewriting are implemented here. In-place algorithms take the owning
 // container so the exclusive borrow and the element type stay explicit;
 // iterator-pair in-place forms wait on retainable mutable cursors.
-
-#include <std/iterator>
-#include <std/functional>
-#include <std/vector>
-
+import std.iterator;
+import std.functional;
+import std.vector;
 namespace std {
-constexpr T min<std::totally_ordered T>(T left, T right) {
+export constexpr T min<std::totally_ordered T>(T left, T right) {
   if (right < left) {
     return std::move(right);
   }
   return std::move(left);
 }
 
-constexpr T max<std::totally_ordered T>(T left, T right) {
+export constexpr T max<std::totally_ordered T>(T left, T right) {
   if (left < right) {
     return std::move(right);
   }
   return std::move(left);
 }
 
-constexpr T clamp<std::totally_ordered T>(T value, T low, T high) {
+export constexpr T clamp<std::totally_ordered T>(T value, T low, T high) {
   if (value < low) {
     return std::move(low);
   }
@@ -33,7 +33,7 @@ constexpr T clamp<std::totally_ordered T>(T value, T low, T high) {
   return std::move(value);
 }
 
-bool all_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
+export bool all_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
                                            mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> &&
@@ -46,7 +46,7 @@ bool all_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
   return true;
 }
 
-bool any_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
+export bool any_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
                                            mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> &&
@@ -59,7 +59,7 @@ bool any_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
   return false;
 }
 
-bool none_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
+export bool none_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
                                             mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> &&
@@ -72,7 +72,7 @@ bool none_of<Iterator, Sentinel, Predicate>(mut Iterator first, Sentinel last,
   return true;
 }
 
-[[discardable]]
+export [[discardable]]
 Function for_each<Iterator, Sentinel, Function>(mut Iterator first,
                                                 Sentinel last,
                                                 mut Function function)
@@ -86,7 +86,7 @@ Function for_each<Iterator, Sentinel, Function>(mut Iterator first,
   return std::move(function);
 }
 
-Iterator find<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+export Iterator find<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
                                      T& value)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> &&
@@ -100,7 +100,7 @@ Iterator find<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
   }
   return std::move(first);
 }
-Iterator find_if<Iterator, Sentinel, Predicate>(mut Iterator first,
+export Iterator find_if<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                 Sentinel last,
                                                 mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
@@ -114,7 +114,7 @@ Iterator find_if<Iterator, Sentinel, Predicate>(mut Iterator first,
   return std::move(first);
 }
 
-Iterator find_if_not<Iterator, Sentinel, Predicate>(mut Iterator first,
+export Iterator find_if_not<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                     Sentinel last,
                                                     mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
@@ -128,7 +128,7 @@ Iterator find_if_not<Iterator, Sentinel, Predicate>(mut Iterator first,
   return std::move(first);
 }
 
-ptrdiff_t count<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+export ptrdiff_t count<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
                                        T& value)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> &&
@@ -143,7 +143,7 @@ ptrdiff_t count<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
   }
   return result;
 }
-ptrdiff_t count_if<Iterator, Sentinel, Predicate>(mut Iterator first,
+export ptrdiff_t count_if<Iterator, Sentinel, Predicate>(mut Iterator first,
                                                   Sentinel last,
                                                   mut Predicate predicate)
   requires std::input_iterator<Iterator> &&
@@ -164,7 +164,7 @@ ptrdiff_t count_if<Iterator, Sentinel, Predicate>(mut Iterator first,
 // destination's own defined failure. Unlike the C++-familiar signature, the
 // advanced cursor is not returned: a mutable owner-tied cursor cannot escape
 // through a return value under the current ownership model.
-void copy<Iterator, Sentinel, OutputIterator>(mut Iterator first,
+export void copy<Iterator, Sentinel, OutputIterator>(mut Iterator first,
                                               Sentinel last,
                                               mut OutputIterator output)
   requires std::input_iterator<Iterator> &&
@@ -180,7 +180,7 @@ void copy<Iterator, Sentinel, OutputIterator>(mut Iterator first,
 // Whole-range fill keeps one exclusive range loan and one iteration-bounded
 // mutable element loan. The exact element relation prevents a backend-selected
 // conversion; fixed-array and nominal ranges use the same concrete range plan.
-void fill<Range, std::copyable T>(mut Range& values, T& value)
+export void fill<Range, std::copyable T>(mut Range& values, T& value)
   requires std::mutable_range_of<Range, T> {
   for (mut T& element : values) {
     element = value;
@@ -192,7 +192,7 @@ void fill<Range, std::copyable T>(mut Range& values, T& value)
 // slot.
 // Reading and writing the same vector is rejected by borrow exclusivity at
 // the call site; an undersized destination raises its own checked failure.
-void transform<std::movable T, Operation>(std::vector<T>& source,
+export void transform<std::movable T, Operation>(std::vector<T>& source,
                                            mut std::vector<T>& destination,
                                            mut Operation operation)
   requires std::vector_element<T> && std::operation<Operation, T, T> {
@@ -204,7 +204,7 @@ void transform<std::movable T, Operation>(std::vector<T>& source,
 
 // In-place families retain one exclusive container borrow. Checked restoring
 // transfers permute initialized elements without copying or leaving a hole.
-void reverse<std::relocatable T>(mut std::vector<T>& values)
+export void reverse<std::relocatable T>(mut std::vector<T>& values)
   requires std::vector_element<T> {
   if (values.size() < std::size_t(2)) {
     return;
@@ -464,7 +464,7 @@ void introsort<std::relocatable T, Compare>(mut std::vector<T>& values,
 // Both overloads sort in place with detail::introsort: O(n log n)
 // comparisons in the worst case, fixed auxiliary storage and no allocation.
 // Neither promises stability; the order of equal elements is unspecified.
-void sort<std::relocatable T>(mut std::vector<T>& values)
+export void sort<std::relocatable T>(mut std::vector<T>& values)
   requires std::vector_element<T> && std::totally_ordered<T> {
   mut detail::sort_less<T> less{};
   detail::introsort(values, less);
@@ -476,7 +476,7 @@ void sort<std::relocatable T>(mut std::vector<T>& values)
 // rejects a consuming target because sorting may compare zero or more times.
 // Compare must define a strict weak order; any other relation still leaves a
 // permutation.
-void sort<std::relocatable T, Compare>(mut std::vector<T>& values,
+export void sort<std::relocatable T, Compare>(mut std::vector<T>& values,
                                     mut Compare compare)
   requires std::vector_element<T> && std::comparator<Compare, T> {
   detail::introsort(values, compare);
@@ -486,7 +486,7 @@ void sort<std::relocatable T, Compare>(mut std::vector<T>& values,
 // the exact structural begin/end protocol. The compiler recognizes neither a
 // public range nor an algorithm name; concrete reanalysis selects every
 // endpoint, iterator operator, and callable target before HIR/MIR lowering.
-bool all_of<Range, Predicate>(Range& values, mut Predicate predicate)
+export bool all_of<Range, Predicate>(Range& values, mut Predicate predicate)
   requires std::input_range<Range> &&
            std::range_predicate<Predicate, Range> {
   for (auto& element : values) {
@@ -497,7 +497,7 @@ bool all_of<Range, Predicate>(Range& values, mut Predicate predicate)
   return true;
 }
 
-bool any_of<Range, Predicate>(Range& values, mut Predicate predicate)
+export bool any_of<Range, Predicate>(Range& values, mut Predicate predicate)
   requires std::input_range<Range> &&
            std::range_predicate<Predicate, Range> {
   for (auto& element : values) {
@@ -508,7 +508,7 @@ bool any_of<Range, Predicate>(Range& values, mut Predicate predicate)
   return false;
 }
 
-bool none_of<Range, Predicate>(Range& values, mut Predicate predicate)
+export bool none_of<Range, Predicate>(Range& values, mut Predicate predicate)
   requires std::input_range<Range> &&
            std::range_predicate<Predicate, Range> {
   for (auto& element : values) {
@@ -519,7 +519,7 @@ bool none_of<Range, Predicate>(Range& values, mut Predicate predicate)
   return true;
 }
 
-ptrdiff_t count_if<Range, Predicate>(Range& values,
+export ptrdiff_t count_if<Range, Predicate>(Range& values,
                                     mut Predicate predicate)
   requires std::input_range<Range> &&
            std::range_predicate<Predicate, Range> {
@@ -532,7 +532,7 @@ ptrdiff_t count_if<Range, Predicate>(Range& values,
   return result;
 }
 
-[[discardable]]
+export [[discardable]]
 Function for_each<Range, Function>(Range& values, mut Function function)
   requires std::input_range<Range> &&
            std::range_operation<Function, Range, void> {
@@ -573,7 +573,7 @@ bool binary_search_counted<Iterator, T>(mut Iterator first,
 }
 }
 
-bool binary_search<Iterator, Sentinel, T>(mut Iterator first,
+export bool binary_search<Iterator, Sentinel, T>(mut Iterator first,
                                           Sentinel last,
                                           T& value)
   requires std::forward_iterator<Iterator> &&
@@ -588,7 +588,7 @@ bool binary_search<Iterator, Sentinel, T>(mut Iterator first,
   }
   return detail::binary_search_counted(std::move(first), count, value);
 }
-bool contains<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
+export bool contains<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
   requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::equality_comparable<T> {
   while (first != last) {
@@ -598,7 +598,7 @@ bool contains<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value
   return false;
 }
 
-bool contains<Range, T>(Range& values, T& value)
+export bool contains<Range, T>(Range& values, T& value)
   requires std::range_of<Range, T> && std::equality_comparable<T> {
   for (auto& element : values) {
     if (element == value) { return true; }
@@ -606,7 +606,7 @@ bool contains<Range, T>(Range& values, T& value)
   return false;
 }
 
-ptrdiff_t count<Range, T>(Range& values, T& value)
+export ptrdiff_t count<Range, T>(Range& values, T& value)
   requires std::range_of<Range, T> && std::equality_comparable<T> {
   mut ptrdiff_t result = 0;
   for (auto& element : values) {
@@ -615,7 +615,7 @@ ptrdiff_t count<Range, T>(Range& values, T& value)
   return result;
 }
 
-bool is_partitioned<Iterator, Sentinel, Predicate>(
+export bool is_partitioned<Iterator, Sentinel, Predicate>(
     mut Iterator first, Sentinel last, mut Predicate predicate)
   requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::indirect_predicate<Predicate, Iterator> {
@@ -629,7 +629,7 @@ bool is_partitioned<Iterator, Sentinel, Predicate>(
   return true;
 }
 
-bool is_partitioned<Range, Predicate>(Range& values, mut Predicate predicate)
+export bool is_partitioned<Range, Predicate>(Range& values, mut Predicate predicate)
   requires std::input_range<Range> && std::range_predicate<Predicate, Range> {
   mut bool reached_false = false;
   for (auto& element : values) {
@@ -643,7 +643,7 @@ bool is_partitioned<Range, Predicate>(Range& values, mut Predicate predicate)
 // Four endpoints keep both reads bounded, including unequal-length inputs.
 // Element comparisons are ordinary exact GTI operators, checked again for
 // every concrete instance (no host comparison, conversion, or type erasure).
-bool equal<I, S, J, E>(mut I first, S last, mut J second, E end)
+export bool equal<I, S, J, E>(mut I first, S last, mut J second, E end)
   requires std::input_iterator<I> && std::sentinel_for<S, I> &&
            std::input_iterator<J> && std::sentinel_for<E, J> {
   while (first != last && second != end) {
@@ -654,7 +654,7 @@ bool equal<I, S, J, E>(mut I first, S last, mut J second, E end)
   return !(first != last) && !(second != end);
 }
 
-bool starts_with<I, S, J, E>(mut I first, S last, mut J second, E end)
+export bool starts_with<I, S, J, E>(mut I first, S last, mut J second, E end)
   requires std::input_iterator<I> && std::sentinel_for<S, I> &&
            std::input_iterator<J> && std::sentinel_for<E, J> {
   while (second != end) {
@@ -666,7 +666,7 @@ bool starts_with<I, S, J, E>(mut I first, S last, mut J second, E end)
   return true;
 }
 
-bool lexicographical_compare<I, S, J, E>(mut I first, S last, mut J second, E end)
+export bool lexicographical_compare<I, S, J, E>(mut I first, S last, mut J second, E end)
   requires std::input_iterator<I> && std::sentinel_for<S, I> &&
            std::input_iterator<J> && std::sentinel_for<E, J> {
   while (first != last && second != end) {
@@ -678,7 +678,7 @@ bool lexicographical_compare<I, S, J, E>(mut I first, S last, mut J second, E en
   return !(first != last) && second != end;
 }
 
-Iterator adjacent_find<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+export Iterator adjacent_find<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
   if (!(first != last)) { return std::move(first); }
   mut Iterator next = first;
@@ -692,7 +692,7 @@ Iterator adjacent_find<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   return std::move(first);
 }
 
-Iterator search<Iterator, Sentinel, Pattern, PatternEnd>(
+export Iterator search<Iterator, Sentinel, Pattern, PatternEnd>(
     mut Iterator first, Sentinel last, Pattern pattern, PatternEnd pattern_end)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::forward_iterator<Pattern> && std::sentinel_for<PatternEnd, Pattern> {
@@ -710,7 +710,7 @@ Iterator search<Iterator, Sentinel, Pattern, PatternEnd>(
   return std::move(first);
 }
 
-Iterator find_first_of<Iterator, Sentinel, Pattern, PatternEnd>(
+export Iterator find_first_of<Iterator, Sentinel, Pattern, PatternEnd>(
     mut Iterator first, Sentinel last, Pattern pattern, PatternEnd pattern_end)
   requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::forward_iterator<Pattern> && std::sentinel_for<PatternEnd, Pattern> {
@@ -725,7 +725,7 @@ Iterator find_first_of<Iterator, Sentinel, Pattern, PatternEnd>(
   return std::move(first);
 }
 
-Iterator search_n<Iterator, Sentinel, T>(
+export Iterator search_n<Iterator, Sentinel, T>(
     mut Iterator first, Sentinel last, size_t count, T& value)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::equality_comparable<T> {
@@ -751,7 +751,7 @@ Iterator search_n<Iterator, Sentinel, T>(
 // A partitioned range has a true prefix followed by a false suffix. Count
 // first, then narrow without requiring subtraction or random-access movement:
 // O(log n) predicate calls, O(n) increments, no allocation or element copies.
-Iterator partition_point<Iterator, Sentinel, Predicate>(
+export Iterator partition_point<Iterator, Sentinel, Predicate>(
     mut Iterator first, Sentinel last, mut Predicate predicate)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::indirect_predicate<Predicate, Iterator> {
@@ -770,7 +770,7 @@ Iterator partition_point<Iterator, Sentinel, Predicate>(
   return std::move(first);
 }
 
-Iterator lower_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
+export Iterator lower_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::totally_ordered<T> {
   mut Iterator scan = first;
@@ -788,7 +788,7 @@ Iterator lower_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T
   return std::move(first);
 }
 
-Iterator upper_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
+export Iterator upper_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::totally_ordered<T> {
   mut Iterator scan = first;
@@ -810,7 +810,7 @@ Iterator upper_bound<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T
 // operator<. One owned, repeatable comparator lives for the complete search;
 // move-only elements are only borrowed. The range must be partitioned for the
 // bound's comparison (and sorted under the strict weak order for binary_search).
-Iterator lower_bound<Iterator, Sentinel, T, Compare>(
+export Iterator lower_bound<Iterator, Sentinel, T, Compare>(
     mut Iterator first, Sentinel last, T& value, mut Compare compare)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::comparator<Compare, T> {
@@ -829,7 +829,7 @@ Iterator lower_bound<Iterator, Sentinel, T, Compare>(
   return std::move(first);
 }
 
-Iterator upper_bound<Iterator, Sentinel, T, Compare>(
+export Iterator upper_bound<Iterator, Sentinel, T, Compare>(
     mut Iterator first, Sentinel last, T& value, mut Compare compare)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::comparator<Compare, T> {
@@ -848,7 +848,7 @@ Iterator upper_bound<Iterator, Sentinel, T, Compare>(
   return std::move(first);
 }
 
-bool binary_search<Iterator, Sentinel, T, Compare>(
+export bool binary_search<Iterator, Sentinel, T, Compare>(
     mut Iterator first, Sentinel last, T& value, mut Compare compare)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::comparator<Compare, T> {
@@ -869,7 +869,7 @@ bool binary_search<Iterator, Sentinel, T, Compare>(
   return first != last && !compare(value, *first);
 }
 
-Iterator min_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+export Iterator min_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
   if (!(first != last)) { return std::move(first); }
   mut Iterator scan = first;
@@ -883,7 +883,7 @@ Iterator min_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   return std::move(first);
 }
 
-Iterator max_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+export Iterator max_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
   if (!(first != last)) { return std::move(first); }
   mut Iterator scan = first;
@@ -897,7 +897,7 @@ Iterator max_element<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   return std::move(first);
 }
 
-bool is_sorted<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+export bool is_sorted<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
   if (!(first != last)) { return true; }
   mut Iterator next = first;
@@ -910,7 +910,7 @@ bool is_sorted<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   return true;
 }
 
-Iterator is_sorted_until<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+export Iterator is_sorted_until<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::forward_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> {
   if (!(first != last)) { return std::move(first); }
   mut Iterator next = first;
@@ -924,14 +924,14 @@ Iterator is_sorted_until<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   return std::move(first);
 }
 
-void replace<Range, std::copyable T>(mut Range& values, T& old_value, T& new_value)
+export void replace<Range, std::copyable T>(mut Range& values, T& old_value, T& new_value)
   requires std::mutable_range_of<Range, T> && std::equality_comparable<T> {
   for (mut T& element : values) {
     if (element == old_value) { element = new_value; }
   }
 }
 
-void replace_if<Range, std::copyable T, Predicate>(
+export void replace_if<Range, std::copyable T, Predicate>(
     mut Range& values, mut Predicate predicate, T& replacement)
   requires std::mutable_range_of<Range, T> && std::predicate<Predicate, T> {
   for (mut T& element : values) {
@@ -941,7 +941,7 @@ void replace_if<Range, std::copyable T, Predicate>(
 
 // Output algorithms retain one exclusive destination cursor and return no
 // escaping cursor. Output exhaustion uses the destination's checked failure.
-void copy_if<Iterator, Sentinel, Output, Predicate>(
+export void copy_if<Iterator, Sentinel, Output, Predicate>(
     mut Iterator first, Sentinel last, mut Output output, mut Predicate predicate)
   requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::output_iterator<Output> && std::indirect_predicate<Predicate, Iterator> {
@@ -951,7 +951,7 @@ void copy_if<Iterator, Sentinel, Output, Predicate>(
   }
 }
 
-void copy_n<Iterator, Output>(mut Iterator first, size_t count, mut Output output)
+export void copy_n<Iterator, Output>(mut Iterator first, size_t count, mut Output output)
   requires std::input_iterator<Iterator> && std::output_iterator<Output> {
   for (mut size_t index = 0; index < count; index++) {
     *output = *first;
@@ -960,7 +960,7 @@ void copy_n<Iterator, Output>(mut Iterator first, size_t count, mut Output outpu
   }
 }
 
-void replace_copy<Iterator, Sentinel, Output, T>(
+export void replace_copy<Iterator, Sentinel, Output, T>(
     mut Iterator first, Sentinel last, mut Output output, T& old_value, T& new_value)
   requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::copyable<T> &&
@@ -974,7 +974,7 @@ void replace_copy<Iterator, Sentinel, Output, T>(
   }
 }
 
-void replace_copy_if<Iterator, Sentinel, Output, T, Predicate>(
+export void replace_copy_if<Iterator, Sentinel, Output, T, Predicate>(
     mut Iterator first, Sentinel last, mut Output output,
     mut Predicate predicate, T& replacement)
   requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
@@ -989,7 +989,7 @@ void replace_copy_if<Iterator, Sentinel, Output, T, Predicate>(
   }
 }
 
-void remove_copy<Iterator, Sentinel, Output, T>(
+export void remove_copy<Iterator, Sentinel, Output, T>(
     mut Iterator first, Sentinel last, mut Output output, T& value)
   requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::dereferences_to<Iterator, T> && std::copyable<T> &&
@@ -1001,7 +1001,7 @@ void remove_copy<Iterator, Sentinel, Output, T>(
   }
 }
 
-void remove_copy_if<Iterator, Sentinel, Output, Predicate>(
+export void remove_copy_if<Iterator, Sentinel, Output, Predicate>(
     mut Iterator first, Sentinel last, mut Output output, mut Predicate predicate)
   requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
            std::output_iterator<Output> && std::indirect_predicate<Predicate, Iterator> {

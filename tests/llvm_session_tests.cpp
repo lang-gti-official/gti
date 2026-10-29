@@ -1321,7 +1321,7 @@ void testPolymorphicStorageLayout(const std::filesystem::path &repository) {
   std::string source(std::istreambuf_iterator<char>{input}, {});
   expect(input.good() || input.eof(), "read trusted polymorphic declarations");
   source += "\nnamespace slot_layout_probe {\n"
-            "interface Target { int read(); };\nint run() {\n";
+            "interface Target { int read(); };\nexport int run() {\n";
   for (std::uint64_t alignment = 1; alignment <= 4096; alignment *= 2)
     for (const auto capacity : {1, 4096})
       source += "gti_internal::polymorphic_storage<Target, " +
@@ -1334,7 +1334,7 @@ void testPolymorphicStorageLayout(const std::filesystem::path &repository) {
   options.lowerLibraryReachableOnly = true;
   auto frontend = Frontend(options).analyze(
       repository / "tests/slot-layout-entry.gti",
-      "#include <std/polymorphic>\n"
+      "import std.polymorphic;\n"
       "int main() { return slot_layout_probe::run(); }\n",
       {repository / "stdlib/prelude.gti"}, {{library.string(), source}},
       {repository / "stdlib"});
@@ -1562,7 +1562,7 @@ gti_internal::unique_owner<int32_t> extract() {
   case Packet::owned(value): return std::move(value);
   }
 }
-int run() {
+export int run() {
   {
     gti_internal::unique_owner<int32_t> selected = extract();
     // The source payload is already dead, while its extracted owner is live.
@@ -1578,7 +1578,7 @@ int run() {
   options.lowerLibraryReachableOnly = true;
   auto frontend = Frontend(options).analyze(
       repository / "tests/payload-owner-entry.gti",
-      "#include <std/memory>\n"
+      "import std.memory;\n"
       "int main() { return payload_owner_probe::run(); }\n",
       {repository / "stdlib/prelude.gti"}, {{library.string(), source}},
       {repository / "stdlib"});

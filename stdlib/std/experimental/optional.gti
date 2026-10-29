@@ -1,19 +1,20 @@
+export module experimental.optional;
+
 // A source-defined optional value. A payload enum holds either nothing or one
 // live `T`, so GTI's generated movement and exactly-once cleanup apply to the
 // value directly and no compiler-private storage is involved. Prefix `?`
 // propagates an empty optional through `std::tryable`.
 //
 // Compatibility spelling for the former candidate. New code should use
-// <std/optional>; this distinct type retains its historical panic behavior.
-#include <std/panic>
-#include <std/utility>
-
+// import std.optional; this distinct type retains its historical panic behavior.
+import std.panic;
+import std.utility;
 namespace std::experimental {
 /// The residual of an empty optional: it carries no value.
-struct nullopt_t { nullopt_t() = default; };
+export struct nullopt_t { nullopt_t() = default; };
 
 /// The empty residual as a value, such as `optional<int> none = nullopt;`.
-nullopt_t nullopt{};
+export nullopt_t nullopt{};
 
 namespace detail {
 /// Either no value or one live `T`.
@@ -31,7 +32,7 @@ enum class optional_state<T> {
 /// Access to an empty value panics after normal cleanup. Copy construction
 /// and copy assignment are absent; use `clone()` when `T` supports
 /// duplication.
-class optional<std::move_constructible T> {
+export class optional<std::move_constructible T> {
   mut detail::optional_state<T> state = detail::optional_state<T>::empty;
 
 public:
@@ -143,7 +144,7 @@ public:
 };
 
 /// `?` on an optional produces its value or returns an empty optional.
-for <std::move_constructible T> concept std::tryable<optional<T>> {
+export for <std::move_constructible T> concept std::tryable<optional<T>> {
   using value_type = T;
   using residual_type = nullopt_t;
   bool has_value(optional<T>& value) { return value.has_value(); }

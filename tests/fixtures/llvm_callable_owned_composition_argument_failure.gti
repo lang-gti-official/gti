@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/panic>
+import std.memory;
+import std.panic;
 
 mut int cleanup_trace = 0;
 mut int payload_drops = 0;

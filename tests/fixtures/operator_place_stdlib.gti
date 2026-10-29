@@ -1,8 +1,8 @@
-#include <std/memory>
-#include <std/optional>
-#include <std/vector>
-#include <std/array>
-#include <std/string>
+import std.memory;
+import std.optional;
+import std.vector;
+import std.array;
+import std.string;
 
 class Row {
   mut int32_t cells[2] = {};

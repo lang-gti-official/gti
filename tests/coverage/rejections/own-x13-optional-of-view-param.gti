@@ -1,7 +1,7 @@
 // INVALID: optional storage of a by-value view parameter loses its owner
 // dependency (standard-library.md optional section).
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 std::optional<std::string_view> keep(std::string_view text) {
   std::optional<std::string_view> kept{text};
   return kept;

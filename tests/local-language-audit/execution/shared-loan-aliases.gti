@@ -1,10 +1,10 @@
-#include <std/string>
+import std.string;
 
 int sequential_aliases() {
   mut std::string value = std::string("gti");
   mut auto iterator = value.begin();
-  std::detail::storage_iterator<char>& alias = iterator;
-  std::detail::storage_iterator<char>& second_alias = alias;
+  std::string::const_iterator& alias = iterator;
+  std::string::const_iterator& second_alias = alias;
   char first = *iterator;
   char second = *alias;
   char third = *second_alias;
@@ -19,7 +19,7 @@ int sequential_aliases() {
 int conditional_aliases(bool use_original) {
   mut std::string value = std::string("gti");
   mut auto iterator = value.begin();
-  std::detail::storage_iterator<char>& alias = iterator;
+  std::string::const_iterator& alias = iterator;
   mut char selected = 'x';
   if (use_original) {
     selected = *iterator;

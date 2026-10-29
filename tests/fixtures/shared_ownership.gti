@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/utility>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.utility;
+import std.string;
+import std.vector;
 
 struct Item {
   int identity;

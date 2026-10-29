@@ -261,14 +261,16 @@ void testFrontendReuseInvalidationAndEquivalence() {
   const std::string entryKey = canonicalKey(entry);
   const std::string dependencyKey = canonicalKey(dependency);
   const std::string unrelatedKey = canonicalKey(unrelated);
-  const std::string dependencyDisk = "int dependency_value() { return 1; }\n";
+  const std::string dependencyDisk = "export module dependency;\nexport int "
+                                     "dependency_value() { return 1; }\n";
   const std::string unrelatedSource = "int unrelated_value() { return 7; }\n";
-  const std::string firstRoot = "#include \"dependency.gti\"\n"
+  const std::string firstRoot = "import \"dependency.gti\";\n"
                                 "int main() { return dependency_value(); }\n";
   const std::string editedRoot =
-      "#include \"dependency.gti\"\n"
+      "import \"dependency.gti\";\n"
       "int main() { return dependency_value() + 0; }\n";
-  const std::string dirtyDependency = "int dependency_value() { return 2; }\n";
+  const std::string dirtyDependency = "export module dependency;\nexport int "
+                                      "dependency_value() { return 2; }\n";
   TemporaryProject::write(entry, firstRoot);
   TemporaryProject::write(dependency, dependencyDisk);
   TemporaryProject::write(unrelated, unrelatedSource);
@@ -421,16 +423,18 @@ void testDependencyConfigurationChangesParsedIdentity() {
   const std::filesystem::path provider = project.path("flag-provider.gti");
   const std::string entryKey = canonicalKey(entry);
   const std::string providerKey = canonicalKey(provider);
-  const std::string entrySource = "#include \"flag-provider.gti\"\n"
-                                  "#if defined(FEATURE)\n"
-                                  "int selected() { return 1; }\n"
-                                  "#else\n"
-                                  "int selected() { return 2; }\n"
-                                  "#endif\n"
+  const std::string entrySource = "import \"flag-provider.gti\";\n"
                                   "int main() { return selected(); }\n";
-  const std::string enabledProvider = "#define FEATURE\n";
-  const std::string disabledProvider = "#define FEATURE\n"
-                                       "#undef FEATURE\n";
+  const std::string providerBody = "#if defined(FEATURE)\n"
+                                   "export int selected() { return 1; }\n"
+                                   "#else\n"
+                                   "export int selected() { return 2; }\n"
+                                   "#endif\n";
+  const std::string enabledProvider =
+      "export module flag_provider;\n#define FEATURE\n" + providerBody;
+  const std::string disabledProvider =
+      "export module flag_provider;\n#define FEATURE\n#undef FEATURE\n" +
+      providerBody;
   TemporaryProject::write(entry, entrySource);
   TemporaryProject::write(provider, enabledProvider);
 
@@ -457,9 +461,8 @@ void testDependencyConfigurationChangesParsedIdentity() {
       std::as_const(disabled.result.sourceGraph)
           .findUnit(disabled.result.sourceGraph.sourceUnitForPath(entryKey));
   expect(enabledRoot != nullptr && disabledRoot != nullptr &&
-             enabledRoot->syntaxDigest != disabledRoot->syntaxDigest,
-         "dependency-selected root token streams should have distinct "
-         "syntax digests");
+             enabledRoot->syntaxDigest == disabledRoot->syntaxDigest,
+         "module-local flags must leave the importing root syntax unchanged");
   expect(disabled.result.semanticValid,
          "the disabled dependency-provided configuration should remain valid");
   expect(!contains(disabled.metrics.lexedUnits, entryKey),
@@ -551,50 +554,54 @@ void testProcessedSourceUnitReplay() {
   const std::filesystem::path entry = project.path("replay-main.gti");
   const std::string sharedKey = canonicalKey(project.path("shared.gti"));
   TemporaryProject::write(project.path("shared.gti"),
-                          "int shared_value() { return 2; }\n");
+                          "export module shared;\n"
+                          "export int shared_value() { return 2; }\n");
   // Conditionals that test only the target keep a processed form; one that
   // tests a flag (`configured.gti`) does not.
   TemporaryProject::write(project.path("targeted.gti"),
+                          "export module targeted;\n"
                           "#if target.os == \"plan9\"\n"
-                          "int targeted_value() { return 1; }\n"
+                          "export int targeted_value() { return 1; }\n"
                           "#else\n"
-                          "int targeted_value() { return 4; }\n"
+                          "export int targeted_value() { return 4; }\n"
                           "#endif\n");
   TemporaryProject::write(project.path("helper.gti"),
-                          "#include \"shared.gti\"\n"
-                          "#include \"targeted.gti\"\n"
-                          "int helper_value() {\n"
+                          "export module helper;\n"
+                          "import \"shared.gti\";\n"
+                          "import \"targeted.gti\";\n"
+                          "export int helper_value() {\n"
                           "  return shared_value() + targeted_value();\n"
                           "}\n");
   // Both interfaces include `helper.gti`, so the second replays it, and its
   // nested includes, in another configuration domain.
   TemporaryProject::write(project.path("left.gti"),
                           "export module left;\n"
-                          "export #include \"helper.gti\"\n"
+                          "export import \"helper.gti\";\n"
                           "export int left_value() { return 1; }\n");
   TemporaryProject::write(project.path("right.gti"),
                           "export module right;\n"
-                          "#include \"helper.gti\"\n"
+                          "import \"helper.gti\";\n"
                           "export int right_value() {\n"
                           "  return helper_value() + 1;\n"
                           "}\n");
   TemporaryProject::write(project.path("configured.gti"),
+                          "export module configured;\n"
                           "#if defined(FEATURE)\n"
-                          "int configured_value() { return 1; }\n"
+                          "export int configured_value() { return 1; }\n"
                           "#else\n"
-                          "int configured_value() { return 3; }\n"
+                          "export int configured_value() { return 3; }\n"
                           "#endif\n");
   // Loading diagnostics: including a module interface depends on the
   // included unit and is re-established by replay; a plain `include` is a
   // token-level diagnostic and keeps its unit out of the processed form.
-  TemporaryProject::write(project.path("wrong.gti"), "#include \"left.gti\"\n");
+  TemporaryProject::write(project.path("wrong.gti"), "import \"left.gti\";\n");
   TemporaryProject::write(project.path("legacy.gti"),
                           "include \"shared.gti\"\n");
   const std::string entrySource = "import \"left.gti\";\n"
                                   "import \"right.gti\";\n"
-                                  "#include \"configured.gti\"\n"
-                                  "#include \"wrong.gti\"\n"
-                                  "#include \"legacy.gti\"\n"
+                                  "import \"configured.gti\";\n"
+                                  "import \"wrong.gti\";\n"
+                                  "import \"legacy.gti\";\n"
                                   "int entry_value() {\n"
                                   "  return left_value() + right_value() +\n"
                                   "         configured_value();\n"

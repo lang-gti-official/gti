@@ -682,7 +682,7 @@ full advisory CI coverage.
 Automation-only and source-only GTI stdlib local owning checks may use
 `verify --focused`, which checks the actual diff and does not reserve a
 broad-suite slot. The source-library path requires a change under `stdlib/std/`
-or `stdlib/modules/` ending in `.gti`; accompanying GTI fixtures/examples,
+ending in `.gti`; accompanying GTI fixtures/examples,
 Python test harnesses, explicit surface/census metadata, release metadata and
 Markdown documentation are permitted. Compiler, native runtime, CMake and
 other implementation changes cannot use that path. Its checks require a named

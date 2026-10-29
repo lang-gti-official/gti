@@ -4,8 +4,8 @@
 // plain and compound assignment through both levels, a two-argument
 // operator(), read-only vs mutable subscript overload selection, and a
 // subscript reached through a class field and a mutable reference parameter.
-#include <std/format>
-#include <std/vector>
+import std.format;
+import std.vector;
 
 class Row {
   mut int32_t cells[4] = {};

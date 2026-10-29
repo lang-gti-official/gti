@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 
 int main() {
   // A scheduler hint is legal without enabling a second GTI execution agent.

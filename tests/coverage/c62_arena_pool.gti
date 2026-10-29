@@ -1,5 +1,5 @@
 // Bounded arena and pool allocation with explicit capacity failure.
-#include <std/memory>
+import std.memory;
 
 class Particle {
   mut int32_t id = 0;

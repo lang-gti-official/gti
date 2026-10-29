@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/format>
+import std.string;
+import std.format;
 
 #ifdef ALLOCATION_COUNTS
 extern "C" {

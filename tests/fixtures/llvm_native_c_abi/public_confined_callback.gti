@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 
 using Operation = (int32_t) -> int32_t;
 extern "C" {

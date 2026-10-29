@@ -267,8 +267,8 @@ void testInPlaceConstructorEffects() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto frontend =
       Frontend().analyze("optimizer-in-place-constructor.gti", R"(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 class Item {
   std::string text;
 public:

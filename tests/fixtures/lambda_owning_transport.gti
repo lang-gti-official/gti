@@ -2,8 +2,8 @@
 // caller's result storage, from an ordinary function or an exact lambda, and
 // a lambda stages an owning class argument before a later argument that can
 // fail, exactly as a direct function call does.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 class resource {
   int32_t id;

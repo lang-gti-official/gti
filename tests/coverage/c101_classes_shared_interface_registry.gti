@@ -2,9 +2,9 @@
 // requires operator() and a comparison operator, dispatch through the shared
 // handle, through a dereferenced reference, and last-owner destruction from
 // a base-typed handle.
-#include <std/format>
-#include <std/memory>
-#include <std/vector>
+import std.format;
+import std.memory;
+import std.vector;
 
 static mut int32_t drops = 0;
 

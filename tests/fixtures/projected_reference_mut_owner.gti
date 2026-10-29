@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 
 // A mutable owner selects the read-only `operator->` and `operator*` steps
 // for read-only bindings, so two read-only references through the same

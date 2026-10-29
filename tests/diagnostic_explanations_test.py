@@ -7,13 +7,13 @@ import subprocess
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position, without_include_advice
+from lsp_smoke_test import LspSession, lsp_position
 
 
 def run(compiler, server, root):
     path = root / "explanations.gti"
     uri = path.as_uri()
-    source = '''#include <std/string>
+    source = '''import std.string;
 int main() {
   std::string owner = std::string("hello");
   /* 借 é */ std::string destination = std::move(owner);
@@ -81,10 +81,10 @@ int main() {
             "textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": source}}})
 
         def publication(version):
-            return without_include_advice(session.receive_until(lambda message:
+            return session.receive_until(lambda message:
                 message.get("method") == "textDocument/publishDiagnostics"
                 and message["params"].get("uri") == uri
-                and message["params"].get("version") == version)["params"]["diagnostics"])
+                and message["params"].get("version") == version)["params"]["diagnostics"]
 
         diagnostics = publication(1)
         error = next(d for d in diagnostics if d.get("code") == "GTI-S2018")
@@ -150,7 +150,7 @@ int main() { Command cmd{}; cmd.name = 1; return 0; }
         assert not any(d.get("code") == "GTI-S2001" for d in remaining), remaining
         assert sum(d.get("code") == "GTI-S2056" for d in remaining) == 1, remaining
 
-        branches = '#include <std/string>\nvoid use(int path) {\n'
+        branches = 'import std.string;\nvoid use(int path) {\n'
         branches += '  std::string owner{"text"};\n'
         for index in range(5):
             branches += (f'  if (path == {index}) {{ auto moved = std::move(owner); }} else ')
@@ -165,15 +165,17 @@ int main() { Command cmd{}; cmd.name = 1; return 0; }
         assert len(bounded["relatedInformation"]) == 4, bounded
 
         contract_path = root / "member-contract.gti"
-        contract = '''concept readable<T> = requires(T& value) { { value.snapshot() } -> int; };
-struct Wrapper<T> {
-  int snapshot() requires std::integral<T> { return 7; }
-public: Wrapper() = default;
-};
-int read<T>(T& value) requires readable<T> { return value.snapshot(); }
-'''
+        contract = (
+                       'export module member_contract;\n'
+                       'export concept readable<T> = requires(T& value) { { value.snapshot() } -> int; };\n'
+                       'export struct Wrapper<T> {\n'
+                       '  int snapshot() requires std::integral<T> { return 7; }\n'
+                       'public: Wrapper() = default;\n'
+                       '};\n'
+                       'export int read<T>(T& value) requires readable<T> { return value.snapshot(); }\n'
+                   )
         contract_path.write_text(contract)
-        member = '''#include "member-contract.gti"
+        member = '''import "member-contract.gti";
 int main() { Wrapper<bool> value{}; return read(/* 😀 */ value); }
 '''
         output = terminal(member)
@@ -198,12 +200,14 @@ int main() { Wrapper<bool> value{}; return read(/* 😀 */ value); }
         assert not publication(8), "repair must clear nested causes from the next snapshot"
 
         helper_path = root / "constant-helper.gti"
-        helper = '''constexpr int divide(int value) { return 100 / value; }
-constexpr int middle(int value) { /* 😀 */ return divide(value); }
-constexpr int outer(int value) { return middle(value); }
-'''
+        helper = (
+                     'export module constant_helper;\n'
+                     'export constexpr int divide(int value) { return 100 / value; }\n'
+                     'export constexpr int middle(int value) { /* 😀 */ return divide(value); }\n'
+                     'export constexpr int outer(int value) { return middle(value); }\n'
+                 )
         helper_path.write_text(helper)
-        constant = '''#include "constant-helper.gti"
+        constant = '''import "constant-helper.gti";
 constexpr int result = outer(0);
 int main() { return 0; }
 '''

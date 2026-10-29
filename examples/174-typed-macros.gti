@@ -1,9 +1,8 @@
 // Typed macros use ordinary calls, but force argument expressions at each use.
 // There is no asynchronous work, runtime thunk, or textual token replacement.
-#include <std/assert>
-#include <std/string>
-#include <std/source_location>
-
+import std.assert;
+import std.string;
+import std.source_location;
 struct Sample {
   int value = 7;
 public:

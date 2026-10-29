@@ -4,7 +4,7 @@
 // class and an interface view. MIR stages each forwarded reference as a borrow
 // input to the base initialization; the base reads or mutates the referent
 // but cannot retain it. The C++ backend does not represent this staging.
-#include <std/string>
+import std.string;
 
 mut int64_t events = 0;
 

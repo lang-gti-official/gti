@@ -1,0 +1,19 @@
+export module detail.charconv_types;
+
+namespace std {
+export enum class parse_errc {
+  none,
+  invalid_argument,
+  result_out_of_range,
+};
+
+export enum class chars_format { general, fixed, scientific, hex };
+
+/// position is the first unconsumed byte offset, never a raw pointer.
+export struct from_chars_result {
+  size_t position;
+  parse_errc ec;
+  from_chars_result(size_t consumed, parse_errc error) : position(consumed), ec(error) {}
+};
+
+}

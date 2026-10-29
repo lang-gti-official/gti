@@ -1,6 +1,6 @@
 # Text and binary encoding
 
-`<std/encoding>` provides portable source-defined conversion between counted
+`std.encoding` provides portable source-defined conversion between counted
 bytes and textual Base64 or hexadecimal representations, plus strict UTF-8
 scalar conversion and traversal. The binary-to-text operations use
 `std::string_view` as a byte view and return owning `std::string` values, so
@@ -9,8 +9,8 @@ embedded zeroes and every other byte value are preserved.
 ## API
 
 ```gti
-#include <std/encoding>
-#include <std/string>
+import std.encoding;
+import std.string;
 
 std::string encoded = std::encoding::base64::encode("hello");
 mut auto decoded = std::encoding::base64::decode(encoded.view());
@@ -33,9 +33,9 @@ expected<std::string, std::encoding::decode_errc>
 std::encoding::hex::decode(std::string_view text);
 ```
 
-`<std/encoding>` includes its implementation dependency on `<std/string>`, but
+`std.encoding` includes its implementation dependency on `std.string`, but
 optional standard units do not re-export declarations. A source file that
-names `std::string` directly therefore also includes `<std/string>`.
+names `std::string` directly therefore also includes `std.string`.
 
 ## UTF-8 contract
 
@@ -74,8 +74,8 @@ destination. Allocation failure follows ordinary string allocation policy,
 not the recoverable UTF-8 error channel.
 
 ```gti
-#include <std/encoding>
-#include <std/string>
+import std.encoding;
+import std.string;
 
 auto text = std::encoding::utf8::encode(uint32_t(0x20ac)).expect("valid scalar");
 auto view = text.view();

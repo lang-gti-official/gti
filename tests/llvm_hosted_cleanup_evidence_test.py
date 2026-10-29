@@ -9,6 +9,7 @@ new native bindings, compiler-private access exemptions or failure seams exist.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
@@ -21,11 +22,11 @@ import llvm_readiness_collect as collector
 
 
 SCHEMA = "gti.llvm.hosted-cleanup-source-contract/v1"
-TRACE_PATH = "std/detail/llvm_hosted_cleanup_trace.gti"
+TRACE_PATH = "std/detail_llvm_hosted_cleanup_trace.gti"
 CTOR = "    implicit string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {\n"
 MOVE = "    string(string&& other) = default;\n"
-STRING_INCLUDE = "#include <std/iterator>\n"
-MEMORY_INCLUDE = "#include <std/meta>\n"
+STRING_INCLUDE = "import std.iterator;\n"
+MEMORY_INCLUDE = "import std.meta;\n"
 RELEASE = """  void release() mut {
     std::detail::raw_allocation previous = this.take();
     gti_internal::process_resource process{};
@@ -66,9 +67,20 @@ def inventory(directory: Path) -> dict[str, str]:
     return result
 
 
+def install_trace_module(library: Path, source: Path) -> None:
+    """Publish only the disposable observation module in this alternative library."""
+    shutil.copyfile(source, library / TRACE_PATH)
+    map_path = library / "module-map.json"
+    mapping = json.loads(map_path.read_text(encoding="utf-8"))
+    name = "detail_llvm_hosted_cleanup_trace"
+    audit.require(name not in mapping["modules"], "trace module must remain test-only")
+    mapping["modules"][name] = TRACE_PATH
+    map_path.write_text(json.dumps(mapping, indent=2) + "\n", encoding="utf-8")
+
+
 def transformed_sources(root: Path, *, failures: bool, release_marker: bool) -> dict[str, str]:
     string = (root / "stdlib/std/string.gti").read_text(encoding="utf-8")
-    memory = (root / "stdlib/std/memory.gti").read_text(encoding="utf-8")
+    memory = (root / "stdlib/std/detail/memory_storage.gti").read_text(encoding="utf-8")
     # Even a no-trigger/control setup validates the uninstrumented anchors.
     for text, anchors in ((string, (CTOR, MOVE, STRING_INCLUDE)),
                           (memory, (MEMORY_INCLUDE, RELEASE))):
@@ -76,13 +88,13 @@ def transformed_sources(root: Path, *, failures: bool, release_marker: bool) -> 
             audit.require(text.count(anchor) == 1, "unmodified source anchor differs")
     if failures:
         string = replace_once(string, STRING_INCLUDE, STRING_INCLUDE +
-            "#include <std/detail/panic>\n#include <std/detail/llvm_hosted_cleanup_trace>\n")
+            'import "detail/panic.gti";\nimport "detail_llvm_hosted_cleanup_trace.gti";\n')
         string = replace_once(string, CTOR, CTOR + PRIMARY)
         string = replace_once(string, MOVE, MOVE + SECONDARY)
     if release_marker:
         audit.require(failures, "post-release markers are an optional alternative-library observation")
         memory = replace_once(memory, MEMORY_INCLUDE,
-                              MEMORY_INCLUDE + "#include <std/detail/llvm_hosted_cleanup_trace>\n")
+                              MEMORY_INCLUDE + 'import "../detail_llvm_hosted_cleanup_trace.gti";\n')
         modified_release = replace_once(RELEASE, "    unsafe { process.release(previous); }\n",
                                        "    unsafe { process.release(previous); }\n" + POST_RELEASE)
         memory = replace_once(memory, RELEASE, modified_release)
@@ -90,12 +102,12 @@ def transformed_sources(root: Path, *, failures: bool, release_marker: bool) -> 
                       modified_release.index("process.release(previous)") <
                       modified_release.index("previous.address != nullptr") <
                       modified_release.index("lease-release-returned"), "source release order changed")
-    return {"std/string.gti": string, "std/memory.gti": memory}
+    return {"std/string.gti": string, "std/detail/memory_storage.gti": memory}
 
 
 def anchor_controls(root: Path) -> None:
     for source, anchors in ((root / "stdlib/std/string.gti", (CTOR, MOVE, STRING_INCLUDE)),
-                            (root / "stdlib/std/memory.gti", (MEMORY_INCLUDE, RELEASE))):
+                            (root / "stdlib/std/detail/memory_storage.gti", (MEMORY_INCLUDE, RELEASE))):
         text = source.read_text(encoding="utf-8")
         for anchor in anchors:
             for changed in (text.replace(anchor, "", 1), text + anchor):
@@ -278,11 +290,11 @@ def main() -> None:
         modified = transformed_sources(root, failures=failures, release_marker=release_marker)
         for relative, text in modified.items():
             (library / relative).write_text(text, encoding="utf-8")
-        shutil.copyfile(trace_source, library / TRACE_PATH)
+        install_trace_module(library, trace_source)
         transformed = inventory(library)
-        expected = {"std/string.gti"} if failures else set()
+        expected = {"module-map.json"} | ({"std/string.gti"} if failures else set())
         if release_marker:
-            expected.add("std/memory.gti")
+            expected.add("std/detail/memory_storage.gti")
         validate_inventory(original, transformed, expected)
         changed = dict(transformed)
         changed["prelude.gti"] = "0" * 64

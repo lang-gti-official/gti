@@ -1,8 +1,8 @@
 // INVALID: exact specializations that collide after canonicalization
 // (alias and int/int32_t spellings), a symbolic (partial) pattern, an
 // unqualified target, and a foreign/foreign key against a std primary.
-#include <std/functional>
-#include <std/vector>
+import std.functional;
+import std.vector;
 
 namespace codec {
 class traits<T> {

@@ -11,9 +11,8 @@
 // on a generic class, reads that field. A class can also hold the view in a
 // payload of an enum field, as `std::optional<std::string_view>` does. Implicit
 // conversions, such as a view into an optional, keep the owner too.
-#include <std/optional>
-#include <std/string>
-
+import std.optional;
+import std.string;
 // A token views its input; it owns no text.
 class Token {
 public:

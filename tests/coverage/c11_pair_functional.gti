@@ -1,7 +1,7 @@
-#include <std/utility>
-#include <std/functional>
-#include <std/vector>
-#include <std/algorithm>
+import std.utility;
+import std.functional;
+import std.vector;
+import std.algorithm;
 int main() {
   mut auto p = std::make_pair(int32_t(3), int32_t(4));
   std::print(p.first + p.second); std::print(" ");

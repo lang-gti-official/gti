@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/simd>
+import std.memory;
+import std.simd;
 
 extern "C" {
   void adoption_count_begin();

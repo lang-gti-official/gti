@@ -715,7 +715,7 @@ int main() { auto value = repeated(3); return inspect(value) - 2; }
 )gti",
            "loop-carried alternatives do not reuse a first-iteration proof");
   const auto ownedSets = analyze(R"gti(
-#include <std/string>
+import std.string;
 enum Owned { item(std::string text), empty };
 Owned move_result() {
   auto original = Owned::item(std::string("error"));
@@ -1027,7 +1027,7 @@ int main() {
   // An enum template conforms through one block, and its residual may be
   // the enum itself.
   accepted(R"gti(
-#include <std/panic>
+import std.panic;
 enum class Result<T, E> {
   ok(T value),
   failed(E error),

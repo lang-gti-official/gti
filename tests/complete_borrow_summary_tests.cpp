@@ -400,7 +400,7 @@ int main() {
   }
   {
     const auto result = analyze(R"gti(
-#include <std/panic>
+import std.panic;
 enum Selected { empty, value(int& owner) };
 [[borrowed_from(input)]] int& selected(mut Selected input, int& other) {
   int ignored = other;
@@ -2134,7 +2134,7 @@ int main() { return 0; }
     // A borrowed field takes its carrier from a by-value parameter or builds
     // it in place. Copying the carrier out of a reference parameter is a
     // semantic error at that initializer argument, never a MIR failure.
-    const std::string prefix = "#include <std/utility>\n"
+    const std::string prefix = "import std.utility;\n"
                                "enum Slot { ready(int& value), empty };\n"
                                "enum MaybeRef<T> { some(T value), none };\n";
     const std::string fragment =

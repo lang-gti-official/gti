@@ -1,4 +1,4 @@
-#include <std/functional>
+import std.functional;
 
 void add(mut int& value, int amount) { value += amount; }
 void adjust(mut int& left, int& right, mut int& last) {

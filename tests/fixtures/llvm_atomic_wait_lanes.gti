@@ -1,4 +1,4 @@
-#include <std/atomic>
+import std.atomic;
 
 // Source-verified release/acquire plans for the test-only native parking lanes.
 // No GTI wait, worker, or foreign-object admission is claimed by this fixture.

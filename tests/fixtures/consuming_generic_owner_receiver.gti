@@ -1,6 +1,6 @@
-#include <std/panic>
-#include <std/string>
-#include <std/vector>
+import std.panic;
+import std.string;
+import std.vector;
 
 // A consuming (`&&`) member call on a generic owner moved out of a named
 // binding or parameter. Each owner class declares a default constructor and

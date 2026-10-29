@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/array>
+import std.vector;
+import std.array;
 
 extern "C" {
   void adoption_count_begin();

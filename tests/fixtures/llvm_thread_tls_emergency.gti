@@ -1,4 +1,4 @@
-#include <std/thread>
+import std.thread;
 
 // A worker failure is pending while the worker drains its thread-local
 // objects; a failing destructor there completes the exact GTI-R0014 envelope.

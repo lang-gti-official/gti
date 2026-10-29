@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 extern "C" { void opaque_wide_store(uint64_t* target); }
 
 void write_small(mut int32_t& value) { value = int32_t(7); }

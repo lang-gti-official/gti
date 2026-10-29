@@ -1,6 +1,6 @@
 // INVALID: a span borrowed from a vector stays live across push_back.
-#include <std/span>
-#include <std/vector>
+import std.span;
+import std.vector;
 
 int main() {
   mut std::vector<int> values = std::vector<int>({1, 2, 3});

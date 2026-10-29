@@ -1,14 +1,14 @@
+export module chrono;
+
 // <std/chrono> -- exact nanosecond clock readings and elapsed-time measurement.
 //
 // This first surface deliberately keeps monotonic and wall-clock points as
 // distinct nominal types. It does not yet provide sleeps, calendar fields,
 // civil-time formatting, time zones, or generic ratio-based durations.
-
-#include <std/numeric>
-
+import std.numeric;
 namespace gti_internal {
 namespace chrono_runtime {
-extern "C" {
+export extern "C" {
 int32_t gti_rt_chrono_steady_now_v1(int64_t* output_nanoseconds);
 int32_t gti_rt_chrono_system_now_v1(int64_t* output_nanoseconds);
 }
@@ -19,7 +19,7 @@ namespace std {
 namespace chrono {
 
 /// Recoverable clock-read and duration-arithmetic outcomes.
-enum class clock_errc {
+export enum class clock_errc {
   unavailable,
   out_of_range,
 };
@@ -33,7 +33,7 @@ clock_errc elapsed_error(std::arithmetic_errc error) {
 }
 
 /// An exact signed nanosecond duration.
-class nanoseconds {
+export class nanoseconds {
   int64_t value;
 
 public:
@@ -50,7 +50,7 @@ public:
 ///
 /// Its epoch has no portable meaning. Use only `elapsed_since`, ordering, or
 /// another point from the same process; use `system_time_point` for timestamps.
-class steady_time_point {
+export class steady_time_point {
   nanoseconds since_origin;
 
 public:
@@ -87,7 +87,7 @@ public:
 ///
 /// Leap seconds are excluded. The signed nanosecond representation covers
 /// 1677-09-21 through 2262-04-11.
-class system_time_point {
+export class system_time_point {
   nanoseconds since_epoch;
 
 public:
@@ -141,7 +141,7 @@ public:
 };
 
 /// Process-local monotonic clock for elapsed-time measurement.
-class steady_clock {
+export class steady_clock {
 public:
   /// Reads a nondecreasing clock unaffected by wall-clock adjustment.
   static expected<steady_time_point, clock_errc> now() {
@@ -162,7 +162,7 @@ public:
 };
 
 /// Adjustable UTC wall clock for Unix timestamps.
-class system_clock {
+export class system_clock {
 public:
   /// Reads signed Unix time, excluding leap seconds.
   static expected<system_time_point, clock_errc> now() {

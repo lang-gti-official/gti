@@ -2,6 +2,7 @@
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "private_stdlib_fixture.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -19,12 +20,8 @@ void expect(bool valid, const char *message) {
   }
 }
 lang::FrontendResult analyze(const std::string &source) {
-  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
-  const auto entry = root / "tests/fixtures/source_sparse_slots.gti";
-  return lang::Frontend().analyze(
-      entry, source, {root / "stdlib/prelude.gti", entry},
-      {{std::filesystem::weakly_canonical(entry).string(), source}},
-      {root / "stdlib"});
+  return gti_test::analyzeTrustedPrivateMemoryFixture("source_sparse_slots.gti",
+                                                      source);
 }
 } // namespace
 
@@ -83,7 +80,7 @@ int main(int argc, char **argv) {
   for (const char *operation : {"owner.destroy(uint64_t(0));", "owner.clear();",
                                 "auto moved = std::move(owner);"}) {
     const auto invalid =
-        analyze(std::string("#include <std/memory>\nint main() { "
+        analyze(std::string("import std.memory;\nint main() { "
                             "mut gti_internal::sparse_slots<int> owner{}; "
                             "int& loan = owner.read(uint64_t(0)); ") +
                 operation + "return loan; }");

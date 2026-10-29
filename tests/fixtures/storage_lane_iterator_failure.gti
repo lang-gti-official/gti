@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/simd>
-#include <std/vector>
-#include <std/string>
+import std.memory;
+import std.simd;
+import std.vector;
+import std.string;
 
 class Drop {
   int id;

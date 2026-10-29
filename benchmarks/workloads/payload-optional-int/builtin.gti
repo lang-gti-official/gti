@@ -1,5 +1,5 @@
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 
 std::optional<int32_t> lookup(int32_t index) {
   if (index % 4 == 0)

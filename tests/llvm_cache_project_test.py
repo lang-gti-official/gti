@@ -47,19 +47,34 @@ def main():
         for directory in (project / "src", project / "native", dependency / "src"):
             directory.mkdir(parents=True)
         (project / "src/main.gti").write_text(
-            '#include "logic.gti"\n#include <dep/value>\n'
+            'import "logic.gti";\nimport dep.value;\n'
             "int main() { return 17 == expected_value() + "
             "dep::offset() ? 0 : 1; }\n", encoding="utf-8",
         )
         source_dependency = project / "src/logic.gti"
         source_dependency.write_text(
-            "int expected_value() { return 17; }\n", encoding="utf-8")
+            (
+                'export module logic;\n'
+                'export int expected_value() { return 17; }\n'
+            ), encoding="utf-8")
         (dependency / "src/value.gti").write_text(
-            "namespace dep { int offset() { return 0; } }\n", encoding="utf-8")
+            (
+                'export module value;\n'
+                'namespace dep { export int offset() { return 0; } }\n'
+            ), encoding="utf-8")
         (dependency / "gti.toml").write_text(
-            'manifest-version = 1\n[package]\nname = "cache-dependency"\n'
-            'version = "1.0.0"\n[package.build-script]\n'
-            'command = ["python3", "generate.py"]\ninputs = ["generate.py"]\n',
+            (
+                'manifest-version = 1\n'
+                '[package]\n'
+                'name = "cache-dependency"\n'
+                'version = "1.0.0"\n'
+                '[package.build-script]\n'
+                'command = ["python3", "generate.py"]\n'
+                'inputs = ["generate.py"]\n'
+                '\n'
+                '[modules]\n'
+                'value = "src/value.gti"\n'
+            ),
             encoding="utf-8")
         (dependency / "generate.py").write_text(
             'import os\nfrom pathlib import Path\n'
@@ -135,7 +150,10 @@ def main():
         invoke("build", "app", "--backend", "llvm", "--emit-mir", expected=64)
         invoke("build", "--all", "--jobs", "2", "--backend", "llvm", "--cxx", wrapper)
         source_dependency.write_text(
-            "int expected_value() { return 17; } // new source identity\n",
+            (
+                'export module logic;\n'
+                'export int expected_value() { return 17; } // new source identity\n'
+            ),
             encoding="utf-8")
         source_miss = invoke("build", "app", "--cxx", wrapper, "--verbose")
         assert "gti: cache miss " in source_miss.stderr, source_miss.stderr
@@ -183,12 +201,21 @@ def main():
         dependency_manifest = dependency / "gti.toml"
         old_dependency_manifest = dependency_manifest.read_text()
         dependency_manifest.write_text(
-            'manifest-version = 1\n[package]\nname = "cache-dependency"\n'
-            'version = "1.0.0"\n[package.build-script]\n'
-            'source = "build.gti"\ninputs = []\n', encoding="utf-8")
+            (
+                'manifest-version = 1\n'
+                '[package]\n'
+                'name = "cache-dependency"\n'
+                'version = "1.0.0"\n'
+                '[package.build-script]\n'
+                'source = "build.gti"\n'
+                'inputs = []\n'
+                '\n'
+                '[modules]\n'
+                'value = "src/value.gti"\n'
+            ), encoding="utf-8")
         script = dependency / "build.gti"
         hosted_script = (
-            '#include <std/build>\n#include <std/string>\n#include <std/vector>\n'
+            'import std.build;\nimport std.string;\nimport std.vector;\n'
             'int main(int argc, std::vector<std::string> argv) {\n'
             '  mut auto context = std::build::context_from_args(argv);\n'
             '  mut auto outputs = std::build::outputs();\n'

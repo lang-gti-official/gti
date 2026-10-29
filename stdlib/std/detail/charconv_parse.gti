@@ -1,0 +1,134 @@
+export module detail.charconv_parse;
+
+import std.numeric;
+import "charconv_types.gti";
+
+namespace gti_internal {
+namespace runtime {
+extern "C" {
+uint32_t gti_rt_parse_f32_v1(text_view input, uint64_t offset, uint32_t format,
+                            float* output, uint64_t* position);
+uint32_t gti_rt_parse_f64_v1(text_view input, uint64_t offset, uint32_t format,
+                            double* output, uint64_t* position);
+}
+}
+}
+
+namespace std::detail {
+export uint32_t numeric_format(chars_format format) {
+  if (format == chars_format::fixed) { return uint32_t(1); }
+  if (format == chars_format::scientific) { return uint32_t(2); }
+  if (format == chars_format::hex) { return uint32_t(3); }
+  return uint32_t(0);
+}
+
+parse_errc numeric_error(uint32_t code) {
+  if (code == 0) { return parse_errc::none; }
+  if (code == 2) { return parse_errc::result_out_of_range; }
+  return parse_errc::invalid_argument;
+}
+
+export from_chars_result parse_float(string_view input, size_t offset, mut float& output, chars_format format) {
+  mut float value = 0.0;
+  mut uint64_t position = offset;
+  mut uint32_t code = 0;
+  unsafe {
+    code = gti_internal::runtime::gti_rt_parse_f32_v1(input, offset, numeric_format(format), &value, &position);
+  }
+  if (code == 0) { output = value; }
+  return from_chars_result(position, numeric_error(code));
+}
+
+export from_chars_result parse_float(string_view input, size_t offset, mut double& output, chars_format format) {
+  mut double value = 0.0;
+  mut uint64_t position = offset;
+  mut uint32_t code = 0;
+  unsafe {
+    code = gti_internal::runtime::gti_rt_parse_f64_v1(input, offset, numeric_format(format), &value, &position);
+  }
+  if (code == 0) { output = value; }
+  return from_chars_result(position, numeric_error(code));
+}
+
+export int digit_value(char value) {
+  uint8_t code = uint8_t(value);
+  if (code >= 48 && code <= 57) { return int(code - 48); }
+  if (code >= 65 && code <= 90) { return int(code - 65) + 10; }
+  if (code >= 97 && code <= 122) { return int(code - 97) + 10; }
+  return -1;
+}
+
+export bool numeric_space(char value) {
+  return value == ' ' || value == '\t' || value == '\n' ||
+         value == '\r' || uint8_t(value) == 12 || uint8_t(value) == 11;
+}
+
+export from_chars_result parse_integer<std::integral T>(
+    string_view input, mut T& output, int requested_base, bool relaxed) {
+  if ((requested_base < 2 || requested_base > 36) &&
+      !(relaxed && requested_base == 0)) {
+    return from_chars_result(size_t(0), parse_errc::invalid_argument);
+  }
+  mut size_t index = 0;
+  if (relaxed) {
+    while (index < input.size() && numeric_space(input[index])) { index++; }
+  }
+  mut bool negative = false;
+  if (index < input.size() && input[index] == '-') {
+    // Wrapping subtraction is defined for every admitted integer width.
+    // Unlike a narrowing -1 cast, it also safely distinguishes unsigned T.
+    if (gti_internal::integer_wrapping_sub(T(0), T(1)) >= T(0)) {
+      return from_chars_result(size_t(0), parse_errc::invalid_argument);
+    }
+    negative = true;
+    index++;
+  } else if (relaxed && index < input.size() && input[index] == '+') {
+    index++;
+  }
+  mut int base = requested_base;
+  if (relaxed) {
+    if ((base == 0 || base == 16) && input.size() - index >= 3 &&
+        input[index] == '0' && (input[index + 1] == 'x' || input[index + 1] == 'X') &&
+        digit_value(input[index + 2]) >= 0 && digit_value(input[index + 2]) < 16) {
+      base = 16;
+      index += size_t(2);
+    }
+    if (base == 0) {
+      base = 10;
+      if (index < input.size() && input[index] == '0') { base = 8; }
+    }
+  }
+  size_t digits_start = index;
+  mut T value = T(0);
+  mut bool overflow = false;
+  while (index < input.size()) {
+    int digit = digit_value(input[index]);
+    if (digit < 0 || digit >= base) { break; }
+    if (!overflow) {
+      if (gti_internal::integer_mul_overflows(value, T(base))) {
+        overflow = true;
+      } else {
+        T scaled = gti_internal::integer_wrapping_mul(value, T(base));
+        if (negative) {
+          // Accumulate negatively so the signed minimum never needs negation.
+          overflow = gti_internal::integer_sub_overflows(scaled, T(digit));
+          if (!overflow) { value = gti_internal::integer_wrapping_sub(scaled, T(digit)); }
+        } else {
+          overflow = gti_internal::integer_add_overflows(scaled, T(digit));
+          if (!overflow) { value = gti_internal::integer_wrapping_add(scaled, T(digit)); }
+        }
+      }
+    }
+    // Consume the whole valid digit sequence even after overflow.
+    index++;
+  }
+  if (index == digits_start) {
+    return from_chars_result(size_t(0), parse_errc::invalid_argument);
+  }
+  if (overflow) {
+    return from_chars_result(index, parse_errc::result_out_of_range);
+  }
+  output = value;
+  return from_chars_result(index, parse_errc::none);
+}
+}

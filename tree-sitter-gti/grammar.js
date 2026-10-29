@@ -16,79 +16,6 @@ const PREC = {
   postfix: 15,
 };
 
-const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
-  "and",
-  "alignof",
-  "auto",
-  "bool",
-  "break",
-  "case",
-  "char",
-  "class",
-  "concept",
-  "continue",
-  "const",
-  "constexpr",
-  "default",
-  "double",
-  "else",
-  "enum",
-  "extern",
-  "export",
-  "false",
-  "float",
-  "for",
-  "if",
-  "interface",
-  "import",
-  "int",
-  "int8_t",
-  "int16_t",
-  "int32_t",
-  "int64_t",
-  "int8",
-  "int16",
-  "int32",
-  "int64",
-  "mut",
-  "module",
-  "namespace",
-  "nullptr",
-  "nullptr_t",
-  "operator",
-  "or",
-  "override",
-  "private",
-  "protected",
-  "public",
-  "requires",
-  "return",
-  "static",
-  "static_assert",
-  "thread_local",
-  "this",
-  "struct",
-  "sizeof",
-  "switch",
-  "true",
-  "typename",
-  "uint",
-  "uint8_t",
-  "uint16_t",
-  "uint32_t",
-  "uint64_t",
-  "uint8",
-  "uint16",
-  "uint32",
-  "uint64",
-  "unsafe",
-  "using",
-  "void",
-  "virtual",
-  "while",
-  "do",
-];
-
 module.exports = grammar({
   name: "gti",
 
@@ -125,13 +52,13 @@ module.exports = grammar({
       seq(
         optional($._byte_order_mark),
         optional($.module_declaration),
-        repeat(choice($.include_directive, $.import_declaration, $.declaration)),
+        repeat(choice($.import_declaration, $.declaration)),
       ),
 
     _byte_order_mark: () => "\uFEFF",
 
     module_declaration: ($) =>
-      seq("export", "module", field("name", $.identifier), ";"),
+      seq(optional("export"), "module", field("name", $.module_name), ";"),
 
     import_declaration: ($) =>
       seq(
@@ -141,31 +68,9 @@ module.exports = grammar({
         ";",
       ),
 
-    module_name: ($) => seq($.identifier, optional(seq(".", $.identifier))),
+    module_name: ($) => seq($.identifier, repeat(seq(".", $.identifier))),
 
     export_declaration: ($) => seq("export", $.declaration),
-
-    // `export #include` republishes one legacy unit from an interface.
-    include_directive: ($) =>
-      prec.right(
-        seq(
-          optional("export"),
-          "#include",
-          field("path", choice($.string_literal, $.standard_library_path)),
-          optional(";"),
-        ),
-      ),
-
-    standard_library_path: ($) =>
-      seq(
-        "<",
-        $.standard_library_component,
-        repeat1(seq("/", $.standard_library_component)),
-        ">",
-      ),
-
-    standard_library_component: ($) =>
-      choice($.identifier, ...STANDARD_LIBRARY_COMPONENT_KEYWORDS),
 
     declaration: ($) =>
       choice(
@@ -862,7 +767,7 @@ module.exports = grammar({
     _function_declaration_body: ($) =>
       seq(
         field("return_type", $.type),
-        field("name", $._qualified_identifier),
+        field("name", choice($._qualified_identifier, $.generic_scoped_identifier)),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
         optional(choice(field("mutable", "mut"), field("consuming", "&&"))),

@@ -172,7 +172,7 @@ void lifetimeAndEffects() {
          "prospective TLS return summaries never authorize a shadowing "
          "automatic local");
   positive(R"(
-#include <std/thread>
+import std.thread;
 thread_local int source = 7;
 struct Read {
   int& target;
@@ -187,7 +187,7 @@ int main() { joined(source); return 0; }
            "a joined scoped worker may borrow TLS while the owner thread and "
            "loan remain alive");
   positive(R"(
-#include <std/thread>
+import std.thread;
 struct Read {
   int& target;
   Read(int& value) : target(value) {}
@@ -201,7 +201,7 @@ int main() {
 )",
            "a function-local TLS borrow retains a joined scoped dependency");
   const auto escapingTask = analyze(R"(
-#include <std/thread>
+import std.thread;
 thread_local int source = 7;
 int main() {
   int& input = source;
@@ -221,7 +221,7 @@ int main() {
        "GTI-S2045"}};
   for (const auto &[result, diagnostic] : workerResults) {
     const auto scopedResult = analyze(
-        "#include <std/thread>\n" + result +
+        "import std.thread;\n" + result +
         "int main() { auto joined = std::parallel_invoke(worker); return 0; }");
     expect(!scopedResult.semanticValid && code(scopedResult, diagnostic),
            "the scoped void-task boundary or existing borrowed-carrier return "
@@ -1335,7 +1335,7 @@ int main() { int& held = guarded; modify(); return held; }
   for (const auto bodies : {lang::TrustedBodyAnalysis::Complete,
                             lang::TrustedBodyAnalysis::Reachable}) {
     const auto reflection = analyze(R"(
-#include <std/meta>
+import std.meta;
 class Node<T> {
   static_assert(std::meta::type<Node<T>>().field_count() == uint64_t(2),
                 "outer reflection assertion");
@@ -1416,18 +1416,18 @@ void lateConcreteQueryContexts() {
   const auto trustedPath =
       std::filesystem::weakly_canonical(library / "std/functional.gti");
   const std::string declarations = R"(
-struct Relay<T> {
+export struct Relay<T> {
   void invoke<F>(F& callback, T value) { callback(value); }
   void invoke<F>(F& callback) { callback(); }
 public:
   Relay() = default;
 };
 F retain<F>(F& callback) { return callback; }
-void escape<F>(F& callback) { auto held = retain(callback); held(); }
+export void escape<F>(F& callback) { auto held = retain(callback); held(); }
 )";
   const std::string calls = R"(
-#include <std/functional>
-#include <std/panic>
+import std.functional;
+import std.panic;
 thread_local mut int guarded = 1;
 void selected<F>(F& callback) { Relay<int> relay{}; relay.invoke(callback, 4); }
 void empty<F>(F& callback) { Relay<int> relay{}; relay.invoke(callback); }
@@ -1457,7 +1457,7 @@ int main() {
 }
 )";
   const std::string invalid = R"(
-#include <std/functional>
+import std.functional;
 thread_local mut int guarded = 1;
 int main() {
   int& held = guarded;
@@ -1467,7 +1467,7 @@ int main() {
 }
 )";
   const std::string failingBody = R"(
-#include <std/functional>
+import std.functional;
 thread_local mut int guarded = 1;
 int main() {
   int& held = guarded;
@@ -1545,7 +1545,7 @@ int main() {
 
 void reflectedQueryEffects() {
   const std::string prefix = R"(
-#include <std/meta>
+import std.meta;
 struct Reading { int first = 1; int second = 2;  public: Reading() = default; };
 struct Empty { public: Empty() = default; };
 thread_local mut int guarded = 1;
@@ -1623,7 +1623,7 @@ void reflectionRegistrySnapshots() {
   const auto metaPath =
       std::filesystem::weakly_canonical(library / "std/meta.gti");
   const std::string text = R"(
-#include <std/meta>
+import std.meta;
 struct Reading { int first = 1; int second = 2;  public: Reading() = default; };
 void inspect<T>() { constexpr for (auto field : std::meta::fields_of<T>()) {} }
 int main() { inspect<Reading>(); return 0; }
@@ -1953,7 +1953,7 @@ int& current(Cleanup& input) { return value; }
            "across calls");
   }
   positive(
-      "#include <std/utility>\nthread_local mut int value = 1; int main() "
+      "import std.utility;\nthread_local mut int value = 1; int main() "
       "{ int previous = std::exchange(value, 2); return previous + value; }",
       "the exact restoring exchange contract can update a TLS value "
       "without exposing an unavailable persistent slot");
@@ -2084,8 +2084,8 @@ void instanceTextRelayEffects() {
   // view_field_payloads.gti. The copied view must keep the TLS string's origin,
   // not just its local carrier or the reference accessor's result shell.
   const std::string prefix = R"(
-#include <std/panic>
-#include <std/string>
+import std.panic;
+import std.string;
 thread_local mut std::string value{"owned text"};
 thread_local mut std::string other{"other text"};
 void modify() { value.append("!"); }
@@ -2346,7 +2346,7 @@ int main() {
 )",
              "actual owning macro cleanup remains legal for a disjoint "
              "persistent owner");
-    accepted("#include <std/source_location>\n" + prefix + R"(
+    accepted("import std.source_location;\n" + prefix + R"(
 #macro ignore<F>(F action) {}
 int main() {
   int& held = guarded;

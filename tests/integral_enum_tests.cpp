@@ -76,12 +76,12 @@ int main() { return decode(Wire::high) == uint64_t(18446744073709551615) ? 0 : 1
         "std::to_underlying<int32_t,E>(E::x); int main() { return value; }",
         "enum class E { x }; int main() { int value = E::x; return value; }",
         "enum class E { x }; int main() { return int32_t(E::x); }",
-        "#include <std/format>\nenum class E { x(int value) }; int main() { "
+        "import std.format;\nenum class E { x(int value) }; int main() { "
         "[[discard]] std::format(\"{}\", E::x(1)); return 0; }",
-        "#include <std/format>\nenum class E { x }; class std::formatter<E> "
+        "import std.format;\nenum class E { x }; class std::formatter<E> "
         "{ public: formatter() = default; }; int main() { [[discard]] "
         "std::format(\"{}\", E::x); return 0; }",
-        "#include <std/format>\nenum class E { x }; class std::formatter<E> { "
+        "import std.format;\nenum class E { x }; class std::formatter<E> { "
         "public: int format(E& value) { return 0; }  public: formatter() = "
         "default; }; int main() { "
         "[[discard]] std::format(\"{}\", E::x); return 0; }",

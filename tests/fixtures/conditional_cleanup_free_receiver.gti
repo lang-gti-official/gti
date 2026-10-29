@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // A cleanup-free class value joined by a conditional expression is the
 // receiver of a member call: read-only, mutable or consuming. Each arm

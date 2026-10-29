@@ -1,7 +1,7 @@
 // This is a correctness/code-generation probe, NOT the descriptor's complete
 // output-record benchmark. Keep the shared kernel identical until native
 // hosted-output support is composed; do not count this as benchmark acceptance.
-#include "kernel.gti"
+import "kernel.gti";
 
 int main() {
   return atomic_core();

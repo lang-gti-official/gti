@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 int32_t count_all<std::copyable T>(std::vector<T>& values) requires std::vector_element<T> {
   mut int32_t total = 0;
   for (auto& v : values) { total = total + 1; }

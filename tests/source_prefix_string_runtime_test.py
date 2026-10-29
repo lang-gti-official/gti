@@ -20,10 +20,10 @@ if __name__ == "__main__":
                          if "replacement{requested + size_t(1)}" in text)
     failure = (f"<std/string>:{overflow_line}: runtime error[GTI-R0001]: "
                "integer_overflow in addition\n")
-    memory = pathlib.Path(__file__).parent.parent / "stdlib/std/memory.gti"
+    memory = pathlib.Path(__file__).parent.parent / "stdlib/std/detail/memory_storage.gti"
     provider_line = next(index for index, text in enumerate(memory.read_text().splitlines(), 1)
                          if "require_allocation(false)" in text)
-    provider_failure = (f"<std/memory>:{provider_line}: runtime error[GTI-R0011]: "
+    provider_failure = (f"<std/detail/memory_storage>:{provider_line}: runtime error[GTI-R0011]: "
                         "allocation_failure in private_storage\n")
     run_runtime_matrix(
         names=("source_prefix_string", "source_prefix_string_overflow",

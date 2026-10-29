@@ -1427,15 +1427,9 @@ auto SemanticVisitor::Impl::resolveClassArguments(
     }
     const ClassId selected = selectClassDefinition(classId, result.types);
     resolveClassArgumentPatterns(selected);
-    if (sourceGraph != nullptr && currentSourceUnit != 0 &&
-        !sourceGraph->isDeclarationVisible(currentSourceUnit,
-                                           classInfo(selected).sourceUnit,
-                                           classInfo(selected).name.position)) {
-      reportInvisibleDeclaration(site, owner.name.lexeme,
-                                 classInfo(selected).name,
-                                 classInfo(selected).sourceUnit);
-      result.valid = false;
-    }
+    // A selected family component is an implementation of the already
+    // resolved nominal declaration. Registration permits a family only within
+    // one logical module, so this does not publish another private name.
     if (classInfo(selected).declaration->genericArgumentPatterns().empty()) {
       auto ordinary = resolveNominalArguments(
           classInfo(selected).genericParameters, classInfo(selected).name,
@@ -4103,6 +4097,16 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     return;
   }
 
+  NamePath qualifier(std::vector<Token>{});
+  for (std::size_t index = 0; index + 1 < type.name.segments.size(); ++index) {
+    qualifier.segments.push_back(type.name.segments[index]);
+    if (index == 0 && resolveTypeParameter(qualifier))
+      break;
+    if (reportAmbiguousName(type.name.segments[index], pathSpelling(qualifier)))
+      return;
+  }
+  if (reportAmbiguousName(type.name.last(), pathSpelling(type.name)))
+    return;
   if (const std::optional<ResolvedTypeAlias> alias =
           resolveTypeAliasPath(type, currentNamespace)) {
     (void)validateTypeAliasAccess(*alias, type.name.last());
@@ -4141,13 +4145,15 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
   const std::optional<ClassId> classId =
       resolveClassPath(type.name, currentNamespace);
   if (!classId) {
+    if (reportAmbiguousName(type.name.last(), pathSpelling(type.name)))
+      return;
     if (type.name.segments.size() == 1 && type.name.last().lexeme == "string") {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2033", DiagnosticPhase::Semantics, type.name.last(),
           "'string' is not a built-in GTI type; choose 'std::string' for "
           "owning text or 'std::string_view' for a non-owning view.");
       diagnostic.hints.push_back(
-          "Use '#include <std/string>' before naming 'std::string'.");
+          "Use 'import std.string;' before naming 'std::string'.");
       diagnostic.hints.push_back(
           "'std::string_view' is available from the standard prelude.");
       diagnostics.emplace_back(std::move(diagnostic));
@@ -6688,6 +6694,16 @@ auto SemanticVisitor::Impl::genericParametersFor(const FunctionDecl &function)
   static const std::vector<GenericParameterInfo> empty;
   const auto found = functionGenericParameters.find(&function);
   return found == functionGenericParameters.end() ? empty : found->second;
+}
+
+auto SemanticVisitor::Impl::definitionOwnerParametersFor(
+    const FunctionDecl &function) const
+    -> const std::vector<GenericParameterInfo> & {
+  static const std::vector<GenericParameterInfo> empty;
+  const auto found = catalog.definitionOwnerGenericParameters.find(&function);
+  return found == catalog.definitionOwnerGenericParameters.end()
+             ? empty
+             : found->second;
 }
 
 auto SemanticVisitor::Impl::beginTypeParameterScope(

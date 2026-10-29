@@ -1,6 +1,5 @@
-#include <std/functional>
-#include <std/memory>
-
+import std.functional;
+import std.memory;
 class Authentication {
   mut std::function<void()> login_callback{};
 

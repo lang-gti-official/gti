@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 namespace packets {
 // libc's allocator is declared with its exact C prototype: c_size_t is C's
 // size_t on the selected target, distinct from GTI's fixed-width uint64_t.

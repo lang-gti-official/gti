@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/iterator>
+import std.vector;
+import std.iterator;
 
 bool probe<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::input_iterator<Iterator> &&

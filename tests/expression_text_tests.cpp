@@ -89,8 +89,8 @@ void testWrittenOriginAndCloning() {
 
 void testLiteralNormalizationAndForwarding() {
   const auto result = analyze(R"gti(
-#include <std/source_location>
-#include <std/memory>
+import std.source_location;
+import std.memory;
 int effect() { return 19; }
 #macro std::string_view named<T>(T argument) {
   return std::expression_text(argument);
@@ -142,7 +142,7 @@ int main() {
                "MIR should consume only ordinary literal values");
 
   const auto crlf =
-      analyze("#include <std/source_location>\r\n"
+      analyze("import std.source_location;\r\n"
               "int main() { std::string_view text = std::expression_text("
               "(1 /* λ */ +\r\n 2)); return int32_t(text.size()); }\r\n");
   expect(
@@ -185,7 +185,7 @@ int main() {
 
 void testRejections() {
   const auto composed = analyze(R"gti(
-#include <std/source_location>
+import std.source_location;
 #macro std::string_view composed(int argument) {
   return std::expression_text(argument + 1);
 }
@@ -206,7 +206,7 @@ int main() { std::string_view text = composed(2); return 0; }
   expect(originDiagnostic, "synthetic source needs its semantic diagnostic");
 
   const std::string invalidSource = R"gti(
-#include <std/source_location>
+import std.source_location;
 int main() {
   std::string_view text = std::expression_text(missing_expression + 1);
   return 0;
@@ -224,7 +224,7 @@ int main() {
   expect(exactSpan, "invalid operands should retain their exact written span");
 
   const auto unsafe = analyze(R"gti(
-#include <std/source_location>
+import std.source_location;
 int main() {
   int* pointer = nullptr;
   std::string_view text = std::expression_text(*pointer);
@@ -239,7 +239,7 @@ int main() {
       "unevaluated source inspection must retain ordinary unsafe obligations");
 
   const auto privateCall = analyze(R"gti(
-#include <std/source_location>
+import std.source_location;
 int main() {
   std::string_view text = gti_internal::source_expression_text<int>(1);
   return 0;
@@ -258,7 +258,7 @@ int main() {
   options.stopAfter = lang::FrontendPhase::Parsing;
   const auto parsed =
       lang::Frontend(options).analyze("unavailable-source.gti",
-                                      "#include <std/source_location>\n"
+                                      "import std.source_location;\n"
                                       "int main() { std::string_view text = "
                                       "std::expression_text(2); return 0; }",
                                       {library / "prelude.gti"}, {}, {library});
@@ -279,7 +279,7 @@ int main() {
 
 void testPublicSpellingHasNoCompilerMeaning() {
   const auto result = analyze(R"gti(
-#include <std/string>
+import std.string;
 namespace std {
   std::string_view expression_text(int value) { return "ordinary"; }
 }
@@ -308,9 +308,9 @@ int main() {
 
 void testExplicitFallback() {
   const auto result = analyze(R"gti(
-#include <std/source_location>
-#include <std/memory>
-#include <std/assert>
+import std.source_location;
+import std.memory;
+import std.assert;
 constexpr std::string_view fallback = "synthetic condition";
 #macro std::string_view composed(int expression) {
   return std::expression_text(expression + 1, fallback);
@@ -348,7 +348,7 @@ int main() {
            "fallback");
 
   const auto dynamic = analyze(R"gti(
-#include <std/source_location>
+import std.source_location;
 std::string_view dynamic() { return "dynamic"; }
 int main() {
   std::string_view text = std::expression_text(1, dynamic());
@@ -365,7 +365,7 @@ int main() {
          "available");
 
   const auto invalid = analyze(R"gti(
-#include <std/source_location>
+import std.source_location;
 int main() {
   std::string_view text = std::expression_text(missing, "explicit fallback");
   return 0;

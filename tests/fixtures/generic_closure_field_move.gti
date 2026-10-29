@@ -9,9 +9,9 @@
 // same route. The rule is not closure-specific: a payload enum moved into a
 // field also publishes through the constructor record. The last call fails
 // inside the constructor body when given an argument.
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 int call<F>(F f) { return f(); }
 

@@ -1,6 +1,8 @@
+export module detail_panic_impl;
+
 // Shared non-formatting panic core. Keeping this separate lets formatting
 // adopt the public operation without a format -> panic -> format cycle.
-namespace std {
+export namespace std {
 namespace detail {
   /// Stops normal execution after preserving the message and running cleanup.
   [[noreturn, track_caller]]

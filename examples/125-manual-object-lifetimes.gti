@@ -1,7 +1,6 @@
-#include <std/memory>
-#include <std/panic>
-#include <std/string>
-
+import std.memory;
+import std.panic;
+import std.string;
 // A source-defined, fixed-address owner. The carrier supplies aligned bytes;
 // this class supplies live-state policy, cleanup and checked access.
 class InlineSlot<std::layout_queryable T> {

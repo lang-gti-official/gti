@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 enum Error { Invalid, Failed };
 mut int destructions = 0;

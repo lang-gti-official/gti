@@ -5,11 +5,11 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import without_include_advice, LspSession, lsp_position
+from lsp_smoke_test import LspSession, lsp_position
 
 
 def main():
-    valid = ("#include <std/memory>\nclass Pinned {\npublic:\n"
+    valid = ("import std.memory;\nclass Pinned {\npublic:\n"
              "  Pinned(Pinned& other) = delete;\n"
              "  Pinned(Pinned&& other) = delete;\n public: Pinned() = default; };\n"
              "int main() { auto descriptor = std::layout_of<Pinned>(); return 0; }\n")
@@ -28,17 +28,17 @@ def main():
                 "textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": valid}}})
 
             def diagnostics(version):
-                return without_include_advice(session.receive_until(lambda message:
+                return session.receive_until(lambda message:
                     message.get("method") == "textDocument/publishDiagnostics" and
                     message["params"]["uri"] == uri and message["params"].get("version") == version
-                )["params"]["diagnostics"])
+                )["params"]["diagnostics"]
 
             assert not diagnostics(1)
             session.send({"jsonrpc": "2.0", "id": 2, "method": "textDocument/definition", "params": {
                 "textDocument": {"uri": uri},
                 "position": lsp_position(valid, valid.index("layout_of") + 2)}})
             definition = session.receive_until(lambda message: message.get("id") == 2)["result"]
-            assert definition and "memory.gti" in str(definition), definition
+            assert definition and definition["uri"].endswith("/std/detail/memory_core.gti"), definition
             invalid = valid.replace("layout_of<Pinned>", "layout_of<void>")
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": invalid}]}})

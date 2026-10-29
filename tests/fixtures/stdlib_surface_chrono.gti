@@ -1,4 +1,4 @@
-#include <std/chrono>
+import std.chrono;
 
 int main() {
   // Wall-clock decomposition is floor-based and normalized before the epoch.

@@ -1,6 +1,5 @@
-#include <std/string>
-#include <std/utility>
-
+import std.string;
+import std.utility;
 // A source-defined move-only resource: no custom movement or swap hooks.
 struct Asset {
   std::string name;

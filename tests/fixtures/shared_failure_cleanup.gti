@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // Shared failure cleanup. Each phase fails at a different point while a
 // different set of user-defined resources is live. Cleanup must release

@@ -8,14 +8,16 @@ import tempfile
 from lsp_smoke_test import LspSession, lsp_position
 
 
-OWNER = """struct Record {
-  mut int count = 1;
-  Record() = default;
-  Record(Record& other) = delete;
-  Record(Record&& other) = default;
-};
-"""
-SOURCE = """#include "owner.gti"
+OWNER = (
+            'export module owner;\n'
+            'export struct Record {\n'
+            '  mut int count = 1;\n'
+            '  Record() = default;\n'
+            '  Record(Record& other) = delete;\n'
+            '  Record(Record&& other) = default;\n'
+            '};\n'
+        )
+SOURCE = """import "owner.gti";
 int main() {
   mut Record owner{};
   /* 😀 */ auto& observed = owner;

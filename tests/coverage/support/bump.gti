@@ -1,20 +1,21 @@
+export module bump;
 // Shared by m04/m05: a single-threaded bump resource over an inline,
 // 8-byte-aligned fixed array. Bookkeeping lives in a separate field that is
 // mutated through a reviewed raw pointer because the resource protocol only
 // grants a read-only receiver. The resource is immovable: its raw self
 // addresses would dangle after a move.
-#include <std/resource>
-#include <std/memory>
-#include <std/numeric>
-#include <std/panic>
+import std.resource;
+import std.memory;
+import std.numeric;
+import std.panic;
 
 namespace probe {
 // Enough byte capacity for the source-defined owning representations used by
 // the tests; deterministic exhaustion is controlled independently by budget.
-constexpr std::size_t buffer_bytes = std::size_t(16384);
+export constexpr std::size_t buffer_bytes = std::size_t(16384);
 // A class, not a struct: taking &this.<struct field> in a constructor ICEs
 // (finding; see red/b2.gti).
-class Ledger {
+export class Ledger {
 public:
   Ledger() {}
   mut std::size_t next = 0;
@@ -24,7 +25,7 @@ public:
   mut uint64_t released_bytes = 0;
 };
 
-[[no_transfer, no_share]] class Bump {
+export [[no_transfer, no_share]] class Bump {
   mut uint64_t words[2048] = {};
   mut Ledger ledger{};
   mut Ledger* book = nullptr;

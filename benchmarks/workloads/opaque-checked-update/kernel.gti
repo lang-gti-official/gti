@@ -1,6 +1,8 @@
-#include <std/string>
+export module opaque_checked_update_kernel;
 
-void print_hex_digit(uint64_t digit) {
+import std.string;
+
+export void print_hex_digit(uint64_t digit) {
   switch (digit) {
   case uint64_t(0): std::print("0"); break;
   case uint64_t(1): std::print("1"); break;
@@ -22,7 +24,7 @@ void print_hex_digit(uint64_t digit) {
   }
 }
 
-void print_digest(uint64_t value) {
+export void print_digest(uint64_t value) {
   mut uint64_t divisor = 0x1000000000000000;
   while (divisor > 0) {
     print_hex_digit((value / divisor) % uint64_t(16));
@@ -30,7 +32,7 @@ void print_digest(uint64_t value) {
   }
 }
 
-int finish(uint64_t value) {
+export int finish(uint64_t value) {
   std::print("GTI-BENCH-1 digest:");
   print_digest(value);
   std::println(" work-units:200000000");

@@ -7,7 +7,7 @@ import tempfile
 
 
 SUCCESS_SOURCE = r"""
-#include <std/string>
+import std.string;
 
 expected<std::string, int32_t> make_text() {
   return std::string("ab");
@@ -81,7 +81,7 @@ int main() {
 
 
 FAILURE_SOURCE = r"""
-#include <std/string>
+import std.string;
 
 expected<std::string, int32_t> make_error() {
   return unexpected(int32_t(7));
@@ -96,7 +96,7 @@ int main() {
 
 
 FAILURE_PARAMETER_SOURCE = r"""
-#include <std/string>
+import std.string;
 
 expected<std::string, int32_t> make_error() {
   return unexpected(int32_t(7));
@@ -115,7 +115,7 @@ int main() {
 
 
 CSTDIO_SOURCE = r"""
-#include <std/cstdio>
+import std.cstdio;
 
 int main() {
   mut auto chunk = std::read_stdin_some(std::size_t(1));

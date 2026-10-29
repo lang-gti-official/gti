@@ -1,1 +1,2 @@
-#include "right-leaf.gti"
+export module right;
+import "right-leaf.gti";

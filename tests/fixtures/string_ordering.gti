@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/functional>
+import std.string;
+import std.functional;
 
 bool less_than<std::totally_ordered T>(T& left, T& right) {
   return left < right;

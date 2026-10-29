@@ -1,7 +1,9 @@
-#include <std/unordered_map>
-#include <std/functional>
-#include <std/utility>
+export module unordered_set;
+import "detail/unordered_map_iterators.gti";
 
+import std.unordered_map;
+import std.functional;
+import std.utility;
 namespace std {
 namespace detail {
 class unordered_set_key_iterator<K> {
@@ -28,7 +30,7 @@ public:
 };
 }
 /// Unique immutable keys backed by the cached-hash chained dictionary.
-class unordered_set<K, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
+export class unordered_set<K, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
   mut unordered_map<K, bool, Hash, KeyEqual> entries;
   unordered_map<K, bool, Hash, KeyEqual> replace(unordered_map<K, bool, Hash, KeyEqual> value) mut {
     auto previous = std::move(this.entries);

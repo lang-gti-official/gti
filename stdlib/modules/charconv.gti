@@ -1,3 +1,0 @@
-// Module std.charconv: the public surface of <std/charconv>.
-export module charconv;
-export #include <std/charconv>

@@ -1,5 +1,5 @@
-#include <std/array>
-#include <std/numeric>
+import std.array;
+import std.numeric;
 
 enum class mode : uint8_t {
   fast = 3,

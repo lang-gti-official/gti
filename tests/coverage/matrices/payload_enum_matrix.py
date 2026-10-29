@@ -10,8 +10,8 @@ import pathlib, subprocess, sys
 GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
 OUT = pathlib.Path("/tmp/enummx"); OUT.mkdir(exist_ok=True)
 
-HEAD = """#include <std/vector>
-#include <std/string>
+HEAD = """import std.vector;
+import std.string;
 
 mut int32_t drops = 0;
 class Res { mut int32_t n = 0; public: Res(int32_t n) : n(n) {} ~Res() { drops = drops + 1; } int32_t get() { return this.n; } };

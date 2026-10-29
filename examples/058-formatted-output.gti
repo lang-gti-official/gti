@@ -1,6 +1,5 @@
-#include <std/format>
-#include <std/string>
-
+import std.format;
+import std.string;
 int main() {
   // Convenience formatting returns an owner; failure reports the caller and
   // terminates through GTI cleanup. No expected extraction is needed.

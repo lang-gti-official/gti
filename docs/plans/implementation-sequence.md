@@ -46,6 +46,173 @@ Reproduce a remaining
 composition against current main before treating a past rejection as a new
 compiler task.
 
+## Module-only source campaign (2026-10-29)
+
+**Owner-directed delivery hold:** this is one coordinated breaking change in
+`codex/module-only-phase1`. Do not merge either phase into `main`, publish a
+release, or install it as the user's toolchain until phase 2 is complete.
+**Do not run a full validation suite in phase 1** (owner clarification);
+full correctness/platform/performance validation belongs to phase 2. Phase 1
+uses only focused migration checks and may remain a non-production prototype.
+VERSION remains unchanged during
+this phase; the breaking release's minor version and migration notes belong to
+phase 2. Earlier include-preservation promises are revised explicitly in ADRs
+002, 011 and 024.
+
+The outcome is one explicit module/import/export boundary for libraries,
+application dependencies, generated bindings and editor tooling. Native C/C++
+headers and backend-generated C++ includes remain native implementation inputs.
+Removing GTI include syntax does not remove those facilities or weaken ownership,
+borrow checking, package isolation, trusted declaration identity, or exports.
+
+### Phase 1: coordinated mechanical conversion
+
+- Convert stdlib implementation units in place to interfaces, remove
+  `stdlib/modules` republishing wrappers, and map `std.name` to its canonical
+  `stdlib/std/name.gti` source. Preserve the implicit compiler prelude.
+- Convert examples, packages, benchmarks, fuzz inputs, static and generated test
+  fixtures, binding generation and build-script source to imports. Register
+  public package modules explicitly. Preserve test purpose and negative cases.
+- Reject both include spellings with source-loading error GTI-I0014, before
+  loading their targets. Retain keyword recognition for a useful migration
+  diagnostic. Do not emulate includes with implicitly exported imported units.
+- Remove accepted include grammar/highlighting/formatting, replace editor
+  suggestions with compiler-validated import edits, and document the prototype.
+- Validate structural conversion, representative compilation, rejection,
+  visibility and editor behavior using an optimized compiler. Record all failed
+  checks and classify mechanical defects separately from missing module
+  capabilities. A failed production gate is not a passed or skipped test.
+- Publish a draft checkpoint and preserve the branch/worktree for phase 2.
+  Passing phase 1 evidence is not approval for production, integration or release.
+
+### Phase 1 handoff evidence
+
+The draft PR carries the exact source checkpoint and retained logs. The source
+census covers 2,377 tracked/new `.gti` files across stdlib, examples, packages,
+benchmarks, fuzz, scripts, tests and parser fixtures, with zero active include
+directive lines. Deliberate rejection cases remain embedded in the owning tests;
+native C/C++ includes and historical fuzz-record hash authentication remain.
+All 49 legacy standard-library wrapper files are deleted. Generated bindings,
+public package module maps and generated test sources are part of the conversion.
+
+Focused evidence uses a macOS arm64 Release compiler with LLVM 23.1.2. Removal
+and LSP diagnostics, source text/services, cached analysis, import suggestions,
+code snippets and diagnostic registry checks pass. The new module-only example
+executes through LLVM; the standard aggregate example emits verified MIR.
+Bindgen's pipeline and four native binding integration gates pass. Parser corpus,
+highlighting/source-text checks, shipped/auxiliary source parsing and versioned
+fuzz-case migration checks pass. These are migration checks, not production or
+full-suite acceptance; the full compiler partitions were built but not run.
+
+**Confirmed phase 2 blocker:** in project mode, quoted internal stdlib imports
+from `std/vector.gti`, `std/span.gti` and `std/memory.gti` to the iterator detail
+interface fail package containment with GTI-I0012. Direct compilation succeeds.
+`testStandardLibraryModules`, `source_modules_runtime` and `source_modules_lsp`
+retain failing expectations for that gap. In the LSP case source loading stops
+before the unfinished root expression is parsed, so its expected diagnostic
+is not published. Phase 2 must model the standard library's source ownership
+coherently while preserving package containment and trusted identities, then
+rerun those checks; do not suppress them or grant arbitrary cross-package paths.
+
+Public/internal export review and complete generated/package/module behavior
+remain production obligations below. Full suites, platform campaigns, optimized
+workload measurements and release readiness are intentionally deferred at the
+owner's request. Phase 1 passing checks do not establish overall language safety
+or production readiness.
+
+### Phase 2 implementation campaign (2026-10-29)
+
+**Status: implementation and targeted acceptance complete; integration authorized.**
+The owner authorized phase 2 and the breaking release using two implementation
+helpers. On 2026-10-29 the owner revised the delivery boundary: merge when the
+targeted checks pass, and defer the final full suite for the owner to run later.
+This explicitly supersedes the original requirement to finish the full
+production campaign before merging; it does not claim that those checks passed.
+The earlier broad macOS run recorded 905 passes and 70 failures. Its known
+failures were repaired and covered by owning checks, including the complete
+219-test compiler aggregate, all 177 trusted-body corpus entries, module/cache
+and editor checks, native execution and reviewed corpus/evidence inventories.
+Final full macOS/Linux and fresh sanitizer campaigns remain deferred. Earlier
+sanitizer and performance evidence retains its original source identity.
+Main's source-defined shared/weak ownership changes have been reconciled; their
+semantics and supported backend regressions remain part of acceptance.
+
+The production contract keeps `export module`, `import`, `export import`,
+ordinary namespaces, and explicitly registered implementation files. It adds
+hierarchical module names, real module-owned declaration identity and uniform
+source-owner resolution. A module is a semantic boundary, not a C++ translation
+unit, header, namespace alias or native binary artifact.
+
+| Work | Current evidence and required outcome | Authority / invalidation |
+| --- | --- | --- |
+| M-OWN: source ownership | Project imports inside stdlib currently fail GTI-I0012. Use one immutable registry for package, toolchain, generated and direct source owners, with contained relative imports and explicit public maps. Ownership never grants compiler trust. | SourceLoader/SourceGraph; registry, map, dependency and exact source changes invalidate resolution/cache facts. |
+| M-ID: declaration identity | Unrelated modules currently collide on private names. Distinct modules own distinct declarations; a requester sees only its own module and explicitly imported exports. Jointly visible conflicting names diagnose ambiguity; ordinary visible overloads compose. | Semantics owns requester-aware selection and nominal IDs; HIR/MIR/backend preserve selected IDs rather than inventing ownership from spelling. |
+| M-IMPL: definition composition | An exported prototype plus registered implementation body currently duplicates overloads; implementations cannot see interface-private helpers. One ModuleId covers the interface and its implementation units; exact declarations and bodies join, while source-local static declarations retain file identity. | SourceGraph records ownership/loading; semantics checks signature/definition closure and private reachability. |
+| M-API: public surface | Phase 1 exports and detail facades were mechanical. Review public declarations, private types used by exported APIs, generic/concept/default/constexpr reachability, specializations and re-export paths. Explicit installed module inventory replaces accidental filesystem exposure; nested public names use dotted module names. | Public maps select importable interfaces; semantic visibility controls their declarations. Neither map membership nor spelling grants private compiler capabilities. |
+| M-GEN: generated modules | Two direct bindgen outputs both declare `bindings`; LSP rejects an alias accepted by project build. Add an explicit module-name option and deterministic default, and share generated-owner descriptors between build and read-only editor facts. | Bindgen options and immutable driver project facts; artifacts/options/manifest generations invalidate caches. Editors never generate or fetch dependencies. |
+| M-EDIT: first-class editor imports | Import definition/completion currently returns no result. Loader-owned import records (including unresolved/incomplete forms) drive module hover/definition/references and admissible named-import completions. Available units retain syntax/semantic editor facts when another import fails; no partial graph reaches HIR/codegen. | Compiler LanguageQueries over exact immutable snapshots; LSP only converts protocol positions/results. |
+| M-VERIFY: release acceptance | Preserve cycle rejection, explicit re-export, package containment, configuration isolation, canonical declaration trust, deterministic initialization/cleanup and exact cache invalidation. Repair every migrated fixture without hiding failures, execute full required suites/platform/installed-consumer gates, and measure representative runtime plus cold/warm graph/edit costs. | Exact published source/base evidence and normal PR integration/release policy. |
+
+Required examples and regressions include unrelated libraries with identical
+private helper names; public names that are distinct until jointly visible;
+interface/private implementation sharing and exact free-function definitions;
+registered generic class/member bodies with canonical type/value parameter
+identity and declaration-owned defaults/constraints; specialization/conformance
+coherence tied to the owning module rather than an incidental package;
+private types reachable through exported APIs without exposing their names;
+hierarchical local and dependency modules; stdlib/package path escapes;
+generated modules in both build and editor; missing imports restored by unsaved
+overlays; and initialization/cache behavior across diamonds and repeated imports.
+
+The phase 2 working implementation now includes the source-owner registry,
+installed public map, shared interface/implementation module identities,
+module-aware import queries, partial editor source recovery, and public-map
+missing-import fixes. Focused development evidence now also covers generic
+member definition families and exact specializations, logical-module startup
+ordering and cycles, missing-file overlay recovery, and the reviewed public
+stdlib surface with shared private interfaces. Private-library test access is
+explicit and does not grant compiler trust. These owning checks pass. Phase 1
+ran no full suite. Final full native, platform and installed-toolchain coverage
+remains follow-up work under the owner's revised delivery decision above;
+targeted acceptance must not be described as a full-suite pass.
+
+The expected successful runtime cost is unchanged after resolution: module
+ownership and visibility are compile-time facts; selected bodies and startup
+ordering flow through existing verified MIR. No per-call module dispatch,
+allocation or runtime lookup is introduced. Compile/load/memory and editor-cache
+costs are measured separately; no speedup or performance parity is claimed yet.
+
+C++ header units, global/private module fragments, textual fallback and
+preprocessor interoperability are not adopted. Separate binary interfaces/BMIs
+are not a prerequisite for this source-module contract; retain a future cache
+boundary, and require measured whole-program build/edit behavior now. Existing
+fail-closed workspace rename limitations must remain explicit; no textual
+cross-project rename may masquerade as complete semantic reference coverage.
+
+### Phase 2: production modules and breaking release
+
+Review the following obligations against the converted corpus before deciding
+whether a new facility is required. These are acceptance questions, not claims
+that every item is currently broken or that every possible module feature is
+mandatory for 1.0.
+
+| Obligation | Required evidence / completion boundary |
+| --- | --- |
+| Deliberate public API | Replace migration-era broad exports with reviewed public surfaces; prove private helpers, private type dependencies, generics and specializations work without leaking names. Review temporary detail/experimental facades. |
+| Package composition | Decide and implement any required package-private/shared implementation units, re-export and facade behavior; prove local, dependency and transitive visibility, alias collisions and containment. |
+| Configuration and initialization | Verify module configuration isolation, duplicate imports, cycles and deterministic initialization/cleanup order; no importer flag leakage or include-order assumptions. |
+| Generated/native interfaces | Validate standalone bindgen modules, multi-output naming, registered package bindings, C ABI, native linking and hosted build scripts. |
+| Compiler/tooling agreement | Verify fresh/cached/overlay analysis, source mapping, diagnostic recovery, import suggestions, rename/navigation, formatter and parser across the converted corpus. |
+| Full correctness | Repair outstanding module prerequisites and run the full required optimized compiler/platform suites, runnable examples and supported backend regressions; preserve independent LLVM execution evidence where C++ lacks support. |
+| Runtime and build costs | Measure representative optimized workloads, allocations, code size and compile/cache costs; retain safety and reject unaccepted regressions. |
+| Release readiness | Reconcile current canonical main, review the exact candidate, complete required platform/combined validation, write migration guidance and advance the minor VERSION before PR-only integration. |
+
+The source-loader's unused legacy resolution helpers and historical internal
+`Include*` graph/query names can be removed or renamed once their shared consumers
+are audited. Leaving unreachable machinery temporarily is not compatibility
+support. A blanket syntax error alone would not satisfy this migration: corpus,
+module metadata, generators and editor behavior must agree.
+
 ## Typed macro and assertion foundation
 
 The implementation provides source-defined `std::assert` and

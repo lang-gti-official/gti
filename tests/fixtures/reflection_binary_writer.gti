@@ -2,8 +2,8 @@
 // field is appended little-endian, nested structs recurse, and the result is
 // compared with the bytes a hand-written writer produces. Nothing about the
 // field names survives compilation.
-#include <std/meta>
-#include <std/vector>
+import std.meta;
+import std.vector;
 
 struct Vec2 {
   uint16_t x = 0;

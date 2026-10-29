@@ -1,5 +1,5 @@
 // INVALID: a std::string_view of a local std::string escapes the function.
-#include <std/string>
+import std.string;
 
 std::string_view greeting(std::string_view who) {
   mut std::string text = std::string("hello ");

@@ -1,6 +1,6 @@
 // A59: the same through map::at.
-#include <std/map>
-#include <std/vector>
+import std.map;
+import std.vector;
 int main() {
   mut std::map<int, std::vector<int>> graph{};
   int key = 1;

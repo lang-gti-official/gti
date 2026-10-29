@@ -1,18 +1,20 @@
-#include <std/format>
+export module managed_thread_parallelism_kernel;
 
-constexpr int32_t image_width = 1000;
-constexpr int32_t image_height = 700;
-constexpr int32_t maximum_iterations = 600;
-constexpr int32_t worker_count = 4;
-constexpr int32_t repetition_count = 4;
+import std.format;
 
-constexpr uint64_t first_partition_checksum = uint64_t(10152834640);
-constexpr uint64_t second_partition_checksum = uint64_t(10172543656);
-constexpr uint64_t third_partition_checksum = uint64_t(10236517964);
-constexpr uint64_t fourth_partition_checksum = uint64_t(10172902632);
-constexpr uint64_t expected_checksum = uint64_t(40734798892);
+export constexpr int32_t image_width = 1000;
+export constexpr int32_t image_height = 700;
+export constexpr int32_t maximum_iterations = 600;
+export constexpr int32_t worker_count = 4;
+export constexpr int32_t repetition_count = 4;
 
-int32_t escape_iterations(double coordinate_real,
+export constexpr uint64_t first_partition_checksum = uint64_t(10152834640);
+export constexpr uint64_t second_partition_checksum = uint64_t(10172543656);
+export constexpr uint64_t third_partition_checksum = uint64_t(10236517964);
+export constexpr uint64_t fourth_partition_checksum = uint64_t(10172902632);
+export constexpr uint64_t expected_checksum = uint64_t(40734798892);
+
+export int32_t escape_iterations(double coordinate_real,
                           double coordinate_imaginary) {
   mut double value_real = 0.0d;
   mut double value_imaginary = 0.0d;
@@ -35,7 +37,7 @@ int32_t escape_iterations(double coordinate_real,
   return iteration;
 }
 
-uint64_t render_partition(int32_t first_row, int32_t row_stride) {
+export uint64_t render_partition(int32_t first_row, int32_t row_stride) {
   mut uint64_t checksum = uint64_t(0);
 
   for (mut int32_t pixel_y = first_row; pixel_y < image_height;
@@ -59,7 +61,7 @@ uint64_t render_partition(int32_t first_row, int32_t row_stride) {
   return checksum;
 }
 
-uint64_t render_repeated_partition(int32_t first_row, int32_t row_stride) {
+export uint64_t render_repeated_partition(int32_t first_row, int32_t row_stride) {
   mut uint64_t checksum = uint64_t(0);
   for (mut int32_t repetition = 0; repetition < repetition_count;
        repetition++) {
@@ -68,7 +70,7 @@ uint64_t render_repeated_partition(int32_t first_row, int32_t row_stride) {
   return checksum;
 }
 
-void require_partition(int32_t first_row, int32_t row_stride,
+export void require_partition(int32_t first_row, int32_t row_stride,
                        uint64_t expected_value) {
   uint64_t checksum = render_repeated_partition(first_row, row_stride);
   if (checksum != expected_value) {
@@ -79,7 +81,7 @@ void require_partition(int32_t first_row, int32_t row_stride,
   }
 }
 
-void print_hex_digit(uint64_t digit) {
+export void print_hex_digit(uint64_t digit) {
   switch (digit) {
   case uint64_t(0):
     std::print("0");
@@ -135,7 +137,7 @@ void print_hex_digit(uint64_t digit) {
   }
 }
 
-void print_digest(uint64_t digest) {
+export void print_digest(uint64_t digest) {
   mut uint64_t divisor = 0x1000000000000000;
   while (divisor > 0) {
     print_hex_digit((digest / divisor) % uint64_t(16));
@@ -143,7 +145,7 @@ void print_digest(uint64_t digest) {
   }
 }
 
-void print_benchmark_record(uint64_t digest) {
+export void print_benchmark_record(uint64_t digest) {
   std::print("GTI-BENCH-1 digest:");
   print_digest(digest);
   std::println(" work-units:2800000");

@@ -1,6 +1,6 @@
-#include <std/http>
-#include <std/string>
-#include <std/vector>
+import std.http;
+import std.string;
+import std.vector;
 
 extern "C" {
   void adoption_fail_at(uint64_t allocation);

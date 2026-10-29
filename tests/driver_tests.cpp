@@ -498,22 +498,24 @@ void testPackageWarningPolicy() {
   std::filesystem::create_directories(own.parent_path());
   std::filesystem::create_directories(library);
   std::filesystem::create_directories(leaf);
-  expect(
-      writeFile(temporary.root() / "prelude.gti", "") &&
-          writeFile(source, "#include <library/value>\n"
-                            "#include \"build/gti/deps/not-a-package.gti\"\n"
-                            "int main() { mut int value = 0; "
-                            "return library::value() + own::value() + value; "
-                            "}\n") &&
-          writeFile(own, "namespace own { int value() { mut int value = 0; "
-                         "return value; } }\n") &&
-          writeFile(librarySource, "#include <leaf/value>\nnamespace library { "
-                                   "int value() { mut int value = 0; "
-                                   "return leaf::value() + value; } }\n") &&
-          writeFile(leafSource,
-                    "namespace leaf { int value() { mut int value = 0; "
-                    "return value; } }\n"),
-      "package-warning source fixtures should be writable");
+  expect(writeFile(temporary.root() / "prelude.gti", "") &&
+             writeFile(source,
+                       "import library.value;\n"
+                       "import \"build/gti/deps/not-a-package.gti\";\n"
+                       "int main() { mut int value = 0; "
+                       "return library::value() + own::value() + value; "
+                       "}\n") &&
+             writeFile(own, "export module own;\nexport namespace own { int "
+                            "value() { mut int value = 0; "
+                            "return value; } }\n") &&
+             writeFile(librarySource, "export module value;\nimport "
+                                      "leaf.value;\nexport namespace library { "
+                                      "int value() { mut int value = 0; "
+                                      "return leaf::value() + value; } }\n") &&
+             writeFile(leafSource, "export module value;\nexport namespace "
+                                   "leaf { int value() { mut int value = 0; "
+                                   "return value; } }\n"),
+         "package-warning source fixtures should be writable");
   const std::vector<lang::PackageSourceRoot> roots{
       {.identity = "app@1.0.0",
        .name = "app",
@@ -524,12 +526,14 @@ void testPackageWarningPolicy() {
        .name = "library",
        .packageRoot = library,
        .sourceRoot = library,
-       .dependencies = {{"leaf", "leaf@1.0.0"}}},
+       .dependencies = {{"leaf", "leaf@1.0.0"}},
+       .modules = {{"value", librarySource}}},
       {.identity = "leaf@1.0.0",
        .name = "leaf",
        .packageRoot = leaf,
        .sourceRoot = leaf,
-       .dependencies = {}}};
+       .dependencies = {},
+       .modules = {{"value", leafSource}}}};
   const lang::driver::PackageWarningPolicy hidden(
       false, "app@1.0.0", {"library@1.0.0", "leaf@1.0.0", "app@1.0.0"});
   const auto request = [&](lang::driver::PackageWarningPolicy policy = {},
@@ -595,7 +599,8 @@ void testPackageWarningPolicy() {
          "unloaded/unowned paths must remain visible despite directory names");
 
   expect(writeFile(librarySource,
-                   "namespace library { int value() { return missing; } }\n"),
+                   "export module value;\nexport namespace library "
+                   "{ int value() { return missing; } }\n"),
          "the dependency-error fixture should be writable");
   const lang::driver::CheckResult error =
       lang::driver::checkCompilation(request(hidden));
@@ -1578,13 +1583,17 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   const std::filesystem::path helper = project / "helper.gti";
   const std::filesystem::path leaf = project / "leaf.gti";
   std::filesystem::create_directories(project);
-  expect(writeFile(source, "#include \"helper.gti\"\n"
-                           "int main() { return cached_value(); }\n") &&
-             writeFile(helper,
-                       "#include \"leaf.gti\"\n"
-                       "int cached_value() { return leaf_value(); }\n") &&
-             writeFile(leaf, "int leaf_value() { return 0; }\n"),
-         "whole-program cache source fixtures should be writable");
+  expect(
+      writeFile(source, "import \"helper.gti\";\n"
+                        "int main() { return cached_value(); }\n") &&
+          writeFile(helper,
+                    "export module helper;\n"
+                    "import \"leaf.gti\";\n"
+                    "export int cached_value() { return leaf_value(); }\n") &&
+          writeFile(
+              leaf,
+              "export module leaf;\nexport int leaf_value() { return 0; }\n"),
+      "whole-program cache source fixtures should be writable");
 
   const std::string executablePath = testExecutable.string();
   const lang::driver::ToolchainLayout discoveredToolchain =
@@ -1819,8 +1828,10 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              groupPolicyChange.cache.key != firstKey,
          "warning-group policy must invalidate the same cached presentation");
 
-  expect(writeFile(leaf, "int leaf_value() { return 1; }\n"),
-         "the transitive cache invalidation fixture should be writable");
+  expect(
+      writeFile(leaf,
+                "export module leaf;\nexport int leaf_value() { return 1; }\n"),
+      "the transitive cache invalidation fixture should be writable");
   const lang::driver::ExecutableBuildResult transitiveChange =
       build(lang::OptimizationLevel::O0);
   expect(transitiveChange.succeeded() &&
@@ -1831,8 +1842,10 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
          "changing a transitive GTI include should produce a different cache "
          "identity and invoke native compilation");
 
-  expect(writeFile(leaf, "int leaf_value() { return 0; }\n"),
-         "the original transitive source should be restorable");
+  expect(
+      writeFile(leaf,
+                "export module leaf;\nexport int leaf_value() { return 0; }\n"),
+      "the original transitive source should be restorable");
   const lang::driver::ExecutableBuildResult restoredSource =
       build(lang::OptimizationLevel::O0);
   expect(restoredSource.succeeded() &&
@@ -2761,9 +2774,10 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
   const std::filesystem::path dependency = project / "dependency.gti";
   const std::filesystem::path entry = project / "main.gti";
   std::filesystem::create_directories(project);
-  expect(writeFile(dependency, "int dependency_value() { return 1; }\n") &&
+  expect(writeFile(dependency, "export module dependency;\nexport int "
+                               "dependency_value() { return 1; }\n") &&
              writeFile(entry,
-                       "#include \"dependency.gti\"\n"
+                       "import \"dependency.gti\";\n"
                        "expected<int, int> calculated() { return 1; }\n"
                        "int main() {\n"
                        "  expected<int, int> value = calculated();\n"
@@ -2949,7 +2963,8 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
              (cpp20.provenance ? runtimeSummary(*cpp20.provenance) : "none") +
              ", C++23 materials=" + runtimeSummary(firstProvenance) + ")");
 
-  expect(writeFile(dependency, "int dependency_value() { return 2; }\n"),
+  expect(writeFile(dependency, "export module dependency;\nexport int "
+                               "dependency_value() { return 2; }\n"),
          "the included provenance source should be editable");
   const lang::driver::ExecutableBuildResult sourceChanged =
       build("source", entry, toolchain, lang::CppStandard::Cpp23);
@@ -3098,6 +3113,22 @@ void testBuildReportRecordRoundTrip() {
          "a round-tripped record should compare equal to its source");
   expect(lang::driver::serializeBuildProvenanceJson(*parsed) == serialized,
          "re-serializing a parsed record should reproduce the sidecar");
+  for (const auto *retired :
+       {"include", "export-include", "standard-library", "package"}) {
+    std::string legacy = serialized;
+    const std::string currentKind = "\"kind\":\"import\"";
+    const auto position = legacy.find(currentKind);
+    expect(position != std::string::npos,
+           "the report fixture contains an import edge");
+    if (position == std::string::npos)
+      continue;
+    legacy.replace(position, currentKind.size(),
+                   "\"kind\":\"" + std::string(retired) + "\"");
+    expect(!lang::driver::parseBuildProvenanceJson(legacy, parseError) &&
+               parseError.find("unknown source dependency kind") !=
+                   std::string::npos,
+           "retired source-edge spellings are not valid module build records");
+  }
   auto embedding = recorded;
   embedding.project->targetKind = "library";
   embedding.embeddingHeader = recorded.artifact;

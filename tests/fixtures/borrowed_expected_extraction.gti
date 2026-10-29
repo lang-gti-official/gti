@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // Deliberately unrelated, noncopyable application types. A success extraction
 // must borrow Resource, never reconstruct it from its pointer representation.

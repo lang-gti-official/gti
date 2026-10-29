@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // A class result produced inside one arm of a conditional expression, or in
 // a short-circuit operand, by a call that consumes a value moved into it: a

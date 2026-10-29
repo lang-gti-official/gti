@@ -147,7 +147,7 @@ public:
   // Return initialization shares exact selection, access and ownership with
   // declarations; the destination is fresh even when its source is a place.
   const auto returned = analyze(R"gti(
-#include <std/meta>
+import std.meta;
 struct Score {
   int value;
   implicit Score(int initial, int offset = 2) : value(initial + offset) {}
@@ -242,7 +242,7 @@ int main() { Explicit value = construct<Explicit>(1); return 0; }
 )gti",
            "GTI-S2003");
   rejected(R"gti(
-#include <std/meta>
+import std.meta;
 struct Explicit { Explicit(int value) {}  public: Explicit() = default; };
 Explicit exact(int value) { return Explicit(value); }
 std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
@@ -256,7 +256,7 @@ int main() {
 )gti",
            "GTI-S2003", true);
   rejected(R"gti(
-#include <std/meta>
+import std.meta;
 struct Middle { implicit Middle(int value) {}  public: Middle() = default; };
 struct End { implicit End(Middle value) {}  public: End() = default; };
 End exact(Middle value) { return End(value); }

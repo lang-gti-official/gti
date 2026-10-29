@@ -1,9 +1,10 @@
-#include <std/cstdio>
-#include <std/span>
-#include <std/vector>
-#include <std/string>
+export module io;
 
-namespace std {
+import std.cstdio;
+import std.span;
+import std.vector;
+import std.string;
+export namespace std {
 /// Reusable, initialized binary storage. Capacity beyond size is never exposed.
 using byte_buffer = vector<uint8_t>;
 

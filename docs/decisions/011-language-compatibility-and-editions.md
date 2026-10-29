@@ -1,5 +1,24 @@
 # 011: Edition 1 Preserves Meaning And Future Breaks Are Opt-In
 
+> **2026-10-29 module-only campaign amendment (unreleased):** The owner has
+> selected a coordinated hard removal of GTI `#include`, including
+> `export #include`, before 1.0. Phase 1 mechanically converts the source corpus
+> and rejects the removed syntax; phase 2 establishes production module
+> completeness and supplies release acceptance. Neither phase is merged into
+> `main` or released until phase 2 completes. The historical include-preservation
+> commitments below describe earlier releases and are explicitly superseded by
+> this decision for the forthcoming breaking release. Existing released editions
+> are not silently reinterpreted.
+>
+> The prototype uses explicit module interfaces and exports, preserves canonical
+> source identity and compiler ownership checks, and resolves `std.name` directly
+> to `stdlib/std/name.gti`. Wrapper interfaces and republished legacy includes are
+> removed. Useful graph/loading/cache machinery remains shared; recognizing an
+> obsolete directive for a targeted error does not accept it. See the
+> [two-phase plan](../plans/implementation-sequence.md#module-only-source-campaign-2026-10-29)
+> for outstanding obligations. This amendment does not promise that every
+> historical include program has a semantics-preserving automatic rewrite.
+
 Status: Accepted
 
 ## Context

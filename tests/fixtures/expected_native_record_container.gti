@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 
 // An Expected carrier keeps its ordinary value ABI even when its alternative
 // needs byte-preserving native-record transport. A retained generic signature

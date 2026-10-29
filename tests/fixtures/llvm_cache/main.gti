@@ -1,6 +1,6 @@
-#include "value.gti"
-#include "edges/left.gti"
-#include "edges/right.gti"
+import "value.gti";
+import "edges/left.gti";
+import "edges/right.gti";
 
 mut int destroyed_value = 0;
 

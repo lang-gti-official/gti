@@ -27,7 +27,7 @@ from backend_execution import Endpoint, execute
 
 
 ARRAY_ELEMENTS = r'''
-#include <std/string_view>
+import std.string_view;
 std::string_view table[3] = {"zero", "one", "two"};
 mut std::string_view kept = "";
 std::string_view pick(std::string_view names[3], uint64_t index) { return names[index]; }
@@ -55,7 +55,7 @@ int main() {
 '''
 
 ARRAY_FIELDS_AND_LAMBDAS = r'''
-#include <std/string_view>
+import std.string_view;
 struct Shelf {
   std::string_view titles[2];
   int count;
@@ -75,7 +75,7 @@ int main() {
 '''
 
 ELEMENT_REFERENCES = r'''
-#include <std/string_view>
+import std.string_view;
 void setTo(mut std::string_view& out, std::string_view value) { out = value; }
 std::string_view throughReferences() {
   mut std::string_view words[2] = {"a", "bc"};
@@ -91,8 +91,8 @@ int main() {
 '''
 
 CALLABLE_RESULTS = r'''
-#include <std/functional>
-#include <std/string_view>
+import std.functional;
+import std.string_view;
 // A callable's text result through a GTI invocation pointer is what its
 // target returns: a user-defined callable class, a lambda or a function item.
 class Greeter {
@@ -156,7 +156,7 @@ int main() {
 '''
 
 RAW_TEXT_VIEWS = r'''
-#include <std/string_view>
+import std.string_view;
 // A view read through a raw pointer, its index or `->` is the view stored
 // there; the pointer formal is not its owner.
 struct Entry {
@@ -182,7 +182,7 @@ int main() {
 '''
 
 CAPTURED_TEXT_LOCAL_USE = r'''
-#include <std/string>
+import std.string;
 // A lambda's view over its captured text keeps the captured view's owner
 // borrowed for each use, as the view itself does: callers use it in an
 // expression, a local binding or a copy of one, a call that only reads or
@@ -236,7 +236,7 @@ int main() {
 '''
 
 REASSIGNED_TEXT_LOCALS = r'''
-#include <std/string>
+import std.string;
 // A local text binding holds what any of its writes stored, including a
 // store through a mutable borrow of it: each holds ownerless text here.
 struct Note {
@@ -279,7 +279,7 @@ int main() {
 '''
 
 RECEIVER_FIELD_CALL_RETURNS = r'''
-#include <std/string_view>
+import std.string_view;
 // A method whose relay its body never uses returns an ownerless call result
 // through its receiver's field or a nested one.
 class Inner {
@@ -315,9 +315,9 @@ int main() {
 '''
 
 ERASED_TEXT_RESULTS = r'''
-#include <std/functional>
-#include <std/polymorphic>
-#include <std/string>
+import std.functional;
+import std.polymorphic;
+import std.string;
 // A virtual text result follows its root's contract, a lambda's result is
 // what its returns hold, and a generic result its instance makes text relays
 // at the call: an erased callable over a literal lambda returns ownerless text
@@ -374,7 +374,7 @@ int main() {
 '''
 
 VIRTUAL_ROOT_INSTANCES = r'''
-#include <std/string>
+import std.string;
 // An override's text result keeps its root's contract in the override's
 // instance of the root's class: under a generic root that relays its
 // argument, an override relays it or returns a literal.
@@ -410,7 +410,7 @@ int main() {
 '''
 
 OPERATOR_TEXT_RELAYS = r'''
-#include <std/string>
+import std.string;
 // An overloaded operator's text result relays its receiver or an argument as
 // its summary says, as a method's does: the relayed owner stays borrowed
 // while the result is used, and ownerless text relays nothing.
@@ -453,8 +453,8 @@ int main() {
 '''
 
 INVOCATION_POINTER_TARGETS = r'''
-#include <std/functional>
-#include <std/string>
+import std.functional;
+import std.string;
 // An invocation pointer's text result is ownerless (owner decision
 // 2026-10-27): a function or lambda returning ownerless text forms one, and
 // its results keep no argument's owner borrowed.
@@ -485,7 +485,7 @@ int main() {
 '''
 
 INHERITED_TEXT_FIELDS = r'''
-#include <std/string>
+import std.string;
 // A view field a base class declares is the derived value's field too, and a
 // class with a base keeps its text fields ownerless: a derived method,
 // virtual or not, returns an inherited view field as ownerless text.

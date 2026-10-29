@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 struct Details {
   mut std::string title = std::string("initial");

@@ -32,7 +32,7 @@ def run(command, cwd, status=0):
     return result
 
 
-LIBRARY_SOURCE = "#include <std/memory>\nint main() { return 0; }\n"
+LIBRARY_SOURCE = "import std.memory;\nint main() { return 0; }\n"
 
 
 def library_findings(stderr):

@@ -2,9 +2,9 @@
 // pool. Slot bounds/liveness must be checked BEFORE the element constructor
 // runs, so "construct 99" never prints; already-live elements and the prepared
 // string argument are cleaned up exactly once before the status-70 report.
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.vector;
 
 class Part {
   std::string label;

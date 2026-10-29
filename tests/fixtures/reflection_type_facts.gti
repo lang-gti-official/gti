@@ -1,4 +1,4 @@
-#include <std/meta>
+import std.meta;
 
 struct Coordinates { int32_t x = 0; int32_t y = 0;  public: Coordinates() = default; };
 class MoveOnly {

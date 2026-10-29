@@ -24,14 +24,14 @@ if __name__ == "__main__":
                 f"failure_during_cleanup; primary [GTI-R0002] at "
                 f"{fixture.name}:{primary}; secondary [GTI-R0002]\n")
 
-    memory = fixtures.parent.parent / "stdlib/std/memory.gti"
+    memory = fixtures.parent.parent / "stdlib/std/detail/memory_core.gti"
     empty_site = next(i + 1 for i, line in enumerate(memory.read_text().splitlines())
                       if "return gti_internal::unique_owner_borrow_mut(" in line)
     expected = [
         (0, "1\n2\n3\n7\n5\n99\n", ""),
         (70, "1\n7\n99\n", failure("value.read() / divisor")),
         (70, "1\n2\n7\n99\n", failure("6 / divisor")),
-        (70, "99\n", f"<std/memory>:{empty_site}: runtime error[GTI-R0008]: "
+        (70, "99\n", f"<std/detail/memory_core>:{empty_site}: runtime error[GTI-R0008]: "
                       "empty_owner_access in dereference\n"),
         (70, "1\n2\n3\n7\n99\n", failure("1 / this.cleanup_divisor")),
         (70, "1\n7\n", secondary("value.read() / divisor")),

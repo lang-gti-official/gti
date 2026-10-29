@@ -1864,8 +1864,8 @@ int main() {
          "a named subject is observed, so a move-only binding stays rejected "
          "with a hint to consume the enum");
 
-  const auto terminal = analyzeWithPrelude(
-      "consuming-terminal-subject.gti", "#include <std/panic>\n" + prefix + R"(
+  const auto terminal = analyzeWithPrelude("consuming-terminal-subject.gti",
+                                           "import std.panic;\n" + prefix + R"(
 [[noreturn]] data never() { std::panic("never"); }
 int main() {
   switch (never()) {

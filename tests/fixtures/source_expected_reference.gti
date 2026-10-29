@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 expected<int&, int> find_value(int& owner, bool missing) {
   if (missing) return unexpected(7);

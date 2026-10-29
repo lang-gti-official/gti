@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // A cleanup-free conditional class result nested in an arm of another
 // conditional, evaluated again by a loop. The enclosing arm moves the inner

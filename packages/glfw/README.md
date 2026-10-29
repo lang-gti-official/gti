@@ -16,7 +16,7 @@ Run `gti fetch`, then include the package and use the ordinary GLFW API inside
 `unsafe`:
 
 ```gti
-#include <glfw/glfw>
+import glfw.glfw;
 
 int main() {
   unsafe {

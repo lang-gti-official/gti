@@ -5,10 +5,10 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import without_include_advice, LspSession, lsp_position
+from lsp_smoke_test import LspSession, lsp_position
 
 
-SOURCE = """#include <std/meta>
+SOURCE = """import std.meta;
 // UTF-16 positioning: 🧮
 concept sums<T> = requires(T& left, T& right) { { left + right } -> T; };
 concept integer_value<T> = std::meta::is_integral<T>();
@@ -55,10 +55,10 @@ def main():
                           "contentChanges": [{"text": source}]}
                 method = "textDocument/didChange"
             session.send({"jsonrpc": "2.0", "method": method, "params": params})
-            return without_include_advice(session.receive_until(lambda item:
+            return session.receive_until(lambda item:
                 item.get("method") == "textDocument/publishDiagnostics" and
                 item["params"].get("uri") == uri and
-                item["params"].get("version") == version)["params"]["diagnostics"])
+                item["params"].get("version") == version)["params"]["diagnostics"]
 
         def hover(source, position):
             return request("textDocument/hover", {

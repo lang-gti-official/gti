@@ -136,7 +136,7 @@ int main() {
         2);
 
   valid(R"(
-#include <std/memory>
+import std.memory;
 #macro ignore<F>(F callback) {}
 #macro when<F>(bool enabled, F callback) { if (enabled) { callback(); } }
 int main() {
@@ -175,7 +175,7 @@ int main() {
            "direct fresh closure invocation does not acquire mutable access");
 
   rejected(R"(
-#include <std/memory>
+import std.memory;
 #macro twice<F>(F callback) { callback(); callback(); }
 int main() {
   auto owner = std::make_unique<int>(7);
@@ -187,7 +187,7 @@ int main() {
            "repeated closure construction cannot consume one owner twice");
 
   rejected(R"(
-#include <std/memory>
+import std.memory;
 #macro invoke<F>(F callback) { callback(); }
 int main() {
   auto owner = std::make_unique<int>(7);
@@ -209,7 +209,7 @@ int main() {
 
   rejected(
       R"(
-#include <std/memory>
+import std.memory;
 #macro F repeated<F>(F expression) { F first = expression; return expression; }
 int main() {
   auto owner = std::make_unique<int>(7);

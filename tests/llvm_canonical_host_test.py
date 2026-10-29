@@ -173,9 +173,12 @@ def main() -> None:
     # Normal relative include loading and mandatory prelude snapshots are real
     # driver operations, not reconstructed by this test observer.
     header = evidence / "support.gti"
-    header.write_text("int supporting() { return 7; }\n", encoding="utf-8")
+    header.write_text((
+                          'export module support;\n'
+                          'export int supporting() { return 7; }\n'
+                      ), encoding="utf-8")
     entry = evidence / "including.gti"
-    entry.write_text('#include "support.gti"\nint main() { return supporting() - 7; }\n', encoding="utf-8")
+    entry.write_text('import "support.gti";\nint main() { return supporting() - 7; }\n', encoding="utf-8")
     included = observe(helper, root, entry)
     assert included["status"] == "observed"
     snapshots = {item["path"]: item for item in included["loaded_sources"]}
@@ -238,7 +241,7 @@ int main() { Value value{3}; return value.get() - 3; }
     # (managed workers and erased callables now name their exact bodies);
     # llvm_admission keeps that fallback covered through rootless inventory.
     # If erased invocation ever loses its sealed roots, this control must fail.
-    worker_source = """#include <std/functional>
+    worker_source = """import std.functional;
 int main() {
   std::function<int32_t()> callback{[]() -> int32_t { return 0; }};
   return callback();

@@ -22,6 +22,83 @@ const std::vector<SourceUnit> &SourceGraph::sourceUnits() const {
   return units;
 }
 
+const std::vector<SourceModule> &SourceGraph::sourceModules() const {
+  return modules;
+}
+
+const std::vector<SourceImport> &SourceGraph::imports() const {
+  return sourceImports;
+}
+
+const std::shared_ptr<const SourceOwnerRegistry> &
+SourceGraph::sourceOwners() const {
+  return owners;
+}
+
+void SourceGraph::setSourceOwners(
+    std::shared_ptr<const SourceOwnerRegistry> value) {
+  owners = std::move(value);
+}
+
+void SourceGraph::addImport(SourceImport import) {
+  sourceImports.push_back(std::move(import));
+}
+
+const SourceModule *SourceGraph::findModule(ModuleId id) const {
+  return id == 0 || id > modules.size() ? nullptr : &modules[id - 1];
+}
+
+ModuleId SourceGraph::moduleForUnit(SourceUnitId id) const {
+  const auto *unit = findUnit(id);
+  return unit == nullptr ? 0 : unit->moduleId;
+}
+
+bool SourceGraph::sameModule(SourceUnitId left, SourceUnitId right) const {
+  const ModuleId owner = moduleForUnit(left);
+  return owner != 0 && owner == moduleForUnit(right);
+}
+
+ModuleId SourceGraph::registerModule(SourceUnitId interfaceUnit,
+                                     std::string ownerIdentity,
+                                     std::string name) {
+  auto *unit = findUnit(interfaceUnit);
+  if (unit == nullptr)
+    return 0;
+  for (const auto &module : modules) {
+    if (module.ownerIdentity == ownerIdentity && module.name == name) {
+      // A second physical interface is invalid; the loader owns its diagnostic.
+      if (module.interfaceUnit != interfaceUnit)
+        return 0;
+      unit->moduleId = module.id;
+      return module.id;
+    }
+  }
+  const ModuleId id = modules.size() + 1;
+  modules.push_back(
+      {id, std::move(ownerIdentity), std::move(name), interfaceUnit});
+  unit->moduleId = id;
+  return id;
+}
+
+bool SourceGraph::attachModuleImplementation(SourceUnitId interfaceUnit,
+                                             SourceUnitId implementationUnit) {
+  const ModuleId owner = moduleForUnit(interfaceUnit);
+  auto *unit = findUnit(implementationUnit);
+  if (owner == 0 || unit == nullptr || unit->moduleDeclaration ||
+      (unit->moduleId != 0 && unit->moduleId != owner))
+    return false;
+  unit->moduleId = owner;
+  const auto found = std::find_if(
+      implementationRoots.begin(), implementationRoots.end(),
+      [&](const SourceImplementation &implementation) {
+        return implementation.interfaceUnit == interfaceUnit &&
+               implementation.implementationUnit == implementationUnit;
+      });
+  if (found == implementationRoots.end())
+    implementationRoots.push_back({interfaceUnit, implementationUnit});
+  return true;
+}
+
 const std::vector<SourceDependency> &SourceGraph::dependencyEdges() const {
   return dependencies;
 }
@@ -55,7 +132,8 @@ bool SourceGraph::isCompilerTrusted(SourceUnitId id) const {
 
 bool SourceGraph::isVisible(SourceUnitId requester,
                             SourceUnitId declaration) const {
-  if (requester == 0 || declaration == 0 || requester == declaration) {
+  if (requester == 0 || declaration == 0 || requester == declaration ||
+      sameModule(requester, declaration)) {
     return true;
   }
   const SourceUnit *declaringUnit = findUnit(declaration);
@@ -84,8 +162,7 @@ bool SourceGraph::isVisible(SourceUnitId requester,
     }
     for (const SourceDependency &dependency : dependencies) {
       if (dependency.source != unit ||
-          (dependency.kind != SourceDependencyKind::ExportImport &&
-           dependency.kind != SourceDependencyKind::ExportInclude)) {
+          dependency.kind != SourceDependencyKind::ExportImport) {
         continue;
       }
       if (dependency.target == declaration) {
@@ -100,6 +177,8 @@ bool SourceGraph::isVisible(SourceUnitId requester,
 bool SourceGraph::isExported(SourceUnitId declaration,
                              std::size_t nameOffset) const {
   const SourceUnit *unit = findUnit(declaration);
+  if (unit != nullptr && unit->implementationDeclaration)
+    return false;
   if (unit == nullptr || !unit->moduleDeclaration) {
     return true;
   }
@@ -116,7 +195,8 @@ bool SourceGraph::isDeclarationVisible(SourceUnitId requester,
                                        SourceUnitId declaration,
                                        std::size_t nameOffset) const {
   return isVisible(requester, declaration) &&
-         (requester == declaration || isExported(declaration, nameOffset));
+         (requester == declaration || sameModule(requester, declaration) ||
+          isExported(declaration, nameOffset));
 }
 
 std::vector<SourceUnitId> SourceGraph::compilationOrder() const {
@@ -143,8 +223,12 @@ std::vector<SourceUnitId> SourceGraph::compilationOrder() const {
       visit(unit.id);
     }
   }
-  for (const auto implementation : implementationRoots)
+  for (const auto implementation : implementationRoots) {
+    // The interface introduces the declarations completed by this unit. Module
+    // membership supplies that ordering without manufacturing an import edge.
+    visit(implementation.interfaceUnit);
     visit(implementation.implementationUnit);
+  }
   visit(entry);
   for (const SourceUnit &unit : units) {
     visit(unit.id);
@@ -154,6 +238,9 @@ std::vector<SourceUnitId> SourceGraph::compilationOrder() const {
 
 void SourceGraph::clear() {
   units.clear();
+  modules.clear();
+  sourceImports.clear();
+  owners.reset();
   dependencies.clear();
   configuredPreludeRoots.clear();
   implementationRoots.clear();

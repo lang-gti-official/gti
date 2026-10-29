@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/vector>
-#include <std/string>
+import std.memory;
+import std.vector;
+import std.string;
 class Failing {
 public:
   Failing() = default;

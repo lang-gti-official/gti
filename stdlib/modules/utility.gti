@@ -1,3 +1,0 @@
-// Module std.utility: the public surface of <std/utility>.
-export module utility;
-export #include <std/utility>

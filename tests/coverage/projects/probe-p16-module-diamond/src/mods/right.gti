@@ -1,5 +1,5 @@
 export module right;
-#include "../trace.gti"
+import "../trace.gti";
 export import core;
 
 namespace right {

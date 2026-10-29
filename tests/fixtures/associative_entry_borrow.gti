@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/memory>
+import std.vector;
+import std.memory;
 
 struct Entry { mut int value; Entry(int v) : value(v) {} };
 class Table {

@@ -43,6 +43,9 @@ struct FrontendOptions {
   ConfigurationFlags declaredConfigurationFlags;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   bool analyzeRecoveredProgram = false;
+  // Editor-only partial snapshots may inspect available units after a load
+  // failure. The graph stays invalid and never reaches HIR or code generation.
+  bool analyzeRecoveredSourceGraph = false;
   std::optional<std::size_t> completionOffset;
   FrontendPhase stopAfter = FrontendPhase::Mir;
   bool toolingOccurrences = true;
@@ -69,8 +72,6 @@ struct FrontendOptions {
   // source generation. Missing identities force SourceLoader to read and
   // digest the file before it may populate or reuse a cache row.
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
-  // Editor migration advice; ordinary build/check output stays unchanged.
-  bool warnLegacyIncludes = false;
   bool suggestIncludes = true;
   std::vector<IncludeSearchRoot> includeSearchRoots;
   // Lower to MIR only the instances reachable from the program roots. The

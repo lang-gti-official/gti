@@ -1,9 +1,10 @@
-#include <std/resource>
-#include <std/memory>
-#include <std/numeric>
-#include <std/panic>
+export module arena;
 
-namespace engine {
+import std.resource;
+import std.memory;
+import std.numeric;
+import std.panic;
+export namespace engine {
 struct ArenaState {
   mut std::size_t next = 0;
   mut std::size_t live = 0;

@@ -1,9 +1,9 @@
-#include <std/functional>
-#include <std/thread>
-#include <std/mutex>
-#include <std/memory>
-#include <std/vector>
-#include <std/utility>
+import std.functional;
+import std.thread;
+import std.mutex;
+import std.memory;
+import std.vector;
+import std.utility;
 
 class Once {
   std::unique_ptr<int> value;

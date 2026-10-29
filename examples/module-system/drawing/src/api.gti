@@ -1,0 +1,25 @@
+export module graphics.geometry;
+
+// These names belong to this module, including its implementation file.
+struct Detail { int value; };
+int offset() { return 2; }
+
+export namespace drawing {
+  struct Box<T> {
+    T value;
+    T read();
+    U convert<U>(U input);
+  };
+  class Holder<T> {
+  public:
+    Holder() = default;
+    int tag();
+  };
+  class Holder<T&> {
+  public:
+    Holder() = default;
+    int tag();
+  };
+  int answer();
+  Detail make();
+}

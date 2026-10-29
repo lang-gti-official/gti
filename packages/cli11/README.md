@@ -11,15 +11,15 @@ Prepare the pinned headers from the repository root:
 python3 packages/prepare.py cli11 --offline  # omit --offline on first use
 ```
 
-Add the package as a path dependency and include `#include <cli11/cli11>`.
+Add the package as a path dependency and use `import cli11.cli11;`.
 An app owns every command and option handle returned from it. Arguments are
 copied immediately, so owned GTI strings can be passed as temporary dynamic
 views:
 
 ```gti
-#include <cli11/cli11>
-#include <std/string>
-#include <std/vector>
+import cli11.cli11;
+import std.string;
+import std.vector;
 
 int main(int argc, std::vector<std::string> argv) {
   unsafe {

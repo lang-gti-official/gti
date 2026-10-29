@@ -5,8 +5,8 @@
 // holds the assigned value afterwards, and a later operand that assigns the
 // same destination again leaves an earlier read unchanged. Producers that
 // are not assignments share the nested field-read rule (issues #195, #196).
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 struct Point {
   int32_t x;

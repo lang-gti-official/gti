@@ -566,7 +566,7 @@ void testFormatterSurface() {
 
 void testThreadConfinedCallbacks() {
   const std::string source = R"(
-#include <std/cthread>
+import std.cthread;
 using Transform = (int32_t) -> int32_t;
 [[thread_confined_callback]] int32_t transform(int32_t value) { return value; }
 Transform obtain_transform() { return transform; }

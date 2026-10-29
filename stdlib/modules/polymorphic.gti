@@ -1,3 +1,0 @@
-// Module std.polymorphic: the public surface of <std/polymorphic>.
-export module polymorphic;
-export #include <std/polymorphic>

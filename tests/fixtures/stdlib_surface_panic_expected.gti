@@ -1,4 +1,4 @@
-#include <std/panic>
+import std.panic;
 
 // The surface census exercises successful control flow. The panic runtime
 // matrix separately checks terminal status, exact reports and cleanup.

@@ -5,7 +5,7 @@ name = "j_dotted_name"
 version = "0.1.0"
 
 [modules]
-"geo.shapes" = "src/geo.gti"
+"geo..shapes" = "src/geo.gti"
 
 [targets.app]
 kind = "executable"

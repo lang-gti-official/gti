@@ -1,0 +1,270 @@
+export module detail.memory_core;
+
+import std.meta;
+import "memory_capabilities.gti";
+
+namespace std {
+/// Checked type erasure retains the original object's lifetime and access.
+/// Erasure does not make an object transferable or concurrently shareable.
+export using erased_object = gti_internal::erased_object;
+
+export erased_object& erase_ref<T>(T& object) {
+  return gti_internal::erase_reference(object);
+}
+export mut erased_object& erase_mut<T>(mut T& object) {
+  return gti_internal::erase_reference_mut(object);
+}
+/// The caller must restore precisely the original referent type. Lifetime
+/// and shared/exclusive access remain checked even inside unsafe.
+export unsafe T& restore_ref<T>(erased_object& object) {
+  unsafe { return gti_internal::restore_reference<T>(object); }
+}
+export unsafe mut T& restore_mut<T>(mut erased_object& object) {
+  unsafe { return gti_internal::restore_reference_mut<T>(object); }
+}
+/// Complete object types supported by the runtime representation query.
+export [[unsatisfied("The type must have a complete object representation; copying and moving are not required.")]]
+concept layout_queryable<T> = std::meta::has_object_layout<T>();
+/// Complete storage elements that retain no checked external owner borrow.
+export [[unsatisfied("The element must be a complete object type without checked borrowed state. Raw pointers retain their unsafe validity obligations; copying or moving is not required.")]]
+concept storage_element<T> = layout_queryable<T> && std::meta::is_borrow_free<T>();
+
+/// End one live object's lifetime without releasing its storage.
+/// The caller guarantees a live, writable, correctly aligned complete object,
+/// exclusive access, and that no later cleanup will destroy that object again.
+export unsafe void destroy_at<T>(T* address) requires layout_queryable<T> {
+  unsafe { gti_internal::object_destroy(address); }
+}
+
+/// Construct at a vacant final address, without allocating backing storage.
+/// The caller guarantees writable extent/alignment and nonconflicting access.
+/// On failure no complete object is published; GTI rolls back initialized
+/// subobjects and prepared owning arguments using its ordinary cleanup rules.
+/// Argument construction selects only safe constructors. For an unsafe
+/// constructor, explicitly construct an owned value first and move it here.
+export [[discardable]]
+unsafe T* construct_at<T, Args...>(T* address, Args... args)
+    requires layout_queryable<T> {
+  unsafe { gti_internal::object_construct(address, args...); }
+  return address;
+}
+
+// A completed owned value has an ordinary exact T parameter, not a pack
+// element. This also preserves payload-enum transport through normal source
+// helpers without introducing a container-specific compiler exception.
+
+
+/// Runtime layout of the compiler-selected GTI object representation.
+/// This is neither a stable foreign ABI nor a compile-time layout promise.
+export struct layout {
+  size_t bytes;
+  size_t alignment;
+  layout(size_t bytes, size_t alignment) : bytes(bytes), alignment(alignment) {}
+};
+
+/// Queries a complete object type without constructing or moving an object.
+export layout layout_of<T>() requires std::layout_queryable<T> {
+  layout result{gti_internal::object_size<T>(),
+                gti_internal::object_alignment<T>()};
+  return result;
+}
+
+namespace detail {
+Target convert_address<Target, T>(T* address) {
+  return Target(address);
+}
+Target convert_address<Target, T>(const T* address) {
+  return Target(address);
+}
+}
+
+/// Erases only the pointee spelling; preserves constness and known origins.
+export void* erase_address<T>(T* address) {
+  return detail::convert_address<void*, T>(address);
+}
+
+export const void* erase_address<T>(const T* address) {
+  return detail::convert_address<const void*, T>(address);
+}
+
+/// Selects a pointee spelling, without establishing initialization, alignment,
+/// lifetime, ownership or permission to access the pointee.
+export T* typed_address<T>(void* address) {
+  return detail::convert_address<T*, void>(address);
+}
+
+export const T* typed_address<T>(const void* address) {
+  return detail::convert_address<const T*, void>(address);
+}
+
+/// Inline bytes with T's size/alignment, but no initial live T. Destruction
+/// never destroys a payload. Ordinary movement is available only for bitwise
+/// relocatable T; copying additionally requires copyable T. Other carriers
+/// remain fixed-address even while empty. A live owning payload must instead
+/// be explicitly destroyed or relocated before its carrier goes out of scope.
+export class uninitialized<layout_queryable T> {
+  mut gti_internal::uninitialized_storage<T> bytes{};
+public:
+  uninitialized() = default;
+  const T* data() {
+    unsafe { return std::typed_address<T>(std::erase_address(&this.bytes)); }
+  }
+  T* data() mut {
+    unsafe { return std::typed_address<T>(std::erase_address(&this.bytes)); }
+  }
+};
+
+/// Transfers one live object into distinct vacant storage without allocation.
+/// Both pointers must denote writable, aligned complete regions for T. The
+/// source must be live and exclusively accessible; the destination must be
+/// vacant and nonoverlapping. Success ends the source lifetime without running
+/// its GTI destructor and leaves exactly one live destination. Eligibility is
+/// the existing failure-free generated relocation contract, never custom moves.
+export unsafe void relocate_at<T>(T* destination, T* source)
+    requires layout_queryable<T> && relocatable<T> {
+  unsafe { gti_internal::object_relocate(destination, source); }
+}
+
+/// Bulk transfer of count live bitwise-relocatable objects into vacant storage.
+/// The caller guarantees nonoverlapping regions of at least count complete T
+/// objects, valid alignment, exclusive access and a representable byte extent.
+/// All source lifetimes end without cleanup; exactly count destination objects
+/// become live. A zero count accesses neither pointer (null is then permitted).
+export unsafe void relocate_range_at<T>(T* destination, T* source, size_t count)
+    requires layout_queryable<T> && bitwise_relocatable<T> {
+  unsafe { gti_internal::object_relocate_range(destination, source, count); }
+}
+
+/// Asserts that address denotes a live T whose lifetime is covered by owner.
+/// The caller proves alignment, initialization and aliasing. The returned
+/// reference is checked against owner; the raw pointer itself remains nonowning.
+export [[borrowed_from(owner)]]
+unsafe T& assume_ref<T, Owner>(const T* address, Owner& owner) {
+  unsafe { return *address; }
+}
+
+/// Asserts exclusive access to a live T for the checked borrow of owner.
+export [[borrowed_from(owner)]]
+unsafe mut T& assume_mut<T, Owner>(T* address, mut Owner& owner) {
+  unsafe { return *address; }
+}
+
+/// Assert that count readable character objects at address remain valid for
+/// the checked owner borrow. The caller proves extent, initialization and
+/// aliasing; the result retains owner even when count is zero.
+export unsafe string_view assume_string_view<Owner>(
+    const char* address, size_t count, Owner& owner) {
+  unsafe { return gti_internal::text_view_from_address(address, count, owner); }
+}
+
+/// Assert that address is null or points to a readable NUL-terminated sequence
+/// protected by owner. The checked owner dependency cannot be bypassed by the
+/// unsafe validity assertion. No scan or character allocation happens here.
+export unsafe c_string assume_c_string<Owner>(const char* address, Owner& owner) {
+  unsafe { return gti_internal::c_string_from_address(address, owner); }
+}
+
+/// Exposes a non-owning byte address without scanning or extending its lifetime.
+/// The caller must preserve the original storage and prove every subsequent
+/// read's validity; null remains null. No checked reference is created.
+export unsafe const uint8_t* c_string_bytes(c_string text) {
+  unsafe { return gti_internal::runtime::gti_rt_c_string_bytes_v1(text); }
+}
+
+/// Exclusive ownership of one dynamically allocated `T`.
+export class unique_ptr<T> {
+  mut gti_internal::unique_owner<T> owner = nullptr;
+
+public:
+  unique_ptr() = default;
+  constexpr unique_ptr(nullptr_t empty) : owner(nullptr) {}
+
+  constexpr unique_ptr(gti_internal::unique_owner<T> value)
+      : owner(std::move(value)) {}
+
+  constexpr void reset() mut {
+    // Detach before cleanup. The local owns destruction and propagates any
+    // failure through ordinary MIR scope cleanup; the receiver stays empty.
+    unique_ptr<T> previous = unique_ptr<T>(std::move(this.owner));
+    this.owner = nullptr;
+  }
+
+  constexpr void operator=(nullptr_t empty) mut {
+    this.reset();
+  }
+
+  constexpr void swap(mut unique_ptr<T>& other) mut {
+    gti_internal::unique_owner_swap(this.owner, other.owner);
+  }
+
+  unique_ptr<Base> upcast<Base>() mut {
+    mut gti_internal::unique_owner<Base> converted =
+        gti_internal::unique_owner_upcast<Base>(std::move(this.owner));
+    this.owner = nullptr;
+    return unique_ptr<Base>(std::move(converted));
+  }
+
+  constexpr T& operator*() {
+    return gti_internal::unique_owner_borrow(this.owner);
+  }
+
+  constexpr mut T& operator*() mut {
+    return gti_internal::unique_owner_borrow_mut(this.owner);
+  }
+
+  constexpr T& operator->() {
+    return gti_internal::unique_owner_borrow(this.owner);
+  }
+
+  constexpr mut T& operator->() mut {
+    return gti_internal::unique_owner_borrow_mut(this.owner);
+  }
+
+  constexpr operator bool() {
+    return !gti_internal::unique_owner_is_null(this.owner);
+  }
+
+  constexpr bool operator==(nullptr_t other) {
+    return gti_internal::unique_owner_is_null(this.owner);
+  }
+
+  constexpr bool operator!=(nullptr_t other) {
+    return !gti_internal::unique_owner_is_null(this.owner);
+  }
+};
+
+/// Allocates a `T` from `args` and returns its exclusive owner.
+export constexpr unique_ptr<T> make_unique<T, Args...>(Args... args) {
+  return unique_ptr<T>(gti_internal::allocate_unique_owner<T>(args...));
+}
+
+export unique_ptr<Base> upcast_unique<Base, Derived>(mut unique_ptr<Derived> owner) {
+  return owner.upcast<Base>();
+}
+
+/// Recoverable failures from typed storage allocation.
+export enum class alloc_errc {
+  invalid_alignment,
+  size_overflow,
+  resource_exhausted,
+  invalid_region,
+  invalid_state,
+};
+
+/// A requested minimum byte alignment for typed storage.
+///
+/// Allocation accepts nonzero powers of two. Keeping validation in the
+/// fallible allocation operation makes invalid runtime input recoverable.
+export class alignment {
+  size_t amount;
+
+public:
+  alignment(size_t bytes) : amount(bytes) {}
+
+  /// Returns the requested minimum byte alignment.
+  size_t bytes() {
+    return this.amount;
+  }
+};
+
+}

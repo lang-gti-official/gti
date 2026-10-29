@@ -1,6 +1,6 @@
 // format patterns, argument packs and the try_ output surface.
-#include <std/format>
-#include <std/string>
+import std.format;
+import std.string;
 
 int main() {
   mut auto zero = std::try_format("plain");

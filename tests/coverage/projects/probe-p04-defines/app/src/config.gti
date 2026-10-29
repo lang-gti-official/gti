@@ -1,3 +1,17 @@
-// A later source #undef deliberately removes a manifest flag.
+export module config;
+// Source-local flags stay inside this module, including a manifest override.
 #undef VERBOSE
 #define FROM_CONFIG
+
+namespace config {
+#ifdef FROM_CONFIG
+  export constexpr bool configured = true;
+#else
+  export constexpr bool configured = false;
+#endif
+#ifdef VERBOSE
+  export constexpr bool verbose_disabled = false;
+#else
+  export constexpr bool verbose_disabled = true;
+#endif
+}

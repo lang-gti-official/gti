@@ -6,7 +6,7 @@ void checkContainingClasses() {
   std::ifstream stream(path);
   const std::string source =
       std::string{std::istreambuf_iterator<char>(stream), {}} + R"gti(
-#include <std/mutex>
+import std.mutex;
 class MutexSlot {
   std::mutex<std::string> value;
 public:

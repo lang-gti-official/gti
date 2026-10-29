@@ -758,7 +758,8 @@ void runChecks(const std::filesystem::path &self) {
       "failed native link must not publish cache metadata or replace output");
   const auto sourceTimestamp =
       std::filesystem::last_write_time(project / "value.gti");
-  write(project / "value.gti", "int cache_value() { return 23; }\n");
+  write(project / "value.gti",
+        "export module value;\nexport int cache_value() { return 23; }\n");
   std::filesystem::last_write_time(project / "value.gti", sourceTimestamp);
   miss({}, "transitive GTI source content must invalidate native objects");
   execute(23);

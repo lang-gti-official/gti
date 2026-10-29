@@ -2,9 +2,9 @@
 // channel. value() on an invalid-alignment error and error() on a success are
 // GTI-R0009 failures sited at the observer call; storage already holding live
 // elements, a unique_ptr and an arena are all cleaned before the report.
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.vector;
 
 class Item {
   int32_t id;

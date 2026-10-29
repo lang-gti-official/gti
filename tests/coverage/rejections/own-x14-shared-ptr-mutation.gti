@@ -1,6 +1,6 @@
 // INVALID: shared_ptr dereference yields a read-only borrow; mutation through
 // it must be rejected.
-#include <std/memory>
+import std.memory;
 class Counter {
   mut int n_ = 0;
 public:

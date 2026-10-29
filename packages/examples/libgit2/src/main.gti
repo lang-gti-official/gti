@@ -1,5 +1,4 @@
-#include <libgit2/libgit2>
-
+import libgit2.libgit2;
 int main() {
   unsafe {
     if (git::gti_git_init() < 1) { return 1; }

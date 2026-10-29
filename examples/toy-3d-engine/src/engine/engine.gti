@@ -1,13 +1,14 @@
-#include "math.gti"
-#include "model.gti"
-#include "renderer.gti"
-#include "scene.gti"
-#include "ui.gti"
-#include "window.gti"
-#include <glfw/glfw>
-#include <std/memory>
+export module engine;
 
-namespace toy3d {
+import "math.gti";
+import "model.gti";
+import "renderer.gti";
+import "scene.gti";
+import "ui.gti";
+import "window.gti";
+import glfw.glfw;
+import std.memory;
+export namespace toy3d {
 class Engine {
   mut std::unique_ptr<Window> window = nullptr;
   mut std::unique_ptr<Renderer> renderer = nullptr;

@@ -1,6 +1,6 @@
-#include <std/experimental/optional>
-#include <std/optional>
-#include <std/string>
+import std.experimental.optional;
+import std.optional;
+import std.string;
 
 extern "C" {
   void adoption_count_begin();

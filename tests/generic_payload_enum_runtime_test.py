@@ -78,7 +78,7 @@ int consume(int divisor) {
 int main() { return consume(0); }
 """, 70, "4\n"),
         "observed-owned-field": ("""
-#include <std/string>
+import std.string;
 enum Observed { ready(int& owner), failed(std::string error) };
 [[borrowed_from(owner)]] Observed produce(int& owner) {
   if (owner == 3) return Observed::failed(std::string("bad"));

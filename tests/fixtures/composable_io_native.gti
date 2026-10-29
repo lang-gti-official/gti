@@ -1,7 +1,7 @@
-#include <std/io>
-#include <std/cstdio>
-#include <std/string>
-#include <std/vector>
+import std.io;
+import std.cstdio;
+import std.string;
+import std.vector;
 
 int native_test(std::string_view path) {
   mut auto opened = std::fopen(path, std::file_mode::read_write_truncate);

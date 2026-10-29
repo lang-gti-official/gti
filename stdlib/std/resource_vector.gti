@@ -1,11 +1,14 @@
-#include <std/resource>
-#include <std/memory>
-#include <std/numeric>
-#include <std/detail/iterator>
+export module resource_vector;
+import "detail/resource_lease.gti";
+import "detail/memory_storage.gti";
 
+import std.resource;
+import std.memory;
+import std.numeric;
+import "detail/iterator.gti";
 namespace std {
 /// Growable resource-backed storage transfers elements by structural relocation.
-concept resource_vector_element<T> = std::movable<T> && std::relocatable<T>
+export concept resource_vector_element<T> = std::movable<T> && std::relocatable<T>
     && std::storage_element<T>;
 
 namespace detail {
@@ -218,7 +221,7 @@ public:
 /// Moving the owner transfers that binding and does not move its elements.
 /// Growth preserves the old sequence on recoverable allocation failure.
 /// Assignment and implicit propagation between resources are not supported.
-class resource_vector<std::resource_vector_element T, std::memory_resource R> {
+export class resource_vector<std::resource_vector_element T, std::memory_resource R> {
   mut detail::resource_prefix_owner<T, R> slots;
 
   expected<void, alloc_errc> try_grow_for_one() mut {

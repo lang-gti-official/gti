@@ -1,7 +1,7 @@
 // A34: a string_view relayed through a receiver-tied subscript is rejected, while the
 // identical std::string& relay is accepted.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 class Record {
   std::string key_;
 public:

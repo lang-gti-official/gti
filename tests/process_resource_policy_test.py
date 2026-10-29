@@ -89,7 +89,7 @@ def main():
         # the unchanged selected library. Only this extra case narrows its bound.
         limited_library = temporary / "limited-stdlib"
         shutil.copytree(environment["GTI_STDLIB_PATH"], limited_library)
-        memory = limited_library / "std/memory.gti"
+        memory = limited_library / "std/detail/memory_storage.gti"
         original = memory.read_text()
         needle = "uint64_t size_bytes = std::layout_of<c_size_t>().bytes;"
         assert original.count(needle) == 1, "native-size fault injection seam changed"

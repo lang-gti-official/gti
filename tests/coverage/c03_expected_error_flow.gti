@@ -1,5 +1,5 @@
 // expected<T,E> with the propagation operator across several call layers.
-#include <std/string>
+import std.string;
 
 enum class parse_errc {
   empty_input,

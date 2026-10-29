@@ -22,7 +22,7 @@ void testContracts() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto result =
       lang::Frontend().analyze("panic-contracts.gti", R"(
-#include <std/panic>
+import std.panic;
 [[noreturn, track_caller]] void fail(std::string_view reason) {
   std::panic(reason);
 }
@@ -205,7 +205,7 @@ void testAbandonedCallInputs() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto result =
       lang::Frontend().analyze("terminal-arguments.gti", R"(
-#include <std/panic>
+import std.panic;
 void observe(int value) {}
 struct Guard {
   int value;
@@ -349,7 +349,7 @@ void testTerminalConstructorPublication() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto result =
       lang::Frontend().analyze("terminal-constructor.gti", R"(
-#include <std/panic>
+import std.panic;
 struct Guard {
   int value;
   Guard(int input) : value(input) {}

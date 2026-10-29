@@ -1,6 +1,7 @@
-#include <assimp/assimp>
+export module model;
 
-namespace toy3d {
+import assimp.assimp;
+export namespace toy3d {
 class Model {
   mut const assimp::aiScene* scene = nullptr;
 

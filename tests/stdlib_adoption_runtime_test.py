@@ -49,11 +49,11 @@ def main():
                           if "mut T& operator[](size_t index) mut" in text)
     vector_bounds_line = next(i + 1 for i in range(subscript_line, len(vector_lines))
                              if "gti_internal::index_bounds_check" in vector_lines[i])
-    memory_lines = (repository / "stdlib/std/memory.gti").read_text().splitlines()
+    memory_lines = (repository / "stdlib/std/detail/memory_storage.gti").read_text().splitlines()
     allocation_line = next(i + 1 for i, text in enumerate(memory_lines)
                            if "require_allocation(false)" in text)
     url_failure = (ABORT_STATUS, "",
-                   f"<std/memory>:{allocation_line}: runtime error[GTI-R0011]: allocation_failure in private_storage\n")
+                   f"<std/detail/memory_storage>:{allocation_line}: runtime error[GTI-R0011]: allocation_failure in private_storage\n")
     cases = {
         "url-failure": (fixtures / "http_url_allocation_failure.gti", [
             ((), url_failure), (("clone",), url_failure), (("path", "rebuild"), url_failure),

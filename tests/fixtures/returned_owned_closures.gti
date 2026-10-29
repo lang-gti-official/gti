@@ -1,4 +1,4 @@
-#include <std/utility>
+import std.utility;
 // An owned closure that its callee returns by value carries its borrowed
 // captures out under the call's result, however the return is spelled.
 F identity<F>(F f) { return f; }

@@ -6,10 +6,10 @@ std::format, padding and repeated building of a long string, plus manual
 string building in loops and through returned owners.
 """
 
-PRELUDE = """#include <std/format>
-#include <std/string>
-#include <std/vector>
-#include <std/utility>
+PRELUDE = """import std.format;
+import std.string;
+import std.vector;
+import std.utility;
 class Point {
 public:
   int32_t x;

@@ -1,6 +1,5 @@
-#include <std/string>
-#include <std/utility>
-
+import std.string;
+import std.utility;
 struct Pair<T, U> {
   T first;
   U second;

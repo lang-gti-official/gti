@@ -2,12 +2,12 @@
 // positional insert/erase, remove/unique/sort/merge on the list, generic
 // iterator algorithms (find_if, count_if, lower_bound, max_element) over
 // list and deque cursors, a deque sliding window, and FIFO queue draining.
-#include <std/list>
-#include <std/deque>
-#include <std/queue>
-#include <std/memory>
-#include <std/string>
-#include <std/algorithm>
+import std.list;
+import std.deque;
+import std.queue;
+import std.memory;
+import std.string;
+import std.algorithm;
 
 mut int live_tasks = 0;
 

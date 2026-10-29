@@ -1,7 +1,6 @@
-#include <std/memory>
-#include <std/panic>
-#include <std/string>
-
+import std.memory;
+import std.panic;
+import std.string;
 namespace application {
 // Each cell owns its policy, not an allocation. The enclosing pool is fixed in
 // place, so even an immovable object's constructor sees its final address.

@@ -2,7 +2,7 @@
 // composed with std concepts, used by a constrained generic function, a
 // structurally constrained generic class with methods, and a static query in
 // `if constexpr` / `static_assert`.
-#include <std/vector>
+import std.vector;
 
 concept shaped<T> = requires(T& value) { { value.area() } -> int32_t; };
 concept named_shape<T> =

@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/thread>
+import std.memory;
+import std.thread;
 
 [[unsafe_transfer, unsafe_share]] class Sentinel {
 public:

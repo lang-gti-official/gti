@@ -1,1 +1,2 @@
+export module second;
 // Second dependency identity; intentionally no executable declarations.

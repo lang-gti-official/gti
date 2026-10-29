@@ -1,5 +1,5 @@
-#include <std/map>
-#include <std/utility>
+import std.map;
+import std.utility;
 int main() {
   mut std::map<int, int> values{};
   [[discard]] values.insert(1, 10);

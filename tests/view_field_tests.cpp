@@ -17,7 +17,7 @@ lang::FrontendResult analyzeText(std::string source) {
 }
 
 const std::string kDeclarations = R"gti(
-#include <std/string>
+import std.string;
 mut std::string_view kept = "";
 class Token {
 public:
@@ -355,7 +355,7 @@ void testConstructorReads() {
   // ownerless text, so a constructor with a body keeps the ownerless rule.
   // Initializers and field defaults cannot reference members yet.
   const std::string declarations = R"gti(
-#include <std/string>
+import std.string;
 mut std::string_view kept = "";
 class Logging {
 public:
@@ -507,7 +507,7 @@ int main() {
 // payload (L-OWN-02); a switch that observes the value binds a dependent
 // view of that payload and ownerless views of the others.
 const std::string kPayloadDeclarations = R"gti(
-#include <std/string>
+import std.string;
 mut std::string_view kept = "";
 enum Word { text(std::string_view value), count(int value) };
 enum Two { both(std::string_view first, std::string_view second), none };
@@ -930,7 +930,7 @@ Token keepsLocal(std::string_view t) { Token x = makeToken(t); return x; }
 // argument's owner there, as a constructor does. This covers generic
 // functions after substitution, such as std::make_pair and unexpected.
 void testPublishedResults() {
-  const auto result = analyzeText("#include <std/utility>\n" + kDeclarations +
+  const auto result = analyzeText("import std.utility;\n" + kDeclarations +
                                   kPublishedDeclarations + R"gti(
 int main() {
   std::string input{"token text"};
@@ -1228,7 +1228,7 @@ int main() {
 // Recursive calls relay what the recursion's other returns relay: a text
 // formal, a formal's text field or the receiver's.
 const std::string kRecursiveDeclarations = R"gti(
-#include <std/string>
+import std.string;
 mut std::string_view kept = "";
 class Token {
 public:
@@ -1418,7 +1418,7 @@ std::string_view pick(std::string_view s, std::string_view t, int n) {
 int main() { return pick("ab", "xyz", 1).size() == 3 ? 0 : 1; }
 )gti",
                              R"gti(
-#include <std/string>
+import std.string;
 struct Pair {
   std::string_view text;
   int line;
@@ -1437,7 +1437,7 @@ int main() {
 }
 )gti",
                              R"gti(
-#include <std/string>
+import std.string;
 std::string_view first(std::string_view s, int n) {
   if (n == 0) {
     return s;
@@ -1597,7 +1597,7 @@ int main() {
 // let the whole value escape, as `std::vector<T>::push_back` stores it.
 void testTypeParameterFormals() {
   const auto result = analyzeText(kDeclarations + R"gti(
-#include <std/vector>
+import std.vector;
 int main() {
   mut std::vector<Token> tokens{};
   tokens.push_back(Token("literal", 1));
@@ -1624,7 +1624,7 @@ int main() {
   }
   expect(whole >= 1, "push_back requires its argument's text fields");
   const auto rejected = analyzeText(kDeclarations + R"gti(
-#include <std/vector>
+import std.vector;
 int run() {
   std::string owner{"owner"};
   Token token = Token(owner.view(), 1);
@@ -1644,9 +1644,9 @@ int main() { return run(); }
 }
 
 const std::string kPayloadPaths = R"gti(
-#include <std/optional>
-#include <std/panic>
-#include <std/string>
+import std.optional;
+import std.panic;
+import std.string;
 mut std::string_view kept = "";
 enum Word { text(std::string_view value), none };
 class Line {
@@ -1907,8 +1907,8 @@ int main() {
 }
 
 const std::string kConversions = R"gti(
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 mut std::string_view kept = "";
 class Token {
 public:
@@ -2268,8 +2268,8 @@ int main() {
 }
 
 const std::string kPayloadUses = R"gti(
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 mut std::string_view kept = "";
 enum Word { text(std::string_view value), none };
 mut Word keptWord = Word::none;
@@ -2450,8 +2450,8 @@ int main() {
 }
 
 const std::string kNesting = R"gti(
-#include <std/optional>
-#include <std/string>
+import std.optional;
+import std.string;
 mut std::string_view kept = "";
 class Diag {
 public:
@@ -2638,7 +2638,7 @@ int main() {
 }
 
 const std::string kCarrierDeclarations = R"gti(
-#include <std/string>
+import std.string;
 class Token {
 public:
   std::string_view text;
@@ -2768,7 +2768,7 @@ int main() {
 // to it, but it cannot carry the text out. Before 0.468.1 every escape below
 // compiled, and `leak` returned freed text.
 const std::string kReferenceResults = R"gti(
-#include <std/string>
+import std.string;
 mut std::string_view kept = "";
 enum Word { text(std::string_view value), none };
 mut Word keptWord = Word::none;

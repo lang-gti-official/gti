@@ -1,6 +1,6 @@
-#include <std/algorithm>
-#include <std/utility>
-#include <std/vector>
+import std.algorithm;
+import std.utility;
+import std.vector;
 // A confined callable that its callee returns as the call's exact result
 // carries the same capture group out under that call's result loan.
 F apply<F>(mut F f) {

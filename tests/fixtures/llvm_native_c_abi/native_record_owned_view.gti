@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 [[c_abi]] struct NativePacket {
   mut int8_t tag; mut uint16_t extent; mut int32_t count; mut double ratio;
 };

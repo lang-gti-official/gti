@@ -6,3 +6,6 @@ version = "0.1.0"
 
 [build]
 defines = ["DEP_FLAG"]
+
+[modules]
+feature = "src/feature.gti"

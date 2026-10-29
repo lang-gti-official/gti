@@ -1,6 +1,6 @@
 // A25: the plain T& return of a reference extracted from expected<T&, E> is a MIR ICE
 // (borrow instruction does not match the loan's parent).
-#include <std/memory>
+import std.memory;
 enum class errc { missing };
 class Node {
   int value_;

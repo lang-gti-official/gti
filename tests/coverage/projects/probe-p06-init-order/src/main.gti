@@ -1,7 +1,7 @@
-#include "c.gti"
-#include "b.gti"
-#include "log.gti"
-#include "a.gti"
+import "c.gti";
+import "b.gti";
+import "log.gti";
+import "a.gti";
 
 int main_value = trace::record(6);
 

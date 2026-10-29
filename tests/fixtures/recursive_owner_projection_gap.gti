@@ -1,7 +1,7 @@
 // Original nested owner-field projection regression. The second arrow must
 // retain the first call's referent instead of projecting a Left field directly
 // from its unique_ptr dependency origin.
-#include <std/memory>
+import std.memory;
 
 struct Left {
   mut std::unique_ptr<Right> next = std::unique_ptr<Right>();

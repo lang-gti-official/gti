@@ -1,10 +1,10 @@
-#include <std/list>
-#include <std/deque>
-#include <std/queue>
-#include <std/set>
-#include <std/unordered_set>
-#include <std/string>
-#include <std/vector>
+import std.list;
+import std.deque;
+import std.queue;
+import std.set;
+import std.unordered_set;
+import std.string;
+import std.vector;
 
 class Guard {
 public:

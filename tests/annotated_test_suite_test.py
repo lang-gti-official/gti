@@ -59,8 +59,8 @@ def main():
             assert executable.is_file() and symbols.is_dir(), restored
 
         source = project / "tests/main.gti"
-        source.write_text('''#include <std/testing>
-#include <std/string>
+        source.write_text('''import std.testing;
+import std.string;
 extern "C" { int raise(int signal); }
 namespace sample {
   struct Guard {
@@ -84,12 +84,18 @@ namespace sample {
         # Discovery traverses the suite graph without granting the user's test
         # bodies access to private declarations in other source units.
         (project / "tests/leaf.gti").write_text(
-            "namespace leaf { [[test]] void nested() {} }\n")
-        (project / "tests/indirect.gti").write_text('#include "leaf.gti"\n')
-        source.write_text('#include "indirect.gti"\n[[test]] void root_case() {}\n')
+            (
+                'export module leaf;\n'
+                'namespace leaf { export [[test]] void nested() {} }\n'
+            ))
+        (project / "tests/indirect.gti").write_text((
+                                                        'export module indirect;\n'
+                                                        'import "leaf.gti";\n'
+                                                    ))
+        source.write_text('import "indirect.gti";\n[[test]] void root_case() {}\n')
         output = run(project, "test", "--no-cache")
         assert "leaf::nested ... passed" in output and "Test result: 2 passed" in output, output
-        source.write_text('#include "indirect.gti"\n[[test]] void root_case() { leaf::nested(); }\n')
+        source.write_text('import "indirect.gti";\n[[test]] void root_case() { leaf::nested(); }\n')
         output = run(project, "check", "engine-tests", expected=65)
         assert "GTI-S2024" in output, output
 
@@ -105,11 +111,23 @@ namespace sample {
 
         helper = project / "helper"
         (helper / "src").mkdir(parents=True)
-        (helper / "gti.toml").write_text('manifest-version = 1\n[package]\nname = "helper"\nversion = "0.1.0"\n')
+        (helper / "gti.toml").write_text((
+                                             'manifest-version = 1\n'
+                                             '[package]\n'
+                                             'name = "helper"\n'
+                                             'version = "0.1.0"\n'
+                                             '\n'
+                                             '[modules]\n'
+                                             'cases = "src/cases.gti"\n'
+                                         ))
         (helper / "src/cases.gti").write_text(
-            '#include <std/testing>\nnamespace dependency_cases { [[test]] void never_run() { std::testing::check(false); } }\n')
+            (
+                'export module cases;\n'
+                'import std.testing;\n'
+                'namespace dependency_cases { export [[test]] void never_run() { std::testing::check(false); } }\n'
+            ))
         manifest.write_text(manifest.read_text() + '\n[dependencies]\nhelper = { path = "helper" }\n')
-        source.write_text('#include <helper/cases>\n[[test]] void root_case() {}\n')
+        source.write_text('import helper.cases;\n[[test]] void root_case() {}\n')
         output = run(project, "test", "--no-cache")
         assert "Test result: 1 passed" in output and "never_run ..." not in output, output
 

@@ -1,8 +1,8 @@
 // Production-migration differential client. Production expected is unchanged
 // until this source carrier passes the full compatibility matrix.
-#include <std/meta>
-#include <std/panic>
-#include <std/string>
+import std.meta;
+import std.panic;
+import std.string;
 
 namespace source_result {
 class Failure<E> {

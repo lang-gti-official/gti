@@ -1,6 +1,6 @@
 // String construction, views, comparison, and to_string round trips.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 std::string join(std::vector<std::string>& parts, char sep) {
   mut std::string out = std::string();

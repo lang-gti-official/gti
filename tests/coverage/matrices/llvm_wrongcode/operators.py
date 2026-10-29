@@ -5,13 +5,13 @@ assignment, used by sort, binary search, map keys, max_element and a
 constrained generic, plus a subscript and call operator class.
 """
 
-PRELUDE = """#include <std/vector>
-#include <std/algorithm>
-#include <std/map>
-#include <std/string>
-#include <std/format>
-#include <std/utility>
-#include <std/memory>
+PRELUDE = """import std.vector;
+import std.algorithm;
+import std.map;
+import std.string;
+import std.format;
+import std.utility;
+import std.memory;
 class Version {
 public:
   mut int32_t major;

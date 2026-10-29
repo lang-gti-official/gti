@@ -1,6 +1,6 @@
-#include <std/numeric>
-#include <std/string>
-#include <std/vector>
+import std.numeric;
+import std.string;
+import std.vector;
 
 class Guard {
 public:

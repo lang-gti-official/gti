@@ -1,4 +1,4 @@
-#include <std/atomic>
+import std.atomic;
 
 constexpr int32_t operation = 0;
 

@@ -1,4 +1,4 @@
-#include <std/forward_list>
+import std.forward_list;
 
 extern "C" {
   void adoption_count_begin();

@@ -1,7 +1,6 @@
-#include <std/algorithm>
-#include <std/numeric>
-#include <std/vector>
-
+import std.algorithm;
+import std.numeric;
+import std.vector;
 class increasing_add {
   mut int multiplier = 1;
 

@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 unsafe c_string select_c_string(int& owner, const char* bytes) {
   unsafe { return std::assume_c_string(bytes, owner); }
 }

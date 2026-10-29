@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 
 enum class data { numbers(std::vector<int32_t> items) };
 class wrapper {

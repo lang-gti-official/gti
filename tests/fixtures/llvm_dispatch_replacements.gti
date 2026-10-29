@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 // Assignments that replace a whole object containing hierarchy storage. The
 // previous object is destroyed exactly once, then a fresh or moved value is

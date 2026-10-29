@@ -4,9 +4,9 @@
 // exactly once, a residual enum is returned as it is, a fresh variant returned
 // across fallible cleanup is published once, and a failing test destroys its
 // operand once before the enclosing scope.
-#include <std/panic>
-#include <std/string>
-#include <std/vector>
+import std.panic;
+import std.string;
+import std.vector;
 
 class Tracked {
   int id;

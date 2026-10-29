@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 struct Reading {
   int value = 0;
 

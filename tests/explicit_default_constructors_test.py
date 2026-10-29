@@ -26,7 +26,7 @@ def main():
             "expression": "struct Value {}; int main() { auto value = Value(); return 0; }",
             "required": "struct Value { int value = 7; Value(int input) : value(input) {} }; "
                         "int main() { Value value{}; return 0; }",
-            "factory": "#include <std/memory>\n"
+            "factory": "import std.memory;\n"
                        "struct Value { int value = 7; Value(int input) : value(input) {} }; "
                        "int main() { auto value = std::make_unique<Value>(); return 0; }",
             "field": "struct Value { int value = 7; }; "
@@ -53,9 +53,9 @@ def main():
             assert not (root / f"{name}.mir").exists()
 
         source = root / "available.gti"
-        source.write_text('''#include <std/memory>
-#include <std/functional>
-#include <std/meta>
+        source.write_text('''import std.memory;
+import std.functional;
+import std.meta;
 mut int drops = 0;
 class Ready {
   int value = 7;

@@ -81,8 +81,8 @@ local ok, problem = xpcall(function()
   }, vim.fs.joinpath(project, "gti.toml"))
   local source_path = vim.fs.joinpath(project, "smoke.gti")
   vim.fn.writefile({
-    "#include <std/array>",
-    "#include <std/string>",
+    "import std.array;",
+    "import std.string;",
     "using Index = uint64_t;",
     "enum class Stage : uint8_t { Boot, Running = 4, };",
     "class StaticArray<T, uint64_t N> {",
@@ -510,8 +510,8 @@ local ok, problem = xpcall(function()
     fail("gti_lsp did not format the GTI buffer")
   end
   local formatted = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
-  if not formatted:find("#include <std/array>", 1, true)
-    or not formatted:find("#include <std/string>", 1, true)
+  if not formatted:find("import std.array;", 1, true)
+    or not formatted:find("import std.string;", 1, true)
     or not formatted:find("class StaticArray<T, uint64_t N>", 1, true)
     or not formatted:find("interface Renderable {", 1, true)
     or not formatted:find("class Renderer : public Renderable {", 1, true)

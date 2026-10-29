@@ -1,6 +1,7 @@
-#include <std/cmath>
+export module math;
 
-namespace toy3d {
+import std.cmath;
+export namespace toy3d {
 constexpr float pi = 3.14159265358979323846;
 constexpr float full_turn = pi * 2.0;
 

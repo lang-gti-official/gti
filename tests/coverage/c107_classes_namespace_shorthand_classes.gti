@@ -3,8 +3,8 @@
 // another namespace, namespace aliases, class static fields/methods reached by
 // qualified names, namespace-scoped aliases and same-named functions in
 // different namespaces.
-#include <std/format>
-#include <std/memory>
+import std.format;
+import std.memory;
 
 namespace geo::shapes {
 interface Shape {

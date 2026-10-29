@@ -91,13 +91,16 @@ namespace sample {
         assert "gti: cache hit " not in rebuilt.stderr, rebuilt.stderr
         run([str(binary)])
 
-        # Standard-library modules republish their legacy units; an application
-        # interface can re-export one and republish its own legacy unit.
+        # An application interface can re-export a standard-library module
+        # and another ordinary source module.
         (library / "legacy_numbers.gti").write_text(
-            "namespace legacy { int32_t base() { return 40; } }\n")
+            (
+                'export module legacy_numbers;\n'
+                'namespace legacy { export int32_t base() { return 40; } }\n'
+            ))
         (library / "numbers.gti").write_text(
             "export module numbers;\nexport import std.vector;\n"
-            'export #include "legacy_numbers.gti"\n')
+            'export import "legacy_numbers.gti";\n')
         standard = library / "standard_consumer.gti"
         standard.write_text('''import "numbers.gti";
 import std.format;
@@ -123,7 +126,8 @@ int main() {
         standard_report = root / "standard-report.json"
         run([compiler, "build", "--build-report", str(standard_report)], cwd=app)
         run([str(binary)])
-        assert '"export-include"' in standard_report.read_text(), standard_report.read_text()
+        assert '"import"' in standard_report.read_text(), standard_report.read_text()
+        assert '"export-include"' not in standard_report.read_text()
 
 
 if __name__ == "__main__":

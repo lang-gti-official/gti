@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 
 // A reference bound to a field of a call's returned reference, including the
 // hidden range of a range-for, keeps that call's owner borrowed: through a

@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 extern "C" { void once_terminal(); }
 int main() {
   once_terminal();

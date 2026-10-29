@@ -1,5 +1,5 @@
 export module geo;
-#include "internal/storage.gti"
+import "internal/storage.gti";
 
 namespace lib::geo {
   export enum class Axis { x, y, z };

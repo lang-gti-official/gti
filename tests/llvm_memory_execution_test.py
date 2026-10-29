@@ -11,6 +11,7 @@ import json
 
 from backend_execution import Endpoint, execute
 from llvm_evidence_manifest import build_manifest
+from internal_module_fixture import iterator_library, private_library, private_source
 
 
 CASES = {
@@ -63,9 +64,9 @@ int main() {
     # must be destroyed exactly once afterwards, whole arrays swap as one
     # object, and swapping an element with itself must change nothing.
     "restoring-exchanges": r'''
-#include <std/array>
-#include <std/string>
-#include <std/utility>
+import std.array;
+import std.string;
+import std.utility;
 
 mut int destroyed = 0;
 
@@ -123,8 +124,8 @@ int main() {
     # dispatch headers and owned text, element views dispatch through raw
     # references, and destruction runs each exact recipe once in reverse.
     "hierarchy-element-storage": r'''
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 mut int destroyed = 0;
 mut int trace = 0;
@@ -193,12 +194,22 @@ def prepare_evidence_case(root: Path, name: str, source: Path, work: Path):
     ordinary compiler still rejects private names in application source; no
     trust check or production library declaration is changed for this test.
     """
+    if name in {"guards", "guard-cleanup"}:
+        overlay = work / "iterator-library"
+        iterator_library(root, overlay / "stdlib")
+        return overlay, source
+    if name == "provider":
+        overlay = work / "provider-library"
+        private_library(root, overlay / "stdlib", ("detail.memory_storage",))
+        prepared = private_source(source, overlay / source.name,
+                                  ("detail.memory_storage",))
+        return overlay, prepared
     if name != "private-shared-capability":
         return root, source
     overlay = work / "private-shared-library"
     standard_library = overlay / "stdlib"
     shutil.copytree(root / "stdlib", standard_library)
-    memory = standard_library / "std/memory.gti"
+    memory = standard_library / "std/detail/memory_capabilities.gti"
     with memory.open("a", encoding="utf-8") as output:
         output.write("\n" + source.read_text(encoding="utf-8"))
     return overlay, memory
@@ -238,7 +249,7 @@ def evidence_manifest(root: Path) -> dict:
 
 
 def check_structural_failures(binary: Path, root: Path, env: dict[str, str]):
-    lines = (root / "stdlib/std/memory.gti").read_text(encoding="utf-8").splitlines()
+    lines = (root / "stdlib/std/detail/memory_storage.gti").read_text(encoding="utf-8").splitlines()
     def region(start: str, end: str):
         owner = next(index for index, line in enumerate(lines) if "class sparse_slots<" in line)
         begin = next(index for index in range(owner, len(lines)) if start in lines[index])
@@ -263,7 +274,7 @@ def check_structural_failures(binary: Path, root: Path, env: dict[str, str]):
         matches = [index + 1 for index in scope if source in lines[index]]
         if len(matches) != 1:
             raise AssertionError(f"ambiguous structural failure source: {source}: {matches}")
-        stderr = (f"<std/memory>:{matches[0]}: runtime error[GTI-R0010]: "
+        stderr = (f"<std/detail/memory_storage>:{matches[0]}: runtime error[GTI-R0010]: "
                   f"invalid_storage_state in {detail}\n")
         result = subprocess.run([str(binary), *(["case"] * count)], cwd=root,
                                 env=env, capture_output=True, text=True, timeout=15)
@@ -345,9 +356,12 @@ def main():
             if selected and selected != name:
                 continue
             observed = []
+            case_root, source = prepare_evidence_case(
+                root, name, root / "tests/fixtures" / filename, work)
+            case_env = {**env, "GTI_STDLIB_PATH": str(case_root / "stdlib")}
             for endpoint in endpoints:
                 result = execute(gti, root, work / f"{name}-{endpoint}",
-                                 root / "tests/fixtures" / filename, endpoint, env)
+                                 source, endpoint, case_env)
                 if (result.error or result.returncode != 70 or code not in result.stderr
                         or marker not in result.stderr or "wrong Boolean-guard" in result.stderr):
                     raise AssertionError(f"{name} {endpoint}: {result}")

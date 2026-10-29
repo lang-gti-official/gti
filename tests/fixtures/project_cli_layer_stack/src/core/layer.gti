@@ -1,8 +1,9 @@
+export module layer;
 namespace psych {
 // The window, renderer, native events, and editor UI from the C++ engine are
 // deliberately absent. A layer keeps only the lifecycle used by the headless
 // application loop.
-interface Layer {
+export interface Layer {
   uint64_t Id();
   void OnAttach() mut;
   void OnDetach() mut;

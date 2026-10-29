@@ -1,3 +1,4 @@
-#include <tracelib/log>
+export module local;
+import tracelib.log;
 
-int local_init = trace::record(3);
+export int local_init = trace::record(3);

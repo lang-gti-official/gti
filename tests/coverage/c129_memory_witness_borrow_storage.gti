@@ -3,8 +3,8 @@
 // [[borrowed_from]] helper). The witness is the storage owner; after the
 // borrowed reference's last use the owner can be mutated again. Erased
 // addresses survive a round trip and compare equal to the slot address.
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 class Account {
   std::string owner;

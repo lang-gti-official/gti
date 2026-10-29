@@ -7,6 +7,7 @@
 #include "gti/optimization/report.h"
 #include "gti/optimizer.h"
 #include "gti/support.h"
+#include "private_stdlib_fixture.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -410,7 +411,7 @@ int32_t main() {
 
 void testSynchronizingCallInvalidation() {
   const auto frontend = analyzeTrusted("optimizer-sync-call.gti", R"(
-#include <std/atomic>
+import std.atomic;
 std::atomic<int32_t> signal{0};
 void synchronize(std::atomic<int32_t>& signal) {
   [[discard]] signal.load();
@@ -481,7 +482,7 @@ int main() {
 
 void testOpaqueRuntimeCallInvalidation() {
   const std::string source = R"(
-#include <std/memory>
+import std.memory;
 mut bool inspect_runtime = false;
 int32_t inspect_shared(gti_internal::shared_owner<int32_t>& owner, bool inspect) {
   if (inspect) {
@@ -503,7 +504,9 @@ int main() {
   return total;
 }
 )";
-  const auto frontend = analyzeTrusted("optimizer-opaque-runtime.gti", source);
+  const auto frontend = analyzeTrusted(
+      "optimizer-opaque-runtime.gti",
+      "import \"std/detail/memory_capabilities.gti\"; " + source);
   expect(frontend.canGenerateCode(),
          "an unsupported runtime intrinsic fixture must remain valid GTI/MIR");
   if (!frontend.canGenerateCode()) {
@@ -1107,7 +1110,7 @@ std::size_t borrowingCallDischarges(const lang::OptimizedProgram &optimized,
 
 void testSourcePrefixBoundsRelation() {
   const std::string source = R"(
-#include <std/memory>
+import std.memory;
 extern "C" {
   void analysis_barrier();
 }
@@ -1221,7 +1224,8 @@ int32_t main() {
 }
 )";
   const lang::FrontendResult frontend =
-      analyzeTrusted("optimizer-source-prefix-bounds.gti", source);
+      gti_test::analyzeTrustedPrivateMemoryFixture(
+          "optimizer-source-prefix-bounds.gti", source);
   expect(frontend.canGenerateCode(),
          "source-prefix bounds relation fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {
@@ -1484,7 +1488,7 @@ int32_t main() {
 
 void testClosedIndexedElementEnvelope() {
   const std::string source = R"(
-#include <std/memory>
+import std.memory;
 class CheckedBuffer {
   mut std::detail::prefix_owner<int32_t> data;
 
@@ -1543,7 +1547,8 @@ int32_t main() {
 }
 )";
   const lang::FrontendResult frontend =
-      analyzeTrusted("optimizer-indexed-envelope.gti", source);
+      gti_test::analyzeTrustedPrivateMemoryFixture(
+          "optimizer-indexed-envelope.gti", source);
   expect(frontend.canGenerateCode(),
          "closed indexed-element envelope fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {
@@ -1582,7 +1587,7 @@ int32_t main() {
 
 void testClosedIndexedRecordFieldEnvelope() {
   const std::string source = R"(
-#include <std/memory>
+import std.memory;
 extern "C" {
   void analysis_barrier();
 }
@@ -1680,8 +1685,8 @@ int32_t main() {
   // control. Its local owning helper performs cleanup whose authoritative
   // effect summary has unknown writes; the earlier caller buffer cannot keep
   // its field envelope across that call.
-  const auto crossingFrontend =
-      analyzeTrusted("optimizer-indexed-record-opaque-cleanup.gti", source);
+  const auto crossingFrontend = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "optimizer-indexed-record-opaque-cleanup.gti", source);
   expect(crossingFrontend.canGenerateCode(),
          "the sequential record cleanup-boundary client must remain valid");
   if (!crossingFrontend.canGenerateCode())
@@ -1743,7 +1748,8 @@ int32_t main() {
     return;
   isolatedSource.replace(position, before.size(), after);
   const lang::FrontendResult frontend =
-      analyzeTrusted("optimizer-indexed-record-envelope.gti", isolatedSource);
+      gti_test::analyzeTrustedPrivateMemoryFixture(
+          "optimizer-indexed-record-envelope.gti", isolatedSource);
   expect(frontend.canGenerateCode(),
          "closed indexed-record envelope fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {
@@ -1804,7 +1810,7 @@ void testSourceRecordSequenceEnvelopes() {
   // intact; a caller-local loop index reads one element of the initialized
   // region without naming an exact cell.
   const std::string source = R"(
-#include <std/vector>
+import std.vector;
 extern "C" {
   void analysis_barrier();
 }
@@ -1940,7 +1946,7 @@ void testScalarLeafSequenceStores() {
   // the container's live length. A caller-local index then proves `at`. An
   // index reaching the length, or an opaque call in the loop, keeps it.
   const std::string containers = R"(
-#include <std/memory>
+import std.memory;
 extern "C" {
   void analysis_barrier();
 }
@@ -2101,9 +2107,10 @@ int32_t main() {
        0, "an opaque call after the floating store must keep the check"},
   };
   for (const Case &fixture : cases) {
-    const lang::FrontendResult frontend = analyzeTrusted(
-        "optimizer-scalar-leaf-" + std::string(fixture.name) + ".gti",
-        containers + fixture.program);
+    const lang::FrontendResult frontend =
+        gti_test::analyzeTrustedPrivateMemoryFixture(
+            "optimizer-scalar-leaf-" + std::string(fixture.name) + ".gti",
+            containers + fixture.program);
     expect(frontend.canGenerateCode(), "the " + std::string(fixture.name) +
                                            " fixture should pass the frontend");
     if (!frontend.canGenerateCode()) {
@@ -2229,7 +2236,8 @@ int32_t main() {
 }
 )";
   const lang::FrontendResult frontend =
-      analyzeTrusted("optimizer-capture-locals.gti", locals);
+      gti_test::analyzeTrustedPrivateMemoryFixture(
+          "optimizer-capture-locals.gti", locals);
   expect(frontend.canGenerateCode(),
          "the capture fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {
@@ -2237,7 +2245,7 @@ int32_t main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return;
   }
-  const std::string containerHeader = R"(#include <std/memory>
+  const std::string containerHeader = R"(import std.memory;
 extern "C" {
   void analysis_barrier();
 
@@ -2323,9 +2331,10 @@ int32_t main() {
                      "  keep_samples(first);\n" + barrier);
     }
     const lang::FrontendResult containers =
-        analyzeTrusted(exposed ? "optimizer-capture-exposed.gti"
-                               : "optimizer-capture-containers.gti",
-                       source);
+        gti_test::analyzeTrustedPrivateMemoryFixture(
+            exposed ? "optimizer-capture-exposed.gti"
+                    : "optimizer-capture-containers.gti",
+            source);
     expect(containers.canGenerateCode(),
            "the capture container fixture should pass the frontend");
     if (!containers.canGenerateCode())
@@ -2354,7 +2363,7 @@ int32_t main() {
 
 void testGuardedClosedCallContextWidening() {
   const std::string source = R"(
-#include <std/memory>
+import std.memory;
 struct ContextEntity {
   ContextEntity() {}
 
@@ -2426,7 +2435,8 @@ int32_t main() {
 }
 )";
   const lang::FrontendResult frontend =
-      analyzeTrusted("optimizer-guarded-call-context.gti", source);
+      gti_test::analyzeTrustedPrivateMemoryFixture(
+          "optimizer-guarded-call-context.gti", source);
   expect(frontend.canGenerateCode(),
          "guarded closed-call context fixture should pass the frontend");
   if (!frontend.canGenerateCode()) {

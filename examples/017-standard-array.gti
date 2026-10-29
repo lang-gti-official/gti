@@ -1,5 +1,4 @@
-#include <std/array>
-
+import std.array;
 int main() {
   int initial[4] = {2, 4, 6, 8};
   mut std::array<int, 4> values{initial};

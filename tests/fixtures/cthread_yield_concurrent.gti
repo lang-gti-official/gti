@@ -1,6 +1,6 @@
-#include <std/cthread>
-#include <std/atomic>
-#include <std/thread>
+import std.cthread;
+import std.atomic;
+import std.thread;
 
 std::atomic<int32_t> completed{0};
 

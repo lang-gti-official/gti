@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // The payload is incomplete when the source-defined vector's retained member
 // declarations are emitted. There is no by-value cycle: the object region is

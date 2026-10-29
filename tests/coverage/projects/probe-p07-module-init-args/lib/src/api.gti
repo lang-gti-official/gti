@@ -1,7 +1,7 @@
 export module main;
-#include <tracelib/log>
-#include <std/string>
-#include <std/vector>
+import tracelib.log;
+import std.string;
+import std.vector;
 
 namespace lib {
   int lib_init = trace::record(2);

@@ -17,3 +17,6 @@ execution-profile = "concurrent"
 optimization = 3
 cpp-standard = "c++23"
 execution-profile = "concurrent"
+
+[modules]
+spdlog = "src/spdlog.gti"

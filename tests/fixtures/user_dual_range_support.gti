@@ -1,11 +1,12 @@
-#include <std/span>
-#include <std/vector>
-#include <std/string>
-#include <std/panic>
+export module user_dual_range_support;
+import std.span;
+import std.vector;
+import std.string;
+import std.panic;
 
-extern "C" { void user_dual_range_event(int identity); }
+export extern "C" { void user_dual_range_event(int identity); }
 
-class UserDualGuard {
+export class UserDualGuard {
   int identity;
 public:
   UserDualGuard(int identity) : identity(identity) {}
@@ -13,7 +14,7 @@ public:
 };
 
 // Owning elements cannot be copied: traversal must use checked references.
-class UserDualElement {
+export class UserDualElement {
   int identity;
   std::string label;
 public:
@@ -26,14 +27,14 @@ public:
   std::string& text() { return this.label; }
 };
 
-class UserDualEnd {
+export class UserDualEnd {
   std::size_t limit;
 public:
   UserDualEnd(std::size_t limit) : limit(limit) {}
   std::size_t position() { return this.limit; }
 };
 
-class UserDualProxy {
+export class UserDualProxy {
   UserDualRange& range;
   mut std::size_t coordinate;
 public:
@@ -54,7 +55,7 @@ public:
   bool finished(UserDualEnd end) { return this.coordinate == end.position(); }
 };
 
-class UserDualCursor {
+export class UserDualCursor {
   mut UserDualProxy proxy;
 public:
   UserDualCursor(UserDualRange& range, std::size_t coordinate)
@@ -71,7 +72,7 @@ public:
 
 // Two independently owned element buffers. The cursor contains its proxy
 // inline and borrows this physical carrier, not a copied owner or element.
-class UserDualRange {
+export class UserDualRange {
   std::span<UserDualElement> first;
   std::span<UserDualElement> second;
   int selected_failure;

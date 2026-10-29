@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 
 mut int calls = 0;
 struct Inner {

@@ -1,6 +1,6 @@
 // A source destructor makes Node noncopyable. Checked replacement must not
 // weaken that rule when the RHS is a named value without an explicit move.
-#include <std/string>
+import std.string;
 
 struct Node {
   int32_t identity;

@@ -1,11 +1,10 @@
 // Source-defined contracts combine ordinary expressions with compiler-verified
 // reflection facts. Checking a requirement never executes the expression.
-#include <std/meta>
-#include <std/memory>
-#include <std/functional>
-#include <std/iterator>
-#include <std/algorithm>
-
+import std.meta;
+import std.memory;
+import std.functional;
+import std.iterator;
+import std.algorithm;
 // A source predicate can inspect a fixed generic declaration before its payload
 // type is concrete. Reflection does not grant access: the expression query must
 // independently prove the cursor borrow.

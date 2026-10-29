@@ -5,8 +5,8 @@
 // thread exit, an object's destructors each observe their own class. A
 // thread-local copied from program storage is a generated copy made in the
 // slot when that thread first uses it.
-#include <std/atomic>
-#include <std/thread>
+import std.atomic;
+import std.thread;
 
 std::atomic<int> worker_result{-1};
 std::atomic<int> dropped{0};

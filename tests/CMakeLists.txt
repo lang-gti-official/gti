@@ -1,11 +1,59 @@
-add_executable(gti_include_warning_tests include_warning_tests.cpp)
-target_link_libraries(gti_include_warning_tests PRIVATE gti_compiler)
-add_test(NAME include_warning COMMAND gti_include_warning_tests)
+add_test(NAME stdlib_module_boundaries COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/stdlib_module_boundaries_test.py" $<TARGET_FILE:gti>)
+set_tests_properties(stdlib_module_boundaries PROPERTIES TIMEOUT 120)
+
+add_executable(gti_generic_method_tooling_tests generic_method_tooling_tests.cpp)
+target_link_libraries(gti_generic_method_tooling_tests PRIVATE gti_compiler)
+add_test(NAME generic_method_tooling COMMAND gti_generic_method_tooling_tests)
+
+add_executable(gti_source_owner_tests source_owner_tests.cpp)
+target_link_libraries(gti_source_owner_tests PRIVATE gti_compiler)
+add_test(NAME source_owner_registration COMMAND gti_source_owner_tests)
+
+add_executable(gti_driver_module_facts_tests driver_module_facts_tests.cpp)
+target_link_libraries(gti_driver_module_facts_tests PRIVATE gti_driver)
+add_test(NAME driver_module_facts COMMAND gti_driver_module_facts_tests)
+add_test(NAME bindgen_module_cli COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/bindgen_module_cli_test.py" $<TARGET_FILE:gti>)
+
+add_executable(gti_include_removal_tests include_removal_tests.cpp)
+target_link_libraries(gti_include_removal_tests PRIVATE gti_compiler)
+add_test(NAME include_removal COMMAND gti_include_removal_tests)
+add_executable(gti_module_editor_recovery_tests module_editor_recovery_tests.cpp)
+target_link_libraries(gti_module_editor_recovery_tests PRIVATE gti_compiler)
+add_test(NAME module_editor_recovery COMMAND gti_module_editor_recovery_tests)
+add_executable(gti_module_query_tests module_query_tests.cpp)
+target_link_libraries(gti_module_query_tests PRIVATE gti_compiler)
+add_test(NAME module_queries COMMAND gti_module_query_tests)
+add_executable(gti_module_identity_tests module_identity_tests.cpp)
+target_link_libraries(gti_module_identity_tests PRIVATE gti_compiler)
+add_test(NAME module_semantic_identity COMMAND gti_module_identity_tests)
+add_executable(gti_module_preamble_tests module_preamble_tests.cpp)
+target_link_libraries(gti_module_preamble_tests PRIVATE gti_compiler)
+add_test(NAME module_preamble_identity COMMAND gti_module_preamble_tests)
+add_test(NAME module_system_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_system_runtime_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(module_system_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME module_initialization_runtime
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_initialization_runtime_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(module_initialization_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME module_cpp_boundary
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_cpp_boundary_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(module_cpp_boundary PROPERTIES TIMEOUT 180)
 if(TARGET gti_lsp)
-  add_test(NAME include_warning_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/include_warning_lsp_test.py"
+  add_test(NAME module_map_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_map_lsp_test.py"
       $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(include_warning_lsp PROPERTIES TIMEOUT 120)
+  set_tests_properties(module_map_lsp PROPERTIES TIMEOUT 90)
+  add_test(NAME module_navigation_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_navigation_lsp_test.py"
+      $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(module_navigation_lsp PROPERTIES TIMEOUT 120)
+  add_test(NAME include_removal_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/include_removal_lsp_test.py"
+      $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(include_removal_lsp PROPERTIES TIMEOUT 120)
 endif()
 
 add_executable(gti_thread_local_syntax_tests thread_local_syntax_tests.cpp)

@@ -11,7 +11,7 @@ from allocation_abort_runtime_test import ABORT_STATUS
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     fixtures = pathlib.Path(__file__).parent / "fixtures"
-    memory = fixtures.parent.parent / "stdlib/std/memory.gti"
+    memory = fixtures.parent.parent / "stdlib/std/detail/memory_core.gti"
     site = next(index for index, line in enumerate(memory.read_text().splitlines(), 1)
                 if "return unique_ptr<T>(gti_internal::allocate_unique_owner" in line)
     with tempfile.TemporaryDirectory(prefix="gti-existing-value-allocation-") as temporary:
@@ -29,7 +29,7 @@ def main():
                 for arguments, expected in (
                         ((), (0, "7\n7\n9\n", "")),
                         (("oom",), (ABORT_STATUS, "",
-                         f"<std/memory>:{site}: runtime error[GTI-R0011]: "
+                         f"<std/detail/memory_core>:{site}: runtime error[GTI-R0011]: "
                          "allocation_failure in unique_owner\n"))):
                     observed = subprocess.run([str(binary), *arguments],
                                               capture_output=True, text=True, timeout=30)

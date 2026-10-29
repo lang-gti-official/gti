@@ -1,6 +1,6 @@
-#include <std/algorithm>
-#include <std/iterator>
-#include <std/vector>
+import std.algorithm;
+import std.iterator;
+import std.vector;
 
 extern "C" {
   void adoption_count_begin();

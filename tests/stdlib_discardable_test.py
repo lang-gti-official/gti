@@ -68,9 +68,9 @@ def main():
         }
         for name, (include, body) in negative.items():
             source = temporary / f"required-{name}.gti"
-            imports = f"#include <std/{include}>\n"
+            imports = f"import std.{include};\n"
             if name == "resource_failure":
-                imports += "#include <std/resource>\n"
+                imports += "import std.resource;\n"
             source.write_text(f"{imports}int main() {{ {body} return 0; }}\n")
             command = [compiler, source, "--emit-cpp", "-o", temporary / f"{name}.cpp"]
             if name == "conditional_update":

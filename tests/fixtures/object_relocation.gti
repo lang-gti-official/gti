@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 
 class Packet {
   std::string text;

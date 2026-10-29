@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 // Native test support supplies one live scalar and releases bytes separately.
 // No GTI automatic owner has a competing cleanup obligation for this object.

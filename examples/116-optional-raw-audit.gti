@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 struct Counter {
   mut int value = 41;
   void increment() mut { this.value += 1; }

@@ -1,8 +1,8 @@
-#include <std/algorithm>
-#include <std/vector>
-#include <std/string>
-#include <std/list>
-#include <std/array>
+import std.algorithm;
+import std.vector;
+import std.string;
+import std.list;
+import std.array;
 
 class witness { public: ~witness() { std::println(99); }  public: witness() = default; };
 class failing_predicate {

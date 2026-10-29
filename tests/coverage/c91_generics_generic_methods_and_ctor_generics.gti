@@ -2,7 +2,7 @@
 // requirements, constructor-local generic parameters with requirements and
 // fixed-array extent inference, and a structural class contract used from a
 // destructor.
-#include <std/vector>
+import std.vector;
 
 concept measurable<T> = requires(T& value) { { value.weight() } -> int32_t; };
 concept stockable<T> = measurable<T> && std::movable<T> && std::vector_element<T>;

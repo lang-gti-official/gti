@@ -1,9 +1,9 @@
+export module numeric;
+
 // C++-familiar API scaffold for <std/numeric>.
-
-#include <std/iterator>
-#include <std/functional>
-
-namespace gti_internal {
+import std.iterator;
+import std.functional;
+export namespace gti_internal {
 T integer_wrapping_mul<T>(T left, T right);
 T integer_saturating_add<T>(T left, T right);
 T integer_saturating_sub<T>(T left, T right);
@@ -13,7 +13,7 @@ bool integer_sub_overflows<T>(T left, T right);
 bool integer_mul_overflows<T>(T left, T right);
 }
 
-namespace std {
+export namespace std {
   constexpr uint64_t MAX_UINT64 = uint64_t(18446744073709551615);
 
   enum class arithmetic_errc {

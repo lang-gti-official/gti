@@ -2,10 +2,10 @@
 // search (find/rfind with positions), substr, trimming, prefix/suffix tests,
 // insert/replace/erase, compare and ordering, plus stoi/stoull/stod and
 // from_chars conversions with positions, bases, and error categories.
-#include <std/string>
-#include <std/map>
-#include <std/charconv>
-#include <std/numeric>
+import std.string;
+import std.map;
+import std.charconv;
+import std.numeric;
 
 bool is_space(char c) { return c == ' ' || c == '\t'; }
 

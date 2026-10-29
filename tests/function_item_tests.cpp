@@ -173,10 +173,10 @@ lang::MirTerminator *functionItemRelayReturn(lang::MirProgram &program) {
 
 void testGenericAndManagedPipeline() {
   const std::string source = R"(
-#include <std/algorithm>
-#include <std/functional>
-#include <std/thread>
-#include <std/vector>
+import std.algorithm;
+import std.functional;
+import std.thread;
+import std.vector;
 
 int main() {
   std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
@@ -569,8 +569,8 @@ int main() {
 
   const lang::FrontendResult storedResult = analyze("function-item-storage.gti",
                                                     R"(
-#include <std/algorithm>
-#include <std/vector>
+import std.algorithm;
+import std.vector;
 void observe(int32_t& value) {}
 int main() {
   mut std::vector<int32_t> values = std::vector<int32_t>({1});
@@ -659,7 +659,7 @@ int main() { auto value = Box(work); return 0; }
 // ambiguous name reports the class name's diagnostic.
 void testAliasConstructorValueArguments() {
   const std::string declarations = R"(
-#include <std/functional>
+import std.functional;
 class Tag {
   int64_t value;
 public:

@@ -61,7 +61,7 @@ def main():
                     assert dependency.is_relative_to(relocated.resolve()), dependency
             run(["codesign", "--verify", file], environment)
         source = root / "consumer.gti"
-        source.write_text('#include <std/string>\nextern "C" { int32_t getpid(); }\n'
+        source.write_text('import std.string;\nextern "C" { int32_t getpid(); }\n'
                           'int main() { std::string text{"portable installed GTI"};\n'
                           'std::println(text.view()); if (getpid() <= 0) { return 1; }\n'
                           'return 0; }\n')
@@ -74,7 +74,7 @@ def main():
         tests.mkdir()
         (tests / "gti.toml").write_text('manifest-version = 1\n[package]\nname = "installed-tests"\n'
                                        'version = "0.1.0"\n[targets.suite]\nkind = "test"\nroot = "tests.gti"\n')
-        (tests / "tests.gti").write_text('#include <std/testing>\n'
+        (tests / "tests.gti").write_text('import std.testing;\n'
             '[[test]] void first() { std::testing::check_eq(2, 2); std::testing::check_ne(2, 3); }\n'
             '[[test]] void second() { std::testing::check_approx(1.0, 1.001, 0.01); '
             'std::testing::check_string_eq("yes", "yes"); }\n')
@@ -95,9 +95,9 @@ def main():
             run_program(parsed, "", environment, root)
         # Resolve an installed interface and its republished legacy unit after
         # relocation, without a source-tree stdlib or an environment override.
-        assert (relocated / "share/gti/stdlib/modules/string.gti").is_file()
+        assert (relocated / "share/gti/stdlib/std/string.gti").is_file()
         source.write_text(source.read_text().replace(
-            '#include <std/string>', 'import std.string;'))
+            'import std.string;', 'import std.string;'))
         run([cli, source, "-o", executable], environment)
         assert "portable installed GTI" in run([executable], environment)
         # The portable aggregate must also resolve entirely from the installation.
@@ -107,7 +107,7 @@ def main():
         assert "portable installed GTI" in run([executable], environment)
         # The owned environment API and its module must work without source
         # paths/overrides after relocation, using only the packaged runtime.
-        source.write_text('import std.environment;\n#include <std/string>\n'
+        source.write_text('import std.environment;\nimport std.string;\n'
                           'int main() { auto result = std::environment::get("GTI_INSTALLED_ENVIRONMENT");\n'
                           'if (!result) { return 1; }\n'
                           'auto value = std::move(result).expect("installed environment lookup");\n'
@@ -152,7 +152,7 @@ def main():
         )
         for filename, _ in iterator_examples:
             (root / filename).write_text((examples / filename).read_text())
-        assert (relocated / "share/gti/stdlib/modules/string_view.gti").is_file()
+        assert (relocated / "share/gti/stdlib/std/string_view.gti").is_file()
         assert (relocated / "share/gti/stdlib/std/string_view.gti").is_file()
         view_module = root / "installed-string-view-module.gti"
         view_module.write_text('''import std.string_view;

@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/panic>
+import std.memory;
+import std.panic;
 
 mut int rollback_trace = 0;
 

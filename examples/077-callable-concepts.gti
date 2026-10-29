@@ -1,7 +1,6 @@
-#include <std/algorithm>
-#include <std/functional>
-#include <std/vector>
-
+import std.algorithm;
+import std.functional;
+import std.vector;
 mut int32_t actions = 0;
 
 class descending {

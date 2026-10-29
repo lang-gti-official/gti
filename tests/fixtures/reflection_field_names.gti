@@ -1,6 +1,6 @@
-#include <std/meta>
-#include <std/string>
-#include <std/vector>
+import std.meta;
+import std.string;
+import std.vector;
 
 struct Player {
   uint32_t health = 100;

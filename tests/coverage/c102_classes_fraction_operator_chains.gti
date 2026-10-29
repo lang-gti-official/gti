@@ -2,7 +2,7 @@
 // compound-assignment operators; long chained expressions mixing operators on
 // class results, comparisons applied directly to operator results, methods on
 // operator results, and an operator used inside a loop accumulator.
-#include <std/format>
+import std.format;
 
 int32_t gcd(int32_t a, int32_t b) {
   mut int32_t x = a < 0 ? 0 - a : a;

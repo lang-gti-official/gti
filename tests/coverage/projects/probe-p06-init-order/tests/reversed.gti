@@ -1,6 +1,6 @@
-#include "../src/b.gti"
-#include "../src/c.gti"
-#include "../src/log.gti"
+import "../src/b.gti";
+import "../src/c.gti";
+import "../src/log.gti";
 
 int main() {
   // b's dependency a first, then b (7, 2), then c (3, 4, 5).

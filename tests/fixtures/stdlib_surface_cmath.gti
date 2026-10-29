@@ -1,4 +1,4 @@
-#include <std/cmath>
+import std.cmath;
 
 bool near(float actual, float expected_value) {
   return std::isfinite(actual) &&

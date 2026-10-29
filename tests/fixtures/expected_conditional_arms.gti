@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // An arm of an Expected-valued conditional may be a callable value
 // invocation (a closure literal, a capturing closure or a callable parameter)

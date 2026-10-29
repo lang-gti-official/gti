@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 class Counter {
 public:
   mut int value;

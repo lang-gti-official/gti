@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/string>
+import std.vector;
+import std.string;
 mut int32_t drops = 0;
 class Owner {
   mut int32_t id;

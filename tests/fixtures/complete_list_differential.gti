@@ -1,5 +1,5 @@
-#include <std/list>
-#include <std/vector>
+import std.list;
+import std.vector;
 int main() {
   mut std::list<int> linked{};
   mut std::vector<int> model{};

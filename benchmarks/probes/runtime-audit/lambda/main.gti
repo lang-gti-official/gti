@@ -1,6 +1,6 @@
-#include <std/algorithm>
-#include <std/string>
-#include <std/vector>
+import std.algorithm;
+import std.string;
+import std.vector;
 int main() {
   mut std::vector<int32_t> values{};
   for (mut int32_t i = 0; i < 1000000; i++) { values.push_back(int32_t((int64_t(i) * int64_t(7919)) % int64_t(10007))); }

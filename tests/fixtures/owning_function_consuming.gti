@@ -1,6 +1,6 @@
-#include <std/functional>
-#include <std/memory>
-#include <std/string>
+import std.functional;
+import std.memory;
+import std.string;
 
 class Increment {
 public:

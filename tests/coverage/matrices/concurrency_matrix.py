@@ -9,9 +9,9 @@ import pathlib, subprocess, sys
 GTI = sys.argv[1] if len(sys.argv) > 1 else "/private/tmp/gti-cov/build/gti"
 OUT = pathlib.Path("/tmp/concmx"); OUT.mkdir(exist_ok=True)
 
-HEAD = """#include <std/thread>
-#include <std/vector>
-#include <std/string>
+HEAD = """import std.thread;
+import std.vector;
+import std.string;
 
 class Res { mut int32_t n = 0; public: Res(int32_t n) : n(n) {} int32_t get() { return this.n; } };
 """

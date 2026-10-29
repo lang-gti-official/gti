@@ -1,6 +1,7 @@
-#include <std/cstdio>
+export module network;
 
-enum class NetworkLoadError {
+import std.cstdio;
+export enum class NetworkLoadError {
   open_failed,
   read_failed,
   close_failed,
@@ -10,7 +11,7 @@ enum class NetworkLoadError {
   invalid_travel_time,
 };
 
-class TransitNetwork {
+export class TransitNetwork {
   mut uint64_t travel_minutes[64] = {};
   mut uint64_t stored_links = 0;
 
@@ -32,7 +33,7 @@ public:
   TransitNetwork() = default;
 };
 
-class EdgeRecord {
+export class EdgeRecord {
   mut uint64_t origin = 0;
   mut uint64_t destination = 0;
   mut uint64_t minutes = 0;
@@ -105,7 +106,7 @@ public:
   EdgeRecord() = default;
 };
 
-expected<uint64_t, NetworkLoadError> load_network(std::string_view path, mut TransitNetwork & network) {
+export expected<uint64_t, NetworkLoadError> load_network(std::string_view path, mut TransitNetwork & network) {
   mut auto opened = std::fopen(path, "r");
   if (!opened) {
     return unexpected(NetworkLoadError::open_failed);

@@ -1,9 +1,9 @@
-#include <std/forward_list>
-#include <std/memory>
-#include <std/iterator>
-#include <std/algorithm>
-#include <std/array>
-#include <std/string>
+import std.forward_list;
+import std.memory;
+import std.iterator;
+import std.algorithm;
+import std.array;
+import std.string;
 
 void prove_forward<I, S>(I first, S last)
     requires std::forward_iterator<I> && std::sentinel_for<S, I> {}

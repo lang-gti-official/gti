@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/string>
+import std.vector;
+import std.string;
 
 // A borrowed receiver reached through a reference parameter and field path is
 // staged before its conditional argument, whose checked conversions branch

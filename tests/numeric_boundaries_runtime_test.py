@@ -66,7 +66,7 @@ def main():
                                              "std::lcm<double>(1.0d, 2.0d)",
                                              "std::midpoint<bool>(true, false)")):
             invalid = root / f"invalid-{index}.gti"
-            invalid.write_text(f"#include <std/numeric>\nint main() {{ {expression}; return 0; }}\n")
+            invalid.write_text(f"import std.numeric;\nint main() {{ {expression}; return 0; }}\n")
             artifact = root / f"invalid-{index}.cpp"
             result = run([compiler, invalid, "--emit-cpp", "-o", artifact])
             assert result.returncode == 65 and "error[GTI-S" in result.stderr, result

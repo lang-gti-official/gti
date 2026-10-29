@@ -1,7 +1,8 @@
-#include <std/vector>
+export module inventory;
+import std.vector;
 
 namespace inv {
-  class Inventory {
+  export class Inventory {
     mut std::vector<int> counts = std::vector<int>();
 
   public:

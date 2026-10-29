@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 struct EntryRecord { int code = 7;  public: EntryRecord() = default; };
 
 // The allocation owns the address independently of the storage handle's place.

@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 // An observer does not extend the payload lifetime. Keep the result of lock()
 // alive for as long as any reference borrowed from it is needed.
 [[no_transfer, no_share]] class Message {

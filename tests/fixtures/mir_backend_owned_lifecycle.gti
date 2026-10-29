@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 mut int32_t close_bits = 0;
 mut int32_t first_close = 0;

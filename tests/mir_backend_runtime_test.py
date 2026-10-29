@@ -331,7 +331,7 @@ def main() -> int:
             return 1
 
     generic_member_source = (
-        "#include <std/vector>\n"
+        "import std.vector;\n"
         "int main() {\n"
         "  mut std::vector<int32_t> values = std::vector<int32_t>();\n"
         "  values.push_back(7);\n"

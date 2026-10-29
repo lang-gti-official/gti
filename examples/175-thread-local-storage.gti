@@ -1,10 +1,9 @@
 // Build with --execution-profile concurrent. Every thread owns its state;
 // workers need no mutex to update their own thread-local objects.
-#include <std/atomic>
-#include <std/format>
-#include <std/thread>
-#include <std/string>
-
+import std.atomic;
+import std.format;
+import std.thread;
+import std.string;
 class ThreadState {
   std::string label = std::string("thread state");
   mut int visits = 0;

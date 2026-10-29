@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // Expected<Class, E> call results whose success class has no default
 // constructor, published without value-initializing the Expected: directly

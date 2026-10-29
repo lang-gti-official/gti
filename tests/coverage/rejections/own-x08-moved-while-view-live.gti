@@ -1,7 +1,7 @@
 // INVALID: the owner of a live string_view is moved into a vector while the
 // view is still used afterwards in a loop.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 int main() {
   mut std::vector<std::string> sink{};

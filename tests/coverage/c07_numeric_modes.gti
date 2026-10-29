@@ -1,7 +1,7 @@
 // Defined integer arithmetic modes, gcd/lcm, accumulate and lerp.
-#include <std/numeric>
-#include <std/string>
-#include <std/vector>
+import std.numeric;
+import std.string;
+import std.vector;
 
 int main() {
   int32_t w = std::wrapping_add(int32_t(2147483647), int32_t(1));

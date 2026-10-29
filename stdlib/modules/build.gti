@@ -1,3 +1,0 @@
-// Module std.build: the public surface of <std/build>.
-export module build;
-export #include <std/build>

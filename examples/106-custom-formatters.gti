@@ -1,6 +1,5 @@
-#include <std/format>
-#include <std/string>
-
+import std.format;
+import std.string;
 namespace app {
 struct AssetId { uint64_t value; };
 struct Point { int x; int y; };

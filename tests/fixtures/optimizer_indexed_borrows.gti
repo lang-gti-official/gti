@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 class Witness { public: int unrelated = 2147483647;  public: Witness() = default; };
 

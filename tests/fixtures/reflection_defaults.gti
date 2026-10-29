@@ -2,9 +2,9 @@
 // constant and `default_value()` evaluates a fresh copy of the declared
 // initializer where it is called, for literals, constructor calls, nested
 // brace initializers and containers, inside and outside `constexpr for`.
-#include <std/meta>
-#include <std/string>
-#include <std/vector>
+import std.meta;
+import std.string;
+import std.vector;
 
 struct point {
   int32_t x = 0;

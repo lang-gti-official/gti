@@ -52,7 +52,7 @@ void forged(const lang::FrontendResult &frontend, lang::IntrinsicKind kind,
 
 int main() {
   const auto frontend = analyze(R"(
-#include <std/memory>
+import std.memory;
 class ByteOwner {
   char bytes[2] = {'x', '\0'};
 public:

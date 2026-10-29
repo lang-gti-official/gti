@@ -2,8 +2,8 @@
 // and expected propagation: forwarding a mixed pack (including a unique
 // owner) to emplace_back, a value-generic ring of unique owners, and `?`
 // inside a loop of a generic function.
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 
 mut int32_t destroyed = 0;
 

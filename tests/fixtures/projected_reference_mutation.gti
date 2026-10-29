@@ -1,5 +1,5 @@
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 
 // A mutable range over a field reached through a mutable smart-pointer
 // reference parameter writes each element in place: the hidden range retains

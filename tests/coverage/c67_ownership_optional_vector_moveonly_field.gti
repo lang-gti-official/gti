@@ -1,11 +1,11 @@
 // Move-only records inside a vector inside an optional class field:
 // emplace, push through value(), mutable range over a field projection,
 // std::exchange to take the field out, and reset.
-#include <std/memory>
-#include <std/optional>
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.memory;
+import std.optional;
+import std.string;
+import std.utility;
+import std.vector;
 
 class Item {
   std::string name_;

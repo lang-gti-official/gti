@@ -1,9 +1,8 @@
-#include <std/algorithm>
-#include <std/array>
-#include <std/list>
-#include <std/set>
-#include <std/vector>
-
+import std.algorithm;
+import std.array;
+import std.list;
+import std.set;
+import std.vector;
 int main() {
   // Sequence search is generic; the returned cursor keeps its owner borrowed.
   std::list<int> priorities = {2, 4, 4, 9};

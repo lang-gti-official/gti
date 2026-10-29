@@ -28,7 +28,7 @@ def run(command, *, timeout=180):
 
 
 def reject_invalid(compiler, root):
-    includes = "#include <std/memory>\n#include <std/resource>\n#include <std/simd>\n"
+    includes = "import std.memory;\nimport std.resource;\nimport std.simd;\n"
     storage = """std::allocator allocator{};
   mut auto result = allocator.try_storage<int>(std::size_t(3));
   if (!result) { return 1; }

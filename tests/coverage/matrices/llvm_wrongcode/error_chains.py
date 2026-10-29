@@ -6,12 +6,12 @@ and_then chains, optional of owning classes, early exits that must clean up
 locals created before the failure, and loops that stop at the first error.
 """
 
-PRELUDE = """#include <std/string>
-#include <std/vector>
-#include <std/optional>
-#include <std/format>
-#include <std/utility>
-#include <std/atomic>
+PRELUDE = """import std.string;
+import std.vector;
+import std.optional;
+import std.format;
+import std.utility;
+import std.atomic;
 std::atomic<int32_t> live{0};
 class Res {
   int32_t id;

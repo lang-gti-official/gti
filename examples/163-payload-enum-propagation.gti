@@ -2,9 +2,8 @@
 // template lets `?` take the value out of a `result<T, E>`, or return the
 // failure from the enclosing function as it is. Owning payloads such as
 // strings move out; nothing is copied.
-#include <std/panic>
-#include <std/string>
-
+import std.panic;
+import std.string;
 enum class result<T, E> {
   ok(T value),
   failed(E error),

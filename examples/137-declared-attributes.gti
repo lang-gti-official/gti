@@ -2,10 +2,9 @@
 // types with constant arguments, and <std/meta> hands those constants to
 // ordinary GTI code. The compiler stores them and gives them no meaning; every
 // policy below (key renaming, skipping, field widths) is written here.
-#include <std/meta>
-#include <std/string>
-#include <std/vector>
-
+import std.meta;
+import std.string;
+import std.vector;
 namespace enc {
 [[attribute]] struct key { std::string_view name = "";  public: key() = default; };
 [[attribute]] struct skip { public: skip() = default; };

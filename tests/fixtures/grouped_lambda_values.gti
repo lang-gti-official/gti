@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 // Parentheses around a lambda create no second closure: each grouped value
 // below is its producer's exact closure, binding or argument.

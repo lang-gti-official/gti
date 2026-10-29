@@ -1,3 +1,4 @@
+export module global_b;
 namespace config {
-  int limit = 20;
+  export int limit = 20;
 }

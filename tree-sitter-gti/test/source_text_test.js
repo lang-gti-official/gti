@@ -62,6 +62,17 @@ try {
   );
   requireAccepted(valid);
 
+  // Removed dependency syntax must not remain a successful editor parse.
+  for (const source of [
+    '#include "legacy.gti"\n',
+    '#include <std/vector>\n',
+    'export module api;\nexport #include "legacy.gti"\n',
+  ]) {
+    const legacyInclude = path.join(temporary, "legacy-include.gti");
+    fs.writeFileSync(legacyInclude, source, "utf8");
+    requireRejected(legacyInclude);
+  }
+
   const misplacedBom = path.join(temporary, "misplaced-bom.gti");
   fs.writeFileSync(misplacedBom, "int \ufeffvalue = 0;\n", "utf8");
   requireRejected(misplacedBom);

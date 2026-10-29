@@ -64,7 +64,7 @@ def classify(path):
 hard = []
 for name, body in CASES.items():
     src = OUT / f"{name}.gti"
-    src.write_text("#include <std/string>\n"
+    src.write_text("import std.string;\n"
                    "class Anchor { public: int32_t id() { return 0; } };\n"
                    f"int main() {{ {body} return 0; }}\n")
     try:

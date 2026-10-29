@@ -1,9 +1,10 @@
-#include <std/string>
-#include <std/random>
-#include <std/vector>
-#include <std/format>
+export module random;
 
-expected<void, std::string> random_test() {
+import std.string;
+import std.random;
+import std.vector;
+import std.format;
+export expected<void, std::string> random_test() {
   mut std::random_device rd{};
   mut std::random_engine engine{uint64_t(rd().value())};
 

@@ -204,15 +204,15 @@ uint alias_unsigned_overflow = 4294967296;
          "fail during lexing");
 
   const std::string formatted =
-      lang::Formatter().format("#include <std/uint64>\n"
+      lang::Formatter().format("import \"uint64.gti\";\n"
                                "int8 small=1;int64 large=small;uint8 byte=0xFF;"
                                "uint64 wide=0b1010;");
-  expect(formatted == "#include <std/uint64>\n"
+  expect(formatted == "import \"uint64.gti\";\n"
                       "int8_t small = 1;\nint64_t large = small;\n"
                       "uint8_t byte = 0xFF;\nuint64_t wide = 0b1010;\n" &&
              lang::Formatter().format(formatted) == formatted,
          "formatter should canonicalize legacy fixed-width aliases, preserve "
-         "include paths and prefixed integer literals, and remain idempotent");
+         "import paths and prefixed integer literals, and remain idempotent");
 }
 
 void testContextualSignedIntegerLiterals() {
@@ -655,7 +655,7 @@ int main() {
              migration->fixes.empty() && migration->hints.size() == 2 &&
              migration->message.find("std::string") != std::string::npos &&
              migration->message.find("std::string_view") != std::string::npos &&
-             migration->hints.front().find("#include <std/string>") !=
+             migration->hints.front().find("import std.string;") !=
                  std::string::npos,
          "obsolete string declarations should explain the owning and "
          "non-owning replacements without guessing ownership intent");
@@ -673,7 +673,7 @@ void testStandardString() {
       std::filesystem::temp_directory_path() / "gti-standard-string/main.gti";
   const lang::FrontendResult valid = lang::Frontend().analyze(
       entry, R"(
-#include <std/string>
+import std.string;
 
 int main() {
   std::string_view literal = "engine";
@@ -739,7 +739,7 @@ int main() {
 
   const lang::FrontendResult invalidCopy = lang::Frontend().analyze(
       entry, R"(
-#include <std/string>
+import std.string;
 int main() {
   std::string original = std::string("text");
   std::string copied = original;
@@ -757,7 +757,7 @@ int main() {
          "than hidden allocation");
 
   const std::string constructorOwnershipSource = R"(
-#include <std/string>
+import std.string;
 class Path {
 public:
   Path(std::string value) {}
@@ -818,8 +818,8 @@ int main() {
 
   const lang::FrontendResult formattedOutput = lang::Frontend().analyze(
       entry, R"(
-#include <std/format>
-#include <std/string>
+import std.format;
+import std.string;
 int main() {
   mut auto formatted =
       std::try_format("left={} right={} count={}", int8_t(-8), uint64_t(9), 3);
@@ -2313,9 +2313,8 @@ int main() {
        "GTI-S2057", "limit"}};
   for (const auto &test : rejections) {
     const auto invalid = lang::Frontend().analyze(
-        "dependent-constexpr-invalid.gti",
-        "#include <std/string>\n" + test.source, {standardLibraryPrelude()}, {},
-        {standardLibraryRoot()});
+        "dependent-constexpr-invalid.gti", "import std.string;\n" + test.source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     const bool found =
         std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
                     [&](const auto &d) {
@@ -2456,7 +2455,7 @@ void testConstexprOperators() {
                test.source);
   }
   const std::string boundsSource =
-      "#include <std/array>\nconstexpr std::array<int, 2> a = std::array<int, "
+      "import std.array;\nconstexpr std::array<int, 2> a = std::array<int, "
       "2>({1, 2});\n"
       "constexpr int invalid = a[2];\nint main() { return 0; }";
   const auto bounds = lang::Frontend().analyze(
@@ -2758,7 +2757,7 @@ int main() { Table table = build(4); return table.total() + array_work(4) - 68; 
 
   const auto constructorUnsupported = lang::Frontend().analyze(
       "constexpr-mutation-constructor-invalid.gti", R"(
-#include <std/numeric>
+import std.numeric;
 int runtime_only(int value) { return value + 1; }
 struct Item {
   mut int value;
@@ -2945,7 +2944,7 @@ static_assert(fail_cleanup() == 0);
          "assertion");
 
   const std::string orderSource = R"(
-#include <std/memory>
+import std.memory;
 struct First {
   constexpr First() {}
   ~First() { int zero = 0; int failure = 11 / zero; }
@@ -3650,7 +3649,7 @@ void testConstexprReadOnlyReferences() {
       {"constexpr int bad(std::string& owner) { return int(owner.size()); }",
        "GTI-S2057", "parameters must be", "owner)", 5}};
   const std::string prefix =
-      "#include <std/array>\n#include <std/string>\n"
+      "import std.array;\nimport std.string;\n"
       "constexpr int inspect(int& value) { return value + 1; }\n"
       "constexpr std::array<int, 3> values = std::array<int, 3>({1,2,3});\n";
   for (const auto &test : rejections) {
@@ -3762,8 +3761,7 @@ void testConstexprLibrary() {
   lang::FrontendWorkMetrics chronoLibraryMetrics;
   const auto chronoLibrary =
       lang::Frontend({.workMetrics = &chronoLibraryMetrics})
-          .analyze(chronoPath,
-                   "#include <std/chrono>\nint main() { return 0; }",
+          .analyze(chronoPath, "import std.chrono;\nint main() { return 0; }",
                    {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::size_t fixtureExecutions =
       chronoMetrics.constexprMirExecutions -
@@ -3792,7 +3790,7 @@ void testConstexprLibrary() {
         "if (n.count() == int64_t(0)) { return 0; } return depth(i - 1); } "
         "constexpr int value = depth(100);"}) {
     const auto invalid = lang::Frontend().analyze(
-        "constexpr-chrono-invalid.gti", "#include <std/chrono>\n" + source,
+        "constexpr-chrono-invalid.gti", "import std.chrono;\n" + source,
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalid.canGenerateCode() &&
                hasDiagnosticCode(invalid.diagnostics, "GTI-S2057"),
@@ -3829,7 +3827,7 @@ void testConstexprLibrary() {
 
   const auto runtime = lang::Frontend().analyze(
       "constexpr-runtime-only-instance.gti", R"(
-#include <std/string>
+import std.string;
 struct Holder<T> {
   T value;
   constexpr Holder(T input) : value(std::move(input)) {}
@@ -3864,8 +3862,8 @@ int main() {
         "constexpr int value = inspect(std::string(\"a\"));"}) {
     const auto invalid = lang::Frontend().analyze(
         "constexpr-library-invalid.gti",
-        "#include <std/string>\n#include <std/numeric>\n#include "
-        "<std/utility>\n" +
+        "import std.string;\nimport std.numeric;\n"
+        "import std.utility;\n" +
             body + "\nint main() { return 0; }\n",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalid.semanticValid &&
@@ -3878,7 +3876,7 @@ int main() {
   }
 
   const std::string invalidSignature =
-      "#include <std/string>\nconstexpr std::string impossible() { "
+      "import std.string;\nconstexpr std::string impossible() { "
       "return std::string(\"asset\"); }\nint main() { return 0; }";
   const auto signature = lang::Frontend().analyze(
       "constexpr-invalid-signature.gti", invalidSignature,
@@ -3910,7 +3908,7 @@ int main() {
         "int(borrowed.size());"}) {
     const auto invalid = lang::Frontend().analyze(
         "constexpr-runtime-ownership.gti",
-        "#include <std/string>\nconstexpr T relay<T>(T value) { "
+        "import std.string;\nconstexpr T relay<T>(T value) { "
         "return std::move(value); }\nint main() { " +
             body + " }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -3977,7 +3975,7 @@ int selected() {
   const auto library =
       lang::Frontend({.workMetrics = &libraryMetrics})
           .analyze("constexpr-library-array.gti", R"(
-#include <std/array>
+import std.array;
 constexpr std::array<int, 3> make_values(int seed) {
   return std::array<int, 3>({seed, seed + 1, seed + 2});
 }
@@ -5403,23 +5401,25 @@ public:
   };
   const lang::FrontendResult separateUnits = lang::Frontend().analyze(
       entry,
-      "#include \"left.gti\"\n#include \"right.gti\"\n"
+      "import \"left.gti\";\nimport \"right.gti\";\n"
       "int main() { return left_value() + right_value() - 3; }\n",
       {},
       {{canonical(left),
-        "using SharedName = int; static int value = 1; "
+        "export module left;\nusing SharedName = int; static int value = 1; "
         "static int helper() { return value; } "
-        "int left_value() { SharedName local = helper(); return local; }\n"},
-       {canonical(right), "static int SharedName = 2; static int value = 2; "
+        "export int left_value() { SharedName local = helper(); return local; "
+        "}\n"},
+       {canonical(right), "export module right;\nstatic int SharedName = 2; "
+                          "static int value = 2; "
                           "static int helper() { return value; } "
-                          "int right_value() { return helper(); }\n"}});
+                          "export int right_value() { return helper(); }\n"}});
   expect(separateUnits.canGenerateCode() && separateUnits.diagnostics.empty(),
          "different source units should isolate static names from sibling "
          "symbols and aliases");
 
   const lang::FrontendResult hiddenStatic = lang::Frontend().analyze(
-      entry, "#include \"left.gti\"\nint main() { return value; }\n", {},
-      {{canonical(left), "static int value = 1;\n"}});
+      entry, "import \"left.gti\";\nint main() { return value; }\n", {},
+      {{canonical(left), "export module left;\nstatic int value = 1;\n"}});
   expect(!hiddenStatic.semanticValid &&
              hasDiagnostic(hiddenStatic.diagnostics, "Undefined name 'value'"),
          "namespace static declarations should not leak into includers");
@@ -5934,18 +5934,20 @@ int main() { return selected_value() + local_state(); }
     const std::string dependencyKey = fixtureSourcePath(dependency).string();
     const lang::FrontendResult includeOrdered = lang::Frontend().analyze(
         entry,
-        "#define BEFORE_INCLUDE\n"
-        "#include \"flags.gti\"\n"
-        "#ifdef FROM_INCLUDE\n"
-        "int main() { return included_value(); }\n"
-        "#else\n#error \"include flags were not visible\"\n#endif\n",
-        {},
-        {{dependencyKey, "#ifdef BEFORE_INCLUDE\n#define FROM_INCLUDE\n#endif\n"
-                         "int included_value() { return 0; }\n"}});
-    expect(includeOrdered.canGenerateCode() &&
-               includeOrdered.diagnostics.empty(),
-           "defines before an include should enter it and active definitions "
-           "from the included unit should remain visible afterwards");
+        "#define BEFORE_IMPORT\n"
+        "import \"flags.gti\";\n"
+        "#ifdef FROM_IMPORT\n#error \"module flags escaped\"\n#endif\n"
+        "int main() { return imported_value(); }\n",
+        {}, {{dependencyKey, R"GTIMODULE(export module flags;
+#ifdef BEFORE_IMPORT
+#error "importer flags entered module"
+#endif
+#define FROM_IMPORT
+export int imported_value() { return 0; }
+)GTIMODULE"}});
+    expect(
+        includeOrdered.canGenerateCode(),
+        "source-local configuration does not propagate across module imports");
 
     const lang::FrontendResult replacement = lang::Frontend().analyze(
         "configuration-replacement.gti",

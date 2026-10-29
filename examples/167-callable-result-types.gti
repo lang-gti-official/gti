@@ -1,7 +1,6 @@
 // Ordinary source wrappers can name a mapper's result without a builtin
 // combinator or repeating the result type at the call site.
-#include <std/meta>
-
+import std.meta;
 class Box<T> {
   mut T value;
 public:

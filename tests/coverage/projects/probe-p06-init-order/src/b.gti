@@ -1,8 +1,9 @@
-#include "a.gti"
-#include "log.gti"
+export module b;
+import "a.gti";
+import "log.gti";
 
 static int b_hidden = trace::record(7);
-int b_value = trace::record(2);
-int b_copy = a_value + 40;
+export int b_value = trace::record(2);
+export int b_copy = a_value + 40;
 
-int b_hidden_value() { return b_hidden; }
+export int b_hidden_value() { return b_hidden; }

@@ -1,6 +1,6 @@
 // A30: assigning a consuming (&&) call result to an existing cleanup-owning binding is a
 // backend ICE.
-#include <std/string>
+import std.string;
 class Builder {
   mut std::string name_;
 public:

@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 std::vector<T> filtered<T, Predicate>(std::vector<T>& source, mut Predicate keep)
   requires std::copyable<T> && std::vector_element<T> {
   mut std::vector<T> result = std::vector<T>();

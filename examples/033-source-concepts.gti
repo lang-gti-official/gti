@@ -1,5 +1,4 @@
-#include <std/vector>
-
+import std.vector;
 concept signed_value<T> =
     std::signed_numeric<T> && std::copyable<T>;
 

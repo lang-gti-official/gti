@@ -17,7 +17,7 @@ def events(*identities):
 
 
 def negative_sources(support):
-    headers = f'#include "{support.name}"\n#include <std/vector>\n#include <std/string>\n#include <std/panic>\n'
+    headers = f'import "{support.name}";\nimport std.vector;\nimport std.string;\nimport std.panic;\n'
     setup = """mut std::vector<UserDualElement> first = {UserDualElement(1, std::string("left"))};
 mut std::vector<UserDualElement> second = {UserDualElement(2, std::string("right"))};
 mut auto range = UserDualRange(first.as_span(), second.as_span());

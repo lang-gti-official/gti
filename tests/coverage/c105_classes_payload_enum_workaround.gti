@@ -6,9 +6,9 @@
 // value bindings, read-only `auto&` and mutable `mut auto&` payload bindings,
 // exhaustive switches without trailing return, switching on reference
 // parameters, a vector of payload enums inside a class, and factory returns.
-#include <std/format>
-#include <std/string>
-#include <std/vector>
+import std.format;
+import std.string;
+import std.vector;
 
 static mut int32_t label_drops = 0;
 

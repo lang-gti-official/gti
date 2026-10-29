@@ -1,8 +1,8 @@
-#include <std/algorithm>
-#include <std/numeric>
-#include <std/cmath>
-#include <std/utility>
-#include <std/string>
+import std.algorithm;
+import std.numeric;
+import std.cmath;
+import std.utility;
+import std.string;
 
 constexpr T identity<T>(T value) { return std::move(value); }
 

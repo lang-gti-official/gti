@@ -2,8 +2,8 @@
 // receiver-derived returns from inside a loop, `?` relayed through a
 // method and a free function, `?` inside a loop, `.expect` on fresh and
 // moved carriers, carrier copies, and owner mutation after the last use.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 enum class find_errc { missing, disabled };
 

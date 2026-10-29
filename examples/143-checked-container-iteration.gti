@@ -1,9 +1,8 @@
-#include <std/forward_list>
-#include <std/vector>
-#include <std/list>
-#include <std/map>
-#include <std/set>
-
+import std.forward_list;
+import std.vector;
+import std.list;
+import std.map;
+import std.set;
 int main() {
   // Shared cursors are independently positioned copies, but both retain the
   // owner. Changing or moving the owner while either is used is rejected.

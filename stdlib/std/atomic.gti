@@ -1,6 +1,7 @@
-#include <std/meta>
+export module atomic;
 
-namespace std {
+import std.meta;
+export namespace std {
 /// A scalar domain with a stable public atomic contract: bool and the
 /// fixed-width signed and unsigned integer types.
 concept atomic_scalar<T> =
@@ -55,7 +56,7 @@ public:
 };
 }
 
-namespace gti_internal {
+export namespace gti_internal {
 /// Compiler-owned scalar atomic representation. The declaration identity, not
 /// this source spelling, selects the backend capability.
 class atomic_storage<std::atomic_scalar T> {
@@ -134,7 +135,7 @@ bool atomic_compare_exchange_seq_cst_acquire<std::atomic_scalar T>(
     mut T& observed);
 }
 
-namespace std {
+export namespace std {
 /// A share-safe atomic bool or fixed-width integer.
 ///
 /// Operations without an order argument are sequentially consistent. Explicit

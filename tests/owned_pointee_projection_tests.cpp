@@ -123,15 +123,17 @@ void checkProjectionMutations(const lang::FrontendResult &frontend,
 lang::FrontendResult trusted(std::string name, const std::string &source) {
   const auto root =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
-  const auto path = std::filesystem::temp_directory_path() / name;
+  const auto path = root / name;
+  const std::string text =
+      "import \"std/detail/memory_capabilities.gti\"; " + source;
   const auto key = std::filesystem::weakly_canonical(path).string();
-  return lang::Frontend().analyze(path, source, {root / "prelude.gti", path},
-                                  {{key, source}}, {root});
+  return lang::Frontend().analyze(path, text, {root / "prelude.gti", path},
+                                  {{key, text}}, {root});
 }
 
 void checkSourceDefinedIdentity() {
   const auto frontend = trusted("gti-owned-pointee-renamed.gti", R"gti(
-#include <std/memory>
+import std.memory;
 class Item { public: int read() { return 4; }  public: Item() = default; };
 class UnrelatedName<T> {
   mut gti_internal::unique_owner<T> resource = nullptr;

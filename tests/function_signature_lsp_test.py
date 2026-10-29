@@ -5,7 +5,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import without_include_advice, LspSession
+from lsp_smoke_test import LspSession
 
 
 def main():
@@ -36,7 +36,7 @@ def main():
                 and item["params"].get("uri") == uri
                 and item["params"].get("version") == version
             )
-            return without_include_advice(reply["params"]["diagnostics"])
+            return reply["params"]["diagnostics"]
 
         def change(version, text):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
@@ -199,7 +199,7 @@ def main():
             assert "Callback<void()>" in str(selected), selected
 
             borrowed = (
-                "#include <std/functional>\n"
+                "import std.functional;\n"
                 "struct Read { int operator()(int& value) { return value; }  public: Read() = default; };\n"
                 "int main() {\n"
                 "  Read reader{};\n"
@@ -220,7 +220,7 @@ def main():
             change(24, borrowed)
             assert not diagnostics(24)
             stored_item = (
-                "#include <std/functional>\n"
+                "import std.functional;\n"
                 "int selected(int value) { return value; }\n"
                 "int main() {\n"
                 "  auto item = selected;\n"
@@ -301,7 +301,7 @@ def main():
             change(36, family)
             assert not diagnostics(36)
             mutable_arguments = (
-                "#include <std/functional>\n"
+                "import std.functional;\n"
                 "void change(mut int& value) { value++; }\n"
                 "int main() {\n"
                 "  std::function<void(mut int&)> callback{change};\n"
@@ -335,7 +335,7 @@ def main():
             change(41, formatted)
             assert not diagnostics(41)
             consuming_virtual = (
-                "#include <std/memory>\n"
+                "import std.memory;\n"
                 "interface Operation { int operator()(int value) &&; };\n"
                 "class Increment : public Operation { public:\n"
                 "  int operator()(int value) && override { return value + 1; }\n"
@@ -360,7 +360,7 @@ def main():
             change(44, consuming_virtual)
             assert not diagnostics(44)
             nested_callback = (
-                "#include <std/memory>\n"
+                "import std.memory;\n"
                 "int combine(int left, int right) { return left + right; }\n"
                 "int invoke<T>(T callback) {\n"
                 "  return combine(std::move(callback)(3), 2);\n"
@@ -384,7 +384,7 @@ def main():
             change(47, nested_callback)
             assert not diagnostics(47)
             consuming_wrapper = (
-                "#include <std/functional>\n"
+                "import std.functional;\n"
                 "int main() {\n"
                 "  std::function<int(int) &&> callback{[](int value) -> int { return value; }};\n"
                 "  return std::move(callback)(3);\n"

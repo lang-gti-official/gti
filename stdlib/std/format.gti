@@ -1,10 +1,12 @@
-#include <std/charconv>
-#include <std/string>
-#include <std/detail/panic>
+export module format;
+import "detail/charconv_parse.gti";
 
+import std.charconv;
+import std.string;
+import "detail/panic.gti";
 namespace gti_internal {
 namespace runtime {
-extern "C" {
+export extern "C" {
 uint32_t gti_rt_format_f32_v1(
     float value, uint32_t format, int32_t precision, uint32_t flags,
     uint32_t fill, uint32_t alignment, uint32_t sign, uint32_t zero_pad,
@@ -20,7 +22,7 @@ uint32_t gti_rt_format_f64_v1(double value, uint32_t format,
 }
 
 namespace std {
-enum class format_errc {
+export enum class format_errc {
   invalid_format,
   argument_count_mismatch,
   unsupported_argument,
@@ -28,7 +30,7 @@ enum class format_errc {
 
 /// Formatting errors and stdout submission failure are distinct recoverable
 /// outcomes. Allocation still follows GTI's defined allocation-failure policy.
-enum class print_errc {
+export enum class print_errc {
   invalid_format,
   argument_count_mismatch,
   unsupported_argument,
@@ -37,7 +39,7 @@ enum class print_errc {
 
 /// Parsed replacement-field presentation. A zero type means the default
 /// presentation for the selected argument type.
-struct format_spec {
+export struct format_spec {
   mut char fill;
   mut char alignment;
   mut char sign;
@@ -63,7 +65,7 @@ struct enum_underlying_probe<T, U> {
 /// Specialize this class for an application-owned type. A specialization
 /// supplies a public safe read-only format method with the formattable contract.
 /// The primary formats integral enums using their exact underlying integer.
-class formatter<T> {
+export class formatter<T> {
 public:
   formatter() = default;
   expected<void, format_errc> format(T& value, mut string& output,
@@ -112,7 +114,7 @@ private:
   }
 };
 
-concept formattable<T> =
+export concept formattable<T> =
     std::default_initializable<formatter<T>> &&
     requires(formatter<T>& writer, T& value, mut string& output, format_spec& spec) {
       { writer.format(value, output, spec) } -> expected<void, format_errc>;
@@ -706,7 +708,7 @@ void append_format_literal(mut string& output, string_view pattern,
 }
 }
 
-class std::formatter<int8_t> {
+export class std::formatter<int8_t> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(int8_t& value, mut std::string& output, std::format_spec& spec) {
@@ -720,7 +722,7 @@ private:
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::formatter<uint8_t> {
+export class std::formatter<uint8_t> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(uint8_t& value, mut std::string& output, std::format_spec& spec) {
@@ -734,7 +736,7 @@ private:
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::formatter<int16_t> {
+export class std::formatter<int16_t> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(int16_t& value, mut std::string& output, std::format_spec& spec) {
@@ -748,7 +750,7 @@ private:
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::formatter<uint16_t> {
+export class std::formatter<uint16_t> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(uint16_t& value, mut std::string& output, std::format_spec& spec) {
@@ -762,7 +764,7 @@ private:
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::formatter<int32_t> {
+export class std::formatter<int32_t> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(int32_t& value, mut std::string& output, std::format_spec& spec) {
@@ -776,7 +778,7 @@ private:
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::formatter<uint32_t> {
+export class std::formatter<uint32_t> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(uint32_t& value, mut std::string& output, std::format_spec& spec) {
@@ -790,7 +792,7 @@ private:
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::formatter<int64_t> {
+export class std::formatter<int64_t> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(int64_t& value, mut std::string& output, std::format_spec& spec) {
@@ -804,7 +806,7 @@ private:
     return std::detail::append_integral(output, value, spec);
   }
 };
-class std::formatter<uint64_t> {
+export class std::formatter<uint64_t> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(uint64_t& value, mut std::string& output, std::format_spec& spec) {
@@ -819,7 +821,7 @@ private:
   }
 };
 
-class std::formatter<bool> {
+export class std::formatter<bool> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(bool& value, mut std::string& output, std::format_spec& spec) {
@@ -842,7 +844,7 @@ private:
   }
 };
 
-class std::formatter<char> {
+export class std::formatter<char> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(char& value, mut std::string& output, std::format_spec& spec) {
@@ -866,7 +868,7 @@ private:
   }
 };
 
-class std::formatter<float> {
+export class std::formatter<float> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(float& value, mut std::string& output, std::format_spec& spec) {
@@ -881,7 +883,7 @@ private:
   }
 };
 
-class std::formatter<double> {
+export class std::formatter<double> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(double& value, mut std::string& output, std::format_spec& spec) {
@@ -896,7 +898,7 @@ private:
   }
 };
 
-class std::formatter<std::string_view> {
+export class std::formatter<std::string_view> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(std::string_view& value, mut std::string& output, std::format_spec& spec) {
@@ -916,7 +918,7 @@ private:
   }
 };
 
-class std::formatter<std::string> {
+export class std::formatter<std::string> {
 public:
   formatter() = default;
   expected<void, std::format_errc> format(std::string& value, mut std::string& output, std::format_spec& spec) {
@@ -937,7 +939,7 @@ private:
 };
 
 namespace std {
-expected<string, format_errc> try_format(string_view pattern) {
+export expected<string, format_errc> try_format(string_view pattern) {
   expected<void, format_errc> validation =
       detail::validate_format_pattern(pattern, size_t(0));
   if (!validation) {
@@ -953,7 +955,7 @@ expected<string, format_errc> try_format(string_view pattern) {
   return std::move(output);
 }
 
-expected<string, format_errc>
+export expected<string, format_errc>
 try_format<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   mut size_t argument_count = 1;
   (detail::count_format_argument(argument_count, args), ...);
@@ -1008,7 +1010,7 @@ try_format<First, Args...>(string_view pattern, First first, Args... args) requi
 }
 
 /// Appends one fully formatted result. Failure leaves `output` unchanged.
-expected<void, format_errc> try_format_to(mut string& output,
+export expected<void, format_errc> try_format_to(mut string& output,
                                       string_view pattern) {
   mut expected<string, format_errc> formatted = try_format(pattern);
   if (!formatted) {
@@ -1019,7 +1021,7 @@ expected<void, format_errc> try_format_to(mut string& output,
 }
 
 /// Appends one fully formatted result. Failure leaves `output` unchanged.
-expected<void, format_errc>
+export expected<void, format_errc>
 try_format_to<First, Args...>(mut string& output, string_view pattern, First first,
                           Args... args) requires formattable<First> {
   mut expected<string, format_errc> formatted =
@@ -1083,7 +1085,7 @@ expected<void, print_errc> submit_print(string_view text) {
 }
 
 /// Formats an owning result, panicking at the caller on formatting failure.
-[[track_caller]]
+export [[track_caller]]
 string format(string_view pattern) {
   mut auto result = try_format(pattern);
   if (!result) {
@@ -1092,7 +1094,7 @@ string format(string_view pattern) {
   return std::move(result).expect("Formatting succeeded without a value");
 }
 
-[[track_caller]]
+export [[track_caller]]
 string format<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   mut auto result = try_format(pattern, std::move(first), args...);
   if (!result) {
@@ -1101,7 +1103,7 @@ string format<First, Args...>(string_view pattern, First first, Args... args) re
   return std::move(result).expect("Formatting succeeded without a value");
 }
 
-[[track_caller]]
+export [[track_caller]]
 void format_to(mut string& output, string_view pattern) {
   auto result = try_format_to(output, pattern);
   if (!result) {
@@ -1109,7 +1111,7 @@ void format_to(mut string& output, string_view pattern) {
   }
 }
 
-[[track_caller]]
+export [[track_caller]]
 void format_to<First, Args...>(mut string& output, string_view pattern,
                               First first, Args... args) requires formattable<First> {
   auto result = try_format_to(output, pattern, std::move(first), args...);
@@ -1119,11 +1121,11 @@ void format_to<First, Args...>(mut string& output, string_view pattern,
 }
 
 /// With no format arguments, output is literal, like the prelude print API.
-expected<void, print_errc> try_print(string_view text) {
+export expected<void, print_errc> try_print(string_view text) {
   return detail::submit_print(text);
 }
 
-expected<void, print_errc>
+export expected<void, print_errc>
 try_print<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   mut auto formatted = try_format(pattern, std::move(first), args...);
   if (!formatted) {
@@ -1132,13 +1134,13 @@ try_print<First, Args...>(string_view pattern, First first, Args... args) requir
   return detail::submit_print(formatted.value().view());
 }
 
-expected<void, print_errc> try_println(string_view text) {
+export expected<void, print_errc> try_println(string_view text) {
   mut string line = string(text);
   line.push_back('\n');
   return detail::submit_print(line.view());
 }
 
-expected<void, print_errc>
+export expected<void, print_errc>
 try_println<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   mut auto formatted = try_format(pattern, std::move(first), args...);
   if (!formatted) {
@@ -1148,7 +1150,7 @@ try_println<First, Args...>(string_view pattern, First first, Args... args) requ
   return detail::submit_print(formatted.value().view());
 }
 
-[[track_caller]]
+export [[track_caller]]
 void print<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   auto result = try_print(pattern, std::move(first), args...);
   if (!result) {
@@ -1156,7 +1158,7 @@ void print<First, Args...>(string_view pattern, First first, Args... args) requi
   }
 }
 
-[[track_caller]]
+export [[track_caller]]
 void println<First, Args...>(string_view pattern, First first, Args... args) requires formattable<First> {
   auto result = try_println(pattern, std::move(first), args...);
   if (!result) {

@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 // Virtual calls use each root's shared GTI signature: records, text views,
 // floating and enum arguments, owner transfer, reference results to scalars,

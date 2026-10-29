@@ -1,5 +1,5 @@
 // Value-parameter generics with fixed arrays and std::array.
-#include <std/array>
+import std.array;
 
 class Grid<T, uint64_t N> {
   mut T[N] cells = {};

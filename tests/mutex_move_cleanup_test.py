@@ -10,7 +10,7 @@ import tempfile
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT
 
 
-SCALAR = """#include <std/mutex>
+SCALAR = """import std.mutex;
 int main() {
   std::mutex<int32_t> first{7};
   std::mutex<int32_t> second = std::move(first);
@@ -22,7 +22,7 @@ int main() {
 }
 """
 
-FAILURE = """#include <std/mutex>
+FAILURE = """import std.mutex;
 class Payload {
   int32_t id;
   int32_t divisor;
@@ -45,7 +45,7 @@ int main() {
 """
 
 
-STORED_FAILURE = """#include <std/mutex>
+STORED_FAILURE = """import std.mutex;
 class Payload {
   int32_t id;
 public:

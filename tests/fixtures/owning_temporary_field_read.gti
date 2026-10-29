@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // A field of an owning class temporary read before the temporary's
 // full-expression destruction. The field is a view of the result's own

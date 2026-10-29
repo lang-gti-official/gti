@@ -5,11 +5,11 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import without_include_advice, LspSession, lsp_position
+from lsp_smoke_test import LspSession, lsp_position
 
 
 def main():
-    source = '''#include <std/meta>
+    source = '''import std.meta;
 /*😀*/ using Result = std::meta::callable_return_type<int>;
 int main() { return 0; }
 '''
@@ -27,10 +27,10 @@ int main() { return 0; }
                 "textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": source}}})
 
             def diagnostics(version):
-                return without_include_advice(session.receive_until(lambda item:
+                return session.receive_until(lambda item:
                     item.get("method") == "textDocument/publishDiagnostics"
                     and item["params"].get("uri") == uri
-                    and item["params"].get("version") == version)["params"]["diagnostics"])
+                    and item["params"].get("version") == version)["params"]["diagnostics"]
 
             errors = diagnostics(1)
             error = next(item for item in errors if item.get("code") == "GTI-S2023")

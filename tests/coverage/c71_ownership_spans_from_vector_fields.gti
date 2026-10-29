@@ -1,8 +1,8 @@
 // std::span borrowed from a vector field through receiver methods,
 // sub-spans on temporaries and locals, by-value span relays, a mutable span
 // over a field in a mut method, and owner growth after the spans end.
-#include <std/span>
-#include <std/vector>
+import std.span;
+import std.vector;
 
 int sum(std::span<int> values) {
   mut int total = 0;

@@ -1,9 +1,55 @@
 # 024: Explicit Source Module Interfaces
 
+> **2026-10-29 module-only campaign amendment (unreleased):** The owner has
+> selected a coordinated hard removal of GTI `#include`, including
+> `export #include`, before 1.0. Phase 1 mechanically converts the source corpus
+> and rejects the removed syntax; phase 2 establishes production module
+> completeness and supplies release acceptance. Neither phase is merged into
+> `main` or released until phase 2 completes. The historical include-preservation
+> commitments below describe earlier releases and are explicitly superseded by
+> this decision for the forthcoming breaking release. Existing released editions
+> are not silently reinterpreted.
+>
+> The prototype uses explicit module interfaces and exports, preserves canonical
+> source identity and compiler ownership checks, and resolves `std.name` directly
+> to `stdlib/std/name.gti`. Wrapper interfaces and republished legacy includes are
+> removed. Useful graph/loading/cache machinery remains shared; recognizing an
+> obsolete directive for a targeted error does not accept it. See the
+> [two-phase plan](../plans/implementation-sequence.md#module-only-source-campaign-2026-10-29)
+> for outstanding obligations. This amendment does not promise that every
+> historical include program has a semantics-preserving automatic rewrite.
+
 Status: Accepted and implemented in 0.362.0, with combined release validation.
 Revised in 0.393.0: republished includes, standard-library modules, and
 configuration sharing by replay. Separate compilation and independent module
 linkage remain outside this decision.
+
+## Module identity revision (2026-10-29, unreleased)
+
+The production module-only campaign supersedes the original program-wide
+qualified-name uniqueness rule. The semantic declaration owner is the logical
+source-owner/module-name pair, shared by one interface and its explicitly
+registered implementation units. An implementation states `module name;` and
+must match its registration; a file cannot acquire private access by claiming
+an unregistered header. Source ownership is distinct from compiler trust.
+
+Different modules may independently use identical source names. Semantic IDs
+retain distinct nominal types and callable identities; requester visibility
+determines lookup and ambiguity. Imports do not themselves reject unused name
+collisions, and overload sets compose through ordinary signature resolution.
+The backend preserves selected semantic identities rather than establishing
+module meaning through a global spelling rewrite. Static names remain local
+to their source unit.
+
+Registered bodies can complete exported ordinary function prototypes, including
+generic and constexpr functions. Exact signature/contract matching establishes
+one callable identity before lowering. Private types returned by public APIs,
+generic bodies and default arguments retain defining-context reachability
+without publishing private names. Dotted names are logical labels, not implied
+namespaces, privilege hierarchies or filesystem discovery. These rules support
+ordinary source libraries and application SDK implementations without C++
+header units or textual inclusion. Binary module distribution remains a
+separate facility; it does not gate source-module ownership.
 
 ## Outcome
 

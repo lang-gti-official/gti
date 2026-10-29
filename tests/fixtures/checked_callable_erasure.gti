@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/functional>
-#include <std/numeric>
+import std.memory;
+import std.functional;
+import std.numeric;
 
 class Inspection {
   std::erased_object& object;

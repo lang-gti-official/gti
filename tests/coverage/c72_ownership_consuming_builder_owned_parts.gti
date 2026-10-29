@@ -2,9 +2,9 @@
 // vector of labels (optional<T> has no move assignment, so it cannot sit in a
 // reassigned builder): temporary chains, explicit moves with reinitialization in
 // a loop, branch-dependent consumption, and exactly-once part cleanup.
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.vector;
 
 mut int g_parts_dropped = 0;
 

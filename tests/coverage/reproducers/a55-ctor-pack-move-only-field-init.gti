@@ -2,7 +2,7 @@
 // ICE: a constructor-local pack forwards a move-only element (std::string)
 // into a generic field initializer T(args...). Same shape as the private
 // list_node/deque_node constructors behind list/deque/queue emplacement.
-#include <std/string>
+import std.string;
 class Task {
   std::string name_;
 public:

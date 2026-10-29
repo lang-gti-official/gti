@@ -6,13 +6,13 @@ nested traversal, generic algorithms over user ranges, and ranges of owning
 elements.
 """
 
-PRELUDE = """#include <std/vector>
-#include <std/iterator>
-#include <std/string>
-#include <std/format>
-#include <std/utility>
-#include <std/memory>
-#include <std/atomic>
+PRELUDE = """import std.vector;
+import std.iterator;
+import std.string;
+import std.format;
+import std.utility;
+import std.memory;
+import std.atomic;
 std::atomic<int32_t> destroyed{0};
 class Count {
   mut int32_t current;

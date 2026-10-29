@@ -1,7 +1,9 @@
+export module cthread;
+
 // C-style manual threading. Context lifetime and synchronization are unsafe
 // caller obligations; use <std/thread> for owned automatically joined tasks.
-#include <std/atomic>
-namespace std {
+import std.atomic;
+export namespace std {
 using thrd_t = uint64_t;
 using thrd_start_t = (void*) -> int32_t;
 using mtx_t = uint64_t;
@@ -27,7 +29,7 @@ struct timespec {
 };
 }
 
-namespace gti_internal {
+export namespace gti_internal {
 // A private source token keeps the flag's implementation method out of the
 // application API without granting public access to its atomic state.
 struct once_access { once_access() {} };
@@ -58,7 +60,7 @@ int32_t gti_rt_cnd_timedwait_v1(uint64_t condition, uint64_t mutex, int64_t seco
 }
 }
 
-namespace std {
+export namespace std {
 /// Explicit constructor tag for a fresh once flag; not a shared flag instance.
 struct once_flag_init {
   constexpr once_flag_init() {}

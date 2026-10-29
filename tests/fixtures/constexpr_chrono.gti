@@ -1,4 +1,4 @@
-#include <std/chrono>
+import std.chrono;
 
 constexpr bool timestamp(int64_t ticks, int64_t seconds, int32_t fraction) {
   std::chrono::nanoseconds duration{ticks};

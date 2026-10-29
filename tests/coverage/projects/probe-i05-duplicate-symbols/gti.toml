@@ -13,7 +13,7 @@ kind = "executable"
 root = "src/dup_function_main.gti"
 
 [targets.dup_private_type]
-kind = "test"
+kind = "executable"
 root = "src/dup_private_type_main.gti"
 
 [targets.main_in_include]
@@ -29,5 +29,5 @@ kind = "test"
 root = "src/dup_class_main.gti"
 
 [targets.hidden_dup]
-kind = "test"
+kind = "executable"
 root = "src/hidden_dup_main.gti"

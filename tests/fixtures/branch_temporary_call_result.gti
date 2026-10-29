@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // A class result that exists only on one branch of `||`, `&&` or `?:` and is
 // used as a receiver publishes into a hidden temporary place. Its value has no

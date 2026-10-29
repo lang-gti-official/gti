@@ -1,0 +1,11 @@
+manifest-version = 1
+[package]
+name = "module-system"
+version = "0.1.0"
+source-root = "src"
+[dependencies]
+drawing = { path = "drawing" }
+metrics = { path = "metrics" }
+[targets.module-system]
+kind = "executable"
+root = "src/main.gti"

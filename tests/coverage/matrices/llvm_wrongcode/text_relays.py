@@ -6,12 +6,12 @@ an owning object; the consumer digests it while the owner is alive.
 """
 import itertools
 
-PRELUDE = """#include <std/string>
-#include <std/vector>
-#include <std/span>
-#include <std/memory>
-#include <std/format>
-#include <std/utility>
+PRELUDE = """import std.string;
+import std.vector;
+import std.span;
+import std.memory;
+import std.format;
+import std.utility;
 int64_t digest(std::string_view v) {
   mut int64_t e = 0;
   for (mut std::size_t i = std::size_t(0); i < v.size(); i += std::size_t(1)) {

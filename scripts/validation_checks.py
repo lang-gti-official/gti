@@ -39,7 +39,7 @@ def focused_scope(paths):
                 "tests/stdlib_surface_manifest.json", "tests/mir_census_baseline.json",
                 "tests/lowered_program_census_baseline.json"}
     def library(path):
-        return path.startswith(("stdlib/std/", "stdlib/modules/")) and path.endswith(".gti")
+        return path.startswith("stdlib/std/") and path.endswith(".gti")
     def allowed(path):
         return (library(path) or path in metadata or path.startswith("docs/") and path.endswith(".md") or
                 path.startswith(("examples/", "tests/fixtures/")) and path.endswith(".gti") or
@@ -248,8 +248,8 @@ int main() {
   return twice(sum) == 90 ? 0 : 1;
 }
 """,
-        "owners": """#include <std/string>
-#include <std/vector>
+        "owners": """import std.string;
+import std.vector;
 int main() {
   mut std::vector<std::string> values{};
   values.push_back(std::string("smoke"));

@@ -1,5 +1,5 @@
-#include <std/random>
-#include <std/cmath>
+import std.random;
+import std.cmath;
 class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 int main() {
   mut std::random_engine engine = std::random_engine(uint64_t(12345));

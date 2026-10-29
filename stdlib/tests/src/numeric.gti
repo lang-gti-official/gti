@@ -1,11 +1,12 @@
-#include <std/numeric>
+export module numeric;
 
-extern "C" {
+import std.numeric;
+export extern "C" {
   int stdlib_cpp_gcd(int left, int right);
   int stdlib_cpp_lcm(int left, int right);
 }
 
-namespace stdlib {
+export namespace stdlib {
   namespace tests {
     namespace numeric {
 

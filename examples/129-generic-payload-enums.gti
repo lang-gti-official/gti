@@ -1,6 +1,5 @@
-#include <std/string>
-#include <std/vector>
-
+import std.string;
+import std.vector;
 // One closed message family serves unrelated payload types. The optional
 // `class` spelling would give this declaration exactly the same meaning.
 enum Message<T, uint64_t Channel = 3> {

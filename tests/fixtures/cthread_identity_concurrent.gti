@@ -1,6 +1,6 @@
-#include <std/cthread>
-#include <std/thread>
-#include <std/atomic>
+import std.cthread;
+import std.thread;
+import std.atomic;
 
 std::atomic<uint64_t> observed{uint64_t(0)};
 

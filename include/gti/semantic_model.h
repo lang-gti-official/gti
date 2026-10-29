@@ -2052,7 +2052,7 @@ struct SemanticSourceUnitSeal {
 struct SemanticSourceDependencySeal {
   SourceUnitId source = 0;
   SourceUnitId target = 0;
-  SourceDependencyKind kind = SourceDependencyKind::Include;
+  SourceDependencyKind kind = SourceDependencyKind::Import;
   std::string directiveSource;
   std::size_t directiveStart = 0;
   std::size_t directiveEnd = 0;

@@ -24,7 +24,7 @@ lang::FrontendResult analyze(std::string source) {
 
 void testContract() {
   const auto frontend = analyze(R"gti(
-#include <std/simd>
+import std.simd;
 class UserVector {
   std::simd<float, 4> lanes;
 public:
@@ -113,13 +113,13 @@ void testInvalidPrograms() {
        {"std::simd<int, 4> value{};", "std::simd<bool, 4> value{};",
         "std::simd<float, 0> value{};", "std::simd<float, 65> value{};",
         "std::simd_mask<0> value{};", "std::simd_mask<65> value{};"}) {
-    const auto frontend = analyze("#include <std/simd>\nint main() { " +
+    const auto frontend = analyze("import std.simd;\nint main() { " +
                                   std::string(declaration) + " return 0; }");
     expect(!frontend.canGenerateCode(),
            "invalid lane types and extents must fail in semantics");
   }
   expect(!analyze(R"gti(
-#include <std/simd>
+import std.simd;
 int main() {
   std::simd<float, 4> a{}; std::simd<float, 3> b{};
   auto wrong = a + b; return 0;
@@ -128,13 +128,13 @@ int main() {
               .canGenerateCode(),
          "mixed extents must not silently truncate or convert");
   expect(!analyze(R"gti(
-#include <std/simd>
+import std.simd;
 int main() { std::simd_mask<4> mask{}; if (mask) { return 1; } return 0; }
 )gti")
               .canGenerateCode(),
          "a lane mask must require explicit all/any reduction");
   expect(!analyze(R"gti(
-#include <std/simd>
+import std.simd;
 int main() {
   float a[4] = {}; mut float output[4] = {};
   gti_internal::simd_add(a, a, output); return 0;
@@ -144,7 +144,7 @@ int main() {
          "application spelling must not grant a private SIMD capability");
 }
 
-void testIncludeDiagnostics() {
+void testImportDiagnostics() {
   for (const std::string name : {"simd", "simd_mask"}) {
     const std::string source = "using lanes = std::" + name +
                                (name == "simd" ? "<float, 4>;\n" : "<4>;\n");
@@ -160,13 +160,14 @@ void testIncludeDiagnostics() {
                missing->primary.start == source.find(name) &&
                missing->primary.end == source.find(name) + name.size() &&
                !missing->hints.empty() &&
-               missing->hints.front().find("<std/simd>") != std::string::npos &&
+               missing->hints.front().find("import std.simd;") !=
+                   std::string::npos &&
                missing->fixes.size() == 1 &&
                missing->fixes.front().span.source == missing->primary.source &&
                missing->fixes.front().span.start == 0 &&
                missing->fixes.front().span.end == 0 &&
-               missing->fixes.front().replacement == "#include <std/simd>\n",
-           "missing SIMD includes need an exact compiler-owned include fix");
+               missing->fixes.front().replacement == "import std.simd;\n",
+           "missing SIMD imports need an exact compiler-owned import fix");
   }
 }
 
@@ -174,7 +175,7 @@ void testAccessDiagnostics() {
   const auto check = [](std::string statement, std::string code,
                         std::string selected, std::string message) {
     const std::string source =
-        "#include <std/simd>\nint main() {\n" + statement + "\nreturn 0;\n}\n";
+        "import std.simd;\nint main() {\n" + statement + "\nreturn 0;\n}\n";
     const auto frontend = analyze(source);
     const lang::Diagnostic *found = nullptr;
     for (const auto &diagnostic : frontend.diagnostics) {
@@ -205,7 +206,7 @@ void testAccessDiagnostics() {
 int main() {
   testContract();
   testInvalidPrograms();
-  testIncludeDiagnostics();
+  testImportDiagnostics();
   testAccessDiagnostics();
   if (failures)
     return 1;

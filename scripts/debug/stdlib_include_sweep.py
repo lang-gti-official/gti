@@ -2,23 +2,23 @@
 
 """Compile every standard-library module on its own and report what breaks.
 
-The weakest possible claim about a header is that including it reaches C++
+The weakest possible claim about a module is that importing it reaches C++
 emission, and the stdlib surface manifest does not exercise this exact shape:
-its cases use the module they cover. This sweep protects the include-without-
-use path that regressed in #116.
+its cases use the module they cover. This sweep protects the import-without-
+use path. The script keeps its historical filename for tool compatibility.
 
     python3 scripts/debug/stdlib_include_sweep.py
     python3 scripts/debug/stdlib_include_sweep.py --gti build/gti
 
-Each module gets a program consisting of one `#include` and an empty `main`,
-then compiles through `--emit-cpp`, so a failure is attributable to the header
+Each module gets a program consisting of one `import` and an empty `main`,
+then compiles through `--emit-cpp`, so a failure is attributable to the module
 alone without spending time in the native toolchain. Results are:
 
-    ok           the header compiles on its own
-    ICE          GTI-B0001 — an internal error from merely including it
-    header-error the header's own source is rejected; the location is inside
+    ok           the module compiles on its own
+    ICE          GTI-B0001 — an internal error from merely importing it
+    header-error the module's own source is rejected; the location is inside
                  stdlib/, so a user could not act on it
-    error        the include is rejected with a diagnostic pointing at the
+    error        the import is rejected with a diagnostic pointing at the
                  user's file, which may be a legitimate requirement
 
 `--manifest-gaps` additionally lists modules the surface manifest never
@@ -41,6 +41,14 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent.parent
 DIAGNOSTIC = re.compile(r"error\[(GTI-[A-Z0-9]+)\]")
 
 
+def public_modules(root: Path) -> dict[str, str]:
+    """Public names are registered explicitly; private source files are omitted."""
+    document = json.loads((root / "stdlib/module-map.json").read_text(encoding="utf-8"))
+    default = document.get("default")
+    return {name: "std" if name == default else f"std.{name}"
+            for name in document["modules"]}
+
+
 def manifest_modules(root: Path) -> set[str]:
     """Module stems that the surface manifest mentions in any case source."""
     manifest = root / "tests" / "stdlib_surface_manifest.json"
@@ -52,19 +60,19 @@ def manifest_modules(root: Path) -> set[str]:
     except json.JSONDecodeError:
         return set()
     mentioned: set[str] = set()
-    for module in (root / "stdlib" / "std").glob("*.gti"):
+    for module in public_modules(root):
         # A case references its module by fixture name or evidence path, so
         # match on the stem appearing anywhere in the manifest rather than
         # guessing the naming convention.
-        if module.stem in text:
-            mentioned.add(module.stem)
+        if module.rsplit(".", 1)[-1] in text:
+            mentioned.add(module)
     del document
     return mentioned
 
 
-def classify(gti: Path, directory: Path, module: str) -> tuple[str, str]:
-    source = directory / f"include-{module}.gti"
-    source.write_text(f"#include <std/{module}>\n\nint main() {{\n  return 0;\n}}\n",
+def classify(gti: Path, directory: Path, module: str, spelling: str) -> tuple[str, str]:
+    source = directory / f"import-{module}.gti"
+    source.write_text(f"import {spelling};\n\nint main() {{\n  return 0;\n}}\n",
                       encoding="utf-8")
     run = subprocess.run(
         [str(gti), str(source), "-O0", "--std", "c++23", "--emit-cpp",
@@ -78,7 +86,7 @@ def classify(gti: Path, directory: Path, module: str) -> tuple[str, str]:
     if "GTI-B0001" in codes:
         detail = first.split("artifact:")[-1].strip() if "artifact:" in first else first
         return "ICE", detail[:140]
-    # A diagnostic whose location is inside stdlib/ is the header's own fault,
+    # A diagnostic whose location is inside stdlib/ is the module's own fault,
     # not a requirement the caller failed to meet.
     if "/stdlib/std/" in first:
         return "header-error", first.split("/stdlib/std/")[-1][:140]
@@ -97,17 +105,16 @@ def main() -> int:
     if not gti.is_file():
         print(f"error: {gti} not found; build it first", file=sys.stderr)
         return 1
-    modules = sorted(path.stem for path in
-                     (REPOSITORY_ROOT / "stdlib" / "std").glob("*.gti"))
+    modules = dict(sorted(public_modules(REPOSITORY_ROOT).items()))
     if not modules:
-        print("error: no modules found under stdlib/std", file=sys.stderr)
+        print("error: no public modules registered in stdlib/module-map.json", file=sys.stderr)
         return 1
 
     failures = 0
-    with tempfile.TemporaryDirectory(prefix="gti-stdlib-include-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="gti-stdlib-import-") as temporary:
         directory = Path(temporary)
-        for module in modules:
-            state, detail = classify(gti, directory, module)
+        for module, spelling in modules.items():
+            state, detail = classify(gti, directory, module, spelling)
             if state == "ok":
                 print(f"  {module:<16} ok")
                 continue

@@ -1,6 +1,6 @@
-#include <std/map>
-#include <std/string>
-#include <std/memory>
+import std.map;
+import std.string;
+import std.memory;
 
 mut int constructions = 0;
 mut int destructions = 0;

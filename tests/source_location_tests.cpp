@@ -70,7 +70,7 @@ lang::MirInstruction *findInstruction(lang::MirProgram &program,
 
 void testSourceLocationMirContract() {
   const lang::FrontendResult frontend = analyze(R"gti(
-#include <std/source_location>
+import std.source_location;
 int main() {
   std::source_location location = std::source_location::current();
   return int32_t(location.line());
@@ -127,7 +127,7 @@ int main() {
 
 void testConstructorCallerContexts() {
   const lang::FrontendResult frontend =
-      analyze(R"gti(#include <std/source_location>
+      analyze(R"gti(import std.source_location;
 class Base {
   uint32_t line_value;
 public:
@@ -177,7 +177,7 @@ int main() { Explicit first{}; Implicit second{}; return 0; }
 
 void testFieldInitializerCallerContext() {
   const lang::FrontendResult frontend =
-      analyze(R"gti(#include <std/source_location>
+      analyze(R"gti(import std.source_location;
 class Record {
 public:
   Record(std::source_location where = std::source_location::current()) {}

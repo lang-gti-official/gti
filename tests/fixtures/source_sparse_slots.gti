@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/resource>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.resource;
+import std.string;
+import std.vector;
 
 class Packet {
   int id;

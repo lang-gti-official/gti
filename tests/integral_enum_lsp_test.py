@@ -7,7 +7,7 @@ from lsp_smoke_test import LspSession, has_error_diagnostics, lsp_position
 
 
 def main():
-    source = ('#include <std/format>\n#include <std/string>\n'
+    source = ('import std.format;\nimport std.string;\n'
               'enum class Status : uint64_t { failed = 18446744073709551615 };\n'
               'int main() { Status value = Status::failed; '
               'uint64_t raw = std::to_underlying<uint64_t, Status>(value); '

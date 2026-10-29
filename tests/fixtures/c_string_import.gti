@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/memory>
-#include <std/panic>
+import std.string;
+import std.memory;
+import std.panic;
 
 using ErrorCallback = (int32_t, c_string) -> void;
 extern "C" {

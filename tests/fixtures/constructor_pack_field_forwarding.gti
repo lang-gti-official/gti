@@ -1,8 +1,8 @@
-#include <std/string>
-#include <std/vector>
-#include <std/list>
-#include <std/deque>
-#include <std/queue>
+import std.string;
+import std.vector;
+import std.list;
+import std.deque;
+import std.queue;
 
 class Resource {
   int id;

@@ -1,9 +1,9 @@
-#include <std/assert>
-#include <std/panic>
-#include <std/format>
-#include <std/string>
-#include <std/vector>
-#include <std/source_location>
+import std.assert;
+import std.panic;
+import std.format;
+import std.string;
+import std.vector;
+import std.source_location;
 
 #ifdef COST_MANUAL
 #define COST_MANUAL

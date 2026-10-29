@@ -1,6 +1,6 @@
-#include <std/algorithm>
-#include <std/iterator>
-#include <std/vector>
+import std.algorithm;
+import std.iterator;
+import std.vector;
 
 // Exhaustive short sequences, with independent indexed reference answers.
 int main() {

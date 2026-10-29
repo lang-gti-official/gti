@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 enum class window_backend { desktop, headless, unavailable };
 enum class window_errc { unsupported_backend };
 

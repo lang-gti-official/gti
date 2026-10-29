@@ -23,7 +23,7 @@ def main():
     right = site("right_failure = 37 / zero")
     mutual_body = site("return 41 / zero")
     staged = site("staged_failure = 43 / zero")
-    memory = source.parents[2] / "stdlib/std/memory.gti"
+    memory = source.parents[2] / "stdlib/std/detail/memory_core.gti"
     arrow_site = [i for i, line in enumerate(memory.read_text().splitlines(), 1)
                   if "return gti_internal::unique_owner_borrow_mut(" in line][-1]
 
@@ -79,7 +79,7 @@ def main():
         (0, "1\n2\n3\n9\n", ""),
         (0, "3\n1\n2\n9\n", ""),
         (70, "3\n1\n9\n",
-         f"<std/memory>:{arrow_site}: runtime error[GTI-R0008]: "
+         f"<std/detail/memory_core>:{arrow_site}: runtime error[GTI-R0008]: "
          "empty_owner_access in member_access\n"),
         (70, "1\n2\n3\n9\n", ordinary(right)),
         (0, "1\n2\n3\n2\n9\n", ""),

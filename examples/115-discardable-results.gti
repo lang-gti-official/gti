@@ -1,8 +1,7 @@
-#include <std/memory>
-#include <std/optional>
-#include <std/string>
-#include <std/vector>
-
+import std.memory;
+import std.optional;
+import std.string;
+import std.vector;
 // The mutation is the operation; the returned reference is optional.
 struct Counter {
   mut int value = 0;

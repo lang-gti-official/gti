@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 extern "C" {
   void* malloc(uint64_t bytes);
   void free(void* address);

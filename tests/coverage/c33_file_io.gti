@@ -1,6 +1,6 @@
 // cstdio file handles: write, read back, and error propagation through expected.
-#include <std/cstdio>
-#include <std/string>
+import std.cstdio;
+import std.string;
 
 expected<std::string, std::io_errc> round_trip(std::string_view path) {
   mut auto writer = ?std::fopen(path, std::file_mode::write);

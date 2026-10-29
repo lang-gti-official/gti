@@ -1,7 +1,7 @@
-#include "kernel.gti"
-#include <std/numeric>
-#include <std/string>
-#include <std/vector>
+import "kernel.gti";
+import std.numeric;
+import std.string;
+import std.vector;
 
 int main(int argc, std::vector<std::string> argv) {
   mut int32_t value = argc;

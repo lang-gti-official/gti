@@ -1,5 +1,4 @@
-#include <std/memory>
-
+import std.memory;
 // A source destructor conservatively denies automatic thread capabilities.
 // This wrapper's audit is small: cleanup only resets its exclusive owner,
 // and observation exposes a read-only, owner-tied reference. Its payload must

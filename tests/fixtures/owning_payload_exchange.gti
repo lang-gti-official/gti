@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 enum class data { empty, items(std::vector<int32_t> values) };
 class owner {
   mut data content;

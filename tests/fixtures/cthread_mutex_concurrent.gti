@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 
 // The C context remains opaque. Its native owner returns exact typed views;
 // GTI deliberately does not infer or cast a void* pointee layout.

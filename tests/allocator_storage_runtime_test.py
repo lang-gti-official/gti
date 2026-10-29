@@ -15,7 +15,7 @@ from native_symbol_spelling import native_spelling
 FAILURE_CASES = {
     "bounds": (
         """\
-#include <std/memory>
+import std.memory;
 
 int main() {
   std::allocator allocator = std::allocator();
@@ -26,11 +26,11 @@ int main() {
   return 2;
 }
 """,
-        ("GTI-R0007", "index_out_of_bounds", "private_storage"),
+        ("GTI-R0007", "index_out_of_bounds", "private_storage", "<std/memory>"),
     ),
     "duplicate-construction": (
         """\
-#include <std/memory>
+import std.memory;
 
 int main() {
   std::allocator allocator = std::allocator();
@@ -42,11 +42,12 @@ int main() {
   return 2;
 }
 """,
-        ("GTI-R0010", "invalid_storage_state", "duplicate_construction"),
+        ("GTI-R0010", "invalid_storage_state", "duplicate_construction",
+         "<std/detail/memory_storage>"),
     ),
     "uninitialized-access": (
         """\
-#include <std/memory>
+import std.memory;
 
 int main() {
   std::allocator allocator = std::allocator();
@@ -56,11 +57,12 @@ int main() {
   return values.get(std::size_t(0));
 }
 """,
-        ("GTI-R0010", "invalid_storage_state", "uninitialized_access"),
+        ("GTI-R0010", "invalid_storage_state", "uninitialized_access",
+         "<std/detail/memory_storage>"),
     ),
     "uninitialized-destruction": (
         """\
-#include <std/memory>
+import std.memory;
 
 int main() {
   std::allocator allocator = std::allocator();
@@ -71,13 +73,14 @@ int main() {
   return 2;
 }
 """,
-        ("GTI-R0010", "invalid_storage_state", "uninitialized_access"),
+        ("GTI-R0010", "invalid_storage_state", "uninitialized_access",
+         "<std/detail/memory_storage>"),
     ),
 }
 
 
 CONSTRUCTOR_FAILURE_CLEANUP = """\
-#include <std/memory>
+import std.memory;
 
 class probe {
   int32_t value;
@@ -225,7 +228,6 @@ def main() -> int:
                     executed.returncode != 70
                     or executed.stdout != ""
                     or any(fragment not in executed.stderr for fragment in fragments)
-                    or "<std/memory>" not in executed.stderr
                 ):
                     return fail(
                         f"run {label} {standard} {optimization}", executed

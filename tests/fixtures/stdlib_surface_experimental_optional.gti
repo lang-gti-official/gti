@@ -1,8 +1,8 @@
 // std::experimental::optional: empty and engaged states, `?`, and a consuming
 // move-out of a move-only payload.
-#include <std/experimental/optional>
-#include <std/memory>
-#include <std/string>
+import std.experimental.optional;
+import std.memory;
+import std.string;
 
 std::experimental::optional<std::unique_ptr<int>> boxed(int value) {
   if (value < 0) {

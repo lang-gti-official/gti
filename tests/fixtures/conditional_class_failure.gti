@@ -1,6 +1,6 @@
-#include <std/panic>
-#include <std/string>
-#include <std/vector>
+import std.panic;
+import std.string;
+import std.vector;
 
 class Guard {
   int number;

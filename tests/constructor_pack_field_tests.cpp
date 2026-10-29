@@ -61,7 +61,7 @@ int main() {
   }
   const auto repeated =
       analyzeWithStandardLibrary("pack-double-consume.gti", R"(
-#include <std/string>
+import std.string;
 class Item {
   std::string value;
 public:

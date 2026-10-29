@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/vector>
-#include <std/atomic>
+import std.memory;
+import std.vector;
+import std.atomic;
 std::atomic<int> drops{0};
 interface View { int read(); };
 class Item : public View {

@@ -1,6 +1,6 @@
 // @coverage-profile: concurrent
 // Managed threads: spawn, join, and a result-carrying task.
-#include <std/thread>
+import std.thread;
 class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
 
 int main() {

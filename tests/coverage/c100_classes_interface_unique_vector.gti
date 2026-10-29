@@ -1,10 +1,10 @@
 // Interface dispatch through a vector of unique_ptr<Interface>, through
 // dereferenced owners bound to Interface& / mut Interface& parameters, and
 // observable destruction order of the erased owners.
-#include <std/format>
-#include <std/memory>
-#include <std/vector>
-#include <std/string>
+import std.format;
+import std.memory;
+import std.vector;
+import std.string;
 
 static mut int32_t destroyed_sum = 0;
 static mut int32_t destroyed_count = 0;

@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 
-PRELUDE = """#include <std/string>
+PRELUDE = """import std.string;
 class Guard {
 public:
   Guard() {}

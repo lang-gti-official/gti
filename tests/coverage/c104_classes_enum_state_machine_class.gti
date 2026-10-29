@@ -2,8 +2,8 @@
 // fields, class-scoped aliases, static constexpr members, vector elements and
 // switch subjects inside mut methods; grouped case labels, default arms,
 // break inside loops, and explicit underlying-value extraction.
-#include <std/format>
-#include <std/vector>
+import std.format;
+import std.vector;
 
 namespace net::proto {
 enum class Phase : uint8_t { idle = 1, connecting, open, closing, closed = 9 };

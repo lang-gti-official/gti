@@ -2,10 +2,10 @@
 // pre-epoch floor division), checked elapsed_since with overflow reported as
 // clock_errc::out_of_range, a comparator sorting system time points in a
 // vector, and real monotonic/system clock reads with ordering checks.
-#include <std/chrono>
-#include <std/vector>
-#include <std/algorithm>
-#include <std/string>
+import std.chrono;
+import std.vector;
+import std.algorithm;
+import std.string;
 
 constexpr int64_t billion = 1000000000;
 

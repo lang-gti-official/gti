@@ -1,5 +1,5 @@
 // Payload enums with multi-field payloads and exhaustive switch binding.
-#include <std/vector>
+import std.vector;
 
 enum class Node {
   leaf,

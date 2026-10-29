@@ -1,6 +1,6 @@
-#include <std/optional>
-#include <std/string>
-#include <std/vector>
+import std.optional;
+import std.string;
+import std.vector;
 
 class Marker {
   int identity;

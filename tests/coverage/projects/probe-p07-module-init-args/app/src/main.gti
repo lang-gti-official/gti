@@ -1,8 +1,8 @@
-#include <tracelib/log>
+import tracelib.log;
 import lib;
-#include "local.gti"
-#include <std/string>
-#include <std/vector>
+import "local.gti";
+import std.string;
+import std.vector;
 
 int main_init = trace::record(4);
 

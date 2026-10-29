@@ -1,4 +1,4 @@
-#include <std/forward_list>
+import std.forward_list;
 
 int32_t take(mut std::forward_list<int32_t>& values) {
   int32_t value = values.front();

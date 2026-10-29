@@ -2,14 +2,14 @@
 
 Status: current bounded standard-library contract
 
-`#include <std/http>` provides a synchronous reusable HTTP client implemented
+`import std.http;` provides a synchronous reusable HTTP client implemented
 as ordinary GTI policy over a versioned private runtime ABI. The first surface
 is deliberately buffered: each request completes before `send` returns, and a
 successful response owns its complete headers and body.
 
 ```gti
-#include <std/http>
-#include <std/string>
+import std.http;
+import std.string;
 
 int main() {
   mut auto created = std::http::client::create();
@@ -36,7 +36,7 @@ int main() {
 ```
 
 Applications name `std::string` or `std::vector` directly only after including
-their defining modules; `<std/http>` does not re-export its implementation
+their defining modules; `std.http` does not re-export its implementation
 dependencies.
 
 ## Public Surface

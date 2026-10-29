@@ -990,14 +990,10 @@ install(DIRECTORY "include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
         COMPONENT gti_toolchain)
 install(DIRECTORY "runtime/include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
         COMPONENT gti_toolchain)
-install(FILES "stdlib/prelude.gti" "stdlib/std.gti"
+install(FILES "stdlib/prelude.gti" "stdlib/std.gti" "stdlib/module-map.json"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
         COMPONENT gti_toolchain)
 install(DIRECTORY "stdlib/std"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
-        COMPONENT gti_toolchain
-        FILES_MATCHING PATTERN "*.gti")
-install(DIRECTORY "stdlib/modules"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
         COMPONENT gti_toolchain
         FILES_MATCHING PATTERN "*.gti")

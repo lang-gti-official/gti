@@ -12,7 +12,7 @@ import tempfile
 
 
 STATE = """\
-#include <std/format>
+import std.format;
 class State {
   int32_t id;
 public:
@@ -26,9 +26,9 @@ thread_local mut State unused = State(99);
 """
 
 FORMAT_PAYLOAD = """\
-#include <std/format>
-#include <std/string>
-#include <std/thread>
+import std.format;
+import std.string;
+import std.thread;
 class Formatted {
 public:
   int32_t id;
@@ -65,8 +65,8 @@ int main() {
 """
 
 EMPTY_FOLD_PREFIX = """\
-#include <std/format>
-#include <std/panic>
+import std.format;
+import std.panic;
 int32_t initialize_prefix() { std::println("initialize prefix"); return 7; }
 thread_local mut int32_t fold_prefix = initialize_prefix();
 void observe_prefix<T>(int32_t& prefix, T& element) {
@@ -86,7 +86,7 @@ int main() {
 """
 
 FOLD_RELOAD = """\
-#include <std/format>
+import std.format;
 thread_local mut int32_t repeated = 0;
 void observe_reload<T>(int32_t snapshot, mut int32_t& live, T& element) {
   std::println("{}", snapshot);
@@ -102,9 +102,9 @@ int main() {
 """
 
 MACRO_RESULT_PRELUDE = """\
-#include <std/format>
-#include <std/panic>
-#include <std/thread>
+import std.format;
+import std.panic;
+import std.thread;
 thread_local mut int32_t macro_seed = 7;
 thread_local mut int32_t macro_created = 0;
 thread_local mut int32_t macro_guards = 0;
@@ -184,7 +184,7 @@ int main() {
 }
 """
 
-SUCCESS = "#include <std/thread>\n" + STATE + """\
+SUCCESS = "import std.thread;\n" + STATE + """\
 int32_t local_visit() {
   thread_local mut int32_t visits = 0;
   visits += 1;
@@ -235,7 +235,7 @@ int main() {
 """
 
 IMMOVABLE = """\
-#include <std/format>
+import std.format;
 class Resource {
 public:
   Resource() = default;
@@ -249,7 +249,7 @@ int main() { return resource.read() - 7; }
 """
 
 UNIQUE_OWNER = """\
-#include <std/memory>
+import std.memory;
 thread_local std::unique_ptr<int> number = std::make_unique<int>(7);
 int main() { return *number - 7; }
 """
@@ -279,7 +279,7 @@ int main() {
 }
 """
 
-MANUAL = "#include <std/cthread>\n" + STATE + """\
+MANUAL = "import std.cthread;\n" + STATE + """\
 int32_t worker(void* context) {
   return first.read() + 41;
 }
@@ -305,7 +305,7 @@ int main() {
 }
 """
 
-BODY_FAILURE = "#include <std/thread>\n" + STATE + """\
+BODY_FAILURE = "import std.thread;\n" + STATE + """\
 int main() {
   auto started = std::thread::start([]() -> void {
     int32_t value = first.read();
@@ -320,8 +320,8 @@ int main() {
 """
 
 CLEANUP_FAILURE = """\
-#include <std/thread>
-#include <std/format>
+import std.thread;
+import std.format;
 class Fail {
 public:
   Fail() = default;

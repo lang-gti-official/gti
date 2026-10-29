@@ -13,7 +13,7 @@ from llvm_evidence_manifest import build_manifest
 
 
 RESOURCE = r'''
-#include <std/panic>
+import std.panic;
 mut int trace = 0;
 mut int expected_trace = 0;
 class Resource {
@@ -75,7 +75,7 @@ int main() {
 }
 ''', "GTI-R0017", "prepared enum failure"),
     "empty-optional": (RESOURCE + r'''
-#include <std/optional>
+import std.optional;
 int main() {
   Guard guard{};
   std::optional<int> value{};
@@ -432,7 +432,7 @@ int main() {
 }
 ''',
     "source-wrappers": r'''
-#include <std/optional>
+import std.optional;
 expected<int, int> load(bool ready) {
   if (ready) { return 40; }
   return unexpected(7);
@@ -455,7 +455,7 @@ int main() {
 }
 ''',
     "checked-arithmetic": r'''
-#include <std/numeric>
+import std.numeric;
 int main() {
   auto add_success = std::checked_add(int8_t(20), int8_t(22));
   auto add_overflow = std::checked_add(int8_t(127), int8_t(1));
@@ -475,8 +475,8 @@ int main() {
 }
 ''',
     "payload-raw-access": r'''
-#include <std/memory>
-#include <std/vector>
+import std.memory;
+import std.vector;
 mut int trace = 0;
 class Resource {
   int id;

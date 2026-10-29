@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // Class-valued conditionals. Each arm publishes into the conditional's shared
 // storage, and the joined object reaches its consumer without a default

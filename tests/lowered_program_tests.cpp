@@ -370,7 +370,9 @@ void testFrontendSourceDebugProfile() {
   const auto entry = root / "main.gti";
   const std::unordered_map<std::string, std::string> overrides{
       {prelude.string(),
-       "T cached<T>(T input) { T local = input; return local; }\n"}};
+       R"GTIMODULE(export module prelude;
+export T cached<T>(T input) { T local = input; return local; }
+)GTIMODULE"}};
   std::ofstream(prelude) << overrides.at(prelude.string());
   lang::FrontendOptions options;
   options.cache = std::make_shared<lang::FrontendCache>();
@@ -664,7 +666,7 @@ void testDebugPlaceAvailability() {
       lang::Frontend(
           {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
           .analyze("debug-place-availability.gti", R"gti(
-#include <std/memory>
+import std.memory;
 int probe(mut int input, bool choose) {
   mut int local = input;
   int moved = std::move(local);
@@ -875,7 +877,7 @@ void testDebugLifetimeAndBorrowAvailability() {
       lang::Frontend(
           {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
           .analyze("debug-lifetime-availability.gti", R"gti(
-#include <std/memory>
+import std.memory;
 class Owned {
 public:
   mut int value = 3;

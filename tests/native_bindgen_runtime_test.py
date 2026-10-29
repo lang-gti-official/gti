@@ -45,11 +45,14 @@ def main():
             bindgen_command += ["--rename", "foreign_epoch=epoch"]
         run(bindgen_command)
         original = bindings.read_bytes()
+        generated = original.decode("utf-8")
+        assert "export module bindings;" in generated
+        assert f"export namespace {namespace} {{" in generated
         run(bindgen_command)
         assert original == bindings.read_bytes(), "native bindings must be byte-stable"
         source = work / "main.gti"
         source.write_text((project / "src/main.gti").read_text().replace(
-            f"<{binding}/bindings>", '"bindings.gti"'))
+            f"import {binding}.bindings;", 'import "bindings.gti";'))
         if arguments.example == "native-variable-bindings":
             native_header = work / "foreign_variables.generated.h"
             run([compiler, source, "--emit-native-header", "-o", native_header])

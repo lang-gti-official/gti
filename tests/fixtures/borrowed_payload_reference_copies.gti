@@ -1,7 +1,7 @@
-#include <std/optional>
-#include <std/panic>
-#include <std/string>
-#include <std/utility>
+import std.optional;
+import std.panic;
+import std.string;
+import std.utility;
 
 // A reference accessor that binds the active payload with `auto&` returns a
 // reference to that payload inside its owner, as std::optional<T>::value()

@@ -1,8 +1,8 @@
 // std::string_view borrowed from string fields through receivers, through
 // a vector of move-only records, relayed by free functions and by-value view
 // parameters, used across a loop, and released before owner mutation.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 class Record {
   std::string key_;

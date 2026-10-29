@@ -175,8 +175,8 @@ int main() {
 """
 
 
-OWNED_SOURCE = r"""#include <std/string>
-#include <std/vector>
+OWNED_SOURCE = r"""import std.string;
+import std.vector;
 
 class Guard {
   int identity;

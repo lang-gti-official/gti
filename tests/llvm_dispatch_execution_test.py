@@ -94,8 +94,8 @@ TRANSFER_ENDPOINTS = (
 
 CPP_LIMITATIONS = {
     "hierarchy-reference-results": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
-    "owner-reference-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_8743748746c3906f3cb32abc5c52a3d391e4507268de72665a366361f520203d_make_unique'",
-    "owner-failure-before-reference": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_1542b921ce78875e430a1cd950d1c99cce26c90908184496243024d42a33bfd9_make_unique'",
+    "owner-reference-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_718ceee65db96f7cff8e72a9aaae2e81296e2c764a42fcd20b2065657b3b2946_make_unique'",
+    "owner-failure-before-reference": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_9b4fd897cb8f33db86aa01a47e6bff940990cacf41954d99f2fab99265c14d9c_make_unique'",
     "shared-owner-reference": "wrapping atomic read-modify-write",
     "shared-polymorphic-owners": "wrapping atomic read-modify-write",
     "inline-hierarchy-fields": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
@@ -264,7 +264,7 @@ public:
 };
 int main() { Observed value{}; return 0; }
 """, 0),
-    "owned-destructor-observation-former-reject": ("""#include <std/memory>
+    "owned-destructor-observation-former-reject": ("""import std.memory;
 class Observed {
 public:
   Observed() {}
@@ -304,8 +304,8 @@ int main() {
     # A function pointer field's generated copy is its code address: a
     # polymorphic object holding one copies into a local, a unique owner and
     # a by-copy capture with the generated logical-field copy.
-    "function-pointer-field-copies": ("""#include <std/functional>
-#include <std/memory>
+    "function-pointer-field-copies": ("""import std.functional;
+import std.memory;
 interface Action { int64_t fire(int64_t x); };
 using Step = std::function_ptr<int64_t(int64_t)>;
 int64_t triple(int64_t x) { return x * 3; }
@@ -350,8 +350,8 @@ int main() {
     # Restoring swap and exchange of complete locals of a polymorphic class
     # that nothing derives from relocate whole objects; the rule against
     # exchanging a polymorphic base does not reach them.
-    "complete-polymorphic-swap": ("""#include <std/memory>
-#include <std/utility>
+    "complete-polymorphic-swap": ("""import std.memory;
+import std.utility;
 interface Shape { int area(); };
 class Gauge : public Shape {
   int side;
@@ -374,8 +374,8 @@ int main() {
 """, 0),
     # A function-pointer handle field is one code address: a polymorphic class
     # holding one copies it as bytes into a unique owner of its interface.
-    "function-pointer-fields": ("""#include <std/memory>
-#include <std/functional>
+    "function-pointer-fields": ("""import std.memory;
+import std.functional;
 interface Action { int64_t fire(int64_t x); };
 using Callback = std::function_ptr<int64_t(int64_t)>;
 int64_t triple(int64_t x) { return x * 3; }
@@ -395,7 +395,7 @@ int main() {
   return local.fire(int64_t(2)) == 7 && moved->fire(int64_t(3)) == 11 ? 0 : 1;
 }
 """, 0),
-    "heap-polymorphic-owner-former-reject": ("""#include <std/memory>
+    "heap-polymorphic-owner-former-reject": ("""import std.memory;
 mut int dropped = 0;
 class HeapValue {
   int value;
@@ -445,22 +445,22 @@ OWNED_BASE_CPP_LIMITATION = "outside the complete C++ text vocabulary"
 
 OWNED_BASE_SOURCES = {
     "owned-base-text": owned_base(
-        "#include <std/string>\n", "std::string", 'std::string("ann")',
+        "import std.string;\n", "std::string", 'std::string("ann")',
         'value.held.size() == std::size_t(3) && value.held.starts_with("ann")'),
     "owned-base-virtual": owned_base(
-        "#include <std/string>\n", "std::string", 'std::string("ann")',
+        "import std.string;\n", "std::string", 'std::string("ann")',
         'value.held.starts_with("ann") && read(value) == 2',
         member="virtual int tag() { return 1; }",
         derived_member="int tag() override { return 2; }").replace(
             "int main() {", "int read(Base& base) { return base.tag(); }\nint main() {"),
     "owned-base-vector": owned_base(
-        "#include <std/vector>\n", "std::vector<int>", "three()",
+        "import std.vector;\n", "std::vector<int>", "three()",
         "value.held.size() == std::size_t(3) && value.held[std::size_t(2)] == 6").replace(
             "int main() {", "std::vector<int> three() {\n  mut std::vector<int> values{};\n"
             "  values.push_back(4);\n  values.push_back(5);\n  values.push_back(6);\n"
             "  return values;\n}\nint main() {"),
     "owned-base-unique": owned_base(
-        "#include <std/memory>\n", "std::unique_ptr<int>", "std::make_unique<int>(9)",
+        "import std.memory;\n", "std::unique_ptr<int>", "std::make_unique<int>(9)",
         "value.held != nullptr && *value.held == 9"),
     "owned-base-cleanup": """mut int drops = 0;
 class Noisy {
@@ -488,7 +488,7 @@ int main() {
 """,
     # The form d21f4ec3f did not control: owned arguments created in the base
     # initializer itself, as a temporary or a call result.
-    "owned-base-fresh": """#include <std/string>
+    "owned-base-fresh": """import std.string;
 mut int drops = 0;
 class Noisy {
 public:
@@ -896,7 +896,7 @@ int main() { Bundle first{}; Bundle moved = std::move(first); return 0; }
 """,
     # A view a virtual call returns keeps its owner borrowed: it cannot
     # escape that owner, and the owner cannot change while the view lives.
-    "reject-source-virtual-view-escape": """#include <std/string>
+    "reject-source-virtual-view-escape": """import std.string;
 class Base {
 public:
   std::string text;
@@ -910,7 +910,7 @@ std::string_view escape() {
 }
 int main() { return int(escape().size()); }
 """,
-    "reject-source-virtual-view-owner-mutation": """#include <std/string>
+    "reject-source-virtual-view-owner-mutation": """import std.string;
 class Base {
 public:
   mut std::string text;
@@ -949,7 +949,7 @@ int main() {
     # A restoring exchange or swap of a polymorphic class that another class
     # derives from is a source error for now: through a base view it would
     # replace the dispatch state of the enclosing derived object.
-    "reject-source-exchange-base-view": """#include <std/utility>
+    "reject-source-exchange-base-view": """import std.utility;
 class Base {
 public:
   int value;
@@ -967,7 +967,7 @@ int replace(mut Base& view) {
 }
 int main() { mut Derived value = Derived(3); return replace(value) + value.read(); }
 """,
-    "reject-source-swap-base-view": """#include <std/utility>
+    "reject-source-swap-base-view": """import std.utility;
 class Base {
 public:
   int value;
@@ -994,7 +994,7 @@ int main() {
 """,
     # An interface view of a carrier borrows the carrier object, so the
     # carrier cannot move while the view lives.
-    "reject-source-upcast-carrier-move": """#include <std/utility>
+    "reject-source-upcast-carrier-move": """import std.utility;
 interface Gauge { int read(); };
 class Scaled : public Gauge {
   int value;

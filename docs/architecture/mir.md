@@ -4834,11 +4834,11 @@ names. The detached declaration/adapter contract is serialized as
 
 `mir-v101`/`lowered-program-v17` retain `ProcessMemoryRuntimeOperation` on the
 exact private native declarations of the process allocator's runtime ABI
-(`std/memory`'s `gti_internal::runtime` block): the native size and address
+(`std/detail/memory_capabilities`'s `gti_internal::runtime` block): the native size and address
 alignment queries, the POSIX pointer-size/`ENOMEM`/`EINVAL` queries, POSIX
 allocation and release, and the Windows aligned allocation pair. Semantics
 classifies only C-linkage, bodyless, non-generic, compiler-private
-declarations of the trusted `std/memory` unit whose symbol and signature both
+declarations of the trusted `std/detail/memory_capabilities` unit whose symbol and signature both
 match the shared table in `process_memory_runtime.h`; an application
 declaration of the same symbol stays an ordinary native boundary. HIR and the
 lowered builder exact-compare the field, the lowered verifier requires private

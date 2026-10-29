@@ -1,7 +1,6 @@
-#include <std/io>
-#include <std/cstdio>
-#include <std/string>
-
+import std.io;
+import std.cstdio;
+import std.string;
 // This parser accepts any checked reader, including files and custom transports.
 expected<std::size_t, std::io::error> count_lines<R>(mut R& input)
     requires std::io::reader<R> {

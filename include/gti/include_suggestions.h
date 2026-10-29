@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gti/source_owner.h"
+
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -10,7 +12,6 @@ namespace lang {
 
 struct FrontendOptions;
 struct FrontendResult;
-struct PackageSourceRoot;
 
 // The adapter supplies search authority, not symbol meaning. A quoted root
 // stays within its package; an angle root is addressed via its declared alias.

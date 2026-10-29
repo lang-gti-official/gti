@@ -1,5 +1,5 @@
-#include <std/http>
-#include <std/string>
+import std.http;
+import std.string;
 
 extern "C" {
   void adoption_count_begin();

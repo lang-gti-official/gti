@@ -2,9 +2,9 @@
 // moves a move-only error, `?std::move(named)`, `.expect` on a moved named
 // carrier, transform/and_then consuming owned payloads, success owners
 // collected into a vector inside a loop, and error strings collected too.
-#include <std/memory>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.string;
+import std.vector;
 
 class Widget {
   int size_;

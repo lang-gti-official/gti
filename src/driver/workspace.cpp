@@ -128,21 +128,41 @@ std::vector<PackageSourceRoot> ProjectWorkspace::packageSourceRoots() const {
   std::vector<PackageSourceRoot> roots;
   roots.reserve(resolvedPackages.size());
   for (const ResolvedProjectPackage &package : resolvedPackages) {
-    PackageSourceRoot root{
-        .identity = package.identity(),
-        .name = package.manifest.package().name,
-        .packageRoot = package.manifest.packageRoot(),
-        .sourceRoot = package.manifest.package().sourceRoot,
-        .modules = package.manifest.package().modules,
-        .moduleImplementations =
-            package.manifest.package().moduleImplementations};
+    PackageSourceRoot root{.identity = package.identity(),
+                           .name = package.manifest.package().name,
+                           .packageRoot = package.manifest.packageRoot(),
+                           .sourceRoot = package.manifest.package().sourceRoot,
+                           .modules = package.manifest.package().modules,
+                           .moduleImplementations =
+                               package.manifest.package().moduleImplementations,
+                           .moduleLookupPaths =
+                               package.manifest.package().moduleLookupPaths};
     root.dependencies.reserve(package.dependencies.size());
     for (const ResolvedProjectDependency &dependency : package.dependencies) {
       root.dependencies.push_back(
           {.alias = dependency.alias,
            .targetIdentity = dependency.targetIdentity});
     }
+    std::vector<PackageSourceRoot> generated;
+    for (const auto &import : package.manifest.bindgen()) {
+      const auto directory =
+          workspaceRoot / "build" / "gti" / "bindgen" /
+          portableProjectNameKey(package.manifest.package().name) /
+          import.alias;
+      const auto identity = package.identity() + "/bindgen/" + import.alias;
+      root.dependencies.push_back(
+          {.alias = import.alias, .targetIdentity = identity});
+      generated.push_back(
+          {.identity = identity,
+           .name = import.alias,
+           .packageRoot = directory,
+           .sourceRoot = directory,
+           .modules = {{"bindings", directory / "bindings.gti"}},
+           .kind = SourceOwnerKind::Generated});
+    }
     roots.push_back(std::move(root));
+    for (auto &owner : generated)
+      roots.push_back(std::move(owner));
   }
   return roots;
 }
@@ -220,6 +240,25 @@ std::string ProjectWorkspace::modelIdentity() const {
     for (const ResolvedProjectDependency &dependency : package.dependencies) {
       identity += "\ndependency:" + package.identity() + ":" +
                   dependency.alias + "=" + dependency.targetIdentity;
+    }
+    for (const auto &import : package.manifest.bindgen()) {
+      identity += "\nbindgen:" + package.identity() + ":" + import.alias + "=" +
+                  import.declaredHeader + "|module=bindings";
+      identity += "|namespace=" + import.namespaceName;
+      for (const auto &directory : import.includeDirectories)
+        identity += "|include=" +
+                    directory.lexically_relative(package.manifest.packageRoot())
+                        .generic_string();
+      for (const auto &argument : import.macroArguments)
+        identity += "|macro=" + argument;
+      for (const auto &pattern : import.allowPatterns)
+        identity += "|allow=" + pattern;
+      for (const auto &pattern : import.denyPatterns)
+        identity += "|deny=" + pattern;
+      for (const auto &[from, to] : import.renames)
+        identity += "|rename=" + from + ">" + to;
+      for (const auto &[function, count] : import.arrayReturns)
+        identity += "|array=" + function + ">" + count;
     }
   }
   return identity;

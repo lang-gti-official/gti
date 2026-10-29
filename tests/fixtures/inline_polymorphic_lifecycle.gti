@@ -1,9 +1,9 @@
-#include <std/format>
-#include <std/functional>
-#include <std/memory>
-#include <std/polymorphic>
-#include <std/string>
-#include <std/vector>
+import std.format;
+import std.functional;
+import std.memory;
+import std.polymorphic;
+import std.string;
+import std.vector;
 
 extern "C" {
 void inline_polymorphic_count_begin();

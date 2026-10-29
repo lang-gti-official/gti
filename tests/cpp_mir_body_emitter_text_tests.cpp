@@ -763,7 +763,7 @@ int main() {
 void testProducedClosureLocalSlots() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-produced-closure-locals.gti", R"(
-#include <std/utility>
+import std.utility;
 
 F pass<F>(F f) { return f; }
 
@@ -906,7 +906,7 @@ int main() {
 void testCopiedFormalReusedInConstructorBody() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-copied-formal-reuse.gti", R"(
-#include <std/utility>
+import std.utility;
 
 int call<F>(F f) { return f(); }
 
@@ -1083,7 +1083,7 @@ int main() {
 void testMovedClosureFieldInFallibleConstructor() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-moved-closure-field.gti", R"(
-#include <std/utility>
+import std.utility;
 
 int call<F>(F f) { return f(); }
 
@@ -1264,7 +1264,7 @@ int main() {
   // before the move. The owned proof never reorders the move across it.
   const lang::FrontendResult late =
       analyzeWithStandardLibrary("cpp-mir-moved-closure-late-field.gti", R"(
-#include <std/utility>
+import std.utility;
 
 int call<F>(F f) { return f(); }
 
@@ -1319,7 +1319,7 @@ void testMovedPassiveFieldAfterFallibleSibling() {
   // its verified body and starts the field from its empty state.
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-moved-passive-field.gti", R"(
-#include <std/utility>
+import std.utility;
 
 class Ledger {
 public:
@@ -1463,8 +1463,8 @@ int main() {
   // ledger and the checked remainder.
   const lang::FrontendResult view =
       analyzeWithStandardLibrary("cpp-mir-moved-view-field.gti", R"(
-#include <std/string>
-#include <std/utility>
+import std.string;
+import std.utility;
 
 class Ledger {
 public:
@@ -1650,7 +1650,7 @@ int main() {
   // order (testDeferredBoundShellFields covers the family).
   const lang::FrontendResult carrier =
       analyzeWithStandardLibrary("cpp-mir-moved-carrier-field.gti", R"(
-#include <std/utility>
+import std.utility;
 
 class Ledger {
 public:
@@ -1724,7 +1724,7 @@ void testDeferredBoundShellFields() {
   // carrier is its first field keeps a native member.
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-deferred-bound-fields.gti", R"(
-#include <std/utility>
+import std.utility;
 
 class Ledger {
 public:
@@ -1950,7 +1950,7 @@ int main() {
   // so the carrier stays outside deferred storage and outside the route.
   const lang::FrontendResult tagged =
       analyzeWithStandardLibrary("cpp-mir-deferred-payload-leaf.gti", R"(
-#include <std/utility>
+import std.utility;
 
 class Ledger {
 public:
@@ -2005,7 +2005,7 @@ void testMovedBorrowedPayloadAfterFallibleSibling() {
   // order once the fallible ledger exists.
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-moved-borrowed-payload.gti", R"(
-#include <std/utility>
+import std.utility;
 
 enum Slot { ready(int32_t& value), empty };
 
@@ -2140,8 +2140,8 @@ void testMovedViewAfterFormalRead() {
   // order. A sibling that does not name the formal keeps the native move.
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-moved-view-after-read.gti", R"(
-#include <std/string>
-#include <std/utility>
+import std.string;
+import std.utility;
 
 uint64_t measure(std::string_view text) { return text.size(); }
 
@@ -2254,9 +2254,9 @@ void testPassiveTextViewClassAfterFallibleSibling() {
   // verified failure-form body; copied, through the native parameter copy.
   const auto program = [](std::string_view initializer) {
     return std::string(R"(
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 class Name {
 public:
@@ -2469,8 +2469,8 @@ void testPassiveFunctionItemClassAfterFallibleSibling() {
   // failure-form body and copies through the native parameter copy.
   const auto program = [](std::string_view initializer) {
     return std::string(R"(
-#include <std/utility>
-#include <std/vector>
+import std.utility;
+import std.vector;
 
 int32_t seven() { return 7; }
 
@@ -2700,7 +2700,7 @@ void testPassiveClassMoveAndCopyAfterFallibleSibling() {
   // runs no source code and cannot fail, so it still publishes natively.
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-passive-class-move-and-copy.gti", R"(
-#include <std/utility>
+import std.utility;
 
 class Ledger {
 public:
@@ -2869,7 +2869,7 @@ void testMovedChainReturnConstruction() {
   // formal; spelling the unassigned call-input local returned zero.
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-moved-chain-return.gti", R"(
-#include <std/utility>
+import std.utility;
 
 class Holder {
 public:
@@ -2922,7 +2922,7 @@ void testMovedPassiveFieldInPlainConstructor() {
   // the field's empty state. A leading move stays a native publication.
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-moved-passive-plain-field.gti", R"(
-#include <std/utility>
+import std.utility;
 
 bool is_odd(int32_t value) { return (value & 1) == 1; }
 
@@ -3345,8 +3345,8 @@ int main() {
 void testInlineCapturingLiteralAsAlgorithmArgument() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-inline-capture-argument.gti", R"(
-#include <std/vector>
-#include <std/algorithm>
+import std.vector;
+import std.algorithm;
 
 int main() {
   mut std::vector<int32_t> values = std::vector<int32_t>();
@@ -3432,8 +3432,8 @@ int main() {
 void testInlineCaptureControlFlowProofFailsClosed() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-inline-capture-cfg.gti", R"(
-#include <std/vector>
-#include <std/algorithm>
+import std.vector;
+import std.algorithm;
 
 int main() {
   mut std::vector<int32_t> values = std::vector<int32_t>();
@@ -4248,13 +4248,13 @@ int32_t main() {
 void testStoredBorrowReferenceAliasAddresses() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-stored-borrow-reference-aliases.gti", R"(
-#include <std/string>
+import std.string;
 
 int32_t main() {
   mut std::string value = std::string("gti");
   mut auto iterator = value.begin();
-  std::detail::storage_iterator<char>& alias = iterator;
-  std::detail::storage_iterator<char>& second_alias = alias;
+  std::string::const_iterator& alias = iterator;
+  std::string::const_iterator& second_alias = alias;
   char first = *iterator;
   char second = *alias;
   char third = *second_alias;
@@ -4923,7 +4923,7 @@ int main() {
 void testReferenceParameterBorrowUsesReferentCarrier() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-reference-parameter-range.gti", R"(
-#include <std/vector>
+import std.vector;
 
 int32_t sum(std::vector<int32_t>& values) {
   mut int32_t total = 0;
@@ -5955,7 +5955,7 @@ int main() {
 void testCleanupFreeExpectedClassMoveSlot() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-expected-class-move.gti", R"(
-#include <std/utility>
+import std.utility;
 
 struct point {
   mut int32_t x;
@@ -6225,7 +6225,7 @@ void testExpectedClassReplacementSources() {
   }
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-expected-class-replacement-sources.gti", R"gti(
-#include <std/utility>
+import std.utility;
 
 struct pair_value {
   int32_t first = 0;
@@ -6426,7 +6426,7 @@ int main() { return check(false) ? 0 : 1; }
 void testOwningExpectedReplacementSources() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-owning-expected-replacement-sources.gti", R"gti(
-#include <std/utility>
+import std.utility;
 
 struct pair_value {
   int32_t first = 0;
@@ -6588,7 +6588,7 @@ int main() {
 void testOwningPayloadEnumReferentReplacement() {
   const lang::FrontendResult frontend = analyzeWithStandardLibrary(
       "cpp-mir-owning-payload-enum-referent-replacement.gti", R"gti(
-#include <std/string>
+import std.string;
 
 enum class label { text(std::string name), blank };
 
@@ -6752,7 +6752,7 @@ int main() {
 void testExpectedConsumingMemberReturn() {
   const auto frontend = analyzeWithStandardLibrary(
       "cpp-mir-expected-consuming-member-return.gti", R"(
-#include <std/utility>
+import std.utility;
 class Item {
   int divisor = 1;
 public:
@@ -8880,7 +8880,7 @@ int main() { return pick(true).number + pick_counted(true).number - 4; }
 void testClassConditionalJoinBorrowedInputs() {
   const auto frontend = analyzeWithStandardLibrary(
       "cpp-mir-conditional-borrowed-input.gti", R"gti(
-#include <std/string>
+import std.string;
 struct Packet {
   int value;
   Packet(int value) : value(value) {}
@@ -9368,7 +9368,7 @@ int main() { return check(false) ? 0 : 1; }
 void testOwningConditionalJoinConsumers() {
   const auto frontend =
       analyzeWithStandardLibrary("cpp-mir-owning-conditional-join.gti", R"gti(
-#include <std/utility>
+import std.utility;
 
 mut int32_t destroyed = 0;
 
@@ -9500,7 +9500,7 @@ int main() {
 void testCopyableLambdaReturnRetainsSsa() {
   const auto frontend =
       analyzeWithStandardLibrary("copyable-lambda-return.gti", R"gti(
-#include <std/utility>
+import std.utility;
 T relay<T>(T value) { return value; }
 int main() {
   int offset = 1;
@@ -9557,7 +9557,7 @@ int main() {
 void testMixedCaptureDeducedCallableTemplateEmission() {
   const lang::FrontendResult frontend =
       analyzeWithStandardLibrary("cpp-mir-mixed-capture-template.gti", R"(
-#include <std/memory>
+import std.memory;
 
 mut int cleanup_count = 0;
 
@@ -9642,7 +9642,7 @@ int main() {
 void testCallableClassResultSlots() {
   const auto frontend =
       analyzeWithStandardLibrary("cpp-mir-callable-class-result-slots.gti", R"(
-#include <std/utility>
+import std.utility;
 class Ticket {
 public:
   Ticket(int32_t input) : identity(input) {}

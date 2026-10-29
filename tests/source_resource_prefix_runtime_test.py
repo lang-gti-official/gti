@@ -11,6 +11,7 @@ import tempfile
 
 from lambda_pack_invocation_runtime_test import main as run_runtime_matrix
 from allocation_abort_runtime_test import ABORT_STATUS
+from internal_module_fixture import register_modules
 
 
 if __name__ == "__main__":
@@ -20,10 +21,10 @@ if __name__ == "__main__":
     failure = (f"{fixture.name}:{line}: runtime error[GTI-R0002]: "
                "division_by_zero in integer_division\n")
     policy = fixture.parent / "source_resource_prefix_policy.gti"
-    memory = fixture.parents[2] / "stdlib/std/memory.gti"
+    memory = fixture.parents[2] / "stdlib/std/detail/memory_storage.gti"
     allocation_line = next(index for index, text in enumerate(memory.read_text().splitlines(), 1)
                            if "require_allocation(false)" in text)
-    exhaustion = (f"<std/memory>:{allocation_line}: runtime error[GTI-R0011]: "
+    exhaustion = (f"<std/detail/memory_storage>:{allocation_line}: runtime error[GTI-R0011]: "
                   "allocation_failure in private_storage\n")
     policy_lines = policy.read_text().splitlines()
     def rejected_release(marker, message):
@@ -53,10 +54,13 @@ if __name__ == "__main__":
         policy_source = policy.read_text()
         assert policy_source.count("int main(") == 1
         (staged / "std" / policy.name).write_text(
-            policy_source.replace("int main(", "int prefix_policy_main(", 1))
+            'export module source_resource_prefix_policy; '
+            'import "detail/memory_storage.gti"; import "detail/resource_lease.gti"; '
+            + policy_source.replace("int main(", "export int prefix_policy_main(", 1))
+        register_modules(staged, {"source_resource_prefix_policy": "std/" + policy.name})
         entry = pathlib.Path(temporary) / "prefix_policy_test.gti"
-        entry.write_text("#include <std/source_resource_prefix_policy>\n"
-                         "#include <std/string>\n#include <std/vector>\n"
+        entry.write_text("import std.source_resource_prefix_policy;\n"
+                         "import std.string;\nimport std.vector;\n"
                          "int main(int argc, std::vector<std::string> argv) {\n"
                          "  return prefix_policy_main(argc, std::move(argv));\n}\n")
         os.environ["GTI_STDLIB_PATH"] = str(staged)

@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 // Constructor fields initialized directly from calls that cannot fail. The
 // result is published into the field in place; an owning result's

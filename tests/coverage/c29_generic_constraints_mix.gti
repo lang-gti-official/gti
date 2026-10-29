@@ -1,5 +1,5 @@
-#include <std/vector>
-#include <std/string>
+import std.vector;
+import std.string;
 T largest<std::totally_ordered T>(std::vector<T>& values, T fallback)
   requires std::copyable<T> && std::vector_element<T> {
   if (values.size() == std::size_t(0)) { return std::move(fallback); }

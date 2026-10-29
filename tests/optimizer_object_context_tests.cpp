@@ -3,6 +3,7 @@
 #include "gti/mir_effects.h"
 #include "gti/optimization/pass.h"
 #include "gti/optimizer.h"
+#include "private_stdlib_fixture.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -996,10 +997,8 @@ int main() {
   const std::ifstream prefixFile(prefixPath);
   const std::string prefixSource{
       std::istreambuf_iterator<char>(prefixFile.rdbuf()), {}};
-  const auto prefix = lang::Frontend().analyze(
-      prefixPath, prefixSource, {library / "prelude.gti", prefixPath},
-      {{std::filesystem::weakly_canonical(prefixPath).string(), prefixSource}},
-      {library});
+  const auto prefix = gti_test::analyzeTrustedPrivateMemoryFixture(
+      prefixPath.string(), prefixSource);
   expect(prefix.canGenerateCode(), "source prefix publication must lower");
   if (prefix.canGenerateCode()) {
     const auto analysis = lang::analyzeMirClosedCallSafetyChecks(prefix.mir);
@@ -1038,7 +1037,7 @@ int main() {
              "source prefix field publication independently replays");
   }
   const std::string invalidMove =
-      "#include <std/memory>\nint main() { int source = 7; "
+      "import std.memory;\nint main() { int source = 7; "
       "int result = std::move(source); return source + result; }\n";
   const auto invalidPath = sourcePath.parent_path() / "moved-source-read.gti";
   const auto invalid = lang::Frontend().analyze(

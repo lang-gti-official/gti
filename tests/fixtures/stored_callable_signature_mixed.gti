@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 interface MixedInvoker<R, Args...> { R invoke(Args... args); };
 class MixedSignature<S> { public: MixedSignature() = default; };

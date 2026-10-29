@@ -9,9 +9,9 @@
 // owning field built first exactly once and never runs the carrier's
 // constructor; a failure after it still drops that field once. These all
 // stopped with GTI-B0001 before deferred storage.
-#include <std/string>
-#include <std/utility>
-#include <std/vector>
+import std.string;
+import std.utility;
+import std.vector;
 
 mut int stage = 0;
 

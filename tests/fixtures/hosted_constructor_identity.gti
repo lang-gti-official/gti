@@ -1,6 +1,6 @@
-#include <std/string>
-#include <std/vector>
-#include "hosted_constructor_identity/library/src/texts.gti"
+import std.string;
+import std.vector;
+import "hosted_constructor_identity/library/src/texts.gti";
 
 int main(int argc, std::vector<std::string> argv) {
   mut storage::Texts texts{};

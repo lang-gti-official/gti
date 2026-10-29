@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // Independent source members use the same one-result staging as namespace
 // functions. A result has no owner dependency even though its producer does.

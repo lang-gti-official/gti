@@ -1,7 +1,7 @@
-#include <std/memory>
-#include <std/mutex>
-#include <std/string>
-#include <std/vector>
+import std.memory;
+import std.mutex;
+import std.string;
+import std.vector;
 
 class Item {
   int32_t divisor;

@@ -1,6 +1,6 @@
-#include <std/memory>
-#include <std/mutex>
-#include <std/thread>
+import std.memory;
+import std.mutex;
+import std.thread;
 
 // This payload cannot be shared directly. The lock grants exclusive access,
 // so its transfer capability is the relevant cross-thread requirement.

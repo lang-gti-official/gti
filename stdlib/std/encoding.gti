@@ -1,11 +1,12 @@
-#include <std/string>
+export module encoding;
 
+import std.string;
 namespace std {
 namespace encoding {
 
 namespace utf8 {
 
-enum class errc {
+export enum class errc {
   invalid_offset,
   unexpected_end,
   invalid_lead,
@@ -15,14 +16,14 @@ enum class errc {
   out_of_range,
 };
 
-struct error {
+export struct error {
   errc code;
   std::size_t offset;
   error(errc reason, std::size_t position) : code(reason), offset(position) {}
 };
 
 /// One Unicode scalar value and its encoded byte width, not a grapheme.
-struct scalar {
+export struct scalar {
   uint32_t value;
   std::size_t width;
   scalar(uint32_t point, std::size_t bytes) : value(point), width(bytes) {}
@@ -30,7 +31,7 @@ struct scalar {
 
 /// Decodes one scalar at a byte offset. Never reads outside the counted view.
 /// Invalid continuations name that byte; truncated input names input.size().
-expected<scalar, error> decode(std::string_view input, std::size_t offset = 0) {
+export expected<scalar, error> decode(std::string_view input, std::size_t offset = 0) {
   if (offset > input.size()) {
     return unexpected(error(errc::invalid_offset, offset));
   }
@@ -82,7 +83,7 @@ expected<scalar, error> decode(std::string_view input, std::size_t offset = 0) {
 }
 
 /// Empty input, embedded NULs, BOMs and Unicode noncharacters are valid.
-expected<void, error> validate(std::string_view input) {
+export expected<void, error> validate(std::string_view input) {
   mut std::size_t offset = 0;
   while (offset < input.size()) {
     auto decoded = decode(input, offset);
@@ -93,7 +94,7 @@ expected<void, error> validate(std::string_view input) {
 }
 
 /// Invalid scalars leave output unchanged. Allocation follows string policy.
-expected<void, error> append(mut std::string& output, uint32_t point) {
+export expected<void, error> append(mut std::string& output, uint32_t point) {
   if (point > uint32_t(0x10ffff)) {
     return unexpected(error(errc::out_of_range, std::size_t(0)));
   }
@@ -118,7 +119,7 @@ expected<void, error> append(mut std::string& output, uint32_t point) {
   return;
 }
 
-expected<std::string, error> encode(uint32_t point) {
+export expected<std::string, error> encode(uint32_t point) {
   mut std::string output{};
   auto result = append(output, point);
   if (!result) { return unexpected(result.error()); }
@@ -127,7 +128,7 @@ expected<std::string, error> encode(uint32_t point) {
 
 /// Incremental traversal borrows a named view and its owner. Failure does not
 /// advance the cursor; done() distinguishes end-of-input from malformed input.
-class decoder {
+export class decoder {
   std::string_view& input;
   mut std::size_t offset = 0;
 public:
@@ -145,7 +146,7 @@ public:
 }
 
 /// Recoverable failures shared by the binary-to-text decoders in this unit.
-enum class decode_errc {
+export enum class decode_errc {
   invalid_length,
   invalid_character,
   invalid_padding,
@@ -205,7 +206,7 @@ namespace base64 {
 
 /// Encodes the exact counted input bytes with the standard RFC 4648 alphabet
 /// and canonical `=` padding. Embedded zero bytes are preserved.
-std::string encode(std::string_view bytes) {
+export std::string encode(std::string_view bytes) {
   mut std::string result{};
   mut std::size_t index = std::size_t(0);
 
@@ -262,7 +263,7 @@ std::string encode(std::string_view bytes) {
 /// Decodes strict canonical RFC 4648 Base64. The input length must be a
 /// multiple of four, padding is mandatory when required, and whitespace is
 /// not ignored.
-expected<std::string, decode_errc> decode(std::string_view text) {
+export expected<std::string, decode_errc> decode(std::string_view text) {
   if (text.size() % std::size_t(4) != std::size_t(0)) {
     return unexpected(decode_errc::invalid_length);
   }
@@ -335,7 +336,7 @@ expected<std::string, decode_errc> decode(std::string_view text) {
 namespace hex {
 
 /// Encodes the exact counted input bytes as canonical lowercase hexadecimal.
-std::string encode(std::string_view bytes) {
+export std::string encode(std::string_view bytes) {
   mut std::string result{};
   for (mut std::size_t index = std::size_t(0); index < bytes.size(); index++) {
     uint8_t value = uint8_t(bytes[index]);
@@ -349,7 +350,7 @@ std::string encode(std::string_view bytes) {
 
 /// Decodes an even-length hexadecimal string. Both uppercase and lowercase
 /// digits are accepted; separators and prefixes are not accepted.
-expected<std::string, decode_errc> decode(std::string_view text) {
+export expected<std::string, decode_errc> decode(std::string_view text) {
   if (text.size() % std::size_t(2) != std::size_t(0)) {
     return unexpected(decode_errc::invalid_length);
   }

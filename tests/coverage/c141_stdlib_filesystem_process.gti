@@ -3,13 +3,13 @@
 // std::sort over move-only paths) and a streaming directory_iterator using
 // '?', file_size/rename/copy_file options/remove_all, then child processes
 // that inspect the tree and report exit codes and execute failures.
-#include <std/filesystem>
-#include <std/process>
-#include <std/cstdio>
-#include <std/chrono>
-#include <std/string>
-#include <std/vector>
-#include <std/algorithm>
+import std.filesystem;
+import std.process;
+import std.cstdio;
+import std.chrono;
+import std.string;
+import std.vector;
+import std.algorithm;
 
 bool write_file(std::filesystem::path& target, std::string_view body) {
   mut auto opened = std::fopen(target.view(), std::file_mode::write);

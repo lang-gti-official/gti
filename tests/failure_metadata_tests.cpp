@@ -1451,11 +1451,11 @@ int main() { return caller(1); }
 void testContainerContractChecks() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-container-contract/main.gti",
-      "#include <std/functional>\n"
+      "import std.functional;\n"
       "void check(bool valid) { std::key(valid); std::argument(valid); }\n",
       {standardLibraryPrelude()},
       {{(standardLibraryRoot() / "std/functional.gti").string(),
-        "namespace std {\n"
+        "export module functional;\nexport namespace std {\n"
         "void key(bool valid) { gti_internal::require_key(valid); }\n"
         "void argument(bool valid) { "
         "gti_internal::require_container_argument(valid); }\n}\n"}},
@@ -1513,10 +1513,12 @@ void testContainerContractChecks() {
                                  "require_container_argument(true, false)"}) {
     const auto invalid = lang::Frontend().analyze(
         "/tmp/gti-container-contract/invalid.gti",
-        "#include <std/functional>\nvoid invoke() { std::invalid(); }\n",
+        "import std.functional;\nvoid invoke() { std::invalid(); }\n",
         {standardLibraryPrelude()},
         {{(standardLibraryRoot() / "std/functional.gti").string(),
-          "namespace std { void invalid() { gti_internal::" + call + "; } }"}},
+          "export module functional; export namespace std { void invalid() { "
+          "gti_internal::" +
+              call + "; } }"}},
         {standardLibraryRoot()});
     expect(!invalid.canGenerateCode() &&
                std::any_of(invalid.diagnostics.begin(),
@@ -1558,8 +1560,8 @@ void testHostedProgramEntryMetadata() {
          "a no-argument entry point should add no hosted failure metadata");
 
   const std::string source = R"(
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 using arguments = std::vector<std::string>;
 int main(mut int count, mut arguments values) { return count; }
 )";
@@ -1758,11 +1760,11 @@ void testExternalSourceRouteIdentity() {
           std::filesystem::temp_directory_path()) /
       "gti-route";
   const std::string entrySource = R"(
-#include "../shared.gti"
+import "../shared.gti";
 int main() { return checked(1); }
 )";
-  const std::string externalSource =
-      "int checked(int value) { return value + 1; }";
+  const std::string externalSource = "export module shared;\nexport int "
+                                     "checked(int value) { return value + 1; }";
   const auto analyzeAt = [&](const std::filesystem::path &root) {
     const std::filesystem::path entry = root / "app/main.gti";
     const std::filesystem::path external = root / "shared.gti";
@@ -1792,7 +1794,7 @@ int main() { return checked(1); }
                                  frontend.sourceGraph.dependencyEdges().end(),
                                  [](const lang::SourceDependency &dependency) {
                                    return dependency.kind ==
-                                          lang::SourceDependencyKind::Include;
+                                          lang::SourceDependencyKind::Import;
                                  });
   expect(externalUnit != frontend.failureMetadata.sourceUnits().end() &&
              externalUnit->logicalName.ends_with("/shared.gti") &&
@@ -1813,7 +1815,8 @@ int main() { return checked(1); }
 void testModuleImplementationSourceIdentity() {
   const auto fixtureRoot = std::filesystem::weakly_canonical(
       std::filesystem::temp_directory_path() / "gti-module-source-identity");
-  const auto analyzeAt = [](const std::filesystem::path &root) {
+  const auto analyzeAt = [](const std::filesystem::path &root,
+                            std::string_view call = "Widget::read()") {
     const auto app = root / "app";
     const auto library = root / "library";
     const auto api = library / "api.gti";
@@ -1837,20 +1840,21 @@ void testModuleImplementationSourceIdentity() {
         {api.string(), "export module factory; export class Widget { public: "
                        "static int read();  public: Widget() = default; };"},
         {implementation.string(),
-         "import factory;\n#include \"helpers.gti\"\n"
-         "struct Local { int value; };\n"
-         "int Widget::read() { Local local{.value = helper()}; "
-         "return local.value; }"},
-        {helper.string(), "int helper() { return 7; }"}};
-    return lang::Frontend().analyze(
-        app / "main.gti",
-        "import lib.factory; int main() { return Widget::read(); }", {},
-        sources, {}, packages);
+         R"GTIMODULE(module factory;
+import "helpers.gti";
+struct Local { int value; };
+int Widget::read() { Local local{.value = helper()}; return local.value; })GTIMODULE"},
+        {helper.string(), R"GTIMODULE(export module helpers;
+export int helper() { return 7; })GTIMODULE"}};
+    return lang::Frontend().analyze(app / "main.gti",
+                                    "import lib.factory; int main() { return " +
+                                        std::string(call) + "; }",
+                                    {}, sources, {}, packages);
   };
   const auto original = analyzeAt(fixtureRoot);
   const auto relocated = analyzeAt(fixtureRoot / "relocated");
   expect(original.canGenerateCode() && relocated.canGenerateCode(),
-         "dependency module implementations and their private includes need "
+         "dependency module implementations and their private imports need "
          "logical identities even without failure sites");
   if (!original.canGenerateCode() || !relocated.canGenerateCode()) {
     printDiagnostics(original);
@@ -1877,12 +1881,23 @@ void testModuleImplementationSourceIdentity() {
     expect(identity && identity->logicalName.starts_with("<external>/") &&
                identity->logicalName.ends_with("/body.gti"),
            "a private dependency implementation has a stable external name");
-    expect(!original.sourceGraph.isVisible(original.sourceGraph.entryUnit(),
+    expect(
+        !original.sourceGraph.isVisible(original.sourceGraph.entryUnit(),
+                                        registration.implementationUnit) &&
+            original.sourceGraph.isVisible(registration.interfaceUnit,
                                            registration.implementationUnit) &&
-               !original.sourceGraph.isVisible(registration.interfaceUnit,
-                                               registration.implementationUnit),
-           "implementation provenance must not grant source visibility");
+            original.sourceGraph.sameModule(registration.interfaceUnit,
+                                            registration.implementationUnit),
+        "implementation membership grants same-module visibility only");
   }
+  const auto hiddenHelper = analyzeAt(fixtureRoot, "helper()");
+  expect(!hiddenHelper.canGenerateCode() && hiddenHelper.sourceValid &&
+             hiddenHelper.syntaxValid &&
+             std::any_of(
+                 hiddenHelper.diagnostics.begin(),
+                 hiddenHelper.diagnostics.end(),
+                 [](const auto &value) { return value.code == "GTI-S2024"; }),
+         "implementation imports must not expose private helpers to consumers");
 }
 
 void testCallerLocationAssignments() {
@@ -2041,7 +2056,8 @@ void testCallerLocationAssignments() {
 
 void testMetadataAndSiteVerifierMutations() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "/tmp/gti-forged/main.gti", "int checked(int value) { return value + 1; }"
+      "/tmp/gti-forged/main.gti", "export module shared;\nexport int "
+                                  "checked(int value) { return value + 1; }"
                                   "int main() { return checked(1); }");
   expect(frontend.canGenerateCode(),
          "the verifier mutation fixture should compile");
@@ -2534,7 +2550,7 @@ int main() { return checked_add(1, 2); }
 void testUniqueOwnerBorrowFailureEdges() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "/tmp/gti-owner-failure/main.gti", R"(
-#include <std/memory>
+import std.memory;
 struct Record { mut int32_t value = 1;  public: Record() = default; };
 int32_t read(std::unique_ptr<Record>& owner) {
   return (*owner).value + owner->value;
@@ -2636,7 +2652,7 @@ int main() {
 void testScalarUniqueAllocationContracts() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "/tmp/gti-scalar-allocation/main.gti", R"(
-#include <std/memory>
+import std.memory;
 int main() {
   auto value = std::make_unique<int32_t>(7);
   auto zero = std::make_unique<int32_t>();
@@ -2716,7 +2732,7 @@ int main() {
 
   const auto callback = lang::Frontend().analyze(
       "/tmp/gti-scalar-callback/main.gti", R"(
-#include <std/memory>
+import std.memory;
 using callback = (int32_t) -> int32_t;
 int main() {
   callback empty = nullptr;
@@ -2742,7 +2758,7 @@ int main() {
     const std::string path = "/tmp/gti-invalid-scalar/main.gti";
     const auto rejected = lang::Frontend().analyze(
         path,
-        "#include <std/memory>\nenum class choice { one };\n"
+        "import std.memory;\nenum class choice { one };\n"
         "using callback = (int32_t) -> int32_t;\n"
         "int main() { auto owner = " +
             expression + "; return 0; }\n",
@@ -2781,8 +2797,9 @@ int main() {
                              diagnostic->primary.end -
                                  diagnostic->primary.start) == "make_unique" &&
               librarySource != nullptr &&
-              std::filesystem::path(library->span.source).filename() ==
-                  "memory.gti" &&
+              std::filesystem::weakly_canonical(library->span.source) ==
+                  std::filesystem::weakly_canonical(
+                      standardLibraryRoot() / "std/detail/memory_core.gti") &&
               librarySource->substr(library->span.start,
                                     library->span.end - library->span.start) ==
                   ")",
@@ -2795,7 +2812,7 @@ int main() {
 void testImplicitUniqueAllocationContracts() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-implicit-allocation/main.gti", R"(
-#include <std/memory>
+import std.memory;
 class Empty { public: ~Empty() {}  public: Empty() = default; };
 int main() { auto owner = std::make_unique<Empty>(); return 0; }
 )",
@@ -2855,7 +2872,7 @@ int main() { auto owner = std::make_unique<Empty>(); return 0; }
 void testClassUniqueAllocationContracts() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-class-allocation/main.gti", R"(
-#include <std/memory>
+import std.memory;
 class Value {
   int32_t result;
 public:
@@ -2992,7 +3009,7 @@ int main() { auto owner = std::make_unique<Value>(0); return 0; }
 void testUniquePointeeCleanupContracts() {
   const auto quiet = lang::Frontend().analyze(
       "/tmp/gti-quiet-cleanup/main.gti", R"(
-#include <std/memory>
+import std.memory;
 class Quiet { public: Quiet() {} ~Quiet() {} };
 int main() { auto owner = std::make_unique<Quiet>(); return 0; }
 )",
@@ -3732,7 +3749,7 @@ void testCollectionCleanupContracts() {
 void testConstructorPreparedParameterTransfers() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-constructor-prepared-parameter/main.gti", R"(
-#include <std/string>
+import std.string;
 mut int32_t divisor = 1;
 void consume(std::string value) { int32_t checked = 3 / divisor; }
 std::string relay(std::string value) { return std::move(value); }
@@ -3862,7 +3879,7 @@ int main() { auto fields = Fields(); auto caller = Caller(); return 0; }
 void testBaseInitializationContracts() {
   const auto frontend = lang::Frontend().analyze(
       "/tmp/gti-base-initialization/main.gti", R"(
-#include <std/memory>
+import std.memory;
 mut int32_t divisor = 1;
 class Base {
   std::unique_ptr<int32_t> value;
@@ -4018,6 +4035,10 @@ int main(int argc, char **argv) {
       testCheckedCallPlacePreparation();
     else if (name == "testModuleImplementationSourceIdentity")
       testModuleImplementationSourceIdentity();
+    else if (name == "testContainerContractChecks")
+      testContainerContractChecks();
+    else if (name == "testScalarUniqueAllocationContracts")
+      testScalarUniqueAllocationContracts();
     else {
       std::cerr << "unknown test: " << name << '\n';
       return 2;

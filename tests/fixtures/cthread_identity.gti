@@ -1,4 +1,4 @@
-#include <std/cthread>
+import std.cthread;
 
 int main() {
   std::thrd_t initial = std::thrd_current();

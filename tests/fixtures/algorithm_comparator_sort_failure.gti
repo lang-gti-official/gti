@@ -1,6 +1,6 @@
-#include <std/algorithm>
-#include <std/string>
-#include <std/vector>
+import std.algorithm;
+import std.string;
+import std.vector;
 
 mut int mode = 0;
 

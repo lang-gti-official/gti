@@ -79,7 +79,7 @@ int main() { return produce().get() + Owner().get() - 6; }
 
   const auto owned =
       analyzeTrustedPreludeFixture("temporary-string-view.gti", R"(
-#include <std/string>
+import std.string;
 std::string produce() { return std::string("hello"); }
 int read(std::string_view value, int divisor) { return int(value.size()) / divisor; }
 int later(int divisor) { return 1 / divisor; }
@@ -169,7 +169,7 @@ int main() {
          "failure retirement");
 
   for (const std::string source :
-       {"#include <std/string>\nstd::string produce() { return "
+       {"import std.string;\nstd::string produce() { return "
         "std::string(\"hello\"); }\nint main() { auto view = produce().view(); "
         "return int(view.size()); }",
         "class Owner { int value = 3; public: int& get() { return this.value; "

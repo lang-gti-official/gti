@@ -1,5 +1,5 @@
-#include <std/format>
-#include <std/string>
+import std.format;
+import std.string;
 
 namespace app {
 mut int drops = 0;

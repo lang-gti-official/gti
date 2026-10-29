@@ -1,7 +1,7 @@
 // Comma-pack folds over constrained packs feeding a constrained element
 // target, mixed with fixed leading parameters, pack forwarding through two
 // levels, empty packs, a class-owned pack, and a method binding it.
-#include <std/string>
+import std.string;
 
 struct Tally {
   mut int64_t sum = 0;

@@ -1,5 +1,5 @@
 // Exact qualified specialization of a foreign primary over a local type.
-#include <std/functional>
+import std.functional;
 
 class Widget {
   mut int32_t code = 0;

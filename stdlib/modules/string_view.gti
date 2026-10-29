@@ -1,3 +1,0 @@
-// Module std.string_view: the public surface of <std/string_view>.
-export module string_view;
-export #include <std/string_view>

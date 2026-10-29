@@ -1,4 +1,4 @@
-#include <std/vector>
+import std.vector;
 class Accum { public: Accum() {} };
 int main() {
   mut std::vector<int32_t> v = std::vector<int32_t>();

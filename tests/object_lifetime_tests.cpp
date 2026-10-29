@@ -22,13 +22,18 @@ void expect(bool condition, std::string_view label) {
 }
 lang::FrontendResult analyze(const std::string &source, bool trusted = false) {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
-  const auto entry = root / "object-lifetime-test.gti";
+  const auto entry =
+      trusted ? root / "stdlib/__private_tests__/object-lifetime-test.gti"
+              : root / "object-lifetime-test.gti";
+  std::string text = source;
+  if (trusted)
+    text.insert(0, "import \"../std/detail/memory_capabilities.gti\"; ");
   std::vector<std::filesystem::path> preludes{root / "stdlib/prelude.gti"};
   if (trusted)
     preludes.push_back(entry);
   return lang::Frontend().analyze(
-      entry, source, preludes,
-      {{std::filesystem::weakly_canonical(entry).string(), source}},
+      entry, text, preludes,
+      {{std::filesystem::weakly_canonical(entry).string(), text}},
       {root / "stdlib"});
 }
 void diagnostics(const lang::FrontendResult &result) {
@@ -84,8 +89,8 @@ int main() {
   // This is a static/MIR fixture, not an executable program: raw validity is
   // the unsafe caller's obligation, independently of pointer type checking.
   const auto frontend = analyze(R"(
-#include <std/memory>
-#include <std/panic>
+import std.memory;
+import std.panic;
 class Sensor {
 public:
   Sensor(Sensor& other) = delete;
@@ -177,7 +182,7 @@ int main() {
       frontend, [](auto &i) { i.info.category = lang::ValueCategory::Place; },
       "destruction cannot publish a borrowed result");
   const std::string unsafeSource =
-      "#include <std/memory>\nint main() { int* p = nullptr; "
+      "import std.memory;\nint main() { int* p = nullptr; "
       "std::destroy_at(p); return 0; }";
   const auto missingUnsafe = analyze(unsafeSource);
   const auto close =
@@ -200,7 +205,7 @@ int main() {
          "unsafe fix-it");
   for (const std::string pointer : {"const int*", "void*"}) {
     const auto invalid =
-        analyze("#include <std/memory>\nint main() { " + pointer +
+        analyze("import std.memory;\nint main() { " + pointer +
                     " p = nullptr; unsafe { gti_internal::object_destroy(p); } "
                     "return 0; }",
                 true);
@@ -215,7 +220,7 @@ int main() {
            "private destruction rejects readonly and incomplete pointees");
   }
   const auto construction = analyze(R"(
-#include <std/memory>
+import std.memory;
 class Stationary {
   int value;
 public:
@@ -349,8 +354,8 @@ int main() {
     }
   }
   const auto transfers = analyze(R"(
-#include <std/memory>
-#include <std/string>
+import std.memory;
+import std.string;
 struct Record { int number = 4;  public: Record() = default; };
 int main() {
   Record record{};

@@ -9,11 +9,12 @@ import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT
+from internal_module_fixture import private_library, private_source
 
 
 def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
          fixture_paths=None, native_inputs_by_name=None, native_arguments_by_case=None,
-         llvm_modes=False, cpp_unsupported=None):
+         llvm_modes=False, cpp_unsupported=None, private_modules_by_name=None):
     fixtures = pathlib.Path(__file__).parent / "fixtures"
     if names is None:
         names = ("lambda_pack_invocation", "stored_callable_signature",
@@ -44,9 +45,22 @@ def main(names=None, cases=None, execution_profile=None, stdin_by_name=None,
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     with tempfile.TemporaryDirectory(prefix="gti-lambda-pack-") as temporary:
+        private_modules = {module for name in names
+                           for module in (private_modules_by_name or {}).get(name, ())}
+        if private_modules:
+            library = private_library(fixtures.parent.parent,
+                                      pathlib.Path(temporary) / "stdlib", private_modules)
+            environment["GTI_STDLIB_PATH"] = str(library)
+        private_sources = {}
+        for name in names:
+            modules = (private_modules_by_name or {}).get(name, ())
+            if modules:
+                source = (fixture_paths or {}).get(name, fixtures / f"{name}.gti")
+                private_sources[name] = private_source(
+                    source, pathlib.Path(temporary) / source.name, modules)
         def compile_fixture(case):
             name, label, flags, native = case
-            source = (fixture_paths or {}).get(name, fixtures / f"{name}.gti")
+            source = private_sources.get(name, (fixture_paths or {}).get(name, fixtures / f"{name}.gti"))
             binary = pathlib.Path(temporary) / f"{name}-{label}"
             command = [str(compiler), str(source), *flags, "-o", str(binary)]
             if execution_profile is not None:

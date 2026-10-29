@@ -4,8 +4,8 @@
 // run-time index (issue #203). Each used to stop C++ emission with
 // GTI-B0001. A field read or store below a run-time index checks the bound
 // first: an index out of range fails with GTI-R0007.
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 struct Point {
   mut int32_t x;

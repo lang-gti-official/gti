@@ -1,1 +1,2 @@
+export module first;
 // First dependency identity; intentionally no executable declarations.

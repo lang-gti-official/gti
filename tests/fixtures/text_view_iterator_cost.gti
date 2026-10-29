@@ -1,4 +1,4 @@
-#include <std/string>
+import std.string;
 
 extern "C" {
   void adoption_count_begin();

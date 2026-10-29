@@ -1,6 +1,6 @@
-#include "user_dual_range_support.gti"
-#include <std/vector>
-#include <std/string>
+import "user_dual_range_support.gti";
+import std.vector;
+import std.string;
 
 int main() {
   std::vector<UserDualElement> first = {UserDualElement(1, std::string("left"))};

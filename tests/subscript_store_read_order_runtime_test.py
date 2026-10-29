@@ -21,8 +21,8 @@ def fail(label: str, process: subprocess.CompletedProcess[str]) -> int:
 
 
 POSITIVE_SOURCE = """\
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 mut int32_t stamp = 0;
 
@@ -124,7 +124,7 @@ int main() {
 """
 
 SCHEDULE_SOURCE = """\
-#include <std/vector>
+import std.vector;
 
 int main() {
   mut std::vector<int32_t> values = std::vector<int32_t>();
@@ -135,7 +135,7 @@ int main() {
 """
 
 FAILURE_ORDER_SOURCE = """\
-#include <std/vector>
+import std.vector;
 
 int32_t noisy() {
   std::println("right operand evaluated");

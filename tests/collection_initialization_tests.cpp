@@ -208,7 +208,7 @@ int main() {
   constrainedHooks();
   returnCleanupTail();
   const auto generic = analyze("generic-collection.gti", R"(
-#include <std/vector>
+import std.vector;
 std::vector<T> wrap<T>(T element) requires std::vector_element<T> {
   std::vector<T> result = {std::move(element)};
   return std::move(result);
@@ -295,7 +295,7 @@ int main() {
   rejected(collection +
                "int main(){ int64_t wide = 1; Numbers n = {wide}; return 0; }",
            "collection element");
-  rejected("#include <std/vector>\n#include <std/string>\n"
+  rejected("import std.vector;\nimport std.string;\n"
            "int main(){ std::string value{\"owned\"}; "
            "std::vector<std::string> values = {value}; return 0; }",
            "collection element");

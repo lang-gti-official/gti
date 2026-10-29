@@ -1,3 +1,0 @@
-// Module std.vector: the public surface of <std/vector>.
-export module vector;
-export #include <std/vector>

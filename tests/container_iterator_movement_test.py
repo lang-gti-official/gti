@@ -10,6 +10,7 @@ import tempfile
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from contiguous_iterator_completion_test import MODES
 from iterator_sanitizer_support import partition_main
+from internal_module_fixture import iterator_library
 
 
 def sanitizer_partitions(source):
@@ -39,6 +40,7 @@ def main():
     modes = [mode for mode in MODES if not options.mode or mode[0] in options.mode]
     with tempfile.TemporaryDirectory(prefix="gti-container-movement-") as temporary:
         output = Path(temporary)
+        environment["GTI_STDLIB_PATH"] = str(iterator_library(root, output / "stdlib"))
         sanitizer_sources = {}
         if any(label == "sanitized" for label, _, _ in modes):
             source = root / "tests/fixtures/container_iterator_movement.gti"
@@ -121,8 +123,8 @@ def main():
             "resource-reverse-end-step": "mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.rend_mut();",
             "resource-begin-backstep": "mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1); mut auto cursor = values.begin_mut();",
         }
-        state_source = """#include <std/string>
-#include <std/detail/iterator>
+        state_source = """import std.string;
+import std.detail_iterator;
 class StepDrop {
   int id;
 public:
@@ -155,8 +157,8 @@ public:
                     setup = ("std::process_resource process{}; unsafe {\n"
                              "auto resource = std::bind_resource(process);\n" + setup)
                     operation += "\n}"
-                fixture.write_text(state_source + "#include <std/vector>\n"
-                    "#include <std/resource_vector>\n#include <std/resource>\n"
+                fixture.write_text(state_source + "import std.vector;\n"
+                    "import std.resource_vector;\nimport std.resource;\n"
                     "int main() {\nStepDrop outer{10};\n" + setup +
                     "\nStepDrop inner{20};\n" + operation + "\nreturn 99;\n}\n")
                 expected_stdout = "20\n10\n"
@@ -168,7 +170,7 @@ public:
                     "  StepDrop inner{20};\n  state.step();\n  return 99;\n}\n")
                 expected_stdout = f"20\n{position}\n10\n"
             else:
-                fixture.write_text("#include <std/detail/iterator>\nint main() {\n"
+                fixture.write_text("import std.detail_iterator;\nint main() {\n"
                                    f"auto result = {expression};\nreturn 0;\n}}\n")
             binary = output / f"{name}-{label}"
             command = [str(compiler), str(fixture), *flags,

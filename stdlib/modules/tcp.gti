@@ -1,3 +1,0 @@
-// Module std.tcp: the public surface of <std/tcp>.
-export module tcp;
-export #include <std/tcp>

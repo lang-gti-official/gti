@@ -31,11 +31,10 @@ public:
           nullptr,
       const std::unordered_map<std::string, std::uint64_t> *sourceDigests =
           nullptr,
-      std::string cacheContext = {}, bool warnLegacyIncludes = false)
+      std::string cacheContext = {})
       : workMetrics(workMetrics), cache(std::move(cache)),
         sourceGenerations(sourceGenerations), sourceDigests(sourceDigests),
-        cacheContext(std::move(cacheContext)),
-        warnLegacyIncludes(warnLegacyIncludes) {}
+        cacheContext(std::move(cacheContext)) {}
 
   SourceGraph
   load(const std::filesystem::path &entryPath,
@@ -64,27 +63,18 @@ private:
   struct FileState {
     LoadState state = LoadState::Visiting;
     SourceUnitId unit = 0;
-    bool includeWarningEmitted = false;
-    // Includes run once in each isolated module configuration domain. The
-    // source graph and selected syntax still have one canonical identity.
-    std::unordered_set<SourceUnitId> configurationDomains;
-    // Set when the unit loaded through its flag-independent processed form,
-    // which then also serves its replays in later configuration domains.
-    std::shared_ptr<const ProcessedSourceUnit> processed;
   };
 
-  struct ResolvedInclude {
+  struct ResolvedImport {
     std::size_t directiveEnd = 0;
     SourceUnitId dependency = 0;
-    SourceDependencyKind kind = SourceDependencyKind::Include;
+    SourceDependencyKind kind = SourceDependencyKind::Import;
     std::string includeSpelling;
   };
 
   static std::filesystem::path canonicalPath(const std::filesystem::path &path);
 
   static bool isImportPathSegment(std::string_view segment);
-
-  static bool isImportPathSegment(const Token &token);
 
   static bool pathIsWithin(const std::filesystem::path &root,
                            const std::filesystem::path &candidate);
@@ -98,8 +88,7 @@ private:
   [[nodiscard]] std::optional<std::string>
   standardLibraryNameForExistingPath(const std::filesystem::path &path) const;
 
-  // `modules/name` for an interface in a configured root's fixed module
-  // directory; that interface belongs to the reserved `std` module owner.
+  // Trusted source provenance is independent of module ownership/maps.
   [[nodiscard]] std::optional<std::string>
   standardModuleNameForExistingPath(const std::filesystem::path &path) const;
 
@@ -109,26 +98,11 @@ private:
            std::optional<std::string> standardLibraryName = std::nullopt,
            SourceUnitRole role = SourceUnitRole::Application);
 
-  ResolvedInclude resolveInclude(const std::vector<Token> &tokens,
-                                 std::size_t index,
-                                 const std::filesystem::path &includingFile,
-                                 int braceDepth, int conditionalDepth);
-
-  ResolvedInclude
-  resolveAngleInclude(const std::vector<Token> &tokens, std::size_t index,
-                      const Token &includeToken,
-                      const std::filesystem::path &includingFile);
-
-  ResolvedInclude
-  resolvePackageInclude(const std::vector<std::string> &segments,
-                        std::size_t directiveEnd, const Token &includeToken,
-                        const std::filesystem::path &includingFile);
-
-  ResolvedInclude resolveImport(const std::vector<Token> &tokens,
-                                std::size_t index,
-                                const std::filesystem::path &includingFile,
-                                int braceDepth, int conditionalDepth,
-                                bool reexport);
+  ResolvedImport resolveImport(const std::vector<Token> &tokens,
+                               std::size_t index,
+                               const std::filesystem::path &includingFile,
+                               int braceDepth, int conditionalDepth,
+                               bool reexport);
 
   void report(const Token &token, std::string message,
               std::string code = "GTI-I0000");
@@ -142,21 +116,19 @@ private:
   std::optional<std::string> entrySource;
   const std::unordered_map<std::string, std::string> *sourceOverrides = nullptr;
   std::vector<std::filesystem::path> standardLibraryRoots;
-  std::vector<PackageSourceRoot> packageSourceRoots;
+  std::shared_ptr<const SourceOwnerRegistry> sourceOwners;
   bool entrySourceConsumed = false;
   std::optional<std::size_t> completionOffset;
   TargetInfo targetInfo = TargetInfo::host();
   std::unordered_set<std::string> activeFlags;
   std::unordered_set<std::string> declaredFlags;
   std::unordered_set<std::string> initialFlags;
-  SourceUnitId configurationDomain = 0;
   FrontendWorkMetrics *workMetrics = nullptr;
   std::shared_ptr<FrontendCache> cache;
   const std::unordered_map<std::string, std::uint64_t> *sourceGenerations =
       nullptr;
   const std::unordered_map<std::string, std::uint64_t> *sourceDigests = nullptr;
   std::string cacheContext;
-  bool warnLegacyIncludes = false;
 };
 
 } // namespace lang

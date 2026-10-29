@@ -5,7 +5,7 @@ Status: Normative scaffold
 ## 6.1 Program Formation
 
 A program consists of one entry source unit, every source unit reachable
-through valid includes and imports, the implicit prelude, and one selected target. Source
+through valid imports, the implicit prelude, and one selected target. Source
 units are parsed independently and retain their identity through semantic
 analysis.
 
@@ -19,8 +19,8 @@ int main()
 or:
 
 ```gti
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 int main(int argc, std::vector<std::string> argv)
 ```
@@ -63,7 +63,7 @@ canonical path. The native argument storage is not retained after the copy.
 The hosted containment boundary is active before GTI module/static
 initialization and remains active through checked entry adaptation, `main`, and
 invocation cleanup. Dependencies initialize before requesters, direct
-dependencies follow lexical include-directive order, and globals/static fields
+dependencies follow lexical import-declaration order, and globals/static fields
 within a unit follow source order as specified in
 [Execution Section 4.2.4](execution.md#424-program-wide-initialization). The
 verified `Module/0` body and program-initialization thunk carry that plan into
@@ -140,7 +140,7 @@ streams. A root with neither form is diagnosed before native
 compilation. Ordinary executable/fragment compilation does not discover or
 invoke tests merely because a function is annotated.
 
-`<std/testing>` provides `std::testing::check(bool, string_view message =
+`std.testing` provides `std::testing::check(bool, string_view message =
 "Test check failed")`, a source-defined caller-tracked wrapper over `std::panic`.
 Failure reports the user's check location and preserves normal deterministic
 cleanup. The library does not catch or resume a panic.
@@ -168,9 +168,9 @@ lowers to a native preprocessor directive.
 `#define NAME` defines a case-sensitive flag from that point in source order;
 `#undef NAME` removes it. Repeating a definition and undefining an absent flag
 are no-ops. A definition in an inactive branch has no effect. Definitions
-before an include are visible while that unit is loaded, and active definitions
-made by the included unit remain visible afterwards. Includes themselves
-remain forbidden inside a conditional, and each included unit is loaded once.
+are local to the source module: they do not enter or escape imported modules.
+Every imported module starts from compiler-supplied flags. Imports remain
+unconditional, and canonical source units are loaded once.
 
 Flags carry no value and never replace tokens. A replacement list such as
 `#define BUFFER_SIZE 4096` is ill-formed; a typed `constexpr` selected by a
@@ -240,9 +240,8 @@ A project applies the same policy from its selected profile:
 disabled-warnings = ["unused-mut"]
 ```
 
-The editor also enables `legacy-include` (`GTI-I0013`), which recommends
-module imports once per file at its first include; ordinary build/check requests
-do not enable this migration advice.
+GTI `#include` is a source-loading error (`GTI-I0014`) in both editor and
+build/check requests. The former optional `legacy-include` warning is removed.
 
 Command-line groups are additive to the profile list. Current warning groups
 are `configuration` (`GTI-S2075`), `unreachable-code` (`GTI-S2095`),
@@ -519,7 +518,7 @@ The concurrency and memory-model boundary is specified in
 managed-thread operations. `std::atomic<T>` provides `bool` and fixed-width
 integer atomics with sequentially consistent defaults and explicit static
 legal orders. `std::mutex<T>` provides owner-tied scoped exclusive access.
-The separate unsafe `<std/cthread>` surface provides registered manual
+The separate unsafe `std.cthread` surface provides registered manual
 create/join, once initialization, manual mutexes, and manual condition
 variables. A safe scoped condition-variable wrapper, signal interaction,
 detached/asynchronous execution, thread-specific storage, and arbitrary
@@ -595,4 +594,4 @@ a source language feature.
 Project and workspace manifests provide declared package source roots and
 direct-dependency visibility to the same source graph and frontend used by
 direct compilation. Package resolution remains driver policy; it does not
-replace include resolution, parsing, or source-language semantics.
+replace import resolution, parsing, or source-language semantics.

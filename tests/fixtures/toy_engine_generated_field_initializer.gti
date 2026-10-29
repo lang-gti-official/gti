@@ -1,4 +1,4 @@
-#include <std/memory>
+import std.memory;
 
 mut int constructed = 0;
 mut int construction_order = 0;

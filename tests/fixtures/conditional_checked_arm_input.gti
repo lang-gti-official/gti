@@ -1,5 +1,5 @@
-#include <std/string>
-#include <std/vector>
+import std.string;
+import std.vector;
 
 // A cleanup-free class result produced in each arm of a conditional
 // expression after the arm evaluates inputs that can fail: an

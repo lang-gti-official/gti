@@ -1,3 +1,4 @@
-int cache_value() {
+export module value;
+export int cache_value() {
   return 17;
 }
