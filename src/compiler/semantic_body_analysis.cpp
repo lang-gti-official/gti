@@ -10419,62 +10419,101 @@ auto SemanticVisitor::Impl::evaluateLayout(
 auto SemanticVisitor::Impl::validateLayoutClassAssertions(
     const std::vector<SemanticType> &completeClasses, const Token &query)
     -> bool {
-  for (const SemanticType &type : completeClasses) {
-    const ClassInfo *owner = classInfo(type);
-    if (!owner || owner->genericParameters.empty() || !owner->declaration ||
-        !declaresConcreteClassStaticAssertions(owner->declaration->members()))
-      continue;
-    const auto known = knownConcreteClassAssertionOutcome(
-        type.classId, type.arguments, type.valueArguments);
-    if (known && !*known)
-      continue;
-    const InstanceAnalysisKey key{
-        .kind = InstanceAnalysisKind::ClassFieldInitializers,
-        .declaration = type.classId,
-        .classTypes = type.arguments,
-        .classValues = type.valueArguments};
-    const auto open = openReanalyses();
-    // An assertion may query its own complete representation. Its enclosing
-    // analysis owns that assertion, just as for staged constant evaluation.
-    if (std::find(open->begin(), open->end(), key) != open->end())
-      continue;
-    if (open->size() >= constexprCallDepthLimit) {
-      report(query,
-             "Layout query class assertions exceeded the compiler "
-             "instantiation-depth limit.",
-             "GTI-S2063");
-      return false;
+  auto &work = requestSession.layoutAssertionWork;
+  struct RestoreWork {
+    std::shared_ptr<LayoutAssertionWork> &work;
+    bool root;
+    ~RestoreWork() {
+      if (root)
+        work.reset();
     }
-    // A query must validate the classes it needs by value, even when it is
-    // erased before HIR. Reuse ordinary assertion analysis in an isolated
-    // context: no field initialization, lifetime event, or caller-flow edit.
-    auto worker = unevaluatedExpressionWorker();
-    worker->prepareInstanceAnalysis();
-    worker->openReanalyses()->push_back(key);
-    worker->requestSession.assertionsOwnedUpChain = false;
-    if (!worker->prepareClassInstanceContext(type.classId, type.arguments,
-                                             type.valueArguments)) {
-      report(query, "Layout query could not validate the concrete class.",
-             "GTI-S2063");
-      return false;
+  } restore{work, !work};
+  const auto validate = [&]() -> bool {
+    for (const SemanticType &type : completeClasses) {
+      if (work && work->failure)
+        return false;
+      const ClassInfo *owner = classInfo(type);
+      if (!owner || owner->genericParameters.empty() || !owner->declaration ||
+          !declaresConcreteClassStaticAssertions(owner->declaration->members()))
+        continue;
+      const auto known = knownConcreteClassAssertionOutcome(
+          type.classId, type.arguments, type.valueArguments);
+      if (known && !*known)
+        continue;
+      const InstanceAnalysisKey key{
+          .kind = InstanceAnalysisKind::ClassFieldInitializers,
+          .declaration = type.classId,
+          .classTypes = type.arguments,
+          .classValues = type.valueArguments};
+      const auto open = openReanalyses();
+      // An assertion may query its own complete representation. Its enclosing
+      // analysis owns that assertion, just as for staged constant evaluation.
+      if (std::find(open->begin(), open->end(), key) != open->end())
+        continue;
+      if (!work)
+        work = std::make_shared<LayoutAssertionWork>();
+      if (open->size() >= constexprCallDepthLimit) {
+        report(query,
+               "Layout query class assertions exceeded the compiler "
+               "instantiation-depth limit.",
+               "GTI-S2063");
+        work->failure = diagnostics.back();
+        return false;
+      }
+      if (work->instances >= constexprExpressionStepLimit) {
+        report(query,
+               "Layout query class assertions exceeded the compiler "
+               "instantiation-work limit.",
+               "GTI-S2063");
+        work->failure = diagnostics.back();
+        return false;
+      }
+      ++work->instances;
+      // A query must validate the classes it needs by value, even when it is
+      // erased before HIR. Reuse ordinary assertion analysis in an isolated
+      // context: no field initialization, lifetime event, or caller-flow edit.
+      auto worker = unevaluatedExpressionWorker();
+      worker->prepareInstanceAnalysis();
+      worker->openReanalyses()->push_back(key);
+      worker->requestSession.assertionsOwnedUpChain = false;
+      if (!worker->prepareClassInstanceContext(type.classId, type.arguments,
+                                               type.valueArguments)) {
+        report(query, "Layout query could not validate the concrete class.",
+               "GTI-S2063");
+        return false;
+      }
+      worker->analyzeConcreteClassStaticAssertions(
+          owner->declaration->members());
+      worker->finishClassInstanceContext();
+      if (worker->semanticModel.requiresNativeObjectLayout())
+        semanticModel.requireNativeObjectLayout();
+      const bool failed =
+          work->failure.has_value() ||
+          std::any_of(worker->diagnostics.begin(), worker->diagnostics.end(),
+                      [](const SemanticDiagnostic &diagnostic) {
+                        return diagnostic.severity == DiagnosticSeverity::Error;
+                      });
+      diagnostics.insert(diagnostics.end(), worker->diagnostics.begin(),
+                         worker->diagnostics.end());
+      recordConcreteClassAssertionOutcome(type.classId, type.arguments,
+                                          type.valueArguments, failed);
+      if (failed)
+        return false;
     }
-    worker->analyzeConcreteClassStaticAssertions(owner->declaration->members());
-    worker->finishClassInstanceContext();
-    if (worker->semanticModel.requiresNativeObjectLayout())
-      semanticModel.requireNativeObjectLayout();
-    const bool failed =
-        std::any_of(worker->diagnostics.begin(), worker->diagnostics.end(),
-                    [](const SemanticDiagnostic &diagnostic) {
-                      return diagnostic.severity == DiagnosticSeverity::Error;
-                    });
-    diagnostics.insert(diagnostics.end(), worker->diagnostics.begin(),
-                       worker->diagnostics.end());
-    recordConcreteClassAssertionOutcome(type.classId, type.arguments,
-                                        type.valueArguments, failed);
-    if (failed)
-      return false;
-  }
-  return true;
+    return !work || !work->failure;
+  };
+  const bool valid = validate();
+  // A requirement may consume an ordinary invalid-class diagnostic. Resource
+  // exhaustion is different: it cannot establish that a requirement is false.
+  // Preserve it at the root even if an intervening speculative probe erased it.
+  if (restore.root && work && work->failure &&
+      std::none_of(diagnostics.begin(), diagnostics.end(),
+                   [&](const auto &diagnostic) {
+                     return diagnostic.code == work->failure->code &&
+                            diagnostic.message == work->failure->message;
+                   }))
+    diagnostics.push_back(*work->failure);
+  return valid;
 }
 
 auto SemanticVisitor::Impl::evaluateObjectLayout(const SemanticType &type,

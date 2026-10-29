@@ -545,6 +545,45 @@ int main() { uint64_t n = sizeof(Loop<int>); return 0; }
 )");
   expect(!expanding.canGenerateCode() && countCode(expanding, "GTI-S2063") == 1,
          "expanding class assertions terminate with one source diagnostic");
+  const auto branching = analyze("layout-branching-assertion.gti", R"(
+struct Loop<T> {
+  static_assert(sizeof(Loop<T*>) > uint64_t(0) &&
+                sizeof(Loop<T*>) > uint64_t(0));
+  int value;
+};
+int main() { uint64_t n = sizeof(Loop<int>); return 0; }
+)");
+  expect(!branching.canGenerateCode() && countCode(branching, "GTI-S2063") == 1,
+         "branching assertions stop after the first resource failure");
+
+  const auto speculative = analyze("layout-assertion-requirement.gti", R"(
+struct Bad<T> { static_assert(sizeof(T) == uint64_t(0)); int value; };
+constexpr bool rejected<T>() {
+  if constexpr (requires() { { sizeof(Bad<T>) } -> uint64_t; }) {
+    return false;
+  } else { return true; }
+}
+struct Good<T> { static_assert(rejected<T>()); int value; };
+static_assert(sizeof(Good<int>) == uint64_t(4));
+int main() { return 0; }
+)");
+  if (!speculative.canGenerateCode())
+    printDiagnostics(speculative);
+  expect(speculative.canGenerateCode(),
+         "ordinary rejected requirements do not poison the shared work budget");
+  const auto exhausted = analyze("layout-staged-assertion-budget.gti", R"(
+struct Loop<T> { static_assert(sizeof(Loop<T*>) > uint64_t(0)); int value; };
+constexpr bool rejected<T>() {
+  if constexpr (requires() { { sizeof(Loop<T>) } -> uint64_t; }) {
+    return false;
+  } else { return true; }
+}
+struct Good<T> { static_assert(rejected<T>()); int value; };
+static_assert(sizeof(Good<int>) == uint64_t(4));
+int main() { return 0; }
+)");
+  expect(!exhausted.canGenerateCode() && countCode(exhausted, "GTI-S2063") > 0,
+         "staged predicates cannot hide exhausted class assertion work");
 }
 
 void testNativeLayoutAdmission() {

@@ -834,6 +834,10 @@ public:
     std::vector<SemanticType> active;
     std::vector<Completed> completed;
   };
+  struct LayoutAssertionWork {
+    std::size_t instances = 0;
+    std::optional<SemanticDiagnostic> failure;
+  };
   [[nodiscard]] LayoutEvaluation
   evaluateObjectLayout(const SemanticType &type, ObjectLayoutContext &context,
                        bool storedReference = false) const;
@@ -7080,6 +7084,9 @@ private:
     // concreteClassAssertionsFail().
     std::unordered_map<InstanceAnalysisKey, bool, InstanceAnalysisKeyHash>
         classAssertionOutcomes;
+    // Shared only along an active layout query's assertion/staging chain.
+    // A depth limit alone cannot bound branching invalid assertions.
+    std::shared_ptr<LayoutAssertionWork> layoutAssertionWork;
     // While a concrete instance is analysed, each static assertion's own
     // diagnostics are also copied here. If one fails, or the instance's class
     // assertion did, they are all the analysis reports; see

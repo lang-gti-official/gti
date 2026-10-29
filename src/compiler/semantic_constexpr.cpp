@@ -503,6 +503,8 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   // This worker can reanalyse an instance whose reanalysis is open here or
   // further up; it must see that one owns the instance's assertions.
   worker.impl->requestSession.openReanalyses = openReanalyses();
+  worker.impl->requestSession.layoutAssertionWork =
+      requestSession.layoutAssertionWork;
   worker.impl->nextLambdaId = nextLambdaId;
   return *worker.impl;
 }
@@ -862,7 +864,9 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     return std::nullopt;
   };
   if (result) {
-    if (reuseKey && StagedConstantResults::reusable(*result.value))
+    if (reuseKey && StagedConstantResults::reusable(*result.value) &&
+        (!requestSession.layoutAssertionWork ||
+         !requestSession.layoutAssertionWork->failure))
       stagedConstants->record(
           {.key = *reuseKey,
            .value = *result.value,
