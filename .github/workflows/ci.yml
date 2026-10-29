@@ -129,7 +129,7 @@ jobs:
       matrix:
         include:
           - {os: ubuntu-24.04, platform: linux}
-          - {os: macos-15, platform: darwin}
+          - {os: macos-26, platform: darwin}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     steps:
@@ -142,18 +142,8 @@ jobs:
           GTI_MEMORY_PER_JOB_MIB: 2048
           GTI_MEMORY_PER_TEST_MIB: 3072
         run: bash scripts/configure_ci_resources.sh
-      - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential ccache clang cmake ninja-build libcurl4-openssl-dev llvm-18-dev libclang-18-dev
-          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITHUB_ENV}"
-      - name: Install Ninja and LLVM 22
-        if: runner.os == 'macOS'
-        run: |
-          brew install ccache ninja llvm@22
-          echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> "${GITHUB_ENV}"
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
       - name: Configure compiler object cache
         env:
           GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/native
@@ -199,12 +189,12 @@ jobs:
           - {os: ubuntu-24.04, platform: linux, shards: 4, index: 1}
           - {os: ubuntu-24.04, platform: linux, shards: 4, index: 2}
           - {os: ubuntu-24.04, platform: linux, shards: 4, index: 3}
-          - {os: macos-15, platform: darwin, shards: 6, index: 0}
-          - {os: macos-15, platform: darwin, shards: 6, index: 1}
-          - {os: macos-15, platform: darwin, shards: 6, index: 2}
-          - {os: macos-15, platform: darwin, shards: 6, index: 3}
-          - {os: macos-15, platform: darwin, shards: 6, index: 4}
-          - {os: macos-15, platform: darwin, shards: 6, index: 5}
+          - {os: macos-26, platform: darwin, shards: 6, index: 0}
+          - {os: macos-26, platform: darwin, shards: 6, index: 1}
+          - {os: macos-26, platform: darwin, shards: 6, index: 2}
+          - {os: macos-26, platform: darwin, shards: 6, index: 3}
+          - {os: macos-26, platform: darwin, shards: 6, index: 4}
+          - {os: macos-26, platform: darwin, shards: 6, index: 5}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
     steps:
@@ -221,18 +211,8 @@ jobs:
           GTI_MEMORY_PER_JOB_MIB: 2048
           GTI_MEMORY_PER_TEST_MIB: 3072
         run: bash scripts/configure_ci_resources.sh
-      - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential ccache clang cmake ninja-build libcurl4-openssl-dev llvm-18-dev libclang-18-dev
-          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITHUB_ENV}"
-      - name: Install Ninja and LLVM 22
-        if: runner.os == 'macOS'
-        run: |
-          brew install ccache ninja llvm@22
-          echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> "${GITHUB_ENV}"
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
       - name: Configure compiler object cache
         env:
           GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/native
@@ -313,12 +293,8 @@ jobs:
           GTI_MEMORY_PER_JOB_MIB: 3072
           GTI_MEMORY_PER_TEST_MIB: 4096
         run: bash scripts/configure_ci_resources.sh
-      - name: Install Linux build dependencies, Ninja, LLVM 18, and Clang
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential ccache clang cmake ninja-build libcurl4-openssl-dev libclang-rt-18-dev llvm-18-dev libclang-18-dev
-          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITHUB_ENV}"
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
       - name: Configure compiler object cache
         env:
           GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/sanitizers
@@ -334,11 +310,8 @@ jobs:
             gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-sanitizers-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
             gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-sanitizers-
       - name: Check compiler sanitizer execution
-        run: python3 scripts/check_ci_sanitizers.py --cxx clang++ --sanitizer address,undefined
+        run: python3 scripts/check_ci_sanitizers.py --cxx "${CXX}" --sanitizer address,undefined
       - name: Configure
-        env:
-          CC: clang
-          CXX: clang++
         run: >-
           cmake -S . -B build-sanitized -G Ninja
           -DCMAKE_BUILD_TYPE=RelWithDebInfo

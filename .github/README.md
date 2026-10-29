@@ -26,6 +26,12 @@ python3 scripts/agent_workflow.py protection
   installed-toolchain smoke and deterministic docgen. The gate merges the shard
   reports and fails unless each platform ran its whole inventory exactly once.
 
+Every native job builds with the reviewed runtime compiler that
+`scripts/configure_ci_toolchain.sh` installs and exports: GCC 14 with LLVM 20 on
+`ubuntu-24.04`, and Apple clang 21 (Command Line Tools 27) with Homebrew LLVM 22
+on `macos-26`. The script fails before the build if `runtime/src/atomic_lane.h`
+does not admit the compiler.
+
 Contributors run focused checks only; the queue owns the complete suite. A
 queue failure belongs to the change that introduced it.
 
