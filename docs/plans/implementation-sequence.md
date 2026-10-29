@@ -12338,6 +12338,54 @@ R0014) and an `encoding_runtime` C++ -O1 compile timeout; three LSP tests time
 out waiting for messages; eight tests time out on the shared runners. None
 involves LLVM.
 
+#### Both-Backend Acceptance Closure (2026-10-29)
+
+**Owner decision.** The owner accepted the both-backend parity state below as
+the end of the LLVM implementation and promotion campaign's parity goal. The
+C++ backend stays frozen: no fixes or extensions for the gaps it leaves.
+
+**Measured.** Every GTI program in this repository and the gti-lang
+organization was built with both backends on macOS arm64 and Linux x86_64, and
+each executable ran from its own empty directory. Every single-file program
+and project target that the C++ backend builds behaves the same on LLVM,
+except the items accepted below.
+
+**Programs with a native companion source** (181, run by hand with each
+test's own companion): 164 match on macOS and 163 on Linux, where one more is a
+C++ reference timeout; 4 differ only in printed timings; 7 cannot be built and
+run on their own; and the 6 below differ. `unique_scalar_allocation`, the one
+LLVM gap the audit found, runs on LLVM since PR 421.
+
+**Accepted gaps:**
+
+- **C++-rejected programs stay LLVM-only.** About 840 single-file programs do
+  not build on the C++ backend. Most are deliberately invalid diagnostic
+  fixtures; the rest need a native companion, are LLVM-only fixtures for shapes
+  the C++ backend never supported, or are deliberate whole-program errors.
+  `llvm_mutex_guard_lifecycle`, `llvm_native_process_storage` and
+  `llvm_mutex_source_lifecycle` (a C++ backend `GTI-B0001`) run only on LLVM.
+- **Allocator-hook differences in companion fixtures.** `process_storage_policy`,
+  `process_allocation_elision`, `scoped_parallel_allocations`,
+  `unique_scalar_allocation_failure`, `unique_scalar_allocation_cleanup_failure`
+  and `inline_polymorphic_lifecycle` give different results on the two
+  backends. Their companions count or fault-inject the C++ allocator
+  (`operator new`) or replace the runtime's `gti_rt_posix_memalign_v1`. On
+  LLVM, unique owners allocate through that runtime function, and on C++
+  through `operator new`. No GTI document fixes which allocator backs a unique
+  owner. Source-only GTI cannot see the difference; these companions can, and
+  their tests stay C++-only.
+- **Recorded C++ lifecycle bug.** In `llvm_dispatch_lifecycle_phases`, a base
+  destructor's virtual call on `this` runs the destructor's own class on LLVM,
+  the owner's lifecycle-dispatch rule. The C++ backend reaches the destroyed
+  derived override instead.
+- **C++ backend bugs under GCC on Linux:** `enumerator-references` (a dangling
+  reference to an enumerator temporary) and `hierarchy-array-field-failure`
+  (double destruction after a failed constructor).
+- **C++-only test coverage.** About 70 test files still build their companion
+  programs only on the C++ backend. The one-off audit found those programs
+  matching on LLVM, but the suite does not keep checking them on LLVM. Adding
+  LLVM modes to these tests remains available follow-up work, not a gate.
+
 #### LLVM Campaign Waves And Validation
 
 ##### Current Milestone Ownership
