@@ -136,6 +136,38 @@ class GitHub:
         pr.update(merged=True, state="closed", merge_commit_sha=commit)
 
 
+class DeclaredTests(unittest.TestCase):
+    def test_validation_block_names_only_tests(self):
+        body = ("Fixes it.\n\nValidation:\n- tier: T2 (MIR cleanup)\n- T0: mir_regression\n"
+                "- T1: mir_full_expression, optimizer_conformance,\n      compiler_pipeline\n"
+                "- reproduction: fails on parent (GTI-B0003), passes on patch\n- T3: deferred\n\nProse.")
+        self.assertEqual(validation.declared_tests(body),
+                         ["compiler_pipeline", "mir_full_expression", "mir_regression", "optimizer_conformance"])
+        for bad in ("", "Validation:\n- tier: T1", "Validation:\n- T0: a\nValidation:\n- T1: b",
+                    "Validation:\n- T0: name with spaces", "Validation:\n- T1: a;b", "Validation:\n- T0: $(id)"):
+            with self.subTest(bad), self.assertRaises(ValueError):
+                validation.declared_tests(bad)
+        many = "Validation:\n- T1: " + ", ".join(f"t{i}" for i in range(validation.DECLARED_LIMIT + 1))
+        with self.assertRaisesRegex(ValueError, "at most"):
+            validation.declared_tests(many)
+
+    def test_coverage_reads_wrapped_ctest_patterns_and_focused_plans(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = {"tier": "T1", "rationale": "local", "regressions": ["planned_regression"],
+                    "owning": ["planned_owner"], "targets": ["gti"], "platforms": ["darwin"],
+                    "unaffected": "frontend only", "reproduction": {"exception": "new feature"}}
+            Path(directory, "plan.json").write_text(json.dumps(plan))
+            checks = [["python3", "scripts/build_window.py", "--kind", "suite", "--",
+                       "ctest", "--test-dir", "build", "-R", "^llvm_(scalar|class)_execution$"],
+                      {"name": "remote", "kind": "suite", "cwd": "build", "argv": ["ctest", "--tests-regex", "^lsp_protocol$"]},
+                      ["python3", "scripts/validation_checks.py", "focused", "--build", "build", "--plan", "plan.json"],
+                      ["python3", "-c", "print('-R not_a_ctest_pattern')"]]
+            names = ["llvm_scalar_execution", "llvm_class_execution", "lsp_protocol", "planned_owner",
+                     "compiler_pipeline", "llvm_place_execution", "not_a_ctest_pattern"]
+            self.assertEqual(validation.uncovered_declarations(names, checks, directory),
+                             ["llvm_place_execution", "not_a_ctest_pattern"])
+
+
 class GitHubClient(unittest.TestCase):
     def test_credentials_come_from_the_environment_or_the_github_cli(self):
         completed = types.SimpleNamespace(returncode=0, stdout="cli-token\n")
@@ -219,8 +251,12 @@ class Lifecycle(unittest.TestCase):
         self.flow.window.log = self.window_messages.append
         self.worktree = self.root / "task"
         self.branch = "codex/task"
+        # Lifecycle tests use placeholder bodies; the declaration rule has its own tests.
+        self.declarations = unittest.mock.patch.object(validation, "declared_tests", return_value=[])
+        self.declarations.start()
 
     def tearDown(self):
+        unittest.mock.patch.stopall()
         self.env.stop()
         self.temp.cleanup()
 
@@ -269,6 +305,33 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(git(self.primary, "ls-remote", "origin", "refs/heads/" + self.branch), "")
         self.assertEqual(self.flow.load("task")["phase"], "completed")
         self.flow.cleanup("task")  # retry a completed cleanup
+
+    def test_finish_claims_only_declared_tests_that_verify_ran(self):
+        self.declarations.stop()
+        ctest = self.root / "bin" / "ctest"
+        ctest.parent.mkdir()
+        ctest.write_text("#!/bin/sh\nexit 0\n")
+        ctest.chmod(0o755)
+        self.start()
+        self.checkpoint()
+        self.flow.protection(True)
+        self.flow.verify("task", [[str(ctest), "--test-dir", "build", "-R", "^(alpha|beta)$"]])
+        with self.assertRaisesRegex(Error, "Validation:"):
+            self.flow.finish("task", "No declaration")
+        with self.assertRaisesRegex(Error, "not part of the recorded validation: gamma"):
+            self.flow.finish("task", "Fix.\n\nValidation:\n- T0: alpha\n- T1: beta, gamma\n")
+        self.assertEqual(self.api.enqueued, [])
+        state = self.flow.finish("task", "Fix.\n\nValidation:\n- T0: alpha\n- T1: beta\n- T2: deferred\n")
+        self.assertEqual(state["phase"], "synced")
+
+    def test_automation_only_changes_need_no_declaration(self):
+        self.declarations.stop()
+        self.start()
+        (self.worktree / "docs").mkdir()
+        self.checkpoint("notes\n", "docs/notes.md")
+        self.flow.protection(True)
+        self.flow.verify("task", [[sys.executable, "-c", "pass"]])
+        self.assertEqual(self.flow.finish("task", "Documentation only")["phase"], "synced")
 
     def test_recover_lost_pr_create_response(self):
         self.start()

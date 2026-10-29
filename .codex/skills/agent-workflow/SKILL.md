@@ -122,7 +122,24 @@ deferred, never as passed.
    scope `automation` or `source-stdlib`; its diff guard rejects compiler,
    native runtime and build-system changes.
 3. Write the final PR description to a temporary file: behaviour, exactly
-   which checks ran, and "complete suite deferred to the merge queue". Run
+   which checks ran, and "complete suite deferred to the merge queue". Unless
+   the change is automation-only, end it with a `Validation:` block whose `T0`
+   and `T1` items list the CTest names you ran, comma-separated; other items
+   (`tier`, `T2`, `reproduction`, `unaffected`, `T3`) are prose:
+
+   ```text
+   Validation:
+   - tier: T2 (MIR cleanup publication for a new borrow shape)
+   - T0: mir_borrow_carrier_cleanup_regression
+   - T1: mir_full_expression, optimizer_conformance, compiler_pipeline
+   - T2: llvm_place_execution, cpp_mir_body_emitter_lifecycle
+   - reproduction: fails on parent <sha> with GTI-B0003, passes on the patch
+   - T3: deferred to the merge queue
+   ```
+
+   `finish` refuses a missing block or a declared test that no recorded
+   `ctest -R` pattern or focused plan ran, and PR CI re-runs the declared T0
+   and T1 tests on both platforms. Run
    `finish <task> --body-file <file>`. It marks the PR ready, checks the
    `main` ruleset, and adds the PR to the merge queue pinned to the verified
    head. The task is then `queued`; that is the normal completion point.

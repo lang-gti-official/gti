@@ -662,7 +662,7 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 | Event | Mode | Jobs the gate requires |
 | --- | --- | --- |
-| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast` plus `compiler_pipeline`) |
+| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, `compiler_pipeline` and the PR's declared T0/T1 tests) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
 | `merge_group` | full | lint, workflow regressions, every `integration` shard on both platforms, and `sanitizers` |
 | either | automation | lint and workflow regressions only |
@@ -687,6 +687,20 @@ unless, for each required platform, the shards are complete, disjoint, agree
 on source and inventory, ran every registered test exactly once and include the
 smoke, and both platforms validated the same source. Refresh the duration table
 from queue JUnit reports when shard wall times drift apart.
+
+A ready, full-mode pull request declares its evidence in a `Validation:` block
+in its body. The `T0` (reproducer or new regression) and `T1` (owning tests)
+items list CTest names only; other items are prose for reviewers.
+`validation_checks.py declared` parses the block: the plan job rejects a missing
+or malformed declaration, and the `fast` job re-runs the declared tests by exact
+name on both platforms. Each one must be registered and enabled. The body is
+untrusted input, so a name must match the CTest name grammar and reaches CTest
+only as an escaped, anchored pattern. `finish` enforces the same declaration
+locally and refuses a declared test that the recorded `verify` checks did not
+select. A test counts as selected when a `ctest -R` or `--tests-regex` pattern
+matches it or a focused validation plan names it. The re-run guards against a
+claimed but unrun or host-specific result; the merge queue still runs the
+complete suite.
 
 A queue failure belongs to the change that introduced it. The queue removes
 that PR and rebuilds the entries behind it, so other work keeps merging; the

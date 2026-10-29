@@ -411,6 +411,93 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
             "skipped": skipped, "smoke": smoke_results}
 
 
+DECLARED_KEYS = ("T0", "T1")
+DECLARED_LIMIT = 60
+DECLARATION_ITEM = re.compile(r"-\s+([A-Za-z0-9_-]+):\s*(.*)")
+
+
+def declared_tests(body):
+    """The CTest names a pull request declares as its T0 and T1 evidence.
+
+    The PR body's `Validation:` block lists `- <key>: <value>` items. `T0` and
+    `T1` items hold comma-separated CTest names only (continued on more-indented
+    lines); every other key is free prose for reviewers. PR CI re-runs exactly
+    these names on both platforms, so the body is untrusted input: anything that
+    is not a plain test name is rejected rather than interpreted.
+    """
+    lines = (body or "").splitlines()
+    starts = [index for index, line in enumerate(lines) if line.strip() == "Validation:"]
+    if len(starts) != 1:
+        raise ValueError("Add exactly one `Validation:` block naming the T0 and T1 CTest names the change ran")
+    declared, key = {}, None
+    for line in lines[starts[0] + 1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("```"):
+            break
+        item = DECLARATION_ITEM.fullmatch(stripped)
+        if item:
+            key, value = item.groups()
+        elif line[:1].isspace() and key is not None:
+            value = stripped
+        else:
+            break
+        if key in DECLARED_KEYS:
+            for name in (token.strip() for token in value.split(",")):
+                if not name:
+                    continue
+                if not NAME.fullmatch(name):
+                    raise ValueError(f"Validation {key} lists CTest names only; move notes such as {name!r} to another key")
+                declared.setdefault(name, key)
+    if not declared:
+        raise ValueError("The `Validation:` block must name at least one T0 or T1 CTest test")
+    if len(declared) > DECLARED_LIMIT:
+        raise ValueError(f"Declare at most {DECLARED_LIMIT} T0/T1 tests; the merge queue runs the rest")
+    return sorted(declared)
+
+
+def uncovered_declarations(names, checks, root):
+    """Declared names that no recorded check ran: a PR may only claim what it ran.
+
+    A recorded check covers a name through a `ctest -R/--tests-regex` pattern
+    or a `validation_checks.py focused --plan` plan. Labels and wrapper scripts
+    are not expanded, so declare tests that a name-selecting check ran.
+    """
+    patterns, planned = [], set()
+    for check in checks:
+        argv = check.get("argv", []) if isinstance(check, dict) else check
+        ctest = next((index for index, argument in enumerate(argv) if Path(argument).name == "ctest"), None)
+        focused = "focused" in argv and any(Path(argument).name == "validation_checks.py" for argument in argv)
+        for index, argument in enumerate(argv[:-1]):
+            if ctest is not None and index > ctest and argument in ("-R", "--tests-regex"):
+                patterns.append(argv[index + 1])
+            elif focused and argument == "--plan":
+                planned.update(plan_tests(validate_plan(json.loads((Path(root) / argv[index + 1]).read_text()))))
+    def covered(name):
+        return name in planned or any(re.search(pattern, name) for pattern in patterns)
+    return [name for name in names if not covered(name)]
+
+
+def run_declared(build, names, jobs=4, log=None):
+    """Re-run declared tests by exact name; every one must be registered and enabled."""
+    selected = sorted(set(names) - {SMOKE})
+    if not selected:
+        return []
+    pattern = "^(" + "|".join(re.escape(name) for name in selected) + ")$"
+    document = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
+    registered = {row["name"] for row in document.get("tests", [])}
+    missing = [name for name in selected if name not in registered]
+    if missing:
+        raise ValueError("Declared tests are not registered CTest tests: " + ", ".join(missing))
+    inventory(document, selected)
+    with tempfile.TemporaryDirectory(prefix="gti-declared-") as directory:
+        report = Path(directory) / "ctest.xml"
+        subprocess.run(["ctest", "--test-dir", str(build), "--no-tests=error", "--output-on-failure",
+                        "--parallel", str(jobs), "--output-junit", str(report), "-R", pattern],
+                       check=True, stdout=log, stderr=subprocess.STDOUT)
+        results(report, set(selected), set(selected))
+    return selected
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -432,6 +519,10 @@ def main(argv=None):
     shard.add_argument("--jobs", type=int, default=4)
     shard.add_argument("--report", required=True)
     shard.add_argument("--log")
+    declared = sub.add_parser("declared")
+    declared.add_argument("--event", required=True)
+    declared.add_argument("--build", help="re-run the declared tests in this build tree")
+    declared.add_argument("--jobs", type=int, default=4)
     for name in ("focused", "full"):
         run_parser = sub.add_parser(name)
         run_parser.add_argument("--build", required=True)
@@ -458,6 +549,13 @@ def main(argv=None):
             reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]
             summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
+        return
+    if args.command == "declared":
+        pr = json.loads(Path(args.event).read_text()).get("pull_request") or {}
+        names = declared_tests(pr.get("body"))
+        if args.build:
+            names = run_declared(Path(args.build).resolve(), names, args.jobs)
+        print("GTI_DECLARED_TESTS=" + json.dumps(names))
         return
     if args.command == "shard":
         log = Path(args.log).open("w") if args.log else None

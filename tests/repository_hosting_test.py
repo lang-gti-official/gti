@@ -101,7 +101,8 @@ def main():
            and "npm run test:source-text" in ci and "--target gti_docgen" in ci
            and "cmp build/documentation-index.json" in ci
            and "validation_checks.py shard" in ci and "--shard-reports" in ci
-           and "installed_library_smoke" in ci,
+           and "installed_library_smoke" in ci
+           and ci.count("validation_checks.py declared --event") == 2,
            "CI lost its gate, merge-queue suite, Tree-sitter or compiler-owned documentation checks")
     # Every native job takes the one reviewed toolchain; none installs its own.
     expect(ci.count("bash scripts/configure_ci_toolchain.sh") == 3 and "llvm-18" not in ci
