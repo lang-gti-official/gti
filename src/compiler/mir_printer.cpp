@@ -285,6 +285,8 @@ public:
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
     output << "mir-v119 valid=" << program.valid() << '\n';
+    if (program.requiresNativeObjectLayout())
+      output << "native-object-layout\n";
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)

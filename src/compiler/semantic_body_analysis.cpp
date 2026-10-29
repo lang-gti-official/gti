@@ -10406,13 +10406,28 @@ auto SemanticVisitor::Impl::layoutScalarKind(const SemanticType &type)
 
 auto SemanticVisitor::Impl::evaluateLayout(const SemanticType &type) const
     -> LayoutEvaluation {
-  std::vector<SemanticType> active;
-  return evaluateObjectLayout(type, active);
+  ObjectLayoutContext context;
+  return evaluateObjectLayout(type, context);
 }
 
-auto SemanticVisitor::Impl::evaluateObjectLayout(
-    const SemanticType &type, std::vector<SemanticType> &active,
-    bool storedReference) const -> LayoutEvaluation {
+auto SemanticVisitor::Impl::evaluateObjectLayout(const SemanticType &type,
+                                                 ObjectLayoutContext &context,
+                                                 bool storedReference) const
+    -> LayoutEvaluation {
+  for (const auto &completed : context.completed)
+    if (completed.type == type && completed.storedReference == storedReference)
+      return completed.layout;
+  const auto layout = computeObjectLayout(type, context, storedReference);
+  if (layout)
+    context.completed.push_back({type, storedReference, layout});
+  return layout;
+}
+
+auto SemanticVisitor::Impl::computeObjectLayout(const SemanticType &type,
+                                                ObjectLayoutContext &context,
+                                                bool storedReference) const
+    -> LayoutEvaluation {
+  auto &active = context.active;
   // Pointer/owner indirection does not demand the pointee's layout. A stored
   // reference has pointer representation, but a reference is not itself a
   // source-queryable object type.
@@ -10421,7 +10436,7 @@ auto SemanticVisitor::Impl::evaluateObjectLayout(
       type.kind == SemanticType::UniqueOwner ||
       (storedReference && type.kind == SemanticType::Reference)) {
     auto layout = evaluateObjectLayout(
-        SemanticType::rawPointerTo(SemanticType::Void), active);
+        SemanticType::rawPointerTo(SemanticType::Void), context);
     layout.nativeRepresentation = true;
     return layout;
   }
@@ -10460,7 +10475,7 @@ auto SemanticVisitor::Impl::evaluateObjectLayout(
                           bool nonempty) -> LayoutEvaluation {
     std::vector<ObjectLayout> layouts;
     for (const auto &field : fields) {
-      const auto layout = evaluateObjectLayout(field, active, true);
+      const auto layout = evaluateObjectLayout(field, context, true);
       if (!layout)
         return layout;
       layouts.push_back({layout.sizeBytes, layout.abiAlignmentBytes});
@@ -10506,7 +10521,7 @@ auto SemanticVisitor::Impl::evaluateObjectLayout(
           true);
     case CompilerCapabilityTypeKind::AtomicStorage:
       return type.arguments.size() == 1
-                 ? evaluateObjectLayout(type.arguments.front(), active, true)
+                 ? evaluateObjectLayout(type.arguments.front(), context, true)
                  : LayoutEvaluation{.error =
                                         LayoutEvaluationError::UnsupportedType};
     case CompilerCapabilityTypeKind::MutexStorage:
@@ -10522,7 +10537,7 @@ auto SemanticVisitor::Impl::evaluateObjectLayout(
           type.valueArguments[0].kind != CompileTimeValue::UInt64 ||
           type.valueArguments[1].kind != CompileTimeValue::UInt64)
         return {.error = LayoutEvaluationError::UnsupportedType};
-      const auto address = evaluateObjectLayout(pointer, active);
+      const auto address = evaluateObjectLayout(pointer, context);
       const auto payload = alignObjectExtent(
           {type.valueArguments[0].value, type.valueArguments[1].value});
       const std::vector<ObjectLayout> fields{
@@ -10573,7 +10588,8 @@ auto SemanticVisitor::Impl::evaluateObjectLayout(
     }
     // Consume the selected lifecycle representation. Do not infer storage
     // from the presence of a destructor: compact-owner proofs may elide it.
-    if (lifecycle->requiresActiveDropState)
+    if (lifecycle->requiresActiveDropState &&
+        !lifecycle->inactiveDropPointerField)
       fields.push_back(SemanticType::UInt8);
     if (owner->polymorphic && !primaryDispatch)
       fields.push_back(pointer);
@@ -10585,7 +10601,7 @@ auto SemanticVisitor::Impl::evaluateObjectLayout(
       return {.error = LayoutEvaluationError::UnsupportedType};
     }
     if (!enumeration->payload)
-      return evaluateObjectLayout(enumeration->underlyingType, active);
+      return evaluateObjectLayout(enumeration->underlyingType, context);
     std::vector<ObjectLayout> alternatives{{1, 1}};
     for (const auto &variant : enumeration->enumerators) {
       const auto layout = record(variant.payloadTypes, false);
@@ -10594,7 +10610,7 @@ auto SemanticVisitor::Impl::evaluateObjectLayout(
       alternatives.push_back({layout.sizeBytes, layout.abiAlignmentBytes});
     }
     const auto discriminant =
-        evaluateObjectLayout(SemanticType::UInt32, active);
+        evaluateObjectLayout(SemanticType::UInt32, context);
     const std::vector<ObjectLayout> fields{
         {discriminant.sizeBytes, discriminant.abiAlignmentBytes},
         objectUnionLayout(alternatives)};
@@ -10615,7 +10631,7 @@ auto SemanticVisitor::Impl::evaluateObjectLayout(
     return {.error = LayoutEvaluationError::UnsupportedType};
   }
   const LayoutEvaluation element =
-      evaluateObjectLayout(type.arguments.front(), active);
+      evaluateObjectLayout(type.arguments.front(), context);
   if (!element) {
     return element;
   }

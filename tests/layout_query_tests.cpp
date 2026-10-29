@@ -508,7 +508,12 @@ void testNativeLayoutAdmission() {
         "sizeof(T); } static_assert(bytes<Box>() > uint64_t(0)); int main() { "
         "return 0; }",
         "struct Box { int value; }; constexpr uint64_t n = sizeof(Box); int "
-        "main() { uint8_t buffer[n] = {}; return 0; }"}) {
+        "main() { uint8_t buffer[n] = {}; return 0; }",
+        "struct Box { int value; }; constexpr bool fits<T>() { return "
+        "sizeof(T) <= uint64_t(16); } "
+        "concept Small<T> = fits<T>(); int select<T>() requires Small<T> { "
+        "return 0; } "
+        "int main() { return select<Box>(); }"}) {
     const auto result = analyze("native-layout-admission.gti", source);
     if (!result.canGenerateCode())
       printDiagnostics(result);
@@ -538,6 +543,34 @@ int main() { return 0; }
          "a scalar generic query does not require native aggregate layout");
   if (scalar.canGenerateCode())
     (void)gti_test::emitCpp(scalar);
+}
+
+void testLayoutGraph() {
+  // Repeated containment queries reuse the complete-type subgraph. Keep this
+  // fixture bounded because other class-analysis passes also visit its fields.
+  std::string source = "struct Node0 { uint8_t value; };\n";
+  for (int depth = 1; depth <= 12; ++depth) {
+    const auto child = "Node" + std::to_string(depth - 1);
+    source += "struct Node" + std::to_string(depth) + " { " + child +
+              " left; " + child + " right; };\n";
+  }
+  source += "int main() { uint64_t graph = sizeof(Node12); return 0; }";
+  const auto result = analyze("layout-graph.gti", source);
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode() &&
+             queryValue(result, "graph") == (std::uint64_t{1} << 12),
+         "layout queries memoize repeated complete-type subgraphs");
+  expectLayoutFailure("layout-record-overflow.gti", R"(
+struct Huge { uint64_t values[2305843009213693951]; uint64_t tail; };
+uint64_t query() { return sizeof(Huge); }
+)",
+                      "exceeds uint64_t", "Huge");
+  expectLayoutFailure("layout-interface.gti", R"(
+interface Reader { int read(); };
+uint64_t query() { return alignof(Reader); }
+)",
+                      "complete concrete object type", "Reader");
 }
 
 void testHirMirAndBackend() {
@@ -687,6 +720,7 @@ int main() {
   testLayoutDiagnostics();
   testGeneralLayoutConstants();
   testNativeLayoutAdmission();
+  testLayoutGraph();
   testHirMirAndBackend();
   testConstexprControlFlow();
   testFormatting();

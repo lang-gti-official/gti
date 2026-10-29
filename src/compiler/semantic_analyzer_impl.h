@@ -821,10 +821,21 @@ public:
   layoutScalarKind(const SemanticType &type);
 
   [[nodiscard]] LayoutEvaluation evaluateLayout(const SemanticType &type) const;
+  struct ObjectLayoutContext {
+    struct Completed {
+      SemanticType type;
+      bool storedReference;
+      LayoutEvaluation layout;
+    };
+    std::vector<SemanticType> active;
+    std::vector<Completed> completed;
+  };
   [[nodiscard]] LayoutEvaluation
-  evaluateObjectLayout(const SemanticType &type,
-                       std::vector<SemanticType> &active,
+  evaluateObjectLayout(const SemanticType &type, ObjectLayoutContext &context,
                        bool storedReference = false) const;
+  [[nodiscard]] LayoutEvaluation
+  computeObjectLayout(const SemanticType &type, ObjectLayoutContext &context,
+                      bool storedReference) const;
 
   [[nodiscard]] static const Token &
   lastArrayExtentToken(const ArrayExtentExpr &extent);

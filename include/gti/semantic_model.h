@@ -2353,7 +2353,7 @@ public:
     return nativeObjectLayout_ ||
            (base != nullptr && base->requiresNativeObjectLayout());
   }
-  void requireNativeObjectLayout() { nativeObjectLayout_ = true; }
+  void requireNativeObjectLayout() const { nativeObjectLayout_ = true; }
   [[nodiscard]] SourceDebugProfile sourceDebugProfile() const {
     return sourceDebugProfile_;
   }
@@ -3300,7 +3300,7 @@ private:
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_set<const Expr *> contextualIntegerOperands;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
-  bool nativeObjectLayout_ = false;
+  mutable bool nativeObjectLayout_ = false;
   std::unordered_map<const VariableDecl *, std::shared_ptr<const ExprPtr>>
       implicitFieldInitializers;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
