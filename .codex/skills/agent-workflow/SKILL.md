@@ -15,8 +15,8 @@ other repositories or services.
 
 Use `scripts/agent_workflow.py` for shared Git/API operations. GitHub
 (`lang-gti-official/gti`, remote `origin`) is the canonical host for branches,
-PRs, issues and CI. Gitea keeps only the reference website and packages, and
-its `main` is frozen. The helper authenticates through the GitHub CLI
+PRs, issues, CI and toolchain releases. Gitea keeps only the reference website
+and the `gti add` package registry, and its `main` is frozen. The helper authenticates through the GitHub CLI
 (`gh auth login`) or `GH_TOKEN` and never stores a token; it keeps token-free
 recovery records in the common Git directory. Run it from any checkout of the
 repository, or pass `--repo <checkout>`; it always acts on the primary checkout

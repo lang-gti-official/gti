@@ -143,8 +143,8 @@ not a C++ wrapper, and neither backend defines its semantics.
 - GitHub at `https://github.com/lang-gti-official/gti.git` (remote `origin`)
   is canonical for branches, PRs, issues and CI. The helper authenticates
   through the GitHub CLI (`gh auth login`) or `GH_TOKEN`, never a stored
-  token. Gitea keeps the reference website and packages; nothing else is
-  published there. Gitea-era task records move over with explicit
+  token. Gitea keeps only the reference website and the `gti add` package
+  registry; nothing else is published there. Gitea-era task records move over with explicit
   `rehost <task> --pr <number>`, which requires the migrated PR head to carry
   the task's published tree; never reuse a historical PR number by assumption
   or rewrite a live verification record.
@@ -295,7 +295,8 @@ which is now frozen, so no toolchain release publishes until the GitHub release
 workflow replaces it; until then the installer keeps downloading the existing
 Gitea release archives. Do not publish new toolchain releases to Gitea, and do
 not promise automatic nightly or macOS assets before that workflow lands. The
-`gti add` package registry stays on Gitea and is unaffected. See the manual publication contract in `docs/architecture/build-and-driver.md`.
+`gti add` package registry stays on Gitea and is unaffected. See the manual
+publication contract in `docs/architecture/build-and-driver.md`.
 
 - **Nightly** republishes one rolling `nightly` release per commit on `main`.
   It is automatic, replaces its own assets, and needs no `VERSION` change.

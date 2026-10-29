@@ -25,8 +25,9 @@ does not restate it. Put durable rules in `AGENTS.md`, not here.
 
 ## Task Lifecycle
 
-Canonical `origin` is `https://github.com/lang-gti-official/gti.git`. Gitea
-keeps only the reference website and packages; its `main` is frozen. If an
+Canonical `origin` is `https://github.com/lang-gti-official/gti.git`, which
+also carries toolchain releases. Gitea keeps only the reference website and the
+`gti add` package registry; its `main` is frozen. If an
 older worktree still names Gitea, follow the current primary checkout's
 `AGENTS.md` and workflow skill, and move its task over with `rehost`.
 
