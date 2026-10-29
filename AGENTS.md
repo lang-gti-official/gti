@@ -2,9 +2,11 @@
 
 **Canonical host (2026-10-29): [GitHub](https://github.com/lang-gti-official/gti).**
 `origin` must use `https://github.com/lang-gti-official/gti.git` for source,
-branches, PRs, issues and CI. Gitea (`git.internal.howetotech.dev`) keeps the
-standalone reference website and the published packages until GitHub is proven
-for them; its `gti-lang/gti` `main` is frozen and accepts no merges. GitHub
+branches, PRs, issues and CI, and toolchain releases (compiler archives and the
+Neovim plugin's downloads) move to GitHub Releases. Gitea
+(`git.internal.howetotech.dev`) keeps only the standalone reference website and
+the `gti add` package registry (`gti-lang` library packages such as libc); its
+`gti-lang/gti` `main` is frozen and accepts no merges. GitHub
 history carries rewritten commit identities (identical trees, new commit IDs),
 so Gitea-era branches and task records move over by tree identity (`rehost`).
 When resuming an old worktree, read the current primary checkout's guidance and
@@ -287,14 +289,13 @@ one-off implementation-note or redesign files when an existing category fits.
 ## Release Channels And VERSION
 
 Two channels publish this repository, and they answer different questions.
-Packages stay on Gitea releases. Their workflow (`.gitea/workflows/release.yml`)
-fired on Gitea `main`, which is now frozen, so no release publishes
-automatically until a GitHub workflow publishes to Gitea; until then,
-publication is a manual owner step. Existing Linux runners publish Linux x64.
-Apple Silicon release archives are packaged/validated on macOS and uploaded
-manually to the same immutable stable release; no macOS Actions runner is
-configured. Do not promise automatic macOS/nightly assets or install a runner
-service. See the manual publication contract in `docs/architecture/build-and-driver.md`.
+Toolchain releases are moving to GitHub Releases on `lang-gti-official/gti`.
+The previous workflow (`.gitea/workflows/release.yml`) fired on Gitea `main`,
+which is now frozen, so no toolchain release publishes until the GitHub release
+workflow replaces it; until then the installer keeps downloading the existing
+Gitea release archives. Do not publish new toolchain releases to Gitea, and do
+not promise automatic nightly or macOS assets before that workflow lands. The
+`gti add` package registry stays on Gitea and is unaffected. See the manual publication contract in `docs/architecture/build-and-driver.md`.
 
 - **Nightly** republishes one rolling `nightly` release per commit on `main`.
   It is automatic, replaces its own assets, and needs no `VERSION` change.

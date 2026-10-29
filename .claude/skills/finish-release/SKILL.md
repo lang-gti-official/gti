@@ -8,7 +8,8 @@ description: Apply GTI version and release policy to focused-validated work deli
 Read [the canonical finish-release skill](../../../.codex/skills/finish-release/SKILL.md)
 completely before deciding VERSION or delivery. It owns the version policy,
 `Release-Impact` trailers, delivery through the merge queue, and the rule that
-packages stay on Gitea releases (publication is currently an owner step).
+toolchain releases move to GitHub Releases while the `gti add` package registry
+stays on Gitea.
 Source branches and PRs go only to the canonical GitHub repository.
 
 Deliver through [agent-workflow](../agent-workflow/SKILL.md), keeping this

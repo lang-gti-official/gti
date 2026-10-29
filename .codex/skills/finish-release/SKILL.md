@@ -56,12 +56,12 @@ policy below without bypassing that lifecycle.
 
 ## Initiate The Release
 
-Packages stay on Gitea releases until GitHub is proven for them. The Gitea
-release workflow (`.gitea/workflows/release.yml`) remains the tag and release
-authority, but it fired on pushes to Gitea `main`, which is now frozen. Until a
-GitHub workflow publishes to Gitea releases, merging a release-bearing PR does
-not publish anything: report the intended version and leave publication to
-the owner. Never tag a version mismatch or an unvalidated tree by hand, and do
+Toolchain releases move to GitHub Releases; only the
+`gti add` package registry stays on Gitea. The Gitea release workflow
+(`.gitea/workflows/release.yml`) fired on pushes to Gitea `main`, which is now
+frozen, and no new toolchain release is published to Gitea. Until the GitHub
+release workflow lands, merging a release-bearing PR does not publish
+anything: report the intended version. Never tag a version mismatch or an unvalidated tree by hand, and do
 not push a competing tag.
 
 ## Finish After Queueing

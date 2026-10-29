@@ -2,12 +2,16 @@
 
 Since 2026-10-29, source, branches, pull requests, issues and CI live at
 https://github.com/lang-gti-official/gti. Gitea (`git.internal.howetotech.dev`)
-keeps two roles until GitHub is proven for them:
+keeps two roles:
 
 - the standalone reference website (`gti-lang/gti-reference`);
-- published packages: toolchain release assets in `gti-lang/gti` releases,
-  which the Lazy installer downloads, and the `gti-lang` package repositories
-  and registry.
+- the `gti add` package registry: the `gti-lang` library package repositories
+  (libc and the like).
+
+Toolchain releases (compiler archives and the Neovim plugin's downloads) move
+to GitHub Releases. The existing `gti-lang/gti` release archives stay
+downloadable, and the installer keeps using them until the GitHub release
+workflow and installer switch land.
 
 The `gti-lang/gti` source repository is frozen: its `main` merge allowlist is
 empty, so no merge lands there. Its history remains readable. GitHub history
@@ -18,15 +22,11 @@ map is retained outside the repository by the owner.
 
 `workflows/release.yml` built and published the Linux x64 nightly and stable
 packages when Gitea `main` advanced. Gitea `main` no longer advances, so it does
-not run. Until a GitHub workflow publishes packages to Gitea releases,
-publication is a manual owner step. Its packaging rules still apply: one
-bundled Linux build with full CTest and installed-toolchain validation, stable
-only on a VERSION change or an exact-source dispatch, immutable stable tags, and
-serialized nightly that skips superseded commits.
-
-Apple Silicon stable releases are manually built, validated, packaged and
-uploaded to the matching Gitea release. Follow the
-[manual macOS contract](../docs/architecture/build-and-driver.md#manual-macos-release-publication).
+not run, and no new toolchain release is published to Gitea. Its packaging
+rules carry over to the GitHub release workflow that replaces it: one bundled
+build per platform with full CTest and installed-toolchain validation, stable
+only on a deliberate release cut, immutable stable tags, and serialized nightly
+that skips superseded commits.
 Tokens never follow arbitrary redirects in the release synchronization helper.
 
 ## Historical automation

@@ -1515,7 +1515,8 @@ collectSemanticTokens(std::string_view source,
         moduleName(span, modifiers);
     }
     if (unit) {
-      const std::uint32_t modifiers = standardModule(unit) ? std::uint32_t{DefaultLibrary} : 0U;
+      const std::uint32_t modifiers =
+          standardModule(unit) ? std::uint32_t{DefaultLibrary} : 0U;
       if (unit->moduleDeclarationSpan)
         moduleName(*unit->moduleDeclarationSpan, modifiers | Declaration);
       if (unit->implementationDeclarationSpan)

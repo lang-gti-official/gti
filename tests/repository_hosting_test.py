@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fail closed on the hosting split: GitHub owns source and CI, Gitea keeps packages."""
+"""Fail closed on the hosting split: GitHub owns source, CI and toolchain releases;
+Gitea keeps the reference website and the `gti add` package registry."""
 
 import pathlib
 import re
@@ -51,7 +52,8 @@ def main():
     root = pathlib.Path(sys.argv[1]).resolve()
     tracked = tracked_files(root)
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
-    # CI runs on GitHub; packages publish from the Gitea release workflow only.
+    # CI runs on GitHub. The frozen Gitea release workflow stays until the GitHub
+    # release workflow replaces it.
     expect(set(workflows) == {CI, RELEASE}, f"unexpected live workflows: {workflows}")
     for relative in (CI, RELEASE, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
@@ -81,7 +83,7 @@ def main():
     installer = text(root, "lua/gti/installer.lua")
     expect(f'local release_server = "{PACKAGE_SERVER}"' in installer
            and 'local repository = "gti-lang/gti"' in installer,
-           "packages stay on Gitea releases until GitHub is proven for them")
+           "the installer keeps the existing Gitea archives until the GitHub release switch lands")
     expect("*.gti linguist-language=C++" in text(root, ".gitattributes"),
            "GTI source language classification must remain intact")
     helper = text(root, "scripts/agent_workflow.py")
@@ -133,15 +135,15 @@ def main():
                    f"untrusted/unpinned action: {workflow}: {action}@{revision}")
     expect("gh release" not in release and "GH_TOKEN" not in release
            and "api.github.com" not in release and "${{ github." not in release,
-           "packages must not publish to GitHub before the owner moves them")
+           "the frozen Gitea workflow must not be half-converted; GitHub releases get their own workflow")
     expect(f'"{RELEASE}"' in text(root, "scripts/check_release_version.py"),
            "release policy must classify its live package workflow")
     expect("gti-lang/gti-reference" in text(root, "docs/architecture/reference-documentation.md"),
            "the reference website stays on Gitea")
     for skill in (".codex/skills/finish-release/SKILL.md", ".claude/skills/finish-release/SKILL.md"):
         contents = text(root, skill)
-        expect("GitHub" in contents and "Gitea release" in contents,
-               f"delivery instructions must send source to GitHub and packages to Gitea: {skill}")
+        expect("GitHub Releases" in contents and "package registry" in contents,
+               f"delivery instructions must send toolchain releases to GitHub and keep the registry on Gitea: {skill}")
 
 
 if __name__ == "__main__":

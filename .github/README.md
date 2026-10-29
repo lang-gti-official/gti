@@ -1,8 +1,9 @@
 # GTI on GitHub
 
 https://github.com/lang-gti-official/gti is canonical for source, branches,
-pull requests, issues and CI. Packages and the reference website stay on Gitea
-for now; see [Gitea](../.gitea/README.md).
+pull requests, issues, CI and, once its release workflow lands, toolchain
+releases. The reference website and the `gti add` package registry stay on
+Gitea; see [Gitea](../.gitea/README.md).
 
 ## Integration
 

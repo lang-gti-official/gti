@@ -173,10 +173,10 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-Source lives on GitHub (`lang-gti-official/gti`); packages stay on the
-self-hosted Gitea (`gti-lang/gti`), which remains the tag and release authority
-until GitHub is proven for packages. Release archives are downloaded by the
-plugin from
+Source lives on GitHub (`lang-gti-official/gti`), and toolchain releases move
+to its GitHub Releases. Until the GitHub release workflow and installer switch
+land, no new toolchain release publishes and the plugin keeps downloading the
+existing archives from the self-hosted Gitea (`gti-lang/gti`) at
 `https://git.internal.howetotech.dev/gti-lang/gti/releases/download/<tag>/<asset>`.
 The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
 shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
@@ -279,6 +279,10 @@ rolling publication while preserving current archives if upload is
 interrupted.
 
 ### Manual macOS release publication
+
+This contract governed manual uploads to Gitea releases. No new toolchain
+release is published to Gitea; the GitHub release workflow replaces this
+procedure when it lands, and until then nothing is published.
 
 No macOS background runner is configured or authorized by the hosting cutover.
 For an Apple Silicon **stable** release, use a clean, separate checkout of the
