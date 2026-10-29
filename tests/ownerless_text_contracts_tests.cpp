@@ -2625,11 +2625,11 @@ int main() {
              "std::string_view(Label&)", "label", "std::string_view"},
         Case{"c_string target(c_string native) { return native; }\n",
              "c_string(c_string)", "native", "c_string"}}) {
-    const std::string source =
-        "import std.functional;\nimport std.string;\n" +
-        std::string(target.declarations) +
-        "int main() {\n  std::function_ptr<" + std::string(target.signature) +
-        "> pointer{target};\n  return 0;\n}\n";
+    const std::string source = "import std.functional;\nimport std.string;\n" +
+                               std::string(target.declarations) +
+                               "int main() {\n  std::function_ptr<" +
+                               std::string(target.signature) +
+                               "> pointer{target};\n  return 0;\n}\n";
     const auto rejected = analyzeText(source);
     const auto formed = source.find("pointer{target}");
     const auto formal = source.find(" " + std::string(target.parameter) + ")");

@@ -66,8 +66,6 @@ foreach(required_file
           "share/gti/VERSION"
           "share/gti/llvm-backend-archives.txt"
           "share/gti/parser/gti.so"
-          "share/gti/stdlib/modules/vector.gti"
-          "share/gti/stdlib/modules/environment.gti"
           "share/gti/stdlib/prelude.gti"
           "share/gti/stdlib/std/array.gti"
           "share/gti/stdlib/std/environment.gti"

@@ -907,8 +907,7 @@ int main() {
              invisible->fixes.size() == 1 &&
              invisible->fixes.front().span.start == 0 &&
              invisible->fixes.front().span.end == 0 &&
-             invisible->fixes.front().replacement ==
-                 "import std.memory;\n" &&
+             invisible->fixes.front().replacement == "import std.memory;\n" &&
              invisible->fixes.front().message == "Add import std.memory;",
          "a loaded but non-visible standard declaration should carry the "
          "same direct-include fix");

@@ -196,16 +196,16 @@ export int branch_value() { return 1; }
          "the removed include spelling should receive one migration "
          "diagnostic");
 
-  const lang::FrontendResult valid = lang::Frontend().analyze(
-      entry,
-      "import \"branch.gti\";\n"
-      "int main() { return branch_value(); }\n",
-      {},
-      {{branchKey, R"GTIMODULE(export module branch;
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze(entry,
+                               "import \"branch.gti\";\n"
+                               "int main() { return branch_value(); }\n",
+                               {},
+                               {{branchKey, R"GTIMODULE(export module branch;
 import "leaf.gti";
 export int branch_value() { return leaf_value(); }
 )GTIMODULE"},
-       {leafKey, R"GTIMODULE(export module leaf;
+                                {leafKey, R"GTIMODULE(export module leaf;
 export int leaf_value() { return 1; }
 )GTIMODULE"}});
   expect(valid.canGenerateCode() && valid.diagnostics.empty(),
@@ -263,25 +263,25 @@ export int leaf_value() { return 1; }
              hirRetainsLeafUnit,
          "semantic and HIR function identities should retain source units");
 
-  const lang::FrontendResult transitiveUse = lang::Frontend().analyze(
-      entry,
-      "import \"branch.gti\";\n"
-      "int main() { return leaf_value(); }\n",
-      {},
-      {{branchKey, R"GTIMODULE(export module branch;
+  const lang::FrontendResult transitiveUse =
+      lang::Frontend().analyze(entry,
+                               "import \"branch.gti\";\n"
+                               "int main() { return leaf_value(); }\n",
+                               {},
+                               {{branchKey, R"GTIMODULE(export module branch;
 import "leaf.gti";
 export int branch_value() { return leaf_value(); }
 )GTIMODULE"},
-       {leafKey, R"GTIMODULE(export module leaf;
+                                {leafKey, R"GTIMODULE(export module leaf;
 export int leaf_value() { return 1; }
 )GTIMODULE"}});
   expect(
       !transitiveUse.semanticValid &&
           hasDiagnosticCode(transitiveUse.diagnostics, "GTI-S2024") &&
           hasDiagnostic(transitiveUse.diagnostics,
-                        "include its file directly") &&
+                        "import its public module interface") &&
           hasDiagnosticHint(transitiveUse.diagnostics, "import \"leaf.gti\";"),
-      "an includer should not inherit a dependency's private includes");
+      "an importer should not inherit a dependency's private imports");
 
   const lang::FrontendResult hiddenStaticAssert = lang::Frontend().analyze(
       entry,
@@ -325,29 +325,28 @@ import "leaf.gti";
                                 {leafKey, R"GTIMODULE(export module leaf;
 export using LeafId = uint64_t;
 )GTIMODULE"}});
-  expect(
-      !hiddenAlias.semanticValid &&
-          hasDiagnosticCode(hiddenAlias.diagnostics, "GTI-S2024") &&
-          hasDiagnosticHint(hiddenAlias.diagnostics, "import \"leaf.gti\";"),
-      "type aliases should follow direct source visibility rules");
+  expect(!hiddenAlias.semanticValid &&
+             hasDiagnosticCode(hiddenAlias.diagnostics, "GTI-S2024") &&
+             hasDiagnosticHint(hiddenAlias.diagnostics, "import \"leaf.gti\";"),
+         "type aliases should follow direct source visibility rules");
 
-  const lang::FrontendResult siblingLeak = lang::Frontend().analyze(
-      entry,
-      "import \"branch.gti\";\n"
-      "import \"leaf.gti\";\n"
-      "int main() { return branch_value(); }\n",
-      {},
-      {{branchKey, R"GTIMODULE(export module branch;
+  const lang::FrontendResult siblingLeak =
+      lang::Frontend().analyze(entry,
+                               "import \"branch.gti\";\n"
+                               "import \"leaf.gti\";\n"
+                               "int main() { return branch_value(); }\n",
+                               {},
+                               {{branchKey, R"GTIMODULE(export module branch;
 export int branch_value() { return leaf_value(); }
 )GTIMODULE"},
-       {leafKey, R"GTIMODULE(export module leaf;
+                                {leafKey, R"GTIMODULE(export module leaf;
 export int leaf_value() { return 1; }
 )GTIMODULE"}});
-  expect(
-      !siblingLeak.semanticValid &&
-          hasDiagnosticCode(siblingLeak.diagnostics, "GTI-S2024") &&
-          hasDiagnostic(siblingLeak.diagnostics, "include its file directly"),
-      "a source unit should not see dependencies included by its parent");
+  expect(!siblingLeak.semanticValid &&
+             hasDiagnosticCode(siblingLeak.diagnostics, "GTI-S2024") &&
+             hasDiagnostic(siblingLeak.diagnostics,
+                           "import its public module interface"),
+         "a module should not see dependencies imported only by its parent");
 
   const std::filesystem::path prelude = root / "prelude.gti";
   const std::filesystem::path preludeDetail = root / "prelude_detail.gti";
@@ -356,7 +355,7 @@ export int leaf_value() { return 1; }
   const lang::FrontendResult preludeGraph = lang::Frontend().analyze(
       entry, "int main() { return prelude_value(); }\n", {prelude},
       {{preludeKey, R"GTIMODULE(import "prelude_detail.gti";
-export int prelude_value() { return prelude_detail(); }
+int prelude_value() { return prelude_detail(); }
 )GTIMODULE"},
        {preludeDetailKey, R"GTIMODULE(export module prelude_detail;
 export int prelude_detail() { return 1; }
@@ -395,16 +394,20 @@ export int prelude_detail() { return 1; }
   const std::string orderedIncludeBKey = canonical(orderedIncludeB);
   const std::string orderedSharedKey = canonical(orderedShared);
   const std::unordered_map<std::string, std::string> orderedOverrides{
-      {orderedPreludeAKey, R"GTIMODULE(import "ordered-prelude-a-dependency.gti";
-export mut int32_t prelude_a = 1;
+      {orderedPreludeAKey,
+       R"GTIMODULE(import "ordered-prelude-a-dependency.gti";
+mut int32_t prelude_a = 1;
 )GTIMODULE"},
-      {orderedPreludeADependencyKey, R"GTIMODULE(export module ordered_prelude_a_dependency;
+      {orderedPreludeADependencyKey,
+       R"GTIMODULE(export module ordered_prelude_a_dependency;
 export mut int32_t prelude_a_dependency = 1;
 )GTIMODULE"},
-      {orderedPreludeBKey, R"GTIMODULE(import "ordered-prelude-b-dependency.gti";
-export mut int32_t prelude_b = 1;
+      {orderedPreludeBKey,
+       R"GTIMODULE(import "ordered-prelude-b-dependency.gti";
+mut int32_t prelude_b = 1;
 )GTIMODULE"},
-      {orderedPreludeBDependencyKey, R"GTIMODULE(export module ordered_prelude_b_dependency;
+      {orderedPreludeBDependencyKey,
+       R"GTIMODULE(export module ordered_prelude_b_dependency;
 export mut int32_t prelude_b_dependency = 1;
 )GTIMODULE"},
       {orderedIncludeAKey, R"GTIMODULE(export module ordered_a;
@@ -539,11 +542,11 @@ export mut int32_t shared_dependency = 1;
          "SourceLoader reuse should clear stale configured prelude roots and "
          "source-graph state before the next load");
 
-  const lang::FrontendResult invalidDependency =
-      lang::Frontend().analyze(entry,
-                               "import \"branch.gti\";\n"
-                               "int main() { return 0; }\n",
-                               {}, {{branchKey, R"GTIMODULE(export module branch;
+  const lang::FrontendResult invalidDependency = lang::Frontend().analyze(
+      entry,
+      "import \"branch.gti\";\n"
+      "int main() { return 0; }\n",
+      {}, {{branchKey, R"GTIMODULE(export module branch;
 int broken = 1
 )GTIMODULE"}});
   expect(!invalidDependency.syntaxValid &&
@@ -675,22 +678,20 @@ void testStandardLibraryImports() {
   const lang::FrontendResult missingMemory = lang::Frontend().analyze(
       root / "missing-memory.gti", uniqueOwnerSource,
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
-      !missingMemory.canGenerateCode() &&
-          hasDiagnosticCode(missingMemory.diagnostics, "GTI-S2089") &&
-          hasDiagnostic(missingMemory.diagnostics,
-                        "Undefined qualified name 'std::make_unique'") &&
-          hasDiagnosticHint(missingMemory.diagnostics, "import std.memory;"),
-      "unique ownership is not ambient and should offer its actual include");
+  expect(!missingMemory.canGenerateCode() &&
+             hasDiagnosticCode(missingMemory.diagnostics, "GTI-S2089") &&
+             hasDiagnostic(missingMemory.diagnostics,
+                           "Undefined qualified name 'std::make_unique'") &&
+             hasDiagnosticHint(missingMemory.diagnostics, "import std.memory;"),
+         "unique ownership is not ambient and should offer its actual include");
 
   const lang::FrontendResult indirectMemory = lang::Frontend().analyze(
-      root / "indirect-memory.gti",
-      "import std.cstdio;\n" + uniqueOwnerSource, {standardLibraryPrelude()},
-      {}, {standardLibraryRoot()});
+      root / "indirect-memory.gti", "import std.cstdio;\n" + uniqueOwnerSource,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!indirectMemory.canGenerateCode() &&
              hasDiagnosticCode(indirectMemory.diagnostics, "GTI-S2024") &&
              hasDiagnostic(indirectMemory.diagnostics,
-                           "include its file directly"),
+                           "import its public module interface"),
          "a standard unit should not re-export its memory dependency");
 
   const lang::FrontendResult directMemory = lang::Frontend().analyze(
@@ -842,8 +843,7 @@ namespace std { export struct Leaky { public: gti_internal::unique_owner<int> ca
       root / "leaky-alias.gti",
       "import std.array;\n"
       "std::leaked value;\nint main() { return 0; }\n",
-      {standardLibraryPrelude()},
-      {{leakyKey, R"GTIMODULE(export module array;
+      {standardLibraryPrelude()}, {{leakyKey, R"GTIMODULE(export module array;
 import std.memory;
 namespace std { export using leaked = gti_internal::unique_owner<int>; }
 )GTIMODULE"}},
@@ -860,8 +860,7 @@ namespace std { export using leaked = gti_internal::unique_owner<int>; }
       "import std.array;\n"
       "int main() { std::Mixed value = std::Mixed(); "
       "return value.select(1.0); }\n",
-      {standardLibraryPrelude()},
-      {{leakyKey, R"GTIMODULE(export module array;
+      {standardLibraryPrelude()}, {{leakyKey, R"GTIMODULE(export module array;
 import std.memory;
 namespace std { export class Mixed { public: Mixed() {} int select(int value) { return value; } int select(gti_internal::unique_owner<int> value) { return 0; } }; }
 )GTIMODULE"}},
@@ -997,7 +996,8 @@ namespace std { export int keyword_path_value() { return 0; } }
 )GTIMODULE"}},
       {standardLibraryRoot()});
   expect(keywordPath.canGenerateCode(),
-         "standard import components resolve legal names derived from GTI keywords");
+         "standard import components resolve legal names derived from GTI "
+         "keywords");
 
   const std::filesystem::path cppKeywordUnit =
       standardLibraryRoot() / "std/template_unit.gti";
@@ -1014,15 +1014,17 @@ namespace std { export int cpp_keyword_path_value() { return 0; } }
 )GTIMODULE"}},
       {standardLibraryRoot()});
   expect(cppKeywordPath.canGenerateCode(),
-         "standard import components resolve legal names derived from C++ keywords");
+         "standard import components resolve legal names derived from C++ "
+         "keywords");
 
   const lang::FrontendResult missing = lang::Frontend().analyze(
       entry, "import std.not_present;\nint main() { return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!missing.sourceValid &&
              hasDiagnosticCode(missing.diagnostics, "GTI-I0012") &&
-             hasDiagnostic(missing.diagnostics,
-                           "Standard-library module 'std.not_present' was not found"),
+             hasDiagnostic(
+                 missing.diagnostics,
+                 "Standard-library module 'std.not_present' was not found"),
          "missing standard units should fail during source loading");
 
   const lang::FrontendResult malformed = lang::Frontend().analyze(
@@ -1150,12 +1152,14 @@ void testPackageImports() {
   std::filesystem::create_directories(hiddenUnit.parent_path());
   {
     std::ofstream output(mathUnit);
-    output << "export module add;\nexport namespace math { int add(int left, int right) { return left + "
+    output << "export module add;\nexport namespace math { int add(int left, "
+              "int right) { return left + "
               "right; } }\n";
   }
   {
     std::ofstream output(hiddenUnit);
-    output << "export module value;\nexport namespace hidden { int value() { return 7; } }\n";
+    output << "export module value;\nexport namespace hidden { int value() { "
+              "return 7; } }\n";
   }
 
   const std::vector<lang::PackageSourceRoot> packages{
@@ -1173,8 +1177,7 @@ void testPackageImports() {
        .name = "math",
        .packageRoot = mathRoot,
        .sourceRoot = mathRoot / "src",
-       .dependencies = {
-           {.alias = "hidden", .targetIdentity = "hidden@1.0.0"}},
+       .dependencies = {{.alias = "hidden", .targetIdentity = "hidden@1.0.0"}},
        .modules = {{"add", mathUnit}}}};
 
   const lang::FrontendResult imported = lang::Frontend().analyze(
@@ -2711,8 +2714,7 @@ export int flag_value() { return 1; }
 #endif
 )";
   std::unordered_map<std::string, std::string> sources{
-      {flags.string(), flagSource},
-      {parent.string(), R"(export module parent;
+      {flags.string(), flagSource}, {parent.string(), R"(export module parent;
 import "flags.gti";
 #if defined(ENABLED) || defined(SECOND_ONLY) || !defined(STARTED)
 #error "an imported module changed its caller's configuration"
@@ -2728,18 +2730,20 @@ import "parent.gti";
 #if defined(ENABLED) || !defined(STARTED) || !defined(MODULE_LOCAL)
 #error "module imports must preserve the caller's flags"
 #endif
-export int )" + name + "_value() { return parent_value(); }\n";
+export int )" +
+           name + "_value() { return parent_value(); }\n";
   };
   sources[first.string()] = interface("first");
   sources[second.string()] = interface("second");
   lang::FrontendOptions options;
   options.configurationFlags = {"STARTED"};
-  options.declaredConfigurationFlags = {"ENABLED", "MODULE_LOCAL", "SECOND_ONLY"};
+  options.declaredConfigurationFlags = {"ENABLED", "MODULE_LOCAL",
+                                        "SECOND_ONLY"};
   options.cache = std::make_shared<lang::FrontendCache>();
   const auto consumer = [](bool reverse) {
-    return std::string(reverse
-                           ? "import \"second.gti\";\nimport \"first.gti\";\n"
-                           : "import \"first.gti\";\nimport \"second.gti\";\n") +
+    return std::string(
+               reverse ? "import \"second.gti\";\nimport \"first.gti\";\n"
+                       : "import \"first.gti\";\nimport \"second.gti\";\n") +
            R"(#if defined(ENABLED) || defined(MODULE_LOCAL) || defined(SECOND_ONLY) || !defined(STARTED)
 #error "module flags must not enter the importer"
 #endif
@@ -2748,36 +2752,48 @@ int main() { return first_value() + second_value(); }
   };
   const auto analyze = [&](bool reverse, bool cached = true) {
     auto selected = options;
-    if (!cached) selected.cache.reset();
-    return lang::Frontend(selected).analyze(entry, consumer(reverse), {}, sources);
+    if (!cached)
+      selected.cache.reset();
+    return lang::Frontend(selected).analyze(entry, consumer(reverse), {},
+                                            sources);
   };
   for (const bool reverse : {false, true, false}) {
     const auto cached = analyze(reverse);
     const auto uncached = analyze(reverse, false);
     expect(cached.canGenerateCode() && uncached.canGenerateCode(),
-           "shared imports isolate local defines and undefs regardless of order or cache reuse");
+           "shared imports isolate local defines and undefs regardless of "
+           "order or cache reuse");
     expect(cached.sourceGraph.sourceUnits().size() == 5 &&
                cached.sourceGraph.dependencyEdges().size() == 9,
-           "shared modules retain one source identity and each written import edge");
+           "shared modules retain one source identity and each written import "
+           "edge");
     expect(cached.diagnostics.size() == uncached.diagnostics.size(),
-           "cached and uncached isolated module configurations report the same diagnostics");
+           "cached and uncached isolated module configurations report the same "
+           "diagnostics");
     for (const auto &unit : cached.sourceGraph.sourceUnits()) {
-      const auto otherId = uncached.sourceGraph.sourceUnitForPath(unit.path.string());
+      const auto otherId =
+          uncached.sourceGraph.sourceUnitForPath(unit.path.string());
       const auto *other = uncached.sourceGraph.findUnit(otherId);
-      expect(other != nullptr && unit.syntaxDigest == other->syntaxDigest,
-             "cached and uncached module configuration select identical syntax");
+      expect(
+          other != nullptr && unit.syntaxDigest == other->syntaxDigest,
+          "cached and uncached module configuration select identical syntax");
     }
   }
-  sources[flags.string()] = "export module flags;\n#error \"changed module overlay\"\n";
+  sources[flags.string()] =
+      "export module flags;\n#error \"changed module overlay\"\n";
   const auto edited = analyze(false);
-  expect(!edited.sourceValid && hasDiagnostic(edited.diagnostics, "changed module overlay"),
-         "editing a cached module overlay reprocesses its configuration diagnostics");
+  expect(edited.sourceValid && edited.syntaxValid && !edited.semanticValid &&
+             hasDiagnosticCode(edited.diagnostics, "GTI-S2047") &&
+             hasDiagnostic(edited.diagnostics, "changed module overlay"),
+         "editing a cached module overlay reprocesses its configuration "
+         "diagnostics");
   sources[flags.string()] = flagSource;
   expect(analyze(false).canGenerateCode(),
          "restoring a module overlay restores the cached import graph");
   sources[flags.string()] += "import \"parent.gti\";\n";
   const auto cycle = analyze(false);
-  expect(!cycle.sourceValid && hasDiagnosticCode(cycle.diagnostics, "GTI-I0001"),
+  expect(!cycle.sourceValid &&
+             hasDiagnosticCode(cycle.diagnostics, "GTI-I0001"),
          "isolated module configuration preserves cycle rejection");
 }
 
@@ -2832,20 +2848,24 @@ int main() {
          "direct compilation imports standard-library modules by name");
   const lang::SourceUnit *vectorUnit = nullptr;
   for (const lang::SourceUnit &unit : imported.sourceGraph.sourceUnits()) {
-    if (unit.standardLibraryName == "std/vector") vectorUnit = &unit;
+    if (unit.standardLibraryName == "std/vector")
+      vectorUnit = &unit;
     expect(unit.standardLibraryName != "modules/vector",
            "standard modules have no legacy include wrapper");
   }
   bool importEdge = false;
-  for (const lang::SourceDependency &dependency : imported.sourceGraph.dependencyEdges()) {
-    importEdge = importEdge ||
-        (vectorUnit != nullptr && dependency.source == imported.sourceGraph.entryUnit() &&
-         dependency.target == vectorUnit->id &&
-         dependency.kind == lang::SourceDependencyKind::Import);
+  for (const lang::SourceDependency &dependency :
+       imported.sourceGraph.dependencyEdges()) {
+    importEdge =
+        importEdge || (vectorUnit != nullptr &&
+                       dependency.source == imported.sourceGraph.entryUnit() &&
+                       dependency.target == vectorUnit->id &&
+                       dependency.kind == lang::SourceDependencyKind::Import);
   }
-  expect(vectorUnit != nullptr && vectorUnit->role == lang::SourceUnitRole::StandardLibrary &&
-             vectorUnit->moduleDeclaration && vectorUnit->moduleDeclaration->lexeme == "vector" &&
-             importEdge,
+  expect(vectorUnit != nullptr &&
+             vectorUnit->role == lang::SourceUnitRole::StandardLibrary &&
+             vectorUnit->moduleDeclaration &&
+             vectorUnit->moduleDeclaration->lexeme == "vector" && importEdge,
          "std.vector directly imports its trusted source module");
 
   const auto nestedHidden =

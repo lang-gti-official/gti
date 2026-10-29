@@ -2313,9 +2313,8 @@ int main() {
        "GTI-S2057", "limit"}};
   for (const auto &test : rejections) {
     const auto invalid = lang::Frontend().analyze(
-        "dependent-constexpr-invalid.gti",
-        "import std.string;\n" + test.source, {standardLibraryPrelude()}, {},
-        {standardLibraryRoot()});
+        "dependent-constexpr-invalid.gti", "import std.string;\n" + test.source,
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     const bool found =
         std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
                     [&](const auto &d) {
@@ -3762,8 +3761,7 @@ void testConstexprLibrary() {
   lang::FrontendWorkMetrics chronoLibraryMetrics;
   const auto chronoLibrary =
       lang::Frontend({.workMetrics = &chronoLibraryMetrics})
-          .analyze(chronoPath,
-                   "import std.chrono;\nint main() { return 0; }",
+          .analyze(chronoPath, "import std.chrono;\nint main() { return 0; }",
                    {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::size_t fixtureExecutions =
       chronoMetrics.constexprMirExecutions -
@@ -5409,8 +5407,10 @@ public:
       {{canonical(left),
         "export module left;\nusing SharedName = int; static int value = 1; "
         "static int helper() { return value; } "
-        "export int left_value() { SharedName local = helper(); return local; }\n"},
-       {canonical(right), "export module right;\nstatic int SharedName = 2; static int value = 2; "
+        "export int left_value() { SharedName local = helper(); return local; "
+        "}\n"},
+       {canonical(right), "export module right;\nstatic int SharedName = 2; "
+                          "static int value = 2; "
                           "static int helper() { return value; } "
                           "export int right_value() { return helper(); }\n"}});
   expect(separateUnits.canGenerateCode() && separateUnits.diagnostics.empty(),
@@ -5945,8 +5945,9 @@ int main() { return selected_value() + local_state(); }
 #define FROM_IMPORT
 export int imported_value() { return 0; }
 )GTIMODULE"}});
-    expect(includeOrdered.canGenerateCode(),
-           "source-local configuration does not propagate across module imports");
+    expect(
+        includeOrdered.canGenerateCode(),
+        "source-local configuration does not propagate across module imports");
 
     const lang::FrontendResult replacement = lang::Frontend().analyze(
         "configuration-replacement.gti",

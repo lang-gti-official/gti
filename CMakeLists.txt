@@ -997,10 +997,6 @@ install(DIRECTORY "stdlib/std"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
         COMPONENT gti_toolchain
         FILES_MATCHING PATTERN "*.gti")
-install(DIRECTORY "stdlib/modules"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
-        COMPONENT gti_toolchain
-        FILES_MATCHING PATTERN "*.gti")
 install(FILES "VERSION" DESTINATION "${CMAKE_INSTALL_DATADIR}/gti"
         COMPONENT gti_toolchain)
 install(FILES "vendor/tomlplusplus/LICENSE"

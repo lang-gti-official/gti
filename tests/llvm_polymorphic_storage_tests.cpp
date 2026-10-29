@@ -446,8 +446,10 @@ int main(int argc, char **argv) {
            "construct, borrow, repeated move, reset and empty move execute at "
            "O0/O3");
     expect(
-        driver::invokeProcess({executable.string(), R"GTIMODULE(export module slot_operation_entry;
-6)GTIMODULE"}).succeeded(),
+        driver::invokeProcess({executable.string(),
+                               R"GTIMODULE(export module slot_operation_entry;
+6)GTIMODULE"})
+            .succeeded(),
         "runtime-selected model uses its own relocation and interface offset");
     for (int mode = 1; mode <= 5; ++mode) {
       const auto result =

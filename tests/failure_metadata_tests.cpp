@@ -1761,8 +1761,8 @@ void testExternalSourceRouteIdentity() {
 import "../shared.gti";
 int main() { return checked(1); }
 )";
-  const std::string externalSource =
-      "export module shared;\nexport int checked(int value) { return value + 1; }";
+  const std::string externalSource = "export module shared;\nexport int "
+                                     "checked(int value) { return value + 1; }";
   const auto analyzeAt = [&](const std::filesystem::path &root) {
     const std::filesystem::path entry = root / "app/main.gti";
     const std::filesystem::path external = root / "shared.gti";
@@ -2042,7 +2042,8 @@ void testCallerLocationAssignments() {
 
 void testMetadataAndSiteVerifierMutations() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "/tmp/gti-forged/main.gti", "export module shared;\nexport int checked(int value) { return value + 1; }"
+      "/tmp/gti-forged/main.gti", "export module shared;\nexport int "
+                                  "checked(int value) { return value + 1; }"
                                   "int main() { return checked(1); }");
   expect(frontend.canGenerateCode(),
          "the verifier mutation fixture should compile");

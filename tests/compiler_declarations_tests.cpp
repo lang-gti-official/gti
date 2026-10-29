@@ -2206,8 +2206,8 @@ int Cell::take() && { return this.number; }
   const auto canonical = [](const std::filesystem::path &path) {
     return std::filesystem::weakly_canonical(path).string();
   };
-  const std::string types =
-      "export module types;\nexport namespace demo { struct Parcel<T> { T value; }; }\n";
+  const std::string types = "export module types;\nexport namespace demo { "
+                            "struct Parcel<T> { T value; }; }\n";
   for (const auto &[signature, definition] :
        std::vector<std::pair<std::string, std::string>>{
            {"Parcel<int> make();",
@@ -2219,9 +2219,10 @@ int Cell::take() && { return this.number; }
             "int Factory::make(Parcel<int>* input) { return 7; }"}}) {
     const std::unordered_map<std::string, std::string> units{
         {canonical(root / "types.gti"), types},
-        {canonical(root / "api.gti"), "export module api;\nimport \"types.gti\";\nnamespace demo "
-                                      "{ export interface Factory { static " +
-                                          signature + " }; }\n"}};
+        {canonical(root / "api.gti"),
+         "export module api;\nimport \"types.gti\";\nnamespace demo "
+         "{ export interface Factory { static " +
+             signature + " }; }\n"}};
     const std::string source = "import \"api.gti\";\nnamespace demo { " +
                                definition + " }\nint main() { return 0; }\n";
     const auto hidden = lang::Frontend().analyze(
@@ -2234,20 +2235,20 @@ int Cell::take() && { return this.number; }
            "invisible split signature types must diagnose visibility, not "
            "signature mismatch");
     if (diagnostic != nullptr) {
-      expect(
-          diagnostic->phase == lang::DiagnosticPhase::Semantics &&
-              diagnostic->severity == lang::DiagnosticSeverity::Error &&
-              diagnostic->message.find("Parcel") != std::string::npos &&
-              diagnostic->primary.source == canonical(root / "main.gti") &&
-              diagnostic->primary.start == source.find("Parcel") &&
-              diagnostic->primary.end == source.find("Parcel") + 6 &&
-              diagnostic->related.size() == 1 &&
-              diagnostic->related.front().span.source ==
-                  canonical(root / "types.gti") &&
-              diagnostic->related.front().span.start == types.find("Parcel") &&
-              hasDiagnosticHint(hidden.diagnostics, "import \"types.gti\";"),
-          "split signature visibility errors retain the type span, "
-          "declaration note and direct-include hint");
+      expect(diagnostic->phase == lang::DiagnosticPhase::Semantics &&
+                 diagnostic->severity == lang::DiagnosticSeverity::Error &&
+                 diagnostic->message.find("Parcel") != std::string::npos &&
+                 diagnostic->primary.source == canonical(root / "main.gti") &&
+                 diagnostic->primary.start == source.find("Parcel") &&
+                 diagnostic->primary.end == source.find("Parcel") + 6 &&
+                 diagnostic->related.size() == 1 &&
+                 diagnostic->related.front().span.source ==
+                     canonical(root / "types.gti") &&
+                 diagnostic->related.front().span.start ==
+                     types.find("Parcel") &&
+                 hasDiagnosticHint(hidden.diagnostics, "import \"types.gti\";"),
+             "split signature visibility errors retain the type span, "
+             "declaration note and direct-include hint");
     }
     const auto visible = lang::Frontend().analyze(
         root / "main.gti", "import \"types.gti\";\n" + source,
@@ -2262,7 +2263,8 @@ int Cell::take() && { return this.number; }
         "Parcel<Missing> Factory::make() { return 0; }"}) {
     const auto invalid = lang::Frontend().analyze(
         "split-unknown-type.gti",
-        "export module types;\nexport namespace demo { struct Parcel<T> { T value; }; "
+        "export module types;\nexport namespace demo { struct Parcel<T> { T "
+        "value; }; "
         "interface Factory { static int make(); }; " +
             std::string(definition) +
             " } int neighboring() { return absent; } int main(){ return 0; }",
@@ -6080,7 +6082,8 @@ concept signed_value<T> = std::signed_numeric<T>;
       "T use<capabilities::signed_value T>(T value) { return value; }\n"
       "int main() { return use(1) - 1; }\n",
       {standardLibraryPrelude()},
-      {{canonical(wrapperUnit), "export module wrapper;\nimport \"concepts.gti\";\n"},
+      {{canonical(wrapperUnit),
+        "export module wrapper;\nimport \"concepts.gti\";\n"},
        {canonical(conceptsUnit), conceptsSource}},
       {standardLibraryRoot()});
   expect(!hidden.canGenerateCode() &&

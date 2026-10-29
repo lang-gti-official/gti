@@ -127,8 +127,7 @@ const char *const kFindCaller = R"(int main() {
 
 void checkFixtures(const std::filesystem::path &root,
                    const std::filesystem::path &directory) {
-  const std::string includes =
-      "import std.iterator;\nimport std.list;\n\n";
+  const std::string includes = "import std.iterator;\nimport std.list;\n\n";
 
   // The moved-return fact of a generic callee: both orders accept the program
   // and conclude the same thing.

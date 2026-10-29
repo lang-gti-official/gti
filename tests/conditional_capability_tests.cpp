@@ -121,8 +121,7 @@ int main() {
   // contract without a compiler-recognized storage type. These are separate
   // clients of the general Reviewed<T> assertions above, not replacements.
   const std::string storageDeclarations =
-      "import std.memory;\nimport std.resource;\n" +
-      std::string(declarations);
+      "import std.memory;\nimport std.resource;\n" + std::string(declarations);
   const auto storage = analyze(storageDeclarations + R"(
 int main() {
   std::allocator allocator{};

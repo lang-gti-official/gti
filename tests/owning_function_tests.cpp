@@ -2,8 +2,7 @@
 
 namespace {
 void checkConsumingWrapperSemantics() {
-  const std::string prefix =
-      "import std.functional;\nimport std.memory;\n";
+  const std::string prefix = "import std.functional;\nimport std.memory;\n";
   const auto positive =
       analyzeTrustedPreludeFixture("consuming-wrappers.gti", prefix + R"gti(
 class Increment { public: int operator()(int value) && { return value + 1; }  public: Increment() = default; };
@@ -397,8 +396,8 @@ auto copy = wrapper;
 )"}}) {
     const auto result = analyzeTrustedPreludeFixture(
         "invalid-owning-function.gti",
-        "import std.functional;\nimport std.memory;\nint main() {\n" +
-            invalid + "\nreturn 0;\n}\n");
+        "import std.functional;\nimport std.memory;\nint main() {\n" + invalid +
+            "\nreturn 0;\n}\n");
     expect(!result.canGenerateCode() &&
                !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
            "owning callbacks reject noncopyable clone targets, inexact "

@@ -22,10 +22,10 @@ void expect(bool condition, std::string_view message) {
 auto analyze(std::string source) -> lang::FrontendResult {
   const auto stdlib =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
-  return lang::Frontend().analyze(
-      "resource-client.gti",
-      "import std.resource;\nimport std.memory;\n" + source,
-      {stdlib / "prelude.gti"}, {}, {stdlib});
+  return lang::Frontend().analyze("resource-client.gti",
+                                  "import std.resource;\nimport std.memory;\n" +
+                                      source,
+                                  {stdlib / "prelude.gti"}, {}, {stdlib});
 }
 void diagnostics(const lang::FrontendResult &result) {
   for (const auto &diagnostic : result.diagnostics)

@@ -1465,8 +1465,8 @@ void hostedArgumentsBoundary(const std::filesystem::path &repository,
   require(zero.succeeded() && zero.output.empty(),
           "zero count constructs and drops an empty owner without reading null "
           "argv");
-  const auto negative =
-      driver::invokeProcess({executable.string(), R"GTIMODULE(export module llvm_hosted_scalar_return;
+  const auto negative = driver::invokeProcess(
+      {executable.string(), R"GTIMODULE(export module llvm_hosted_scalar_return;
 negative)GTIMODULE"});
   if (negative.exitCode != 70)
     std::cerr << negative.output;

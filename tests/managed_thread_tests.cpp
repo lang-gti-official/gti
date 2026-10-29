@@ -873,14 +873,14 @@ int main() {
 )",
                         "transfer-safe exact task");
   for (const std::string suffix : {"", " mut", " &&"}) {
-    const auto frontend = analyze(
-        "transfer-function.gti",
-        "import std.functional;\nimport std.thread;\n" + std::string(R"(
+    const auto frontend =
+        analyze("transfer-function.gti",
+                "import std.functional;\nimport std.thread;\n" + std::string(R"(
 struct Task { Task() = default; int operator()())") +
-            suffix + R"( { return 42; } };
+                    suffix + R"( { return 42; } };
 int main() {
   std::transfer_function<int())" +
-            suffix + R"(> callback{Task()};
+                    suffix + R"(> callback{Task()};
   mut std::thread_result<int> worker{};
   auto started = worker.start(std::move(callback));
   if (!started) return 1;

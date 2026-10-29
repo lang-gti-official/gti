@@ -95,8 +95,7 @@ void auditDependencySeverity() {
   // reported to an application in any mode, so Strict has nothing to promote
   // there. The opt-in restores the complete report, and Strict then promotes
   // exactly the findings Warn shows.
-  const std::string source =
-      "import std.memory;\nint main() { return 0; }\n";
+  const std::string source = "import std.memory;\nint main() { return 0; }\n";
   const auto library =
       std::filesystem::path(__FILE__).parent_path().parent_path() /
       "stdlib/std/memory.gti";

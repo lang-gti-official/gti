@@ -1393,9 +1393,11 @@ void signatureReceiverFamily() {
          "without guessing a fix");
   std::unordered_map<std::string, std::string> overlays{
       {(root / "read.gti").string(),
-       "export module read_receiver;\nexport class C<R(Args...)> { public: C() = default; };"},
+       "export module read_receiver;\nexport class C<R(Args...)> { public: C() "
+       "= default; };"},
       {(root / "mut.gti").string(),
-       "export module mut_receiver;\nexport class C<R(Args...) mut> { public: C() = default; };"}};
+       "export module mut_receiver;\nexport class C<R(Args...) mut> { public: "
+       "C() = default; };"}};
   const std::string entry = "import \"read.gti\";\nimport \"mut.gti\";\n"
                             "int main() { C<int() mut> value{}; return 0; }";
   const auto included =

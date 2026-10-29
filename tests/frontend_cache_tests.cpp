@@ -261,14 +261,16 @@ void testFrontendReuseInvalidationAndEquivalence() {
   const std::string entryKey = canonicalKey(entry);
   const std::string dependencyKey = canonicalKey(dependency);
   const std::string unrelatedKey = canonicalKey(unrelated);
-  const std::string dependencyDisk = "export module dependency;\nexport int dependency_value() { return 1; }\n";
+  const std::string dependencyDisk = "export module dependency;\nexport int "
+                                     "dependency_value() { return 1; }\n";
   const std::string unrelatedSource = "int unrelated_value() { return 7; }\n";
   const std::string firstRoot = "import \"dependency.gti\";\n"
                                 "int main() { return dependency_value(); }\n";
   const std::string editedRoot =
       "import \"dependency.gti\";\n"
       "int main() { return dependency_value() + 0; }\n";
-  const std::string dirtyDependency = "export module dependency;\nexport int dependency_value() { return 2; }\n";
+  const std::string dirtyDependency = "export module dependency;\nexport int "
+                                      "dependency_value() { return 2; }\n";
   TemporaryProject::write(entry, firstRoot);
   TemporaryProject::write(dependency, dependencyDisk);
   TemporaryProject::write(unrelated, unrelatedSource);
@@ -428,8 +430,11 @@ void testDependencyConfigurationChangesParsedIdentity() {
                                    "#else\n"
                                    "export int selected() { return 2; }\n"
                                    "#endif\n";
-  const std::string enabledProvider = "export module flag_provider;\n#define FEATURE\n" + providerBody;
-  const std::string disabledProvider = "export module flag_provider;\n#define FEATURE\n#undef FEATURE\n" + providerBody;
+  const std::string enabledProvider =
+      "export module flag_provider;\n#define FEATURE\n" + providerBody;
+  const std::string disabledProvider =
+      "export module flag_provider;\n#define FEATURE\n#undef FEATURE\n" +
+      providerBody;
   TemporaryProject::write(entry, entrySource);
   TemporaryProject::write(provider, enabledProvider);
 

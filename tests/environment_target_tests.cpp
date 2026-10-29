@@ -14,11 +14,10 @@ int main() {
     options.target.os = os;
     const auto result =
         lang::Frontend(std::move(options))
-            .analyze(
-                root / "tests/fixtures/environment-target.gti",
-                std::string{
-                    "import std.environment;\nint main() { return 0; }\n"},
-                {stdlib / "prelude.gti"}, {}, {stdlib});
+            .analyze(root / "tests/fixtures/environment-target.gti",
+                     std::string{
+                         "import std.environment;\nint main() { return 0; }\n"},
+                     {stdlib / "prelude.gti"}, {}, {stdlib});
     const bool supported = os == "linux" || os == "macos";
     if (result.canGenerateCode() != supported) {
       std::cerr << "wrong environment target availability for " << os << '\n';

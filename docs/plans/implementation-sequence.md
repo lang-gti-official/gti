@@ -85,6 +85,41 @@ borrow checking, package isolation, trusted declaration identity, or exports.
 - Publish a draft checkpoint and preserve the branch/worktree for phase 2.
   Passing phase 1 evidence is not approval for production, integration or release.
 
+### Phase 1 handoff evidence
+
+The draft PR carries the exact source checkpoint and retained logs. The source
+census covers 2,377 tracked/new `.gti` files across stdlib, examples, packages,
+benchmarks, fuzz, scripts, tests and parser fixtures, with zero active include
+directive lines. Deliberate rejection cases remain embedded in the owning tests;
+native C/C++ includes and historical fuzz-record hash authentication remain.
+All 49 legacy standard-library wrapper files are deleted. Generated bindings,
+public package module maps and generated test sources are part of the conversion.
+
+Focused evidence uses a macOS arm64 Release compiler with LLVM 23.1.2. Removal
+and LSP diagnostics, source text/services, cached analysis, import suggestions,
+code snippets and diagnostic registry checks pass. The new module-only example
+executes through LLVM; the standard aggregate example emits verified MIR.
+Bindgen's pipeline and four native binding integration gates pass. Parser corpus,
+highlighting/source-text checks, shipped/auxiliary source parsing and versioned
+fuzz-case migration checks pass. These are migration checks, not production or
+full-suite acceptance; the full compiler partitions were built but not run.
+
+**Confirmed phase 2 blocker:** in project mode, quoted internal stdlib imports
+from `std/vector.gti`, `std/span.gti` and `std/memory.gti` to the iterator detail
+interface fail package containment with GTI-I0012. Direct compilation succeeds.
+`testStandardLibraryModules`, `source_modules_runtime` and `source_modules_lsp`
+retain failing expectations for that gap. In the LSP case source loading stops
+before the unfinished root expression is parsed, so its expected diagnostic
+is not published. Phase 2 must model the standard library's source ownership
+coherently while preserving package containment and trusted identities, then
+rerun those checks; do not suppress them or grant arbitrary cross-package paths.
+
+Public/internal export review and complete generated/package/module behavior
+remain production obligations below. Full suites, platform campaigns, optimized
+workload measurements and release readiness are intentionally deferred at the
+owner's request. Phase 1 passing checks do not establish overall language safety
+or production readiness.
+
 ### Phase 2: production modules and breaking release
 
 Review the following obligations against the converted corpus before deciding

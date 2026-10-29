@@ -128,7 +128,8 @@ int main() {
       overlayEntry,
       "import \"gti-source-overlay-dependency.gti\";\n"
       "int main() { return dependency_value; }\n",
-      {}, {{dependencyKey, R"GTIMODULE(export module gti_source_overlay_dependency;
+      {},
+      {{dependencyKey, R"GTIMODULE(export module gti_source_overlay_dependency;
 export int dependency_value = 0;
 )GTIMODULE"}});
   expect(overlaid.canGenerateCode() && overlaid.diagnostics.empty(),
