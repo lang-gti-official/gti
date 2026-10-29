@@ -5929,7 +5929,9 @@ cycles invalidate the witness. The witness is serialized in `mir-v119`.
 LLVM omits the separate byte for this witness, uses the pointer for cleanup
 observation, and nulls it after transferring all fields to a move destination.
 A null live value and a retired value need not be distinguishable because their
-complete cleanup effects coincide. All fields are passive, so no child obligation
+complete cleanup effects coincide. This is not an object-liveness test: all
+logical fields still transfer when the marker is null, including non-null data
+in another pointer field. All fields are passive, so no child obligation
 is hidden by this equivalence. Construction rollback remains authoritative:
 only completed objects acquire a cleanup obligation, and constructor failure
 does not invoke the incomplete object's source destructor. The null marker is
