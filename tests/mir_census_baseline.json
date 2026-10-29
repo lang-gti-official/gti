@@ -176,7 +176,8 @@
     "176-profile-independent-atomics.gti": 25,
     "177-capability-predicates.gti": 19,
     "178-wrapping-atomic-counters.gti": 25,
-    "179-weak-ownership.gti": 164
+    "179-weak-ownership.gti": 164,
+    "180-compact-source-owners.gti": 193
   },
-  "total": 26816
+  "total": 27009
 }

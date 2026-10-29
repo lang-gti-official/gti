@@ -1,0 +1,76 @@
+import std.memory;
+import std.vector;
+import std.optional;
+mut int drops = 0;
+class Item {
+public:
+  int id;
+  Item(int id) : id(id) {}
+  ~Item() { drops = drops + 1; }
+};
+class Split<T> {
+  mut T first;
+  T second;
+public:
+  Split(T first, T second) : first(std::move(first)), second(std::move(second)) {}
+  T take() && { return std::move(this.first); }
+};
+int main() {
+  if (std::layout_of<std::shared_ptr<Item>>().bytes != uint64_t(16)) { return 1; }
+  if (std::layout_of<std::weak_ptr<Item>>().bytes != uint64_t(16)) { return 2; }
+  if (std::layout_of<std::shared_ptr<Item>[3]>().bytes != uint64_t(48)) { return 3; }
+  if (std::layout_of<std::weak_ptr<Item>[3]>().bytes != uint64_t(48)) { return 4; }
+  mut auto owner = std::make_shared<Item>(42);
+  mut auto weak = owner.downgrade();
+  {
+    Split<std::shared_ptr<Item>> pair{owner.clone(), owner.clone()};
+    auto extracted = std::move(pair).take();
+    if (owner.use_count() != 2 || extracted->id != 42) { return 5; }
+  }
+  {
+    Split<std::weak_ptr<Item>> pair{weak.clone(), weak.clone()};
+    auto extracted = std::move(pair).take();
+    if (extracted.expired()) { return 6; }
+  }
+  {
+    mut std::shared_ptr<Item> array[2] = {owner.clone(), owner.clone()};
+    auto extracted = std::move(array[0]);
+    array[0] = owner.clone();
+    if (owner.use_count() != 4) { return 7; }
+  }
+  {
+    mut std::vector<std::shared_ptr<Item>> owners{};
+    mut std::vector<std::weak_ptr<Item>> observers{};
+    for (mut int i = 0; i < 20; i = i + 1) {
+      owners.push_back(owner.clone());
+      observers.push_back(weak.clone());
+    }
+    if (owner.use_count() != 21) { return 8; }
+    owners.clear();
+    if (owner.use_count() != 1 || observers[std::size_t(0)].expired()) { return 9; }
+  }
+  {
+    auto held = owner.clone();
+    auto callback = [held = std::move(held)]() -> int { return held->id; };
+    if (callback() != 42) { return 10; }
+    std::optional<std::shared_ptr<Item>> optional{owner.clone()};
+    if (!optional) { return 11; }
+  }
+  {
+    mut std::uninitialized<std::shared_ptr<Item>> from{};
+    mut std::uninitialized<std::shared_ptr<Item>> to{};
+    mut std::uninitialized<std::weak_ptr<Item>> observer{};
+    unsafe {
+      std::construct_at(from.data(), owner.clone());
+      std::relocate_at(to.data(), from.data());
+      std::destroy_at(to.data());
+      std::construct_at(observer.data(), weak.clone());
+      std::destroy_at(observer.data());
+    }
+  }
+  if (owner.use_count() != 1 || drops != 0) { return 12; }
+  owner.reset();
+  if (!weak.expired() || weak.lock() || drops != 1) { return 13; }
+  weak.reset();
+  return 0;
+}

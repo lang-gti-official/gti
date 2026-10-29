@@ -9,6 +9,11 @@
 
 namespace lang::mir_detail {
 
+// Validate the semantic representation witness against the executable null
+// path, without interpreting the non-null destructor or inspecting source.
+[[nodiscard]] bool nullGuardedDestructor(const MirProgram &program,
+                                         const MirClassInstance &owner);
+
 using ::lang::MirDebugPoint;
 
 using ::lang::MirDebugAvailabilityReason;

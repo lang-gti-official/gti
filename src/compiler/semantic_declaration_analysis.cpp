@@ -10048,6 +10048,53 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
     const SpecialMemberStatus moveStatus = specialStatus(
         owner.moveConstructor, traits.movable, "move constructor");
     const bool sourceDestructor = hasSourceDestructorBody(owner);
+    // A deliberately structural representation proof, available before body
+    // execution/constant queries. Null skips the *entire* source body, and raw
+    // pointer fields have no child cleanup. MIR independently verifies the
+    // null path before executable consumers may use the witness.
+    const auto inactiveDropPointerField = [&]() -> std::optional<SymbolId> {
+      if (!sourceDestructor || owner.kind == ClassKind::Union ||
+          owner.kind == ClassKind::Interface || owner.polymorphic ||
+          !owner.bases.empty() || owner.cAbiRecord || owner.cOpaqueHandle ||
+          owner.compilerCapability != CompilerCapabilityTypeKind::None ||
+          owner.fields.empty())
+        return std::nullopt;
+      for (const auto &field : owner.fields) {
+        if (!field.declaration)
+          return std::nullopt;
+        const auto member =
+            owner.members.find(field.declaration->name().lexeme);
+        if (member == owner.members.end() ||
+            member->second.symbol.type.kind != SemanticType::RawPointer)
+          return std::nullopt;
+      }
+      const auto *body = owner.destructor->declaration->body().get();
+      if (!body || body->statements().size() != 1)
+        return std::nullopt;
+      const auto *branch = stmtAs<IfStmt>(body->statements().front().get());
+      if (!branch || branch->isConstexpr() || branch->elseBranch())
+        return std::nullopt;
+      const auto *condition = exprAs<Binary>(branch->condition().get());
+      if (!condition || condition->oper().kind != TokenKind::BANG_EQUAL)
+        return std::nullopt;
+      const auto *field = exprAs<Get>(condition->left().get());
+      const auto *empty = exprAs<LiteralExpr>(condition->right().get());
+      if (!field || !exprAs<This>(field->object().get()) || !empty ||
+          !std::holds_alternative<std::nullptr_t>(empty->value()))
+        return std::nullopt;
+      const auto member = owner.members.find(field->name().lexeme);
+      if (member == owner.members.end() ||
+          member->second.symbol.type.kind != SemanticType::RawPointer ||
+          std::none_of(owner.fields.begin(), owner.fields.end(),
+                       [&](const FieldInfo &candidate) {
+                         return candidate.declaration->name().lexeme ==
+                                field->name().lexeme;
+                       }))
+        return std::nullopt;
+      const auto symbol =
+          symbolForDeclaration(member->second.symbol.declaration);
+      return symbol ? std::optional<SymbolId>{symbol} : std::nullopt;
+    }();
     const bool deletedDestructor =
         owner.destructor && owner.destructor->declaration != nullptr &&
         owner.destructor->declaration->specifier() &&
@@ -10088,6 +10135,7 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
                     : (sourceDestructor ? SpecialMemberStatus::Declared
                                         : SpecialMemberStatus::Generated),
             .requiresActiveDropState = sourceDestructor,
+            .inactiveDropPointerField = inactiveDropPointerField,
             .traits = traits,
             .polymorphic = owner.polymorphic});
   }

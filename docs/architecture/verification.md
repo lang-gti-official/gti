@@ -11156,8 +11156,10 @@ fresh request, including its initializer, effect and instance-analysis state.
 The complete `trusted_body_analysis` corpus checks the corresponding standard
 library behavior, including constants and exported value objects.
 
-The reviewed module migration census retains all 177 top-level examples and
-454 registered LLVM evidence cases. Declaration counts change in 116 examples;
+The reviewed module migration census retains the original 177 top-level examples
+and 454 registered LLVM evidence cases. Reconciliation adds the compact-owner
+example 180, bringing the top-level inventory to 178. Declaration counts change
+in 116 original examples;
 only example 146 adds executable bodies: its public iterator wrapper adds 12
 bodies and four concrete-instance adapters on both target profiles. The MIR
 census records the same 12-body increase. The standard-library surface adds the

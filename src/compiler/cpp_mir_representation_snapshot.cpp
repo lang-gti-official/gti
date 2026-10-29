@@ -2152,9 +2152,10 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
       if (!record || record->name.empty()) {
         continue;
       }
-      // An enumerator read spells the enum type's qualified constant; the
-      // enum spelling is the same authority the enum rows carry. Payload
-      // enums stay rowless — their variants are not plain constants.
+      // An enumerator place designates stable read-only storage. Spelling
+      // the native enumerator directly would create a temporary when passed
+      // by reference, invalidating a returned loan at that native statement.
+      // Payload enums stay rowless — their variants are not plain constants.
       if (record->kind == SymbolKind::Enumerator &&
           place.type.kind == SemanticType::Enum) {
         const std::optional<RowEnumFacts> enumInfo =
@@ -2170,7 +2171,9 @@ static CppMirBodyEmissionMapRows buildCppMirBodyEmissionMapRowsFromFacts(
              .symbol = place.symbol,
              .ordinal = 0,
              .type = place.type,
-             .spelling = enumSpelling + "::" + record->name});
+             .spelling = "::gti_internal::backend::mir_enumerator_storage<" +
+                         std::to_string(place.symbol) + ", " + enumSpelling +
+                         "::" + record->name + ">"});
         builder.addType(place.type);
         continue;
       }

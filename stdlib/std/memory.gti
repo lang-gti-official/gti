@@ -704,7 +704,9 @@ public:
       return weak_ptr<T>(this.block, this.view);
     }
   }
-  ~shared_ptr() { unsafe { std::detail::release_shared<T>(this.block); } }
+  ~shared_ptr() {
+    if (this.block != nullptr) { unsafe { std::detail::release_shared<T>(this.block); } }
+  }
 };
 
 /// Consumes one shared handle and preserves all existing aliases while
@@ -778,7 +780,9 @@ public:
     other.block = block;
     other.view = view;
   }
-  ~weak_ptr() { unsafe { std::detail::release_weak<T>(this.block); } }
+  ~weak_ptr() {
+    if (this.block != nullptr) { unsafe { std::detail::release_weak<T>(this.block); } }
+  }
 };
 
 /// Constructs one owned object and its strong-reference control block.

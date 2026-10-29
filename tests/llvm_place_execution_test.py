@@ -529,6 +529,8 @@ T& pick<T>(T& value) { return value; }
 int main() {
   if (!is_ready(Mode::ready) || is_ready(Mode::done)) { return 1; }
   if (weight(Mode::idle) + weight(Mode::done) != 101) { return 2; }
+  Mode& saved = pick<Mode>(Mode::idle);
+  if (saved != Mode::idle || &saved != &pick<Mode>(Mode::idle)) { return 4; }
   return pick<Mode>(Mode::idle) == Mode::idle ? 0 : 3;
 }
 '''

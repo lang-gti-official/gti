@@ -180,7 +180,7 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
       const auto *target =
           session.program().mir().findDestructorInstance(*selected.destructor);
       if (!target || target->owner != selected.classInstance ||
-          !session.layouts().activeIndex(selected.type))
+          !session.layouts().hasActiveState(selected.type))
         throw std::logic_error(
             "LLVM static destructor lost its exact active-state witness");
     }
@@ -307,11 +307,19 @@ llvm::Function *Lifetimes::cleanupObservation(const MirDropType &recipe) {
     ir.SetInsertPoint(next);
   };
   if (recipe.destructor && !recipe.fixedArray) {
-    const auto index = *session.layouts().activeIndex(recipe.type);
-    auto *state = ir.CreateStructGEP(session.layouts().get(recipe.type).storage,
-                                     address, index);
-    witness(
-        ir.CreateICmpNE(ir.CreateLoad(ir.getInt8Ty(), state), ir.getInt8(0)));
+    if (const auto pointer =
+            session.layouts().inactivePointerIndex(recipe.type)) {
+      auto *state = ir.CreateStructGEP(
+          session.layouts().get(recipe.type).storage, address, *pointer);
+      witness(ir.CreateIsNotNull(
+          ir.CreateLoad(session.layouts().pointer(), state)));
+    } else {
+      const auto index = *session.layouts().activeIndex(recipe.type);
+      auto *state = ir.CreateStructGEP(
+          session.layouts().get(recipe.type).storage, address, index);
+      witness(
+          ir.CreateICmpNE(ir.CreateLoad(ir.getInt8Ty(), state), ir.getInt8(0)));
+    }
   }
   if (recipe.fixedArray) {
     const auto count = recipe.type.arrayLength;
@@ -659,6 +667,16 @@ void Lifetimes::active(llvm::IRBuilder<> &ir, llvm::Value *address,
                        const SemanticType &type, bool value) {
   if (type.kind != SemanticType::Class)
     return;
+  if (const auto index = session.layouts().inactivePointerIndex(type)) {
+    // Construction and relocation publish source fields themselves. A live
+    // null field is observationally equivalent to retired cleanup state.
+    if (!value)
+      ir.CreateStore(
+          llvm::ConstantPointerNull::get(session.layouts().pointer()),
+          ir.CreateStructGEP(session.layouts().get(type).storage, address,
+                             *index));
+    return;
+  }
   if (const auto index = session.layouts().activeIndex(type))
     ir.CreateStore(ir.getInt8(value),
                    ir.CreateStructGEP(session.layouts().get(type).storage,
@@ -900,7 +918,7 @@ Lifetimes::preflightFreshTransfer(Session &session, Dispatch &dispatch,
                              const MirClassInstance &object) -> void {
     static_cast<void>(session.layouts().get(object.type));
     if (object.requiresActiveDropState !=
-        session.layouts().activeIndex(object.type).has_value())
+        session.layouts().hasActiveState(object.type))
       throw std::logic_error(
           "LLVM transfer active state disagrees with its sealed class");
     for (const auto &base : object.bases) {
@@ -1074,7 +1092,7 @@ void preflightRelocation(Session &session, Dispatch &dispatch,
                                       "generated borrow-free record");
       static_cast<void>(session.layouts().get(selected));
       if (owner.requiresActiveDropState !=
-          session.layouts().activeIndex(selected).has_value())
+          session.layouts().hasActiveState(selected))
         throw std::logic_error("LLVM relocation lost its sealed active state");
       // Base metadata is installed by the complete object's dispatch state.
       // A field or array element is a distinct complete object of its own.
@@ -1276,6 +1294,11 @@ llvm::Function *Lifetimes::generatedRelocation(const SemanticType &type) {
         ir.CreateStore(ir.CreateLoad(ir.getInt8Ty(), from), to);
         ir.CreateStore(ir.getInt8(0), from);
       }
+      if (const auto inactive =
+              session.layouts().inactivePointerIndex(selected))
+        ir.CreateStore(
+            llvm::ConstantPointerNull::get(session.layouts().pointer()),
+            ir.CreateStructGEP(layout.storage, source, *inactive));
     } else if (const auto *payload =
                    session.program().mir().findPayloadEnum(selected)) {
       const auto physical = session.layouts().payload(selected);
@@ -1965,7 +1988,10 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     // Convert only this helper's unwind edge into the existing cleanup state;
     // after the schedule drains, resume the original token, never swallow it.
     const auto evaluationCall = [&](llvm::FunctionCallee callee,
-                                    llvm::ArrayRef<llvm::Value *> arguments) {
+                                    llvm::ArrayRef<llvm::Value *> arguments,
+                                    llvm::Value *retiring = nullptr,
+                                    const SemanticType *retiringType =
+                                        nullptr) {
       if (!unwindState) {
         auto personality = session.module().getOrInsertFunction(
             "__gxx_personality_v0",
@@ -1990,6 +2016,8 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
           llvm::FunctionType::get(ir.getVoidTy(), {pointer, pointer}, false));
       ir.CreateCall(transfer, {scratch, ir.CreateExtractValue(landing, 0)})
           ->setDoesNotThrow();
+      if (retiring)
+        active(ir, retiring, *retiringType, false);
       observe(ir.getFalse());
       ir.CreateBr(next);
       ir.SetInsertPoint(next);
@@ -2183,20 +2211,27 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
         if (!target || objectType.kind != SemanticType::Class)
           throw std::logic_error("LLVM cleanup lost its selected destructor");
         const auto index = session.layouts().activeIndex(objectType);
-        if (!index)
+        const auto inactive =
+            session.layouts().inactivePointerIndex(objectType);
+        if (!index && !inactive)
           throw std::logic_error(
               "LLVM source destructor has no active-state representation");
-        auto *state = ir.CreateStructGEP(
-            session.layouts().get(objectType).storage, address, *index);
+        auto *state =
+            ir.CreateStructGEP(session.layouts().get(objectType).storage,
+                               address, inactive ? *inactive : *index);
         auto *run =
             llvm::BasicBlock::Create(session.context(), "body", function);
         auto *done =
             llvm::BasicBlock::Create(session.context(), "body.done", function);
-        ir.CreateCondBr(ir.CreateICmpNE(ir.CreateLoad(ir.getInt8Ty(), state),
-                                        ir.getInt8(0)),
-                        run, done);
+        auto *isActive =
+            inactive ? ir.CreateIsNotNull(
+                           ir.CreateLoad(session.layouts().pointer(), state))
+                     : ir.CreateICmpNE(ir.CreateLoad(ir.getInt8Ty(), state),
+                                       ir.getInt8(0));
+        ir.CreateCondBr(isActive, run, done);
         ir.SetInsertPoint(run);
-        ir.CreateStore(ir.getInt8(0), state);
+        if (!inactive)
+          ir.CreateStore(ir.getInt8(0), state);
         const auto abi = session.abi().gti(
             SemanticType::Void, {}, target->mayRaiseDefinedFailure, true);
         std::vector<llvm::Value *> arguments;
@@ -2205,11 +2240,19 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
         arguments.push_back(address);
         auto *callee = findBody({MirBodyKind::Destructor, target->id});
 #if defined(GTI_LLVM_C04_NATIVE_UNWIND)
-        auto *status = evaluationCall(callee, arguments);
+        auto *status =
+            evaluationCall(callee, arguments, inactive ? address : nullptr,
+                           inactive ? &objectType : nullptr);
 #else
         auto *status = ir.CreateCall(callee, arguments);
 #endif
         abi.applyTo(*status);
+        // Preserve the original receiver and its field observations throughout
+        // the source body. Cleanup owns exclusive access and writable backing
+        // storage until it finishes. Retire before any failure propagation or
+        // enclosing cleanup can revisit this subobject.
+        if (inactive)
+          active(ir, address, objectType, false);
         if (abi.statusResult)
           observe(status);
         ir.CreateBr(done);

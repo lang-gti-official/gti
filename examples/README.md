@@ -377,6 +377,7 @@ is a teaching helper, not a production server.
 | `177-capability-predicates.gti` | source concept conjunctions for audited transfer/share promises, independent unsafe ownership assertions for local callbacks with thread-affine payloads |
 | `178-wrapping-atomic-counters.gti` | explicit modulo atomic updates and prior-value results without a host thread runtime |
 | `179-weak-ownership.gti` | source-defined weak observation, checked promotion, expiry, and local owning callbacks with thread-affine payloads |
+| `180-compact-source-owners.gti` | general null-guarded pointer owners, compact shared/weak handles and exactly-once moved cleanup; LLVM only |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

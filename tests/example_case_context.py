@@ -14,6 +14,7 @@ CENSUS_TIMEOUT = 180
 LLVM_ONLY_EXAMPLES = frozenset({
     "066-managed-threads.gti", "098-shared-ownership.gti",
     "178-wrapping-atomic-counters.gti", "179-weak-ownership.gti",
+    "180-compact-source-owners.gti",
 })
 
 

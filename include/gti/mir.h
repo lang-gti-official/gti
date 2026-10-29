@@ -1398,6 +1398,7 @@ struct MirClassInstance {
   SpecialMemberStatus destructorStatus = SpecialMemberStatus::Generated;
   std::optional<HirDestructorInstanceId> destructor;
   bool requiresActiveDropState = false;
+  std::optional<SymbolId> inactiveDropPointerField;
   bool requiresActiveCleanup = false;
   std::vector<MirClassFieldInfo> declaredFields;
   std::vector<MirClassTypeAlias> typeAliases;

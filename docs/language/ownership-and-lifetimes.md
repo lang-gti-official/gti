@@ -1696,11 +1696,12 @@ credit, followed by an acquire load only on the final release. General compiler 
 object layout/lifetime, borrow checking, capability predicates, function-pointer
 calls, atomic target instructions and defined failure. Public shared ownership
 no longer uses the private `shared_owner` capability.
-On the measured 64-bit native ABI, the ordinary source destructor's activation
-state makes the handle 24 bytes, compared with the legacy handle's 16 bytes.
-The owner accepted this representation cost on 2026-10-28. The factory uses one
-allocation instead of the legacy two; these are implementation measurements,
-not a frozen public layout or a claim about every target.
+The initial source implementation used a 24-byte handle, a cost accepted on
+2026-10-28. LLVM now represents its inactive cleanup state with the already
+nullable control pointer under the general null-guarded-destructor proof. On the
+supported 64-bit native targets the handle occupies 16 bytes, including array
+stride. The factory still uses one allocation instead of the legacy two. These
+are implementation properties, not a frozen public layout on every target.
 
 
 This source implementation requires the LLVM backend because wrapping atomic
@@ -1766,8 +1767,9 @@ conversion and no conversion that inspects an expired payload.
 Weak observation can break ownership cycles, but strong cycles are not collected.
 An expired observer retains the combined allocation, including the former
 payload's storage, until the final weak credit is released. The current source
-weak handle, like the source strong handle, occupies 24 bytes on the measured
-64-bit target; this is an implementation detail, not a frozen ABI.
+weak handle, like the source strong handle, occupies 16 bytes on supported
+64-bit native targets under the same general null-state proof; this remains
+an implementation detail, not a frozen ABI.
 
 ## Nullability And Allocation Failure
 

@@ -40,7 +40,7 @@
     "stdlib/std/json.gti": "85e0213cd253a521937160a0cac1d3e5be1eaa622f34442831a4d2dbffe7b812",
     "stdlib/std/list.gti": "d8c0a951c3ef5a9fefb8fd69882c8d2b313c9b502d32df906e8e38da809f7923",
     "stdlib/std/map.gti": "73bbf9e8c529c923f3391b94b83e330b90c02b933a7b2cfd9f3c171ee01a6955",
-    "stdlib/std/memory.gti": "7c43197646daaf18a8494e2c834d4065c5bb0fcb8be7cba5285563755a8be2ed",
+    "stdlib/std/memory.gti": "cf4a99569c5e3d3ddd352ae4a6019586a64ff5fe27e2d637a6bf1c91e4bd62c1",
     "stdlib/std/meta.gti": "02145583fabe6e6e5598ea9bf3762d27b5d18b4a2c42cd706d42ac14f51c438c",
     "stdlib/std/mutex.gti": "d761ef5ca158c5da39f60c2c6c2d66004f6a02a9ea5903bbf4db015e9a77eb11",
     "stdlib/std/numeric.gti": "fa0d3a929076f3f614ebef4c10c897c513e91712332d00b24fc58e78af5bd0cf",

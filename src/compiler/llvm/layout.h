@@ -114,6 +114,9 @@ public:
                                    HirClassInstanceId base) const;
   [[nodiscard]] std::optional<unsigned>
   activeIndex(const SemanticType &type) const;
+  [[nodiscard]] std::optional<unsigned>
+  inactivePointerIndex(const SemanticType &type) const;
+  [[nodiscard]] bool hasActiveState(const SemanticType &type) const;
   [[nodiscard]] unsigned captureIndex(const SemanticType &type,
                                       std::size_t capture) const;
   [[nodiscard]] std::optional<unsigned>

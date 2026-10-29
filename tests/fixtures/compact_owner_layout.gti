@@ -1,0 +1,109 @@
+import std.memory;
+
+mut int drops = 0;
+mut int weight = 1;
+
+// Two unrelated raw pointers; no compiler-recognized library identity.
+class Guard {
+  mut int* count = nullptr;
+  mut int* value = nullptr;
+public:
+  Guard() {}
+  Guard(int* count, int* value) : count(count), value(value) {}
+  int read() { unsafe { return *this.value; } }
+  ~Guard() {
+    if (this.count != nullptr) {
+      unsafe { *this.count = *this.count + *this.value; }
+    }
+  }
+};
+class Unconditional {
+  int* first = nullptr;
+  int* second = nullptr;
+public:
+  Unconditional() {}
+  ~Unconditional() { drops = drops + 1; }
+};
+class BeforeGuard {
+  int* first = nullptr;
+  int* second = nullptr;
+public:
+  BeforeGuard() {}
+  ~BeforeGuard() {
+    drops = drops + 1;
+    if (this.first != nullptr) { drops = drops + 1; }
+  }
+};
+class ElseEffect {
+  int* first = nullptr;
+  int* second = nullptr;
+public:
+  ElseEffect() {}
+  ~ElseEffect() {
+    if (this.first != nullptr) { drops = drops + 1; }
+    else { drops = drops + 2; }
+  }
+};
+class ScalarField {
+  int* first = nullptr;
+  int64_t second = 0;
+public:
+  ScalarField() {}
+  ~ScalarField() { if (this.first != nullptr) { drops = drops + 1; } }
+};
+class Pair {
+  mut Guard first;
+  Guard second;
+public:
+  Pair(Guard first, Guard second)
+      : first(std::move(first)), second(std::move(second)) {}
+  Guard take() && { return std::move(this.first); }
+};
+Guard relay(Guard guard) { return guard; }
+int main() {
+  if (std::layout_of<Guard>().bytes != uint64_t(16)) { return 1; }
+  if (std::layout_of<Guard[3]>().bytes != uint64_t(48)) { return 2; }
+  if (std::layout_of<Unconditional>().bytes != uint64_t(24)) { return 3; }
+  if (std::layout_of<BeforeGuard>().bytes != uint64_t(24)) { return 4; }
+  if (std::layout_of<ElseEffect>().bytes != uint64_t(24)) { return 5; }
+  if (std::layout_of<ScalarField>().bytes != uint64_t(24)) { return 6; }
+  {
+    mut Guard first{&drops, &weight};
+    Guard second = relay(std::move(first));
+    first = Guard(&drops, &weight);
+    Pair pair{std::move(first), Guard(&drops, &weight)};
+    Guard extracted = std::move(pair).take();
+  }
+  if (drops != 3) { return 7; }
+  {
+    // A null cleanup marker does not mean absent object storage. Other
+    // fields must survive ordinary, enclosing-field and raw relocation.
+    Guard empty{nullptr, &weight};
+    Guard transported = relay(std::move(empty));
+    if (transported.read() != 1) { return 9; }
+    Pair pair{std::move(transported), Guard(nullptr, &weight)};
+    Guard extracted = std::move(pair).take();
+    if (extracted.read() != 1) { return 10; }
+    mut std::uninitialized<Guard> from{};
+    mut std::uninitialized<Guard> to{};
+    unsafe {
+      std::construct_at(from.data(), nullptr, &weight);
+      std::relocate_at(to.data(), from.data());
+      Guard& relocated = std::assume_ref(to.data(), to);
+      if (relocated.read() != 1) { return 11; }
+    }
+    unsafe { std::destroy_at(to.data()); }
+  }
+  {
+    mut std::uninitialized<Guard> from{};
+    mut std::uninitialized<Guard> to{};
+    unsafe {
+      std::construct_at(from.data(), &drops, &weight);
+      std::relocate_at(to.data(), from.data());
+      std::destroy_at(to.data());
+      std::construct_at(from.data());
+      std::destroy_at(from.data());
+    }
+  }
+  return drops == 4 ? 0 : 8;
+}
