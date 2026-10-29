@@ -30,6 +30,15 @@ struct MirConstantEvaluation {
   MirInstructionId instruction = 0;
   std::size_t steps = 0;
   std::string detail;
+  struct CallSite {
+    MirBodyAddress body;
+    MirBlockId block = 0;
+    MirInstructionId instruction = 0;
+  };
+  // Inner-to-outer executed calls, retaining the innermost four and outermost
+  // four when necessary. Failure-only evidence; no AST or source ownership.
+  std::vector<CallSite> calls;
+  std::size_t omittedCalls = 0;
 
   [[nodiscard]] explicit operator bool() const {
     return failure == ConstantEvaluationFailure::None &&

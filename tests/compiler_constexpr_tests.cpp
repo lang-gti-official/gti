@@ -1657,10 +1657,81 @@ static_assert(table<3>(7) == 7);
   const auto loop = evaluate("endless", integer(1), {.steps = 100});
   const auto recursion = evaluate("recursion", integer(1), {.callDepth = 4});
   expect(
+      recursion.calls.size() == 4 && recursion.omittedCalls == 0 &&
+          recursion.calls.front().body.owner == functionId("recursion") &&
+          recursion.calls.front().instruction != 0,
+      "failed MIR calls preserve executed caller identities without AST data");
+  const auto deepRecursion =
+      evaluate("recursion", integer(1), {.callDepth = 20});
+  expect(deepRecursion.calls.size() == 8 &&
+             deepRecursion.calls.capacity() == 8 &&
+             deepRecursion.omittedCalls == 12,
+         "failure traces bound storage and count omitted recursive calls");
+  expect(lazy.calls.empty() && lazy.omittedCalls == 0,
+         "successful constant execution retains no failure trace");
+  expect(
       !loop && loop.failure == lang::ConstantEvaluationFailure::ResourceLimit &&
           !recursion &&
           recursion.failure == lang::ConstantEvaluationFailure::ResourceLimit,
       "all executed MIR blocks and nested calls share bounded resources");
+
+  const std::string traceDefinitions =
+      "constexpr int divide(int value) { return 100 / value; }\n"
+      "constexpr int middle(int value) { return divide(value); }\n"
+      "constexpr int outer(int value) { return middle(value); }\n";
+  for (const std::string &request :
+       {std::string("constexpr int result = outer(0);\n"),
+        std::string("static_assert(outer(0) == 1);\n"),
+        std::string("int select() { if constexpr (outer(0) == 1) { return 1; } "
+                    "else { return 0; } }\n")}) {
+    const auto failed = lang::Frontend().analyze("constant-trace.gti",
+                                                 traceDefinitions + request);
+    const auto *diagnostic =
+        findDiagnosticByCode(failed.diagnostics, "GTI-S2057");
+    expect(!failed.semanticValid && !failed.canGenerateCode() && diagnostic &&
+               diagnostic->message.find("Division by zero") !=
+                   std::string::npos,
+           "all three constant contexts retain the owning arithmetic failure");
+    if (diagnostic) {
+      std::vector<std::size_t> lines;
+      for (const auto &related : diagnostic->related)
+        if (related.message == "Constant evaluation requested here.")
+          lines.push_back(related.span.line);
+      expect(lines == std::vector<std::size_t>{4, 3, 2} &&
+                 diagnostic->primary.line == 1 && diagnostic->fixes.empty(),
+             "constant failure notes link outer-to-inner calls, not "
+             "speculative repairs");
+    }
+    std::string repaired = request;
+    repaired.replace(repaired.find("outer(0)"), 8, "outer(100)");
+    expect(lang::Frontend()
+               .analyze("constant-trace.gti", traceDefinitions + repaired)
+               .semanticValid,
+           "repair clears the arithmetic failure and its call trace");
+  }
+  const auto constructorFailure = lang::Frontend().analyze(
+      "constant-constructor-trace.gti",
+      "struct Ratio {\n"
+      "  int value;\n"
+      "  constexpr Ratio(int divisor) : value(100 / divisor) {}\n"
+      "};\n"
+      "constexpr int make_ratio(int divisor) { Ratio ratio{divisor}; return "
+      "ratio.value; }\n"
+      "constexpr int result = make_ratio(0);\n");
+  const auto *constructorDiagnostic =
+      findDiagnosticByCode(constructorFailure.diagnostics, "GTI-S2057");
+  expect(!constructorFailure.semanticValid && constructorDiagnostic &&
+             constructorDiagnostic->primary.line == 3,
+         "constructor failure preserves the executing initializer location");
+  if (constructorDiagnostic) {
+    std::vector<int> lines;
+    for (const auto &related : constructorDiagnostic->related)
+      if (related.message == "Constant evaluation requested here.")
+        lines.push_back(related.span.line);
+    expect(
+        lines == std::vector<int>{6, 5},
+        "constructor failures retain the requesting function and construction");
+  }
   const auto badArgument = evaluate("sum", true);
   expect(!badArgument && badArgument.failure ==
                              lang::ConstantEvaluationFailure::InvalidOperands,

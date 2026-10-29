@@ -824,35 +824,39 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     return constexprFailure(
         callSite, ConstantEvaluationFailure::UnsupportedType,
         "A void constexpr call does not produce a constant value.");
-  Token location = callSite;
-  const auto *mirBody = findMirBody(mir.program, result.body);
-  const HirBody *hirBody = nullptr;
-  if (result.body.kind == MirBodyKind::Function) {
-    if (const auto *function =
-            hir.program.findFunctionInstance(result.body.owner))
-      hirBody = &function->body;
-  } else if (result.body.kind == MirBodyKind::Constructor) {
-    if (const auto *constructor =
-            hir.program.findConstructorInstance(result.body.owner))
-      hirBody = &constructor->body;
-  } else if (result.body.kind == MirBodyKind::Destructor) {
-    if (const auto *destructor =
-            hir.program.findDestructorInstance(result.body.owner))
-      hirBody = &destructor->body;
-  }
-  if (mirBody != nullptr && hirBody != nullptr) {
-    if (const auto *block = mirBody->findBlock(result.block)) {
-      for (const auto &instruction : block->instructions) {
-        if (instruction.id == result.instruction) {
-          const auto *value = hirBody->findValue(instruction.hirValue);
-          if (value != nullptr && value->source != nullptr) {
-            location = expressionToken(*value->source);
+  const auto sourceLocation =
+      [&](MirBodyAddress address, MirBlockId blockId,
+          MirInstructionId instructionId) -> std::optional<Token> {
+    const auto *mirBody = findMirBody(mir.program, address);
+    const HirBody *hirBody = nullptr;
+    if (address.kind == MirBodyKind::Function) {
+      if (const auto *function =
+              hir.program.findFunctionInstance(address.owner))
+        hirBody = &function->body;
+    } else if (address.kind == MirBodyKind::Constructor) {
+      if (const auto *constructor =
+              hir.program.findConstructorInstance(address.owner))
+        hirBody = &constructor->body;
+    } else if (address.kind == MirBodyKind::Destructor) {
+      if (const auto *destructor =
+              hir.program.findDestructorInstance(address.owner))
+        hirBody = &destructor->body;
+    }
+    if (mirBody != nullptr && hirBody != nullptr) {
+      if (const auto *block = mirBody->findBlock(blockId)) {
+        for (const auto &instruction : block->instructions) {
+          if (instruction.id == instructionId) {
+            const auto *value = hirBody->findValue(instruction.hirValue);
+            if (value != nullptr && value->source != nullptr) {
+              return expressionToken(*value->source);
+            }
+            break;
           }
-          break;
         }
       }
     }
-  }
+    return std::nullopt;
+  };
   if (result) {
     if (reuseKey && StagedConstantResults::reusable(*result.value))
       stagedConstants->record({.key = *reuseKey,
@@ -867,8 +871,19 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   // compiler-trusted unit is reported at the evaluation site that required
   // it, with the library location kept as a note (the same policy as
   // concrete-instance diagnostics).
+  const Token location =
+      sourceLocation(result.body, result.block, result.instruction)
+          .value_or(callSite);
   auto failure =
       constexprFailure(location, result.failure, std::move(result.detail));
+  failure.trace.calls.push_back(tokenSpan(callSite));
+  failure.trace.omittedCalls = result.omittedCalls;
+  for (auto call = result.calls.rbegin(); call != result.calls.rend(); ++call) {
+    if (auto site = sourceLocation(call->body, call->block, call->instruction))
+      failure.trace.calls.push_back(tokenSpan(*site));
+    else
+      ++failure.trace.omittedCalls;
+  }
   if (!location.lexeme.empty() && isCompilerTrustedRequester(location) &&
       !isCompilerTrustedRequester(callSite)) {
     failure.libraryLocation = location;

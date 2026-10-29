@@ -205,8 +205,11 @@ Q-DIAG-04 now begins with member-owned `requires` failures: the ordinary
 resolver retains a representative terminal cause, with explicit elision for
 intermediate member steps, alternative branches and long concept chains.
 User-defined constrained members have positive/repaired cases and multi-file
-CLI/LSP overlay coverage. This is not complete overload-tree or constexpr-frame
-coverage, and the broader cross-family quality baseline remains open.
+CLI/LSP overlay coverage. The next slice retains a bounded executed-call trail
+from staged MIR constant evaluation and maps it to CLI/LSP notes for bindings,
+compile-time branches and static assertions. Recursive elision and successful
+repair are tested. This is not complete overload-tree, AST compatibility or
+all constant-context coverage; the broader cross-family baseline remains open.
 
 Facility 4's first slice adds conservative `FixIt` applicability, diagnostic-local
 atomic/alternative group identities and exact-snapshot LSP validation. Existing
