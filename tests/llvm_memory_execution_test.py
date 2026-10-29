@@ -11,6 +11,7 @@ import json
 
 from backend_execution import Endpoint, execute
 from llvm_evidence_manifest import build_manifest
+from internal_module_fixture import iterator_library
 
 
 CASES = {
@@ -193,6 +194,10 @@ def prepare_evidence_case(root: Path, name: str, source: Path, work: Path):
     ordinary compiler still rejects private names in application source; no
     trust check or production library declaration is changed for this test.
     """
+    if name in {"guards", "guard-cleanup"}:
+        overlay = work / "iterator-library"
+        iterator_library(root, overlay / "stdlib")
+        return overlay, source
     if name != "private-shared-capability":
         return root, source
     overlay = work / "private-shared-library"
@@ -345,9 +350,12 @@ def main():
             if selected and selected != name:
                 continue
             observed = []
+            case_root, source = prepare_evidence_case(
+                root, name, root / "tests/fixtures" / filename, work)
+            case_env = {**env, "GTI_STDLIB_PATH": str(case_root / "stdlib")}
             for endpoint in endpoints:
                 result = execute(gti, root, work / f"{name}-{endpoint}",
-                                 root / "tests/fixtures" / filename, endpoint, env)
+                                 source, endpoint, case_env)
                 if (result.error or result.returncode != 70 or code not in result.stderr
                         or marker not in result.stderr or "wrong Boolean-guard" in result.stderr):
                     raise AssertionError(f"{name} {endpoint}: {result}")

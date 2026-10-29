@@ -3,10 +3,10 @@ export module optional;
 // Optional policy and storage are ordinary GTI: the payload enum owns exactly
 // one live value or none. The compiler supplies general enum lifetime rules.
 import std.utility;
-export namespace std {
+namespace std {
 /// The value representing an empty optional.
-struct nullopt_t { nullopt_t() = default; };
-nullopt_t nullopt{};
+export struct nullopt_t { nullopt_t() = default; };
+export nullopt_t nullopt{};
 
 namespace detail {
 enum optional_state<T> {
@@ -18,7 +18,7 @@ enum optional_state<T> {
 /// A move-only optional owner with inline, source-defined tagged storage.
 /// Empty access raises the checked empty-owner failure after normal cleanup.
 /// Copying is explicit through clone(); moving consumes the source binding.
-class optional<std::move_constructible T> {
+export class optional<std::move_constructible T> {
   mut detail::optional_state<T> state = detail::optional_state<T>::empty;
 
 public:
@@ -89,7 +89,7 @@ public:
   }
 };
 
-for <std::move_constructible T> concept std::tryable<optional<T>> {
+export for <std::move_constructible T> concept std::tryable<optional<T>> {
   using value_type = T;
   using residual_type = nullopt_t;
   bool has_value(optional<T>& value) { return value.has_value(); }

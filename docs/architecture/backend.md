@@ -701,6 +701,16 @@ cleanup fails during unwinding; native destruction does not choose that policy.
 
 ## C++ Backend
 
+The module-only transition introduces distinct nominal identities with identical
+qualified names in different modules. LLVM represents those identities directly.
+The retained C++ name representation does not: its preflight reports `GTI-B0003`
+at the conflicting declaration before invoking the native compiler or publishing
+an artifact. Existing class definition families and exact specializations retain
+their shared primary identity (including primary chains), so this boundary does
+not reject their supported representation. Module tests execute the full LLVM
+contract and a clearly identified unique-name C++ comparison subset; they also
+verify that a rejected build preserves the previous executable.
+
 `CppBackend::generate` verifies the lowered value and constructs
 `CppEmitter(program, standard)`. The emitter then:
 

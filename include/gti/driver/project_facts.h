@@ -23,7 +23,7 @@ namespace lang::driver {
 // and reconstructing that meaning creates a second interpretation of manifest
 // semantics that drifts from the driver's; the package source-root graph in
 // particular cannot be recovered from one manifest, so a consumer that skips
-// it silently loses every package include the build path resolves.
+// it silently loses package imports the build path resolves.
 //
 // These values are that shared answer. Resolution runs no processes and
 // acquires nothing: it uses the same policy as `gti metadata`, so a git
@@ -34,7 +34,7 @@ namespace lang::driver {
 
 // One direct manifest edge, as resolved against the workspace graph.
 struct ProjectFactsDependency {
-  // The alias `#include <alias/unit>` resolves through.
+  // The alias `import alias.module;` resolves through.
   std::string alias;
   // "name@version" of the package the alias resolves to.
   std::string targetIdentity;

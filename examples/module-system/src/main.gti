@@ -1,0 +1,14 @@
+import drawing.graphics.geometry;
+import metrics.geometry;
+
+int main() {
+  // Inference can use returned private types without exposing their names.
+  auto first = drawing::make();
+  auto second = metrics::make();
+  drawing::Box<int> box{.value = 42};
+  if (box.read() != 42 || box.convert(7) != 7) { return 2; }
+  if (first.value != 42 || second.value != 7 || drawing::answer() != 42) {
+    return 1;
+  }
+  return 0;
+}

@@ -8,6 +8,7 @@
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
+#include "gti/source_owner.h"
 #include "gti/support.h"
 
 #include <algorithm>
@@ -348,7 +349,7 @@ Frontend::analyzeLoaded(const std::filesystem::path &entryPath,
 
 FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                         FrontendResult result) const {
-  if (!result.sourceValid) {
+  if (!result.sourceValid && !options.analyzeRecoveredSourceGraph) {
     return result;
   }
 
@@ -371,7 +372,30 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
 
   StmtList declarations;
   bool syntaxValid = true;
-  const std::string frontendCacheContext = cacheContext(options);
+  const std::string syntaxCacheContext = cacheContext(options);
+  std::string frontendCacheContext =
+      syntaxCacheContext + "\nsource-owners:" +
+      (result.sourceGraph.sourceOwners()
+           ? result.sourceGraph.sourceOwners()->resolutionIdentity()
+           : std::string{});
+  // Logical maps are relocatable, but a loaded file's containment, module
+  // membership and compiler trust also affect semantic meaning. Never reuse
+  // a preamble merely because its source bytes and public map are unchanged.
+  const auto appendIdentity = [&](std::string_view value) {
+    frontendCacheContext += std::to_string(value.size()) + ":";
+    frontendCacheContext += value;
+  };
+  for (const auto &unit : result.sourceGraph.sourceUnits()) {
+    appendIdentity(unit.path.generic_string());
+    const auto owners = result.sourceGraph.sourceOwners();
+    const auto *owner = owners ? owners->ownerForPath(unit.path) : nullptr;
+    appendIdentity(owner ? owner->identity : std::string{});
+    const auto *module = result.sourceGraph.findModule(unit.moduleId);
+    appendIdentity(module ? module->ownerIdentity : std::string{});
+    appendIdentity(module ? module->name : std::string{});
+    appendIdentity(std::to_string(static_cast<int>(unit.role)));
+    appendIdentity(unit.prelude ? "prelude" : "source");
+  }
   const std::unordered_map<SourceUnitId, std::uint64_t> dependencyDigests =
       DependencyDigestBuilder(result.sourceGraph, options).build();
   const auto parseStart = std::chrono::steady_clock::now();
@@ -392,7 +416,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       StmtList unitDeclarations;
       const auto dependencyDigest = dependencyDigests.find(unitId);
       const FrontendUnitCacheKey key =
-          unitCacheKey(options, *unit, frontendCacheContext,
+          unitCacheKey(options, *unit, syntaxCacheContext,
                        dependencyDigest == dependencyDigests.end()
                            ? 0
                            : dependencyDigest->second);
@@ -492,10 +516,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   const bool requireDefinitions = options.requireFunctionDefinitions ||
                                   options.requireEntryPoint ||
                                   options.program.kind == ProgramKind::Library;
-  if (options.preambleCache != nullptr &&
+  if (result.sourceValid && options.preambleCache != nullptr &&
       options.rawPointerAudit == RawPointerAuditMode::Off) {
     SemanticPreambleKey key;
-    key.context = cacheContext(options) + "\npreamble:" +
+    key.context = frontendCacheContext + "\npreamble:" +
                   (options.toolingOccurrences ? "tooling" : "plain") +
                   (requireDefinitions ? ":definitions" : ":fragments");
     const StmtList &declarations = result.program.declarations();
@@ -574,11 +598,11 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       if (options.workMetrics != nullptr)
         ++options.workMetrics->semanticPreambleAdoptions;
     }
-    if (options.instanceCache != nullptr &&
+    if (result.sourceValid && options.instanceCache != nullptr &&
         trustedBodies == TrustedBodyAnalysis::Reachable)
       semantic.useInstanceAnalysisCache(
           options.instanceCache,
-          cacheContext(options) +
+          frontendCacheContext +
               (preamble == nullptr
                    ? std::string{}
                    : "\npreamble:" +
@@ -613,8 +637,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
               std::chrono::steady_clock::now() - semanticStart)
               .count());
     }
-    if (result.semanticValid && options.program.testSuite &&
-        !testDiscoveryComplete && !options.completionOffset) {
+    if (result.sourceValid && result.semanticValid &&
+        options.program.testSuite && !testDiscoveryComplete &&
+        !options.completionOffset) {
       testDiscoveryComplete = true;
       SourceUnit *entry =
           result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
@@ -740,7 +765,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         result.semanticValid = false;
       }
     }
-    if (!result.semanticValid || options.completionOffset ||
+    if (!result.sourceValid || !result.semanticValid ||
+        options.completionOffset ||
         options.stopAfter == FrontendPhase::Semantics) {
       result.semantics = semantic.takeModel();
       applyAuditPolicy();

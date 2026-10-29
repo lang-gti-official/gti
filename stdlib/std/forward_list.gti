@@ -4,7 +4,7 @@ export module forward_list;
 // traversal borrows. Cursors retain the whole chain's checked owner dependency
 // and follow its stable node addresses in constant time.
 import std.memory;
-export namespace std {
+namespace std {
   namespace detail {
     enum class forward_list_in_place { value };
 
@@ -127,7 +127,7 @@ export namespace std {
     };
   }
 
-  class forward_list<T> {
+  export class forward_list<T> {
     mut std::unique_ptr<detail::forward_list_node<T>> head =
         std::unique_ptr<detail::forward_list_node<T>>();
 

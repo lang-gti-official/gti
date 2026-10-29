@@ -2366,6 +2366,14 @@ private:
         }
         afterName = nextSyntaxLexeme(
             lexemes, static_cast<std::size_t>(component - lexemes.data()));
+        if (afterName != nullptr && afterName->kind == Kind::Less) {
+          const auto genericClose = matchingGenericClose(
+              lexemes, static_cast<std::size_t>(afterName - lexemes.data()),
+              true);
+          if (!genericClose)
+            return false;
+          afterName = nextSyntaxLexeme(lexemes, *genericClose);
+        }
       } while (afterName != nullptr && afterName->kind == Kind::Scope);
       return afterName != nullptr && afterName->kind == Kind::LeftParen;
     }

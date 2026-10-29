@@ -84,10 +84,10 @@ root = "src/main.gti"
         assert edit["edits"][0]["newText"] == 'import "../include/api.gti";\n', edit
 
         # An unsaved dependency edit removes the definition; no disk fallback.
-        open_file(header_uri, 'namespace example { int renamed() { return 7; } }\n')
+        open_file(header_uri, 'export module api;\nnamespace example { export int renamed() { return 7; } }\n')
         published(lambda p: has_error_diagnostics(p) and include_diagnostic(p) is None)
         assert actions(diagnostic) == [], "stale diagnostic must not offer its old include"
-        change(header_uri, 2, 'namespace example { int test() { return 8; } }\n')
+        change(header_uri, 2, 'export module api;\nnamespace example { export int test() { return 8; } }\n')
         published(lambda p: include_diagnostic(p) is not None)
         notify("textDocument/didClose", {"textDocument": {"uri": header_uri}})
         published(lambda p: include_diagnostic(p) is not None)
@@ -97,7 +97,7 @@ root = "src/main.gti"
         notify("workspace/didChangeWatchedFiles", {"changes": [{"uri": header_uri, "type": 3}]})
         published(lambda p: has_error_diagnostics(p) and include_diagnostic(p) is None)
         other = root / "include/new.gti"
-        other.write_text('namespace example { int test() { return 9; } }\n')
+        other.write_text('export module new_api;\nnamespace example { export int test() { return 9; } }\n')
         notify("workspace/didChangeWatchedFiles", {"changes": [{"uri": other.as_uri(), "type": 1}]})
         new = include_diagnostic(published(lambda p: include_diagnostic(p) is not None))
         assert 'new.gti' in actions(new)[0]["title"]

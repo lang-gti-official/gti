@@ -811,50 +811,18 @@ ProjectBuildPlan makeBuildPlan(
   std::vector<BindgenImportPlan> bindgenImports;
   for (const ResolvedProjectPackage &resolved : workspace.packages()) {
     for (const ProjectBindgenImport &import : resolved.manifest.bindgen()) {
-      std::filesystem::path importDirectory =
-          workspace.root() / "build" / "gti" / "bindgen";
-      importDirectory /=
-          portableProjectNameKey(resolved.manifest.package().name);
-      importDirectory /= import.alias;
       const std::string syntheticIdentity =
           resolved.identity() + "/bindgen/" + import.alias;
-      const auto owner =
+      const auto generatedOwner =
           std::find_if(packageSourceRoots.begin(), packageSourceRoots.end(),
-                       [&resolved](const PackageSourceRoot &root) {
-                         return root.identity == resolved.identity();
+                       [&](const auto &owner) {
+                         return owner.identity == syntheticIdentity;
                        });
-      if (owner == packageSourceRoots.end()) {
+      // Shared workspace projection supplies the same roots to read-only
+      // editor facts and executable build plans; only this path generates them.
+      if (generatedOwner == packageSourceRoots.end())
         continue;
-      }
-      owner->dependencies.push_back(
-          {.alias = import.alias, .targetIdentity = syntheticIdentity});
-      packageSourceRoots.push_back(
-          {.identity = syntheticIdentity,
-           .name = import.alias,
-           .packageRoot = importDirectory,
-           .sourceRoot = importDirectory,
-           .dependencies = {},
-           .modules = {{"bindings", importDirectory / "bindings.gti"}}});
-      modelIdentity += "\nbindgen:" + resolved.identity() + ":" + import.alias +
-                       "=" + import.declaredHeader;
-      if (!import.namespaceName.empty()) {
-        modelIdentity += "|namespace=" + import.namespaceName;
-      }
-      for (const std::string &argument : import.macroArguments) {
-        modelIdentity += "|macro=" + argument;
-      }
-      for (const std::string &pattern : import.allowPatterns) {
-        modelIdentity += "|allow=" + pattern;
-      }
-      for (const std::string &pattern : import.denyPatterns) {
-        modelIdentity += "|deny=" + pattern;
-      }
-      for (const auto &[from, to] : import.renames) {
-        modelIdentity += "|rename=" + from + ">" + to;
-      }
-      for (const auto &[function, count] : import.arrayReturns) {
-        modelIdentity += "|array=" + function + ">" + count;
-      }
+      std::filesystem::path importDirectory = generatedOwner->packageRoot;
       bindgenImports.push_back({.packageName = resolved.manifest.package().name,
                                 .alias = import.alias,
                                 .header = import.header,

@@ -3,7 +3,7 @@ export module paired_span;
 import std.span;
 import std.memory;
 import "detail/iterator.gti";
-export namespace std {
+namespace std {
 namespace detail {
 class paired_span_sentinel {
   size_t finish;
@@ -126,7 +126,7 @@ public:
 /// A read-only indexed view over two independently owned contiguous buffers.
 /// Its length is the shorter input length. Both owners remain borrowed until
 /// the last use of this view and every copy derived from it.
-class paired_span<std::storage_element L, std::storage_element R> {
+export class paired_span<std::storage_element L, std::storage_element R> {
   span<L> left_view;
   span<R> right_view;
 

@@ -16,45 +16,45 @@ export module meta;
 // a field list from, and `field_list`/`field_type` are computed types whose
 // concrete instances the compiler rewrites.
 
-export namespace gti_internal {
-uint64_t meta_field_count<T>();
-std::string_view meta_field_name<T, uint64_t I>();
-bool meta_field_is_public<T, uint64_t I>();
-bool meta_field_has_default<T, uint64_t I>();
-std::string_view meta_type_name<T>();
-uint64_t meta_type_kind<T>();
-uint64_t meta_field_attribute_count<T, uint64_t I>();
-bool meta_field_has_attribute<T, A, uint64_t I>();
-uint64_t meta_type_attribute_count<T>();
-bool meta_type_has_attribute<T, A>();
-bool meta_type_trait<T, uint64_t Trait>();
-bool meta_type_relation<T, U, uint64_t Relation>();
-uint64_t meta_enumerator_count<E>();
-std::string_view meta_enumerator_name<E, uint64_t I>();
-E meta_enumerator_value<E, uint64_t I>();
-uint64_t meta_payload_count<E, uint64_t I>();
-std::string_view meta_payload_name<E, uint64_t I, uint64_t P>();
-uint64_t meta_base_count<T>();
-uint64_t meta_argument_count<T>();
-uint64_t meta_method_count<T>();
-std::string_view meta_method_name<T, uint64_t I>();
-bool meta_method_trait<T, uint64_t I, uint64_t Trait>();
-uint64_t meta_method_parameter_count<T, uint64_t I>();
-std::string_view meta_parameter_name<T, uint64_t I, uint64_t P>();
-uint64_t meta_constructor_count<T>();
-uint64_t meta_constructor_parameter_count<T, uint64_t I>();
-std::string_view meta_constructor_parameter_name<T, uint64_t I, uint64_t P>();
-uint64_t meta_declaration_line<T, uint64_t Kind, uint64_t I>();
-std::string_view meta_declaration_file<T>();
-std::string_view meta_type_primary_name<T>();
-T meta_construct<T, Values...>(Values... values);
+namespace gti_internal {
+export uint64_t meta_field_count<T>();
+export std::string_view meta_field_name<T, uint64_t I>();
+export bool meta_field_is_public<T, uint64_t I>();
+export bool meta_field_has_default<T, uint64_t I>();
+export std::string_view meta_type_name<T>();
+export uint64_t meta_type_kind<T>();
+export uint64_t meta_field_attribute_count<T, uint64_t I>();
+export bool meta_field_has_attribute<T, A, uint64_t I>();
+export uint64_t meta_type_attribute_count<T>();
+export bool meta_type_has_attribute<T, A>();
+export bool meta_type_trait<T, uint64_t Trait>();
+export bool meta_type_relation<T, U, uint64_t Relation>();
+export uint64_t meta_enumerator_count<E>();
+export std::string_view meta_enumerator_name<E, uint64_t I>();
+export E meta_enumerator_value<E, uint64_t I>();
+export uint64_t meta_payload_count<E, uint64_t I>();
+export std::string_view meta_payload_name<E, uint64_t I, uint64_t P>();
+export uint64_t meta_base_count<T>();
+export uint64_t meta_argument_count<T>();
+export uint64_t meta_method_count<T>();
+export std::string_view meta_method_name<T, uint64_t I>();
+export bool meta_method_trait<T, uint64_t I, uint64_t Trait>();
+export uint64_t meta_method_parameter_count<T, uint64_t I>();
+export std::string_view meta_parameter_name<T, uint64_t I, uint64_t P>();
+export uint64_t meta_constructor_count<T>();
+export uint64_t meta_constructor_parameter_count<T, uint64_t I>();
+export std::string_view meta_constructor_parameter_name<T, uint64_t I, uint64_t P>();
+export uint64_t meta_declaration_line<T, uint64_t Kind, uint64_t I>();
+export std::string_view meta_declaration_file<T>();
+export std::string_view meta_type_primary_name<T>();
+export T meta_construct<T, Values...>(Values... values);
 }
 
-export namespace std {
+namespace std {
 namespace meta {
 
 /// The categories used by the reflection classification predicates.
-enum class kind {
+export enum class kind {
   unknown = 0,
   structure = 1,
   class_type = 2,
@@ -77,7 +77,7 @@ enum class kind {
 
 /// A finite compile-time sequence of types; `constexpr for` iterates its
 /// elements, binding each as a default-constructed value.
-@compiler_type("meta_list") struct list<Elements...> {
+export @compiler_type("meta_list") struct list<Elements...> {
 public:
   constexpr list() {}
 };
@@ -85,88 +85,88 @@ public:
 /// The exact type of instance field `I` of `T`: a computed type the compiler
 /// rewrites to the field's type wherever `T` and `I` are concrete, so it can
 /// be spelled in any type position.
-@compiler_type("meta_field_type") struct field_type<T, uint64_t I> {};
+export @compiler_type("meta_field_type") struct field_type<T, uint64_t I> {};
 
 /// `list<field<T, 0>, field<T, 1>, ...>` over the instance fields of `T`, in
 /// declaration order; a computed type like `field_type`.
-@compiler_type("meta_field_list") struct field_list<T> { field_list() = default; };
+export @compiler_type("meta_field_list") struct field_list<T> { field_list() = default; };
 
 /// `list<A, B, ...>` over the attribute types applied to instance field `I`
 /// of `T`, in application order; a computed type like `field_type`.
-@compiler_type("meta_field_attributes") struct field_attributes<T, uint64_t I> { field_attributes() = default; };
+export @compiler_type("meta_field_attributes") struct field_attributes<T, uint64_t I> { field_attributes() = default; };
 
 /// `list<A, B, ...>` over the attribute types applied to `T` itself.
-@compiler_type("meta_type_attributes") struct type_attributes<T> { type_attributes() = default; };
+export @compiler_type("meta_type_attributes") struct type_attributes<T> { type_attributes() = default; };
 
 /// `list<enumerator<E, 0>, enumerator<E, 1>, ...>` over the enumerators of
 /// `E`, in declaration order; a computed type like `field_list`.
-@compiler_type("meta_enumerator_list") struct enumerator_list<E> { enumerator_list() = default; };
+export @compiler_type("meta_enumerator_list") struct enumerator_list<E> { enumerator_list() = default; };
 
 /// `list<payload_field<E, I, 0>, ...>` over the payload fields of enumerator
 /// `I` of `E`; empty for an integral enumerator.
-@compiler_type("meta_payload_list") struct payload_list<E, uint64_t I> { payload_list() = default; };
+export @compiler_type("meta_payload_list") struct payload_list<E, uint64_t I> { payload_list() = default; };
 
 /// The exact type of payload field `P` of enumerator `I` of `E`.
-@compiler_type("meta_payload_type") struct payload_type<E, uint64_t I, uint64_t P> {};
+export @compiler_type("meta_payload_type") struct payload_type<E, uint64_t I, uint64_t P> {};
 
 /// `list<type<B>, ...>` over the direct bases of `T`, in declaration order.
-@compiler_type("meta_base_list") struct base_list<T> { base_list() = default; };
+export @compiler_type("meta_base_list") struct base_list<T> { base_list() = default; };
 
 /// `list<type<Arg>, ...>` over the type arguments of a generic class or enum
 /// instance `T`; empty for a non-generic type.
-@compiler_type("meta_argument_list") struct argument_list<T> { argument_list() = default; };
+export @compiler_type("meta_argument_list") struct argument_list<T> { argument_list() = default; };
 
 /// The first element type of a non-empty `list`, and the `list` of the rest:
 /// computed types that let generic code peel a sequence one element at a time.
-@compiler_type("meta_list_first") struct list_first<L> {};
-@compiler_type("meta_list_rest") struct list_rest<L> {};
+export @compiler_type("meta_list_first") struct list_first<L> {};
+export @compiler_type("meta_list_rest") struct list_rest<L> {};
 
 /// `list<method<T, 0>, ...>` over the methods of `T` in declaration order:
 /// operators and static methods included, constructors and destructors not.
-@compiler_type("meta_method_list") struct method_list<T> { method_list() = default; };
+export @compiler_type("meta_method_list") struct method_list<T> { method_list() = default; };
 
 /// The subset of `method_list<T>` whose methods are overloaded operators.
-@compiler_type("meta_operator_list") struct operator_list<T> { operator_list() = default; };
+export @compiler_type("meta_operator_list") struct operator_list<T> { operator_list() = default; };
 
 /// The resolved method set of T, including inherited overloads and excluding
 /// overridden base declarations. Elements retain their exact declaring owner
 /// and declaration index; names are ordered lexically, overloads by lookup.
 /// Metadata grants no access or invocation permission.
-@compiler_type("meta_lookup_method_list") struct lookup_method_list<T> { lookup_method_list() = default; };
-@compiler_type("meta_lookup_operator_list") struct lookup_operator_list<T> { lookup_operator_list() = default; };
+export @compiler_type("meta_lookup_method_list") struct lookup_method_list<T> { lookup_method_list() = default; };
+export @compiler_type("meta_lookup_operator_list") struct lookup_operator_list<T> { lookup_operator_list() = default; };
 
 /// `list<parameter<T, I, 0>, ...>` over the parameters of method `I`.
-@compiler_type("meta_parameter_list") struct parameter_list<T, uint64_t I> { parameter_list() = default; };
+export @compiler_type("meta_parameter_list") struct parameter_list<T, uint64_t I> { parameter_list() = default; };
 
 /// The exact type of parameter `P` of method `I` of `T`.
-@compiler_type("meta_parameter_type") struct parameter_type<T, uint64_t I, uint64_t P> {};
+export @compiler_type("meta_parameter_type") struct parameter_type<T, uint64_t I, uint64_t P> {};
 
 /// The exact return type of method `I` of `T`.
-@compiler_type("meta_return_type") struct return_type<T, uint64_t I> {};
+export @compiler_type("meta_return_type") struct return_type<T, uint64_t I> {};
 
 /// Exact result type of a function signature, selected GTI function item,
 /// native function pointer or lambda. This is metadata only: it neither calls
 /// the function nor grants unsafe access or a borrowed-result lifetime.
 /// Callable classes use method/operator reflection to select a declaration.
-@compiler_type("meta_callable_return_type") struct callable_return_type<F> {};
+export @compiler_type("meta_callable_return_type") struct callable_return_type<F> {};
 
 /// `list<constructor<T, 0>, ...>` over the declared constructors of `T`.
-@compiler_type("meta_constructor_list") struct constructor_list<T> { constructor_list() = default; };
+export @compiler_type("meta_constructor_list") struct constructor_list<T> { constructor_list() = default; };
 
 /// `list<constructor_parameter<T, I, 0>, ...>` over constructor `I`'s
 /// parameters.
-@compiler_type("meta_constructor_parameter_list") struct constructor_parameter_list<T, uint64_t I> { constructor_parameter_list() = default; };
+export @compiler_type("meta_constructor_parameter_list") struct constructor_parameter_list<T, uint64_t I> { constructor_parameter_list() = default; };
 
 /// The exact type of parameter `P` of constructor `I` of `T`.
-@compiler_type("meta_constructor_parameter_type") struct constructor_parameter_type<T, uint64_t I, uint64_t P> {};
+export @compiler_type("meta_constructor_parameter_type") struct constructor_parameter_type<T, uint64_t I, uint64_t P> {};
 
 /// Satisfied when every instance field of `T` is readable through
 /// reflection: `T` is a struct or class whose instance fields are all public,
 /// or one declared `[[reflect_private]]`.
-concept reflectable<T> = std::meta::is_reflectable<T>();
+export concept reflectable<T> = std::meta::is_reflectable<T>();
 
 /// Describes the type `T`.
-@compiler_type("meta_type") struct type<T> {
+export @compiler_type("meta_type") struct type<T> {
 public:
   constexpr type() {}
   /// The qualified spelling of `T`.
@@ -276,7 +276,7 @@ public:
 };
 
 /// Describes parameter `P` of method `I` of `T`.
-@compiler_type("meta_parameter") struct parameter<T, uint64_t I, uint64_t P> {
+export @compiler_type("meta_parameter") struct parameter<T, uint64_t I, uint64_t P> {
 public:
   constexpr parameter() {}
   constexpr std::string_view name() { return gti_internal::meta_parameter_name<T, I, P>(); }
@@ -288,7 +288,7 @@ public:
 
 /// Describes method `I`, in declaration order, of `T`: metadata only.
 /// Invocation through a metaobject is a separate capability.
-@compiler_type("meta_method") struct method<T, uint64_t I> {
+export @compiler_type("meta_method") struct method<T, uint64_t I> {
 public:
   constexpr method() {}
   /// The declared name, or the operator spelling (`operator+`).
@@ -315,7 +315,7 @@ public:
 };
 
 /// Describes parameter `P` of constructor `I` of `T`.
-@compiler_type("meta_constructor_parameter") struct constructor_parameter<T, uint64_t I, uint64_t P> {
+export @compiler_type("meta_constructor_parameter") struct constructor_parameter<T, uint64_t I, uint64_t P> {
 public:
   constexpr constructor_parameter() {}
   constexpr std::string_view name() { return gti_internal::meta_constructor_parameter_name<T, I, P>(); }
@@ -326,7 +326,7 @@ public:
 };
 
 /// Describes declared constructor `I` of `T`: metadata only.
-@compiler_type("meta_constructor") struct constructor<T, uint64_t I> {
+export @compiler_type("meta_constructor") struct constructor<T, uint64_t I> {
 public:
   constexpr constructor() {}
   constexpr uint64_t index() { return I; }
@@ -338,7 +338,7 @@ public:
 };
 
 /// Describes payload field `P` of enumerator `I` of the payload enum `E`.
-@compiler_type("meta_payload_field") struct payload_field<E, uint64_t I, uint64_t P> {
+export @compiler_type("meta_payload_field") struct payload_field<E, uint64_t I, uint64_t P> {
 public:
   constexpr payload_field() {}
   /// The payload field's declared name.
@@ -352,7 +352,7 @@ public:
 };
 
 /// Describes enumerator `I`, in declaration order, of the enum `E`.
-@compiler_type("meta_enumerator") struct enumerator<E, uint64_t I> {
+export @compiler_type("meta_enumerator") struct enumerator<E, uint64_t I> {
 public:
   constexpr enumerator() {}
   /// The enumerator's declared name.
@@ -371,7 +371,7 @@ public:
 };
 
 /// Describes instance field `I`, in declaration order, of `T`.
-@compiler_type("meta_field") struct field<T, uint64_t I> {
+export @compiler_type("meta_field") struct field<T, uint64_t I> {
 public:
   constexpr field() {}
   /// The field's declared name.
@@ -409,33 +409,33 @@ public:
 };
 
 /// The instance fields of `T`, in declaration order.
-constexpr field_list<T> fields_of<T>() {
+export constexpr field_list<T> fields_of<T>() {
   return field_list<T>();
 }
 
 /// The enumerators of `E`, in declaration order.
-constexpr enumerator_list<E> enumerators_of<E>() {
+export constexpr enumerator_list<E> enumerators_of<E>() {
   return enumerator_list<E>();
 }
 
 /// The alternatives of a payload enum `E`; the same enumerator metaobjects as
 /// `enumerators_of`, named for the payload reading.
-constexpr enumerator_list<E> alternatives_of<E>() {
+export constexpr enumerator_list<E> alternatives_of<E>() {
   return enumerator_list<E>();
 }
 
 /// The direct bases of `T`, in declaration order, as `type` metaobjects.
-constexpr base_list<T> bases_of<T>() { return base_list<T>(); }
+export constexpr base_list<T> bases_of<T>() { return base_list<T>(); }
 
 /// The type arguments of a generic instance `T`, as `type` metaobjects.
-constexpr argument_list<T> arguments_of<T>() { return argument_list<T>(); }
+export constexpr argument_list<T> arguments_of<T>() { return argument_list<T>(); }
 
 /// The methods and declared constructors of `T`, as metaobjects.
-constexpr method_list<T> methods_of<T>() { return method_list<T>(); }
-constexpr operator_list<T> operators_of<T>() { return operator_list<T>(); }
-constexpr lookup_method_list<T> lookup_methods_of<T>() { return lookup_method_list<T>(); }
-constexpr lookup_operator_list<T> lookup_operators_of<T>() { return lookup_operator_list<T>(); }
-constexpr constructor_list<T> constructors_of<T>() { return constructor_list<T>(); }
+export constexpr method_list<T> methods_of<T>() { return method_list<T>(); }
+export constexpr operator_list<T> operators_of<T>() { return operator_list<T>(); }
+export constexpr lookup_method_list<T> lookup_methods_of<T>() { return lookup_method_list<T>(); }
+export constexpr lookup_operator_list<T> lookup_operators_of<T>() { return lookup_operator_list<T>(); }
+export constexpr constructor_list<T> constructors_of<T>() { return constructor_list<T>(); }
 
 namespace detail {
 /// Produces the fields in declaration order, peeling `Remaining` (a `list` of
@@ -461,66 +461,66 @@ expected<T, E> construct_fields<T, E, Producer, Remaining, Values...>(
 /// far are cleaned up by the ordinary rollback. `T` must be eligible for
 /// designated construction (`GTI-S2118` otherwise); constructors and
 /// invariants are never bypassed.
-expected<T, E> construct<T, E, Producer>(mut Producer& producer) {
+export expected<T, E> construct<T, E, Producer>(mut Producer& producer) {
   return detail::construct_fields<T, E, Producer, field_list<T>>(producer);
 }
 
-constexpr type<T> type_of<T>() { return type<T>(); }
-constexpr std::string_view name_of<T>() { return gti_internal::meta_type_name<T>(); }
-constexpr std::string_view primary_name_of<T>() { return gti_internal::meta_type_primary_name<T>(); }
-constexpr bool is_struct<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(1); }
-constexpr bool is_class<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(2); }
-constexpr bool is_enum<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
-constexpr bool is_integral<T>() { return gti_internal::meta_type_trait<T, 17>(); }
-constexpr bool is_floating_point<T>() { return gti_internal::meta_type_trait<T, 18>(); }
-constexpr bool is_bool<T>() { return gti_internal::meta_type_trait<T, 19>(); }
-constexpr bool is_array<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(12); }
-constexpr bool is_raw_pointer<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(13); }
-constexpr bool is_text<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
-constexpr bool is_payload_enum<T>() { return gti_internal::meta_type_trait<T, 0>(); }
-constexpr bool is_generic_instance<T>() { return gti_internal::meta_type_trait<T, 1>(); }
-constexpr bool is_reflectable<T>() { return gti_internal::meta_type_trait<T, 2>(); }
-constexpr bool is_signed_integral<T>() { return gti_internal::meta_type_trait<T, 3>(); }
+export constexpr type<T> type_of<T>() { return type<T>(); }
+export constexpr std::string_view name_of<T>() { return gti_internal::meta_type_name<T>(); }
+export constexpr std::string_view primary_name_of<T>() { return gti_internal::meta_type_primary_name<T>(); }
+export constexpr bool is_struct<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(1); }
+export constexpr bool is_class<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(2); }
+export constexpr bool is_enum<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
+export constexpr bool is_integral<T>() { return gti_internal::meta_type_trait<T, 17>(); }
+export constexpr bool is_floating_point<T>() { return gti_internal::meta_type_trait<T, 18>(); }
+export constexpr bool is_bool<T>() { return gti_internal::meta_type_trait<T, 19>(); }
+export constexpr bool is_array<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(12); }
+export constexpr bool is_raw_pointer<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(13); }
+export constexpr bool is_text<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(10); }
+export constexpr bool is_payload_enum<T>() { return gti_internal::meta_type_trait<T, 0>(); }
+export constexpr bool is_generic_instance<T>() { return gti_internal::meta_type_trait<T, 1>(); }
+export constexpr bool is_reflectable<T>() { return gti_internal::meta_type_trait<T, 2>(); }
+export constexpr bool is_signed_integral<T>() { return gti_internal::meta_type_trait<T, 3>(); }
 
 /// Query GTI's selected lifecycle and structural safety facts. These queries
 /// describe a type; ordinary expression-level ownership, borrowing and unsafe
 /// checks still apply when an operation is performed.
-constexpr bool is_copy_constructible<T>() { return gti_internal::meta_type_trait<T, 4>(); }
-constexpr bool is_move_constructible<T>() { return gti_internal::meta_type_trait<T, 5>(); }
-constexpr bool is_copyable<T>() { return gti_internal::meta_type_trait<T, 6>(); }
-constexpr bool is_movable<T>() { return gti_internal::meta_type_trait<T, 7>(); }
-constexpr bool is_relocatable<T>() { return gti_internal::meta_type_trait<T, 8>(); }
-constexpr bool is_bitwise_relocatable<T>() { return gti_internal::meta_type_trait<T, 9>(); }
-constexpr bool is_transferable<T>() { return gti_internal::meta_type_trait<T, 10>(); }
-constexpr bool is_shareable<T>() { return gti_internal::meta_type_trait<T, 11>(); }
-constexpr bool is_default_initializable<T>() { return gti_internal::meta_type_trait<T, 12>(); }
-constexpr bool is_integral_enum<T>() { return gti_internal::meta_type_trait<T, 13>(); }
-constexpr bool is_unsigned_integral<T>() { return gti_internal::meta_type_trait<T, 14>(); }
-constexpr bool is_numeric<T>() { return gti_internal::meta_type_trait<T, 15>(); }
-constexpr bool is_signed_numeric<T>() { return gti_internal::meta_type_trait<T, 16>(); }
+export constexpr bool is_copy_constructible<T>() { return gti_internal::meta_type_trait<T, 4>(); }
+export constexpr bool is_move_constructible<T>() { return gti_internal::meta_type_trait<T, 5>(); }
+export constexpr bool is_copyable<T>() { return gti_internal::meta_type_trait<T, 6>(); }
+export constexpr bool is_movable<T>() { return gti_internal::meta_type_trait<T, 7>(); }
+export constexpr bool is_relocatable<T>() { return gti_internal::meta_type_trait<T, 8>(); }
+export constexpr bool is_bitwise_relocatable<T>() { return gti_internal::meta_type_trait<T, 9>(); }
+export constexpr bool is_transferable<T>() { return gti_internal::meta_type_trait<T, 10>(); }
+export constexpr bool is_shareable<T>() { return gti_internal::meta_type_trait<T, 11>(); }
+export constexpr bool is_default_initializable<T>() { return gti_internal::meta_type_trait<T, 12>(); }
+export constexpr bool is_integral_enum<T>() { return gti_internal::meta_type_trait<T, 13>(); }
+export constexpr bool is_unsigned_integral<T>() { return gti_internal::meta_type_trait<T, 14>(); }
+export constexpr bool is_numeric<T>() { return gti_internal::meta_type_trait<T, 15>(); }
+export constexpr bool is_signed_numeric<T>() { return gti_internal::meta_type_trait<T, 16>(); }
 /// Whether a complete object representation is available for lifetime operations.
-constexpr bool has_object_layout<T>() { return gti_internal::meta_type_trait<T, 20>(); }
+export constexpr bool has_object_layout<T>() { return gti_internal::meta_type_trait<T, 20>(); }
 /// Whether the value retains no checked external-owner borrow. This does not
 /// establish validity, provenance, or ownership of any raw pointer it stores.
-constexpr bool is_borrow_free<T>() { return gti_internal::meta_type_trait<T, 21>(); }
+export constexpr bool is_borrow_free<T>() { return gti_internal::meta_type_trait<T, 21>(); }
 /// Includes nested owning state and source cleanup, not merely a declared destructor.
 /// This fact does not permit skipping destruction or a lifetime transition.
-constexpr bool has_active_cleanup<T>() { return gti_internal::meta_type_trait<T, 22>(); }
+export constexpr bool has_active_cleanup<T>() { return gti_internal::meta_type_trait<T, 22>(); }
 /// Whether the resolved class/interface participates in virtual dispatch.
-constexpr bool is_polymorphic<T>() { return gti_internal::meta_type_trait<T, 23>(); }
+export constexpr bool is_polymorphic<T>() { return gti_internal::meta_type_trait<T, 23>(); }
 /// Whether Base is a resolved public base of Derived (identity is false).
 /// No object access, conversion, or lifetime extension occurs in this query.
-constexpr bool is_public_base_of<Base, Derived>() { return gti_internal::meta_type_relation<Derived, Base, 2>(); }
+export constexpr bool is_public_base_of<Base, Derived>() { return gti_internal::meta_type_relation<Derived, Base, 2>(); }
 /// Exact type identity, without widening, implicit conversion or inheritance.
-constexpr bool is_same<T, U>() { return gti_internal::meta_type_relation<T, U, 0>(); }
+export constexpr bool is_same<T, U>() { return gti_internal::meta_type_relation<T, U, 0>(); }
 /// Whether E is a payload-free enum with exactly U as its declared domain.
-constexpr bool is_enum_underlying<E, U>() { return gti_internal::meta_type_relation<E, U, 1>(); }
+export constexpr bool is_enum_underlying<E, U>() { return gti_internal::meta_type_relation<E, U, 1>(); }
 
 }
 
 /// The first declared name matching an integral enum value, or "<unknown>".
 /// Returned text has static lifetime; payload enums are excluded.
-std::string_view enum_name<E>(E value)
+export std::string_view enum_name<E>(E value)
   requires std::meta::is_integral_enum<E>() {
   constexpr for (auto enumerator : std::meta::enumerators_of<E>()) {
     if (value == enumerator.value()) {

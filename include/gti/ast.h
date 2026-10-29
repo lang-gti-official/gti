@@ -2365,7 +2365,7 @@ public:
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
       std::vector<FunctionAttribute> functionAttributes = {},
-      std::optional<NamePath> definitionOwner = std::nullopt)
+      std::optional<TypeRef> definitionOwner = std::nullopt)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -2399,7 +2399,7 @@ public:
   }
 
   [[nodiscard]] const TypeRef &returnType() const { return returnType_; }
-  [[nodiscard]] const std::optional<NamePath> &definitionOwner() const {
+  [[nodiscard]] const std::optional<TypeRef> &definitionOwner() const {
     return definitionOwner_;
   }
   [[nodiscard]] const Token &name() const { return name_; }
@@ -2510,7 +2510,7 @@ private:
   std::optional<NativeLinkNameAttribute> nativeLinkName_;
   std::optional<Token> unsafeKeyword_;
   std::vector<FunctionAttribute> functionAttributes_;
-  std::optional<NamePath> definitionOwner_;
+  std::optional<TypeRef> definitionOwner_;
   bool generatedTestEntry_ = false;
   std::optional<Token> implicitKeyword_;
   std::optional<Token> macroKeyword_;

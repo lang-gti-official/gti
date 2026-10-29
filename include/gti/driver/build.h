@@ -170,7 +170,7 @@ struct BuildSourceUnitProvenance {
 struct BuildSourceDependencyProvenance {
   SourceUnitId source = 0;
   SourceUnitId target = 0;
-  SourceDependencyKind kind = SourceDependencyKind::Include;
+  SourceDependencyKind kind = SourceDependencyKind::Import;
   std::string includeSpelling;
   std::size_t includeOccurrence = 0;
 };

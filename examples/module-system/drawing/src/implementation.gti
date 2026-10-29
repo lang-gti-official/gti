@@ -1,0 +1,9 @@
+module graphics.geometry;
+
+// The interface is implicitly available; private helpers stay module-owned.
+namespace drawing {
+  T Box<T>::read() { return value; }
+  U Box<T>::convert<U>(U input) { return input; }
+  int answer() { return 40 + offset(); }
+  Detail make() { Detail result{.value = answer()}; return result; }
+}

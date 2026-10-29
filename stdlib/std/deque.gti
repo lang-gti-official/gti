@@ -3,7 +3,7 @@ export module deque;
 import std.vector;
 import std.memory;
 import "detail/iterator.gti";
-export namespace std {
+namespace std {
 namespace detail {
 enum class deque_in_place { value };
 struct deque_node<T> {
@@ -122,7 +122,7 @@ public:
 
 /// Circular indexed sequence. Each element has one stable exclusive owner;
 /// growth moves owner handles, never T. Both ends are amortized constant time.
-class deque<T> {
+export class deque<T> {
   mut vector<detail::deque_slot<T>> slots{};
   mut size_t head = 0;
   mut size_t length = 0;

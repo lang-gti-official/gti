@@ -165,6 +165,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   SemanticCatalog copy;
   copy.compilerTypeClasses = other.compilerTypeClasses;
   copy.namespaces = other.namespaces;
+  copy.ambiguousPublications = other.ambiguousPublications;
   copy.namespaceToolingSymbols = other.namespaceToolingSymbols;
   copy.namespaceAliases = other.namespaceAliases;
   copy.compilerPrivateNamespaceSymbol = other.compilerPrivateNamespaceSymbol;
@@ -186,11 +187,16 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.classDeclIds = other.classDeclIds;
   copy.conceptDeclIds = other.conceptDeclIds;
   copy.functionGenericParameters = other.functionGenericParameters;
+  copy.definitionOwnerGenericParameters =
+      other.definitionOwnerGenericParameters;
   copy.constraintPredicateDeclarations = other.constraintPredicateDeclarations;
   for (const auto &declaration : other.callableDeclarations) {
     auto owned = std::make_unique<CallableDeclaration>(*declaration);
     copy.callableDeclarationsBySyntax.insert_or_assign(owned->syntax,
                                                        owned.get());
+    if (owned->definition != nullptr)
+      copy.callableDeclarationsBySyntax.insert_or_assign(owned->definition,
+                                                         owned.get());
     copy.callableDeclarations.emplace_back(std::move(owned));
   }
   copy.constructorGenericParameters = other.constructorGenericParameters;
@@ -222,6 +228,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   SemanticCatalog copy;
   copy.compilerTypeClasses = compilerTypeClasses;
   copy.namespaces = namespaces;
+  copy.ambiguousPublications = ambiguousPublications;
   copy.namespaceToolingSymbols = namespaceToolingSymbols;
   copy.namespaceAliases = namespaceAliases;
   copy.compilerPrivateNamespaceSymbol = compilerPrivateNamespaceSymbol;
@@ -243,6 +250,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.classDeclIds = classDeclIds;
   copy.conceptDeclIds = conceptDeclIds;
   copy.functionGenericParameters = functionGenericParameters;
+  copy.definitionOwnerGenericParameters = definitionOwnerGenericParameters;
   copy.constraintPredicateDeclarations = constraintPredicateDeclarations;
   for (const auto &declaration : callableDeclarations) {
     (void)copy.registerCallable(*declaration);

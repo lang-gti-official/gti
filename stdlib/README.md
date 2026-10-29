@@ -204,18 +204,18 @@ C++ header search path. Each interface declares `export module array;` and
 explicitly exports its public declarations. Ordinary imports do not re-export
 their dependencies; `export import` deliberately republishes an interface.
 
-This branch is phase 1 of the coordinated module-only migration and is not a
-production release. The former `stdlib/modules/` wrappers and their republished
-includes have been removed. The mechanical source exports preserve the former
-directly visible surface, including detail declarations needed for cross-unit
-library composition. Phase 2 must review public versus package-private sharing
-and close all module correctness and performance prerequisites before release.
-The implicit prelude remains a compiler-supplied source unit.
+This branch is the unreleased coordinated module-only transition. The former
+`stdlib/modules/` wrappers and their republished includes have been removed.
+The installed `module-map.json` is the explicit public module registry;
+private files have no named-import fallback. The implicit prelude remains a
+compiler-supplied source unit.
 
-`std.detail_iterator`, `std.detail_panic`, and `std.experimental_optional` are
-explicit source facades for formerly directly includable nested units. They
-re-export the corresponding nested module without compiler name exceptions;
-phase 2 owns the deliberate public/internal API decision. See
+`std.experimental.optional` is the public dotted name for the experimental
+optional interface. Iterator and panic implementation interfaces remain private;
+ordinary standard-library modules import them with same-owner relative paths.
+Tests that directly exercise those helpers install explicit temporary test
+maps instead of expanding the production API. The remaining exported detail
+surface and production validation are tracked in the phase 2 plan. See
 [standard-library modules](../docs/language/standard-library.md#standard-library-modules).
 
 Comparison algorithms and function objects use source-defined

@@ -88,31 +88,35 @@ visibility uses the graph: a unit sees itself, the exported surface of its
 imports and explicit re-exports, and the prelude, not arbitrary declarations in
 the combined AST.
 
-Explicit `export module name;` interfaces additionally retain their module
-declaration token. The loader consumes the header and resolves unconditional
-imports, retaining `Import` and `ExportImport` dependency kinds. Import tokens
-and their source spans remain in the syntax digest and parser input. Only the
-parser's source-unit declaration loop consumes them: an import embedded in a
-parameter, initializer, or unfinished declaration must not disappear into a
-valid program. The loader resolves named
-imports only through supplied `PackageSourceRoot::modules` registrations and
-direct dependency aliases; quoted imports use the same canonical path and
-package-containment authority. The name `std` is reserved for the configured
-standard library in both direct and project compilation: `import std.name;`
-selects `<root>/std/name.gti` beneath a standard-library root, a fixed
-layout rather than a search, and the loaded interface has the
-`StandardLibrary` role and the logical name `std/name`. Its module name
-does not collide with an application interface of the same name. The bare
-`import std;` selects `<root>/std.gti`, an ordinary interface re-exporting the
-portable public units. POSIX-only environment/process/TCP and experimental
-units remain explicit. Both paths retain canonical identity and module-header
-validation; neither searches arbitrary application files.
+Explicit `export module net.http;` interfaces retain a canonical dotted module
+name and an exact source name span. The loader consumes the header and resolves
+unconditional imports, retaining `Import` and `ExportImport` dependency kinds.
+Import tokens remain in the parser input so an import inside an unfinished
+parameter or initializer cannot disappear into valid source. `SourceImport`
+records preserve the written declaration/name spans, lexical segments, resolved
+target, re-export flag, and unresolved or incomplete status for editor queries.
+
+The immutable `SourceOwnerRegistry` separates public resolution and containment
+from trusted compiler provenance. Packages, generated bindings, and configured
+toolchain roots use the same owner-local public module maps and direct alias
+edges. Quoted imports stay inside the same canonical owner, including private
+helper modules; a path escape cannot bypass a dependency's public map. Direct
+compilation remains manifest-independent and receives a direct source owner.
+Exact local dotted names take precedence only when there is no competing direct
+alias prefix; a collision is diagnosed rather than guessed.
+
+The configured standard owner exposes the reserved implicit alias `std`. Its
+installed `module-map.json` contains a `modules` name-to-relative-path object and
+a `default` module name for `import std;`. Invalid names, absolute paths, and
+canonical containment escapes are rejected; absent maps expose no public
+modules. Embedding callers can supply a descriptor explicitly. Public names do
+not confer compiler trust: canonical trusted standard paths still establish
+`StandardLibrary` provenance independently. Logical owner identities and module
+maps join build cache identity without embedding relocatable checkout roots.
+
 An import target must declare an explicit module interface. The former
 `ExportInclude` republication and per-module include-configuration replay paths
-are removed. This phase 1 conversion preserves canonical standard declaration
-paths and explicit exports; it does not relax compiler capability trust or
-private symbol visibility. Production module completeness and the library's
-public/internal export boundary remain phase 2 requirements.
+are removed; `#include` is recognized only to emit the removal diagnostic.
 
 The parser retains an optional export token on declarations. Frontend assembly
 collects their exact ranges, including inherited namespace exports in selected
@@ -132,8 +136,11 @@ HIR/MIR and C++ emission use existing executable contracts; this is not binary
 or separate compilation.
 
 Registered `PackageSourceRoot::moduleImplementations` extend that closure after
-ordinary imports finish. An implementation is an ordinary source file and may
-import its owning interface. The graph retains private implementation roots
+ordinary imports finish. Each implementation must start with a matching
+`module net.http;` header and be registered with that interface. It shares the
+interface's canonical `ModuleId`, making its interface available implicitly
+without granting access to sibling modules or nested-name prefixes. The graph
+retains private implementation roots
 for dependency-first compilation, without adding interface-to-implementation
 visibility edges or an artificial import cycle. Only reached registered
 interfaces activate their bodies; newly imported interfaces extend this

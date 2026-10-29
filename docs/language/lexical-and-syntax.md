@@ -166,7 +166,7 @@ must not rescan nearby source text to infer documentation.
 
 ## 2.6 Source Units And Modules
 
-This branch implements the unreleased phase 1 module-only prototype. GTI
+This branch implements the unreleased module-only language transition. GTI
 `#include` and `export #include` are rejected with `GTI-I0014`; they do not load
 a dependency. Source dependencies use explicit module interfaces and imports.
 The coordinated breaking change is held from release until phase 2 establishes
@@ -181,10 +181,12 @@ source unit may define `main`.
 ### Explicit Module Interfaces
 
 A module interface starts with `export module name;` before other tokens.
-Comments and whitespace may precede it. `name` is one ordinary ASCII identifier;
-it is package-local and does not introduce a namespace. Ordinary entry and
-registered implementation units do not need a module declaration; a target of
-an import must be an interface.
+Comments and whitespace may precede it. `name` is one or more ordinary ASCII
+identifiers separated by dots, such as `graphics.geometry`. It is owner-local
+and does not introduce a namespace, nested ownership, or ancestor access. An
+ordinary entry does not require a header; an imported target must be an
+interface. A registered implementation starts with `module name;`, matching
+its interface exactly.
 
 ```gti
 // src/api.gti
@@ -219,18 +221,20 @@ specifiers in their written order.
 `import "api.gti";` imports a relative interface, including in direct compilation.
 With an explicit package graph, `import local;` selects `[modules].local` in the
 owning package, `import dependency.name;` selects a module of a direct dependency,
-and `import dependency;` selects that dependency's `main` module. A collision
-between a local name and a dependency alias is diagnosed. The registered name
+and `import dependency;` selects that dependency's `main` module. If a full spelling identifies both a local module and a dependency module,
+resolution diagnoses the ambiguity. The registered name
 must match the target's module declaration. Names never trigger filesystem
 search or implicit manifest discovery. Quoted imports cannot cross package
 boundaries. See the [manifest contract](../architecture/build-and-driver.md#source-module-registration).
 
-`[module-implementations]` may register ordinary private source files alongside
-an interface. Importing that interface loads its registered implementations;
-they explicitly import the interface and can define its existing ordinary
-methods using `ReturnType Owner::method(...) { ... }`. This is optional, and
-does not introduce a second module-header form, implicit source discovery or
-visibility of private helpers to importers. See
+`[module-implementations]` registers private implementation source files
+alongside an interface. Importing the interface loads that explicit closure.
+Each implementation declares `module name;` and sees the interface implicitly.
+The interface and implementations share one logical module identity, including
+private declarations. Ordinary and generic function bodies can be separated
+from their interface declarations; method definitions use
+`ReturnType Owner::method(...) { ... }` (including `Owner<T>` for generic owners).
+Registration does not discover files or expose private helpers to importers. See
 [out-of-class definitions](static-semantics.md#optional-out-of-class-method-definitions).
 
 `export import ...;` is allowed only in an interface and deliberately re-exports
@@ -239,23 +243,27 @@ and multiple interface files declaring the same name in one package are errors.
 All three declarations require their terminating semicolon.
 
 The name `std` is reserved for the standard library, in direct and project
-compilation alike. `import std.name;` loads the explicit interface at
-`stdlib/std/name.gti`. `import std;` loads the aggregate interface at
-`stdlib/std.gti`, which re-exports portable public standard modules. A package
+compilation alike. `import std.name;` selects the interface registered in the
+installed `stdlib/module-map.json`. `import std;` selects that map’s default
+aggregate interface, which re-exports portable public standard modules.
+Private standard-library files are not discoverable through named imports. A package
 cannot register a module named `std`, and a dependency alias cannot be `std`.
 See [standard-library modules](standard-library.md#standard-library-modules).
 
 Source-local configuration flags neither enter nor escape imported modules;
 compiler-supplied flags still apply. Imports are unconditional. Removing the
 include-based sharing path does not grant access to private declarations or
-compiler capabilities. The phase 1 library conversion preserves prior API
-sharing with explicit source exports; reviewing that surface and establishing
-any needed package-private sharing are phase 2 obligations.
+compiler capabilities. Source ownership and compiler trust are separate facts;
+being in a package, or spelling a module like a standard module, grants no
+compiler capability.
 
-This initial implementation controls visibility, not separate compilation or
-module linkage. Program-wide qualified-name uniqueness still applies, including
-to private types; libraries should retain their ordinary namespaces. Private
-declarations remain available to their defining bodies and generic instances.
+Declarations carry their logical module identity. Unrelated modules may use
+the same private names and may independently export the same qualified names.
+Importing both is valid until an ambiguous name is used. Private declarations
+remain available to their defining bodies and generic instances. A private type
+returned by an exported function remains usable through inference without
+exporting its name. Source-local `static` declarations remain file-local.
+The source module contract does not require binary module artifacts.
 The keywords `import`, `module`, and `export` are reserved. [ADR 024](../decisions/024-source-module-interfaces.md) records
 the proposal and the intentionally unimplemented binary-module boundary.
 

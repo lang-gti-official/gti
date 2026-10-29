@@ -340,6 +340,37 @@ void declaredDependencies() {
              .empty(),
          "an unsaved file must not bypass a nested package boundary");
 }
+void registeredPublicModules() {
+  Fixture f;
+  f.write("dep/gti.toml", "manifest-version = 1\n");
+  f.write("dep/api.gti",
+          "export module net.http;\nexport int remote() { return 7; }");
+  f.write("dep/private.gti",
+          "export module private_api;\nexport int secret() { return 3; }");
+  std::vector<lang::PackageSourceRoot> owners{
+      {.identity = "app",
+       .name = "app",
+       .packageRoot = f.root,
+       .sourceRoot = f.root,
+       .dependencies = {{"dep", "library"}}},
+      {.identity = "library",
+       .name = "library",
+       .packageRoot = f.root / "dep",
+       .sourceRoot = f.root / "dep",
+       .modules = {{"net.http", f.root / "dep/api.gti"}}}};
+  const auto result = f.analyze("int main() { return remote(); }", owners);
+  const auto edits = fixes(result);
+  expect(edits.size() == 1 &&
+             edits.front().replacement == "import dep.net.http;\n",
+         "import fixes use hierarchical public map registrations");
+  const auto hidden = f.analyze("int main() { return secret(); }", owners);
+  expect(fixes(hidden).empty() &&
+             std::find(hidden.includeSuggestionInputs.begin(),
+                       hidden.includeSuggestionInputs.end(),
+                       f.root / "dep/private.gti") ==
+                 hidden.includeSuggestionInputs.end(),
+         "dependency-private files are not probed as public fix candidates");
+}
 } // namespace
 
 int main() {
@@ -350,5 +381,6 @@ int main() {
   conceptsAndGenericDeclarations();
   requestingModuleHeader();
   declaredDependencies();
+  registeredPublicModules();
   return failures ? 1 : 0;
 }

@@ -2,18 +2,18 @@ export module simd;
 
 import std.array;
 import "detail/iterator.gti";
-export namespace gti_internal {
+namespace gti_internal {
 // These exact installed declarations bind immediate, nonescaping array
 // borrows. They do not expose references to arrays in the public language.
-void simd_add<A, B, C>(A& left, B& right, mut C& output);
-void simd_subtract<A, B, C>(A& left, B& right, mut C& output);
-void simd_multiply<A, B, C>(A& left, B& right, mut C& output);
-void simd_divide<A, B, C>(A& left, B& right, mut C& output);
-void simd_equal<A, B, C>(A& left, B& right, mut C& output);
-void simd_less<A, B, C>(A& left, B& right, mut C& output);
+export void simd_add<A, B, C>(A& left, B& right, mut C& output);
+export void simd_subtract<A, B, C>(A& left, B& right, mut C& output);
+export void simd_multiply<A, B, C>(A& left, B& right, mut C& output);
+export void simd_divide<A, B, C>(A& left, B& right, mut C& output);
+export void simd_equal<A, B, C>(A& left, B& right, mut C& output);
+export void simd_less<A, B, C>(A& left, B& right, mut C& output);
 }
 
-export namespace std {
+namespace std {
 namespace detail {
 class lane_sentinel {
   size_t limit;
@@ -210,7 +210,7 @@ public:
 }
 
 /// Fixed-size logical lane mask. No implicit scalar truth conversion.
-class simd_mask<uint64_t N> {
+export class simd_mask<uint64_t N> {
   mut bool values[N];
 public:
   using const_iterator = detail::simd_mask_iterator<N>;
@@ -297,7 +297,7 @@ public:
 };
 
 /// Floating-point lane values with scalar IEEE arithmetic in each lane.
-class simd<std::floating_point T, uint64_t N> {
+export class simd<std::floating_point T, uint64_t N> {
   mut T values[N];
 public:
   using const_iterator = detail::simd_iterator<T, N>;

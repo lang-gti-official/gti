@@ -58,7 +58,7 @@ module.exports = grammar({
     _byte_order_mark: () => "\uFEFF",
 
     module_declaration: ($) =>
-      seq("export", "module", field("name", $.identifier), ";"),
+      seq(optional("export"), "module", field("name", $.module_name), ";"),
 
     import_declaration: ($) =>
       seq(
@@ -68,7 +68,7 @@ module.exports = grammar({
         ";",
       ),
 
-    module_name: ($) => seq($.identifier, optional(seq(".", $.identifier))),
+    module_name: ($) => seq($.identifier, repeat(seq(".", $.identifier))),
 
     export_declaration: ($) => seq("export", $.declaration),
 
@@ -767,7 +767,7 @@ module.exports = grammar({
     _function_declaration_body: ($) =>
       seq(
         field("return_type", $.type),
-        field("name", $._qualified_identifier),
+        field("name", choice($._qualified_identifier, $.generic_scoped_identifier)),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
         optional(choice(field("mutable", "mut"), field("consuming", "&&"))),

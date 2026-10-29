@@ -15,20 +15,19 @@ public std API in ordinary GTI
 ## Module-only Phase 1 Status
 
 This unreleased branch converts the standard library to explicit source module
-interfaces. `import std.name;` resolves `stdlib/std/name.gti`; `import std;`
-selects the portable aggregate at `stdlib/std.gti`. The former `stdlib/modules`
-wrappers and their legacy republication are removed. Keeping canonical source
-paths preserves exact trusted declaration identities rather than granting
-capabilities through a public module name. The implicit prelude remains the
-language-wide root and imports `std.meta` explicitly.
+interfaces. `import std.name;` resolves through `stdlib/module-map.json`;
+`import std;` selects the map’s portable aggregate. The former `stdlib/modules`
+wrappers and legacy republication are removed. Keeping canonical source paths
+preserves trusted declaration identities rather than granting capabilities
+through a public module name. The implicit prelude remains the language-wide
+root and imports `std.meta` explicitly.
 
-Mechanical exports preserve the previous directly visible library surface,
-including internal sharing declarations. They do not make compiler-private
-capabilities callable by ordinary source. The temporary `std.detail_iterator`,
-`std.detail_panic`, and `std.experimental_optional` facades explicitly re-export
-the corresponding nested interfaces. Phase 2 must review these public/internal
-boundaries, establish any required package-private sharing, and validate module
-semantics, correctness, tooling and performance before this change is released.
+The public map excludes internal iterator and panic interfaces. Library modules
+use same-owner quoted imports for those dependencies. Experimental optional has
+the explicit public name `std.experimental.optional`. Internal helper tests use
+disposable, explicitly registered test maps; production never exposes helpers
+solely to make a test compile. Public/detail declaration exports and full
+production acceptance remain tracked in the active phase 2 campaign.
 
 ## Source Policy And Compiler Mechanisms
 

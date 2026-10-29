@@ -439,7 +439,10 @@ advice is removed.
 `GTI-S2120` reports an invalid out-of-class method definition at the method
 name: absent/foreign owner, unmatched signature or receiver, duplicate body,
 pure/native/compiler-provided declaration, repeated declaration-only specifiers
-or defaults, or a currently unsupported generic owner/method. The related
+or defaults, or owner generic arguments that do not bind the primary's formal
+parameters. Ordinary generic owners and methods support separate definitions;
+concrete owner specializations and definition-family patterns are not admitted
+by that binding rule. The related
 span identifies the original method or owner when one is known. The message
 states the violated rule; no speculative signature, ownership, access or
 default-argument edit is offered. Missing selected bodies retain `GTI-S2106`.
@@ -518,8 +521,12 @@ view, or a local holding its call result, is still used reports the ordinary
 the later use.
 
 `GTI-I0012` owns invalid source-module headers and imports: placement, syntax,
-missing registration, name mismatch, duplicate interfaces, package escapes,
-non-interface import targets, and unknown standard-library modules. The
+missing registration, name mismatch, duplicate interfaces or source owners,
+source-owner containment escapes, invalid public module maps, non-interface
+import targets, and missing public modules. Registered implementation headers
+must name their assigned interface. Exact local module names conflicting with
+a dependency alias prefix are ambiguous. Missing generated bindings name the
+`gti check` or `gti build` action needed to produce them. The
 aggregate `import std;` is supported. Removed include syntax uses `GTI-I0014`.
 Point at the source directive; relate the interface declaration for name
 mismatches or duplicates. Imports retain their tokens through parsing, so an
@@ -1309,6 +1316,11 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   milestone and available body/block/instruction. Do not suggest filing a compiler bug. A generic text-vocabulary
   rejection or unclassified backend exception remains `GTI-B0001`; only an
   explicit bounded backend classification may use `GTI-B0003`.
+  The C++ module preflight uses it when distinct nominal declarations share a
+  qualified name that its retained representation cannot distinguish. It points
+  to the conflicting declaration and names LLVM as the available backend.
+  Definition families and exact specializations normalize their primary identity
+  before this check; rejection preserves previously published artifacts.
   One such classification is a fallible source function returning a class value
   in a declaration-time field initializer (historical Gitea issue #2): the backend lacks the
   enclosing constructor failure channel. The diagnostic names that prerequisite

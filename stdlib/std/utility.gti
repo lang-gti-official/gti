@@ -4,15 +4,15 @@ export module utility;
 // std::move is compiler-defined and implicitly available through the prelude;
 // it is intentionally not redeclared here.
 
-export namespace std {
-  concept member_cloneable<T> =
+namespace std {
+  export concept member_cloneable<T> =
       requires (T& value) { { value.clone() } -> T; };
 
-  concept cloneable<T> = std::member_cloneable<T> || std::copy_constructible<T>;
+  export concept cloneable<T> = std::member_cloneable<T> || std::copy_constructible<T>;
 
   /// Explicit duplication: use an exact read-only clone member when present,
   /// otherwise ordinary copy construction. Shared owners retain sharing.
-  T clone<T>(T& value) requires std::cloneable<T> {
+  export T clone<T>(T& value) requires std::cloneable<T> {
     if constexpr (requires (T& candidate) { { candidate.clone() } -> T; }) {
       return value.clone();
     } else {
@@ -25,7 +25,7 @@ export namespace std {
     // record may still be moved or replaced as a whole. Dictionaries therefore
     // never expose a mutable reference to this owning record: mutable cursors
     // publish checked key/mapped projections instead.
-    struct map_entry<K, V> {
+    export struct map_entry<K, V> {
       K first;
       mut V second;
 
@@ -34,24 +34,24 @@ export namespace std {
     };
   }
 
-  struct pair<T, U> {
+  export struct pair<T, U> {
     mut T first;
     mut U second;
 
     constexpr pair(T first_value, U second_value) : first(std::move(first_value)), second(std::move(second_value)) {}
   };
 
-  constexpr pair<T, U> make_pair<T, U>(T first, U second) {
+  export constexpr pair<T, U> make_pair<T, U>(T first, U second) {
     return pair<T, U>(std::move(first), std::move(second));
   }
 
   /// Exchange disjoint initialized places without copying or running cleanup.
-  void swap<T>(mut T& left, mut T& right) requires std::relocatable<T> {
+  export void swap<T>(mut T& left, mut T& right) requires std::relocatable<T> {
     gti_internal::restoring_swap(left, right);
   }
 
   /// Prepare the replacement first; return the old value with its ownership.
-  T exchange<T>(mut T& object, T new_value) requires std::relocatable<T> {
+  export T exchange<T>(mut T& object, T new_value) requires std::relocatable<T> {
     T previous = gti_internal::restoring_exchange(object, std::move(new_value));
     return std::move(previous);
   }

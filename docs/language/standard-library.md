@@ -114,8 +114,9 @@ source. An optional unit does not automatically re-export its own dependencies.
 
 ### Standard-library modules
 
-Public units are explicit module interfaces in the unreleased phase 1
-module-only prototype:
+Public units are explicit module interfaces in the unreleased module-only
+transition. `stdlib/module-map.json` registers their names; private files are
+not addressable through a named-import fallback:
 
 ```gti
 import std.format;
@@ -130,8 +131,8 @@ int main() {
 }
 ```
 
-`import std.name;` loads `stdlib/std/name.gti`, which declares
-`export module name;` and explicitly exports its source declarations. The
+`import std.name;` selects the matching interface in `stdlib/module-map.json`,
+which declares `export module name;` and explicitly exports its declarations. The
 canonical implementation paths remain unchanged so compiler capabilities retain
 their exact trusted declaration identities. The former wrapper directory and
 legacy republication mechanism are removed. An ordinary import exposes only
@@ -577,7 +578,7 @@ The current implemented foundation includes:
   private payload enum, not a compiler-private optional capability. The narrow
   declaration-bound terminal failure operation selects `empty_owner_access`;
   it neither implements optional policy nor grants storage/lifetime authority;
-- `std.experimental_optional` `std::experimental::optional<T>`, the
+- `std.experimental.optional` `std::experimental::optional<T>`, the
   compatibility implementation of the former candidate, defined in GTI source over
   a private payload enum with no compiler-private storage. It has the same
   promoted surface now also available from `std::optional`:

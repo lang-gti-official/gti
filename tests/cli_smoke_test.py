@@ -3762,7 +3762,7 @@ def main():
             )
             assert "meter_variadic" in bindgen_generation.stderr
             bindings_text = bindgen_bindings.read_text(encoding="utf-8")
-            assert "export module bindings;" in bindings_text
+            assert "export module meter_bindings;" in bindings_text
             assert 'export extern "C" {' in bindings_text
             assert "[[c_opaque]] struct Meter;" in bindings_text
             assert "[[c_abi]]" in bindings_text

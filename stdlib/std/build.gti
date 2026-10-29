@@ -9,19 +9,19 @@ export module build;
 import std.cstdio;
 import std.string;
 import std.vector;
-export namespace gti_internal {
+namespace gti_internal {
 namespace build_runtime {
-extern "C" {
+export extern "C" {
 int32_t gti_rt_run_process_v1(gti_internal::text_view arguments);
 }
 }
 }
 
-export namespace std {
+namespace std {
 namespace build {
 
 /// Immutable invocation facts supplied by the GTI project driver.
-class context {
+export class context {
   std::string output_file_value;
   std::string package_dir_value;
   std::string output_dir_value;
@@ -61,7 +61,7 @@ public:
 
 /// Decodes the exact argument vector supplied to a build.gti entry point.
 /// Callers must first require argc == 11.
-context context_from_args(std::vector<std::string>& arguments) {
+export context context_from_args(std::vector<std::string>& arguments) {
   return context(
       arguments[std::size_t(1)].view(), arguments[std::size_t(2)].view(),
       arguments[std::size_t(3)].view(), arguments[std::size_t(4)].view(),
@@ -71,7 +71,7 @@ context context_from_args(std::vector<std::string>& arguments) {
 }
 
 /// One exact host command. No shell parses or expands its arguments.
-class command {
+export class command {
   mut std::string encoded;
   mut bool valid;
   mut std::size_t argument_count;
@@ -163,7 +163,7 @@ void append_array(mut std::string& document, std::string_view name,
 }
 
 /// Native artifacts and inputs contributed by one package build program.
-class outputs {
+export class outputs {
   mut std::string include_dirs;
   mut std::string c_source_files;
   mut std::string cpp_source_files;

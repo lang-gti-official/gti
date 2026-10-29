@@ -43,6 +43,9 @@ struct FrontendOptions {
   ConfigurationFlags declaredConfigurationFlags;
   RawPointerAuditMode rawPointerAudit = RawPointerAuditMode::Off;
   bool analyzeRecoveredProgram = false;
+  // Editor-only partial snapshots may inspect available units after a load
+  // failure. The graph stays invalid and never reaches HIR or code generation.
+  bool analyzeRecoveredSourceGraph = false;
   std::optional<std::size_t> completionOffset;
   FrontendPhase stopAfter = FrontendPhase::Mir;
   bool toolingOccurrences = true;

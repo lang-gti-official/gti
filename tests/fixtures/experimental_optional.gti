@@ -4,7 +4,7 @@
 // `value() &&` move the payload out without a copy, reset, emplace and move
 // assignment end and start exactly one lifetime each, and an empty access
 // panics after cleanup.
-import std.experimental_optional;
+import std.experimental.optional;
 import std.string;
 import std.vector;
 

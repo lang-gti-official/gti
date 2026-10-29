@@ -3048,11 +3048,25 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   } context{*this, currentNamespace, currentSourceUnit, currentClass,
             stmt.definitionOwner().has_value() && !instanceAnalysisActive};
   if (context.active) {
-    validateType(TypeRef(*stmt.definitionOwner()));
     enterDeclarationContext(definitionInfo->namespaceScope,
                             sourceUnitFor(stmt.name()),
                             definitionInfo->ownerClass);
   }
+  const auto ownerParameters =
+      catalog.definitionOwnerGenericParameters.find(&stmt);
+  struct OwnerParameterScope {
+    Impl &self;
+    bool active;
+    ~OwnerParameterScope() {
+      if (active)
+        self.endTypeParameterScope();
+    }
+  } ownerScope{*this, ownerParameters !=
+                          catalog.definitionOwnerGenericParameters.end()};
+  if (ownerScope.active)
+    beginTypeParameterScope(ownerParameters->second);
+  if (context.active)
+    validateType(*stmt.definitionOwner());
   const DeclarationOrderScope declarationOrder{*this, stmt};
   // A declaration analysed on demand (see ensureBodyAnalyzed) is complete;
   // the lexical pass must not process it a second time. Concrete-instance
@@ -4031,6 +4045,7 @@ auto SemanticVisitor::Impl::ensureBodyAnalyzed(const FunctionInfo &function)
     const std::size_t enclosingOrder = currentDeclarationOrder;
     enterDeclarationContext(body.namespaceScope, body.sourceUnit, body.owner);
     const FunctionInfo *info = semanticModel.findFunction(*declaration);
+    beginTypeParameterScope(definitionOwnerParametersFor(*declaration));
     beginTypeParameterScope(genericParametersFor(*declaration));
     if (beginRequirementScope(info)) {
       currentDeclarationOrder = body.declarationOrder;
@@ -4038,6 +4053,7 @@ auto SemanticVisitor::Impl::ensureBodyAnalyzed(const FunctionInfo &function)
                           body.constexprDeclarationValid);
     }
     endRequirementScope();
+    endTypeParameterScope();
     endTypeParameterScope();
     exitDeclarationContext(body.owner);
     restoreBodyLocalState(std::move(enclosing));
@@ -4350,6 +4366,7 @@ auto SemanticVisitor::Impl::analyzeDeferredBody(
   enterDeclarationContext(body.namespaceScope, body.sourceUnit, body.owner);
   const FunctionInfo *functionInfo =
       semanticModel.findFunction(*body.declaration);
+  beginTypeParameterScope(definitionOwnerParametersFor(*body.declaration));
   beginTypeParameterScope(genericParametersFor(*body.declaration));
   const bool requirementsValid = beginRequirementScope(functionInfo);
   if (requirementsValid) {
@@ -4360,6 +4377,7 @@ auto SemanticVisitor::Impl::analyzeDeferredBody(
     currentDeclarationOrder = enclosingOrder;
   }
   endRequirementScope();
+  endTypeParameterScope();
   endTypeParameterScope();
   exitDeclarationContext(body.owner);
   currentNamespace = enclosingNamespace;

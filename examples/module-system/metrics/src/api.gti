@@ -1,0 +1,9 @@
+export module geometry;
+
+// An unrelated module can use the same private names without collisions.
+struct Detail { int value; };
+int offset() { return 7; }
+
+export namespace metrics {
+  Detail make() { Detail result{.value = offset()}; return result; }
+}

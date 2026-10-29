@@ -221,6 +221,7 @@ is a teaching helper, not a production server.
 | `008-expected.gti` | explicit recoverable errors and `?` propagation with `expected<T, E>` |
 | `009-target-selection.gti` | compile-time host selection and active `#error` guards |
 | `module-only/main.gti` | relative module imports, explicit exports, and a private implementation helper |
+| `module-system/` | hierarchical package modules, registered implementation bodies, isolated private names, and inferred private return types |
 | `011-overloads.gti` | exact overloads and explicit numeric conversions |
 | `012-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields and receiver element-field projections |
 | `013-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |

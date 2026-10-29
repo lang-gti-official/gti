@@ -381,11 +381,11 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
     application += ">";
 
     if (valid) {
-      // An open pattern is owned by its template's package, a closed one by
-      // its top-level nominal type's. No package owns a built-in type, so
-      // only the concept's package declares a block over one.
-      bool owns =
-          samePackageOwnershipDomain(currentSourceUnit, conceptInfo.sourceUnit);
+      // A nominal template/type or the concept owns its module's blocks.
+      // Registration closes that module's implementation sources, preserving
+      // one canonical conformance regardless of the requester's imports.
+      bool owns = declarationOwner(currentSourceUnit) ==
+                  declarationOwner(conceptInfo.sourceUnit);
       for (std::size_t position = 0; !owns && position < patterns.size();
            ++position) {
         owns = ownsNominalSpecializationArgument(currentSourceUnit,
@@ -394,15 +394,15 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
       if (!owns) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2123", DiagnosticPhase::Semantics, site,
-            "This package cannot declare a conformance block for '" +
+            "This module cannot declare a conformance block for '" +
                 application + "'; it owns neither the concept nor " +
                 (arity == 1 ? "the type." : "any of the argument types."));
         diagnostic.related.push_back(
             {tokenSpan(conceptInfo.declaration->name()),
              "Concept declared here."});
         diagnostic.hints.emplace_back(
-            "Declare the block in the concept's package or in the package of "
-            "one of its argument types, or wrap a type in one this package "
+            "Declare the block in the concept's module or in the module of "
+            "one of its argument types, or wrap a type in one this module "
             "owns.");
         diagnostics.emplace_back(std::move(diagnostic));
         valid = false;

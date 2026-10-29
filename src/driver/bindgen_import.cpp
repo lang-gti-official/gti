@@ -208,6 +208,7 @@ void generateImport(const BindgenImportPlan &import,
           ? lang::bindgen::CDataModel::Llp64
           : lang::bindgen::CDataModel::Lp64);
   lang::bindgen::BindingOptions options;
+  options.moduleName = "bindings";
   options.namespaceName = import.namespaceName;
   for (const std::string &pattern : import.allowPatterns) {
     options.allow.push_back({pattern});

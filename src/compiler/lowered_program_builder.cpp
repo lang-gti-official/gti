@@ -644,11 +644,12 @@ private:
   void collectStatement(const Stmt &statement, LoweredDeclarationId parent,
                         ClassId ownerClass,
                         const std::vector<std::string> &namespaceScope) {
-    // The qualified body contributes executable syntax to its canonical
-    // member declaration, not another namespace-level declaration row.
-    if (const auto *definition = stmtAs<FunctionDecl>(&statement);
-        definition != nullptr && definition->definitionOwner()) {
-      return;
+    // A separate body contributes executable syntax to its semantic canonical
+    // declaration, never a second backend declaration with the same identity.
+    if (const auto *definition = stmtAs<FunctionDecl>(&statement)) {
+      const auto *info = semantics_.findFunction(*definition);
+      if (info != nullptr && info->declaration != definition)
+        return;
     }
     if (const auto *conditional = stmtAs<ConditionalStmt>(&statement)) {
       if (const StmtList *active = conditional->activeBranch(target_)) {

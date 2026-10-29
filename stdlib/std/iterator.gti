@@ -4,7 +4,7 @@ export module iterator;
 // Iterator behavior remains structural in GTI; these names are ordinary
 // library vocabulary rather than compiler-recognized category tags.
 import std.meta;
-export namespace std {
+namespace std {
 namespace detail {
 // Declaration metadata supplies the result type; an ordinary expression query
 // separately validates access, overload selection, and the checked origin.
@@ -153,21 +153,21 @@ requires(mut I& position, std::ptrdiff_t distance) {
   { position -= distance } -> void;
 };
 }
-[[unsatisfied("Provide public, safe read-only operator*() yielding a checked cursor-borrowed reference or an independent copyable value, and public void operator++() mut.")]]
+export [[unsatisfied("Provide public, safe read-only operator*() yielding a checked cursor-borrowed reference or an independent copyable value, and public void operator++() mut.")]]
 concept input_iterator<I> = detail::readable_dereference_declaration<I>() &&
     detail::cursor_increment_declarations<I>() &&
     requires(I& cursor, mut I& position) { { *cursor }; { ++position } -> void; };
-[[unsatisfied("The iterator must provide one unambiguous public read-only bool operator!=(S&) or operator!=(S) with copyable S for the exact sentinel type.")]]
+export [[unsatisfied("The iterator must provide one unambiguous public read-only bool operator!=(S&) or operator!=(S) with copyable S for the exact sentinel type.")]]
 concept sentinel_for<Sentinel, Iterator> =
     detail::sentinel_comparison_declaration<Iterator, Sentinel>() &&
     requires(Iterator& position, Sentinel& end) {
       { position != end } -> bool;
     };
-[[unsatisfied("The read-only dereference must yield exactly T as a checked cursor-borrowed reference or an independent copyable value.")]]
+export [[unsatisfied("The read-only dereference must yield exactly T as a checked cursor-borrowed reference or an independent copyable value.")]]
 concept dereferences_to<Iterator, T> =
     detail::exact_dereference_declaration<Iterator, T>() &&
     requires(Iterator& cursor) { { *cursor }; };
-concept forward_iterator<Iterator> =
+export concept forward_iterator<Iterator> =
     std::input_iterator<Iterator> &&
     std::copy_constructible<Iterator> &&
     std::sentinel_for<Iterator, Iterator>;
@@ -175,14 +175,14 @@ concept forward_iterator<Iterator> =
 // A writable position: mut dereference yields a mutable element reference and
 // prefix increment advances the position. `writes_to` is the exact-element
 // refinement, mirroring how `dereferences_to` refines `input_iterator`.
-[[unsatisfied("Provide mutable operator*() returning a mutable checked reference borrowed from the cursor, and public void operator++() mut.")]]
+export [[unsatisfied("Provide mutable operator*() returning a mutable checked reference borrowed from the cursor, and public void operator++() mut.")]]
 concept output_iterator<Iterator> =
     detail::cursor_increment_declarations<Iterator>() &&
     requires(mut Iterator& cursor) {
       { *cursor } -> mut auto& [[borrowed_from(cursor)]];
       { ++cursor } -> void;
     };
-[[unsatisfied("Provide a mutable dereference returning exactly mut T& borrowed from the cursor.")]]
+export [[unsatisfied("Provide a mutable dereference returning exactly mut T& borrowed from the cursor.")]]
 concept writes_to<Iterator, T> = requires(mut Iterator& cursor) {
   { *cursor } -> mut T& [[borrowed_from(cursor)]];
 };
@@ -192,19 +192,19 @@ concept writes_to<Iterator, T> = requires(mut Iterator& cursor) {
 // capability rather than a tag: bidirectional adds `void operator--() mut`,
 // and random access adds `void operator+=(std::ptrdiff_t) mut` plus
 // `void operator-=(std::ptrdiff_t) mut`.
-concept bidirectional_iterator<Iterator> =
+export concept bidirectional_iterator<Iterator> =
     std::forward_iterator<Iterator> &&
     detail::cursor_decrements<Iterator>;
-concept random_access_iterator<Iterator> =
+export concept random_access_iterator<Iterator> =
     std::bidirectional_iterator<Iterator> &&
     detail::cursor_jumps<Iterator>;
 
 // Movement is independent of duplication: exclusive output cursors can move
 // backward or jump without becoming copyable multipass readers.
-concept bidirectional_cursor<Iterator> =
+export concept bidirectional_cursor<Iterator> =
     std::input_iterator<Iterator> &&
     detail::cursor_decrements<Iterator>;
-concept random_access_cursor<Iterator> =
+export concept random_access_cursor<Iterator> =
     std::bidirectional_cursor<Iterator> &&
     detail::cursor_jumps<Iterator>;
 
@@ -212,7 +212,7 @@ concept random_access_cursor<Iterator> =
 // `mut operator[](std::ptrdiff_t)` returns a mutable reference to exactly T.
 // One exclusive cursor plus offsets reaches every element of its range, which
 // is how in-place algorithms keep a single mutable borrow of the owner.
-concept subscripts_to_mut<Iterator, T> =
+export concept subscripts_to_mut<Iterator, T> =
     detail::cursor_index_declaration<Iterator>() &&
     requires(mut Iterator& cursor, std::ptrdiff_t offset) {
       { cursor[offset] } -> mut T& [[borrowed_from(cursor)]];
@@ -223,7 +223,7 @@ concept subscripts_to_mut<Iterator, T> =
 // `std::ptrdiff_t operator-(Sentinel)`. Subtraction uses conventional
 // left-minus-right coordinates: an iterator before its end has a negative
 // difference. `distance(first, last)` instead counts forward increments.
-[[unsatisfied("The iterator must provide public read-only std::ptrdiff_t operator-(S&) or operator-(S) with copyable S for the exact sentinel type, returning the signed distance from the iterator to the sentinel.")]]
+export [[unsatisfied("The iterator must provide public read-only std::ptrdiff_t operator-(S&) or operator-(S) with copyable S for the exact sentinel type, returning the signed distance from the iterator to the sentinel.")]]
 concept sized_sentinel_for<Sentinel, Iterator> =
     std::sentinel_for<Sentinel, Iterator> &&
     detail::sentinel_distance_declaration<Iterator, Sentinel>() &&
@@ -235,34 +235,34 @@ concept sized_sentinel_for<Sentinel, Iterator> =
 // a range's exact begin/end protocol. They intentionally expose no associated
 // iterator type: range-first generic code iterates the owner directly, and
 // concrete reanalysis retains the selected source declarations.
-[[unsatisfied("Provide the accessible begin()/end() operations and checked element access required by a read-only range loop.")]]
+export [[unsatisfied("Provide the accessible begin()/end() operations and checked element access required by a read-only range loop.")]]
 concept input_range<Range> =
     requires(Range& range) { for (auto& element : range) {} };
-[[unsatisfied("The range must yield exactly the required element type with read-only checked access.")]]
+export [[unsatisfied("The range must yield exactly the required element type with read-only checked access.")]]
 concept range_of<Range, T> =
     std::input_range<Range> &&
     requires(Range& range) { for (T& element : range) {} };
-[[unsatisfied("Provide the begin_mut()/end() operations and exact mutable element access required by a mutable range loop.")]]
+export [[unsatisfied("Provide the begin_mut()/end() operations and exact mutable element access required by a mutable range loop.")]]
 concept mutable_range_of<Range, T> =
     std::range_of<Range, T> &&
     requires(mut Range& range) { for (mut T& element : range) {} };
-[[unsatisfied("The range must provide a safe read-only size() returning std::size_t without a conversion.")]]
+export [[unsatisfied("The range must provide a safe read-only size() returning std::size_t without a conversion.")]]
 concept sized_range<Range> =
     std::input_range<Range> &&
     requires(Range& range) { { (range.size()) } -> std::size_t; };
 
-struct input_iterator_tag { input_iterator_tag() = default; };
-struct output_iterator_tag { output_iterator_tag() = default; };
-struct forward_iterator_tag : public input_iterator_tag { forward_iterator_tag() = default; };
-struct bidirectional_iterator_tag : public forward_iterator_tag { bidirectional_iterator_tag() = default; };
-struct random_access_iterator_tag : public bidirectional_iterator_tag { random_access_iterator_tag() = default; };
-struct contiguous_iterator_tag : public random_access_iterator_tag { contiguous_iterator_tag() = default; };
+export struct input_iterator_tag { input_iterator_tag() = default; };
+export struct output_iterator_tag { output_iterator_tag() = default; };
+export struct forward_iterator_tag : public input_iterator_tag { forward_iterator_tag() = default; };
+export struct bidirectional_iterator_tag : public forward_iterator_tag { bidirectional_iterator_tag() = default; };
+export struct random_access_iterator_tag : public bidirectional_iterator_tag { random_access_iterator_tag() = default; };
+export struct contiguous_iterator_tag : public random_access_iterator_tag { contiguous_iterator_tag() = default; };
 
 // Forward-only utilities take an unsigned distance; the signed overload
 // requires bidirectional movement so a negative distance always has an exact
 // meaning. Movement steps rather than jumping so the reference receiver only
 // needs the increment/decrement contract.
-void advance<Iterator>(mut Iterator& iterator, mut ptrdiff_t distance)
+export void advance<Iterator>(mut Iterator& iterator, mut ptrdiff_t distance)
   requires std::bidirectional_cursor<Iterator> {
   while (distance > 0) {
     ++iterator;
@@ -274,7 +274,7 @@ void advance<Iterator>(mut Iterator& iterator, mut ptrdiff_t distance)
   }
 }
 
-void advance<Iterator>(mut Iterator& iterator, mut size_t distance)
+export void advance<Iterator>(mut Iterator& iterator, mut size_t distance)
   requires std::input_iterator<Iterator> {
   while (distance > 0) {
     ++iterator;
@@ -282,7 +282,7 @@ void advance<Iterator>(mut Iterator& iterator, mut size_t distance)
   }
 }
 
-ptrdiff_t distance<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+export ptrdiff_t distance<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::input_iterator<Iterator> &&
            std::sentinel_for<Sentinel, Iterator> {
   mut ptrdiff_t result = 0;
@@ -293,19 +293,19 @@ ptrdiff_t distance<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   return result;
 }
 
-Iterator next<Iterator>(mut Iterator iterator)
+export Iterator next<Iterator>(mut Iterator iterator)
   requires std::input_iterator<Iterator> {
   ++iterator;
   return std::move(iterator);
 }
 
-Iterator next<Iterator>(mut Iterator iterator, ptrdiff_t distance)
+export Iterator next<Iterator>(mut Iterator iterator, ptrdiff_t distance)
   requires std::random_access_cursor<Iterator> {
   iterator += distance;
   return std::move(iterator);
 }
 
-Iterator next<Iterator>(mut Iterator iterator, mut size_t distance)
+export Iterator next<Iterator>(mut Iterator iterator, mut size_t distance)
   requires std::input_iterator<Iterator> {
   while (distance > 0) {
     ++iterator;
@@ -314,13 +314,13 @@ Iterator next<Iterator>(mut Iterator iterator, mut size_t distance)
   return std::move(iterator);
 }
 
-Iterator prev<Iterator>(mut Iterator iterator)
+export Iterator prev<Iterator>(mut Iterator iterator)
   requires std::bidirectional_cursor<Iterator> {
   --iterator;
   return std::move(iterator);
 }
 
-Iterator prev<Iterator>(mut Iterator iterator, mut size_t distance)
+export Iterator prev<Iterator>(mut Iterator iterator, mut size_t distance)
   requires std::bidirectional_cursor<Iterator> {
   while (distance > 0) {
     --iterator;

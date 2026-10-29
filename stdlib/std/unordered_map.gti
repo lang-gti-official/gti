@@ -5,7 +5,7 @@ import std.memory;
 import std.functional;
 import std.utility;
 import std.cmath;
-export namespace std {
+namespace std {
 namespace detail {
 struct unordered_map_node<K, V> {
   mut map_entry<K, V> entry;
@@ -17,14 +17,14 @@ struct unordered_map_node<K, V> {
         hash(hash), next(next) {}
 };
 
-class unordered_map_sentinel {
+export class unordered_map_sentinel {
   size_t limit;
 public:
   unordered_map_sentinel(size_t limit) : limit(limit) {}
   size_t position() { return this.limit; }
 };
 
-class unordered_map_iterator<K, V> {
+export class unordered_map_iterator<K, V> {
   vector<unique_ptr<unordered_map_node<K, V>>>& nodes;
   mut size_t current;
 public:
@@ -76,7 +76,7 @@ public:
   }
 };
 
-class unordered_map_mut_iterator<K, V> {
+export class unordered_map_mut_iterator<K, V> {
   mut unordered_map_entry_projection<K, V> projection;
 public:
   unordered_map_mut_iterator(mut vector<unique_ptr<unordered_map_node<K, V>>>& nodes,
@@ -98,7 +98,7 @@ public:
 
 /// Owning hash table with cached hashes and separately owned stable entries.
 /// Links are slot indexes (index + 1), never untracked pointers.
-class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
+export class unordered_map<K, V, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
   mut vector<unique_ptr<detail::unordered_map_node<K, V>>> nodes{};
   mut vector<size_t> free_slots{};
   mut vector<size_t> buckets{};

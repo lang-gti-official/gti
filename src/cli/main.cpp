@@ -15,6 +15,7 @@
 #include "gti/driver/registry.h"
 #include "gti/driver/test_runner.h"
 #include "gti/executable_path.h"
+#include "gti/module_name.h"
 #include "gti/support.h"
 #include "gti/target.h"
 #include "project_presentation.h"
@@ -186,6 +187,7 @@ struct BindgenCliOptions {
   std::vector<std::filesystem::path> includeDirectories;
   std::vector<std::string> macroArguments;
   lang::bindgen::BindingOptions bindings;
+  bool explicitModuleName = false;
   bool verbose = false;
 };
 
@@ -323,7 +325,8 @@ void printUsage(std::ostream &stream) {
          "       gti clean\n"
          "       gti metadata [--format json] [--package <name>]\n"
          "       gti format init [directory]\n"
-         "       gti bindgen <header.h> [-o <out.gti>] [--namespace <name>] "
+         "       gti bindgen <header.h> [-o <out.gti>] [--module <name>] "
+         "[--namespace <name>] "
          "[--target <triple>] [--sysroot <path>] [-I <dir>] [-D <macro>] "
          "[-U <macro>] [--allow <pattern>] [--deny <pattern>] "
          "[--rename <from>=<to>] [--array-return <fn>=<count>]\n"
@@ -470,6 +473,8 @@ void printUsage(std::ostream &stream) {
          "\n"
          "Bindgen options:\n"
          "  -o, --output <path>  Write generated GTI declarations to a file.\n"
+         "      --module <name>  Set the exported module name (default: "
+         "output/header stem).\n"
          "      --namespace <name>\n"
          "                       Wrap generated source names in a GTI "
          "namespace.\n"
@@ -4073,6 +4078,15 @@ int runBindgen(int argc, char *argv[]) {
       options.output = argv[++index];
       continue;
     }
+    if (argument == "--module") {
+      if (index + 1 >= argc) {
+        std::cerr << "gti: --module requires a name\n";
+        return exitCode(ExitStatus::Usage);
+      }
+      options.bindings.moduleName = argv[++index];
+      options.explicitModuleName = true;
+      continue;
+    }
     if (argument == "--namespace") {
       if (index + 1 >= argc) {
         std::cerr << "gti: --namespace requires a name\n";
@@ -4198,6 +4212,30 @@ int runBindgen(int argc, char *argv[]) {
   }
   if (options.header.empty()) {
     std::cerr << "gti: bindgen requires a C header path\n";
+    return exitCode(ExitStatus::Usage);
+  }
+  if (!options.explicitModuleName) {
+    const auto &path = options.output.empty() ? options.header : options.output;
+    std::string name = path.stem().string();
+    for (char &character : name) {
+      const bool ascii = (character >= 'a' && character <= 'z') ||
+                         (character >= 'A' && character <= 'Z') ||
+                         (character >= '0' && character <= '9');
+      if (!ascii)
+        character = '_';
+    }
+    while (name.find("__") != std::string::npos)
+      name.replace(name.find("__"), 2, "_");
+    if (name.empty() || name.front() == '_' ||
+        (name.front() >= '0' && name.front() <= '9') ||
+        lang::keywords.contains(name) || lang::isCppReservedIdentifier(name))
+      name = "bindings" + (name.empty() ? "" : "_" + name);
+    while (name.find("__") != std::string::npos)
+      name.replace(name.find("__"), 2, "_");
+    options.bindings.moduleName = std::move(name);
+  }
+  if (!lang::isModuleName(options.bindings.moduleName)) {
+    std::cerr << "gti: --module requires a dotted GTI module name\n";
     return exitCode(ExitStatus::Usage);
   }
   std::ifstream headerStream(options.header, std::ios::binary);

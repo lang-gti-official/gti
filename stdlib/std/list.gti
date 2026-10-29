@@ -2,7 +2,7 @@ export module list;
 
 import std.vector;
 import std.memory;
-export namespace std {
+namespace std {
 namespace detail {
 enum class list_in_place { value };
 struct list_node<T> {
@@ -109,7 +109,7 @@ public:
 
 /// A doubly linked owning sequence with checked internal slot-index links.
 /// Nodes never own their neighbors, so destruction is iterative.
-class list<T> {
+export class list<T> {
   mut vector<detail::list_slot<T>> slots{};
   mut size_t head = 0;
   mut size_t tail = 0;

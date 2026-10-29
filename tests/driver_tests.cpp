@@ -598,10 +598,10 @@ void testPackageWarningPolicy() {
   expect(!hidden.suppresses(diagnostic, inputs.sourceGraph),
          "unloaded/unowned paths must remain visible despite directory names");
 
-  expect(
-      writeFile(librarySource, "export module value;\nexport namespace library "
-                               "{ int value() { return missing; } }\n"),
-      "the dependency-error fixture should be writable");
+  expect(writeFile(librarySource,
+                   "export module value;\nexport namespace library "
+                   "{ int value() { return missing; } }\n"),
+         "the dependency-error fixture should be writable");
   const lang::driver::CheckResult error =
       lang::driver::checkCompilation(request(hidden));
   expect(!error.succeeded() && lang::hasErrorDiagnostics(error.diagnostics),
@@ -3113,6 +3113,22 @@ void testBuildReportRecordRoundTrip() {
          "a round-tripped record should compare equal to its source");
   expect(lang::driver::serializeBuildProvenanceJson(*parsed) == serialized,
          "re-serializing a parsed record should reproduce the sidecar");
+  for (const auto *retired :
+       {"include", "export-include", "standard-library", "package"}) {
+    std::string legacy = serialized;
+    const std::string currentKind = "\"kind\":\"import\"";
+    const auto position = legacy.find(currentKind);
+    expect(position != std::string::npos,
+           "the report fixture contains an import edge");
+    if (position == std::string::npos)
+      continue;
+    legacy.replace(position, currentKind.size(),
+                   "\"kind\":\"" + std::string(retired) + "\"");
+    expect(!lang::driver::parseBuildProvenanceJson(legacy, parseError) &&
+               parseError.find("unknown source dependency kind") !=
+                   std::string::npos,
+           "retired source-edge spellings are not valid module build records");
+  }
   auto embedding = recorded;
   embedding.project->targetKind = "library";
   embedding.embeddingHeader = recorded.artifact;

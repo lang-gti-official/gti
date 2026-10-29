@@ -5833,16 +5833,22 @@ auto SemanticVisitor::Impl::recordQualifiedPathUses(
   const std::vector<ResolvedNamespaceSegment> resolvedSegments =
       resolveNamespaceSegments(namespacePath, currentNamespace);
   for (std::size_t index = 0; index < resolvedSegments.size(); ++index) {
-    const auto symbol =
-        namespaceToolingSymbols.find(resolvedSegments[index].declaration);
-    if (symbol == namespaceToolingSymbols.end() || symbol->second == 0) {
+    SymbolId symbol = 0;
+    if (const auto *alias =
+            findNamespaceAlias(resolvedSegments[index].declaration))
+      symbol = alias->symbol;
+    else if (const auto found = namespaceToolingSymbols.find(
+                 resolvedSegments[index].declaration);
+             found != namespaceToolingSymbols.end())
+      symbol = found->second;
+    if (symbol == 0) {
       continue;
     }
     const Token &token = path.segments[index];
     semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                     .span = tokenSpan(token),
                                     .kind = SemanticOccurrenceKind::Symbol,
-                                    .symbol = symbol->second,
+                                    .symbol = symbol,
                                     .roles = OccurrenceRole::Reference,
                                     .name = token.lexeme});
   }
@@ -6341,9 +6347,11 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
   const bool sourceLocal = symbol.internalLinkage && sourceGraph != nullptr &&
                            currentSourceUnit != 0;
   bool categoryConflict =
-      namespaces.contains(qualified) || namespaceAliases.contains(qualified) ||
-      typeAliasIds.contains(qualified) || enumIds.contains(qualified) ||
-      conceptIds.contains(qualified);
+      namespaceIsVisible(qualified) ||
+      namespaceAliases.contains(qualified, declarationOwner()) ||
+      typeAliasIds.contains(qualified, declarationOwner()) ||
+      enumIds.contains(qualified, declarationOwner()) ||
+      conceptIds.contains(qualified, declarationOwner());
   if (sourceLocal) {
     categoryConflict = namespaceIsVisible(qualified) ||
                        findNamespaceAlias(qualified) != nullptr ||
@@ -6375,7 +6383,8 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
       return false;
     }
     const auto &namespaceIndex = activeNamespaceSymbols();
-    if (const auto external = namespaceIndex.find(qualified);
+    if (const auto external =
+            namespaceIndex.find(qualified, declarationOwner());
         external != namespaceIndex.end() &&
         declarationVisible(declarationSourceUnit(external->second),
                            external->second.declaration)) {
@@ -6402,7 +6411,7 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
   }
 
   auto &namespaceIndex = activeNamespaceSymbols();
-  const auto existing = namespaceIndex.find(qualified);
+  const auto existing = namespaceIndex.find(qualified, declarationOwner());
   if (existing != namespaceIndex.end()) {
     const Symbol published = symbol;
     if (appendFunctionOverload(existing->second, std::move(symbol), name)) {
@@ -6418,7 +6427,7 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
     return false;
   }
   publishNamespaceSymbol(qualified, symbol);
-  namespaceIndex.emplace(qualified, std::move(symbol));
+  namespaceIndex.emplace(qualified, std::move(symbol), declarationOwner());
   return true;
 }
 
@@ -6634,7 +6643,7 @@ auto SemanticVisitor::Impl::appendNamespaceChildren(
     if (found != visibleNamespaceAliases.end()) {
       return found->second;
     }
-    static const std::unordered_map<std::string, NamespaceAliasInfo> empty;
+    static const DeclarationIndex<NamespaceAliasInfo> empty;
     return empty;
   }();
   for (const auto &[qualified, _] : visibleAliases) {
@@ -7067,6 +7076,9 @@ auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {
     }
   }
   for (std::size_t depth = lookup.size() + 1; depth > 0; --depth) {
+    if (symbols.ambiguousCandidates(
+            qualifiedName(lookup, depth - 1, name.lexeme)))
+      return nullptr;
     const auto found =
         symbols.find(qualifiedName(lookup, depth - 1, name.lexeme));
     if (found != symbols.end() && symbolVisibleAt(found->second, name)) {
@@ -7095,8 +7107,7 @@ auto SemanticVisitor::Impl::resolvePlaceSymbol(const Token &name) -> Symbol * {
     // as its qualified spelling.
     return staticFieldFlowSymbol(*local);
   }
-  std::unordered_map<std::string, Symbol> *symbols =
-      currentNamespaceSymbolsMutable();
+  DeclarationIndex<Symbol> *symbols = currentNamespaceSymbolsMutable();
   const auto *context = macroContext(name);
   const auto &lookup = context ? context->namespaceScope : currentNamespace;
   if (context && sourceGraph && context->sourceUnit) {
@@ -7251,8 +7262,7 @@ auto SemanticVisitor::Impl::resolveQualifiedPlaceSymbol(const NamePath &path)
                : nullptr;
   }
 
-  std::unordered_map<std::string, Symbol> *symbols =
-      currentNamespaceSymbolsMutable();
+  DeclarationIndex<Symbol> *symbols = currentNamespaceSymbolsMutable();
   if (context && sourceGraph && context->sourceUnit) {
     auto &visible = activeVisibleNamespaceSymbols();
     const auto unit = visible.find(context->sourceUnit);
@@ -7378,6 +7388,8 @@ auto SemanticVisitor::Impl::declarationSourceUnit(const Symbol &symbol) const
 auto SemanticVisitor::Impl::reportInvisibleDeclaration(
     const Token &use, std::string name, const Token &declaration,
     SourceUnitId declarationUnit) -> bool {
+  if (reportAmbiguousName(use, name))
+    return true;
   if (sourceGraph == nullptr || currentSourceUnit == 0 ||
       declarationUnit == 0 ||
       declarationVisible(declarationUnit, declaration)) {
@@ -7427,6 +7439,8 @@ auto SemanticVisitor::Impl::reportInvisibleSymbol(const Token &use,
                                                   std::string name,
                                                   const Symbol *symbol)
     -> bool {
+  if (reportAmbiguousName(use, name))
+    return true;
   return symbol != nullptr &&
          reportInvisibleDeclaration(use, std::move(name), symbol->declaration,
                                     declarationSourceUnit(*symbol));
@@ -7522,6 +7536,9 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
         return std::nullopt;
     }
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+      if (visibleAliases.ambiguousCandidates(
+              qualifiedName(fromScope, depth - 1, path.last().lexeme)))
+        return std::nullopt;
       const auto found = visibleAliases.find(
           qualifiedName(fromScope, depth - 1, path.last().lexeme));
       if (found != visibleAliases.end()) {
@@ -7533,6 +7550,9 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
 
   const std::string written = pathSpelling(path);
   for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+    if (visibleAliases.ambiguousCandidates(
+            qualifiedName(fromScope, depth - 1, written)))
+      return std::nullopt;
     const auto found =
         visibleAliases.find(qualifiedName(fromScope, depth - 1, written));
     if (found != visibleAliases.end()) {
@@ -7636,6 +7656,9 @@ auto SemanticVisitor::Impl::resolveConceptPath(
   const auto &visibleConcepts = currentConceptIds();
   if (path.segments.size() == 1) {
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+      if (visibleConcepts.ambiguousCandidates(
+              qualifiedName(fromScope, depth - 1, path.last().lexeme)))
+        return std::nullopt;
       const auto found = visibleConcepts.find(
           qualifiedName(fromScope, depth - 1, path.last().lexeme));
       if (found != visibleConcepts.end()) {
@@ -7704,6 +7727,9 @@ auto SemanticVisitor::Impl::resolveClassPath(
     }
   }
   for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+    if (visibleClasses.ambiguousCandidates(
+            qualifiedName(fromScope, depth - 1, pathSpelling(path))))
+      return std::nullopt;
     const auto found = visibleClasses.find(
         qualifiedName(fromScope, depth - 1, pathSpelling(path)));
     if (found != visibleClasses.end())
@@ -7790,6 +7816,9 @@ auto SemanticVisitor::Impl::resolveEnumPath(
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
       const std::string qualified =
           qualifiedName(fromScope, depth - 1, path.last().lexeme);
+      if (visibleEnums.ambiguousCandidates(qualified) ||
+          visibleAliases.ambiguousCandidates(qualified))
+        return std::nullopt;
       const auto found = visibleEnums.find(qualified);
       if (found != visibleEnums.end()) {
         return found->second;

@@ -3,7 +3,7 @@ export module unordered_set;
 import std.unordered_map;
 import std.functional;
 import std.utility;
-export namespace std {
+namespace std {
 namespace detail {
 class unordered_set_key_iterator<K> {
   mut unordered_map_iterator<K, bool> cursor;
@@ -29,7 +29,7 @@ public:
 };
 }
 /// Unique immutable keys backed by the cached-hash chained dictionary.
-class unordered_set<K, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
+export class unordered_set<K, Hash = std::hash<K>, KeyEqual = std::equal_to<K>> {
   mut unordered_map<K, bool, Hash, KeyEqual> entries;
   unordered_map<K, bool, Hash, KeyEqual> replace(unordered_map<K, bool, Hash, KeyEqual> value) mut {
     auto previous = std::move(this.entries);

@@ -17,7 +17,7 @@ def main():
         interface = ("export module api;\nexport struct Parcel<T> { T value; };\n"
                      "export interface Factory { static int make(int number = 7); "
                      "static Parcel<int> parcel(); };\n")
-        implementation = ("import api;\n/* UTF-16: 🦉 */ int Factory::make(int value) { return value; }\n"
+        implementation = ("module api;\n/* UTF-16: 🦉 */ int Factory::make(int value) { return value; }\n"
                           "Parcel < int > Factory::parcel() { Parcel<int> result = {.value = 7}; return result; }\n")
         source = "import api;\nint main() { return Factory::make() - 7; }\n"
         write(api, interface)

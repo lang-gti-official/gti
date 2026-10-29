@@ -2154,6 +2154,13 @@ int Cell::take() && { return this.number; }
            "a separate method must not mutate or consume a receiver with a "
            "live borrowed result");
   }
+  const auto genericMethod = lang::Frontend().analyze(
+      "split-generic-method.gti",
+      "struct A { static T read<T>(T x); }; "
+      "U A::read<U>(U x) { return x; } int main() { return A::read(0); }",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(genericMethod.canGenerateCode(),
+         "a generic method may have a separate alpha-renamed definition");
   for (const auto &[source, message] :
        std::vector<std::pair<std::string, std::string>>{
            {"int Missing::read() { return 1; }", "visible"},
@@ -2182,10 +2189,6 @@ int Cell::take() && { return this.number; }
            {"struct A { int read() mut;  public: A() = default; }; int "
             "A::read() { return 1; }",
             "receiver qualifier"},
-           {"struct A { static T read<T>(T x);  public: A() = default; }; T "
-            "A::read<T>(T x) { return "
-            "x; }",
-            "non-generic"},
            {"struct A { int read();  public: A() = default; }; namespace wrong "
             "{ int A::read() { "
             "return 1; } }",
@@ -2223,11 +2226,18 @@ int Cell::take() && { return this.number; }
          "export module api;\nimport \"types.gti\";\nnamespace demo "
          "{ export interface Factory { static " +
              signature + " }; }\n"}};
-    const std::string source = "import \"api.gti\";\nnamespace demo { " +
-                               definition + " }\nint main() { return 0; }\n";
+    const lang::PackageSourceRoot package{
+        .identity = "split-signature",
+        .name = "split-signature",
+        .packageRoot = root,
+        .sourceRoot = root,
+        .modules = {{"api", root / "api.gti"}},
+        .moduleImplementations = {{"api", {root / "main.gti"}}}};
+    const std::string source = "module api;\nnamespace demo { " + definition +
+                               " }\nint main() { return 0; }\n";
     const auto hidden = lang::Frontend().analyze(
         root / "main.gti", source, {standardLibraryPrelude()}, units,
-        {standardLibraryRoot()});
+        {standardLibraryRoot()}, {package});
     const auto *diagnostic =
         findDiagnosticByCode(hidden.diagnostics, "GTI-S2024");
     expect(!hidden.canGenerateCode() && diagnostic != nullptr &&
@@ -2251,8 +2261,9 @@ int Cell::take() && { return this.number; }
              "declaration note and direct-include hint");
     }
     const auto visible = lang::Frontend().analyze(
-        root / "main.gti", "import \"types.gti\";\n" + source,
-        {standardLibraryPrelude()}, units, {standardLibraryRoot()});
+        root / "main.gti",
+        "module api;\nimport \"types.gti\";\n" + source.substr(12),
+        {standardLibraryPrelude()}, units, {standardLibraryRoot()}, {package});
     expect(visible.canGenerateCode(),
            "directly included split signature types bind normally");
   }
@@ -3991,7 +4002,7 @@ int main() { return 0; }
           hasDiagnosticCode(orphanHash.diagnostics, "GTI-S2078") &&
           hasDiagnostic(orphanHash.diagnostics,
                         "owns neither the primary nor a top-level nominal") &&
-          hasDiagnosticHint(orphanHash.diagnostics, "primary's package"),
+          hasDiagnosticHint(orphanHash.diagnostics, "primary's module"),
       "the coherence rule should reject a std::hash specialization for a "
       "builtin type owned by neither side");
 

@@ -773,3 +773,12 @@ requireCapture(threadLocalRow, "thread_counter_highlight", "variable");
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
 );
+
+for (const method of ["generic_owner_highlight", "generic_member_highlight"]) {
+  const row = fixtureLines.findIndex((line) => line.includes(`::${method}`));
+  requireCapture(row, method, "function.method");
+  requireLocalCapture(row, method, "local.definition.method");
+  if (captures.some((capture) => capture.row === row && capture.text === method && capture.name === "constant")) {
+    throw new Error(`method ${method} must not be classified as a constant`);
+  }
+}

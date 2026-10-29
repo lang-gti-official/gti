@@ -3,6 +3,7 @@
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
+#include "gti/source_owner.h"
 
 #include <algorithm>
 #include <fstream>
@@ -55,6 +56,45 @@ struct Candidate {
   std::filesystem::path path;
   std::optional<std::string> angleName;
 };
+
+std::optional<std::string> importSpelling(const SourceGraph &graph,
+                                          const SourceUnit &requester,
+                                          const std::filesystem::path &target) {
+  const auto registry = graph.sourceOwners();
+  const auto *owner =
+      registry ? registry->ownerForPath(requester.path) : nullptr;
+  const auto *targetOwner = registry ? registry->ownerForPath(target) : nullptr;
+  if (!registry ||
+      (owner && targetOwner && owner->identity == targetOwner->identity)) {
+    const auto relative =
+        target.lexically_relative(requester.path.parent_path())
+            .generic_string();
+    if (relative.find_first_of("\"\r\n") != std::string::npos)
+      return std::nullopt;
+    return "\"" + relative + "\"";
+  }
+  std::set<std::string> names;
+  const auto add = [&](const SourceOwnerDescriptor &selected,
+                       const std::string &alias) {
+    for (const auto &[name, path] : selected.modules) {
+      if (path == target) {
+        names.insert(alias + "." + name);
+        if (name == selected.defaultModule)
+          names.insert(alias);
+      }
+    }
+  };
+  if (owner)
+    for (const auto &dependency : owner->dependencies)
+      if (const auto *selected = registry->find(dependency.targetIdentity))
+        add(*selected, dependency.alias);
+  for (const auto &selected : registry->owners())
+    if (selected.implicitAlias)
+      add(selected, *selected.implicitAlias);
+  if (names.empty())
+    return std::nullopt;
+  return *names.begin();
+}
 
 std::vector<Candidate>
 candidates(std::vector<IncludeSearchRoot> roots,
@@ -159,10 +199,12 @@ void declarationNames(const StmtList &statements, const TargetInfo &target,
 
 std::size_t insertionOffset(const std::string &source, const SourceUnit &unit) {
   std::size_t offset = source.starts_with("\xef\xbb\xbf") ? 3 : 0;
-  if (unit.moduleDeclaration) {
-    // Source loading has already validated the module header. Includes must
+  const auto &header = unit.moduleDeclaration ? unit.moduleDeclaration
+                                              : unit.implementationDeclaration;
+  if (header) {
+    // Source loading has already validated the module header. Imports must
     // follow it rather than accidentally preceding the required first token.
-    const auto end = source.find(';', unit.moduleDeclaration->position);
+    const auto end = source.find(';', header->position);
     if (end != std::string::npos) {
       offset = end + 1;
       if (offset < source.size() && source[offset] == '\r')
@@ -223,9 +265,12 @@ void addIncludeSuggestions(
   result.includeSuggestionsRequested = true;
 
   auto roots = options.includeSearchRoots;
-  for (const auto &root : standardLibraryRoots) {
-    roots.push_back({root / "std", "std", {}});
-  }
+  // Cross-owner discovery is defined by public maps, not a directory scan.
+  roots.erase(std::remove_if(roots.begin(), roots.end(),
+                             [](const auto &root) {
+                               return root.anglePrefix.has_value();
+                             }),
+              roots.end());
   auto overrides = sourceOverrides;
   // Freeze the original loaded graph, not a mixture of a new disk snapshot
   // and the source that produced the diagnostic being repaired.
@@ -245,6 +290,17 @@ void addIncludeSuggestions(
   if (!trialOptions.cache)
     trialOptions.cache = std::make_shared<FrontendCache>();
   auto searchCandidates = candidates(std::move(roots), overrides);
+  if (const auto registry = result.sourceGraph.sourceOwners()) {
+    for (const auto &owner : registry->owners()) {
+      for (const auto &[name, path] : owner.modules) {
+        (void)name;
+        if (std::none_of(
+                searchCandidates.begin(), searchCandidates.end(),
+                [&](const auto &candidate) { return candidate.path == path; }))
+          searchCandidates.push_back({path, std::nullopt});
+      }
+    }
+  }
   // Loaded-but-invisible declarations already belong to this compilation's
   // source authority, including virtual/overlay-only compiler-library inputs.
   // Keep their module-import advice even when no project search was requested.
@@ -271,6 +327,19 @@ void addIncludeSuggestions(
                                     .findUnit(result.sourceGraph.entryUnit());
   for (const auto &candidate : searchCandidates) {
     if (entryUnit != nullptr && candidate.path == entryUnit->path)
+      continue;
+    const bool accessible = std::any_of(
+        result.diagnostics.begin(), result.diagnostics.end(),
+        [&](const auto &diagnostic) {
+          const auto *requester =
+              std::as_const(result.sourceGraph)
+                  .findUnit(result.sourceGraph.sourceUnitForPath(
+                      diagnostic.primary.source));
+          return requester &&
+                 importSpelling(result.sourceGraph, *requester, candidate.path)
+                     .has_value();
+        });
+    if (!accessible)
       continue;
     result.includeSuggestionInputs.push_back(candidate.path);
     std::string text;
@@ -327,24 +396,14 @@ void addIncludeSuggestions(
       const auto *source = result.sources.find(sourceName);
       if (!unit || !source || unit->path == candidate.path || unit->prelude)
         continue;
-      const auto relative =
-          candidate.path.lexically_relative(unit->path.parent_path())
-              .generic_string();
-      std::string spelling = "\"" + relative + "\"";
-      if (candidate.angleName) {
-        const auto slash = candidate.angleName->find('/');
-        if (slash == std::string::npos)
-          continue;
-        spelling = candidate.angleName->substr(0, slash) + "." +
-                   candidateUnit->moduleDeclaration->lexeme;
-      }
-      if (spelling.find_first_of("\r\n") != std::string::npos ||
-          (!candidate.angleName && relative.find('"') != std::string::npos))
+      const auto spelling =
+          importSpelling(result.sourceGraph, *unit, candidate.path);
+      if (!spelling)
         continue;
       const auto insertion = insertionOffset(*source, *unit);
       const std::string newline =
           source->find("\r\n") != std::string::npos ? "\r\n" : "\n";
-      const std::string directive = "import " + spelling + ";";
+      const std::string directive = "import " + *spelling + ";";
       const std::string replacement =
           (insertion && (*source)[insertion - 1] == ';' ? newline : "") +
           directive + newline;

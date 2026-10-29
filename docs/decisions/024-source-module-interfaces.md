@@ -24,6 +24,33 @@ Revised in 0.393.0: republished includes, standard-library modules, and
 configuration sharing by replay. Separate compilation and independent module
 linkage remain outside this decision.
 
+## Module identity revision (2026-10-29, unreleased)
+
+The production module-only campaign supersedes the original program-wide
+qualified-name uniqueness rule. The semantic declaration owner is the logical
+source-owner/module-name pair, shared by one interface and its explicitly
+registered implementation units. An implementation states `module name;` and
+must match its registration; a file cannot acquire private access by claiming
+an unregistered header. Source ownership is distinct from compiler trust.
+
+Different modules may independently use identical source names. Semantic IDs
+retain distinct nominal types and callable identities; requester visibility
+determines lookup and ambiguity. Imports do not themselves reject unused name
+collisions, and overload sets compose through ordinary signature resolution.
+The backend preserves selected semantic identities rather than establishing
+module meaning through a global spelling rewrite. Static names remain local
+to their source unit.
+
+Registered bodies can complete exported ordinary function prototypes, including
+generic and constexpr functions. Exact signature/contract matching establishes
+one callable identity before lowering. Private types returned by public APIs,
+generic bodies and default arguments retain defining-context reachability
+without publishing private names. Dotted names are logical labels, not implied
+namespaces, privilege hierarchies or filesystem discovery. These rules support
+ordinary source libraries and application SDK implementations without C++
+header units or textual inclusion. Binary module distribution remains a
+separate facility; it does not gate source-module ownership.
+
 ## Outcome
 
 A source package can publish a deliberate API without exposing implementation

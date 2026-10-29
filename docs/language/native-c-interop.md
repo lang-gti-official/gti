@@ -312,10 +312,13 @@ portable, available on every target, or linked into the executable.
 
 ## Importing Existing C Headers
 
-`gti bindgen <header.h> [-o <out.gti>] [--namespace <name>]
+`gti bindgen <header.h> [-o <out.gti>] [--module <module.name>] [--namespace <name>]
 [--target <triple>] [--clang <path>] [-I <directory>]... [-D
 <macro[=value]>]... [-U <macro>]...` generates the GTI declarations for a C
-header's bounded-ABI-compatible surface. Clang preprocesses the C17
+header's bounded-ABI-compatible surface. The output is an explicit exported
+module. `--module` chooses its dotted name; otherwise the output file stem
+(or header stem for stdout) supplies a sanitized non-reserved name. The
+namespace option controls declaration names independently. Clang preprocesses the C17
 translation unit, so includes, macros, conditionals, ordered header search
 paths, and explicit definitions have their native meaning before declaration
 import. The host target is used by default; an explicit supported 64-bit

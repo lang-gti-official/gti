@@ -1,6 +1,7 @@
 #include "gti/language_queries.h"
 
 #include "gti/lexer.h"
+#include "gti/source_owner.h"
 #include "language_snippets.h"
 #include "semantic_spelling.h"
 
@@ -13,6 +14,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -756,6 +758,118 @@ void SignaturePrinter::appendRequirements(
 }
 
 namespace {
+
+struct ModuleQueryLocation {
+  SourceSpan origin;
+  const SourceUnit *interface = nullptr;
+};
+
+bool spanContains(const SourceSpan &span, std::size_t offset) {
+  return span.start <= offset && offset < span.end;
+}
+
+SourceSpan moduleNameSpan(const SourceUnit &unit) {
+  return unit.moduleDeclarationSpan.value_or(
+      tokenSpan(*unit.moduleDeclaration));
+}
+
+std::optional<ModuleQueryLocation> moduleAt(const FrontendResult &snapshot,
+                                            SourceUnitId requester,
+                                            std::size_t offset) {
+  for (const auto &import : snapshot.sourceGraph.imports()) {
+    if (import.requester != requester || !spanContains(import.name, offset) ||
+        import.resolution != SourceImportResolution::Resolved || !import.target)
+      continue;
+    const auto *target = snapshot.sourceGraph.findUnit(*import.target);
+    if (target && target->moduleDeclaration)
+      return ModuleQueryLocation{import.name, target};
+  }
+  const auto *unit = snapshot.sourceGraph.findUnit(requester);
+  if (!unit)
+    return std::nullopt;
+  if (unit->moduleDeclaration && spanContains(moduleNameSpan(*unit), offset))
+    return ModuleQueryLocation{moduleNameSpan(*unit), unit};
+  if (unit->implementationDeclaration) {
+    const auto range = unit->implementationDeclarationSpan.value_or(
+        tokenSpan(*unit->implementationDeclaration));
+    const auto *module = snapshot.sourceGraph.findModule(unit->moduleId);
+    const auto *target =
+        module ? snapshot.sourceGraph.findUnit(module->interfaceUnit) : nullptr;
+    if (spanContains(range, offset) && target && target->moduleDeclaration)
+      return ModuleQueryLocation{range, target};
+  }
+  return std::nullopt;
+}
+
+std::optional<CompletionResult>
+completeModuleImport(const FrontendResult &snapshot,
+                     const CompletionInput &input) {
+  const SourceImport *request = nullptr;
+  for (const auto &import : snapshot.sourceGraph.imports()) {
+    if (import.requester == snapshot.sourceGraph.entryUnit() &&
+        !import.quoted && import.name.start <= input.byteOffset &&
+        input.byteOffset <= import.name.end) {
+      request = &import;
+      break;
+    }
+  }
+  if (!request)
+    return std::nullopt;
+  CompletionResult result;
+  const auto registry = snapshot.sourceGraph.sourceOwners();
+  if (!registry || request->name.end > input.source.size())
+    return result;
+  const auto *entry = snapshot.sourceGraph.findUnit(request->requester);
+  const auto *owner = entry ? registry->ownerForPath(entry->path) : nullptr;
+  const std::string prefix =
+      request->completionPrefix.value_or(input.source.substr(
+          request->name.start, input.byteOffset - request->name.start));
+  struct Choice {
+    std::filesystem::path target;
+    bool ambiguous = false;
+  };
+  std::unordered_map<std::string, Choice> choices;
+  const auto add = [&](std::string name, const std::filesystem::path &path) {
+    if (entry && path == entry->path)
+      return;
+    const auto [position, added] =
+        choices.emplace(std::move(name), Choice{path});
+    if (!added)
+      position->second.ambiguous = true;
+  };
+  const auto addOwner = [&](const SourceOwnerDescriptor &selected,
+                            const std::string &alias) {
+    for (const auto &[name, path] : selected.modules) {
+      add(alias.empty() ? name : alias + "." + name, path);
+      if (!alias.empty() && name == selected.defaultModule)
+        add(alias, path);
+    }
+  };
+  if (owner) {
+    addOwner(*owner, "");
+    for (const auto &dependency : owner->dependencies)
+      if (const auto *target = registry->find(dependency.targetIdentity))
+        addOwner(*target, dependency.alias);
+  }
+  for (const auto &candidate : registry->owners())
+    if (candidate.implicitAlias)
+      addOwner(candidate, *candidate.implicitAlias);
+  for (const auto &[name, choice] : choices) {
+    if (choice.ambiguous || !name.starts_with(prefix))
+      continue;
+    result.candidates.push_back({.kind = CompletionCandidateKind::Namespace,
+                                 .label = name,
+                                 .detail = "module " + name,
+                                 .insertion = name,
+                                 .sortText = name,
+                                 .replacementRange = request->name});
+  }
+  std::sort(result.candidates.begin(), result.candidates.end(),
+            [](const auto &left, const auto &right) {
+              return left.label < right.label;
+            });
+  return result;
+}
 
 // Inspection is deliberately separate from lowering. This bounded printer
 // renders retained checked syntax and marks omissions rather than attempting
@@ -1646,6 +1760,7 @@ public:
     options.rawPointerAudit = input.rawPointerAudit;
     options.trustedBodies = input.trustedBodies;
     options.analyzeRecoveredProgram = true;
+    options.analyzeRecoveredSourceGraph = true;
     options.completionOffset = input.byteOffset;
     options.workMetrics = input.workMetrics;
     options.cache = input.cache;
@@ -1655,6 +1770,8 @@ public:
         input.entryPath, input.source, input.preludePaths,
         input.sourceOverrides, input.standardLibraryRoots,
         input.packageSourceRoots);
+    if (auto modules = completeModuleImport(snapshot, input))
+      return std::move(*modules);
     const std::optional<SemanticCompletionContext> &context =
         snapshot.semantics.completionContext();
     const SourceUnit *completionUnit =
@@ -2612,6 +2729,12 @@ private:
 std::optional<HoverInfo> LanguageQueries::hover(const FrontendResult &snapshot,
                                                 SourceUnitId sourceUnit,
                                                 std::size_t byteOffset) const {
+  if (const auto module = moduleAt(snapshot, sourceUnit, byteOffset)) {
+    return HoverInfo{.range = module->origin,
+                     .signature = "export module " +
+                                  module->interface->moduleDeclaration->lexeme +
+                                  ";"};
+  }
   return LanguageQueriesImpl().hover(snapshot, sourceUnit, byteOffset);
 }
 
@@ -2671,6 +2794,9 @@ std::optional<DefinitionInfo>
 LanguageQueries::definition(const FrontendResult &snapshot,
                             SourceUnitId sourceUnit,
                             std::size_t byteOffset) const {
+  if (const auto module = moduleAt(snapshot, sourceUnit, byteOffset))
+    return DefinitionInfo{.origin = module->origin,
+                          .target = moduleNameSpan(*module->interface)};
   return LanguageQueriesImpl().definition(snapshot, sourceUnit, byteOffset);
 }
 
@@ -2678,6 +2804,29 @@ std::optional<ReferencesInfo>
 LanguageQueries::references(const FrontendResult &snapshot,
                             SourceUnitId sourceUnit, std::size_t byteOffset,
                             bool includeDeclaration) const {
+  if (const auto module = moduleAt(snapshot, sourceUnit, byteOffset)) {
+    ReferencesInfo result;
+    if (includeDeclaration)
+      result.sites.push_back(
+          {moduleNameSpan(*module->interface), OccurrenceRole::Declaration});
+    for (const auto &import : snapshot.sourceGraph.imports())
+      if (import.target && *import.target == module->interface->id &&
+          import.resolution == SourceImportResolution::Resolved)
+        result.sites.push_back({import.name, OccurrenceRole::Reference});
+    for (const auto &unit : snapshot.sourceGraph.sourceUnits())
+      if (unit.implementationDeclaration && unit.moduleId != 0 &&
+          unit.moduleId == module->interface->moduleId)
+        result.sites.push_back({unit.implementationDeclarationSpan.value_or(
+                                    tokenSpan(*unit.implementationDeclaration)),
+                                OccurrenceRole::Reference});
+    std::sort(
+        result.sites.begin(), result.sites.end(),
+        [](const auto &left, const auto &right) {
+          return std::tie(left.span.source, left.span.start, left.span.end) <
+                 std::tie(right.span.source, right.span.start, right.span.end);
+        });
+    return result;
+  }
   return LanguageQueriesImpl().references(snapshot, sourceUnit, byteOffset,
                                           includeDeclaration);
 }

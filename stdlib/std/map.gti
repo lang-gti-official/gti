@@ -4,7 +4,7 @@ import std.vector;
 import std.memory;
 import std.functional;
 import std.utility;
-export namespace std {
+namespace std {
 namespace detail {
 struct map_node<K, V> {
   mut map_entry<K, V> entry;
@@ -17,12 +17,12 @@ struct map_node<K, V> {
       : entry(map_entry<K, V>(std::move(key), std::move(value))), parent(ancestor) {}
 };
 
-class map_sentinel {
+export class map_sentinel {
 public:
   map_sentinel() = default;
 };
 
-class map_iterator<K, V, uint64_t Reverse = 0> {
+export class map_iterator<K, V, uint64_t Reverse = 0> {
   vector<unique_ptr<map_node<K, V>>>& nodes;
   size_t root;
   mut size_t position;
@@ -204,7 +204,7 @@ public:
 
 // The inline projection is a view, not the owning node entry. Replacing or
 // moving a view cannot transfer or mutate a stored key.
-class map_mut_iterator<K, V, uint64_t Reverse = 0> {
+export class map_mut_iterator<K, V, uint64_t Reverse = 0> {
   mut map_entry_projection<K, V> projection;
 public:
   map_mut_iterator(mut vector<unique_ptr<map_node<K, V>>>& source, size_t index, size_t root)
@@ -226,7 +226,7 @@ public:
 
 /// An owning ordered dictionary. Its AVL tree stores links as slot indexes,
 /// never untracked pointers; zero is the absent link, other links are index+1.
-class map<K, V, Compare = std::less<K>> {
+export class map<K, V, Compare = std::less<K>> {
   mut vector<unique_ptr<detail::map_node<K, V>>> nodes{};
   mut vector<size_t> free_slots{};
   mut size_t root = 0;

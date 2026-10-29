@@ -765,19 +765,15 @@ namespace std { export int override_only_value() { return 0; } }
       {standardLibraryRoot()});
   const lang::SourceUnitId overlayId =
       overlayGraph.sourceUnitForPath(overlayKey);
-  const lang::SourceUnit *overlaySource = overlayGraph.findUnit(overlayId);
   expect(!overlayExists && !directOverlayLoader.hadError() &&
              directOverlaySource != nullptr &&
              !directOverlaySource->standardLibraryName.has_value() &&
              !directOverlayGraph.isCompilerTrusted(
                  directOverlayGraph.entryUnit()) &&
-             !overlayLoader.hadError() && overlayId != 0 &&
-             overlaySource != nullptr &&
-             !overlaySource->standardLibraryName.has_value() &&
-             !overlayGraph.isCompilerTrusted(overlayId),
-         "direct and imported override-only paths beneath a configured root "
-         "must not mint compiler trust without a physical standard-library "
-         "unit");
+             overlayLoader.hadError() && overlayId == 0 &&
+             hasDiagnosticCode(overlayLoader.errors(), "GTI-I0012"),
+         "direct overlay paths do not mint compiler trust and unregistered "
+         "standard imports cannot discover overlay files");
 
   const std::string privateSource =
       "import std.memory;\n"
@@ -963,6 +959,9 @@ namespace std { export class PrivateMethod { public: PrivateMethod() {} int secr
       standardLibraryRoot() / "std/import_test_wrapper.gti";
   const std::string wrapperKey =
       std::filesystem::weakly_canonical(wrapper).string();
+  auto fixtureStandard =
+      *imported.sourceGraph.sourceOwners()->findImplicitAlias("std");
+  fixtureStandard.modules.emplace_back("import_test_wrapper", wrapper);
   const lang::FrontendResult hidden = lang::Frontend().analyze(
       entry,
       "import std.import_test_wrapper;\n"
@@ -974,7 +973,7 @@ namespace std { export class PrivateMethod { public: PrivateMethod() {} int secr
 import std.array;
 namespace std { export int import_test_value() { return 0; } }
 )GTIMODULE"}},
-      {standardLibraryRoot()});
+      {standardLibraryRoot()}, {fixtureStandard});
   expect(!hidden.semanticValid &&
              hasDiagnosticCode(hidden.diagnostics, "GTI-S2024") &&
              hasDiagnosticHint(hidden.diagnostics, "import std.array;"),
@@ -985,6 +984,7 @@ namespace std { export int import_test_value() { return 0; } }
       standardLibraryRoot() / "std/char_unit.gti";
   const std::string keywordKey =
       std::filesystem::weakly_canonical(keywordUnit).string();
+  fixtureStandard.modules.emplace_back("char_unit", keywordUnit);
   const lang::FrontendResult keywordPath = lang::Frontend().analyze(
       entry,
       "import std.char_unit;\n"
@@ -994,7 +994,7 @@ namespace std { export int import_test_value() { return 0; } }
         R"GTIMODULE(export module char_unit;
 namespace std { export int keyword_path_value() { return 0; } }
 )GTIMODULE"}},
-      {standardLibraryRoot()});
+      {standardLibraryRoot()}, {fixtureStandard});
   expect(keywordPath.canGenerateCode(),
          "standard import components resolve legal names derived from GTI "
          "keywords");
@@ -1003,6 +1003,7 @@ namespace std { export int keyword_path_value() { return 0; } }
       standardLibraryRoot() / "std/template_unit.gti";
   const std::string cppKeywordKey =
       std::filesystem::weakly_canonical(cppKeywordUnit).string();
+  fixtureStandard.modules.emplace_back("template_unit", cppKeywordUnit);
   const lang::FrontendResult cppKeywordPath = lang::Frontend().analyze(
       entry,
       "import std.template_unit;\n"
@@ -1012,7 +1013,7 @@ namespace std { export int keyword_path_value() { return 0; } }
         R"GTIMODULE(export module template_unit;
 namespace std { export int cpp_keyword_path_value() { return 0; } }
 )GTIMODULE"}},
-      {standardLibraryRoot()});
+      {standardLibraryRoot()}, {fixtureStandard});
   expect(cppKeywordPath.canGenerateCode(),
          "standard import components resolve legal names derived from C++ "
          "keywords");
@@ -1022,9 +1023,8 @@ namespace std { export int cpp_keyword_path_value() { return 0; } }
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!missing.sourceValid &&
              hasDiagnosticCode(missing.diagnostics, "GTI-I0012") &&
-             hasDiagnostic(
-                 missing.diagnostics,
-                 "Standard-library module 'std.not_present' was not found"),
+             hasDiagnostic(missing.diagnostics,
+                           "does not declare public module 'not_present'"),
          "missing standard units should fail during source loading");
 
   const lang::FrontendResult malformed = lang::Frontend().analyze(
@@ -1032,7 +1032,8 @@ namespace std { export int cpp_keyword_path_value() { return 0; } }
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!malformed.sourceValid &&
              hasDiagnosticCode(malformed.diagnostics, "GTI-I0014") &&
-             hasDiagnostic(malformed.diagnostics, "module imports"),
+             hasDiagnostic(malformed.diagnostics, "removed") &&
+             hasDiagnosticHint(malformed.diagnostics, "import"),
          "malformed standard imports should explain the required spelling");
 
   const lang::TargetInfo linuxTarget{"linux", "unknown", "x86_64"};
@@ -2633,7 +2634,7 @@ void testSourceModuleResolution() {
   const auto direct =
       lang::Frontend().analyze(entry, "import lib;", {}, sources);
   expect(!direct.sourceValid &&
-             hasDiagnostic(direct.diagnostics, "owning package graph"),
+             hasDiagnostic(direct.diagnostics, "registered source owner"),
          "direct compilation must not discover named modules implicitly");
   packages[0].modules.push_back({"lib", local});
   expect(!analyze("import lib;").sourceValid,
@@ -2901,8 +2902,7 @@ int main() {
       analyze("import std.missing;\nint main() { return 0; }\n");
   expect(!missing.sourceValid &&
              hasDiagnostic(missing.diagnostics,
-                           "Standard-library module 'std.missing' was not "
-                           "found"),
+                           "does not declare public module 'missing'"),
          "an unknown standard-library module is a source-loading error");
 
   const auto throughFacade = analyze(R"(import "facade.gti";

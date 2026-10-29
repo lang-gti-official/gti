@@ -76,13 +76,13 @@ def transformed_sources(root: Path, *, failures: bool, release_marker: bool) -> 
             audit.require(text.count(anchor) == 1, "unmodified source anchor differs")
     if failures:
         string = replace_once(string, STRING_INCLUDE, STRING_INCLUDE +
-            "import std.detail_panic;\nimport std.detail_llvm_hosted_cleanup_trace;\n")
+            'import "detail/panic.gti";\nimport "detail_llvm_hosted_cleanup_trace.gti";\n')
         string = replace_once(string, CTOR, CTOR + PRIMARY)
         string = replace_once(string, MOVE, MOVE + SECONDARY)
     if release_marker:
         audit.require(failures, "post-release markers are an optional alternative-library observation")
         memory = replace_once(memory, MEMORY_INCLUDE,
-                              MEMORY_INCLUDE + "import std.detail_llvm_hosted_cleanup_trace;\n")
+                              MEMORY_INCLUDE + 'import "detail_llvm_hosted_cleanup_trace.gti";\n')
         modified_release = replace_once(RELEASE, "    unsafe { process.release(previous); }\n",
                                        "    unsafe { process.release(previous); }\n" + POST_RELEASE)
         memory = replace_once(memory, RELEASE, modified_release)

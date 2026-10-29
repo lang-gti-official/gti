@@ -23,9 +23,9 @@ export module filesystem;
 // joining is available through append()/append_path() and operator/()/operator/=().
 import std.string;
 import std.vector;
-export namespace gti_internal {
+namespace gti_internal {
 namespace filesystem_runtime {
-extern "C" {
+export extern "C" {
 uint32_t gti_rt_fs_status_v1(text_view path, uint32_t follow, uint32_t* type);
 uint32_t gti_rt_fs_measure_v1(text_view path, uint32_t operation, uint64_t* value);
 uint32_t gti_rt_fs_equivalent_v1(text_view left, text_view right, uint32_t* value);
@@ -40,7 +40,7 @@ void gti_rt_fs_result_destroy_v1(int64_t result);
 }
 
 // Unique source-defined ownership; ordinary MIR movement retires the source.
-[[no_transfer, no_share]] class filesystem_result {
+export [[no_transfer, no_share]] class filesystem_result {
   mut int64_t handle;
 public:
   filesystem_result(int64_t value) : handle(value) {}
@@ -71,11 +71,11 @@ public:
 };
 }
 
-export namespace std {
+namespace std {
   namespace filesystem {
 
     /// An owning pathname value that performs lexical path manipulation.
-    class path {
+    export class path {
     public:
       /// Constructs an empty path.
       path() {}
@@ -661,12 +661,12 @@ export namespace std {
 
   }
 }
-export namespace std {
+namespace std {
 namespace filesystem {
 
 /// Stable recoverable host errors; allocation of ordinary GTI values retains
 /// the normal defined-failure contract.
-enum class errc {
+export enum class errc {
   invalid_argument,
   not_found,
   permission_denied,
@@ -684,10 +684,10 @@ enum class errc {
   unsupported,
 };
 
-enum class file_type { not_found, regular, directory, symlink, block, character, fifo, socket, unknown };
-enum class copy_options { none, skip_existing, overwrite_existing };
+export enum class file_type { not_found, regular, directory, symlink, block, character, fifo, socket, unknown };
+export enum class copy_options { none, skip_existing, overwrite_existing };
 
-class file_status {
+export class file_status {
   file_type value;
 public:
   file_status(file_type type_value) : value(type_value) {}
@@ -696,7 +696,7 @@ public:
 
 }
 }
-export namespace gti_internal {
+namespace gti_internal {
 namespace filesystem_detail {
 std::filesystem::errc error(uint32_t code) {
   switch (code) {
@@ -767,180 +767,180 @@ expected<std::filesystem::path, std::filesystem::errc> resolve(uint32_t operatio
 }
 }
 
-export namespace std {
+namespace std {
 namespace filesystem {
 
 /// Follows symbolic links. An absent path is a successful not_found status.
-expected<file_status, errc> status(std::string_view input) {
+export expected<file_status, errc> status(std::string_view input) {
   return gti_internal::filesystem_detail::status(input, uint32_t(1));
 }
-expected<file_status, errc> status(path& input) {
+export expected<file_status, errc> status(path& input) {
   return status(input.view());
 }
 /// Inspects the link itself, including dangling links.
-expected<file_status, errc> symlink_status(std::string_view input) {
+export expected<file_status, errc> symlink_status(std::string_view input) {
   return gti_internal::filesystem_detail::status(input, uint32_t(0));
 }
-expected<file_status, errc> symlink_status(path& input) {
+export expected<file_status, errc> symlink_status(path& input) {
   return symlink_status(input.view());
 }
 
-bool exists(file_status& value) { return value.type() != file_type::not_found; }
-bool is_regular_file(file_status& value) { return value.type() == file_type::regular; }
-bool is_directory(file_status& value) { return value.type() == file_type::directory; }
-bool is_symlink(file_status& value) { return value.type() == file_type::symlink; }
+export bool exists(file_status& value) { return value.type() != file_type::not_found; }
+export bool is_regular_file(file_status& value) { return value.type() == file_type::regular; }
+export bool is_directory(file_status& value) { return value.type() == file_type::directory; }
+export bool is_symlink(file_status& value) { return value.type() == file_type::symlink; }
 
-expected<bool, errc> exists(std::string_view input) {
+export expected<bool, errc> exists(std::string_view input) {
   file_status observed = ?status(input);
   return exists(observed);
 }
-expected<bool, errc> exists(path& input) { return exists(input.view()); }
+export expected<bool, errc> exists(path& input) { return exists(input.view()); }
 
-expected<bool, errc> is_regular_file(std::string_view input) {
+export expected<bool, errc> is_regular_file(std::string_view input) {
   file_status observed = ?status(input);
   return is_regular_file(observed);
 }
-expected<bool, errc> is_regular_file(path& input) { return is_regular_file(input.view()); }
+export expected<bool, errc> is_regular_file(path& input) { return is_regular_file(input.view()); }
 
-expected<bool, errc> is_directory(std::string_view input) {
+export expected<bool, errc> is_directory(std::string_view input) {
   file_status observed = ?status(input);
   return is_directory(observed);
 }
-expected<bool, errc> is_directory(path& input) { return is_directory(input.view()); }
+export expected<bool, errc> is_directory(path& input) { return is_directory(input.view()); }
 
-expected<bool, errc> is_symlink(std::string_view input) {
+export expected<bool, errc> is_symlink(std::string_view input) {
   file_status observed = ?symlink_status(input);
   return is_symlink(observed);
 }
-expected<bool, errc> is_symlink(path& input) { return is_symlink(input.view()); }
+export expected<bool, errc> is_symlink(path& input) { return is_symlink(input.view()); }
 
-expected<uint64_t, errc> file_size(std::string_view input) {
+export expected<uint64_t, errc> file_size(std::string_view input) {
   mut uint64_t value = 0;
   mut uint32_t code = 0;
   unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_measure_v1(input, uint32_t(0), &value); }
   if (code != uint32_t(0)) { return unexpected(gti_internal::filesystem_detail::error(code)); }
   return value;
 }
-expected<uint64_t, errc> file_size(path& input) { return file_size(input.view()); }
+export expected<uint64_t, errc> file_size(path& input) { return file_size(input.view()); }
 
-expected<bool, errc> is_empty(std::string_view input) {
+export expected<bool, errc> is_empty(std::string_view input) {
   mut uint64_t value = 0;
   mut uint32_t code = 0;
   unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_measure_v1(input, uint32_t(1), &value); }
   if (code != uint32_t(0)) { return unexpected(gti_internal::filesystem_detail::error(code)); }
   return value != uint64_t(0);
 }
-expected<bool, errc> is_empty(path& input) { return is_empty(input.view()); }
+export expected<bool, errc> is_empty(path& input) { return is_empty(input.view()); }
 
-expected<bool, errc> equivalent(std::string_view left, std::string_view right) {
+export expected<bool, errc> equivalent(std::string_view left, std::string_view right) {
   mut uint32_t value = 0;
   mut uint32_t code = 0;
   unsafe { code = gti_internal::filesystem_runtime::gti_rt_fs_equivalent_v1(left, right, &value); }
   if (code != uint32_t(0)) { return unexpected(gti_internal::filesystem_detail::error(code)); }
   return value != uint32_t(0);
 }
-expected<bool, errc> equivalent(path& left, path& right) { return equivalent(left.view(), right.view()); }
+export expected<bool, errc> equivalent(path& left, path& right) { return equivalent(left.view(), right.view()); }
 
-expected<bool, errc> create_directory(std::string_view input) {
+export expected<bool, errc> create_directory(std::string_view input) {
   uint64_t value = ?gti_internal::filesystem_detail::mutate(uint32_t(0), input, "", uint32_t(0));
   return value != uint64_t(0);
 }
-expected<bool, errc> create_directory(path& input) { return create_directory(input.view()); }
+export expected<bool, errc> create_directory(path& input) { return create_directory(input.view()); }
 
-expected<bool, errc> create_directories(std::string_view input) {
+export expected<bool, errc> create_directories(std::string_view input) {
   uint64_t value = ?gti_internal::filesystem_detail::mutate(uint32_t(1), input, "", uint32_t(0));
   return value != uint64_t(0);
 }
-expected<bool, errc> create_directories(path& input) { return create_directories(input.view()); }
+export expected<bool, errc> create_directories(path& input) { return create_directories(input.view()); }
 
-expected<bool, errc> remove(std::string_view input) {
+export expected<bool, errc> remove(std::string_view input) {
   uint64_t value = ?gti_internal::filesystem_detail::mutate(uint32_t(2), input, "", uint32_t(0));
   return value != uint64_t(0);
 }
-expected<bool, errc> remove(path& input) { return remove(input.view()); }
+export expected<bool, errc> remove(path& input) { return remove(input.view()); }
 
-expected<uint64_t, errc> remove_all(std::string_view input) {
+export expected<uint64_t, errc> remove_all(std::string_view input) {
   uint64_t value = ?gti_internal::filesystem_detail::mutate(uint32_t(3), input, "", uint32_t(0));
   return value;
 }
-expected<uint64_t, errc> remove_all(path& input) { return remove_all(input.view()); }
+export expected<uint64_t, errc> remove_all(path& input) { return remove_all(input.view()); }
 
-expected<void, errc> current_path(std::string_view input) {
+export expected<void, errc> current_path(std::string_view input) {
   uint64_t value = ?gti_internal::filesystem_detail::mutate(uint32_t(8), input, "", uint32_t(0));
   return;
 }
-expected<void, errc> current_path(path& input) { ?current_path(input.view()); return; }
+export expected<void, errc> current_path(path& input) { ?current_path(input.view()); return; }
 
-expected<void, errc> rename(std::string_view first, std::string_view second) {
+export expected<void, errc> rename(std::string_view first, std::string_view second) {
   uint64_t changed = ?gti_internal::filesystem_detail::mutate(uint32_t(4), first, second, uint32_t(0));
   return;
 }
-expected<void, errc> rename(path& first, path& second) { ?rename(first.view(), second.view()); return; }
+export expected<void, errc> rename(path& first, path& second) { ?rename(first.view(), second.view()); return; }
 
-expected<void, errc> create_symlink(std::string_view first, std::string_view second) {
+export expected<void, errc> create_symlink(std::string_view first, std::string_view second) {
   uint64_t changed = ?gti_internal::filesystem_detail::mutate(uint32_t(6), first, second, uint32_t(0));
   return;
 }
-expected<void, errc> create_symlink(path& first, path& second) { ?create_symlink(first.view(), second.view()); return; }
+export expected<void, errc> create_symlink(path& first, path& second) { ?create_symlink(first.view(), second.view()); return; }
 
-expected<void, errc> create_directory_symlink(std::string_view first, std::string_view second) {
+export expected<void, errc> create_directory_symlink(std::string_view first, std::string_view second) {
   uint64_t changed = ?gti_internal::filesystem_detail::mutate(uint32_t(7), first, second, uint32_t(0));
   return;
 }
-expected<void, errc> create_directory_symlink(path& first, path& second) { ?create_directory_symlink(first.view(), second.view()); return; }
+export expected<void, errc> create_directory_symlink(path& first, path& second) { ?create_directory_symlink(first.view(), second.view()); return; }
 
-expected<void, errc> create_hard_link(std::string_view first, std::string_view second) {
+export expected<void, errc> create_hard_link(std::string_view first, std::string_view second) {
   uint64_t changed = ?gti_internal::filesystem_detail::mutate(uint32_t(9), first, second, uint32_t(0));
   return;
 }
-expected<void, errc> create_hard_link(path& first, path& second) { ?create_hard_link(first.view(), second.view()); return; }
+export expected<void, errc> create_hard_link(path& first, path& second) { ?create_hard_link(first.view(), second.view()); return; }
 
 /// Copies regular-file contents. Existing destinations fail unless the caller
 /// explicitly chooses skip_existing or overwrite_existing. Symlinks are followed.
-expected<bool, errc> copy_file(std::string_view from, std::string_view to, copy_options options) {
+export expected<bool, errc> copy_file(std::string_view from, std::string_view to, copy_options options) {
   mut uint32_t option = 0;
   if (options == copy_options::skip_existing) { option = uint32_t(1); }
   if (options == copy_options::overwrite_existing) { option = uint32_t(2); }
   uint64_t value = ?gti_internal::filesystem_detail::mutate(uint32_t(5), from, to, option);
   return value != uint64_t(0);
 }
-expected<bool, errc> copy_file(std::string_view from, std::string_view to) { return copy_file(from, to, copy_options::none); }
-expected<bool, errc> copy_file(path& from, path& to, copy_options options) { return copy_file(from.view(), to.view(), options); }
-expected<bool, errc> copy_file(path& from, path& to) { return copy_file(from.view(), to.view(), copy_options::none); }
+export expected<bool, errc> copy_file(std::string_view from, std::string_view to) { return copy_file(from, to, copy_options::none); }
+export expected<bool, errc> copy_file(path& from, path& to, copy_options options) { return copy_file(from.view(), to.view(), options); }
+export expected<bool, errc> copy_file(path& from, path& to) { return copy_file(from.view(), to.view(), copy_options::none); }
 
-expected<path, errc> current_path() {
+export expected<path, errc> current_path() {
   return gti_internal::filesystem_detail::resolve(uint32_t(0), "");
 }
 
 
-expected<path, errc> absolute(std::string_view input) {
+export expected<path, errc> absolute(std::string_view input) {
   return gti_internal::filesystem_detail::resolve(uint32_t(1), input);
 }
-expected<path, errc> absolute(path& input) { return absolute(input.view()); }
+export expected<path, errc> absolute(path& input) { return absolute(input.view()); }
 
-expected<path, errc> canonical(std::string_view input) {
+export expected<path, errc> canonical(std::string_view input) {
   return gti_internal::filesystem_detail::resolve(uint32_t(2), input);
 }
-expected<path, errc> canonical(path& input) { return canonical(input.view()); }
+export expected<path, errc> canonical(path& input) { return canonical(input.view()); }
 
-expected<path, errc> weakly_canonical(std::string_view input) {
+export expected<path, errc> weakly_canonical(std::string_view input) {
   return gti_internal::filesystem_detail::resolve(uint32_t(3), input);
 }
-expected<path, errc> weakly_canonical(path& input) { return weakly_canonical(input.view()); }
+export expected<path, errc> weakly_canonical(path& input) { return weakly_canonical(input.view()); }
 
-expected<path, errc> temp_directory_path() {
+export expected<path, errc> temp_directory_path() {
   return gti_internal::filesystem_detail::resolve(uint32_t(4), "");
 }
 
 
-expected<path, errc> read_symlink(std::string_view input) {
+export expected<path, errc> read_symlink(std::string_view input) {
   return gti_internal::filesystem_detail::resolve(uint32_t(5), input);
 }
-expected<path, errc> read_symlink(path& input) { return read_symlink(input.view()); }
+export expected<path, errc> read_symlink(path& input) { return read_symlink(input.view()); }
 
 /// A move-only, nonrecursive directory stream. open() starts before the first
 /// entry; next() returns true for each available entry and false at end.
-class directory_iterator {
+export class directory_iterator {
   mut gti_internal::filesystem_result owner;
   mut bool available = false;
   directory_iterator(gti_internal::filesystem_result value) : owner(std::move(value)) {}
@@ -974,7 +974,7 @@ public:
 
 /// Collects directory entries into an owning range. Host order is unspecified;
 /// concurrent directory changes do not produce an atomic snapshot.
-expected<std::vector<path>, errc> directory_entries(std::string_view input) {
+export expected<std::vector<path>, errc> directory_entries(std::string_view input) {
   mut directory_iterator iterator = ?directory_iterator::open(input);
   mut std::vector<path> entries = std::vector<path>();
   for (;;) {
@@ -985,7 +985,7 @@ expected<std::vector<path>, errc> directory_entries(std::string_view input) {
   }
   return std::move(entries);
 }
-expected<std::vector<path>, errc> directory_entries(path& input) { return directory_entries(input.view()); }
+export expected<std::vector<path>, errc> directory_entries(path& input) { return directory_entries(input.view()); }
 
 }
 }

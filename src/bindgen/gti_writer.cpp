@@ -146,7 +146,7 @@ std::string writeGtiBindings(const BindingPlan &plan,
   out << "// Imported declarations: " << plan.importedCount()
       << "; skipped: " << plan.skippedCount() << ".\n\n";
 
-  out << "export module bindings;\n\n";
+  out << "export module " << plan.options.moduleName << ";\n\n";
   const bool namespaced = !plan.options.namespaceName.empty();
   const std::string_view indent = namespaced ? "  " : "";
   if (namespaced) {

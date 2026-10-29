@@ -2,7 +2,7 @@ export module string_view;
 
 import std.iterator;
 import "detail/iterator.gti";
-export namespace std::detail {
+namespace std::detail {
 class text_view_sentinel {
   size_t final_position;
 public:
@@ -68,54 +68,54 @@ public:
 };
 }
 
-export namespace gti_internal {
+namespace gti_internal {
 // Trusted declaration identities bind builtin member syntax to these ordinary
 // source functions. They do not become backend-known iteration operations.
-std::detail::text_view_iterator<0> text_view_begin(std::string_view& view) {
+export std::detail::text_view_iterator<0> text_view_begin(std::string_view& view) {
   return std::detail::text_view_iterator<0>(view, std::size_t(0));
 }
-std::detail::text_view_iterator<0> text_view_cbegin(std::string_view& view) {
+export std::detail::text_view_iterator<0> text_view_cbegin(std::string_view& view) {
   return text_view_begin(view);
 }
-std::detail::text_view_sentinel text_view_end(std::string_view& view) {
+export std::detail::text_view_sentinel text_view_end(std::string_view& view) {
   return std::detail::text_view_sentinel(view.size());
 }
-std::detail::text_view_sentinel text_view_cend(std::string_view& view) {
+export std::detail::text_view_sentinel text_view_cend(std::string_view& view) {
   return text_view_end(view);
 }
-std::detail::text_view_iterator<0> text_view_end_iterator(std::string_view& view) {
+export std::detail::text_view_iterator<0> text_view_end_iterator(std::string_view& view) {
   return std::detail::text_view_iterator<0>(view, view.size());
 }
-std::detail::text_view_iterator<0> text_view_iterator_at(std::string_view& view, std::size_t position) {
+export std::detail::text_view_iterator<0> text_view_iterator_at(std::string_view& view, std::size_t position) {
   return std::detail::text_view_iterator<0>(view, position);
 }
-std::detail::text_view_iterator<1> text_view_rbegin(std::string_view& view) {
+export std::detail::text_view_iterator<1> text_view_rbegin(std::string_view& view) {
   return std::detail::text_view_iterator<1>(view, view.size());
 }
-std::detail::text_view_iterator<1> text_view_crbegin(std::string_view& view) {
+export std::detail::text_view_iterator<1> text_view_crbegin(std::string_view& view) {
   return text_view_rbegin(view);
 }
-std::detail::text_view_sentinel text_view_rend(std::string_view& view) {
+export std::detail::text_view_sentinel text_view_rend(std::string_view& view) {
   return std::detail::text_view_sentinel(std::size_t(0));
 }
-std::detail::text_view_sentinel text_view_crend(std::string_view& view) {
+export std::detail::text_view_sentinel text_view_crend(std::string_view& view) {
   return text_view_rend(view);
 }
-std::detail::text_view_iterator<1> text_view_rend_iterator(std::string_view& view) {
+export std::detail::text_view_iterator<1> text_view_rend_iterator(std::string_view& view) {
   return std::detail::text_view_iterator<1>(view, std::size_t(0));
 }
-std::detail::text_view_iterator<1> text_view_reverse_iterator_at(std::string_view& view, std::size_t position) {
+export std::detail::text_view_iterator<1> text_view_reverse_iterator_at(std::string_view& view, std::size_t position) {
   return std::detail::text_view_iterator<1>(view, position);
 }
 }
 
-export namespace std {
-detail::text_view_iterator<0> begin(std::string_view& view) { return gti_internal::text_view_begin(view); }
-detail::text_view_sentinel end(std::string_view& view) { return gti_internal::text_view_end(view); }
-detail::text_view_iterator<0> cbegin(std::string_view& view) { return gti_internal::text_view_cbegin(view); }
-detail::text_view_sentinel cend(std::string_view& view) { return gti_internal::text_view_cend(view); }
-detail::text_view_iterator<1> rbegin(std::string_view& view) { return gti_internal::text_view_rbegin(view); }
-detail::text_view_sentinel rend(std::string_view& view) { return gti_internal::text_view_rend(view); }
-detail::text_view_iterator<1> crbegin(std::string_view& view) { return gti_internal::text_view_crbegin(view); }
-detail::text_view_sentinel crend(std::string_view& view) { return gti_internal::text_view_crend(view); }
+namespace std {
+export detail::text_view_iterator<0> begin(std::string_view& view) { return gti_internal::text_view_begin(view); }
+export detail::text_view_sentinel end(std::string_view& view) { return gti_internal::text_view_end(view); }
+export detail::text_view_iterator<0> cbegin(std::string_view& view) { return gti_internal::text_view_cbegin(view); }
+export detail::text_view_sentinel cend(std::string_view& view) { return gti_internal::text_view_cend(view); }
+export detail::text_view_iterator<1> rbegin(std::string_view& view) { return gti_internal::text_view_rbegin(view); }
+export detail::text_view_sentinel rend(std::string_view& view) { return gti_internal::text_view_rend(view); }
+export detail::text_view_iterator<1> crbegin(std::string_view& view) { return gti_internal::text_view_crbegin(view); }
+export detail::text_view_sentinel crend(std::string_view& view) { return gti_internal::text_view_crend(view); }
 }

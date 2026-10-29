@@ -277,6 +277,69 @@ auto SemanticVisitor::Impl::sourceUnitFor(const Token &token) const
                                 : sourceGraph->sourceUnitForPath(token.source);
 }
 
+DeclarationOwner
+SemanticVisitor::Impl::declarationOwner(SourceUnitId unit) const {
+  if (sourceGraph == nullptr)
+    return {};
+  const ModuleId module = sourceGraph->moduleForUnit(unit);
+  return module != 0 ? DeclarationOwner{module, 0} : DeclarationOwner{0, unit};
+}
+
+bool SemanticVisitor::Impl::reportAmbiguousName(const Token &use,
+                                                const std::string &name) {
+  std::vector<Token> declarations;
+  const auto append = [&](const auto &index, const std::string &qualified,
+                          const auto &location) {
+    if (const auto *candidates = index.ambiguousCandidates(qualified))
+      for (const auto &candidate : *candidates)
+        declarations.push_back(location(candidate));
+    else if (const auto candidate = index.find(qualified);
+             candidate != index.end())
+      declarations.push_back(location(candidate->second));
+  };
+  for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
+    const auto qualified = qualifiedName(currentNamespace, depth - 1, name);
+    append(currentClassIds(), qualified,
+           [&](ClassId id) { return classInfo(id).name; });
+    append(currentEnumIds(), qualified,
+           [&](EnumId id) { return enums[id - 1].name; });
+    append(currentTypeAliasIds(), qualified, [&](TypeAliasId id) {
+      return typeAliases[id - 1].declaration->name();
+    });
+    append(currentConceptIds(), qualified,
+           [&](ConceptId id) { return concepts[id - 1].declaration->name(); });
+    append(currentNamespaceSymbols(), qualified,
+           [](const Symbol &symbol) { return symbol.declaration; });
+    if (const auto aliases = visibleNamespaceAliases.find(currentSourceUnit);
+        aliases != visibleNamespaceAliases.end())
+      append(aliases->second, qualified,
+             [](const NamespaceAliasInfo &alias) { return alias.declaration; });
+    if (!declarations.empty())
+      break;
+  }
+  std::unordered_set<std::string> locations;
+  std::erase_if(declarations, [&](const Token &declaration) {
+    return !locations
+                .insert(declaration.source + ":" +
+                        std::to_string(declaration.position))
+                .second;
+  });
+  if (declarations.size() < 2)
+    return false;
+  const std::string key = use.source + ":" + std::to_string(use.position);
+  if (!catalog.ambiguousPublications.insert(key).second)
+    return true;
+  auto diagnostic = makeDiagnostic(
+      "GTI-S2006", DiagnosticPhase::Semantics, use,
+      "Name '" + name +
+          "' refers to distinct declarations from imported modules.");
+  for (const auto &declaration : declarations)
+    diagnostic.related.push_back(
+        {tokenSpan(declaration), "Candidate declaration is here."});
+  diagnostics.push_back(std::move(diagnostic));
+  return true;
+}
+
 bool SemanticVisitor::Impl::declarationVisible(SourceUnitId declaration,
                                                const Token &name) const {
   if (sourceGraph == nullptr ||
@@ -495,11 +558,14 @@ auto SemanticVisitor::Impl::publishNamespace(const std::string &name,
 auto SemanticVisitor::Impl::publishNamespaceAlias(
     const std::string &name, const NamespaceAliasInfo &alias,
     const Token &token) -> void {
-  forEachSourceConsumer(alias.sourceUnit, alias.compilerPrivate, token.position,
-                        [&](SourceUnitId consumer) {
-                          visibleNamespaceAliases[consumer].insert_or_assign(
-                              name, alias);
-                        });
+  forEachSourceConsumer(
+      alias.sourceUnit, alias.compilerPrivate, token.position,
+      [&](SourceUnitId consumer) {
+        auto [previous, inserted] =
+            visibleNamespaceAliases[consumer].emplace(name, alias);
+        if (!inserted && previous->second.sourceUnit != alias.sourceUnit)
+          visibleNamespaceAliases[consumer].addAlternative(name, alias);
+      });
 }
 
 auto SemanticVisitor::Impl::publishTypeAlias(const std::string &name,
@@ -510,7 +576,10 @@ auto SemanticVisitor::Impl::publishTypeAlias(const std::string &name,
       declaration, compilerPrivate || isCompilerPrivateQualifiedName(name),
       typeAliases[id - 1].declaration->name().position,
       [&](SourceUnitId consumer) {
-        visibleTypeAliasIds[consumer].insert_or_assign(name, id);
+        auto [existing, inserted] =
+            visibleTypeAliasIds[consumer].emplace(name, id);
+        if (!inserted && existing->second != id)
+          visibleTypeAliasIds[consumer].addAlternative(name, id);
       });
 }
 
@@ -520,7 +589,10 @@ auto SemanticVisitor::Impl::publishConcept(const std::string &name,
                                            const Token &token) -> void {
   forEachSourceConsumer(declaration, isCompilerPrivateQualifiedName(name),
                         token.position, [&](SourceUnitId consumer) {
-                          visibleConceptIds[consumer].insert_or_assign(name,
+                          auto [existing, inserted] =
+                              visibleConceptIds[consumer].emplace(name, id);
+                          if (!inserted && existing->second != id)
+                            visibleConceptIds[consumer].addAlternative(name,
                                                                        id);
                         });
 }
@@ -530,7 +602,10 @@ auto SemanticVisitor::Impl::publishClass(const std::string &name, ClassId id,
                                          const Token &token) -> void {
   forEachSourceConsumer(declaration, isCompilerPrivateQualifiedName(name),
                         token.position, [&](SourceUnitId consumer) {
-                          visibleClassIds[consumer].insert_or_assign(name, id);
+                          auto [existing, inserted] =
+                              visibleClassIds[consumer].emplace(name, id);
+                          if (!inserted && existing->second != id)
+                            visibleClassIds[consumer].addAlternative(name, id);
                         });
 }
 
@@ -539,17 +614,20 @@ auto SemanticVisitor::Impl::publishEnum(const std::string &name, EnumId id,
                                         const Token &token) -> void {
   forEachSourceConsumer(declaration, isCompilerPrivateQualifiedName(name),
                         token.position, [&](SourceUnitId consumer) {
-                          visibleEnumIds[consumer].insert_or_assign(name, id);
+                          auto [existing, inserted] =
+                              visibleEnumIds[consumer].emplace(name, id);
+                          if (!inserted && existing->second != id)
+                            visibleEnumIds[consumer].addAlternative(name, id);
                         });
 }
 
 auto SemanticVisitor::Impl::activeNamespaceSymbols()
-    -> std::unordered_map<std::string, Symbol> & {
+    -> DeclarationIndex<Symbol> & {
   return catalog.sealed ? valueFlow.namespaceSymbols : catalog.namespaceSymbols;
 }
 
 auto SemanticVisitor::Impl::activeNamespaceSymbols() const
-    -> const std::unordered_map<std::string, Symbol> & {
+    -> const DeclarationIndex<Symbol> & {
   return catalog.sealed ? valueFlow.namespaceSymbols : catalog.namespaceSymbols;
 }
 
@@ -595,13 +673,18 @@ auto SemanticVisitor::Impl::publishNamespaceSymbol(const std::string &name,
           published.compilerPrivate = false;
         }
         auto &symbols = activeVisibleNamespaceSymbols()[consumer];
-        const auto existing = symbols.find(name);
+        const auto existing = symbols.find(name, DeclarationOwner{});
         if (existing == symbols.end()) {
           symbols.emplace(name, std::move(published));
           return;
         }
         if (existing->second.type != SemanticType::Function ||
             published.type != SemanticType::Function) {
+          if (existing->second.declaration.source !=
+                  published.declaration.source ||
+              existing->second.declaration.position !=
+                  published.declaration.position)
+            symbols.addAlternative(name, published);
           return;
         }
         existing->second.overloads.insert(existing->second.overloads.end(),
@@ -641,7 +724,7 @@ auto SemanticVisitor::Impl::findNamespaceAlias(const std::string &name) const
 }
 
 auto SemanticVisitor::Impl::currentNamespaceSymbols() const
-    -> const std::unordered_map<std::string, Symbol> & {
+    -> const DeclarationIndex<Symbol> & {
   if (sourceGraph == nullptr || currentSourceUnit == 0) {
     return activeNamespaceSymbols();
   }
@@ -650,12 +733,12 @@ auto SemanticVisitor::Impl::currentNamespaceSymbols() const
   if (found != visible.end()) {
     return found->second;
   }
-  static const std::unordered_map<std::string, Symbol> empty;
+  static const DeclarationIndex<Symbol> empty;
   return empty;
 }
 
 auto SemanticVisitor::Impl::currentNamespaceSymbolsMutable()
-    -> std::unordered_map<std::string, Symbol> * {
+    -> DeclarationIndex<Symbol> * {
   if (sourceGraph == nullptr || currentSourceUnit == 0) {
     return &activeNamespaceSymbols();
   }
@@ -665,7 +748,7 @@ auto SemanticVisitor::Impl::currentNamespaceSymbolsMutable()
 }
 
 auto SemanticVisitor::Impl::currentClassIds() const
-    -> const std::unordered_map<std::string, ClassId> & {
+    -> const DeclarationIndex<ClassId> & {
   if (sourceGraph == nullptr || currentSourceUnit == 0) {
     return classIds;
   }
@@ -673,12 +756,12 @@ auto SemanticVisitor::Impl::currentClassIds() const
   if (found != visibleClassIds.end()) {
     return found->second;
   }
-  static const std::unordered_map<std::string, ClassId> empty;
+  static const DeclarationIndex<ClassId> empty;
   return empty;
 }
 
 auto SemanticVisitor::Impl::currentEnumIds() const
-    -> const std::unordered_map<std::string, EnumId> & {
+    -> const DeclarationIndex<EnumId> & {
   if (sourceGraph == nullptr || currentSourceUnit == 0) {
     return enumIds;
   }
@@ -686,12 +769,12 @@ auto SemanticVisitor::Impl::currentEnumIds() const
   if (found != visibleEnumIds.end()) {
     return found->second;
   }
-  static const std::unordered_map<std::string, EnumId> empty;
+  static const DeclarationIndex<EnumId> empty;
   return empty;
 }
 
 auto SemanticVisitor::Impl::currentTypeAliasIds() const
-    -> const std::unordered_map<std::string, TypeAliasId> & {
+    -> const DeclarationIndex<TypeAliasId> & {
   if (sourceGraph == nullptr || currentSourceUnit == 0) {
     return typeAliasIds;
   }
@@ -699,12 +782,12 @@ auto SemanticVisitor::Impl::currentTypeAliasIds() const
   if (found != visibleTypeAliasIds.end()) {
     return found->second;
   }
-  static const std::unordered_map<std::string, TypeAliasId> empty;
+  static const DeclarationIndex<TypeAliasId> empty;
   return empty;
 }
 
 auto SemanticVisitor::Impl::currentConceptIds() const
-    -> const std::unordered_map<std::string, ConceptId> & {
+    -> const DeclarationIndex<ConceptId> & {
   if (sourceGraph == nullptr || currentSourceUnit == 0) {
     return conceptIds;
   }
@@ -712,7 +795,7 @@ auto SemanticVisitor::Impl::currentConceptIds() const
   if (found != visibleConceptIds.end()) {
     return found->second;
   }
-  static const std::unordered_map<std::string, ConceptId> empty;
+  static const DeclarationIndex<ConceptId> empty;
   return empty;
 }
 
@@ -773,8 +856,9 @@ auto SemanticVisitor::Impl::registerNamespaceAliases(
         const std::string name = qualifiedName(scope, alias->name().lexeme);
         NamespaceAliasInfo poisoned{.target = "gti_internal",
                                     .sourceUnit = currentSourceUnit,
-                                    .compilerPrivate = true};
-        namespaceAliases.insert_or_assign(name, poisoned);
+                                    .compilerPrivate = true,
+                                    .declaration = alias->name()};
+        namespaceAliases.insert_or_assign(name, poisoned, declarationOwner());
         visibleNamespaceAliases[currentSourceUnit].insert_or_assign(
             name, std::move(poisoned));
         continue;
@@ -788,7 +872,8 @@ auto SemanticVisitor::Impl::registerNamespaceAliases(
       }
 
       const std::string name = qualifiedName(scope, alias->name().lexeme);
-      if (namespaces.contains(name) || namespaceAliases.contains(name)) {
+      if (namespaceIsVisible(name) ||
+          namespaceAliases.contains(name, declarationOwner())) {
         report(alias->name(),
                "Duplicate declaration of '" + alias->name().lexeme + "'.");
         continue;
@@ -797,12 +882,13 @@ auto SemanticVisitor::Impl::registerNamespaceAliases(
           .target = *targetNamespace,
           .sourceUnit = currentSourceUnit,
           .compilerPrivate = isCompilerPrivateQualifiedName(name) ||
-                             isCompilerPrivateQualifiedName(*targetNamespace)};
-      namespaceAliases.emplace(name, info);
+                             isCompilerPrivateQualifiedName(*targetNamespace),
+          .declaration = alias->name()};
       const SymbolId symbol =
           recordToolingSymbol(alias->name(), SymbolKind::NamespaceAlias, name,
                               SemanticType::Unknown);
-      namespaceToolingSymbols.try_emplace(name, symbol);
+      info.symbol = symbol;
+      namespaceAliases.emplace(name, info, declarationOwner());
       publishNamespaceAlias(name, info, alias->name());
     } else if (const auto *namespaceDecl =
                    stmtAs<NamespaceDecl>(statement.get())) {
@@ -820,13 +906,15 @@ auto SemanticVisitor::Impl::registerTypeAlias(
     AccessModifier access) -> void {
   currentSourceUnit = sourceUnitFor(alias.name());
   const std::string qualified = qualifiedName(lookupScope, alias.name().lexeme);
-  const auto duplicate =
-      std::find_if(typeAliases.begin(), typeAliases.end(),
-                   [&](const RegisteredTypeAlias &other) {
-                     return other.qualifiedName == qualified &&
-                            other.ownerDeclaration == owner;
-                   });
-  if (namespaces.contains(qualified) || namespaceAliases.contains(qualified) ||
+  const auto duplicate = std::find_if(
+      typeAliases.begin(), typeAliases.end(),
+      [&](const RegisteredTypeAlias &other) {
+        return other.qualifiedName == qualified &&
+               other.ownerDeclaration == owner &&
+               declarationOwner(other.sourceUnit) == declarationOwner();
+      });
+  if (namespaceIsVisible(qualified) ||
+      namespaceAliases.contains(qualified, declarationOwner()) ||
       duplicate != typeAliases.end()) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2006", DiagnosticPhase::Semantics, alias.name(),
@@ -851,7 +939,7 @@ auto SemanticVisitor::Impl::registerTypeAlias(
 
   const TypeAliasId id = typeAliases.size() + 1;
   if (owner == nullptr) {
-    typeAliasIds.emplace(qualified, id);
+    typeAliasIds.emplace(qualified, id, declarationOwner());
   }
   typeAliases.push_back({.sourceUnit = currentSourceUnit,
                          .declaration = &alias,
@@ -997,14 +1085,17 @@ auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
       currentSourceUnit = sourceUnitFor(declaration->name());
       const std::string qualified =
           qualifiedName(scope, declaration->name().lexeme);
-      if (namespaces.contains(qualified) ||
-          namespaceAliases.contains(qualified) ||
-          typeAliasIds.contains(qualified) || enumIds.contains(qualified) ||
-          classIds.contains(qualified) || conceptIds.contains(qualified)) {
+      if (namespaceIsVisible(qualified) ||
+          namespaceAliases.contains(qualified, declarationOwner()) ||
+          typeAliasIds.contains(qualified, declarationOwner()) ||
+          enumIds.contains(qualified, declarationOwner()) ||
+          classIds.contains(qualified, declarationOwner()) ||
+          conceptIds.contains(qualified, declarationOwner())) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2006", DiagnosticPhase::Semantics, declaration->name(),
             "Duplicate declaration of '" + declaration->name().lexeme + "'.");
-        if (const auto existing = conceptIds.find(qualified);
+        if (const auto existing =
+                conceptIds.find(qualified, declarationOwner());
             existing != conceptIds.end()) {
           diagnostic.related.push_back(
               {tokenSpan(concepts[existing->second - 1].declaration->name()),
@@ -1043,7 +1134,7 @@ auto SemanticVisitor::Impl::registerConcepts(const StmtList &statements,
             qualified + "::" + parameter.lexeme,
             SemanticType::typeParameter(parameterId), false, false));
       }
-      conceptIds.emplace(qualified, id);
+      conceptIds.emplace(qualified, id, declarationOwner());
       conceptDeclIds.emplace(declaration, id);
       publishConcept(qualified, id, currentSourceUnit, declaration->name());
       concepts.push_back({.id = id,
@@ -1733,13 +1824,14 @@ auto SemanticVisitor::Impl::registerEnums(const StmtList &statements,
 
     currentSourceUnit = sourceUnitFor(enumDecl->name());
     const std::string qualified = qualifiedName(scope, enumDecl->name().lexeme);
-    if (namespaces.contains(qualified) ||
-        namespaceAliases.contains(qualified) ||
-        typeAliasIds.contains(qualified) || enumIds.contains(qualified)) {
+    if (namespaceIsVisible(qualified) ||
+        namespaceAliases.contains(qualified, declarationOwner()) ||
+        typeAliasIds.contains(qualified, declarationOwner()) ||
+        enumIds.contains(qualified, declarationOwner())) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2006", DiagnosticPhase::Semantics, enumDecl->name(),
           "Duplicate declaration of '" + enumDecl->name().lexeme + "'.");
-      if (const auto existing = enumIds.find(qualified);
+      if (const auto existing = enumIds.find(qualified, declarationOwner());
           existing != enumIds.end()) {
         diagnostic.related.push_back(
             {tokenSpan(enums[existing->second - 1].name),
@@ -1777,7 +1869,7 @@ auto SemanticVisitor::Impl::registerEnums(const StmtList &statements,
     }
 
     const EnumId id = enums.size() + 1;
-    enumIds.emplace(qualified, id);
+    enumIds.emplace(qualified, id, declarationOwner());
     publishEnum(qualified, id, currentSourceUnit, enumDecl->name());
     enums.push_back(EnumInfo{.id = id,
                              .sourceUnit = currentSourceUnit,
@@ -2821,7 +2913,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       const std::string qualified =
           qualifiedName(scope, classDecl->name().lexeme);
       ClassId familyPrimary = 0;
-      if (const auto existing = classIds.find(qualified);
+      if (const auto existing = classIds.find(qualified, declarationOwner());
           existing != classIds.end()) {
         const ClassInfo &first = classInfo(existing->second);
         const auto key = signatureClassKey(*classDecl);
@@ -2851,15 +2943,17 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
             familyPrimary = existing->second;
         }
       }
-      if (namespaces.contains(qualified) ||
-          namespaceAliases.contains(qualified) ||
-          typeAliasIds.contains(qualified) || enumIds.contains(qualified) ||
-          (classIds.contains(qualified) && familyPrimary == 0) ||
-          conceptIds.contains(qualified)) {
+      if (namespaceIsVisible(qualified) ||
+          namespaceAliases.contains(qualified, declarationOwner()) ||
+          typeAliasIds.contains(qualified, declarationOwner()) ||
+          enumIds.contains(qualified, declarationOwner()) ||
+          (classIds.contains(qualified, declarationOwner()) &&
+           familyPrimary == 0) ||
+          conceptIds.contains(qualified, declarationOwner())) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2006", DiagnosticPhase::Semantics, classDecl->name(),
             "Duplicate declaration of '" + classDecl->name().lexeme + "'.");
-        if (const auto existing = classIds.find(qualified);
+        if (const auto existing = classIds.find(qualified, declarationOwner());
             existing != classIds.end()) {
           diagnostic.related.push_back(
               {tokenSpan(classInfo(existing->second).name),
@@ -2900,7 +2994,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  "GTI-S2066");
         }
       }
-      classIds.emplace(qualified, id);
+      classIds.emplace(qualified, id, declarationOwner());
       publishClass(qualified, familyPrimary == 0 ? id : familyPrimary,
                    currentSourceUnit, classDecl->name());
       classDeclIds.emplace(classDecl, id);
@@ -4445,13 +4539,13 @@ auto SemanticVisitor::Impl::ownsNominalSpecializationArgument(
   const SemanticType canonical = canonicalExactSpecializationType(argument);
   if (canonical.kind == SemanticType::Class && canonical.classId != 0 &&
       canonical.classId <= classes.size()) {
-    return samePackageOwnershipDomain(sourceUnit,
-                                      classInfo(canonical.classId).sourceUnit);
+    return declarationOwner(sourceUnit) ==
+           declarationOwner(classInfo(canonical.classId).sourceUnit);
   }
   if (canonical.kind == SemanticType::Enum && canonical.enumId != 0 &&
       canonical.enumId <= enums.size()) {
-    return samePackageOwnershipDomain(sourceUnit,
-                                      enums[canonical.enumId - 1].sourceUnit);
+    return declarationOwner(sourceUnit) ==
+           declarationOwner(enums[canonical.enumId - 1].sourceUnit);
   }
   return false;
 }
@@ -4600,8 +4694,8 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
       valid = false;
     }
 
-    const bool ownsPrimary =
-        samePackageOwnershipDomain(currentSourceUnit, primary.sourceUnit);
+    const bool ownsPrimary = declarationOwner(currentSourceUnit) ==
+                             declarationOwner(primary.sourceUnit);
     const bool ownsArgument = std::any_of(
         typeArguments.begin(), typeArguments.end(),
         [&](const SemanticType &argument) {
@@ -4610,15 +4704,15 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
     if (!ownsPrimary && !ownsArgument) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2078", DiagnosticPhase::Semantics, declaration->name(),
-          "This package cannot define the exact specialization '" +
+          "This module cannot define the exact specialization '" +
               typeRefSpelling(targetType) +
               "'; it owns neither the primary nor a top-level nominal "
               "type argument.");
       diagnostic.related.push_back(
           {tokenSpan(primary.name), "Primary class declared here."});
       diagnostic.hints.emplace_back(
-          "Define the specialization in the primary's package or use a "
-          "nominal argument type owned by this package.");
+          "Define the specialization in the primary's module or use a "
+          "nominal argument type owned by this module.");
       diagnostics.emplace_back(std::move(diagnostic));
       valid = false;
     }
@@ -4968,23 +5062,47 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
       diagnostics.push_back(std::move(diagnostic));
     };
     const auto ownerId =
-        resolveClassPath(*definition->definitionOwner(), scope);
+        resolveClassPath(definition->definitionOwner()->name, scope);
     if (!ownerId) {
       fail("An out-of-class definition must name a visible class, struct or "
            "interface owner.");
       continue;
     }
     ClassInfo &owner = classInfo(*ownerId);
-    if (!samePackageOwnershipDomain(currentSourceUnit, owner.sourceUnit)) {
-      fail("A method can only be defined in the package that declares its "
-           "owner.",
+    if (declarationOwner(currentSourceUnit) !=
+        declarationOwner(owner.sourceUnit)) {
+      fail("A method definition must belong to the module that declares its "
+           "owner; register a matching module implementation unit.",
            &owner.name);
       continue;
     }
-    if (!owner.genericParameters.empty() ||
-        !definition->genericParameters().empty()) {
-      fail("Out-of-class definitions currently require a non-generic owner and "
-           "method.",
+    const auto &ownerArguments = definition->definitionOwner()->arguments;
+    if (ownerArguments.size() != owner.genericParameters.size()) {
+      fail("An out-of-class generic owner must spell each of its generic "
+           "parameters in declaration order.",
+           &owner.name);
+      continue;
+    }
+    auto ownerParameters = owner.genericParameters;
+    bool ownerPatternValid = true;
+    std::unordered_set<std::string> ownerNames;
+    for (std::size_t index = 0; index < ownerArguments.size(); ++index) {
+      const auto &argument = ownerArguments[index];
+      if (argument.name.segments.size() != 1 ||
+          argument.name.last().kind != TokenKind::IDENTIFIER ||
+          !argument.arguments.empty() || !argument.pointers.empty() ||
+          argument.reference || !argument.arrayExtents.empty() ||
+          argument.isFunctionSignature() || argument.qualifiedOwner ||
+          argument.packExpansion.has_value() != ownerParameters[index].pack ||
+          !ownerNames.insert(argument.name.last().lexeme).second) {
+        ownerPatternValid = false;
+        break;
+      }
+      ownerParameters[index].name = argument.name.last();
+    }
+    if (!ownerPatternValid) {
+      fail("A generic method owner binds distinct parameter names (and pack "
+           "expansions) matching its declaration, not concrete arguments.",
            &owner.name);
       continue;
     }
@@ -5013,14 +5131,32 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
            "definition.");
       continue;
     }
+    if (std::any_of(definition->genericParameters().begin(),
+                    definition->genericParameters().end(),
+                    [&](const GenericParameter &parameter) {
+                      return parameter.constraint || parameter.defaultType ||
+                             parameter.defaultValue ||
+                             ownerNames.contains(parameter.name.lexeme);
+                    })) {
+      fail("Generic method parameters must use distinct names and keep "
+           "constraints and defaults on the in-class declaration.");
+      continue;
+    }
     const auto previousOwner = currentClass;
     currentClass = owner.id;
+    beginTypeParameterScope(ownerParameters);
+    const auto writtenGenerics =
+        makeGenericParameters(definition->genericParameters(),
+                              definition->name(), owner.namespaceScope);
+    beginTypeParameterScope(writtenGenerics);
     std::vector<SemanticType> parameterTypes;
     for (const auto &parameter : definition->parameters())
       parameterTypes.push_back(typeOf(parameter, owner.namespaceScope));
     const auto result =
         typeOf(definition->returnType(), definition->returnMutability(),
                owner.namespaceScope);
+    endTypeParameterScope();
+    endTypeParameterScope();
     currentClass = previousOwner;
     const auto reportSignatureTypeErrors = [&] {
       // An unmatched definition never reaches visitFunctionDecl. Diagnose its
@@ -5030,9 +5166,13 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
       const auto previousUnit = currentSourceUnit;
       const std::size_t diagnosticStart = diagnostics.size();
       enterDeclarationContext(owner.namespaceScope, previousUnit, owner.id);
+      beginTypeParameterScope(ownerParameters);
+      beginTypeParameterScope(writtenGenerics);
       validateType(definition->returnType());
       for (const auto &parameter : definition->parameters())
         validateType(parameter.type);
+      endTypeParameterScope();
+      endTypeParameterScope();
       exitDeclarationContext(owner.id);
       currentNamespace = previousNamespace;
       currentSourceUnit = previousUnit;
@@ -5045,12 +5185,20 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
     };
     auto member = owner.members.find(definition->name().lexeme);
     CallableCandidate *selected = nullptr;
+    const CallableDeclaration signatureRecord{.genericParameters =
+                                                  writtenGenerics};
+    const CallableCandidate signature{
+        .declarationRecord = &signatureRecord,
+        .returnType = result,
+        .parameterTypes = parameterTypes,
+        .parameterPack = !definition->parameters().empty() &&
+                         definition->parameters().back().pack.has_value(),
+        .ownerClass = owner.id,
+        .receiverMutability = definition->receiverMutability()};
     if (member != owner.members.end()) {
       for (auto &candidate : member->second.symbol.overloads) {
         if (candidate.ownerClass == owner.id &&
-            candidate.parameterTypes == parameterTypes &&
-            candidate.receiverMutability == definition->receiverMutability() &&
-            candidate.record().genericParameters.empty()) {
+            sameFunctionSignature(candidate, signature)) {
           if (selected != nullptr) {
             selected = nullptr;
             break;
@@ -5081,7 +5229,9 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
            &declaration.name());
       continue;
     }
-    if (selected->returnType != result ||
+    if (!sameSignatureType(selected->returnType,
+                           selected->record().genericParameters, result,
+                           writtenGenerics) ||
         declaration.isConstexpr() != definition->isConstexpr() ||
         declaration.unsafeKeyword().has_value() !=
             definition->unsafeKeyword().has_value()) {
@@ -5100,8 +5250,13 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
       continue;
     }
     record->definition = definition;
-    functionGenericParameters.emplace(definition,
-                                      std::vector<GenericParameterInfo>{});
+    auto methodParameters = record->genericParameters;
+    for (std::size_t index = 0; index < methodParameters.size(); ++index)
+      methodParameters[index].name = writtenGenerics[index].name;
+    functionGenericParameters.emplace(definition, std::move(methodParameters));
+    catalog.definitionOwnerGenericParameters.emplace(
+        definition, std::move(ownerParameters));
+    catalog.callableDeclarationsBySyntax.insert_or_assign(definition, record);
     semanticModel.bindFunctionDefinition(declaration, *definition);
   }
 }
@@ -5124,6 +5279,86 @@ auto SemanticVisitor::Impl::nativeCArrayCountParameter(
       std::distance(function.parameters().begin(), found));
 }
 
+auto SemanticVisitor::Impl::bindNamespaceFunctionDefinition(
+    const FunctionDecl &definition, const Symbol &symbol,
+    const std::vector<std::string> &scope) -> bool {
+  if (!definition.body() || definition.hasCLinkage() ||
+      definition.runtimeBinding() || symbol.overloads.size() != 1)
+    return false;
+  const std::string qualified = qualifiedName(scope, definition.name().lexeme);
+  auto &index = definition.isStatic() && sourceGraph != nullptr
+                    ? activeInternalNamespaceSymbols()[currentSourceUnit]
+                    : activeNamespaceSymbols();
+  const auto owner = definition.isStatic() && sourceGraph != nullptr
+                         ? DeclarationOwner{}
+                         : declarationOwner();
+  const auto found = index.find(qualified, owner);
+  if (found == index.end())
+    return false;
+  const auto &candidate = symbol.overloads.front();
+  for (const auto &previous : found->second.overloads) {
+    if (!sameFunctionSignature(previous, candidate))
+      continue;
+    const auto &declaration = *previous.declaration;
+    auto fail = [&](std::string message) {
+      auto diagnostic = makeDiagnostic("GTI-S2011", DiagnosticPhase::Semantics,
+                                       definition.name(), std::move(message));
+      diagnostic.related.push_back(
+          {tokenSpan(declaration.name()), "Function declaration is here."});
+      diagnostics.push_back(std::move(diagnostic));
+    };
+    auto *record = catalog.mutableCallable(declaration);
+    if (declaration.body() || record->definition || declaration.hasCLinkage() ||
+        declaration.runtimeBinding() ||
+        record->intrinsic != IntrinsicKind::None)
+      return false; // The ordinary duplicate/native contract owns this error.
+    if (!sameSignatureType(previous.returnType, record->genericParameters,
+                           candidate.returnType,
+                           candidate.record().genericParameters) ||
+        declaration.isConstexpr() != definition.isConstexpr() ||
+        declaration.unsafeKeyword().has_value() !=
+            definition.unsafeKeyword().has_value() ||
+        declaration.isStatic() != definition.isStatic() ||
+        declaration.isMacro() != definition.isMacro()) {
+      fail("The definition must match its declaration's return type and "
+           "constexpr, unsafe, static and macro qualifiers.");
+      return true;
+    }
+    if (definition.requiresClause() ||
+        !definition.functionAttributes().empty() ||
+        std::any_of(definition.genericParameters().begin(),
+                    definition.genericParameters().end(),
+                    [](const GenericParameter &parameter) {
+                      return parameter.constraint || parameter.defaultType ||
+                             parameter.defaultValue;
+                    }) ||
+        std::any_of(definition.parameters().begin(),
+                    definition.parameters().end(),
+                    [](const Parameter &parameter) {
+                      return parameter.hasDefault();
+                    })) {
+      fail("Default arguments, attributes and constraints belong on the "
+           "function declaration, not its separate definition.");
+      return true;
+    }
+    auto parameters = record->genericParameters;
+    const auto &writtenParameters = functionGenericParameters.at(&definition);
+    for (std::size_t i = 0; i < parameters.size(); ++i)
+      parameters[i].name = writtenParameters[i].name;
+    functionGenericParameters.insert_or_assign(&definition,
+                                               std::move(parameters));
+    auto *unused = catalog.mutableCallable(definition);
+    record->definition = &definition;
+    catalog.callableDeclarationsBySyntax.insert_or_assign(&definition, record);
+    std::erase_if(catalog.callableDeclarations, [unused](const auto &entry) {
+      return entry.get() == unused;
+    });
+    semanticModel.bindFunctionDefinition(declaration, definition);
+    return true;
+  }
+  return false;
+}
+
 auto SemanticVisitor::Impl::registerNamespaceSymbols(
     const StmtList &statements, std::vector<std::string> scope, bool typesOnly)
     -> void {
@@ -5141,6 +5376,8 @@ auto SemanticVisitor::Impl::registerNamespaceSymbols(
         continue;
       currentSourceUnit = sourceUnitFor(function->name());
       Symbol symbol = functionSymbol(*function, scope);
+      if (bindNamespaceFunctionDefinition(*function, symbol, scope))
+        continue;
       if (!symbol.overloads.empty()) {
         publishCallableDeclaration(*function, symbol.overloads.front(), scope,
                                    0);

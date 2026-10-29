@@ -40,10 +40,10 @@ import std.optional;
 import std.string;
 import std.unordered_map;
 import std.vector;
-export namespace std {
+namespace std {
 namespace json {
 
-enum class errc {
+export enum class errc {
   unexpected_end,
   unexpected_character,
   invalid_number,
@@ -60,7 +60,7 @@ enum class errc {
   io_failure,
 };
 
-std::string_view describe(errc code) {
+export std::string_view describe(errc code) {
   switch (code) {
     case errc::unexpected_end: return "unexpected end of JSON text";
     case errc::unexpected_character: return "unexpected character";
@@ -84,7 +84,7 @@ std::string_view describe(errc code) {
 /// into the input; `line` and `column` are one-based and zero when the error
 /// has no source location (an encoding failure). `path` is a JSON Pointer to
 /// the value being decoded when the failure happened.
-struct error {
+export struct error {
   errc code = errc::unexpected_end;
   std::size_t offset = 0;
   std::size_t line = 0;
@@ -127,7 +127,7 @@ struct error {
 };
 
 /// Resource limits and leniency for decoding.
-struct decode_options {
+export struct decode_options {
   mut {
     std::size_t max_depth;
     std::size_t max_document_bytes;
@@ -148,17 +148,17 @@ struct decode_options {
 };
 
 /// `[[std::json::name("key")]]`: the object key of a field.
-[[attribute]] struct name {
+export [[attribute]] struct name {
   std::string_view key = "";
 };
 
 /// `[[std::json::ignore]]`: the field is not part of the text.
-[[attribute]] struct ignore {};
+export [[attribute]] struct ignore {};
 
 /// `[[std::json::defaulted]]`: an absent member takes the field's declared
 /// default initializer instead of failing with `missing_field`. The field
 /// must declare a default.
-[[attribute]] struct defaulted {};
+export [[attribute]] struct defaulted {};
 
 /// Applications specialize this class for a type they own that the field
 /// rules do not cover (`class std::json::codec<Model> { ... }`):
@@ -170,7 +170,7 @@ struct decode_options {
 /// value's text and reports offsets relative to it (the library rebases them).
 /// The empty primary is detected through reflection: a specialization has
 /// methods, the primary has none.
-class codec<T> {
+export class codec<T> {
 public:
 };
 
@@ -1337,7 +1337,7 @@ expected<T, error> decode_object<T>(std::string_view text, std::size_t begin, st
 /// per field that is not `[[ignore]]`d, keyed by `[[name]]` or the declared
 /// name; see the file comment for every supported type. Fails only for
 /// invalid UTF-8 text and non-finite floating values.
-expected<std::string, error> encode<T>(T& value) {
+export expected<std::string, error> encode<T>(T& value) {
   mut std::string out = std::string("");
   mut detail::layout style{};
   ?detail::encode_value(out, value, style, std::size_t(0));
@@ -1345,7 +1345,7 @@ expected<std::string, error> encode<T>(T& value) {
 }
 
 /// Like `encode`, with newlines and `indentation` spaces per nesting level.
-expected<std::string, error> encode_pretty<T>(T& value, uint8_t indentation = 2) {
+export expected<std::string, error> encode_pretty<T>(T& value, uint8_t indentation = 2) {
   mut std::string out = std::string("");
   mut detail::layout style = {.pretty = true, .indentation = indentation};
   ?detail::encode_value(out, value, style, std::size_t(0));
@@ -1355,7 +1355,7 @@ expected<std::string, error> encode_pretty<T>(T& value, uint8_t indentation = 2)
 /// The `T` that the JSON text denotes. Structs are built field by field
 /// through `std::meta::construct`; every non-ignored, non-optional field must
 /// be present.
-expected<T, error> decode<T>(std::string_view text, decode_options& options) {
+export expected<T, error> decode<T>(std::string_view text, decode_options& options) {
   if (text.size() > options.max_document_bytes) {
     return unexpected(detail::located(errc::document_too_large, text, std::size_t(0)));
   }
@@ -1365,14 +1365,14 @@ expected<T, error> decode<T>(std::string_view text, decode_options& options) {
   return detail::decode_value<T>(text, root.begin, root.end, options);
 }
 
-expected<T, error> decode<T>(std::string_view text) {
+export expected<T, error> decode<T>(std::string_view text) {
   mut decode_options options{};
   return decode<T>(text, options);
 }
 
 /// The `T` encoded in the file at `path`; `io_failure` when it cannot be
 /// opened or read, otherwise the decoding result.
-expected<T, error> read_file<T>(std::string_view path, decode_options& options) {
+export expected<T, error> read_file<T>(std::string_view path, decode_options& options) {
   mut auto opened = std::fopen(path, std::file_mode::read);
   if (!opened) {
     return unexpected(error(errc::io_failure, std::size_t(0), std::size_t(0), std::size_t(0)));
@@ -1395,13 +1395,13 @@ expected<T, error> read_file<T>(std::string_view path, decode_options& options) 
   return decode<T>(text.view(), options);
 }
 
-expected<T, error> read_file<T>(std::string_view path) {
+export expected<T, error> read_file<T>(std::string_view path) {
   mut decode_options options{};
   return read_file<T>(path, options);
 }
 
 /// Writes `text` to `path`, replacing any existing file.
-expected<void, error> write_text(std::string_view path, std::string_view text) {
+export expected<void, error> write_text(std::string_view path, std::string_view text) {
   mut auto opened = std::fopen(path, std::file_mode::write);
   if (!opened) {
     return unexpected(error(errc::io_failure, std::size_t(0), std::size_t(0), std::size_t(0)));
@@ -1419,14 +1419,14 @@ expected<void, error> write_text(std::string_view path, std::string_view text) {
 }
 
 /// Encodes `value` compactly into the file at `path`.
-expected<void, error> write_file<T>(std::string_view path, T& value) {
+export expected<void, error> write_file<T>(std::string_view path, T& value) {
   std::string text = ?encode(value);
   return write_text(path, text.view());
 }
 
 /// Encodes `value` with newlines and indentation into the file at `path`,
 /// ending with a newline.
-expected<void, error> write_file_pretty<T>(std::string_view path, T& value, uint8_t indentation = 2) {
+export expected<void, error> write_file_pretty<T>(std::string_view path, T& value, uint8_t indentation = 2) {
   mut std::string text = ?encode_pretty(value, indentation);
   text.push_back('\n');
   return write_text(path, text.view());

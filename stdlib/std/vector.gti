@@ -6,10 +6,10 @@ import std.memory;
 import "detail/iterator.gti";
 // The storage-backed value, capacity, indexed operations, move-aware
 // insertion/erasure, and bounded read-only/mutable iteration are implemented.
-export namespace std {
+namespace std {
 // Capacity changes and shifts use generated, failure-free relocation, never
 // custom movement or assignment. Independent storage excludes checked borrows.
-concept vector_element<T> = std::relocatable<T> && std::storage_element<T>;
+export concept vector_element<T> = std::relocatable<T> && std::storage_element<T>;
 namespace detail {
 class vector_sentinel {
   size_t final_position;
@@ -177,7 +177,7 @@ public:
 }
 
 /// An owning, move-only, contiguous sequence of `T` values.
-class vector<std::vector_element T> {
+export class vector<std::vector_element T> {
   mut std::detail::prefix_owner<T> data;
 
   std::detail::prefix_owner<T> replace_storage(

@@ -4,14 +4,14 @@ import std.memory;
 import std.meta;
 // Owning polymorphic values with inline storage for small eligible payloads.
 
-export namespace gti_internal {
+namespace gti_internal {
 /// Compiler-bound inline slot for at most one object whose dynamic type
 /// implements `Interface`, within `Bytes` and `Align`. Application code cannot
 /// name this type or its operations; `std::inline_polymorphic` owns every
 /// transition. Moving the slot relocates its payload through that payload's
 /// generated move and then ends the source lifetime, so the dynamic type moves
 /// with its bytes and the interface is recovered from the new address.
-class polymorphic_storage<Interface, uint64_t Bytes, uint64_t Align> {
+export class polymorphic_storage<Interface, uint64_t Bytes, uint64_t Align> {
 public:
   polymorphic_storage() {}
   polymorphic_storage(polymorphic_storage<Interface, Bytes, Align>& other) = delete;
@@ -19,19 +19,19 @@ public:
   ~polymorphic_storage() = default;
 };
 
-bool polymorphic_storage_has_value<Interface, uint64_t Bytes, uint64_t Align>(
+export bool polymorphic_storage_has_value<Interface, uint64_t Bytes, uint64_t Align>(
     gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage);
-void polymorphic_storage_construct<Interface, Model, uint64_t Bytes, uint64_t Align>(
+export void polymorphic_storage_construct<Interface, Model, uint64_t Bytes, uint64_t Align>(
     mut gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage, Model value);
-Interface& polymorphic_storage_read<Interface, uint64_t Bytes, uint64_t Align>(
+export Interface& polymorphic_storage_read<Interface, uint64_t Bytes, uint64_t Align>(
     gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage);
-mut Interface& polymorphic_storage_read_mut<Interface, uint64_t Bytes, uint64_t Align>(
+export mut Interface& polymorphic_storage_read_mut<Interface, uint64_t Bytes, uint64_t Align>(
     mut gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage);
-void polymorphic_storage_reset<Interface, uint64_t Bytes, uint64_t Align>(
+export void polymorphic_storage_reset<Interface, uint64_t Bytes, uint64_t Align>(
     mut gti_internal::polymorphic_storage<Interface, Bytes, Align>& storage);
 }
 
-export namespace std {
+namespace std {
 namespace detail {
 constexpr bool inline_payload_policy<Model, Interface>() {
   return (std::meta::is_class<Model>() || std::meta::is_struct<Model>()) &&
@@ -49,7 +49,7 @@ constexpr bool inline_payload_policy<Model, Interface>() {
 /// concrete class publicly derived from polymorphic `Interface`, its generated
 /// relocation cannot fail, its cleanup runs no source code, it retains no
 /// checked borrow, and erasing it grants no concurrency capability it lacks.
-[[unsatisfied("The payload needs a concrete public implementation with movable, relocatable, borrow-free storage, inert cleanup and no added concurrency capability.")]]
+export [[unsatisfied("The payload needs a concrete public implementation with movable, relocatable, borrow-free storage, inert cleanup and no added concurrency capability.")]]
 concept inline_polymorphic_payload<Model, Interface> =
     detail::inline_payload_policy<Model, Interface>();
 
@@ -66,7 +66,7 @@ struct inline_payload_probe<Model, Interface> {
 /// Moving the owner moves an inline payload with it; the moved-from owner is
 /// unavailable, exactly as for any other GTI move. References returned by
 /// `get()` borrow the owner, so they cannot observe a move.
-class inline_polymorphic<Interface, uint64_t Bytes, uint64_t Align> {
+export class inline_polymorphic<Interface, uint64_t Bytes, uint64_t Align> {
   mut gti_internal::polymorphic_storage<Interface, Bytes, Align> slot =
       gti_internal::polymorphic_storage<Interface, Bytes, Align>();
   mut std::unique_ptr<Interface> boxed = nullptr;

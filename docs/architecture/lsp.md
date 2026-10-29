@@ -153,8 +153,15 @@ both declaration and definition. Body parameter names belong to that body and
 can be renamed locally. The existing conservative restriction on renaming
 public/non-local symbols remains in force. The protocol does not independently
 match signatures or load implementation files.
-Unrelated semantic errors do not suppress module completion. Import-path/module-
-name completion and import-directive navigation are not added by this slice.
+Unrelated semantic errors do not suppress module completion. Named-import
+completion uses the source owner’s public module map and direct aliases,
+including dotted logical names; it never scans dependency-private files. The
+loader retains resolved, unresolved, and incomplete import facts with exact
+name spans and a token-derived completion prefix. Hover, definition, and
+references consume those facts and registered implementation membership.
+Unresolved imports have no invented definition target. Protocol ranges convert
+retained byte spans to UTF-16, including comments and non-ASCII text before names.
+Module rename remains conservative; no textual path-rewrite fallback exists.
 
 `FrontendResult` retains the recovered AST, `SemanticModel`, `SemanticDatabase`,
 HIR/MIR, source graph, source text, and diagnostics together. The LSP retains a
@@ -647,8 +654,9 @@ compiler work.
   from a superseded version. A dependant's diagnostics located in an edited
   file therefore disappear with the edit and return with the dependant's new
   result; its diagnostics in unchanged files stay visible throughout.
-- The dynamic file watcher covers `**/*.gti`, `**/gti.toml`, and `**/gti.lock`.
-  A manifest or lockfile change invalidates semantic-token caches and
+- The dynamic file watcher covers `**/*.gti`, `**/gti.toml`, `**/gti.lock`,
+  and `**/module-map.json`, plus the installed standard-library map’s absolute
+  path. A manifest, lockfile, or public module map change invalidates snapshots and
   reanalyses every open document, so configuration, package aliases, and
   materialized locked dependencies cannot leave a stale project snapshot.
 
@@ -1087,8 +1095,8 @@ the diagnostic; the protocol adapter never extracts names from its message.
 
 The driver supplies search roots for the selected package and its declared
 direct dependency aliases. Standalone files search their parent directory;
-standard-library public units use the same discovery mechanism. Discovery
-recurses through `.gti` files, excluding hidden/build directories, nested
+dependency and standard-library candidates come only from explicit public
+module maps. Same-owner discovery recurses through `.gti` files, excluding hidden/build directories, nested
 packages without their own search authority, and symlink escapes. Unsaved
 files and dirty overlays participate. Candidates must be explicit module
 interfaces. Dependency fixes use the direct alias and declared module name;
@@ -1127,8 +1135,12 @@ persistent background project index.
 
 ## Incomplete Source
 
-Editor analysis enables parser recovery and semantic analysis of recovered
-declarations. Completion runs a dedicated frontend analysis with a cursor
+Editor analysis opts into source-graph recovery as well as parser recovery and
+semantic analysis of recovered declarations. A missing import retains the
+available units for independent diagnostics and queries; it does not make the
+source graph valid. Such snapshots never produce HIR/MIR, cache semantic
+preambles/instances, or synthesize a test entry. Ordinary compilation remains
+fail-closed at source loading. Completion runs a dedicated frontend analysis with a cursor
 marker so the parser/analyzer can capture real scope, receiver, visibility, and
 overload candidates in fragments such as `object.` or `foo(`. A variable
 initializer that consumes this marker remains available to semantic completion

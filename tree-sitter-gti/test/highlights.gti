@@ -361,3 +361,6 @@ concept integer_highlight<T> = std::meta::is_integral<T>();
 concept sum_highlight<T> = requires(T& left, T& right) { { left + right } -> T; };
 [[track_caller]] #macro macro_highlight<Args...>(bool condition, Args... args) { if (condition) { use(args...); } }
 [[track_caller]] #macro int macro_value_highlight(bool condition, int value) { if (condition) { return value; } return 0; }
+
+T Box<T>::generic_owner_highlight() { return this.value; }
+U demo::Box<T>::generic_member_highlight<U>(U value) { return value; }

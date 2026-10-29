@@ -40,11 +40,15 @@ def initialize(session, watched_files=False, initialization_options=None):
         watchers = registration["params"]["registrations"][0]["registerOptions"][
             "watchers"
         ]
-        assert watchers == [
+        assert watchers[:4] == [
             {"globPattern": "**/*.gti"},
             {"globPattern": "**/gti.toml"},
             {"globPattern": "**/gti.lock"},
+            {"globPattern": "**/module-map.json"},
         ], watchers
+        assert len(watchers) == 5, watchers
+        installed_map = pathlib.Path(watchers[4]["globPattern"])
+        assert installed_map.is_absolute() and installed_map.name == "module-map.json", watchers
         session.send(
             {
                 "jsonrpc": "2.0",

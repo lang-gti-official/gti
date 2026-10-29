@@ -806,13 +806,14 @@ int engine_variadic(const char *format, ...);
 )";
   lang::bindgen::BindingOptions options;
   options.namespaceName = "engine";
+  options.moduleName = "native.engine";
   const lang::bindgen::BindgenResult first =
       lang::bindgen::runCBindgen(header, "engine.h", options);
   const lang::bindgen::BindgenResult second =
       lang::bindgen::runCBindgen(header, "engine.h", options);
   expect(first.gtiSource == second.gtiSource,
          "identical inputs should produce byte-identical output");
-  expect(contains(first.gtiSource, "export module bindings;"),
+  expect(contains(first.gtiSource, "export module native.engine;"),
          "bindings should declare a module interface");
   expect(contains(first.gtiSource, "export namespace engine {"),
          "the namespace option should export the generated source names");

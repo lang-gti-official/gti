@@ -1393,27 +1393,42 @@ void signatureReceiverFamily() {
          "without guessing a fix");
   std::unordered_map<std::string, std::string> overlays{
       {(root / "read.gti").string(),
-       "export module read_receiver;\nexport class C<R(Args...)> { public: C() "
+       "export module receiver;\nexport class C<R(Args...)> { public: C() "
        "= default; };"},
       {(root / "mut.gti").string(),
-       "export module mut_receiver;\nexport class C<R(Args...) mut> { public: "
+       "module receiver;\nclass C<R(Args...) mut> { public: "
        "C() = default; };"}};
-  const std::string entry = "import \"read.gti\";\nimport \"mut.gti\";\n"
+  const lang::PackageSourceRoot package{
+      .identity = "receiver-family",
+      .name = "receiver-family",
+      .packageRoot = root,
+      .sourceRoot = root,
+      .modules = {{"receiver", root / "read.gti"}},
+      .moduleImplementations = {{"receiver", {root / "mut.gti"}}}};
+  const std::string entry = "import receiver;\n"
                             "int main() { C<int() mut> value{}; return 0; }";
-  const auto included =
-      lang::Frontend().analyze(root / "main.gti", entry, {}, overlays);
+  const auto included = lang::Frontend().analyze(root / "main.gti", entry, {},
+                                                 overlays, {}, {package});
   for (const auto &diagnostic : included.diagnostics)
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(included.canGenerateCode(),
-         "included same-package receiver definitions compose");
+         "registered same-module receiver definitions compose");
   overlays[(root / "read.gti").string()] +=
       " int hidden() { C<int() mut> invisible{}; return 0; }";
-  const auto hidden =
-      lang::Frontend().analyze(root / "main.gti", entry, {}, overlays);
-  expect(!hidden.canGenerateCode() &&
-             !hasDiagnosticCode(hidden.diagnostics, "GTI-B0001"),
-         "an entry's sibling include must not expose a variant inside another "
-         "source unit");
+  const auto shared = lang::Frontend().analyze(root / "main.gti", entry, {},
+                                               overlays, {}, {package});
+  expect(shared.canGenerateCode(),
+         "same-module implementations share their private family components");
+  overlays[(root / "foreign.gti").string()] =
+      "export module foreign; export class C<R(Args...) mut> { public: C() = "
+      "default; };";
+  const auto distinct = lang::Frontend().analyze(
+      root / "main.gti", "import \"foreign.gti\";\n" + entry, {}, overlays, {},
+      {package});
+  expect(!distinct.canGenerateCode() &&
+             !hasDiagnosticCode(distinct.diagnostics, "GTI-B0001"),
+         "a foreign module's same-spelled class cannot join the definition "
+         "family");
 }
 
 void mutableSignatureArguments() {

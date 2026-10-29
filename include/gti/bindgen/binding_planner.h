@@ -41,6 +41,9 @@ struct BindingArrayReturn {
 // Opt-in import policy (C-07). Every field narrows or renames what the
 // bounded surface already admits; none of it widens the ABI.
 struct BindingOptions {
+  // Explicit interface name; the CLI derives a filename-based default while
+  // manifest imports pin the name registered in their synthetic source owner.
+  std::string moduleName = "bindings";
   // Optional GTI namespace wrapped around the generated source names; the C
   // symbols stay global exactly as the language defines.
   std::string namespaceName;

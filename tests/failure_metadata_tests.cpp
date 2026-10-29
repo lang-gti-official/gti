@@ -1792,7 +1792,7 @@ int main() { return checked(1); }
                                  frontend.sourceGraph.dependencyEdges().end(),
                                  [](const lang::SourceDependency &dependency) {
                                    return dependency.kind ==
-                                          lang::SourceDependencyKind::Include;
+                                          lang::SourceDependencyKind::Import;
                                  });
   expect(externalUnit != frontend.failureMetadata.sourceUnits().end() &&
              externalUnit->logicalName.ends_with("/shared.gti") &&
@@ -1837,7 +1837,7 @@ void testModuleImplementationSourceIdentity() {
         {api.string(), "export module factory; export class Widget { public: "
                        "static int read();  public: Widget() = default; };"},
         {implementation.string(),
-         R"GTIMODULE(import factory;
+         R"GTIMODULE(module factory;
 import "helpers.gti";
 struct Local { int value; };
 int Widget::read() { Local local{.value = helper()}; return local.value; })GTIMODULE"},

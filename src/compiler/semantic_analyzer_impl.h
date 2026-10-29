@@ -9,6 +9,7 @@
 #include "gti/instance_analysis_cache.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"
+#include "semantic_declaration_index.h"
 #include "semantic_diagnostics.h"
 #include "semantic_reflection_traits.h"
 #include "semantic_spelling.h"
@@ -1770,6 +1771,8 @@ private:
     std::string target;
     SourceUnitId sourceUnit = 0;
     bool compilerPrivate = false;
+    Token declaration;
+    SymbolId symbol = 0;
   };
 
   struct ResolvedNamespaceSegment {
@@ -4301,6 +4304,8 @@ private:
 
   [[nodiscard]] const std::vector<GenericParameterInfo> &
   genericParametersFor(const FunctionDecl &function) const;
+  [[nodiscard]] const std::vector<GenericParameterInfo> &
+  definitionOwnerParametersFor(const FunctionDecl &function) const;
 
   void
   beginTypeParameterScope(const std::vector<GenericParameterInfo> &parameters);
@@ -4533,11 +4538,9 @@ private:
   void publishEnum(const std::string &name, EnumId id, SourceUnitId declaration,
                    const Token &token);
 
-  [[nodiscard]] std::unordered_map<std::string, Symbol> &
-  activeNamespaceSymbols();
+  [[nodiscard]] DeclarationIndex<Symbol> &activeNamespaceSymbols();
 
-  [[nodiscard]] const std::unordered_map<std::string, Symbol> &
-  activeNamespaceSymbols() const;
+  [[nodiscard]] const DeclarationIndex<Symbol> &activeNamespaceSymbols() const;
 
   [[nodiscard]] auto &activeInternalNamespaceSymbols() {
     return catalog.sealed ? valueFlow.internalNamespaceSymbols
@@ -4556,28 +4559,29 @@ private:
 
   void publishNamespaceSymbol(const std::string &name, const Symbol &symbol);
 
+  [[nodiscard]] DeclarationOwner declarationOwner(SourceUnitId unit) const;
+  [[nodiscard]] DeclarationOwner declarationOwner() const {
+    return declarationOwner(currentSourceUnit);
+  }
+  bool reportAmbiguousName(const Token &use, const std::string &name);
+
   [[nodiscard]] bool namespaceIsVisible(const std::string &name) const;
 
   [[nodiscard]] const NamespaceAliasInfo *
   findNamespaceAlias(const std::string &name) const;
 
-  [[nodiscard]] const std::unordered_map<std::string, Symbol> &
-  currentNamespaceSymbols() const;
+  [[nodiscard]] const DeclarationIndex<Symbol> &currentNamespaceSymbols() const;
 
-  [[nodiscard]] std::unordered_map<std::string, Symbol> *
-  currentNamespaceSymbolsMutable();
+  [[nodiscard]] DeclarationIndex<Symbol> *currentNamespaceSymbolsMutable();
 
-  [[nodiscard]] const std::unordered_map<std::string, ClassId> &
-  currentClassIds() const;
+  [[nodiscard]] const DeclarationIndex<ClassId> &currentClassIds() const;
 
-  [[nodiscard]] const std::unordered_map<std::string, EnumId> &
-  currentEnumIds() const;
+  [[nodiscard]] const DeclarationIndex<EnumId> &currentEnumIds() const;
 
-  [[nodiscard]] const std::unordered_map<std::string, TypeAliasId> &
+  [[nodiscard]] const DeclarationIndex<TypeAliasId> &
   currentTypeAliasIds() const;
 
-  [[nodiscard]] const std::unordered_map<std::string, ConceptId> &
-  currentConceptIds() const;
+  [[nodiscard]] const DeclarationIndex<ConceptId> &currentConceptIds() const;
 
   void registerNamespaces(const StmtList &statements,
                           std::vector<std::string> scope);
@@ -4798,6 +4802,9 @@ private:
   [[nodiscard]] static std::optional<std::size_t>
   nativeCArrayCountParameter(const FunctionDecl &function);
 
+  bool bindNamespaceFunctionDefinition(const FunctionDecl &definition,
+                                       const Symbol &symbol,
+                                       const std::vector<std::string> &scope);
   void registerNamespaceSymbols(const StmtList &statements,
                                 std::vector<std::string> scope,
                                 bool typesOnly = false);
@@ -6574,38 +6581,37 @@ private:
   // sealed after the ordered registration prepasses complete.
   struct SemanticCatalog {
     std::unordered_set<std::string> namespaces;
+    std::unordered_set<std::string> ambiguousPublications;
     std::unordered_map<std::string, SymbolId> namespaceToolingSymbols;
-    std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
+    DeclarationIndex<NamespaceAliasInfo> namespaceAliases;
     SymbolId compilerPrivateNamespaceSymbol = 0;
-    std::unordered_map<std::string, TypeAliasId> typeAliasIds;
+    DeclarationIndex<TypeAliasId> typeAliasIds;
     std::vector<RegisteredTypeAlias> typeAliases;
-    std::unordered_map<std::string, ConceptId> conceptIds;
+    DeclarationIndex<ConceptId> conceptIds;
     std::vector<RegisteredConcept> concepts;
-    std::unordered_map<std::string, Symbol> namespaceSymbols;
-    std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
+    DeclarationIndex<Symbol> namespaceSymbols;
+    std::unordered_map<SourceUnitId, DeclarationIndex<Symbol>>
         internalNamespaceSymbols;
-    std::unordered_map<std::string, ClassId> classIds;
-    std::unordered_map<std::string, EnumId> enumIds;
+    DeclarationIndex<ClassId> classIds;
+    DeclarationIndex<EnumId> enumIds;
     std::unordered_map<SourceUnitId, std::unordered_set<std::string>>
         visibleNamespaces;
-    std::unordered_map<SourceUnitId,
-                       std::unordered_map<std::string, NamespaceAliasInfo>>
+    std::unordered_map<SourceUnitId, DeclarationIndex<NamespaceAliasInfo>>
         visibleNamespaceAliases;
-    std::unordered_map<SourceUnitId,
-                       std::unordered_map<std::string, TypeAliasId>>
+    std::unordered_map<SourceUnitId, DeclarationIndex<TypeAliasId>>
         visibleTypeAliasIds;
-    std::unordered_map<SourceUnitId, std::unordered_map<std::string, ConceptId>>
+    std::unordered_map<SourceUnitId, DeclarationIndex<ConceptId>>
         visibleConceptIds;
-    std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
+    std::unordered_map<SourceUnitId, DeclarationIndex<Symbol>>
         visibleNamespaceSymbols;
-    std::unordered_map<SourceUnitId, std::unordered_map<std::string, ClassId>>
-        visibleClassIds;
-    std::unordered_map<SourceUnitId, std::unordered_map<std::string, EnumId>>
-        visibleEnumIds;
+    std::unordered_map<SourceUnitId, DeclarationIndex<ClassId>> visibleClassIds;
+    std::unordered_map<SourceUnitId, DeclarationIndex<EnumId>> visibleEnumIds;
     std::unordered_map<const ClassDecl *, ClassId> classDeclIds;
     std::unordered_map<const ConceptDecl *, ConceptId> conceptDeclIds;
     std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
         functionGenericParameters;
+    std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
+        definitionOwnerGenericParameters;
     std::unordered_map<std::string, std::vector<ConstraintPredicateDeclaration>>
         constraintPredicateDeclarations;
     std::unordered_map<const FunctionDecl *, CallableDeclaration *>
@@ -6668,6 +6674,9 @@ private:
           std::make_unique<CallableDeclaration>(std::move(declaration));
       CallableDeclaration &result = *owned;
       callableDeclarationsBySyntax.insert_or_assign(result.syntax, &result);
+      if (result.definition != nullptr)
+        callableDeclarationsBySyntax.insert_or_assign(result.definition,
+                                                      &result);
       callableDeclarations.emplace_back(std::move(owned));
       return result;
     }
@@ -6712,6 +6721,7 @@ private:
               classDeclIds.size(),
               conceptDeclIds.size(),
               functionGenericParameters.size(),
+              definitionOwnerGenericParameters.size(),
               constraintPredicateDeclarations.size(),
               callableDeclarationsBySyntax.size(),
               callableDeclarations.size(),
@@ -6744,10 +6754,10 @@ private:
     std::vector<ValueControlFlowContext> controlFlow;
     std::vector<RawPointerLoop> rawPointerLoops;
     std::size_t nextRawPointerLoop = 1;
-    std::unordered_map<std::string, Symbol> namespaceSymbols;
-    std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
+    DeclarationIndex<Symbol> namespaceSymbols;
+    std::unordered_map<SourceUnitId, DeclarationIndex<Symbol>>
         internalNamespaceSymbols;
-    std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
+    std::unordered_map<SourceUnitId, DeclarationIndex<Symbol>>
         visibleNamespaceSymbols;
     // Class static fields are program storage like namespace globals, but
     // their declarations live in the sealed class catalog. Body analysis
@@ -7145,36 +7155,32 @@ private:
       requestSession.catalog.namespaces;
   std::unordered_map<std::string, SymbolId> &namespaceToolingSymbols =
       requestSession.catalog.namespaceToolingSymbols;
-  std::unordered_map<std::string, NamespaceAliasInfo> &namespaceAliases =
+  DeclarationIndex<NamespaceAliasInfo> &namespaceAliases =
       requestSession.catalog.namespaceAliases;
   std::unordered_set<std::string> &reportedCompilerPrivateAccess =
       requestSession.reportedCompilerPrivateAccess;
   SymbolId &compilerPrivateNamespaceSymbol =
       requestSession.catalog.compilerPrivateNamespaceSymbol;
-  std::unordered_map<std::string, TypeAliasId> &typeAliasIds =
+  DeclarationIndex<TypeAliasId> &typeAliasIds =
       requestSession.catalog.typeAliasIds;
   std::vector<RegisteredTypeAlias> &typeAliases =
       requestSession.catalog.typeAliases;
-  std::unordered_map<std::string, ConceptId> &conceptIds =
-      requestSession.catalog.conceptIds;
+  DeclarationIndex<ConceptId> &conceptIds = requestSession.catalog.conceptIds;
   std::vector<RegisteredConcept> &concepts = requestSession.catalog.concepts;
-  std::unordered_map<std::string, ClassId> &classIds =
-      requestSession.catalog.classIds;
-  std::unordered_map<std::string, EnumId> &enumIds =
-      requestSession.catalog.enumIds;
+  DeclarationIndex<ClassId> &classIds = requestSession.catalog.classIds;
+  DeclarationIndex<EnumId> &enumIds = requestSession.catalog.enumIds;
   std::unordered_map<SourceUnitId, std::unordered_set<std::string>>
       &visibleNamespaces = requestSession.catalog.visibleNamespaces;
-  std::unordered_map<SourceUnitId,
-                     std::unordered_map<std::string, NamespaceAliasInfo>>
+  std::unordered_map<SourceUnitId, DeclarationIndex<NamespaceAliasInfo>>
       &visibleNamespaceAliases = requestSession.catalog.visibleNamespaceAliases;
-  std::unordered_map<SourceUnitId, std::unordered_map<std::string, TypeAliasId>>
+  std::unordered_map<SourceUnitId, DeclarationIndex<TypeAliasId>>
       &visibleTypeAliasIds = requestSession.catalog.visibleTypeAliasIds;
-  std::unordered_map<SourceUnitId, std::unordered_map<std::string, ConceptId>>
+  std::unordered_map<SourceUnitId, DeclarationIndex<ConceptId>>
       &visibleConceptIds = requestSession.catalog.visibleConceptIds;
-  std::unordered_map<SourceUnitId, std::unordered_map<std::string, ClassId>>
-      &visibleClassIds = requestSession.catalog.visibleClassIds;
-  std::unordered_map<SourceUnitId, std::unordered_map<std::string, EnumId>>
-      &visibleEnumIds = requestSession.catalog.visibleEnumIds;
+  std::unordered_map<SourceUnitId, DeclarationIndex<ClassId>> &visibleClassIds =
+      requestSession.catalog.visibleClassIds;
+  std::unordered_map<SourceUnitId, DeclarationIndex<EnumId>> &visibleEnumIds =
+      requestSession.catalog.visibleEnumIds;
   std::unordered_map<const ClassDecl *, ClassId> &classDeclIds =
       requestSession.catalog.classDeclIds;
   std::unordered_map<const ConceptDecl *, ConceptId> &conceptDeclIds =

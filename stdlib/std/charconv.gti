@@ -1,9 +1,9 @@
 export module charconv;
 
 import std.numeric;
-export namespace gti_internal {
+namespace gti_internal {
 namespace runtime {
-extern "C" {
+export extern "C" {
 uint32_t gti_rt_parse_f32_v1(text_view input, uint64_t offset, uint32_t format,
                             float* output, uint64_t* position);
 uint32_t gti_rt_parse_f64_v1(text_view input, uint64_t offset, uint32_t format,
@@ -12,24 +12,24 @@ uint32_t gti_rt_parse_f64_v1(text_view input, uint64_t offset, uint32_t format,
 }
 }
 
-export namespace std {
-enum class parse_errc {
+namespace std {
+export enum class parse_errc {
   none,
   invalid_argument,
   result_out_of_range,
 };
 
-enum class chars_format { general, fixed, scientific, hex };
+export enum class chars_format { general, fixed, scientific, hex };
 
 /// position is the first unconsumed byte offset, never a raw pointer.
-struct from_chars_result {
+export struct from_chars_result {
   size_t position;
   parse_errc ec;
   from_chars_result(size_t consumed, parse_errc error) : position(consumed), ec(error) {}
 };
 
 namespace detail {
-uint32_t numeric_format(chars_format format) {
+export uint32_t numeric_format(chars_format format) {
   if (format == chars_format::fixed) { return uint32_t(1); }
   if (format == chars_format::scientific) { return uint32_t(2); }
   if (format == chars_format::hex) { return uint32_t(3); }
@@ -42,7 +42,7 @@ parse_errc numeric_error(uint32_t code) {
   return parse_errc::invalid_argument;
 }
 
-from_chars_result parse_float(string_view input, size_t offset, mut float& output, chars_format format) {
+export from_chars_result parse_float(string_view input, size_t offset, mut float& output, chars_format format) {
   mut float value = 0.0;
   mut uint64_t position = offset;
   mut uint32_t code = 0;
@@ -53,7 +53,7 @@ from_chars_result parse_float(string_view input, size_t offset, mut float& outpu
   return from_chars_result(position, numeric_error(code));
 }
 
-from_chars_result parse_float(string_view input, size_t offset, mut double& output, chars_format format) {
+export from_chars_result parse_float(string_view input, size_t offset, mut double& output, chars_format format) {
   mut double value = 0.0;
   mut uint64_t position = offset;
   mut uint32_t code = 0;
@@ -64,7 +64,7 @@ from_chars_result parse_float(string_view input, size_t offset, mut double& outp
   return from_chars_result(position, numeric_error(code));
 }
 
-int digit_value(char value) {
+export int digit_value(char value) {
   uint8_t code = uint8_t(value);
   if (code >= 48 && code <= 57) { return int(code - 48); }
   if (code >= 65 && code <= 90) { return int(code - 65) + 10; }
@@ -72,12 +72,12 @@ int digit_value(char value) {
   return -1;
 }
 
-bool numeric_space(char value) {
+export bool numeric_space(char value) {
   return value == ' ' || value == '\t' || value == '\n' ||
          value == '\r' || uint8_t(value) == 12 || uint8_t(value) == 11;
 }
 
-from_chars_result parse_integer<std::integral T>(
+export from_chars_result parse_integer<std::integral T>(
     string_view input, mut T& output, int requested_base, bool relaxed) {
   if ((requested_base < 2 || requested_base > 36) &&
       !(relaxed && requested_base == 0)) {
@@ -149,24 +149,24 @@ from_chars_result parse_integer<std::integral T>(
 
 /// Locale-independent, nonallocating integer parsing. No whitespace, plus
 /// sign, or radix prefix is skipped. A failed parse leaves output unchanged.
-from_chars_result from_chars<std::integral T>(string_view input, mut T& output, int base) {
+export from_chars_result from_chars<std::integral T>(string_view input, mut T& output, int base) {
   return detail::parse_integer(input, output, base, false);
 }
 
-from_chars_result from_chars<std::integral T>(string_view input, mut T& output) {
+export from_chars_result from_chars<std::integral T>(string_view input, mut T& output) {
   return std::from_chars(input, output, 10);
 }
 
-from_chars_result from_chars(string_view input, mut float& output, chars_format format) {
+export from_chars_result from_chars(string_view input, mut float& output, chars_format format) {
   return detail::parse_float(input, size_t(0), output, format);
 }
-from_chars_result from_chars(string_view input, mut double& output, chars_format format) {
+export from_chars_result from_chars(string_view input, mut double& output, chars_format format) {
   return detail::parse_float(input, size_t(0), output, format);
 }
-from_chars_result from_chars(string_view input, mut float& output) {
+export from_chars_result from_chars(string_view input, mut float& output) {
   return std::from_chars(input, output, chars_format::general);
 }
-from_chars_result from_chars(string_view input, mut double& output) {
+export from_chars_result from_chars(string_view input, mut double& output) {
   return std::from_chars(input, output, chars_format::general);
 }
 }

@@ -10,6 +10,7 @@ import tempfile
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from contiguous_iterator_completion_test import MODES
 from iterator_sanitizer_support import partition_main
+from internal_module_fixture import iterator_library
 
 
 def sanitizer_partitions(source):
@@ -39,6 +40,7 @@ def main():
     modes = [mode for mode in MODES if not options.mode or mode[0] in options.mode]
     with tempfile.TemporaryDirectory(prefix="gti-container-movement-") as temporary:
         output = Path(temporary)
+        environment["GTI_STDLIB_PATH"] = str(iterator_library(root, output / "stdlib"))
         sanitizer_sources = {}
         if any(label == "sanitized" for label, _, _ in modes):
             source = root / "tests/fixtures/container_iterator_movement.gti"

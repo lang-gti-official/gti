@@ -120,6 +120,65 @@ workload measurements and release readiness are intentionally deferred at the
 owner's request. Phase 1 passing checks do not establish overall language safety
 or production readiness.
 
+### Phase 2 implementation campaign (2026-10-29)
+
+**Status: active, not production-accepted.** The owner has authorized phase 2
+implementation and the breaking release, using two implementation helpers.
+The phase 1 full-suite prohibition applied only to phase 1. The complete release
+candidate must now pass production verification before the existing PR merges.
+Main's source-defined shared/weak ownership changes have been reconciled; their
+semantics and supported backend regressions remain part of acceptance.
+
+The production contract keeps `export module`, `import`, `export import`,
+ordinary namespaces, and explicitly registered implementation files. It adds
+hierarchical module names, real module-owned declaration identity and uniform
+source-owner resolution. A module is a semantic boundary, not a C++ translation
+unit, header, namespace alias or native binary artifact.
+
+| Work | Current evidence and required outcome | Authority / invalidation |
+| --- | --- | --- |
+| M-OWN: source ownership | Project imports inside stdlib currently fail GTI-I0012. Use one immutable registry for package, toolchain, generated and direct source owners, with contained relative imports and explicit public maps. Ownership never grants compiler trust. | SourceLoader/SourceGraph; registry, map, dependency and exact source changes invalidate resolution/cache facts. |
+| M-ID: declaration identity | Unrelated modules currently collide on private names. Distinct modules own distinct declarations; a requester sees only its own module and explicitly imported exports. Jointly visible conflicting names diagnose ambiguity; ordinary visible overloads compose. | Semantics owns requester-aware selection and nominal IDs; HIR/MIR/backend preserve selected IDs rather than inventing ownership from spelling. |
+| M-IMPL: definition composition | An exported prototype plus registered implementation body currently duplicates overloads; implementations cannot see interface-private helpers. One ModuleId covers the interface and its implementation units; exact declarations and bodies join, while source-local static declarations retain file identity. | SourceGraph records ownership/loading; semantics checks signature/definition closure and private reachability. |
+| M-API: public surface | Phase 1 exports and detail facades were mechanical. Review public declarations, private types used by exported APIs, generic/concept/default/constexpr reachability, specializations and re-export paths. Explicit installed module inventory replaces accidental filesystem exposure; nested public names use dotted module names. | Public maps select importable interfaces; semantic visibility controls their declarations. Neither map membership nor spelling grants private compiler capabilities. |
+| M-GEN: generated modules | Two direct bindgen outputs both declare `bindings`; LSP rejects an alias accepted by project build. Add an explicit module-name option and deterministic default, and share generated-owner descriptors between build and read-only editor facts. | Bindgen options and immutable driver project facts; artifacts/options/manifest generations invalidate caches. Editors never generate or fetch dependencies. |
+| M-EDIT: first-class editor imports | Import definition/completion currently returns no result. Loader-owned import records (including unresolved/incomplete forms) drive module hover/definition/references and admissible named-import completions. Available units retain syntax/semantic editor facts when another import fails; no partial graph reaches HIR/codegen. | Compiler LanguageQueries over exact immutable snapshots; LSP only converts protocol positions/results. |
+| M-VERIFY: release acceptance | Preserve cycle rejection, explicit re-export, package containment, configuration isolation, canonical declaration trust, deterministic initialization/cleanup and exact cache invalidation. Repair every migrated fixture without hiding failures, execute full required suites/platform/installed-consumer gates, and measure representative runtime plus cold/warm graph/edit costs. | Exact published source/base evidence and normal PR integration/release policy. |
+
+Required examples and regressions include unrelated libraries with identical
+private helper names; public names that are distinct until jointly visible;
+interface/private implementation sharing and exact free-function definitions;
+registered generic class/member bodies with canonical type/value parameter
+identity and declaration-owned defaults/constraints; specialization/conformance
+coherence tied to the owning module rather than an incidental package;
+private types reachable through exported APIs without exposing their names;
+hierarchical local and dependency modules; stdlib/package path escapes;
+generated modules in both build and editor; missing imports restored by unsaved
+overlays; and initialization/cache behavior across diamonds and repeated imports.
+
+The phase 2 working implementation now includes the source-owner registry,
+installed public map, shared interface/implementation module identities,
+module-aware import queries, partial editor source recovery, and public-map
+missing-import fixes. Focused development evidence exists for ownership,
+identity, generated modules, and recovery; generic member composition and the
+stdlib export review are still undergoing focused verification. This is not
+full production acceptance. Phase 1 ran no full suite; phase 2's full native,
+platform, installed-toolchain and performance gates remain mandatory before
+integration/release. The draft PR remains the two-phase integration boundary.
+
+The expected successful runtime cost is unchanged after resolution: module
+ownership and visibility are compile-time facts; selected bodies and startup
+ordering flow through existing verified MIR. No per-call module dispatch,
+allocation or runtime lookup is introduced. Compile/load/memory and editor-cache
+costs are measured separately; no speedup or performance parity is claimed yet.
+
+C++ header units, global/private module fragments, textual fallback and
+preprocessor interoperability are not adopted. Separate binary interfaces/BMIs
+are not a prerequisite for this source-module contract; retain a future cache
+boundary, and require measured whole-program build/edit behavior now. Existing
+fail-closed workspace rename limitations must remain explicit; no textual
+cross-project rename may masquerade as complete semantic reference coverage.
+
 ### Phase 2: production modules and breaking release
 
 Review the following obligations against the converted corpus before deciding

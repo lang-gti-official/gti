@@ -9243,11 +9243,15 @@ def test_watched_dependency_reanalysis(executable, root):
         watchers = registration["params"]["registrations"][0]["registerOptions"][
             "watchers"
         ]
-        assert watchers == [
+        assert watchers[:4] == [
             {"globPattern": "**/*.gti"},
             {"globPattern": "**/gti.toml"},
             {"globPattern": "**/gti.lock"},
+            {"globPattern": "**/module-map.json"},
         ]
+        assert len(watchers) == 5, watchers
+        assert pathlib.Path(watchers[4]["globPattern"]).is_absolute(), watchers
+        assert pathlib.Path(watchers[4]["globPattern"]).name == "module-map.json", watchers
         session.send(
             {
                 "jsonrpc": "2.0",

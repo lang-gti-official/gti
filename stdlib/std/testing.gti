@@ -7,7 +7,7 @@ import std.memory;
 import std.span;
 // Operand capture is ordinary source policy: objects stay borrowed, while
 // scalar literals and expressions are evaluated once into inexpensive values.
-export namespace std::testing::detail {
+namespace std::testing::detail {
   class check_operand<T> {
     T& value;
   public:
@@ -82,10 +82,10 @@ public:
   check_operand(double value) : std::testing::detail::scalar_check_operand<double>(value) {}
 };
 
-export namespace std::testing {
+namespace std::testing {
   /// Fails the current isolated test with a source-located terminal message.
   /// Ordinary return from a [[test]] function indicates success.
-  [[track_caller]]
+  export [[track_caller]]
   void check(bool condition, std::string_view message = "Test check failed") {
     if (!condition) {
       std::panic(message);
@@ -151,7 +151,7 @@ export namespace std::testing {
 
   /// Evaluates scalar operands once and borrows object operands without copies.
   /// Messages and diagnostic formatting are evaluated only on failure.
-  [[track_caller]]
+  export [[track_caller]]
   #macro check_eq<T>(T actual, T expected,
                     std::string_view message = "Expected equal values")
       requires std::equality_comparable<T> && std::formattable<T> {
@@ -162,7 +162,7 @@ export namespace std::testing {
     }
   }
 
-  [[track_caller]]
+  export [[track_caller]]
   #macro check_ne<T>(T actual, T unexpected,
                     std::string_view message = "Expected different values")
       requires std::equality_comparable<T> && std::formattable<T> {
@@ -175,7 +175,7 @@ export namespace std::testing {
 
   /// Reports quoted values, lengths and the first differing byte (UTF-8 bytes,
   /// not character indices). Use .view() when comparing owning strings.
-  [[track_caller]]
+  export [[track_caller]]
   void check_string_eq(std::string_view actual, std::string_view expected,
                        std::string_view message = "Expected equal strings") {
     if (actual != expected) {
@@ -201,7 +201,7 @@ export namespace std::testing {
 
   /// Absolute OR relative tolerance. Tolerances must be finite and nonnegative;
   /// NaNs never compare approximately equal, and equal infinities do.
-  [[track_caller]]
+  export [[track_caller]]
   void check_approx<T>(T actual, T expected, T absolute_tolerance,
                        T relative_tolerance = T(0),
                        std::string_view message = "Expected approximately equal values")
@@ -245,7 +245,7 @@ export namespace std::testing {
 
   /// Compares two borrowed contiguous spans without copying their elements.
   /// Bind container.as_span() results to locals before passing them.
-  [[track_caller]]
+  export [[track_caller]]
   void check_elements_eq<T>(std::span<T>& actual, std::span<T>& expected,
                          std::string_view message = "Expected equal elements")
       requires std::storage_element<T> && std::equality_comparable<T> &&

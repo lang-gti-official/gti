@@ -1,4 +1,4 @@
-import window;
+module window;
 import std.memory;
 import "desktop.gti";
 import "headless.gti";

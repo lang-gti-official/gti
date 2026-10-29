@@ -2368,7 +2368,8 @@ private:
         const std::optional<std::filesystem::path> changedPath =
             filePathFromUri(clientUri);
         if (changedPath && (changedPath->filename() == "gti.toml" ||
-                            changedPath->filename() == "gti.lock")) {
+                            changedPath->filename() == "gti.lock" ||
+                            changedPath->filename() == "module-map.json")) {
           projectModelChanged = true;
           continue;
         }
@@ -2464,6 +2465,10 @@ private:
     watchers.push_back(JsonObject{{"globPattern", "**/*.gti"}});
     watchers.push_back(JsonObject{{"globPattern", "**/gti.toml"}});
     watchers.push_back(JsonObject{{"globPattern", "**/gti.lock"}});
+    watchers.push_back(JsonObject{{"globPattern", "**/module-map.json"}});
+    watchers.push_back(JsonObject{
+        {"globPattern",
+         (standardLibrary.root / "module-map.json").generic_string()}});
     JsonArray registrations;
     registrations.push_back(JsonObject{
         {"id", "gti-source-watcher"},
@@ -3321,6 +3326,7 @@ private:
     frontendOptions.reportLibraryAuditFindings =
         project.rawPointerAuditLibraryFindings;
     frontendOptions.analyzeRecoveredProgram = true;
+    frontendOptions.analyzeRecoveredSourceGraph = true;
     frontendOptions.requireEntryPoint = project.requireEntryPoint;
     frontendOptions.program = project.program;
     frontendOptions.synthesizeTestEntry = false;

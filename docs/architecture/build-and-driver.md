@@ -1256,7 +1256,16 @@ package by an ordinary alias edge, so
 resolution, visibility, and cache identity follow the existing package
 mechanism and the alias shares the dependency-alias namespace (a collision
 is a manifest diagnostic). Every package in the resolved graph generates its
-own imports; aliases do not leak to dependents.
+own imports; aliases do not leak to dependents. The read-only project-facts path
+registers these same synthetic owners without generating files or fetching
+dependencies. Before generation, resolution reports the missing artifact and
+asks for `gti check` or `gti build`; after generation, editor analysis uses it.
+
+Direct `gti bindgen` accepts `--module net.http`. Without that option it derives
+a valid module name from the output file stem, or the header stem when writing
+to stdout, replacing punctuation and protecting reserved names. Distinct output
+names can therefore coexist in one direct compilation. Project bindgen pins the
+registered name `bindings`; namespaces remain an independent API choice.
 
 Imported enums retain the selected native integer family and evaluated values,
 including unsigned high-bit flags and supported 64-bit ranges. See
@@ -1345,8 +1354,9 @@ map. The selected interface remains ordinary untrusted GTI source. Transitive
 aliases do not leak, and quoted imports cannot cross an owning package boundary
 to bypass the manifest edge. Direct mode receives no package graph and therefore
 rejects package imports without consulting nearby manifests. GTI `#include` is
-rejected with `GTI-I0014` and does not load a dependency in this unreleased
-phase 1 module-only prototype.
+rejected with `GTI-I0014` and does not load a dependency. An immutable source-owner
+registry gives packages, generated bindings, and the configured toolchain the same
+containment and public-map rules; compiler trust remains a separate provenance fact.
 
 ### Source Module Registration
 
@@ -1358,8 +1368,9 @@ main = "src/api.gti"
 geometry = "src/geometry_api.gti"
 ```
 
-Each key is one non-reserved GTI identifier other than `std`, which names the
-standard library's modules (`import std.vector;`). Each value is a package-relative
+Each key is a dot-separated sequence of non-reserved GTI identifiers. The
+`std` prefix is reserved for the configured standard library (`import std.vector;`).
+Dotted TOML keys must be quoted, for example `"net.http" = "src/http.gti"`. Each value is a package-relative
 path to an existing regular `.gti` interface. Canonical paths must remain inside
 the package, including through symlinks. Duplicate physical files, portable
 case-fold name collisions, invalid names/types and missing paths are rejected
@@ -1379,7 +1390,9 @@ export namespace geometry {
 The owning package writes `import geometry;`. Consumers write
 `import dependency.geometry;`, using their declared dependency alias. The
 shorter `import dependency;` selects the dependency's `main` module. An
-unqualified local-name/dependency-alias collision is an error. Only direct
+exact local-name/dependency-alias-prefix collision is an error. For example,
+`import net.http;` is ambiguous if both local module `net.http` and direct alias
+`net` exist; directory structure never resolves that ambiguity. Only direct
 dependency aliases resolve; re-exporting declarations never leaks aliases.
 Direct compilation remains manifest-independent and can write a relative
 quoted import instead.
@@ -1394,8 +1407,9 @@ geometry = ["src/geometry_impl.gti"]
 Each key must already occur in `[modules]`. Values are arrays of existing,
 package-contained, relative `.gti` file paths. Duplicate physical registration,
 interface/implementation overlap, non-files and symlink escapes are rejected.
-An implementation is ordinary source, not another `export module` interface;
-it explicitly imports its interface and the dependencies its bodies use.
+An implementation begins with `module geometry;`, matching its registered
+interface name. Its interface is implicitly available through shared module
+identity; imports are still required for other dependencies used by its bodies.
 Importing the registered interface automatically loads these files, including
 when it is reached through a dependency package. Unused module registrations
 do not load bodies. Consumers gain no visibility into implementation helpers.

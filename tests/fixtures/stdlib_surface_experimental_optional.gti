@@ -1,6 +1,6 @@
 // std::experimental::optional: empty and engaged states, `?`, and a consuming
 // move-out of a move-only payload.
-import std.experimental_optional;
+import std.experimental.optional;
 import std.memory;
 import std.string;
 
