@@ -12409,9 +12409,14 @@ LLVM gap the audit found, runs on LLVM since PR 421.
   destructor's virtual call on `this` runs the destructor's own class on LLVM,
   the owner's lifecycle-dispatch rule. The C++ backend reaches the destroyed
   derived override instead.
-- **C++ backend bugs under GCC on Linux:** `enumerator-references` (a dangling
-  reference to an enumerator temporary) and `hierarchy-array-field-failure`
-  (double destruction after a failed constructor).
+- **C++ backend bugs under GCC on Linux at the audited snapshot:**
+  `enumerator-references` (a dangling reference to an enumerator temporary) and
+  `hierarchy-array-field-failure` (double destruction after a failed
+  constructor). The in-flight L-OWN-01 source-owner change already contained a
+  completed preservation fix for the latter before this acceptance record:
+  rollback restores inert native array-element lifetimes, with independent
+  C++20/C++23 and LLVM failure/cleanup evidence. No further C++ gap work is
+  scheduled here.
 - **C++-only test coverage.** About 70 test files still build their companion
   programs only on the C++ backend. The one-off audit found those programs
   matching on LLVM, but the suite does not keep checking them on LLVM. Adding
