@@ -1,0 +1,12 @@
+import std.atomic;
+// Ordinary source policy can use atomics in the default single-threaded
+// profile. The same operations retain atomic semantics in concurrent programs.
+// This does not enable thread creation or atomic wait/notification.
+int main() {
+  std::atomic<uint64_t> next{uint64_t(0)};
+  uint64_t first = next.fetch_add(uint64_t(1), std::memory_order_relaxed());
+  uint64_t second = next.fetch_add(uint64_t(1), std::memory_order_relaxed());
+  uint64_t observed = next.load(std::memory_order_relaxed());
+  if (first != uint64_t(0) || second != uint64_t(1)) { return 1; }
+  return observed == uint64_t(2) ? 0 : 2;
+}

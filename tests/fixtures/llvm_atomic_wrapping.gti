@@ -1,0 +1,39 @@
+import std.atomic;
+int main() {
+  std::atomic<int8_t> n0{int8_t(127)};
+  if (n0.fetch_add_wrapping(int8_t(1)) != int8_t(127) || n0.load() != int8_t(-128)) { return 1; }
+  if (n0.fetch_sub_wrapping(int8_t(1)) != int8_t(-128) || n0.load() != int8_t(127)) { return 11; }
+  std::atomic<uint8_t> n1{uint8_t(255)};
+  if (n1.fetch_add_wrapping(uint8_t(1)) != uint8_t(255) || n1.load() != uint8_t(0)) { return 2; }
+  if (n1.fetch_sub_wrapping(uint8_t(1)) != uint8_t(0) || n1.load() != uint8_t(255)) { return 12; }
+  std::atomic<int16_t> n2{int16_t(32767)};
+  if (n2.fetch_add_wrapping(int16_t(1)) != int16_t(32767) || n2.load() != int16_t(-32768)) { return 3; }
+  if (n2.fetch_sub_wrapping(int16_t(1)) != int16_t(-32768) || n2.load() != int16_t(32767)) { return 13; }
+  std::atomic<uint16_t> n3{uint16_t(65535)};
+  if (n3.fetch_add_wrapping(uint16_t(1)) != uint16_t(65535) || n3.load() != uint16_t(0)) { return 4; }
+  if (n3.fetch_sub_wrapping(uint16_t(1)) != uint16_t(0) || n3.load() != uint16_t(65535)) { return 14; }
+  std::atomic<int32_t> n4{int32_t(2147483647)};
+  if (n4.fetch_add_wrapping(int32_t(1)) != int32_t(2147483647) || n4.load() != int32_t(-2147483648)) { return 5; }
+  if (n4.fetch_sub_wrapping(int32_t(1)) != int32_t(-2147483648) || n4.load() != int32_t(2147483647)) { return 15; }
+  std::atomic<uint32_t> n5{uint32_t(4294967295)};
+  if (n5.fetch_add_wrapping(uint32_t(1)) != uint32_t(4294967295) || n5.load() != uint32_t(0)) { return 6; }
+  if (n5.fetch_sub_wrapping(uint32_t(1)) != uint32_t(0) || n5.load() != uint32_t(4294967295)) { return 16; }
+  std::atomic<int64_t> n6{int64_t(9223372036854775807)};
+  if (n6.fetch_add_wrapping(int64_t(1)) != int64_t(9223372036854775807) || n6.load() != int64_t(-9223372036854775808)) { return 7; }
+  if (n6.fetch_sub_wrapping(int64_t(1)) != int64_t(-9223372036854775808) || n6.load() != int64_t(9223372036854775807)) { return 17; }
+  std::atomic<uint64_t> n7{uint64_t(18446744073709551615)};
+  if (n7.fetch_add_wrapping(uint64_t(1)) != uint64_t(18446744073709551615) || n7.load() != uint64_t(0)) { return 8; }
+  if (n7.fetch_sub_wrapping(uint64_t(1)) != uint64_t(0) || n7.load() != uint64_t(18446744073709551615)) { return 18; }
+  std::atomic<int> ordered{0};
+  if (ordered.fetch_add_wrapping(1, std::memory_order_relaxed()) != 0) { return 21; }
+  if (ordered.fetch_sub_wrapping(1, std::memory_order_relaxed()) != 1) { return 31; }
+  if (ordered.fetch_add_wrapping(1, std::memory_order_acquire()) != 0) { return 22; }
+  if (ordered.fetch_sub_wrapping(1, std::memory_order_acquire()) != 1) { return 32; }
+  if (ordered.fetch_add_wrapping(1, std::memory_order_release()) != 0) { return 23; }
+  if (ordered.fetch_sub_wrapping(1, std::memory_order_release()) != 1) { return 33; }
+  if (ordered.fetch_add_wrapping(1, std::memory_order_acq_rel()) != 0) { return 24; }
+  if (ordered.fetch_sub_wrapping(1, std::memory_order_acq_rel()) != 1) { return 34; }
+  if (ordered.fetch_add_wrapping(1, std::memory_order_seq_cst()) != 0) { return 25; }
+  if (ordered.fetch_sub_wrapping(1, std::memory_order_seq_cst()) != 1) { return 35; }
+  return 0;
+}

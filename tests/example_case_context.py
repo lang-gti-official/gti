@@ -1,6 +1,7 @@
 """Authoritative source/profile/argument context of the existing MIR census."""
 
 from pathlib import Path
+import subprocess
 
 from llvm_case_context import CaseContext, source_digest
 
@@ -9,6 +10,24 @@ CONCURRENT_EXAMPLES = frozenset({
     "066-managed-threads.gti", "076-scalar-atomics.gti", "175-thread-local-storage.gti",
 })
 CENSUS_TIMEOUT = 180
+# Owner-approved LLVM-only wrapping operations are used by source shared owners.
+LLVM_ONLY_EXAMPLES = frozenset({
+    "066-managed-threads.gti", "098-shared-ownership.gti",
+    "178-wrapping-atomic-counters.gti", "179-weak-ownership.gti",
+})
+
+
+def require_cpp_limitation(gti, source, output, env, optimization="O1", standard="c++23"):
+    output.write_bytes(b"preserved unsupported output")
+    result = subprocess.run(
+        [str(gti), str(source), "--std", standard, "-" + optimization,
+         *(["--execution-profile", "concurrent"] if source.name in CONCURRENT_EXAMPLES else []),
+         "-o", str(output)], capture_output=True, text=True, env=env, timeout=CENSUS_TIMEOUT)
+    assert (result.returncode == 65 and "GTI-B0003" in result.stderr
+            and "wrapping atomic read-modify-write" in result.stderr
+            and output.read_bytes() == b"preserved unsupported output"), result
+    print(f"RECORDED C++ LIMITATION {source.name}/{standard}/{optimization}: wrapping atomics", flush=True)
+
 
 
 def cases(root: Path) -> tuple[CaseContext, ...]:
@@ -18,7 +37,8 @@ def cases(root: Path) -> tuple[CaseContext, ...]:
         execution_profile=("concurrent" if source.name in CONCURRENT_EXAMPLES
                            else "single-threaded"),
         loading="driver-default-prelude-with-stdlib-path-setdefault",
-        observation="mir-census-emit-cpp",
+        observation=("sealed-lowered-census-with-cpp-rejection"
+                     if source.name in LLVM_ONLY_EXAMPLES else "mir-census-emit-cpp"),
         unresolved=("llvm-target-applicability", "native-execution-outcome",
                     "native-dependencies", "native-optimization-endpoints"),
     ) for source in sorted((root / "examples").glob("*.gti")))
@@ -38,11 +58,15 @@ def census_command(case: CaseContext, root: Path, gti: Path, output: Path) -> li
 
 
 def observation_context(case: CaseContext) -> dict:
+    native_only = Path(case.source).name in LLVM_ONLY_EXAMPLES
     return {
         "case": case.record(), "cwd": "repository-root", "timeout_seconds": CENSUS_TIMEOUT,
         "stdlib_environment": {"name": "GTI_STDLIB_PATH", "operation": "setdefault",
                                "repository_default": "stdlib"},
-        "compile_observation": {"mode": "--emit-cpp", "returncode": 0,
-                                "output_required": True,
-                                "oracle": "reviewed MIR body census"},
+        "compile_observation": ({"mode": "sealed-lowered-program-inventory", "returncode": 0,
+                                 "output_required": True, "oracle": "reviewed MIR body census",
+                                 "cpp_rejection": "GTI-B0003: wrapping atomic read-modify-write"}
+                                if native_only else
+                                {"mode": "--emit-cpp", "returncode": 0,
+                                 "output_required": True, "oracle": "reviewed MIR body census"}),
     }

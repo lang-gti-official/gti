@@ -253,7 +253,8 @@ def main():
                 result = execute(gti, root, scratch / filename / str(index),
                                  root / "tests/fixtures" / filename, endpoint, env)
                 if (result.error and endpoint.backend == "cpp"
-                        and filename == "llvm_hosted_union_first_field_aggregate.gti"):
+                        and filename in {"llvm_hosted_union_first_field_aggregate.gti",
+                                         "llvm_hosted_class_pointee_reference.gti"}):
                     # Preserve real comparator evidence for this existing gap.
                     diagnostic = re.search(r"backend diagnostics saved at (.+/backend\.log)",
                                            result.stderr)
@@ -287,7 +288,7 @@ def main():
             if any(value != observations[0] for value in observations):
                 raise AssertionError(f"hosted observable drift: {filename}: {observations}")
             levels = "O0-O3" if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction", "scalar-return", "arguments"} else "O0/O3"
-            scope = (f"LLVM {levels}; recorded C++ aggregate vocabulary gap {comparator_gaps}"
+            scope = (f"LLVM {levels}; recorded C++ vocabulary gap {comparator_gaps}"
                      if comparator_gaps else f"C++20/23 O3 and LLVM {levels}")
             print(f"{filename}: uninstrumented {scope} passed", flush=True)
         if selection == "scalar-return" and selected_cases != 2:

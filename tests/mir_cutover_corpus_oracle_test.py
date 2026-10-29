@@ -29,6 +29,7 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from example_case_context import LLVM_ONLY_EXAMPLES, require_cpp_limitation
 
 
 CONFIGURATIONS = (("O0", "c++20"), ("O3", "c++23"))
@@ -77,6 +78,9 @@ def build_and_run(gti: Path, root: Path, scratch: Path, source: Path,
                   env: dict[str, str], backend: str = "cpp") -> CaseResult:
     case = scratch / f"{optimization}-{standard.replace('+', 'x')}" / source.stem
     case.mkdir(parents=True, exist_ok=True)
+    if backend == "cpp" and source.name in LLVM_ONLY_EXAMPLES:
+        require_cpp_limitation(gti, source, case / "unsupported", env, optimization, standard)
+        backend = "llvm"
     endpoint = Endpoint(backend, optimization,
                         standard if backend == "cpp" else None,
                         keep_cpp=backend == "cpp")
@@ -207,7 +211,7 @@ def main() -> int:
                     f"{label}: exited {case.returncode}; stdout={case.stdout!r}; "
                     f"stderr={case.stderr!r}"
                 )
-            if arguments.backend == "cpp" and len(case.markers) != expected[source.name]:
+            if arguments.backend == "cpp" and source.name not in LLVM_ONLY_EXAMPLES and len(case.markers) != expected[source.name]:
                 failures.append(
                     f"{label}: emitted {len(case.markers)} reviewed body "
                     f"identities, expected {expected[source.name]}"
@@ -225,7 +229,7 @@ def main() -> int:
         if any(case.error for case in cases):
             continue
         first, second = cases
-        if arguments.backend == "cpp" and first.markers != second.markers:
+        if arguments.backend == "cpp" and source.name not in LLVM_ONLY_EXAMPLES and first.markers != second.markers:
             failures.append(
                 f"{source.name}: body ownership differs between endpoint "
                 "configurations"

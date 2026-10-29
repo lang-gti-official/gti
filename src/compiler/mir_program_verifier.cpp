@@ -580,6 +580,8 @@ exactAtomicSynchronization(IntrinsicKind intrinsic,
   case IntrinsicKind::AtomicStore:
     expected = SynchronizationOperationKind::AtomicStore;
     break;
+  case IntrinsicKind::AtomicFetchAddWrapping:
+  case IntrinsicKind::AtomicFetchSubWrapping:
   case IntrinsicKind::AtomicExchange:
     expected = SynchronizationOperationKind::AtomicReadModifyWrite;
     break;
@@ -1241,9 +1243,13 @@ conditionalCapabilities(const MirProgram &program, const SemanticType &type,
   if (found->transferPolicy == ConcurrencyCapabilityPolicy::UnsafeConditional) {
     const auto condition =
         found->transferCondition
-            ? conditionalCapabilities(program, *found->transferCondition)
+            ? evaluateCapabilityCondition(*found->transferCondition,
+                                          [&](const SemanticType &subject) {
+                                            return conditionalCapabilities(
+                                                program, subject);
+                                          })
             : std::nullopt;
-    permitted = condition && condition->transferCapable;
+    permitted = condition && *condition;
   }
   // Unsafe ownership assertions never erase the checked referent contract.
   const auto paths = findStoredCarrierReferences(program, type);
@@ -13063,6 +13069,45 @@ exactAtomicWaitingContract(const MirProgram &program, const MirBody &body,
 }
 
 [[nodiscard]] bool
+exactWrappingAtomicContract(const MirProgram &program, const MirBody &body,
+                            const MirInstruction &instruction) {
+  if (instruction.intrinsic != IntrinsicKind::AtomicFetchAddWrapping &&
+      instruction.intrinsic != IntrinsicKind::AtomicFetchSubWrapping)
+    return true;
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget || instruction.loan ||
+      instruction.unsafeOperation != UnsafeOperationKind::None ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      instruction.info.category != ValueCategory::Value ||
+      instruction.info.access != AccessMode::ReadOnly || !instruction.result ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() ||
+      !instruction.lifecycle.empty() || instruction.operands.size() != 2 ||
+      instruction.parameterTypes.size() != 2)
+    return false;
+  const auto &storage = instruction.operands[0];
+  const auto *element =
+      exactCapabilityReferenceValue(program, storage.type, AccessMode::ReadOnly,
+                                    CompilerCapabilityTypeKind::AtomicStorage);
+  const auto *place = body.findPlace(storage.place);
+  if (!element || !constantIntegerDomain(*element) ||
+      *element == SemanticType::Bool || *element == SemanticType::Char ||
+      storage.kind != MirOperandKind::BorrowRead || !place || storage.value ||
+      storage.loan || storage.literal ||
+      storage.type.arguments.front() != place->type ||
+      instruction.parameterTypes[0] != storage.type ||
+      instruction.info.type != *element)
+    return false;
+  const auto &operand = instruction.operands[1];
+  const auto *value = body.findValue(operand.value);
+  return operand.kind == MirOperandKind::Value && value && !operand.place &&
+         !operand.loan && !operand.literal && value->info.type == *element &&
+         operand.type == *element && instruction.parameterTypes[1] == *element;
+}
+
+[[nodiscard]] bool
 exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
                             const MirInstruction &instruction) {
   const bool mutexIntrinsic =
@@ -17982,6 +18027,8 @@ verifyMirProgramContracts(const MirProgram &program) {
             instruction.intrinsic == IntrinsicKind::AtomicLoad ||
             instruction.intrinsic == IntrinsicKind::AtomicStore ||
             instruction.intrinsic == IntrinsicKind::AtomicExchange ||
+            instruction.intrinsic == IntrinsicKind::AtomicFetchAddWrapping ||
+            instruction.intrinsic == IntrinsicKind::AtomicFetchSubWrapping ||
             instruction.intrinsic == IntrinsicKind::AtomicCompareExchange;
         const bool layoutIntrinsic =
             instruction.intrinsic == IntrinsicKind::ObjectSize ||
@@ -18131,7 +18178,8 @@ verifyMirProgramContracts(const MirProgram &program) {
         if (atomicIntrinsic &&
             (!exactAtomicSynchronization(instruction.intrinsic,
                                          instruction.synchronization) ||
-             !exactAtomicWaitingContract(program, body, instruction))) {
+             !exactAtomicWaitingContract(program, body, instruction) ||
+             !exactWrappingAtomicContract(program, body, instruction))) {
           result.errors.push_back(
               {.bodyKind = body.kind,
                .owner = owner,
@@ -18832,13 +18880,15 @@ verifyMirProgramContracts(const MirProgram &program) {
         break;
       }
       if (condition) {
-        const auto required = conditionalCapabilities(program, *condition);
+        const auto required = evaluateCapabilityCondition(
+            *condition, [&](const SemanticType &subject) {
+              return conditionalCapabilities(program, subject);
+            });
         exact =
             exact && required && instance.kind != ClassKind::Interface &&
             instance.compilerCapability == CompilerCapabilityTypeKind::None &&
-            (transfer
-                 ? instance.traits.transferCapable == required->transferCapable
-                 : instance.traits.shareCapable == required->shareCapable);
+            (transfer ? instance.traits.transferCapable == *required
+                      : instance.traits.shareCapable == *required);
       }
       if (!exact) {
         result.errors.push_back(

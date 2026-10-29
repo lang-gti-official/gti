@@ -1312,7 +1312,7 @@ export namespace std {
 }
 
 // Source-local implementation helpers remain private to this module.
-namespace std {
+export namespace std {
   namespace detail {
     static std::size_t fnv_64_1a_hasher(std::string& value) {
       mut uint64_t result = uint64_t(14695981039346656037);

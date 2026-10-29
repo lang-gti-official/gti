@@ -1,5 +1,5 @@
-// F7: weak_ptr is declaration-only in <std/memory>; calling a member reaches
-// the native linker as an undefined mangled symbol instead of a GTI diagnostic.
+// F7 regression: the former declaration-only weak_ptr is now implemented.
+// Its empty state must execute successfully; missing user bodies remain errors.
 import std.memory;
 int main() {
   std::weak_ptr<int32_t> observer{};

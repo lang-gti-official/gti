@@ -1,5 +1,6 @@
 import std.memory;
 
+
 class Unrelated {
 public:
   int64_t wide;
@@ -8,6 +9,12 @@ public:
 };
 
 int main() {
+  auto native_size = std::layout_of<c_size_t>();
+  uint64_t native_maximum = uint64_t(18446744073709551615) >>
+      ((uint64_t(8) - native_size.bytes) * uint64_t(8));
+  // This native execution fixture runs on the supported 64-bit hosts.
+  if (native_size.bytes != uint64_t(8) || native_maximum != uint64_t(18446744073709551615)) { return 10; }
+
   auto integer = std::layout_of<int64_t>();
   auto boolean = std::layout_of<bool>();
   auto address = std::layout_of<int*>();

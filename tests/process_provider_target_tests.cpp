@@ -375,13 +375,13 @@ int main() { return gti_rt_native_size_max_v1() == uint64_t(0) ? 1 : 0; }
   replace("void gti_rt_posix_free_v1(void* address);",
           "void gti_rt_posix_free_v1(const void* address);");
   // Not compiler-private: the same declaration outside gti_internal.
-  replace("uint64_t gti_rt_posix_pointer_size_v1();", "");
+  replace("int32_t gti_rt_posix_enomem_v1();", "");
   replace("namespace gti_internal {\n// Source policy seal",
-          "namespace std::detail::process_probe {\nextern \"C\" {\nuint64_t "
-          "gti_rt_posix_pointer_size_v1();\n}\n}\nnamespace gti_internal {\n"
+          "namespace std::detail::process_probe {\nextern \"C\" {\nint32_t "
+          "gti_rt_posix_enomem_v1();\n}\n}\nnamespace gti_internal {\n"
           "// Source policy seal");
-  replace("gti_internal::runtime::gti_rt_posix_pointer_size_v1()",
-          "std::detail::process_probe::gti_rt_posix_pointer_size_v1()");
+  replace("gti_internal::runtime::gti_rt_posix_enomem_v1()",
+          "std::detail::process_probe::gti_rt_posix_enomem_v1()");
   {
     std::ofstream output(memory, std::ios::trunc);
     output << text;
@@ -399,7 +399,7 @@ int main() { return gti_rt_native_size_max_v1() == uint64_t(0) ? 1 : 0; }
       sawRelease = true;
       expect(function.processMemoryOperation == Operation::None,
              "a wrong signature in the trusted unit does not classify");
-    } else if (function.externalSymbol == "gti_rt_posix_pointer_size_v1") {
+    } else if (function.externalSymbol == "gti_rt_posix_enomem_v1") {
       sawQuery = true;
       expect(function.processMemoryOperation == Operation::None,
              "a non-private declaration in the trusted unit does not classify");

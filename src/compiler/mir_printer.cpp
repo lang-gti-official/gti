@@ -454,11 +454,23 @@ public:
              << " share-policy=" << number(instance.sharePolicy);
       if (instance.transferCondition) {
         output << " transfer-condition=";
-        type(*instance.transferCondition);
+        output << '[';
+        for (const auto &node : instance.transferCondition->nodes) {
+          output << number(node.kind) << ':';
+          type(node.type);
+          output << ':' << node.left << ':' << node.right << ';';
+        }
+        output << ']';
       }
       if (instance.shareCondition) {
         output << " share-condition=";
-        type(*instance.shareCondition);
+        output << '[';
+        for (const auto &node : instance.shareCondition->nodes) {
+          output << number(node.kind) << ':';
+          type(node.type);
+          output << ':' << node.left << ':' << node.right << ';';
+        }
+        output << ']';
       }
       output << " kind=" << number(instance.kind)
              << " compiler-capability=" << number(instance.compilerCapability)

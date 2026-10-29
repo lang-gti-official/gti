@@ -3436,6 +3436,10 @@ public:
       const auto &type = stage.parameterTypes[0].arguments[0];
       if (nativeValue(type))
         return true;
+      // A selected constructor initializes mutex identity at its final address.
+      // Generated move/copy must not fall through to aggregate bit copying.
+      if (stage.constructorTarget && mutexShape(type).has_value())
+        return true;
       // Hierarchy storage is constructed by its selected constructor, by
       // relocating a moved owned argument, or by the generated field copy.
       if (!dispatchProofs.contains(type) ||
@@ -3461,6 +3465,7 @@ public:
         stage.intrinsic == IntrinsicKind::ObjectAlignment)
       return mir_detail::objectLayoutQuery(program, stage) &&
              (nativeValue(*stage.objectLayoutType) ||
+              mutexShape(*stage.objectLayoutType).has_value() ||
               dispatchProofs.metadata(*stage.objectLayoutType).has_value());
     if (stage.intrinsic == IntrinsicKind::ObjectRelocate ||
         stage.intrinsic == IntrinsicKind::ObjectRelocateRange)
@@ -3470,7 +3475,7 @@ public:
       if (!mir_detail::objectDestroy(program, stage))
         return false;
       const auto &type = stage.parameterTypes[0].arguments[0];
-      if (nativeValue(type))
+      if (nativeValue(type) || mutexShape(type).has_value())
         return true;
       // Hierarchy storage ends through its exact proved cleanup recipe.
       return dispatchProofs.contains(type) &&
@@ -4105,7 +4110,10 @@ public:
            !owner->polymorphic && !owner->abstract && !owner->cOpaqueHandle &&
            !owner->cAbiRecord && !owner->cAbiLayout && !owner->unionLayout &&
            owner->bases.empty() && owner->structuralBases.empty() &&
-           nativeValue(type) && classShape(type) == Shape::NativeClassStorage;
+           // A borrow transports the address of any represented ordinary
+           // complete class, including wrappers whose fields select mutex or
+           // atomic storage. It does not copy or construct that representation.
+           (nativeValue(type) || mutexShape(type).has_value());
   }
 
   // A native C record is addressed like any complete object; its fields
@@ -4132,6 +4140,12 @@ public:
     if (!(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
         !ordinaryRawReferenceObject(pointer.arguments.front()) &&
         !nativeRecordObject(pointer.arguments.front()) &&
+        // A raw borrow may name an already adjusted hierarchy view, including
+        // an interface or abstract base. It publishes that same address; it
+        // neither allocates a complete object nor runs a lifetime operation.
+        !(stage.info.type == pointer.arguments.front() &&
+          dispatchProofs.contains(stage.info.type) &&
+          dispatchProofs.metadata(stage.info.type).has_value()) &&
         !payloadRawReferent(stage) &&
         !(integralEnumAddress(pointer) &&
           stage.info.type == pointer.arguments.front()))

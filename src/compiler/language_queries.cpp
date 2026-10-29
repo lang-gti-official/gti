@@ -1370,6 +1370,10 @@ public:
         return note;
       };
       if (type != nullptr) {
+        if (type->unsafeOwned)
+          result.notes.emplace_back("unsafe ownership assertion: generic "
+                                    "payloads independently checked; "
+                                    "no thread capability granted");
         if (type->cOpaqueHandle) {
           result.notes.emplace_back(
               "opaque C handle: address-only through raw pointers");

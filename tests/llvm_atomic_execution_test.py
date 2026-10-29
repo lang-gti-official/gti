@@ -15,6 +15,13 @@ from llvm_evidence_manifest import build_manifest
 def cases() -> dict[str, str]:
     return {
         "scalar": "atomic_scalar.gti",
+        "wrapping": "llvm_atomic_wrapping.gti",
+        "wrapping-single": "llvm_atomic_wrapping.gti",
+        "wrapping-example-single": "../../examples/178-wrapping-atomic-counters.gti",
+        "scalar-single": "atomic_scalar.gti",
+        "values-single": "llvm_atomic_values.gti",
+        "orders-single": "llvm_atomic_orders.gti",
+        "example-single": "../../examples/176-profile-independent-atomics.gti",
         "values": "llvm_atomic_values.gti",
         "orders": "llvm_atomic_orders.gti",
         "wait-ready": "llvm_atomic_wait_ready.gti",
@@ -30,7 +37,10 @@ def cases() -> dict[str, str]:
 
 def profiles() -> dict[str, list[str]]:
     return {
+        "atomic.wrapping": ["wrapping"],
+        "atomic.wrapping-single": ["wrapping-single", "wrapping-example-single"],
         "atomic.scalar-core": ["scalar", "values", "orders"],
+        "atomic.scalar-single": ["scalar-single", "values-single", "orders-single", "example-single"],
         "atomic.wait-ready": ["wait-ready"],
         "atomic.checked-fetch": ["checked-fetch", "overflow-before-update"],
         "atomic.blocking-workers": ["worker-contention", "worker-publication", "wait-notify"],
@@ -55,6 +65,9 @@ def evidence_manifest(root: Path) -> dict:
         {name: f"tests/fixtures/{fixture}" for name, fixture in cases().items()},
         execution_profiles={
             "atomic.scalar-core": "concurrent",
+            "atomic.wrapping": "concurrent",
+            "atomic.wrapping-single": "single-threaded",
+            "atomic.scalar-single": "single-threaded",
             "atomic.wait-ready": "concurrent",
             "atomic.checked-fetch": "concurrent",
             "atomic.blocking-workers": "concurrent",
@@ -94,7 +107,13 @@ def main() -> None:
                 result = execute(gti, root,
                                  work / f"{name}-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard}",
                                  root / "tests/fixtures" / fixture, endpoint,
-                                 env, concurrent=True)
+                                 env, concurrent=not name.endswith("-single"))
+                if name.startswith("wrapping") and endpoint.backend == "cpp":
+                    if (result.compile_returncode != 65 or "GTI-B0003" not in result.stderr
+                            or "wrapping atomic read-modify-write" not in result.stderr):
+                        raise AssertionError(f"unexpected wrapping comparator result: {result}")
+                    print(f"atomic.{name}: recorded {endpoint.standard} unsupported wrapping operation", flush=True)
+                    continue
                 failure = name == "overflow-before-update"
                 if result.error or result.returncode != (70 if failure else 0):
                     raise AssertionError(f"{name} {endpoint}: {result}")
@@ -105,7 +124,8 @@ def main() -> None:
                 results.append(result.observable)
             if any(result != results[0] for result in results):
                 raise AssertionError(f"{name}: backend observable drift: {results}")
-            print(f"atomic.{name}: C++20/23 O3 and LLVM O0-O3 passed", flush=True)
+            scope = "LLVM O0-O3 passed; C++ limitation recorded" if name.startswith("wrapping") else "C++20/23 O3 and LLVM O0-O3 passed"
+            print(f"atomic.{name}: {scope}", flush=True)
         for name, body in rejects.items():
             if selected is not None and name not in selected:
                 continue

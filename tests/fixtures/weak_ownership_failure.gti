@@ -1,0 +1,42 @@
+import std.memory;
+import std.vector;
+import std.string;
+class Failing {
+public:
+  Failing() = default;
+  ~Failing() { std::println(7); int zero = 0; std::println(1 / zero); }
+};
+class Observer {
+  std::weak_ptr<Failing> weak;
+public:
+  Observer(std::weak_ptr<Failing> weak) : weak(std::move(weak)) {}
+  ~Observer() {
+    // The implicit weak credit must be released on failure, but this explicit
+    // credit still protects the control block during unwind.
+    if (this.weak.expired() && !this.weak.lock()) { std::println(99); }
+  }
+};
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 1) {
+    mut auto owner = std::make_shared<Failing>();
+    Observer observer{owner.downgrade()};
+    owner.reset();
+    return 1;
+  }
+  unsafe {
+    // Deliberately reach otherwise impractical overflow boundaries through the
+    // internal unsafe adoption seam. Overflow must abort without wrapping.
+    mut int value = 42;
+    auto dispose = [](void* address, bool payload) -> void {};
+    mut std::detail::shared_control block{std::erase_address(&value), std::move(dispose)};
+    mut std::weak_ptr<int> weak{&block, &value};
+    if (argc == 2) {
+      block.weak.store(uint64_t(18446744073709551615));
+      auto impossible = weak.clone();
+    } else {
+      block.strong.store(uint64_t(18446744073709551615));
+      auto impossible = weak.lock();
+    }
+    return 2;
+  }
+}

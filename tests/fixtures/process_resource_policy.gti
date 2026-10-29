@@ -26,14 +26,13 @@ int main() {
     if (bad_three || bad_three.error() != std::alloc_errc::invalid_alignment) { return 2; }
     if (provider_test_calls() != 0) { return 3; }
 
-    // The injected native limit exercises conversion overflow without requiring
-    // an unsupported 32-bit GTI target or a dangerously large host allocation.
+    // Target layout determines the native limit. A host adapter cannot narrow
+    // it; a separate source fault-injection case exercises the overflow branch.
     provider_test_mode(1);
-    auto too_big = provider.allocate(std::layout(uint64_t(4096), uint64_t(8)));
-    auto too_aligned = provider.allocate(std::layout(uint64_t(0), uint64_t(8192)));
-    if (too_big || too_big.error() != std::alloc_errc::size_overflow) { return 4; }
-    if (too_aligned || too_aligned.error() != std::alloc_errc::size_overflow) { return 5; }
-    if (provider_test_calls() != 0) { return 6; }
+    auto within_target = provider.allocate(std::layout(uint64_t(4096), uint64_t(8))).expect("target-sized allocation");
+    provider.release(within_target);
+    if (provider_test_calls() != 1 || provider_test_releases() != 1) { return 4; }
+    provider_test_mode(0);
 
     auto empty = provider.allocate(std::layout(uint64_t(0), uint64_t(64))).expect("empty allocation");
     if (empty.address != nullptr || empty.bytes != 0 || empty.alignment != 64 || empty.id != 0) { return 7; }

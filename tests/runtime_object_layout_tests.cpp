@@ -96,7 +96,9 @@ int main() {
                   instruction.operands.empty(),
               "queries are pure target-dependent values without object inputs");
         }
-  expect(sizes == 9 && alignments == 9,
+  // Nine explicit example layouts plus the process provider's two target
+  // layouts.
+  expect(sizes == 11 && alignments == 11,
          "each concrete query retains two typed operations");
   const auto serialized = lang::MirPrinter().print(frontend.mir);
   expect(serialized.starts_with("mir-v118 ") &&

@@ -2765,12 +2765,25 @@
                   "value": "("
                 },
                 {
-                  "type": "FIELD",
-                  "name": "capability_parameter",
-                  "content": {
-                    "type": "SYMBOL",
-                    "name": "identifier"
-                  }
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "FIELD",
+                      "name": "capability_parameter",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "identifier"
+                      }
+                    },
+                    {
+                      "type": "FIELD",
+                      "name": "capability_predicate",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "constraint_expression"
+                      }
+                    }
+                  ]
                 },
                 {
                   "type": "STRING",

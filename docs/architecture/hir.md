@@ -33,6 +33,10 @@ from concrete instance analysis. It is proof metadata, not a synthetic field
 access: the accessor call and its returned loan still describe execution. In
 particular, lowering must not replace a source accessor with a caller-side
 access to that accessor's private storage.
+Synthesized receiver operands, including witnesses for unsafe raw-reference
+returns tied to `this`, retain the concrete body-domain receiver place key.
+Debug availability and ordinary ownership analysis therefore consume the same
+receiver identity as explicit source `this` expressions.
 
 ## Inputs And Outputs
 

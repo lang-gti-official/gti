@@ -1,0 +1,32 @@
+import std.memory;
+// An observer does not extend the payload lifetime. Keep the result of lock()
+// alive for as long as any reference borrowed from it is needed.
+[[no_transfer, no_share]] class Message {
+public:
+  int value;
+  Message(int value) : value(value) {}
+};
+F retain<F>(F callback) { return std::move(callback); }
+
+int main() {
+  mut auto owner = std::make_shared<Message>(42);
+  auto observer = owner.downgrade();
+  {
+    auto locked = observer.lock();
+    if (!locked) { return 1; }
+    std::println(locked->value);
+  }
+  // The payload is thread-affine. Its observer can still be owned by a local
+  // callback; the library's unsafe_owned assertion grants no thread permission.
+  auto watch = observer.clone();
+  auto callback = retain([watch = std::move(watch)]() -> int {
+    auto locked = watch.lock();
+    return locked ? locked->value : 0;
+  });
+  if (callback() != 42) { return 3; }
+  owner.reset();
+  if (callback() != 0) { return 4; }
+  if (!observer.expired() || observer.lock()) { return 2; }
+  std::println("expired");
+  return 0;
+}

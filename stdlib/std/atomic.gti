@@ -85,6 +85,17 @@ void atomic_store_relaxed<std::atomic_scalar T>(
     gti_internal::atomic_storage<T>& storage, T value);
 void atomic_store_release<std::atomic_scalar T>(
     gti_internal::atomic_storage<T>& storage, T value);
+T atomic_fetch_add_wrapping<std::integral T>(gti_internal::atomic_storage<T>& storage, T operand);
+T atomic_fetch_add_wrapping_relaxed<std::integral T>(gti_internal::atomic_storage<T>& storage, T operand);
+T atomic_fetch_add_wrapping_acquire<std::integral T>(gti_internal::atomic_storage<T>& storage, T operand);
+T atomic_fetch_add_wrapping_release<std::integral T>(gti_internal::atomic_storage<T>& storage, T operand);
+T atomic_fetch_add_wrapping_acq_rel<std::integral T>(gti_internal::atomic_storage<T>& storage, T operand);
+T atomic_fetch_sub_wrapping<std::integral T>(gti_internal::atomic_storage<T>& storage, T operand);
+T atomic_fetch_sub_wrapping_relaxed<std::integral T>(gti_internal::atomic_storage<T>& storage, T operand);
+T atomic_fetch_sub_wrapping_acquire<std::integral T>(gti_internal::atomic_storage<T>& storage, T operand);
+T atomic_fetch_sub_wrapping_release<std::integral T>(gti_internal::atomic_storage<T>& storage, T operand);
+T atomic_fetch_sub_wrapping_acq_rel<std::integral T>(gti_internal::atomic_storage<T>& storage, T operand);
+
 T atomic_exchange<std::atomic_scalar T>(
     gti_internal::atomic_storage<T>& storage, T value);
 T atomic_exchange_relaxed<std::atomic_scalar T>(
@@ -468,6 +479,78 @@ public:
     bool exchanged = gti_internal::atomic_compare_exchange(
         this.storage, expected_value, desired, observed);
     return atomic_compare_exchange_result<T>(exchanged, observed);
+  }
+
+  /// Atomically adds modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_add_wrapping(T operand) requires std::integral<T> {
+    return gti_internal::atomic_fetch_add_wrapping(this.storage, operand);
+  }
+
+  /// Atomically adds modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_add_wrapping(T operand, memory_order_relaxed order) requires std::integral<T> {
+    return gti_internal::atomic_fetch_add_wrapping_relaxed(this.storage, operand);
+  }
+
+  /// Atomically adds modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_add_wrapping(T operand, memory_order_acquire order) requires std::integral<T> {
+    return gti_internal::atomic_fetch_add_wrapping_acquire(this.storage, operand);
+  }
+
+  /// Atomically adds modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_add_wrapping(T operand, memory_order_release order) requires std::integral<T> {
+    return gti_internal::atomic_fetch_add_wrapping_release(this.storage, operand);
+  }
+
+  /// Atomically adds modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_add_wrapping(T operand, memory_order_acq_rel order) requires std::integral<T> {
+    return gti_internal::atomic_fetch_add_wrapping_acq_rel(this.storage, operand);
+  }
+
+  /// Atomically adds modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_add_wrapping(T operand, memory_order_seq_cst order) requires std::integral<T> {
+    return gti_internal::atomic_fetch_add_wrapping(this.storage, operand);
+  }
+
+  /// Atomically subtracts modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_sub_wrapping(T operand) requires std::integral<T> {
+    return gti_internal::atomic_fetch_sub_wrapping(this.storage, operand);
+  }
+
+  /// Atomically subtracts modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_sub_wrapping(T operand, memory_order_relaxed order) requires std::integral<T> {
+    return gti_internal::atomic_fetch_sub_wrapping_relaxed(this.storage, operand);
+  }
+
+  /// Atomically subtracts modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_sub_wrapping(T operand, memory_order_acquire order) requires std::integral<T> {
+    return gti_internal::atomic_fetch_sub_wrapping_acquire(this.storage, operand);
+  }
+
+  /// Atomically subtracts modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_sub_wrapping(T operand, memory_order_release order) requires std::integral<T> {
+    return gti_internal::atomic_fetch_sub_wrapping_release(this.storage, operand);
+  }
+
+  /// Atomically subtracts modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_sub_wrapping(T operand, memory_order_acq_rel order) requires std::integral<T> {
+    return gti_internal::atomic_fetch_sub_wrapping_acq_rel(this.storage, operand);
+  }
+
+  /// Atomically subtracts modulo 2^N and returns the previous value.
+  [[discardable]]
+  T fetch_sub_wrapping(T operand, memory_order_seq_cst order) requires std::integral<T> {
+    return gti_internal::atomic_fetch_sub_wrapping(this.storage, operand);
   }
 
   /// Atomically adds `operand`, returning the prior value. Integer arithmetic

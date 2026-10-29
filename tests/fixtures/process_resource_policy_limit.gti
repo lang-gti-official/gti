@@ -1,0 +1,29 @@
+import std.resource;
+import std.memory;
+
+extern "C" {
+  void provider_test_mode(int32_t mode);
+  int32_t provider_test_calls();
+  int32_t provider_test_releases();
+}
+
+// The harness narrows only the copied provider's native-size bound to 8 bits.
+// This reaches the real source rejection/cleanup branches without asking the
+// host allocator for a dangerous allocation or claiming an unsupported target.
+int main() {
+  std::process_resource provider{};
+  unsafe {
+    provider_test_mode(0);
+    auto too_big = provider.allocate(std::layout(uint64_t(256), uint64_t(8)));
+    auto too_aligned = provider.allocate(std::layout(uint64_t(0), uint64_t(256)));
+    if (too_big || too_big.error() != std::alloc_errc::size_overflow) { return 1; }
+    if (too_aligned || too_aligned.error() != std::alloc_errc::size_overflow) { return 2; }
+    if (provider_test_calls() != 0) { return 3; }
+    auto empty = provider.allocate(std::layout(uint64_t(0), uint64_t(64))).expect("empty");
+    provider.release(empty);
+    if (provider_test_calls() != 0 || provider_test_releases() != 0) { return 4; }
+    auto accepted = provider.allocate(std::layout(uint64_t(255), uint64_t(8))).expect("within limit");
+    provider.release(accepted);
+    return provider_test_calls() == 1 && provider_test_releases() == 1 ? 0 : 5;
+  }
+}

@@ -161,6 +161,16 @@ def main():
                     command += ["--execution-profile", "concurrent"]
                 if native:
                     command += ["--", *native]
+                source_owner = fixture.name == "panic_worker_shells.gti"
+                if source_owner:
+                    binary.write_bytes(b"preserved")
+                    rejected = run(command, environment)
+                    assert (rejected.returncode == 65 and "GTI-B0003" in rejected.stderr
+                            and "wrapping atomic read-modify-write" in rejected.stderr
+                            and binary.read_bytes() == b"preserved"), rejected
+                    print(f"RECORDED C++ LIMITATION {fixture.name}/{name}: wrapping atomics", flush=True)
+                    command = [str(compiler), str(fixture), "--backend", "llvm", level,
+                               "--execution-profile", "concurrent", "-o", str(binary)]
                 built = run(command, environment)
                 if built.returncode:
                     sys.stderr.write(f"Build failed: {command!r}\n{built.stdout}{built.stderr}")
@@ -171,9 +181,10 @@ def main():
                         shutil.copy2(fixture, retained / fixture.name)
                         sys.stderr.write(f"Failure artifacts retained at {retained}\n")
                     return 1
-                generated = binary.with_suffix(".gti.cpp").read_text()
-                assert "// GTI verified-MIR body:" in generated
-                assert "gti_rt_failure_capture_panic_v2" in generated
+                if not source_owner:
+                    generated = binary.with_suffix(".gti.cpp").read_text()
+                    assert "// GTI verified-MIR body:" in generated
+                    assert "gti_rt_failure_capture_panic_v2" in generated
                 for count, status, stdout, stderr in executions:
                     executed = run([str(binary), *(["case"] * count)], environment)
                     actual = (executed.returncode, executed.stdout, executed.stderr)
@@ -182,7 +193,8 @@ def main():
                         sys.stderr.write(f"{name}/{fixture.stem}, case {count}: expected {expected!r}; got {actual!r}\n")
                         retained = pathlib.Path(tempfile.mkdtemp(prefix="gti-panic-failure-"))
                         for artifact in (fixture, binary, binary.with_suffix(".gti.cpp")):
-                            shutil.copy2(artifact, retained / artifact.name)
+                            if artifact.exists():
+                                shutil.copy2(artifact, retained / artifact.name)
                         sys.stderr.write(f"Failure artifacts retained at {retained}\n")
                         return 1
                 outcomes += len(executions)

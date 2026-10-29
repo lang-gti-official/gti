@@ -2,6 +2,14 @@
 
 Status: Current implementation.
 
+`[[unsafe_owned]]` is class-declaration semantic metadata. Exact owned callable
+transport checks concrete generic arguments independently, then treats that
+class's raw representation as reviewed. Checked borrows retain their existing
+place and loan obligations; transfer/share traits are unchanged. Recursive
+capture inspection keys cycles by concrete type rather than class declaration.
+The accepted call still lowers through existing exact callable identities,
+consumption and cleanup in HIR/MIR; no backend ownership-name rule is added.
+
 ## Typed statement macro expansion
 
 `semantic_macro.cpp` owns typed `#macro` expansion independently of public

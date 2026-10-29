@@ -1741,6 +1741,32 @@ void testDetachedDebugLocations() {
          "debug stages must identify exact optimized MIR operations");
 }
 
+void testDebugImplicitReceiverBorrow() {
+  const auto frontend =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("debug-implicit-receiver.gti", R"gti(
+class Owner {
+  int* value = nullptr;
+public:
+  Owner() = default;
+  [[borrowed_from(this)]]
+  int& read() { unsafe { return *this.value; } }
+};
+int main() { Owner owner{}; return owner.read(); }
+)gti");
+  expect(frontend.canGenerateCode(),
+         "raw receiver borrow debug fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  const auto built = lang::LoweredProgramBuilder().build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(
+      built.valid(),
+      "implicit receiver witnesses preserve exact identity for debug ranges");
+}
+
 void testDebugReceiverFragments() {
   const auto frontend =
       lang::Frontend(
@@ -3477,6 +3503,7 @@ int main() {
   testDebugValueEvents();
   testDebugLexicalScopeEnds();
   testDebugReceiverFragments();
+  testDebugImplicitReceiverBorrow();
   testVerificationEvidenceOwnsItsProgram();
   testMutationRejection();
   testSealValidationIsAnExplicitSelfCheck();

@@ -6,8 +6,8 @@
 
 int main() {
   for (const std::string policy :
-       {"[[unsafe_transfer]]", "[[unsafe_transfer(T)]]", "", "[[unsafe_share]]",
-        "[[no_transfer]]"}) {
+       {"[[unsafe_owned]]", "[[unsafe_transfer]]", "[[unsafe_transfer(T)]]", "",
+        "[[unsafe_share]]", "[[no_transfer]]"}) {
     const auto reviewed = analyzeTrustedPreludeFixture(
         "reviewed-callable-state.gti",
         "import std.string;\n" + policy + R"( class Reviewed<T> {
@@ -23,7 +23,8 @@ int main() {
   return 0;
 }
 )");
-    const bool permitted = policy.find("unsafe_transfer") != std::string::npos;
+    const bool permitted = policy == "[[unsafe_owned]]" ||
+                           policy.find("unsafe_transfer") != std::string::npos;
     expect(reviewed.canGenerateCode() == permitted,
            "owned callable respects the exact wrapper transfer assertion: " +
                policy);
@@ -64,6 +65,107 @@ int main() {
     expect(
         boundaryRejected,
         "false conditional transfer and asserted tracked views stay rejected");
+  }
+  // Ownership is independent of concurrency, but not of hidden generic state.
+  for (const auto &[payload, permitted] :
+       std::vector<std::pair<std::string, bool>>{
+           {"Local", true},
+           {"Immovable", true},
+           {"Reviewed<Local>", true},
+           {"Reviewed<Reviewed<Local>>", true},
+           {"int*", false},
+           {"Raw", false},
+           {"Borrowed", false},
+           {"Reviewed<Raw>", false},
+           {"Reviewed<Reviewed<Raw>>", false},
+           {"Reviewed<Borrowed>", false},
+           {"spec::Specialized<Raw>", false}}) {
+    const auto result =
+        analyzeTrustedPreludeFixture("independent-owner.gti", R"(
+import std.meta;
+import std.string;
+[[no_transfer, no_share]] struct Local { public: Local() = default; };
+struct Immovable { public: Immovable() = default; Immovable(Immovable&) = delete; Immovable(Immovable&&) = delete; };
+struct Raw { int* pointer = nullptr; public: Raw() = default; };
+struct Borrowed { std::string_view view = ""; public: Borrowed() = default; };
+[[unsafe_owned]] class Reviewed<T> {
+  T* pointer = nullptr;
+public:
+  Reviewed() = default;
+};
+namespace spec { class Specialized<T> { public: Specialized() = default; }; }
+[[unsafe_owned]] class spec::Specialized<Raw> {
+  Raw* pointer = nullptr;
+public:
+  Specialized() = default;
+};
+void retain<F>(F callback) {}
+int main() {
+  Reviewed<)" + payload + R"(> owner{};
+  static_assert(!std::meta::is_transferable<Reviewed<)" + payload +
+                                                                  R"(>>());
+  static_assert(!std::meta::is_shareable<Reviewed<)" + payload + R"(>>());
+  auto callback = [owner = std::move(owner)]() -> int { return 1; };
+  retain(std::move(callback));
+  return 0;
+}
+)");
+    if (result.canGenerateCode() != permitted)
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << payload << ": " << diagnostic.code << ": "
+                  << diagnostic.message << '\n';
+    expect(result.canGenerateCode() == permitted,
+           "unsafe_owned checks the concrete hidden payload " + payload);
+    if (!permitted)
+      expect(hasDiagnosticCode(result.diagnostics, "GTI-S2046"),
+             "hidden raw/borrowed state is rejected at callable transport");
+  }
+  for (const std::string declaration :
+       {"[[unsafe_owned]] interface Invalid {};",
+        "[[unsafe_owned, unsafe_owned]] struct Invalid {};"}) {
+    const auto invalid = analyzeTrustedPreludeFixture(
+        "invalid-owned-assertion.gti",
+        declaration + "\nint main() { return 0; }");
+    expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2059"),
+           "ownership assertions require one class/struct declaration");
+    const auto found =
+        std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                     [](const auto &d) { return d.code == "GTI-S2059"; });
+    if (found != invalid.diagnostics.end()) {
+      expect(found->primary.start == declaration.rfind("unsafe_owned"),
+             "ownership assertion diagnostic points to the rejected attribute");
+      if (declaration.find("interface") == std::string::npos)
+        expect(
+            found->related.size() == 1,
+            "duplicate ownership assertion identifies the first declaration");
+    }
+  }
+  for (const std::string owner : {"std::shared_ptr", "std::weak_ptr"}) {
+    for (const auto &[payload, permitted] :
+         std::vector<std::pair<std::string, bool>>{
+             {"Local", true},
+             {"std::shared_ptr<Local>", true},
+             {"Raw", false},
+             {"std::shared_ptr<Raw>", false}}) {
+      const auto result =
+          analyzeTrustedPreludeFixture("source-independent-owner.gti", R"(
+import std.memory;
+[[no_transfer, no_share]] struct Local { public: Local() = default; };
+struct Raw { int* pointer = nullptr; public: Raw() = default; };
+void retain<F>(F callback) {}
+int main() {
+)" + owner + "<" + payload + R"(> owner{};
+  auto callback = [owner = std::move(owner)]() -> int { return 1; };
+  retain(std::move(callback));
+  return 0;
+}
+)");
+      expect(result.canGenerateCode() == permitted,
+             owner + " preserves local payload lifetime checks for " + payload);
+      if (!permitted)
+        expect(hasDiagnosticCode(result.diagnostics, "GTI-S2046"),
+               "source owners cannot hide raw generic payloads");
+    }
   }
   const auto sourceOwner =
       analyzeTrustedPreludeFixture("source-owner-callable.gti", R"(

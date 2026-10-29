@@ -48,15 +48,20 @@ def equivalent(cases: tuple[CaseContext, ...], root: Path) -> None:
             assert examples.environment(root, inherited) == expected_options["env"], "environment policy changed"
             declared = examples.observation_context(case)
             assert declared["case"]["loading"] == "driver-default-prelude-with-stdlib-path-setdefault"
-            assert declared["case"]["observation"] == "mir-census-emit-cpp"
+            native_only = source.name in examples.LLVM_ONLY_EXAMPLES
+            assert declared["case"]["observation"] == (
+                "sealed-lowered-census-with-cpp-rejection" if native_only else "mir-census-emit-cpp")
             assert declared["stdlib_environment"] == {
                 "name": "GTI_STDLIB_PATH", "operation": "setdefault",
                 "repository_default": "stdlib"}
             assert declared["timeout_seconds"] == expected_options["timeout"], "timeout changed"
             assert declared["cwd"] == "repository-root"
-            assert declared["compile_observation"] == {
-                "mode": "--emit-cpp", "returncode": 0,
+            expected_observation = {
+                "mode": "sealed-lowered-program-inventory" if native_only else "--emit-cpp", "returncode": 0,
                 "output_required": True, "oracle": "reviewed MIR body census"}
+            if native_only:
+                expected_observation["cpp_rejection"] = "GTI-B0003: wrapping atomic read-modify-write"
+            assert declared["compile_observation"] == expected_observation
             assert declared["case"]["execution_profile"] == (
                 "concurrent" if source.name in PRE_EXTRACTION_CONCURRENT else "single-threaded")
             assert set(declared["case"]["unresolved"]) == {
@@ -117,6 +122,20 @@ def main() -> None:
 
     def fake_compiler(command, **options):
         source = selected[len(calls)]
+        if source.name in examples.LLVM_ONLY_EXAMPLES:
+            env = examples.environment(root, inherited)
+            assert options == {"capture_output": True, "text": True, "env": env, "timeout": 180}
+            if command[0] == "/controlled/gti_lowered_program_census":
+                assert command == ["/controlled/gti_lowered_program_census", str(root), source.name]
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0,
+                    "generated_kinds\n" + source.name + "\t9\t2\t0\n", "")
+            output = Path(command[-1])
+            assert command == ["/controlled/compiler", str(source), "--std", "c++23", "-O1",
+                               *(["--execution-profile", "concurrent"]
+                                 if source.name in PRE_EXTRACTION_CONCURRENT else []), "-o", str(output)]
+            assert output.read_bytes() == b"preserved unsupported output"
+            return subprocess.CompletedProcess(command, 65, "", "GTI-B0003: wrapping atomic read-modify-write")
         output = Path(command[-1])
         expected_command, expected_options = frozen_plan(
             source, Path(command[0]), root, output, inherited)

@@ -6,7 +6,7 @@ import os
 import sys
 import tempfile
 
-from backend_execution import Endpoint, execute
+from backend_execution import Endpoint, execute, require_cpp_wrapping_rejection
 
 
 SUCCESS = "llvm_callable_owned_composition"
@@ -41,10 +41,16 @@ def main() -> None:
     gti = Path(sys.argv[1]).resolve()
     root = Path(sys.argv[2]).resolve()
     oracle_only = "--oracle-only" in sys.argv[3:]
-    endpoints = (CPP,) if oracle_only else (CPP, *LLVM)
+    endpoints = LLVM
     env = os.environ.copy()
     with tempfile.TemporaryDirectory(prefix="gti-llvm-callable-owned-") as raw:
         work = Path(raw)
+        for name in (SUCCESS, *FAILURES, *LLVM_ONLY_FAILURES):
+            require_cpp_wrapping_rejection(gti, root / "tests/fixtures" / f"{name}.gti",
+                                          work / (name + "-unsupported"), env, CPP)
+        if oracle_only:
+            print("C++ source-owner oracle unavailable: exact wrapping rejection verified; no execution claim")
+            return
         success = [run_case(gti, root, work, SUCCESS, endpoint, env)
                    for endpoint in endpoints]
         if any(result.observable != (0, "", "") for result in success):
@@ -73,7 +79,7 @@ def main() -> None:
                         f"native owned-wrapper failure drift: {results}"
                     )
 
-    mode = "C++23 oracle" if oracle_only else "C++23/LLVM O0-O3 composition"
+    mode = "C++23 oracle" if oracle_only else "LLVM O0-O3 composition, C++ explicitly unsupported"
     print(f"O-LLVM-08/O-LLVM-09 owned callable {mode} passed")
 
 

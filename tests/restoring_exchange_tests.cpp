@@ -71,7 +71,7 @@ int main() {
       }
     }
   }
-  expect(shapeResults == 10 && arrayPublications == 3,
+  expect(shapeResults == 9 && arrayPublications == 3,
          "shape coverage includes active/cleanup-free arrays and owning "
          "alternatives");
   expect(

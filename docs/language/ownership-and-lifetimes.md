@@ -246,10 +246,39 @@ assuming the conditional promise holds. The two capabilities are independent.
 
 The author still audits the entire wrapper, including state not named in the
 condition, native pointers, movement and cleanup. This is not a compiler proof
-of the unsafe implementation. The bounded condition names a type parameter,
-not a value parameter, parameter pack, arbitrary type expression, or boolean
-expression. Existing unconditional assertions and explicit opt-outs retain
-their meaning; duplicate policies remain errors.
+of the unsafe implementation. Existing unconditional assertions and explicit
+opt-outs retain their meaning; duplicate policies remain errors.
+
+A condition can also be a capability predicate, using the existing constraint
+syntax and declaration-bound concepts:
+
+```gti
+concept CrossThread<T> = std::transferable<T> && std::shareable<T>;
+[[unsafe_transfer(CrossThread<T>), unsafe_share(CrossThread<T>)]]
+class ReviewedSharedOwner<T> {
+  T* pointer = nullptr;
+public:
+  ReviewedSharedOwner() {}
+  ~ReviewedSharedOwner() {}
+};
+```
+
+Predicates compose transfer and sharing facts with `&&`, `||`, and parentheses.
+Named source concepts and transparent source queries of those facts use the
+same declaration lookup as ordinary constraints; their public spelling grants
+no capability. Different type parameters can contribute, including a resource
+or cleanup policy. A false predicate denies only that capability, so the type
+remains usable locally. The single-parameter form remains shorthand for the
+matching capability of that parameter.
+
+This profile is monotone: negation, arbitrary constexpr computations, unrelated
+traits, and member-expression requirements are not capability predicates.
+Keeping the inputs to transfer/share facts preserves the existing cycle-aware
+capability calculation and lets MIR independently replay concrete conditions.
+Resolution is bounded to 64 nested expansion steps and 256 condition nodes;
+unsupported or exhausted predicates report `GTI-S2059`. Conditions do not
+establish that an unsafe implementation satisfies its promise.
+
 
 The prelude exposes `std::transferable<T>` and `std::shareable<T>` as ordinary
 public concepts backed by these compiler-owned facts. They constrain generic
@@ -1340,6 +1369,22 @@ A false conditional assertion, `unsafe_share` alone, or a tracked borrowed
 field cannot provide that permission. Direct raw-pointer captures remain
 rejected. This revises the original blanket recursive raw-field rejection so
 source-defined owning types retain the same transport as private owners.
+`[[unsafe_owned]]` on a class or struct separately asserts that its raw
+implementation state has no external lifetime dependency and remains valid
+through movement and final cleanup. It grants neither transfer nor sharing,
+and cannot hide checked references, views, or borrowed captures. This is an
+unsafe obligation of the implementation author, not a compiler proof inferred
+from a destructor. An invalid assertion can make safe callers unsound.
+Every concrete generic type argument must independently pass the same ownership
+check without inheriting the enclosing assertion; this conservative rule also
+applies to phantom arguments. Nested instantiations are checked by concrete type,
+not merely declaration identity. The assertion does not require a hidden payload
+to be movable or thread-capable. It takes no arguments, may occur only once,
+and applies to classes and structs, not interfaces or functions.
+Examples 177 and 179 demonstrate unrelated reviewed state and local callbacks
+holding observers of thread-affine payloads. This attribute adds no runtime
+state: existing exact callable movement and cleanup remain authoritative in MIR.
+
 Example 55 demonstrates a source-defined string capture; unrelated reviewed
 owners have the same rule. The examples above describe the original
 exact-transport minimum, not a restriction to one-field owners: ordinary direct by-value generic
@@ -1629,16 +1674,39 @@ handle. Such a borrow protects the specific handle that supplied it; resetting
 a different alias is allowed because the borrowed handle still owns the
 object. `use_count()` is an observational snapshot, not exclusive-access proof.
 
-`std::make_shared<T>(args...)` uses the existing unique-allocation family:
-classes, structs, and scalars without stored borrowed state. Direct arrays,
-Expected values, and payload enums are not in this allocation family. The
-current representation allocates the object and its control block separately.
-Failure to allocate the
-block raises an aborting `allocation_failure` report in `shared_owner`; no
-pointee, argument, local or managed-worker cleanup runs before process abort.
-Successful publication still transfers exactly one ownership obligation. Last-owner
-release executes the ordinary verified cleanup recipe, including defined
-failure propagation. Empty dereference/member access raises `empty_owner_access`.
+`std::make_shared<T>(args...)` constructs a `storage_element` at its final
+address using the general raw-region allocation and typed lifetime operations.
+The object and its control block occupy one correctly aligned allocation.
+The source factory places two independently constructed complete objects in
+one region, aligning the payload after the control block. Separate source
+guards and the allocation lease own constructor rollback. Allocation failure raises the
+aborting `allocation_failure` report in `private_storage`; no pointee,
+argument, local or managed-worker cleanup runs before process abort.
+Successful publication transfers exactly one strong credit. Last-owner release
+executes the exact payload type's verified cleanup through a stored function
+pointer, with an implicit weak-credit guard preserving control-block lifetime during
+payload cleanup, including defined failure.
+Empty dereference/member access raises `empty_owner_access` in `member_access`.
+
+The handle, control block, overflow-checked retain loop, final-release decision,
+view conversion and allocation policy are ordinary GTI source. Retain uses
+relaxed compare/exchange; release uses wrapping release decrement after establishing a live strong
+credit, followed by an acquire load only on the final release. General compiler facilities still supply
+object layout/lifetime, borrow checking, capability predicates, function-pointer
+calls, atomic target instructions and defined failure. Public shared ownership
+no longer uses the private `shared_owner` capability.
+On the measured 64-bit native ABI, the ordinary source destructor's activation
+state makes the handle 24 bytes, compared with the legacy handle's 16 bytes.
+The owner accepted this representation cost on 2026-10-28. The factory uses one
+allocation instead of the legacy two; these are implementation measurements,
+not a frozen public layout or a claim about every target.
+
+
+This source implementation requires the LLVM backend because wrapping atomic
+operations are LLVM-only. C++ compilation reports `GTI-B0003`; this is an explicit
+support regression accepted with the source replacement. Scalar atomics are
+available in both execution profiles without a host thread-runtime requirement;
+thread creation and waiting retain their separate restrictions.
 
 `shared_ptr<Derived>::upcast<Base>()` and the equivalent
 `std::upcast_shared<Base, Derived>(owner)` explicitly consume one derived-typed
@@ -1661,8 +1729,44 @@ be destroyed on another thread. Consequently a shared mutex owner can cross
 threads when its payload transfers. A lock guard remains non-transferable;
 neither allocation nor shared reference counting overrides thread affinity.
 
-Shared ownership does not solve cycles. Weak observation remains incomplete;
-strong ownership cycles must be avoided.
+`std::weak_ptr<T>` is a move-only observer, constructed from a strong handle
+or returned by `shared_ptr::downgrade()`. `clone()` adds a weak credit;
+reset, null assignment, generated move assignment, and swap manipulate the
+observer. Empty and expired observers report zero `use_count()` and true
+`expired()`. These queries are snapshots, not a guarantee that promotion will
+succeed. `lock()` returns an empty strong handle after expiry; otherwise it
+atomically acquires a strong credit and returns a read-only shared handle.
+There is no weak dereference operation. Borrows come from the promoted strong
+handle and protect that handle in the ordinary way.
+
+The control block has strong and weak atomic counts. Weak includes one implicit
+credit for the entire live strong population. Last strong release destroys the
+payload exactly once, then drops that implicit credit even when cleanup raises
+a defined failure. Last weak release destroys the control block and frees the
+original allocation. An expired observer can therefore be cloned, moved,
+queried and destroyed without accessing the retired payload. Promotion uses
+acquire compare/exchange on a positive strong count and never revives zero.
+Both strong and weak increments reject count overflow before modifying the
+count; credit-backed releases use wrapping release subtraction followed by a final-
+release acquire load of the same counter. After publication all modifications
+are read-modify-writes, and zero is never resurrected. Atomic write-read
+coherence makes the final acquire observe its preceding zero write; that write
+belongs to the release sequence of every earlier release. Thus destruction
+observes writes preceding all releases, including payload cleanup before the
+implicit weak release. The acquire remains a synchronization effect even though
+its numeric result is discarded.
+
+Weak handles have the same conditional thread permissions as strong handles:
+`T` must support both transfer and sharing, because promotion can create a last
+strong owner on the receiving thread. A weak observer created from an already
+upcast strong handle preserves its adjusted view. There is no implicit view
+conversion and no conversion that inspects an expired payload.
+
+Weak observation can break ownership cycles, but strong cycles are not collected.
+An expired observer retains the combined allocation, including the former
+payload's storage, until the final weak credit is released. The current source
+weak handle, like the source strong handle, occupies 24 bytes on the measured
+64-bit target; this is an implementation detail, not a frozen ABI.
 
 ## Nullability And Allocation Failure
 

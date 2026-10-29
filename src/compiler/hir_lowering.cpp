@@ -466,11 +466,16 @@ private:
     const GenericSubstitution capabilitySubstitution = classSubstitution(
         *declaration, resolvedType.arguments, resolvedType.valueArguments);
     const auto concreteCondition =
-        [&](const std::optional<SemanticType> &condition)
-        -> std::optional<SemanticType> {
-      return condition
-                 ? std::optional(substitute(*condition, capabilitySubstitution))
-                 : std::nullopt;
+        [&](const std::optional<CapabilityCondition> &condition)
+        -> std::optional<CapabilityCondition> {
+      if (!condition)
+        return std::nullopt;
+      auto concrete = *condition;
+      for (auto &node : concrete.nodes)
+        if (node.kind == CapabilityConditionNode::Kind::Transfer ||
+            node.kind == CapabilityConditionNode::Kind::Share)
+          node.type = substitute(node.type, capabilitySubstitution);
+      return concrete;
     };
     SemanticTypeTraits instanceTraits =
         instanceProvider->traitsFor(resolvedType);
@@ -2875,6 +2880,7 @@ private:
   }
 
   [[nodiscard]] HirValueId lowerImplicitReceiver(HirBody &body) {
+    ensurePlaceDomain(body);
     const HirValueId id = nextValueId++;
     body.values.push_back(
         {.id = id,
@@ -2882,7 +2888,8 @@ private:
          .info = {.type = currentReceiverType,
                   .category = ValueCategory::Place,
                   .access = currentReceiverAccess,
-                  .traits = instanceProvider->traitsFor(currentReceiverType)}});
+                  .traits = instanceProvider->traitsFor(currentReceiverType)},
+         .place = PlaceKey{.domain = body.placeDomain, .receiver = true}});
     return id;
   }
 
@@ -6848,6 +6855,10 @@ private:
                    resolved->intrinsic == IntrinsicKind::AtomicStore ||
                    resolved->intrinsic == IntrinsicKind::AtomicExchange ||
                    resolved->intrinsic ==
+                       IntrinsicKind::AtomicFetchAddWrapping ||
+                   resolved->intrinsic ==
+                       IntrinsicKind::AtomicFetchSubWrapping ||
+                   resolved->intrinsic ==
                        IntrinsicKind::AtomicCompareExchange) {
           value.synchronization = resolved->synchronization;
           const SynchronizationOperationKind expected =
@@ -6860,7 +6871,11 @@ private:
                   ? SynchronizationOperationKind::AtomicNotify
               : resolved->intrinsic == IntrinsicKind::AtomicStore
                   ? SynchronizationOperationKind::AtomicStore
-              : resolved->intrinsic == IntrinsicKind::AtomicExchange
+              : resolved->intrinsic == IntrinsicKind::AtomicExchange ||
+                      resolved->intrinsic ==
+                          IntrinsicKind::AtomicFetchAddWrapping ||
+                      resolved->intrinsic ==
+                          IntrinsicKind::AtomicFetchSubWrapping
                   ? SynchronizationOperationKind::AtomicReadModifyWrite
                   : SynchronizationOperationKind::AtomicCompareExchange;
           if (value.synchronization.kind != expected ||

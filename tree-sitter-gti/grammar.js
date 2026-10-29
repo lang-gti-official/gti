@@ -472,7 +472,8 @@ module.exports = grammar({
       field("attribute", $.identifier),
       optional(seq(
         "(",
-        field("capability_parameter", $.identifier),
+        choice(field("capability_parameter", $.identifier),
+               field("capability_predicate", $.constraint_expression)),
         ")",
       )),
     ),

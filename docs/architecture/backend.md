@@ -2614,6 +2614,13 @@ array of concrete generic class elements uses each element's private tag
 constructor and never assumes that the public class has a zero-argument
 constructor. This remains a backend-only rollback representation and does not
 add a GTI constructor or observable initialized value.
+Staged elements of constructor array fields additionally restore their inert
+C++ shells after rollback. The slots remember attempted construction and cancel
+restoration when publication transfers the element to its aggregate. Untouched
+elements keep their original shells. Restoration performs no source cleanup,
+including during emergency abandonment. This prevents enclosing C++ destruction
+from revisiting ended element lifetimes, without running a source destructor twice or changing the MIR drops.
+Ordinary local and returned-array slots do not opt into this field-only rule.
 Cleanup-free constructed fields use the same body-ordered publication route
 when a nested class argument needs a prepared parameter slot. Proving the
 consuming constructor failure-free removes its failure-propagation marker,
@@ -5539,8 +5546,24 @@ it when propagating or containing that failure. Failed-operation edges check the
 incoming primary before any callee-local cleanup; generated aggregate cleanup
 sequences retain the same scope after their first failure. A body whose every
 failure chain executes no instruction and only propagates, contains, continues
-or jumps enters no scope: nothing inside such a chain can observe the context,
-and its failed-operation edges still check the incoming primary. Nested scopes cannot
+or jumps enters no scope: nothing inside such a chain can observe the context.
+Permission-only instructions without lifecycle transfers also qualify; they emit
+no runtime operation. A generated terminal source-destructor recipe without
+children or allocation release likewise returns its first failure without
+entering a scope that no subsequent cleanup could observe. Both paths retain
+the incoming-secondary-failure check and exact record propagation. Aggregate,
+recursive, allocation-releasing and native-unwind cleanup retain their scopes.
+A binding drop with an exact inert recipe (no active cleanup, destructor,
+children, array/recursive/dynamic cleanup or owner release) only retires local
+activation state and also needs no scope. Additional lifecycle transfers keep
+it outside this case. In the status ABI, a body with no observable failure
+cleanup reuses its caller's failure destination for propagation records.
+Successful paths never consume that output; a failed path still performs the
+incoming-secondary-failure check. Bodies that run cleanup retain independent
+primary/secondary buffers, as do native-unwind bodies. This removes fixed-size
+stack buffers and copies from ordinary forwarding helpers without changing
+failure identity, order, diagnostics or the ABI signature.
+ Nested scopes cannot
 replace the earliest record/artifact, and a secondary failure takes the existing
 emergency protocol immediately. The runtime borrows the record only for that
 synchronous scope; no allocation, public type recognition or successful-call

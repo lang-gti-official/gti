@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 
-from backend_execution import Endpoint, execute
+from backend_execution import Endpoint, execute, require_cpp_wrapping_rejection
 from llvm_evidence_manifest import build_manifest
 
 
@@ -217,20 +217,40 @@ def main():
         work = Path(temporary)
         for name, fixture in fixtures().items():
             source = root / "tests/fixtures" / fixture
-            oracle = execute(gti, root, work / f"{name}-cpp", source,
-                             Endpoint("cpp", "O0", "c++23"), environment,
-                             concurrent=True, run_timeout=60)
-            if oracle.error:
-                raise AssertionError(f"{name}: C++ oracle failed: {oracle.error}")
+            source_owner = name in {"owned-mutexes", "owned-mutex-failure", "shared-mutex-workers",
+                                    "transfer-function-tasks", "hierarchy-mutexes"}
+            if source_owner:
+                require_cpp_wrapping_rejection(gti, source, work / (name + "-unsupported"),
+                                              environment, Endpoint("cpp", "O0", "c++23"), concurrent=True)
+                # Pin independent fixture values and cleanup traces; O0 is not
+                # used to invent the expected result for the optimized cases.
+                expected = {
+                    "owned-mutexes": (0, "bank scope ends\naccount closed\n1\nowned mutexes done\naccount closed\n3\n", ""),
+                    "shared-mutex-workers": (0, "", ""),
+                    "transfer-function-tasks": (0, "", ""),
+                    "hierarchy-mutexes": (0, "72\n7\n9\n9\n10\n97\n10\n9\n10\n", ""),
+                }.get(name)
+                if name == "owned-mutex-failure":
+                    line = next(i for i, text in enumerate(source.read_text().splitlines(), 1)
+                                if "payload-cleanup-failure" in text)
+                    expected = (70, "worker locked\nfragile released\n",
+                                f"{source.name}:{line}: runtime error[GTI-R0002]: division_by_zero in integer_division\n")
+            else:
+                oracle = execute(gti, root, work / f"{name}-cpp", source,
+                                 Endpoint("cpp", "O0", "c++23"), environment,
+                                 concurrent=True, run_timeout=60)
+                if oracle.error:
+                    raise AssertionError(f"{name}: C++ oracle failed: {oracle.error}")
+                expected = oracle.observable
             for endpoint in native:
                 result = execute(gti, root,
                                  work / f"{name}-llvm-{endpoint.optimization}",
                                  source, endpoint, environment, concurrent=True,
                                  run_timeout=60)
-                if result.error or result.observable != oracle.observable:
+                if result.error or result.observable != expected:
                     failures.append(
                         f"{name} {endpoint.optimization}: native {result.observable!r} "
-                        f"{result.error[:400]} oracle {oracle.observable!r}")
+                        f"{result.error[:400]} expected {expected!r}")
                     continue
                 print(f"{name} {endpoint.optimization}: matched", flush=True)
         failures += native_helper_controls(gti, root, work, environment, args.cxx)

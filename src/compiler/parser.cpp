@@ -1006,11 +1006,14 @@ private:
         } else if ((attribute.name.lexeme == "unsafe_transfer" ||
                     attribute.name.lexeme == "unsafe_share") &&
                    match({TokenKind::LEFT_PAREN})) {
-          attribute.argument = consume(TokenKind::IDENTIFIER,
-                                       "Expect a generic type parameter in the "
-                                       "conditional unsafe assertion.");
+          if (check(TokenKind::IDENTIFIER) &&
+              peekAt(1).kind == TokenKind::RIGHT_PAREN) {
+            attribute.argument = advance();
+          } else {
+            attribute.capabilityPredicate = constraintExpression();
+          }
           consume(TokenKind::RIGHT_PAREN,
-                  "Expect ')' after the capability type parameter.");
+                  "Expect ')' after the capability condition.");
         } else if (check(TokenKind::LEFT_PAREN)) {
           if (attribute.name.lexeme == "test") {
             throw error(attribute.name, "[[test]] takes no arguments; annotate "
@@ -1123,7 +1126,8 @@ private:
       for (FunctionAttribute &attribute : attributes) {
         classAttributes.push_back(
             {.name = std::move(attribute.name),
-             .capabilityParameter = std::move(attribute.argument)});
+             .capabilityParameter = std::move(attribute.argument),
+             .capabilityPredicate = std::move(attribute.capabilityPredicate)});
       }
       return attachDeclaredAttributes(
           classDeclaration(std::move(classAttributes), previous()),

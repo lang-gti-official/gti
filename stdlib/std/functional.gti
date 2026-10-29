@@ -1,19 +1,42 @@
 export module functional;
 
+import "detail/function_pointer.gti";
 import std.memory;
 import std.polymorphic;
 import std.iterator;
 import std.meta;
+export namespace std {
+/// A non-null, non-owning GTI invocation pointer. Construction accepts one
+/// exact namespace function item or zero-capture lambda; signatures match
+/// exactly. It does not borrow an environment or allocate storage.
+class function_ptr<R(Args...)> {
+  gti_internal::function_pointer<R(Args...)> target;
+public:
+  function_ptr<F>(F target)
+      : target(gti_internal::function_pointer_from_item<R(Args...)>(target)) {}
+  R operator()(Args... args) {
+    return gti_internal::function_pointer_invoke(this.target, args...);
+  }
+};
+
+/// An invocation pointer whose result is a read-only reference. The result
+/// borrows the one reference argument the signature's origin names.
+class function_ptr<R&(Args...)> {
+  gti_internal::function_pointer<R&(Args...)> target;
+public:
+  function_ptr<F>(F target)
+      : target(gti_internal::function_pointer_from_item<R&(Args...)>(target)) {}
+  [[borrowed_from(args)]]
+  R& operator()(Args... args) {
+    return gti_internal::function_pointer_invoke(this.target, args...);
+  }
+};
+
+}
+
 // Callable relationships and source-defined owning callback policy.
 
 export namespace gti_internal {
-// Non-null GTI invocation address with its defined-failure convention. This
-// is not a C function pointer and never retains a callable environment.
-class function_pointer<Signature> {};
-function_pointer<Signature> function_pointer_from_item<Signature, F>(F target);
-R function_pointer_invoke<R, Args...>(function_pointer<R(Args...)>& target,
-                                    Args... args);
-
 // Each repeatable wrapper owns one erased model. A model that is an inline
 // polymorphic payload and fits the 32-byte slot lives inside the wrapper; any
 // other model is boxed. Moving a wrapper relocates an inline model with it.
@@ -169,32 +192,6 @@ public:
 }
 
 export namespace std {
-/// A non-null, non-owning GTI invocation pointer. Construction accepts one
-/// exact namespace function item or zero-capture lambda; signatures match
-/// exactly. It does not borrow an environment or allocate storage.
-class function_ptr<R(Args...)> {
-  gti_internal::function_pointer<R(Args...)> target;
-public:
-  function_ptr<F>(F target)
-      : target(gti_internal::function_pointer_from_item<R(Args...)>(target)) {}
-  R operator()(Args... args) {
-    return gti_internal::function_pointer_invoke(this.target, args...);
-  }
-};
-
-/// An invocation pointer whose result is a read-only reference. The result
-/// borrows the one reference argument the signature's origin names.
-class function_ptr<R&(Args...)> {
-  gti_internal::function_pointer<R&(Args...)> target;
-public:
-  function_ptr<F>(F target)
-      : target(gti_internal::function_pointer_from_item<R&(Args...)>(target)) {}
-  [[borrowed_from(args)]]
-  R& operator()(Args... args) {
-    return gti_internal::function_pointer_invoke(this.target, args...);
-  }
-};
-
 /// A read-only, signature-erased checked borrow of an existing callable.
 /// The callable and everything it borrows must outlive this view's uses.
 class function_ref<R(Args...)> {
