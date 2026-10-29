@@ -147,6 +147,40 @@ void SemanticDiagnosticReporter::reportConstexprFailure(
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
+SemanticMemberConstraintCause
+SemanticMemberConstraintCause::retain(SemanticConstraintFailure failure) {
+  SemanticMemberConstraintCause cause;
+  // Disjunction admission already proved every branch false. Retain one leaf
+  // in source order, explicitly accounting for the branches not displayed.
+  while (!failure.alternatives.empty()) {
+    cause.omittedAlternatives += failure.alternatives.size() - 1;
+    SemanticConstraintFailure first = std::move(failure.alternatives.front());
+    failure = std::move(first);
+  }
+  if (failure.memberFailure && failure.memberFailure->constraintCause) {
+    const auto &nested = *failure.memberFailure->constraintCause;
+    cause.leaf = nested.leaf;
+    cause.omittedMemberSteps = nested.omittedMemberSteps + 1;
+    cause.omittedAlternatives += nested.omittedAlternatives;
+    cause.omittedApplications = nested.omittedApplications;
+    return cause;
+  }
+  // Keep the outer request and innermost applications. The selected leaf and
+  // its exact type/signature facts are never replaced by an elision marker.
+  constexpr std::size_t contextLimit = 8;
+  if (failure.context.size() > contextLimit) {
+    cause.omittedApplications = failure.context.size() - contextLimit;
+    failure.context.erase(failure.context.begin() + contextLimit / 2,
+                          failure.context.end() - contextLimit / 2);
+  }
+  failure.callArgument.reset();
+  failure.callArgumentIndex.reset();
+  failure.candidate.reset();
+  cause.leaf =
+      std::make_shared<const SemanticConstraintFailure>(std::move(failure));
+  return cause;
+}
+
 void SemanticDiagnosticReporter::reportConstraintFailure(
     const Token &site, const SemanticConstraintFailure &failure,
     const std::function<std::string(const SemanticType &)> &spelling) {
@@ -238,6 +272,44 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       diagnostic.related.push_back({tokenSpan(*location), std::move(reason)});
     else
       diagnostic.hints.push_back(std::move(reason));
+    if (detail.constraintCause && detail.constraintCause->leaf) {
+      const auto &cause = *detail.constraintCause;
+      if (detail.rejectedConstraintCandidates > 1)
+        diagnostic.hints.push_back(
+            "Showing the first of " +
+            std::to_string(detail.rejectedConstraintCandidates) +
+            " member candidates with unsatisfied requirements; their causes "
+            "may differ.");
+      std::vector<Diagnostic> nested;
+      SemanticDiagnosticReporter(semantics, nested)
+          .reportConstraintFailure(location ? *location : leaf.parameter,
+                                   *cause.leaf, spelling);
+      for (const Diagnostic &explanation : nested) {
+        diagnostic.related.push_back(
+            {explanation.primary,
+             "Member requirement failed: " + explanation.message});
+        diagnostic.related.insert(diagnostic.related.end(),
+                                  explanation.related.begin(),
+                                  explanation.related.end());
+        for (const auto &hint : explanation.hints)
+          diagnostic.hints.push_back("Member requirement: " + hint);
+      }
+      if (cause.omittedMemberSteps != 0)
+        diagnostic.hints.push_back(std::to_string(cause.omittedMemberSteps) +
+                                   " intermediate member-requirement steps "
+                                   "omitted; the failing leaf is shown.");
+      if (cause.omittedAlternatives != 0)
+        diagnostic.hints.push_back("At least " +
+                                   std::to_string(cause.omittedAlternatives) +
+                                   " other failing disjunction branches "
+                                   "omitted from the member explanation; "
+                                   "the shown branch is representative, not an "
+                                   "exhaustive repair list.");
+      if (cause.omittedApplications != 0)
+        diagnostic.hints.push_back(std::to_string(cause.omittedApplications) +
+                                   " intermediate concept applications omitted "
+                                   "from the member explanation.");
+    }
   };
   const auto publish = [&](Diagnostic diagnostic) {
     if (failure.expressionFailure && !failure.context.empty()) {

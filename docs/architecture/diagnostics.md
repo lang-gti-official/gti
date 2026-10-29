@@ -1332,8 +1332,21 @@ access, unsafe access, inexact/borrowed result, unproven contract, or
 recursive/dependent requirement)
 to the reporter; the reporter does not repeat lookup or evaluate requirements.
 When an otherwise matching member fails its own `requires` clause, the reason
-identifies that unsatisfied member contract; it does not yet recursively expose
-the underlying failure within that member's clause.
+identifies that unsatisfied member contract and retains a representative concrete
+leaf from the resolver's existing failure result. No requirement is reevaluated
+by the reporter. `SemanticMemberConstraintCause` shares one immutable leaf;
+straight nested member chains collapse with an explicit intermediate-step count.
+Failed disjunctions select their first failing branch in source order and report
+a lower bound on omitted branches, not an exhaustive repair list. More than one
+rejected member candidate is likewise identified explicitly. The retained leaf
+keeps at most eight concept applications (four outermost and four innermost),
+with an exact omitted-application count. Its exact failure kind, types and leaf
+location remain intact. This bounds the new member-cause storage; it does not
+claim a global bound on existing overload/disjunction diagnostics.
+These records live only in their owning semantic snapshot; syntax references
+never escape it. CLI and LSP project the same related notes and hints, without
+additional primary diagnostics or automatic repairs. Fixing the displayed leaf
+may expose another failed requirement; the explanation does not promise otherwise.
 Call diagnostics map that leaf through concept parameter maps and the generic
 parameter identity to a unique written argument when possible. Equal concrete
 types in unrelated parameters do not establish provenance. Closed constraints,

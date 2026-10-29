@@ -163,6 +163,39 @@ int main() { Command cmd{}; cmd.name = 1; return 0; }
         bounded = next(d for d in publication(6) if d.get("code") == "GTI-S2018")
         assert "additional ownership-transfer location" in bounded["message"], bounded
         assert len(bounded["relatedInformation"]) == 4, bounded
+
+        contract_path = root / "member-contract.gti"
+        contract = '''concept readable<T> = requires(T& value) { { value.snapshot() } -> int; };
+struct Wrapper<T> {
+  int snapshot() requires std::integral<T> { return 7; }
+public: Wrapper() = default;
+};
+int read<T>(T& value) requires readable<T> { return value.snapshot(); }
+'''
+        contract_path.write_text(contract)
+        member = '''#include "member-contract.gti"
+int main() { Wrapper<bool> value{}; return read(/* 😀 */ value); }
+'''
+        output = terminal(member)
+        assert "Member requirement failed:" in output and "Type 'bool'" in output, output
+        assert "std::integral" in output, output
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri, "version": 7}, "contentChanges": [{"text": member}]}})
+        failed = next(d for d in publication(7) if d.get("code") == "GTI-S2029")
+        assert failed["range"]["start"] == lsp_position(member, member.index("value);")), failed
+        assert not failed.get("data", {}).get("fixes"), failed
+        notes = failed["relatedInformation"]
+        assert any("Member requirement failed:" in note["message"] and
+                   "bool" in note["message"] for note in notes), failed
+        assert any(note["location"]["uri"] == contract_path.as_uri() and
+                   note["location"]["range"]["start"] ==
+                   lsp_position(contract, contract.index("integral<T>"))
+                   for note in notes), failed
+        fixed_member = member.replace("Wrapper<bool>", "Wrapper<int>")
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri, "version": 8},
+            "contentChanges": [{"text": fixed_member}]}})
+        assert not publication(8), "repair must clear nested causes from the next snapshot"
     finally:
         session.close()
 

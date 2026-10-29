@@ -60,11 +60,27 @@ enum class MemberRequirementFailureKind {
   Constraints,
 };
 
+struct SemanticConstraintFailure;
+
+// A representative leaf, not a second proof tree. Its AST references remain
+// inside the owning semantic snapshot, just like the enclosing failure.
+struct SemanticMemberConstraintCause {
+  std::shared_ptr<const SemanticConstraintFailure> leaf;
+  std::size_t omittedMemberSteps = 0;
+  std::size_t omittedAlternatives = 0;
+  std::size_t omittedApplications = 0;
+
+  static SemanticMemberConstraintCause
+  retain(SemanticConstraintFailure failure);
+};
+
 struct SemanticMemberRequirementFailure {
   MemberRequirementFailureKind kind = MemberRequirementFailureKind::None;
   std::optional<Token> declaration;
   SemanticType actualResult = SemanticType::Unknown;
   SemanticType requiredResult = SemanticType::Unknown;
+  std::optional<SemanticMemberConstraintCause> constraintCause;
+  std::size_t rejectedConstraintCandidates = 0;
 };
 
 struct SemanticConstraintContext {
