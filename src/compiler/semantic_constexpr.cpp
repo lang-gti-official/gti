@@ -864,6 +864,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     return std::nullopt;
   };
   if (result) {
+    // A speculative predicate can consume a nested assertion diagnostic, but
+    // an exhausted layout query still has no reusable completed result.
     if (reuseKey && StagedConstantResults::reusable(*result.value) &&
         (!requestSession.layoutAssertionWork ||
          !requestSession.layoutAssertionWork->failure))

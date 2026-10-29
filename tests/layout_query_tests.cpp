@@ -579,6 +579,12 @@ constexpr bool rejected<T>() {
   } else { return true; }
 }
 struct Good<T> { static_assert(rejected<T>()); int value; };
+constexpr bool outer_rejected<T>() {
+  if constexpr (requires() { { sizeof(Good<T>) } -> uint64_t; }) {
+    return false;
+  } else { return true; }
+}
+static_assert(outer_rejected<int>());
 static_assert(sizeof(Good<int>) == uint64_t(4));
 int main() { return 0; }
 )");

@@ -3304,6 +3304,8 @@ layout without recursively evaluating itself. No object initialization or
 unrelated generic argument instantiation is needed. Nested assertion queries
 share a bounded instantiation-work budget and stop expanding after the first
 resource failure; a depth cap alone would not bound branching invalid assertions.
+Staged workers share that budget, and resource-exhausted speculative results
+cannot enter the successful constant-result cache.
 Checked size/padding
 arithmetic in `object_layout.h` is shared with native record-layout verification;
 native execution tests compare constant results with `ObjectSize` and
