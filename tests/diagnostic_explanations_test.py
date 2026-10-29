@@ -198,23 +198,25 @@ int main() { Wrapper<bool> value{}; return read(/* 😀 */ value); }
         assert not publication(8), "repair must clear nested causes from the next snapshot"
 
         helper_path = root / "constant-helper.gti"
-        helper = '''constexpr int divide(int value) { return 100 / value; }
-constexpr int middle(int value) { /* 😀 */ return divide(value); }
+        helper = '''constexpr int middle(int value) { /* 😀 */ return divide(value); }
 constexpr int outer(int value) { return middle(value); }
 '''
         helper_path.write_text(helper)
-        constant = '''#include "constant-helper.gti"
+        constant = '''constexpr int divide(int value) { return 100 / value; }
+#include "constant-helper.gti"
 constexpr int result = outer(0);
 int main() { return 0; }
 '''
         output = terminal(constant)
-        assert output.count("During constant evaluation of this call.") == 3, output
+        assert output.count("Constant evaluation requested here.") == 3, output
         session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
             "textDocument": {"uri": uri, "version": 9},
             "contentChanges": [{"text": constant}]}})
-        failed = next(d for d in publication(9) if d.get("code") == "GTI-S2057")
+        constant_diagnostics = publication(9)
+        assert any(d.get("code") == "GTI-S2057" for d in constant_diagnostics), constant_diagnostics
+        failed = next(d for d in constant_diagnostics if d.get("code") == "GTI-S2057")
         trace = [n for n in failed["relatedInformation"]
-                 if n["message"] == "During constant evaluation of this call."]
+                 if n["message"] == "Constant evaluation requested here."]
         assert len(trace) == 3 and not failed.get("data", {}).get("fixes"), failed
         assert trace[0]["location"]["uri"] == uri, trace
         assert trace[1]["location"]["uri"] == helper_path.as_uri(), trace

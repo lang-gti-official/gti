@@ -1695,7 +1695,7 @@ static_assert(table<3>(7) == 7);
     if (diagnostic) {
       std::vector<std::size_t> lines;
       for (const auto &related : diagnostic->related)
-        if (related.message == "During constant evaluation of this call.")
+        if (related.message == "Constant evaluation requested here.")
           lines.push_back(related.span.line);
       expect(lines == std::vector<std::size_t>{4, 3, 2} &&
                  diagnostic->primary.line == 1 && diagnostic->fixes.empty(),
@@ -1708,6 +1708,29 @@ static_assert(table<3>(7) == 7);
                .analyze("constant-trace.gti", traceDefinitions + repaired)
                .semanticValid,
            "repair clears the arithmetic failure and its call trace");
+  }
+  const auto constructorFailure = lang::Frontend().analyze(
+      "constant-constructor-trace.gti",
+      "struct Ratio {\n"
+      "  int value;\n"
+      "  constexpr Ratio(int divisor) : value(100 / divisor) {}\n"
+      "};\n"
+      "constexpr int make_ratio(int divisor) { Ratio ratio{divisor}; return "
+      "ratio.value; }\n"
+      "constexpr int result = make_ratio(0);\n");
+  const auto *constructorDiagnostic =
+      findDiagnosticByCode(constructorFailure.diagnostics, "GTI-S2057");
+  expect(!constructorFailure.semanticValid && constructorDiagnostic &&
+             constructorDiagnostic->primary.line == 3,
+         "constructor failure preserves the executing initializer location");
+  if (constructorDiagnostic) {
+    std::vector<int> lines;
+    for (const auto &related : constructorDiagnostic->related)
+      if (related.message == "Constant evaluation requested here.")
+        lines.push_back(related.span.line);
+    expect(
+        lines == std::vector<int>{6, 5},
+        "constructor failures retain the requesting function and construction");
   }
   const auto badArgument = evaluate("sum", true);
   expect(!badArgument && badArgument.failure ==
