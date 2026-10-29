@@ -310,8 +310,15 @@ analyzeTrustedPreludeFixture(const std::string &name, const std::string &source,
 [[maybe_unused]] lang::FrontendResult
 analyzeTrustedMemoryFixture(const std::string &name, const std::string &source,
                             lang::FrontendOptions options = {}) {
-  return analyzeTrustedPreludeFixture(
-      name, std::string("import std.memory;\n") + source, std::move(options));
+  const auto entry = standardLibraryRoot() / "__trusted_tests__" /
+                     std::filesystem::path(name).filename();
+  const std::string body =
+      "import std.memory; import \"../std/detail/memory_capabilities.gti\";\n" +
+      source;
+  return lang::Frontend(std::move(options))
+      .analyze(entry, body, {standardLibraryPrelude(), entry},
+               {{std::filesystem::weakly_canonical(entry).string(), body}},
+               {standardLibraryRoot()});
 }
 
 [[maybe_unused]] lang::FrontendResult

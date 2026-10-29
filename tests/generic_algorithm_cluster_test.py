@@ -414,7 +414,7 @@ def main() -> int:
 
         blocker_digest = hashlib.sha256(blocker.read_bytes()).hexdigest()
         expected_blocker_digest = (
-            "693dac7b1e5a68f7d84510bba5626dada34b255ac178bb16e3085c27616fc449"
+            "fdad8288d757a9d4559709eaff4482d53a8a32cfa5b37d2b2ca7c9bc9ae4f982"
         )
         if blocker_digest != expected_blocker_digest:
             return fail_text(

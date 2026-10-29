@@ -6333,6 +6333,12 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
 auto SemanticVisitor::Impl::declareNamespaceSymbol(
     const std::vector<std::string> &scope, const Token &name, Symbol symbol)
     -> bool {
+  return declareNamespaceSymbol(scope, name, std::move(symbol), false);
+}
+
+auto SemanticVisitor::Impl::declareNamespaceSymbol(
+    const std::vector<std::string> &scope, const Token &name, Symbol symbol,
+    bool validateOnly) -> bool {
   const std::string qualified = qualifiedName(scope, name.lexeme);
   symbol.qualifiedName = qualified;
   if (symbol.variableDeclaration != nullptr && !instanceAnalysisActive) {
@@ -6411,6 +6417,8 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
              "GTI-S2006");
       return false;
     }
+    if (validateOnly)
+      return true;
     publishNamespaceSymbol(qualified, symbol);
     unitSymbols.emplace(qualified, std::move(symbol));
     return true;
@@ -6443,6 +6451,8 @@ auto SemanticVisitor::Impl::declareNamespaceSymbol(
     diagnostics.emplace_back(std::move(diagnostic));
     return false;
   }
+  if (validateOnly)
+    return true;
   publishNamespaceSymbol(qualified, symbol);
   namespaceIndex.emplace(qualified, std::move(symbol), declarationOwner());
   return true;

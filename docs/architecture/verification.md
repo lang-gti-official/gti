@@ -11147,6 +11147,21 @@ include syntax is a source-loading rejection, including legacy republication.
 These describe the phase 1 test obligations; the unreleased conversion does not
 claim production module readiness or waive unresolved phase 2 acceptance.
 
+Phase 2's `module_preamble_identity` coverage compares fresh and cached global
+lookup, declaration collisions, private homonyms, public ambiguity and recovery
+after rejected edits. A declaration that invalidates a cached prefix requires a
+fresh request, including its initializer, effect and instance-analysis state.
+The complete `trusted_body_analysis` corpus checks the corresponding standard
+library behavior, including constants and exported value objects.
+
+The reviewed module migration census retains all 177 top-level examples and
+454 registered LLVM evidence cases. Declaration counts change in 116 examples;
+only example 146 adds executable bodies: its public iterator wrapper adds 12
+bodies and four concrete-instance adapters on both target profiles. The MIR
+census records the same 12-body increase. The standard-library surface adds the
+portable aggregate case, bringing its inventory to 194 cases. These reviewed
+inventory changes do not replace execution, rejection or platform acceptance.
+
 Reachable executable lowering is owned by `testReachableExecutableLowering` in
 `compiler_frontend`. It covers:
 

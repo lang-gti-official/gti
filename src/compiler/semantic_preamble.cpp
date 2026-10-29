@@ -173,10 +173,49 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
 
   const auto registrationStart = std::chrono::steady_clock::now();
   registerDeclarations(resumeDeclarations);
+  // Prefix globals already passed their body declaration phase. Validate
+  // those declarations against newly registered names using the same rules
+  // as an ordinary check, without moving their mutable value facts into the
+  // declaration catalog or running their initializers again.
+  bool prefixDeclarationsValid = true;
+  const auto validateGlobal = [&](const Symbol &symbol) {
+    if (symbol.variableDeclaration == nullptr)
+      return;
+    std::vector<std::string> scope;
+    std::size_t start = 0;
+    for (auto separator = symbol.qualifiedName.find("::");
+         separator != std::string::npos;
+         separator = symbol.qualifiedName.find("::", start)) {
+      scope.push_back(symbol.qualifiedName.substr(start, separator - start));
+      start = separator + 2;
+    }
+    struct RestoreSource {
+      SourceUnitId &current;
+      SourceUnitId previous;
+      ~RestoreSource() { current = previous; }
+    } restore{currentSourceUnit, currentSourceUnit};
+    currentSourceUnit = symbol.sourceUnit;
+    prefixDeclarationsValid =
+        declareNamespaceSymbol(scope, symbol.declaration, symbol, true) &&
+        prefixDeclarationsValid;
+  };
+  for (const auto &[_, symbol] : valueFlow.namespaceSymbols)
+    validateGlobal(symbol);
+  for (const auto &[_, symbols] : valueFlow.internalNamespaceSymbols)
+    for (const auto &[name, symbol] : symbols)
+      validateGlobal(symbol);
+  if (!prefixDeclarationsValid) {
+    // The prefix's initializer/effect facts were established before the new
+    // conflicting declaration existed. Refuse the entire adoption rather
+    // than salvaging selected indexes from an invalid partial analysis.
+    adoptedPreamble.reset();
+    adoptedPrefixDeclarations = 0;
+    return false;
+  }
   catalog.seal();
   registrationSymbolCeiling = semanticModel.database().symbolIdentityCeiling();
-  // The prefix's body phase declared its globals; only add what the rest of
-  // the program registered.
+  // Refresh the declaration catalogs while preserving prefix globals and
+  // their established value/loan facts.
   valueFlow.extendBody(catalog);
   throwIfCancelled();
   if (workMetrics != nullptr) {

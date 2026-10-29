@@ -17,9 +17,28 @@ SemanticVisitor::SemanticVisitor(SemanticVisitor &&) noexcept = default;
 SemanticVisitor &
 SemanticVisitor::operator=(SemanticVisitor &&) noexcept = default;
 
+auto SemanticVisitor::Impl::freshRequest() const -> std::unique_ptr<Impl> {
+  auto fresh = std::make_unique<Impl>(target, sourceGraph, toolingOccurrences,
+                                      workMetrics, sources, rawPointerAudit,
+                                      requireFunctionDefinitions, trustedBodies,
+                                      sourceDebugProfile);
+  fresh->cancellation = cancellation;
+  fresh->requiredFunctionBodies = requiredFunctionBodies;
+  return fresh;
+}
+
 bool SemanticVisitor::check(const Program &program) {
   try {
-    return impl->check(program);
+    const bool resuming = impl->adoptedPreamble != nullptr;
+    const bool valid = impl->check(program);
+    if (!valid && resuming && impl->adoptedPreamble == nullptr) {
+      // A resumed declaration invalidated an already analyzed prefix global.
+      // Discard every partial semantic/value/effect fact and request journal;
+      // the immutable cached prefix itself remains available to later edits.
+      impl = impl->freshRequest();
+      return impl->check(program);
+    }
+    return valid;
   } catch (const Impl::AnalysisCancelled &) {
     impl->analysisCancelled = true;
     return false;

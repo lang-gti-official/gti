@@ -180,7 +180,15 @@ in a resumed request therefore updates only that request; it cannot mutate the
 cached preamble or retain a candidate pointing at the preamble's incomplete
 record. After registration resumes, declaration indexes refresh from the complete
 catalog while existing variable flow facts retain their declaration identity.
-This keeps added overloads and ambiguities equivalent to uncached analysis.
+Namespace globals established during prefix body analysis may be absent from
+that catalog; their owned entries and visible ambiguity candidates are retained
+explicitly. The ordinary namespace declaration checks validate these prefix
+globals against newly registered names without replaying initializers or moving
+mutable value facts into the catalog. If a new declaration invalidates a prefix
+global, the visitor discards the complete resumed request and analyzes afresh;
+no initializer, effect, value or journal facts survive that fallback. The cached
+prefix remains immutable and reusable by later valid edits. This keeps added
+overloads, declaration collisions and ambiguities equivalent to uncached analysis.
 Resuming also starts fresh raw-result and complete-return query journals: their
 mutable summaries, budgets and pooled worker catalogs belong to one request,
 so a prefix-only worker cannot be reused after the declaration catalog expands.

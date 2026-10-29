@@ -3650,7 +3650,7 @@ def main():
             [gti, str(missing_standard), "--emit-cpp"], 65
         )
         assert "error[GTI-I0012]" in rejected_standard.stderr
-        assert "<std/not_present>" in rejected_standard.stderr
+        assert "Source owner 'std' does not declare public module 'not_present'." in rejected_standard.stderr
 
         private_capability = root / "private-capability.gti"
         private_capability.write_text(
@@ -3698,18 +3698,19 @@ def main():
         assert 'import "private_leaf.gti";' in private_dependency.stderr
         assert "Declaration is in this source unit" in private_dependency.stderr
 
-        conditional_include = root / "conditional_include.gti"
-        conditional_include.write_text(
+        conditional_import = root / "conditional_import.gti"
+        conditional_import.write_text(
             '#if target.os == "never"\n'
             'import "library.gti";\n'
             "#endif\n"
             "int main() { return 0; }\n",
             encoding="utf-8",
         )
-        rejected_include = run(
-            [gti, str(conditional_include), "--emit-cpp"], 65
+        rejected_import = run(
+            [gti, str(conditional_import), "--emit-cpp"], 65
         )
-        assert "cannot appear inside '#if' blocks" in rejected_include.stderr
+        assert "error[GTI-I0012]" in rejected_import.stderr
+        assert "Module imports are unconditional source-unit-level declarations." in rejected_import.stderr
 
         assert run([gti, "--version"]).stdout.startswith("gti ")
         # `gti bindgen`: generate GTI bindings from a C header, then compile

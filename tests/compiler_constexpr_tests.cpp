@@ -204,15 +204,15 @@ uint alias_unsigned_overflow = 4294967296;
          "fail during lexing");
 
   const std::string formatted =
-      lang::Formatter().format("import std.uint64;\n"
+      lang::Formatter().format("import \"uint64.gti\";\n"
                                "int8 small=1;int64 large=small;uint8 byte=0xFF;"
                                "uint64 wide=0b1010;");
-  expect(formatted == "import std.uint64;\n"
+  expect(formatted == "import \"uint64.gti\";\n"
                       "int8_t small = 1;\nint64_t large = small;\n"
                       "uint8_t byte = 0xFF;\nuint64_t wide = 0b1010;\n" &&
              lang::Formatter().format(formatted) == formatted,
          "formatter should canonicalize legacy fixed-width aliases, preserve "
-         "include paths and prefixed integer literals, and remain idempotent");
+         "import paths and prefixed integer literals, and remain idempotent");
 }
 
 void testContextualSignedIntegerLiterals() {

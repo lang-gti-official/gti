@@ -526,6 +526,7 @@ public:
   // must not keep, and makes an unused analyzer of the same configuration.
   void detachFromCaller();
   [[nodiscard]] std::unique_ptr<Impl> blankLikeThis() const;
+  [[nodiscard]] std::unique_ptr<Impl> freshRequest() const;
   void adoptPreambleState();
   // Reports the preamble bodies reached from `roots`, the demanded
   // functions and (with `all`) every preamble body, with the bodies they in
@@ -5872,6 +5873,9 @@ private:
 
   bool declareNamespaceSymbol(const std::vector<std::string> &scope,
                               const Token &name, Symbol symbol);
+  bool declareNamespaceSymbol(const std::vector<std::string> &scope,
+                              const Token &name, Symbol symbol,
+                              bool validateOnly);
 
   [[nodiscard]] static bool directNamespaceChild(std::string_view qualified,
                                                  std::string_view parent,
@@ -6808,6 +6812,38 @@ private:
           if (previous != values.end())
             symbol = *previous->second;
         });
+        // Namespace globals are introduced by body analysis and need not
+        // appear in the declaration catalog at all. Keep their exact owned
+        // entries and visible ambiguity candidates, not only facts attached
+        // to catalog entries that happened to survive registration.
+        const auto retainVariable = [&](const OwnedDeclarationName &name,
+                                        const Symbol &symbol) {
+          if (symbol.variableDeclaration == nullptr)
+            return;
+          const auto existing = updated.find(name);
+          if (existing == updated.end()) {
+            updated.emplace(name, symbol);
+          } else if (existing->second.variableDeclaration ==
+                     symbol.variableDeclaration) {
+            existing->second = symbol;
+          } else if (name.owner == DeclarationOwner{}) {
+            const auto *candidates = updated.ambiguousCandidates(name.spelling);
+            if (candidates == nullptr ||
+                std::none_of(candidates->begin(), candidates->end(),
+                             [&](const Symbol &candidate) {
+                               return candidate.variableDeclaration ==
+                                      symbol.variableDeclaration;
+                             }))
+              updated.addAlternative(name.spelling, symbol);
+          }
+        };
+        for (const auto &[name, symbol] : current) {
+          retainVariable(name, symbol);
+          if (const auto *candidates =
+                  current.ambiguousCandidates(name.spelling))
+            for (const auto &candidate : *candidates)
+              retainVariable(name, candidate);
+        }
         current = std::move(updated);
       };
       refresh(namespaceSymbols, catalog.namespaceSymbols);

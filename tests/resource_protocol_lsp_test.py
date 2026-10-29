@@ -84,7 +84,13 @@ def main():
             hover = request("textDocument/hover", bind)
             assert "unsafe" in str(hover) and "resource_ref" in str(hover), hover
             definitions = request("textDocument/definition", bind)
-            assert definitions and "resource.gti" in str(definitions), definitions
+            assert definitions and definitions["uri"].endswith("/std/detail/resource_core.gti"), definitions
+            declaration = (pathlib.Path(__file__).resolve().parent.parent /
+                           "stdlib/std/detail/resource_core.gti").read_text()
+            start = declaration.index("bind_resource")
+            assert definitions["range"] == {
+                "start": lsp_position(declaration, start),
+                "end": lsp_position(declaration, start + len("bind_resource"))}, definitions
 
             # Omitting the explicit acknowledgement is the shared unsafe-call error.
             unbound = SOURCE.replace("  unsafe {\n    /*😀*/", "  {\n    /*😀*/")

@@ -4681,7 +4681,7 @@ int main() {
       "import std.string;\n"
       "class PathRange { std::string internal_path; public: "
       "PathRange(std::string value) : internal_path(std::move(value)) {} "
-      "std::detail::storage_iterator<char> begin() { return "
+      "std::string::const_iterator begin() { return "
       "internal_path.begin(); } };\n"
       "int main() { std::string value = std::string(\"gti\"); "
       "mut uint64_t count = 0; for (char character : value) { count++; } "
@@ -9310,13 +9310,13 @@ class number_range {
 
 public:
   number_range() = default;
-  std::detail::vector_iterator<int32_t> begin() {
+  std::vector<int32_t>::const_iterator begin() {
     return this.values.begin();
   }
-  std::detail::vector_mut_iterator<int32_t> begin_mut() mut {
+  std::vector<int32_t>::iterator begin_mut() mut {
     return this.values.begin_mut();
   }
-  std::detail::vector_sentinel end() { return this.values.end(); }
+  std::vector<int32_t>::sentinel end() { return this.values.end(); }
   std::size_t size() { return this.values.size(); }
   int32_t at(std::size_t index) { return this.values[index]; }
 };
@@ -9495,10 +9495,10 @@ import std.vector;
 class read_range {
   mut std::vector<int32_t> values = std::vector<int32_t>({1});
 public:
-  std::detail::vector_iterator<int32_t> begin() {
+  std::vector<int32_t>::const_iterator begin() {
     return this.values.begin();
   }
-  std::detail::vector_sentinel end() { return this.values.end(); }
+  std::vector<int32_t>::sentinel end() { return this.values.end(); }
 public:
   read_range() = default;
 };
@@ -9525,10 +9525,10 @@ import std.vector;
 class wrong_size_range {
   mut std::vector<int32_t> values = std::vector<int32_t>({1});
 public:
-  std::detail::vector_iterator<int32_t> begin() {
+  std::vector<int32_t>::const_iterator begin() {
     return this.values.begin();
   }
-  std::detail::vector_sentinel end() { return this.values.end(); }
+  std::vector<int32_t>::sentinel end() { return this.values.end(); }
   int32_t size() { return 1; }
 public:
   wrong_size_range() = default;
@@ -10505,8 +10505,8 @@ import std.string;
 int sequential_aliases() {
   mut std::string value = std::string("gti");
   mut auto iterator = value.begin();
-  std::detail::storage_iterator<char>& alias = iterator;
-  std::detail::storage_iterator<char>& second_alias = alias;
+  std::string::const_iterator& alias = iterator;
+  std::string::const_iterator& second_alias = alias;
   char first = *iterator;
   char second = *alias;
   char third = *second_alias;
@@ -10517,7 +10517,7 @@ int sequential_aliases() {
 int conditional_aliases(bool use_original) {
   mut std::string value = std::string("gti");
   mut auto iterator = value.begin();
-  std::detail::storage_iterator<char>& alias = iterator;
+  std::string::const_iterator& alias = iterator;
   if (use_original) {
     char first = *iterator;
   } else {
@@ -10530,7 +10530,7 @@ int conditional_aliases(bool use_original) {
 int loop_aliases() {
   mut std::string value = std::string("gti");
   mut auto iterator = value.begin();
-  std::detail::storage_iterator<char>& alias = iterator;
+  std::string::const_iterator& alias = iterator;
   mut int index = 0;
   while (index < 2) {
     if (index == 0) {
@@ -10751,7 +10751,7 @@ int loop_aliases() {
       "shared-alias-later-use.gti",
       "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
-      "auto iterator = value.begin(); std::detail::storage_iterator<char>& "
+      "auto iterator = value.begin(); std::string::const_iterator& "
       "alias = iterator; char first = *iterator; value.push_back('!'); "
       "char second = *alias; return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -10764,7 +10764,7 @@ int loop_aliases() {
       "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut "
-      "std::detail::storage_iterator<char>& alias = iterator; return 0; }\n",
+      "std::string::const_iterator& alias = iterator; return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(mutableAlias.canGenerateCode() &&
              lang::verifyMirProgram(mutableAlias.mir).valid(),
@@ -10775,7 +10775,7 @@ int loop_aliases() {
       "import std.string;\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); mut "
-      "std::detail::storage_iterator<char>& alias = iterator; *alias = 'x'; "
+      "std::string::const_iterator& alias = iterator; *alias = 'x'; "
       "return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(

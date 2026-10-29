@@ -11,7 +11,7 @@ int main() {
   mut std::uninitialized<Packet> source{};
   mut std::uninitialized<Packet> destination{};
   unsafe {
-    std::detail::construct_value_at(source.data(), Packet(int8_t(7), double(42.5)));
+    std::construct_at(source.data(), Packet(int8_t(7), double(42.5)));
     std::relocate_range_at(destination.data(), source.data(), uint64_t(1));
     if (destination.data()->tag != int8_t(7) || destination.data()->tail != double(42.5)) { return 1; }
     std::destroy_at(destination.data());

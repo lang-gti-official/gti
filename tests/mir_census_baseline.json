@@ -142,7 +142,7 @@
     "143-checked-container-iteration.gti": 533,
     "144-checked-view-iteration.gti": 444,
     "145-live-slot-and-lane-iteration.gti": 411,
-    "146-counted-text-view-iteration.gti": 174,
+    "146-counted-text-view-iteration.gti": 186,
     "147-standard-library-import.gti": 463,
     "148-nested-configuration.gti": 625,
     "149-interface-static-factories.gti": 112,
@@ -178,5 +178,5 @@
     "178-wrapping-atomic-counters.gti": 25,
     "179-weak-ownership.gti": 164
   },
-  "total": 26804
+  "total": 26816
 }
