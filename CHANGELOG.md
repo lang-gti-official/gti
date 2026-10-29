@@ -15,9 +15,10 @@ for what minor and patch releases mean.
 - GTI's source, pull requests, issues and CI now live at
   https://github.com/lang-gti-official/gti. Update Lazy specs and clones to
   `https://github.com/lang-gti-official/gti.git`; `lazy.lua` and the local
-  installer's preview source already point there. Packages and the reference
-  website stay on Gitea for now, and the installer still downloads toolchain
-  releases from Gitea.
+  installer's preview source already point there. Toolchain releases move to
+  GitHub Releases next; until then the installer downloads the existing
+  releases from Gitea. The `gti add` package registry and the reference
+  website stay on Gitea.
 - Every change now reaches `main` through a merge queue whose CI runs the
   complete test suite on the exact candidate, sharded across macOS arm64 and
   Linux x64. Contributors run focused checks only.

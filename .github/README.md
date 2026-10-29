@@ -1,8 +1,9 @@
 # GTI on GitHub
 
 https://github.com/lang-gti-official/gti is canonical for source, branches,
-pull requests, issues and CI. Packages and the reference website stay on Gitea
-for now; see [Gitea](../.gitea/README.md).
+pull requests, issues, CI and, once its release workflow lands, toolchain
+releases. The reference website and the `gti add` package registry stay on
+Gitea; see [Gitea](../.gitea/README.md).
 
 ## Integration
 
@@ -25,6 +26,12 @@ python3 scripts/agent_workflow.py protection
   `tests/ci_test_durations.json`) on both platforms, the ASan/UBSan subset, the
   installed-toolchain smoke and deterministic docgen. The gate merges the shard
   reports and fails unless each platform ran its whole inventory exactly once.
+
+Every native job builds with the reviewed runtime compiler that
+`scripts/configure_ci_toolchain.sh` installs and exports: GCC 14 with LLVM 20 on
+`ubuntu-24.04`, and Apple clang 21 (Command Line Tools 27) with Homebrew LLVM 22
+on `macos-26`. The script fails before the build if `runtime/src/atomic_lane.h`
+does not admit the compiler.
 
 Contributors run focused checks only; the queue owns the complete suite. A
 queue failure belongs to the change that introduced it.
