@@ -2553,6 +2553,10 @@ add_test(NAME nested_guarded_expected COMMAND gti_nested_guarded_expected_tests)
 add_executable(gti_structural_relocation_tests structural_relocation_tests.cpp)
 target_link_libraries(gti_structural_relocation_tests PRIVATE gti_cpp_backend)
 add_test(NAME structural_relocation COMMAND gti_structural_relocation_tests)
+
+add_executable(gti_compact_owner_layout_tests compact_owner_layout_tests.cpp)
+target_link_libraries(gti_compact_owner_layout_tests PRIVATE gti_cpp_backend)
+add_test(NAME compact_owner_layout COMMAND gti_compact_owner_layout_tests)
 add_executable(gti_restoring_exchange_tests restoring_exchange_tests.cpp)
 target_link_libraries(gti_restoring_exchange_tests PRIVATE gti_cpp_backend)
 add_test(NAME restoring_exchange COMMAND gti_restoring_exchange_tests)
@@ -4921,6 +4925,12 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(structural_relocation_runtime PROPERTIES TIMEOUT 600)
+
+  add_test(NAME compact_owner_layout_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/compact_owner_layout_runtime_test.py"
+            "$<TARGET_FILE:gti>")
+  set_tests_properties(compact_owner_layout_runtime PROPERTIES TIMEOUT 600)
   if(TARGET gti_lsp)
     add_test(
       NAME structural_relocation_lsp

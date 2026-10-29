@@ -18947,6 +18947,14 @@ verifyMirProgramContracts(const MirProgram &program) {
            .owner = instance.id,
            .message = "class active-drop state does not match its destructor"});
     }
+    if (instance.inactiveDropPointerField &&
+        !mir_detail::nullGuardedDestructor(program, instance)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "class inactive-pointer state lacks an inert destructor "
+                      "null path"});
+    }
     if (instance.traits.relocation !=
         mirTypeRelocationKind(program, instance.type)) {
       result.errors.push_back(

@@ -367,7 +367,7 @@ TypeLayout Layouts::record(const SemanticType &type) {
       fields.push_back(get(base.type).storage);
     for (const auto &field : instance.declaredFields)
       fields.push_back(get(field.type).storage);
-    if (instance.requiresActiveDropState)
+    if (instance.requiresActiveDropState && !instance.inactiveDropPointerField)
       fields.push_back(llvm::Type::getInt8Ty(session.context()));
     if (dispatchIndex(type))
       fields.push_back(pointer());
@@ -533,10 +533,23 @@ unsigned Layouts::baseIndex(const SemanticType &type,
 }
 std::optional<unsigned> Layouts::activeIndex(const SemanticType &type) const {
   const auto &owner = instance(type);
-  if (!owner.requiresActiveDropState)
+  if (!owner.requiresActiveDropState || owner.inactiveDropPointerField)
     return {};
   return static_cast<unsigned>(owner.bases.size() +
                                owner.declaredFields.size());
+}
+
+std::optional<unsigned>
+Layouts::inactivePointerIndex(const SemanticType &type) const {
+  const auto &owner = instance(type);
+  if (!owner.inactiveDropPointerField)
+    return {};
+  return fieldIndex(type, *owner.inactiveDropPointerField);
+}
+
+bool Layouts::hasActiveState(const SemanticType &type) const {
+  return activeIndex(type).has_value() ||
+         inactivePointerIndex(type).has_value();
 }
 
 std::optional<unsigned> Layouts::dispatchIndex(const SemanticType &type) const {
@@ -548,7 +561,7 @@ std::optional<unsigned> Layouts::dispatchIndex(const SemanticType &type) const {
     return {};
   return static_cast<unsigned>(owner.bases.size() +
                                owner.declaredFields.size() +
-                               (owner.requiresActiveDropState ? 1 : 0));
+                               (activeIndex(type).has_value() ? 1 : 0));
 }
 
 const HirBaseInstance *Layouts::primaryBase(const SemanticType &type) const {

@@ -1,0 +1,31 @@
+#include <std/memory>
+#include <std/string>
+
+mut int releases = 0;
+// A library-independent owner shape. A null first field makes the entire
+// destructor inert. LLVM can reuse that field for retired cleanup state.
+class Counted {
+  int* counter = nullptr;
+  int* increment = nullptr;
+public:
+  Counted(int* counter, int* increment) : counter(counter), increment(increment) {}
+  ~Counted() {
+    if (this.counter != nullptr) {
+      unsafe { *this.counter = *this.counter + *this.increment; }
+    }
+  }
+};
+int main() {
+  std::println(std::layout_of<Counted>().bytes);
+  std::println(std::layout_of<std::shared_ptr<int>>().bytes);
+  std::println(std::layout_of<std::weak_ptr<int>>().bytes);
+  {
+    mut int increment = 1;
+    Counted first{&releases, &increment};
+    Counted second = std::move(first);
+  }
+  auto owner = std::make_shared<int>(42);
+  auto observer = owner.downgrade();
+  auto retained = observer.lock();
+  return releases == 1 && *retained == 42 ? 0 : 1;
+}
