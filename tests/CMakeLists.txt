@@ -2841,7 +2841,7 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
             "${PROJECT_SOURCE_DIR}/tests/lowered_program_census_baseline.json"
   )
-  set_tests_properties(lowered_program_corpus_census PROPERTIES TIMEOUT 900)
+  set_tests_properties(lowered_program_corpus_census PROPERTIES TIMEOUT 1800)
   add_test(
     NAME runtime_failure_subprocess
     COMMAND "${Python3_EXECUTABLE}"

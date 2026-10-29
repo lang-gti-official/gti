@@ -51,10 +51,25 @@ void printDiagnostics(const lang::FrontendResult &frontend) {
 
 int main(int argc, char **argv) {
   if (argc < 3) {
-    std::cerr << "usage: gti_lowered_program_census <repo-root> <example>...\n";
+    std::cerr << "usage: gti_lowered_program_census <repo-root> [--target "
+                 "<triple>] <example>...\n";
     return 2;
   }
-
+  // Stable inventory consumers use the canonical baseline target, not the
+  // machine running this analysis-only tool. The full census checks Linux too.
+  std::string_view triple = "arm64-apple-macos";
+  int firstExample = 2;
+  if (std::string_view(argv[2]) == "--target") {
+    if (argc < 5)
+      return 2;
+    triple = argv[3];
+    firstExample = 4;
+  }
+  const auto censusTarget = lang::parseTargetTriple(triple);
+  if (!censusTarget) {
+    std::cerr << "invalid census target: " << triple << '\n';
+    return 2;
+  }
   const std::filesystem::path root = std::filesystem::weakly_canonical(argv[1]);
   const std::filesystem::path standardLibrary = root / "stdlib";
   // Bind the textual column names to the compiled enum identities instead of
@@ -63,11 +78,12 @@ int main(int argc, char **argv) {
   for (const auto &[kind, name] : generatedKinds)
     std::cout << '\t' << name;
   std::cout << '\n';
-  for (int index = 2; index < argc; ++index) {
+  for (int index = firstExample; index < argc; ++index) {
     const std::string name =
         std::filesystem::path(argv[index]).filename().string();
     const std::filesystem::path source = root / "examples" / name;
-    lang::TargetInfo target = lang::TargetInfo::host();
+    lang::TargetInfo target = *censusTarget;
+    target.runtimeCapabilities.threads = true;
     if (name == "066-managed-threads.gti" || name == "076-scalar-atomics.gti" ||
         name == "175-thread-local-storage.gti") {
       target.executionProfile = lang::ExecutionProfile::Concurrent;
