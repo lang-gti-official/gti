@@ -26,6 +26,17 @@ public:
   Pair(Token first, Token second) : first(std::move(first)), second(std::move(second)) {}
   Token take() && { return std::move(this.first); }
 };
+class InitializedFields {
+  Token first;
+  Token second;
+public:
+  InitializedFields() : first(Token(&one, &one, 1)), second(Token(&two, &one, 0)) {}
+};
+class InitializedArray {
+  Token items[2] = {Token(&one, &one, 1), Token(&two, &one, 0)};
+public:
+  InitializedArray() {}
+};
 int main(int argc, std::vector<std::string> argv) {
   if (argc == 1) {
     Pair pair{Token(&one, &one, 1), Token(&two, &one, 1)};
@@ -48,6 +59,16 @@ int main(int argc, std::vector<std::string> argv) {
     Token taken = std::move(pair).take();
     int checked = 12 / zero;
     return 3;
+  }
+  if (argc == 6) {
+    Token outer{&three, &one, 1};
+    InitializedFields failed{};
+    return 5;
+  }
+  if (argc == 7) {
+    Token outer{&three, &one, 1};
+    InitializedArray failed{};
+    return 6;
   }
   Token outer{&three, &one, 1};
   Token failing{&one, &zero, 1};

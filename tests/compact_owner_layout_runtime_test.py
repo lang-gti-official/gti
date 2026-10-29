@@ -23,6 +23,8 @@ def main():
         (70, "1\n2\n3\n", "GTI-R0002"),
         (70, "2\n1\n", "GTI-R0002"),
         (70, "1\n", "GTI-R0014"),
+        (70, "1\n3\n", "GTI-R0002"),
+        (70, "1\n3\n", "GTI-R0002"),
     )
     with tempfile.TemporaryDirectory(prefix="gti-compact-owner-") as directory:
         for name in ("compact_owner_layout", "compact_shared_handles", "compact_owner_failure"):
