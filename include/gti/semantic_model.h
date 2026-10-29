@@ -1129,6 +1129,7 @@ struct ClassTypeInfo {
       ConcurrencyCapabilityPolicy::Structural;
   std::optional<CapabilityCondition> transferCondition;
   std::optional<CapabilityCondition> shareCondition;
+  bool unsafeOwned = false;
   bool compilerPrivate = false;
   // `[[reflect_private]]`: reflected access reaches private instance fields
   // from anywhere, so the representation must not hide them either.

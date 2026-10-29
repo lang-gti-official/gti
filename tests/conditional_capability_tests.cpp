@@ -26,7 +26,7 @@ lang::FrontendResult analyze(std::string source) {
                                   {}, {stdlib});
 }
 constexpr std::string_view declarations = R"(
-[[unsafe_transfer(T), unsafe_share(T)]] class Reviewed<T> {
+[[unsafe_owned, unsafe_transfer(T), unsafe_share(T)]] class Reviewed<T> {
   T* pointer = nullptr;
 public:
   Reviewed() {}
@@ -329,6 +329,13 @@ int main() { send(Either<ReadOnly>()); return 0; }
                                   std::string::npos;
                          }),
          "hover must distinguish conditional from unconditional assertions");
+  expect(hover &&
+             std::any_of(hover->notes.begin(), hover->notes.end(),
+                         [](const auto &note) {
+                           return note.find("no thread capability granted") !=
+                                  std::string::npos;
+                         }),
+         "hover separates unsafe ownership from thread permission");
   const auto definition = lang::LanguageQueries().definition(
       good, good.sourceGraph.entryUnit(),
       source.find("unsafe_transfer(T)") + 16);

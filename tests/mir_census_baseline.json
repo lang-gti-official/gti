@@ -174,9 +174,9 @@
     "174-typed-macros.gti": 232,
     "175-thread-local-storage.gti": 285,
     "176-profile-independent-atomics.gti": 25,
-    "177-capability-predicates.gti": 17,
+    "177-capability-predicates.gti": 19,
     "178-wrapping-atomic-counters.gti": 25,
-    "179-weak-ownership.gti": 161
+    "179-weak-ownership.gti": 164
   },
-  "total": 26799
+  "total": 26804
 }

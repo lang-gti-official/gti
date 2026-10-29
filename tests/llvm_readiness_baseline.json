@@ -11,7 +11,7 @@
       "kind": "source-census",
       "manifest": "tests/mir_census_baseline.json",
       "member_count": 177,
-      "inventory_sha256": "c307b780f559825b29d97e23d21f1fa00727086e4f601e64822daffcaff87c0b"
+      "inventory_sha256": "87c33ddf06258a906fd7069efcbb4c0377dddd8b81e592ee5158496bd74bb1aa"
     },
     {
       "id": "registered-llvm-evidence",
@@ -24,7 +24,7 @@
       "kind": "source-backed-surface-manifest",
       "manifest": "tests/stdlib_surface_manifest.json",
       "member_count": 193,
-      "inventory_sha256": "2dddd9b4ece194f78ab55226dca4e2b25f957f0a1aafea368f00391574dc8fd5"
+      "inventory_sha256": "aa668e191f85ff4a6b121d66562006cbfef0c8417b4223277dc92db2d27e6d02"
     }
   ],
   "family_obligations": [

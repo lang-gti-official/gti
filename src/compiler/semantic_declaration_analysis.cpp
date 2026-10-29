@@ -2304,7 +2304,8 @@ auto SemanticVisitor::Impl::registerClassAttributes(
                     "requirements."
                   : "Classes and structs may use [[no_transfer]], "
                     "[[no_share]], "
-                    "[[unsafe_transfer]], and [[unsafe_share]], optionally "
+                    "[[unsafe_owned]], [[unsafe_transfer]], and "
+                    "[[unsafe_share]], optionally "
                     "conditioning an unsafe assertion on a type parameter "
                     "with [[unsafe_transfer(T)]] or [[unsafe_share(T)]]; a "
                     "passive "
@@ -2521,6 +2522,21 @@ auto SemanticVisitor::Impl::registerClassAttributes(
                       "declare [[share]].");
       } else {
         setPolicy(attribute, false, ConcurrencyCapabilityPolicy::Denied);
+      }
+    } else if (attribute.lexeme == "unsafe_owned") {
+      if (interface) {
+        reportInvalid(
+            attribute,
+            "An unsafe ownership assertion belongs on a class or struct.");
+      } else if (result.unsafeOwnedSource) {
+        Diagnostic diagnostic =
+            makeDiagnostic("GTI-S2059", DiagnosticPhase::Semantics, attribute,
+                           "Unsafe ownership is declared more than once.");
+        diagnostic.related.push_back({tokenSpan(*result.unsafeOwnedSource),
+                                      "The first assertion is here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+      } else {
+        result.unsafeOwnedSource = attribute;
       }
     } else if (attribute.lexeme == "unsafe_transfer") {
       if (interface) {
@@ -3025,6 +3041,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           .sharePolicySource = capabilityPolicies.shareSource,
           .transferCondition = capabilityPolicies.transferCondition,
           .shareCondition = capabilityPolicies.shareCondition,
+          .unsafeOwned = capabilityPolicies.unsafeOwnedSource.has_value(),
           .compilerPrivate =
               compilerPrivateDeclaration(currentSourceUnit, scope),
           .compilerCapability = compilerCapability,
@@ -4661,7 +4678,8 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
         .transferPolicy = capabilityPolicies.transfer,
         .sharePolicy = capabilityPolicies.share,
         .transferPolicySource = capabilityPolicies.transferSource,
-        .sharePolicySource = capabilityPolicies.shareSource});
+        .sharePolicySource = capabilityPolicies.shareSource,
+        .unsafeOwned = capabilityPolicies.unsafeOwnedSource.has_value()});
     exactClassSpecializations.push_back(
         {.primary = *primaryId,
          .specialization = specializationId,
@@ -10727,6 +10745,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .sharePolicy = owner.sharePolicy,
             .transferCondition = owner.transferCondition,
             .shareCondition = owner.shareCondition,
+            .unsafeOwned = owner.unsafeOwned,
             .compilerPrivate = owner.compilerPrivate,
             .reflectPrivate = owner.reflectPrivate,
             .computedTypeProjection =

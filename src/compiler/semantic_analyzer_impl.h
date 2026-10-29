@@ -1697,6 +1697,7 @@ private:
     std::optional<Token> sharePolicySource;
     std::optional<CapabilityCondition> transferCondition;
     std::optional<CapabilityCondition> shareCondition;
+    bool unsafeOwned = false;
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
@@ -1712,6 +1713,7 @@ private:
   };
 
   struct CapabilityPolicyRegistration {
+    std::optional<Token> unsafeOwnedSource;
     ConcurrencyCapabilityPolicy transfer =
         ConcurrencyCapabilityPolicy::Structural;
     ConcurrencyCapabilityPolicy share = ConcurrencyCapabilityPolicy::Structural;
@@ -3604,7 +3606,7 @@ private:
                                   const Token &site);
 
   [[nodiscard]] bool containsDisallowedCallableCaptureState(
-      const SemanticType &type, std::unordered_set<ClassId> &visiting,
+      const SemanticType &type, std::vector<SemanticType> &visiting,
       bool reviewedRawState = false, bool checkedBorrows = false) const;
 
   [[nodiscard]] bool

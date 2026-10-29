@@ -3313,7 +3313,7 @@ auto SemanticVisitor::Impl::reportUnsupportedCallableReturn(
 }
 
 auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
-    const SemanticType &type, std::unordered_set<ClassId> &visiting,
+    const SemanticType &type, std::vector<SemanticType> &visiting,
     bool reviewedRawState, bool checkedBorrows) const -> bool {
   if (type.kind == SemanticType::FunctionItem) {
     // Parameters and results describe the selected target; they are not
@@ -3351,8 +3351,28 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
       if (traits.transferCapable && !traits.containsBorrowedState)
         reviewedRawState = true;
     }
-    if (!visiting.insert(type.classId).second) {
+    // Concrete identities matter: Wrapper<Wrapper<Raw>> must not stop at
+    // the repeated declaration and silently accept its innermost payload.
+    if (std::find(visiting.begin(), visiting.end(), type) != visiting.end())
       return false;
+    if (visiting.size() >= 256)
+      return true;
+    visiting.push_back(type);
+    if (owner.unsafeOwned) {
+      // The unsafe assertion reviews this representation, not its erased
+      // generic payloads. Those must independently own their lifetime, even
+      // when this class itself is nested inside another reviewed wrapper.
+      const auto &arguments = owner.exactSpecializationPrimary != 0
+                                  ? owner.exactTypeArguments
+                                  : type.arguments;
+      for (const SemanticType &argument : arguments) {
+        if (containsDisallowedCallableCaptureState(argument, visiting, false,
+                                                   false)) {
+          visiting.pop_back();
+          return true;
+        }
+      }
+      reviewedRawState = true;
     }
     const GenericSubstitution substitution = classSubstitution(type);
     bool found = false;
@@ -3372,7 +3392,7 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
             reviewedRawState, checkedBorrows);
       }
     }
-    visiting.erase(type.classId);
+    visiting.pop_back();
     return found;
   }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
@@ -3401,7 +3421,7 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
 
 auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
     const SemanticType &type, bool checkedBorrows) const -> bool {
-  std::unordered_set<ClassId> visiting;
+  std::vector<SemanticType> visiting;
   return containsDisallowedCallableCaptureState(type, visiting, false,
                                                 checkedBorrows);
 }

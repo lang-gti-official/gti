@@ -9,12 +9,16 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.489.0 - Source-defined shared ownership and general atomic capabilities
+## 0.490.0 - Source-defined shared and weak ownership
 
 - `std::shared_ptr` now implements its handle, explicit cloning, reference
   counts, final release, upcasts and allocation policy in GTI source. The
   factory constructs the payload and control in one allocation, preserving
   read-only borrowing, constructor rollback and last-owner cleanup.
+- `[[unsafe_owned]]` reviews a class or struct's raw ownership representation
+  independently of thread permission. Generic payloads are checked separately,
+  and checked borrows remain tracked. This enables local callbacks to own shared
+  or weak handles of thread-affine payloads.
 - Scalar atomics are available in both execution profiles and no longer
   require a host thread runtime. Thread creation and atomic wait/notification
   retain their separate restrictions.

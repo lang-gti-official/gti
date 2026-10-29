@@ -3364,7 +3364,7 @@ int sum(Range& values) {
 Class and interface attributes
 ==================
 
-[[no_transfer, unsafe_share]] class NativeOwner {};
+[[unsafe_owned, no_transfer, unsafe_share]] class NativeOwner {};
 [[transfer, share]] interface ConcurrentValue {};
 [[c_abi]] struct NativePoint { float x = 0.0; float y = 0.0; };
 [[c_opaque]] struct NativeHandle;
@@ -3376,6 +3376,7 @@ Class and interface attributes
 (source_file
   (class_declaration
     (class_attribute_list
+      (identifier)
       (identifier)
       (identifier))
     (identifier)

@@ -1837,7 +1837,7 @@ unsafe void release_shared<Payload>(shared_control* block) {
 /// Explicit clone() retains the object. A borrow protects its supplying handle.
 /// Cross-thread use requires both sharing and transfer permission from T,
 /// including permission for last-owner cleanup. Strong cycles are not broken.
-[[unsafe_transfer(std::transferable<T> && std::shareable<T>),
+[[unsafe_owned, unsafe_transfer(std::transferable<T> && std::shareable<T>),
   unsafe_share(std::transferable<T> && std::shareable<T>)]]
 class shared_ptr<T> {
   mut std::detail::shared_control* block = nullptr;
@@ -1937,7 +1937,7 @@ shared_ptr<Base> upcast_shared<Base, Derived>(mut shared_ptr<Derived> owner) {
 
 /// A move-only observer. lock() acquires a strong credit only while the
 /// payload is live; expiry is irreversible. Observations are snapshots.
-[[unsafe_transfer(std::transferable<T> && std::shareable<T>),
+[[unsafe_owned, unsafe_transfer(std::transferable<T> && std::shareable<T>),
   unsafe_share(std::transferable<T> && std::shareable<T>)]]
 class weak_ptr<T> {
   mut std::detail::shared_control* block = nullptr;

@@ -3,7 +3,7 @@
 // A null-only example of an audited handle policy. A real owner must also
 // prove its raw access, retention, cleanup and resource contracts.
 concept CrossThread<T> = std::transferable<T> && std::shareable<T>;
-[[unsafe_transfer(CrossThread<T>), unsafe_share(CrossThread<T>)]]
+[[unsafe_owned, unsafe_transfer(CrossThread<T>), unsafe_share(CrossThread<T>)]]
 class ReviewedHandle<T> {
   T* pointer = nullptr;
 public:
@@ -13,6 +13,8 @@ public:
 [[no_transfer]] struct Affine { int value = 0; };
 [[no_share]] struct Exclusive { int value = 0; };
 
+F retain<F>(F callback) { return std::move(callback); }
+
 int main() {
   static_assert(std::meta::is_transferable<ReviewedHandle<int>>());
   static_assert(std::meta::is_shareable<ReviewedHandle<int>>());
@@ -21,5 +23,10 @@ int main() {
   // A false predicate removes thread permission, not local usability.
   ReviewedHandle<Affine> local{};
   ReviewedHandle<Exclusive> other{};
+  // Independent ownership permits local callback storage without thread
+  // permission. This example's raw handle is always null, so it cannot retain
+  // an external lifetime. Every generic payload is checked independently.
+  auto callback = retain([owner = std::move(local)]() -> int { return 42; });
+  if (callback() != 42) { return 1; }
   return 0;
 }

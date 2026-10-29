@@ -9017,8 +9017,9 @@ prerequisite checkpoints as full acceptance.
   Full-suite validation exposed a remaining composition prerequisite: an
   owning local callback rejects a source owner whose payload is not transferable,
   because raw implementation encapsulation is currently tied to a valid unsafe
-  thread-transfer assertion. A general independent ownership assertion is under
-  owner review. Acceptance requires preserving single-thread-only payloads,
+  thread-transfer assertion. The owner approved a general independent ownership assertion on
+  2026-10-29; `[[unsafe_owned]]` is implemented in the working branch and
+  undergoing validation. Acceptance requires preserving single-thread-only payloads,
   rejecting hidden borrowed/raw lifetime dependencies, and proving the rule on
   unrelated source owners; this must not grant thread capabilities implicitly.
 

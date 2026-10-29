@@ -1369,6 +1369,22 @@ A false conditional assertion, `unsafe_share` alone, or a tracked borrowed
 field cannot provide that permission. Direct raw-pointer captures remain
 rejected. This revises the original blanket recursive raw-field rejection so
 source-defined owning types retain the same transport as private owners.
+`[[unsafe_owned]]` on a class or struct separately asserts that its raw
+implementation state has no external lifetime dependency and remains valid
+through movement and final cleanup. It grants neither transfer nor sharing,
+and cannot hide checked references, views, or borrowed captures. This is an
+unsafe obligation of the implementation author, not a compiler proof inferred
+from a destructor. An invalid assertion can make safe callers unsound.
+Every concrete generic type argument must independently pass the same ownership
+check without inheriting the enclosing assertion; this conservative rule also
+applies to phantom arguments. Nested instantiations are checked by concrete type,
+not merely declaration identity. The assertion does not require a hidden payload
+to be movable or thread-capable. It takes no arguments, may occur only once,
+and applies to classes and structs, not interfaces or functions.
+Examples 177 and 179 demonstrate unrelated reviewed state and local callbacks
+holding observers of thread-affine payloads. This attribute adds no runtime
+state: existing exact callable movement and cleanup remain authoritative in MIR.
+
 Example 55 demonstrates a source-defined string capture; unrelated reviewed
 owners have the same rule. The examples above describe the original
 exact-transport minimum, not a restriction to one-field owners: ordinary direct by-value generic

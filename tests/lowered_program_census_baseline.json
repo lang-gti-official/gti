@@ -2785,9 +2785,9 @@
       }
     },
     "177-capability-predicates.gti": {
-      "declarations": 418,
-      "bodies": 17,
-      "generated_items": 5,
+      "declarations": 419,
+      "bodies": 19,
+      "generated_items": 6,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -2796,7 +2796,7 @@
         "lifecycle_cleanup": 2,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 2,
+        "concrete_instance_adapter": 3,
         "thread_local_storage": 0
       }
     },
@@ -2817,9 +2817,9 @@
       }
     },
     "179-weak-ownership.gti": {
-      "declarations": 1096,
-      "bodies": 161,
-      "generated_items": 84,
+      "declarations": 1097,
+      "bodies": 164,
+      "generated_items": 86,
       "generated_kinds": {
         "program_initialization": 0,
         "hosted_entry": 1,
@@ -2828,14 +2828,14 @@
         "lifecycle_cleanup": 6,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 65,
+        "concrete_instance_adapter": 67,
         "thread_local_storage": 0
       }
     }
   },
   "totals": {
-    "declarations": 214520,
-    "bodies": 26917,
-    "generated_items": 15753
+    "declarations": 214522,
+    "bodies": 26922,
+    "generated_items": 15756
   }
 }
