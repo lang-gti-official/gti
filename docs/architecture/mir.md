@@ -3296,7 +3296,12 @@ existing semantic timing.
 
 Early queries use resolved fields, concrete substitutions, enum alternatives
 and lifecycle representation witnesses. Stored references and owning
-indirection do not recursively demand their referents. Checked size/padding
+indirection do not recursively demand their referents. The layout dependency
+walk also checks generic class assertions in isolated semantic instance
+contexts, reusing ordinary assertion analysis and its existing constant engine.
+An open instance owns its own assertions, so an assertion can query its class's
+layout without recursively evaluating itself. No object initialization or
+unrelated generic argument instantiation is needed. Checked size/padding
 arithmetic in `object_layout.h` is shared with native record-layout verification;
 native execution tests compare constant results with `ObjectSize` and
 `ObjectAlignment` over unrelated user objects and library owners. A selected

@@ -1911,7 +1911,11 @@ and every intermediate offset, padding calculation and extent must fit
 object-size limit. Empty complete objects have nonzero size.
 
 Queries in generic definitions defer until their operands are concrete;
-instantiation checks the resulting object type. Bare `void`, direct references,
+instantiation checks the resulting object type. A query checks the class-level
+static assertions of the concrete classes needed by value, even when the query
+is erased during constant evaluation. It does not initialize fields or invoke
+constructors or destructors. Indirection does not require the pointee's layout
+or class assertions. Bare `void`, direct references,
 interfaces, incomplete/opaque types, recursive by-value layouts, zero extents
 and overflowing layouts are rejected. Invalid resolved queries use `GTI-S2063`;
 opaque operands retain `GTI-S2065`, and unresolved names retain their ordinary

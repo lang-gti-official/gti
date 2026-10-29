@@ -498,6 +498,55 @@ int main() { return int(bytes<void>()); }
          "a dependent query is checked after concrete substitution");
 }
 
+void testLayoutClassAssertions() {
+  for (const std::string query :
+       {"sizeof(Bad<int>)", "alignof(Bad<int>)", "sizeof(Container<int>)",
+        "sizeof(Bad<int>[2])"}) {
+    const auto result = analyze(
+        "layout-class-assertion.gti",
+        "struct Bad<T> { static_assert(sizeof(T) == uint64_t(0)); T value; }; "
+        "struct Container<T> { Bad<T> value; }; "
+        "int main() { uint64_t bytes = " +
+            query + "; return 0; }");
+    expect(!result.canGenerateCode() && countCode(result, "GTI-S2079") > 0,
+           "layout queries validate by-value class assertions: " + query);
+  }
+  const auto erased = analyze("layout-erased-class-assertion.gti", R"(
+struct Bad<T> { static_assert(sizeof(T) == uint64_t(0)); T value; };
+constexpr uint64_t bytes<T>() { return sizeof(T); }
+static_assert(bytes<Bad<int>>() > uint64_t(0));
+int main() { return 0; }
+)");
+  expect(!erased.canGenerateCode() && countCode(erased, "GTI-S2079") > 0,
+         "erased constexpr queries validate class assertions");
+
+  const auto valid = analyze("layout-valid-class-assertion.gti", R"(
+struct Bad<T> { static_assert(sizeof(T) == uint64_t(0)); T value; };
+struct Self<T> { T value; static_assert(sizeof(Self<T>) == sizeof(T)); };
+struct Indirect<T> { T* value = nullptr; };
+constexpr bool fits<T>() { return sizeof(T) <= uint64_t(8); }
+struct Checked<T> { static_assert(fits<T>()); T value; };
+static_assert(sizeof(Self<int>) == uint64_t(4));
+static_assert(alignof(Self<int>) == uint64_t(4));
+static_assert(sizeof(Checked<int>) == uint64_t(4));
+static_assert(sizeof(Indirect<Bad<int>>) == sizeof(void*));
+static_assert(sizeof(Bad<int>*) == sizeof(void*));
+int main() { return 0; }
+)");
+  if (!valid.canGenerateCode())
+    printDiagnostics(valid);
+  expect(valid.canGenerateCode(),
+         "self layout assertions terminate and indirection does not demand "
+         "the pointee's class assertions");
+
+  const auto expanding = analyze("layout-assertion-depth.gti", R"(
+struct Loop<T> { static_assert(sizeof(Loop<T*>) > uint64_t(0)); int value; };
+int main() { uint64_t n = sizeof(Loop<int>); return 0; }
+)");
+  expect(!expanding.canGenerateCode() && countCode(expanding, "GTI-S2063") == 1,
+         "expanding class assertions terminate with one source diagnostic");
+}
+
 void testNativeLayoutAdmission() {
   // A use that disappears during constant evaluation still selects the native
   // representation; the deprecated backend must not silently emit its value.
@@ -719,6 +768,7 @@ int main() {
   testTargetDeterminism();
   testLayoutDiagnostics();
   testGeneralLayoutConstants();
+  testLayoutClassAssertions();
   testNativeLayoutAdmission();
   testLayoutGraph();
   testHirMirAndBackend();

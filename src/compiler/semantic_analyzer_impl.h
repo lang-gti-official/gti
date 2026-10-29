@@ -820,7 +820,11 @@ public:
   [[nodiscard]] static std::optional<TargetScalarKind>
   layoutScalarKind(const SemanticType &type);
 
-  [[nodiscard]] LayoutEvaluation evaluateLayout(const SemanticType &type) const;
+  [[nodiscard]] LayoutEvaluation
+  evaluateLayout(const SemanticType &type,
+                 std::vector<SemanticType> *completeClasses = nullptr) const;
+  [[nodiscard]] bool validateLayoutClassAssertions(
+      const std::vector<SemanticType> &completeClasses, const Token &query);
   struct ObjectLayoutContext {
     struct Completed {
       SemanticType type;

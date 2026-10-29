@@ -10404,10 +10404,77 @@ auto SemanticVisitor::Impl::layoutScalarKind(const SemanticType &type)
   }
 }
 
-auto SemanticVisitor::Impl::evaluateLayout(const SemanticType &type) const
+auto SemanticVisitor::Impl::evaluateLayout(
+    const SemanticType &type, std::vector<SemanticType> *completeClasses) const
     -> LayoutEvaluation {
   ObjectLayoutContext context;
-  return evaluateObjectLayout(type, context);
+  const LayoutEvaluation layout = evaluateObjectLayout(type, context);
+  if (layout && completeClasses)
+    for (const auto &completed : context.completed)
+      if (completed.type.kind == SemanticType::Class)
+        completeClasses->push_back(completed.type);
+  return layout;
+}
+
+auto SemanticVisitor::Impl::validateLayoutClassAssertions(
+    const std::vector<SemanticType> &completeClasses, const Token &query)
+    -> bool {
+  for (const SemanticType &type : completeClasses) {
+    const ClassInfo *owner = classInfo(type);
+    if (!owner || owner->genericParameters.empty() || !owner->declaration ||
+        !declaresConcreteClassStaticAssertions(owner->declaration->members()))
+      continue;
+    const auto known = knownConcreteClassAssertionOutcome(
+        type.classId, type.arguments, type.valueArguments);
+    if (known && !*known)
+      continue;
+    const InstanceAnalysisKey key{
+        .kind = InstanceAnalysisKind::ClassFieldInitializers,
+        .declaration = type.classId,
+        .classTypes = type.arguments,
+        .classValues = type.valueArguments};
+    const auto open = openReanalyses();
+    // An assertion may query its own complete representation. Its enclosing
+    // analysis owns that assertion, just as for staged constant evaluation.
+    if (std::find(open->begin(), open->end(), key) != open->end())
+      continue;
+    if (open->size() >= constexprCallDepthLimit) {
+      report(query,
+             "Layout query class assertions exceeded the compiler "
+             "instantiation-depth limit.",
+             "GTI-S2063");
+      return false;
+    }
+    // A query must validate the classes it needs by value, even when it is
+    // erased before HIR. Reuse ordinary assertion analysis in an isolated
+    // context: no field initialization, lifetime event, or caller-flow edit.
+    auto worker = unevaluatedExpressionWorker();
+    worker->prepareInstanceAnalysis();
+    worker->openReanalyses()->push_back(key);
+    worker->requestSession.assertionsOwnedUpChain = false;
+    if (!worker->prepareClassInstanceContext(type.classId, type.arguments,
+                                             type.valueArguments)) {
+      report(query, "Layout query could not validate the concrete class.",
+             "GTI-S2063");
+      return false;
+    }
+    worker->analyzeConcreteClassStaticAssertions(owner->declaration->members());
+    worker->finishClassInstanceContext();
+    if (worker->semanticModel.requiresNativeObjectLayout())
+      semanticModel.requireNativeObjectLayout();
+    const bool failed =
+        std::any_of(worker->diagnostics.begin(), worker->diagnostics.end(),
+                    [](const SemanticDiagnostic &diagnostic) {
+                      return diagnostic.severity == DiagnosticSeverity::Error;
+                    });
+    diagnostics.insert(diagnostics.end(), worker->diagnostics.begin(),
+                       worker->diagnostics.end());
+    recordConcreteClassAssertionOutcome(type.classId, type.arguments,
+                                        type.valueArguments, failed);
+    if (failed)
+      return false;
+  }
+  return true;
 }
 
 auto SemanticVisitor::Impl::evaluateObjectLayout(const SemanticType &type,
@@ -10731,7 +10798,8 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
     return;
   }
 
-  const LayoutEvaluation layout = evaluateLayout(queriedType);
+  std::vector<SemanticType> completeClasses;
+  const LayoutEvaluation layout = evaluateLayout(queriedType, &completeClasses);
   if (layout.nativeRepresentation)
     semanticModel.requireNativeObjectLayout();
   if (!layout) {
@@ -10778,6 +10846,9 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
     diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
+
+  if (!validateLayoutClassAssertions(completeClasses, expr.keyword()))
+    return;
 
   const std::uint64_t value = expr.kind() == LayoutQueryKind::Size
                                   ? layout.sizeBytes
