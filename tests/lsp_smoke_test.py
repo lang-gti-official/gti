@@ -48,6 +48,14 @@ def lsp_position(source, offset):
     return {"line": line, "character": character}
 
 
+def without_include_advice(diagnostics):
+    # These fixtures test other diagnostics. Validate the migration warning's
+    # cardinality/severity before excluding only that separately tested advice.
+    advice = [d for d in diagnostics if d.get("code") == "GTI-I0013"]
+    assert not advice or has_only_include_advice(advice), diagnostics
+    return [d for d in diagnostics if d.get("code") != "GTI-I0013"]
+
+
 def has_only_include_advice(diagnostics):
     return (len(diagnostics) == 1 and diagnostics[0].get("code") == "GTI-I0013"
             and diagnostics[0].get("severity") == 2)
