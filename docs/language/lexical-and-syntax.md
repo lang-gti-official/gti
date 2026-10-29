@@ -169,8 +169,8 @@ must not rescan nearby source text to infer documentation.
 GTI 0.492.0 implements the module-only language transition. GTI
 `#include` and `export #include` are rejected with `GTI-I0014`; they do not load
 a dependency. Source dependencies use explicit module interfaces and imports.
-The coordinated breaking change is held from release until phase 2 establishes
-production-ready module behavior.
+The campaign plan records the completed phase 2 implementation, targeted
+acceptance and owner-authorized deferral of final full-suite validation.
 
 A source unit can name declarations from itself, exported declarations of its
 imports and their explicit re-exports, and the implicit standard prelude.
