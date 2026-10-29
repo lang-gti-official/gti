@@ -28,6 +28,9 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "mir_closed_enum_unreachable_v1",
       "payload_equal_v",
       "storage_",
+      "RestoreExternalStorage",
+      "restore_pending_",
+      "no_restore_state",
       "tag_",
       "vacant",
       "tag_type",
@@ -1547,10 +1550,14 @@ inline void mir_missing_drop_v1() noexcept {
 // normal C++ local or std::optional, this guard deliberately refuses to clean
 // up an engaged value from its destructor: every successful construction must
 // reach an explicit verified-MIR Drop instruction.
+template <typename T>
+[[nodiscard]] inline T mir_empty_state_v1() noexcept;
+
 template <typename T, bool DestroyRepresentationAtScopeExit = false,
-          bool ExternalStorage = false>
+          bool ExternalStorage = false, bool RestoreExternalStorage = false>
 class mir_lifetime_slot {
 public:
+  static_assert(!RestoreExternalStorage || ExternalStorage);
   mir_lifetime_slot() requires (!ExternalStorage) = default;
   explicit mir_lifetime_slot(T *address) requires ExternalStorage
       : storage_(address) {}
@@ -1559,6 +1566,13 @@ public:
 
   ~mir_lifetime_slot() {
     if (!engaged_) {
+      if constexpr (RestoreExternalStorage) {
+        // MIR retired a staged field element, but its enclosing C++ object
+        // still exists and will destroy that element on constructor failure.
+        // Recreate only the proved inert shell, never a GTI object lifetime.
+        if (restore_pending_)
+          ::new (static_cast<void *>(slot())) T(mir_empty_state_v1<T>());
+      }
       return;
     }
     // A verified cleanup-emergency edge explicitly stopped source cleanup.
@@ -1580,6 +1594,7 @@ public:
     if (engaged_) {
       storage_error("verified MIR lifetime slot was constructed twice");
     }
+    if constexpr (RestoreExternalStorage) restore_pending_ = true;
     construct_representation_at(slot(), std::forward<Args>(args)...);
     engaged_ = true;
   }
@@ -1589,6 +1604,7 @@ public:
     if (engaged_) {
       storage_error("verified MIR lifetime slot was constructed twice");
     }
+    if constexpr (RestoreExternalStorage) restore_pending_ = true;
     ::new (static_cast<void *>(slot()))
         T(std::forward<Factory>(factory)());
     engaged_ = true;
@@ -1616,6 +1632,7 @@ public:
     if (engaged_) {
       storage_error("verified MIR lifetime slot requested construction while engaged");
     }
+    if constexpr (RestoreExternalStorage) restore_pending_ = true;
     return slot();
   }
 
@@ -1631,6 +1648,7 @@ public:
   void release() {
     if (!engaged_) storage_error("verified MIR slot released while empty");
     engaged_ = false;
+    if constexpr (RestoreExternalStorage) restore_pending_ = false;
   }
 
   void destroy() {
@@ -1842,6 +1860,10 @@ private:
   alignas(ExternalStorage ? alignof(T *) : alignof(T))
       std::conditional_t<ExternalStorage, T *, std::byte[sizeof(T)]> storage_;
   bool engaged_ = false;
+  struct no_restore_state {};
+  [[no_unique_address]]
+  std::conditional_t<RestoreExternalStorage, bool, no_restore_state>
+      restore_pending_{};
 };
 
 // The identity-bound public logical-size check (P-STORAGE-01): container

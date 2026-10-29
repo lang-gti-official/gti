@@ -2346,6 +2346,9 @@ int main() { return broken.area() + square.area(); }
   return rack.row[0].area() + kept.area();
 }
 """
+    array_field_first_failure = array_field_failure.replace(
+        "row({Square(side), make(divisor)})", "row({make(divisor), Square(side)})"
+    ).replace("expected_cleanup = 54;", "expected_cleanup = 4;")
     array_needle = "Square make(int side) { return Square(12 / side); }"
     add("hierarchy-array-failure", array_failure, "defined-failure",
         expected_exit=70, failure_needle=array_needle, endpoints=TRANSFER_ENDPOINTS)
@@ -2357,6 +2360,12 @@ int main() { return broken.area() + square.area(); }
         expected_exit=70, failure_needle=array_needle, endpoints=TRANSFER_ENDPOINTS)
     add("hierarchy-array-field-wrong-cleanup",
         array_field_failure.replace("expected_cleanup = 54;", "expected_cleanup = 55;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=array_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-array-field-first-failure", array_field_first_failure, "defined-failure",
+        expected_exit=70, failure_needle=array_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-array-field-first-wrong-cleanup",
+        array_field_first_failure.replace("expected_cleanup = 4;", "expected_cleanup = 5;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=array_needle,
         endpoints=TRANSFER_ENDPOINTS)
     siblings = (root / SUCCESS_FILES["returned-siblings"]).read_text(encoding="utf-8")
@@ -2485,6 +2494,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "hierarchy-arrays": (
             "hierarchy-arrays", "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
             "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
+            "hierarchy-array-field-first-failure", "hierarchy-array-field-first-wrong-cleanup",
             "array-former-reject"),
         "program-hierarchy-storage": (
             "program-storage", "program-storage-failure", "global-former-reject",
@@ -2570,6 +2580,7 @@ def main() -> None:
              "replacement-failure", "replacement-wrong-cleanup",
              "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
              "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
+            "hierarchy-array-field-first-failure", "hierarchy-array-field-first-wrong-cleanup",
              "returned-sibling-failure", "returned-sibling-wrong-cleanup",
              "exchanged-transfer-failure", "exchanged-transfer-wrong-cleanup",
              "program-storage-failure",

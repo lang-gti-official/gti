@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.490.0 - Source-defined shared and weak ownership
+## 0.490.1 - Source-defined shared and weak ownership
 
 - `std::shared_ptr` now implements its handle, explicit cloning, reference
   counts, final release, upcasts and allocation policy in GTI source. The
@@ -33,6 +33,10 @@ for what minor and patch releases mean.
   expiry/count snapshots, reset and swap in source. Weak observers retain the
   control block after payload destruction and cannot revive an expired object.
   Shared and weak handles use the same conditional thread permissions.
+- C++ constructor rollback now restores inert array-element lifetimes before
+  enclosing-object teardown, preventing invalid or repeated cleanup under GCC.
+- Synthesized receiver witnesses retain their concrete place identity, allowing
+  lexical debug information for unsafe raw-reference returns tied to `this`.
 
 ## 0.489.1 - Native unique owners of null and function pointers
 

@@ -2880,6 +2880,7 @@ private:
   }
 
   [[nodiscard]] HirValueId lowerImplicitReceiver(HirBody &body) {
+    ensurePlaceDomain(body);
     const HirValueId id = nextValueId++;
     body.values.push_back(
         {.id = id,
@@ -2887,7 +2888,8 @@ private:
          .info = {.type = currentReceiverType,
                   .category = ValueCategory::Place,
                   .access = currentReceiverAccess,
-                  .traits = instanceProvider->traitsFor(currentReceiverType)}});
+                  .traits = instanceProvider->traitsFor(currentReceiverType)},
+         .place = PlaceKey{.domain = body.placeDomain, .receiver = true}});
     return id;
   }
 

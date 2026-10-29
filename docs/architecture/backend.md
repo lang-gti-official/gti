@@ -2614,6 +2614,13 @@ array of concrete generic class elements uses each element's private tag
 constructor and never assumes that the public class has a zero-argument
 constructor. This remains a backend-only rollback representation and does not
 add a GTI constructor or observable initialized value.
+Staged elements of constructor array fields additionally restore their inert
+C++ shells after rollback. The slots remember attempted construction and cancel
+restoration when publication transfers the element to its aggregate. Untouched
+elements keep their original shells. Restoration performs no source cleanup,
+including during emergency abandonment. This prevents enclosing C++ destruction
+from revisiting ended element lifetimes, without running a source destructor twice or changing the MIR drops.
+Ordinary local and returned-array slots do not opt into this field-only rule.
 Cleanup-free constructed fields use the same body-ordered publication route
 when a nested class argument needs a prepared parameter slot. Proving the
 consuming constructor failure-free removes its failure-propagation marker,
