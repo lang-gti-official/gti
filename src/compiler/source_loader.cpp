@@ -799,7 +799,8 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   // compilation alike. A source header outside its roots cannot claim it.
   for (const auto &[declaration, span] :
        {std::pair{&moduleDeclaration, &moduleDeclarationSpan},
-        std::pair{&implementationDeclaration, &implementationDeclarationSpan}}) {
+        std::pair{&implementationDeclaration,
+                  &implementationDeclarationSpan}}) {
     if (!*declaration)
       continue;
     const std::string &name = (*declaration)->lexeme;
