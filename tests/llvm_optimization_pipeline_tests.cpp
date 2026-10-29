@@ -6,12 +6,40 @@
 #include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Operator.h>
+#include <llvm/MC/MCSubtargetInfo.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include <iostream>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
+
+namespace {
+// LLVM releases differ on whether TargetMachine::getMCSubtargetInfo() returns
+// a pointer or a reference (LLVM 20-21 return a pointer); accept either, as
+// llvm_cost_target_probe does.
+// A subtarget table entry's name: LLVM 23 exposes key(), while LLVM 20-21
+// expose only the Key field.
+template <class Entry> llvm::StringRef entryKey(const Entry &entry) {
+  if constexpr (requires { entry.key(); })
+    return llvm::StringRef(entry.key());
+  else
+    return llvm::StringRef(entry.Key);
+}
+
+template <class Machine>
+const llvm::MCSubtargetInfo &machineSubtarget(const Machine &machine) {
+  auto &&value = machine.getMCSubtargetInfo();
+  if constexpr (std::is_pointer_v<std::remove_reference_t<decltype(value)>>) {
+    if (value == nullptr)
+      throw std::runtime_error("target machine has no MC subtarget");
+    return *value;
+  } else {
+    return value;
+  }
+}
+} // namespace
 
 using namespace lang;
 using namespace lang::native_llvm;
@@ -127,7 +155,7 @@ int main() {
     // processor's TuneImplies closure; no instruction extension, such as
     // LSE atomics, may appear.
     const auto machine = makeMachine(TargetInfo::host(), options);
-    const auto &baseline = machine->getMCSubtargetInfo();
+    const auto &baseline = machineSubtarget(*machine);
     const auto host = TargetInfo::host();
     const llvm::StringRef requestedTune(tuneCpu(host));
     const auto closure = [&](llvm::FeatureBitset bits) {
@@ -146,14 +174,14 @@ int main() {
     // M1 tunes as the A14 core), so judge the closure of what it selected.
     const auto tuningOf = [&](llvm::StringRef processorName) {
       for (const auto &processor : baseline.getAllProcessorDescriptions())
-        if (llvm::StringRef(processor.key()) == processorName)
+        if (entryKey(processor) == processorName)
           return closure(processor.TuneImplies.getAsBitset());
       throw std::runtime_error("unknown tuning processor " +
                                processorName.str());
     };
     std::optional<unsigned> atomics;
     for (const auto &feature : baseline.getAllProcessorFeatures())
-      if (llvm::StringRef(feature.key()) == "lse")
+      if (entryKey(feature) == "lse")
         atomics = feature.Value;
     unsigned tuned = 0;
     for (const auto &function : session.module()) {
