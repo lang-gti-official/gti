@@ -115,7 +115,12 @@ class LspSession:
         self.process.stdin.write(frame(message))
         self.process.stdin.flush()
 
-    def receive_until(self, predicate, timeout=10):
+    # A deadline, not a delay: an awaited message normally arrives at once.
+    # A cold aggregate `import std;` analyses the whole standard library
+    # before its first publication, which takes about 10 s on a Linux CI
+    # host, so the default leaves room for that. Tests asserting that no
+    # message arrives pass their own short timeout.
+    def receive_until(self, predicate, timeout=60):
         deadline = time.monotonic() + timeout
         received = []
         while time.monotonic() < deadline:

@@ -10,6 +10,8 @@ import sys
 import tempfile
 import time
 
+from sanitizer_support import SANITIZED_BUILD_TIMEOUT
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -57,7 +59,7 @@ def main() -> int:
                 command,
                 capture_output=True,
                 text=True,
-                timeout=180,
+                timeout=SANITIZED_BUILD_TIMEOUT if label == "sanitized" else 180,
                 env=environment,
                 check=False,
             )
