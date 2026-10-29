@@ -940,6 +940,41 @@ int main() { return outer::values::dynamic - 1; }
          "namespace storage spellings");
 }
 
+void testEnumeratorStorageRows() {
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "cpp-mir-representation-enumerator-storage.gti", R"(
+enum class Mode : int8_t { idle = -1, ready = 2 };
+T& pick<T>(T& value) { return value; }
+int main() {
+  Mode& saved = pick<Mode>(Mode::idle);
+  return saved == pick<Mode>(Mode::ready) ? 1 : 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "enumerator loans should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
+  const auto rows =
+      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp20);
+  std::size_t count = 0;
+  for (const auto &row : rows.symbols) {
+    const auto *symbol = lowered.findSymbol(row.symbol);
+    if (row.kind != lang::CppMirSymbolRepresentationKind::Storage || !symbol ||
+        symbol->kind != lang::SymbolKind::Enumerator) {
+      continue;
+    }
+    ++count;
+    expect(row.spelling == "::gti_internal::backend::mir_enumerator_storage<" +
+                               std::to_string(row.symbol) +
+                               ", ::__gti_program::Mode::" + symbol->name + ">",
+           "enumerator places must name stable storage keyed by symbol");
+  }
+  expect(count == 2, "each borrowed enumerator must have its own storage row");
+}
+
 void testStaticOnlyProgramInitializationFact() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("cpp-mir-representation-static-only.gti", R"(
@@ -2824,6 +2859,7 @@ int main() {
   testPureDataOnlyProgramInitializationPlan();
   testNoEntryProgramInitializationPlan();
   testNamespacedProgramStorageRows();
+  testEnumeratorStorageRows();
   testStaticOnlyProgramInitializationFact();
   testCheckedDynamicInitializationIsComplete();
   testMissingAndStaleFactsFailClosed();

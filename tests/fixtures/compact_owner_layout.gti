@@ -10,6 +10,7 @@ class Guard {
 public:
   Guard() {}
   Guard(int* count, int* value) : count(count), value(value) {}
+  int read() { unsafe { return *this.value; } }
   ~Guard() {
     if (this.count != nullptr) {
       unsafe { *this.count = *this.count + *this.value; }
@@ -74,6 +75,25 @@ int main() {
     Guard extracted = std::move(pair).take();
   }
   if (drops != 3) { return 7; }
+  {
+    // A null cleanup marker does not mean absent object storage. Other
+    // fields must survive ordinary, enclosing-field and raw relocation.
+    Guard empty{nullptr, &weight};
+    Guard transported = relay(std::move(empty));
+    if (transported.read() != 1) { return 9; }
+    Pair pair{std::move(transported), Guard(nullptr, &weight)};
+    Guard extracted = std::move(pair).take();
+    if (extracted.read() != 1) { return 10; }
+    mut std::uninitialized<Guard> from{};
+    mut std::uninitialized<Guard> to{};
+    unsafe {
+      std::construct_at(from.data(), nullptr, &weight);
+      std::relocate_at(to.data(), from.data());
+      Guard& relocated = std::assume_ref(to.data(), to);
+      if (relocated.read() != 1) { return 11; }
+    }
+    unsafe { std::destroy_at(to.data()); }
+  }
   {
     mut std::uninitialized<Guard> from{};
     mut std::uninitialized<Guard> to{};
