@@ -13,12 +13,12 @@
 int main(int argc, char **argv) {
   using namespace lang;
   using namespace lang::driver;
-  if (argc != 6 && argc != 7)
+  if (argc != 6 && argc != 7 && argc != 8)
     return 2;
   const auto level = std::string(argv[4]);
   if (level != "O0" && level != "O1" && level != "O3")
     return 2;
-  const auto mode = argc == 7 ? std::string(argv[6]) : "address,undefined";
+  const auto mode = argc >= 7 ? std::string(argv[6]) : "address,undefined";
   if (mode != "address,undefined" && mode != "thread")
     return 2;
   const auto optimization = level == "O0"   ? OptimizationLevel::O0
@@ -27,7 +27,12 @@ int main(int argc, char **argv) {
   auto toolchain = discoverToolchainLayout(argv[0]);
   toolchain.standardLibrary = standardLibraryLayout(argv[1]);
   auto target = TargetInfo::host();
-  target.executionProfile = ExecutionProfile::Concurrent;
+  const auto profile = argc == 8 ? std::string(argv[7]) : "concurrent";
+  if (profile != "concurrent" && profile != "single-threaded")
+    return 2;
+  target.executionProfile = profile == "concurrent"
+                                ? ExecutionProfile::Concurrent
+                                : ExecutionProfile::SingleThreaded;
   target.runtimeCapabilities.threads = true;
   auto request =
       CompilationRequest(argv[2], toolchain.standardLibrary, target,
