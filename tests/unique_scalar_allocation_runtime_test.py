@@ -69,16 +69,19 @@ def main():
         # The native backend owns the same scalar pointees, including a null
         # pointer, a native function pointer and an integral enum. Its owners
         # allocate through the runtime's POSIX provider rather than C++ operator
-        # new; the companion fails that provider through the same switch, so
-        # exhaustion and failure during cleanup are checked on both backends.
+        # new. Its own companion fails that provider through the same switch,
+        # so exhaustion and failure during cleanup are checked on both
+        # backends. That provider is POSIX-only.
         suffixes = ("",) if os.name == "nt" else ("", "_failure", "_cleanup_failure")
+        companion = "unique_scalar_allocation_fault.cpp" if os.name == "nt" else \
+            "unique_scalar_runtime_allocation_fault.cpp"
         for suffix in suffixes:
             name = "unique_scalar_allocation" + suffix
             for level in ("O0", "O2"):
                 binary = pathlib.Path(temporary) / f"{name}-llvm-{level}"
                 command = [str(compiler), str(fixtures / f"{name}.gti"), "--backend", "llvm",
                            f"-{level}", "-o", str(binary), "--",
-                           str(fixtures / "unique_scalar_allocation_fault.cpp")]
+                           str(fixtures / companion)]
                 built = run(command)
                 assert built.returncode == 0, (command, built.stdout, built.stderr)
                 result = run([str(binary)])

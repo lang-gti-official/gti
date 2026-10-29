@@ -12375,8 +12375,8 @@ LLVM gap the audit found, runs on LLVM since PR 421.
   owner. Source-only GTI cannot see the difference; these companions can.
   Since 2026-10-29 the `unique_scalar_allocation_failure`,
   `unique_scalar_allocation_cleanup_failure` and `process_allocation_elision`
-  companions also replace the runtime's POSIX provider through the same
-  switch or probe, so `unique_scalar_allocation_runtime` and
+  programs also run with companions that replace the runtime's POSIX provider
+  through the same switch or probe, so `unique_scalar_allocation_runtime` and
   `process_allocation_elision` check exhaustion, failure during cleanup and
   owner release on LLVM as well (not on Windows). The other three tests stay
   C++-only.
