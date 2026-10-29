@@ -576,6 +576,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
         context.work->steps + reused->steps <= constexprExpressionStepLimit) {
       context.work->steps += reused->steps;
       appendStagedWarnings(reused->warnings);
+      if (reused->nativeObjectLayout)
+        semanticModel.requireNativeObjectLayout();
       if (workMetrics != nullptr)
         ++workMetrics->constexprStagedReuses;
       return ConstexprEvaluation{.value = reused->value, .location = callSite};
@@ -640,6 +642,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     return std::nullopt;
   }
   appendStagedWarnings(hir.diagnostics);
+  if (hir.program.requiresNativeObjectLayout())
+    semanticModel.requireNativeObjectLayout();
   const auto *entry = sourceGraph->findUnit(sourceGraph->entryUnit());
   if (entry == nullptr) {
     return std::nullopt;
@@ -859,11 +863,13 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   };
   if (result) {
     if (reuseKey && StagedConstantResults::reusable(*result.value))
-      stagedConstants->record({.key = *reuseKey,
-                               .value = *result.value,
-                               .steps = context.work->steps - stepsBefore,
-                               .depth = depth,
-                               .warnings = hir.diagnostics});
+      stagedConstants->record(
+          {.key = *reuseKey,
+           .value = *result.value,
+           .steps = context.work->steps - stepsBefore,
+           .depth = depth,
+           .warnings = hir.diagnostics,
+           .nativeObjectLayout = hir.program.requiresNativeObjectLayout()});
     return ConstexprEvaluation{.value = std::move(result.value),
                                .location = callSite};
   }

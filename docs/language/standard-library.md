@@ -1082,8 +1082,9 @@ may be `void`. References, `void` itself, incomplete/opaque classes, interfaces,
 abstract classes and compiler-private storage capabilities are excluded.
 Containing an owner field does not make an ordinary user class a private
 capability. This runtime descriptor is not a stable foreign ABI, an allocation,
-an initialization proof, or a new constant expression. The existing bounded
-`sizeof(T)` and `alignof(T)` constant-query rules are unchanged. See
+an initialization proof, or itself a constant expression. General
+`sizeof(T)` and `alignof(T)` provide constant queries of the same selected native
+representation where both facilities apply; they do not construct a `T`. See
 [runtime object layout](../../examples/119-runtime-object-layout.gti).
 
 `<std/memory>` also implements the first public typed allocation slice:

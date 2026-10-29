@@ -403,49 +403,23 @@ void expectLayoutFailure(std::string_view name, std::string source,
 }
 
 void testLayoutDiagnostics() {
-  expectLayoutFailure("layout-query-class.gti", R"(
-class Box { public: Box() = default; };
+  expectLayoutFailure("layout-query-incomplete.gti", R"(
+class Box;
 uint64_t query() { return sizeof(Box); }
 )",
-                      "no GTI layout contract", "Box");
+                      "complete concrete object type", "Box");
   expectLayoutFailure("layout-query-reference.gti", R"(
 uint64_t query(int32_t& value) { return alignof(int32_t&); }
 )",
-                      "no GTI layout contract", "&");
+                      "complete concrete object type", "&");
   expectLayoutFailure("layout-query-void.gti", R"(
 uint64_t query() { return sizeof(void); }
 )",
-                      "no GTI layout contract", "void");
-  expectLayoutFailure("layout-query-payload-enum.gti", R"(
-enum class State { Ready, Value(uint8_t value) };
-uint64_t query() { return sizeof(State); }
-)",
-                      "no GTI layout contract", "State");
-  expectLayoutFailure("layout-query-nullptr-type.gti", R"(
-uint64_t query() { return alignof(nullptr_t); }
-)",
-                      "no GTI layout contract", "nullptr_t");
-  expectLayoutFailure("layout-query-expected.gti", R"(
-uint64_t query() { return sizeof(expected<int32_t, int32_t>); }
-)",
-                      "no GTI layout contract", "expected");
+                      "complete concrete object type", "void");
   expectLayoutFailure("layout-query-zero.gti", R"(
 uint64_t query() { return sizeof(int32_t[0]); }
 )",
                       "zero-length fixed array", "0");
-  expectLayoutFailure("layout-query-symbolic-type.gti", R"(
-uint64_t query<T>() { return sizeof(T); }
-)",
-                      "requires a concrete type", "T");
-  expectLayoutFailure("layout-query-symbolic-extent.gti", R"(
-class ArrayShape<uint64_t N> {
-public:
-  uint64_t query() { return alignof(int32_t[N]); }
-public:
-  ArrayShape() = default;
-};
-)",
-                      "concrete fixed-array extent", "N");
   expectLayoutFailure("layout-query-overflow.gti", R"(
 uint64_t query() {
   return sizeof(int16_t[18446744073709551615]);
@@ -460,6 +434,110 @@ uint64_t query() { return sizeof(MissingType); }
              countCode(unknown, "GTI-S2063") == 0,
          "ordinary unknown-type diagnostics should suppress the dependent "
          "layout-contract diagnostic");
+}
+
+void testGeneralLayoutConstants() {
+  const auto source = R"(
+struct Empty {};
+struct Pair { uint8_t tag; uint64_t value; };
+struct Nested { Pair value; uint8_t tail; };
+struct Box<T> { T value; };
+constexpr uint64_t storage_bytes = sizeof(Pair);
+struct Space { uint8_t bytes[storage_bytes]; };
+enum class Sum { Empty, Value(Pair value), Code(uint8_t code) };
+constexpr uint64_t bytes<T>() { return sizeof(T); }
+constexpr uint64_t alignment<T>() { return alignof(T); }
+static_assert(bytes<Box<Pair>>() == uint64_t(16));
+static_assert(alignment<Box<Pair>>() == uint64_t(8));
+int main() {
+  uint64_t empty = sizeof(Empty);
+  uint64_t pair = sizeof(Pair);
+  uint64_t pair_align = alignof(Pair);
+  uint64_t nested = sizeof(Nested);
+  uint64_t generic = sizeof(Box<Pair>);
+  uint64_t array = sizeof(Box<Pair>[3]);
+  uint64_t sum = sizeof(Sum);
+  uint64_t sum_align = alignof(Sum);
+  uint64_t null_size = sizeof(nullptr_t);
+  uint64_t text = sizeof(std::string_view);
+  uint64_t space = sizeof(Space);
+  uint64_t expected_size = sizeof(expected<uint64_t, uint8_t>);
+  constexpr uint64_t extent = sizeof(Nested);
+  uint8_t buffer[extent] = {};
+  return 0;
+}
+)";
+  const auto frontend = analyzeWithPrelude("general-layout-query.gti", source);
+  if (!frontend.canGenerateCode())
+    printDiagnostics(frontend);
+  expect(frontend.canGenerateCode(),
+         "complete concrete objects support constant layout queries");
+  for (const auto &[name, value] :
+       std::vector<std::pair<std::string, std::uint64_t>>{
+           {"empty", 1},
+           {"pair", 16},
+           {"pair_align", 8},
+           {"nested", 24},
+           {"generic", 16},
+           {"array", 48},
+           {"sum", 24},
+           {"sum_align", 8},
+           {"null_size", 8},
+           {"text", 16},
+           {"space", 16},
+           {"expected_size", 16}})
+    expect(queryValue(frontend, name) == value,
+           "general layout constant for " + name);
+
+  const auto invalid =
+      analyzeWithPrelude("general-layout-invalid-instance.gti", R"(
+uint64_t bytes<T>() { return sizeof(T); }
+int main() { return int(bytes<void>()); }
+)");
+  expect(!invalid.canGenerateCode() && countCode(invalid, "GTI-S2063") > 0,
+         "a dependent query is checked after concrete substitution");
+}
+
+void testNativeLayoutAdmission() {
+  // A use that disappears during constant evaluation still selects the native
+  // representation; the deprecated backend must not silently emit its value.
+  for (const auto source :
+       {"struct Box { int value; }; static_assert(sizeof(Box) > uint64_t(0)); "
+        "int main() { return 0; }",
+        "struct Box { int value; }; constexpr uint64_t bytes<T>() { return "
+        "sizeof(T); } static_assert(bytes<Box>() > uint64_t(0)); int main() { "
+        "return 0; }",
+        "struct Box { int value; }; constexpr uint64_t n = sizeof(Box); int "
+        "main() { uint8_t buffer[n] = {}; return 0; }"}) {
+    const auto result = analyze("native-layout-admission.gti", source);
+    if (!result.canGenerateCode())
+      printDiagnostics(result);
+    expect(result.canGenerateCode() &&
+               result.semantics.requiresNativeObjectLayout() &&
+               result.hir.requiresNativeObjectLayout() &&
+               result.mir.requiresNativeObjectLayout(),
+           "erased native layout uses retain the backend admission fact");
+    if (!result.canGenerateCode())
+      continue;
+    bool rejected = false;
+    try {
+      (void)gti_test::emitCpp(result);
+    } catch (const lang::BackendUnsupportedError &error) {
+      rejected =
+          std::string_view(error.what()).find("general sizeof/alignof") !=
+          std::string_view::npos;
+    }
+    expect(rejected, "C++ rejects native layout constants after erasure");
+  }
+  const auto scalar = analyze("scalar-generic-layout.gti", R"(
+constexpr uint64_t bytes<T>() { return sizeof(T); }
+static_assert(bytes<uint32_t>() == uint64_t(4));
+int main() { return 0; }
+)");
+  expect(scalar.canGenerateCode() && !scalar.mir.requiresNativeObjectLayout(),
+         "a scalar generic query does not require native aggregate layout");
+  if (scalar.canGenerateCode())
+    (void)gti_test::emitCpp(scalar);
 }
 
 void testHirMirAndBackend() {
@@ -607,6 +685,8 @@ int main() {
   testPointerLayoutDoesNotRequirePointeeLayout();
   testTargetDeterminism();
   testLayoutDiagnostics();
+  testGeneralLayoutConstants();
+  testNativeLayoutAdmission();
   testHirMirAndBackend();
   testConstexprControlFlow();
   testFormatting();

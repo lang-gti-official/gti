@@ -1945,6 +1945,9 @@ struct MirThreadLocalStorage {
 
 class MirProgram {
 public:
+  [[nodiscard]] bool requiresNativeObjectLayout() const {
+    return nativeObjectLayout_;
+  }
   [[nodiscard]] const std::vector<MirThreadLocalStorage> &
   threadLocalStorage() const {
     return threadLocalStorage_;
@@ -2143,6 +2146,7 @@ private:
   friend class MirLowerer;
   friend struct MirProgramTestAccess;
 
+  bool nativeObjectLayout_ = false;
   bool valid_ = true;
   SourceDebugProfile sourceDebugProfile_ = SourceDebugProfile::None;
   TargetInfo target_ = TargetInfo::host();

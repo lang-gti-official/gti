@@ -1,0 +1,60 @@
+#include <std/memory>
+#include <std/vector>
+#include <std/string>
+
+// These are facts about this compilation's target representation, not a
+// promise that a future compiler or a foreign language uses the same layout.
+struct Packet {
+  uint8_t tag;
+  uint64_t sequence;
+};
+
+struct Envelope<T> {
+  uint8_t tag;
+  T payload;
+};
+
+mut int destructions = 0;
+class Pinned {
+  uint64_t value = 42;
+public:
+  Pinned() = default;
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = delete;
+  ~Pinned() { destructions += 1; }
+};
+
+enum class Message { Empty, Data(Packet packet), Failed(uint8_t code) };
+
+constexpr uint64_t storage_bytes<T>() { return sizeof(T); }
+constexpr uint64_t storage_alignment<T>() { return alignof(T); }
+
+static_assert(storage_bytes<Packet>() == uint64_t(16));
+static_assert(storage_alignment<Packet>() == uint64_t(8));
+static_assert(sizeof(Packet[3]) == sizeof(Packet) * uint64_t(3));
+
+bool matches_representation<T>() requires std::layout_queryable<T> {
+  std::layout actual = std::layout_of<T>();
+  return actual.bytes == sizeof(T) && actual.alignment == alignof(T);
+}
+
+int main() {
+  constexpr uint64_t capacity = storage_bytes<Envelope<Packet>>();
+  uint8_t scratch[capacity] = {};
+  if (sizeof(uint8_t[capacity]) != capacity) { return 1; }
+  if (!matches_representation<Packet>() ||
+      !matches_representation<Envelope<Packet>>() ||
+      !matches_representation<Message>() ||
+      !matches_representation<expected<Packet, uint8_t>>() ||
+      !matches_representation<expected<void, uint8_t>>()) { return 2; }
+  // Ownership and immovability do not prevent querying a complete type.
+  // No object is constructed and no destructor or allocation is invoked.
+  if (!matches_representation<Pinned>() ||
+      !matches_representation<std::unique_ptr<int>>() ||
+      !matches_representation<std::shared_ptr<int>>() ||
+      !matches_representation<std::weak_ptr<int>>() ||
+      !matches_representation<std::vector<int>>() ||
+      !matches_representation<std::string>() ||
+      !matches_representation<std::string_view>()) { return 3; }
+  return destructions;
+}

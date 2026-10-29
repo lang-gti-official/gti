@@ -296,35 +296,37 @@ alignment below are measured in bytes:
 The layout is little-endian and has 64-bit pointers. `float` and `double`
 retain the exact binary32 and binary64 contracts in
 [Execution Section 4.3](execution.md#43-numeric-execution).
-The pointer row is a representation category for compiler facts; it does not
-grant layout to ordinary classes, interfaces, owners, references, or other
-aggregate source types. A record explicitly declared `[[c_abi]] struct` has
-the layout defined below, and a valid passive union has the separate bounded
-layout defined below. Ordinary class layout, vtables, packing, payload-enum
-layout, bit-fields, and user-selected alignment remain outside this bounded
-contract.
+The pointer row is a representation category, also used by stored references
+and owning indirection. Indirection does not require the pointee to be complete.
 
-The type-only operators `sizeof(type)` and `alignof(type)` expose a bounded
-projection of these selected facts as exact `uint64_t` frontend constants.
-`alignof` selects the ABI-alignment column; preferred alignment is not
-source-queryable. Primitive scalar types and recursive raw pointers use the
-table directly after transparent alias resolution; pointer layout does not
-depend on whether the pointee is itself queryable. An integral scoped enum
-uses the layout of its exact fixed-width underlying integer type. A supported
-positive fixed array is derived recursively:
+The type-only operators `sizeof(type)` and `alignof(type)` expose selected
+object-layout facts as exact `uint64_t` frontend constants. `alignof` selects
+required ABI alignment, not preferred alignment. Primitive types and raw
+pointers use the table after transparent alias resolution. Integral scoped
+enums use their exact underlying integer type. A positive fixed array derives:
 
 ```text
 sizeof(T[N])  = checked(N * sizeof(T))
 alignof(T[N]) = alignof(T)
 ```
 
-Every extent must be concrete and greater than zero, and the size product must
-fit `uint64_t`. A valid `[[c_abi]]` record is laid out in source field order.
-Each field begins at the smallest offset aligned to that field's ABI alignment;
-the record alignment is the greatest field alignment; and the final size is
-rounded up to that record alignment. Nested `[[c_abi]]` records use their
-already-computed size and alignment. Every intermediate offset and final size
-must fit `uint64_t`.
+Every extent must be concrete and positive. All arithmetic is checked against
+`uint64_t`; native object materialization also enforces addressability limits.
+A record places its selected storage components at aligned offsets and rounds
+its final extent up to its greatest component alignment. A `[[c_abi]]` record's
+components are its source fields, with the explicit native ABI contract below.
+Ordinary objects additionally account for bases and compiler-required storage.
+Empty ordinary objects occupy at least one byte. Payload enums include their
+discriminant and aligned payload storage. Owners and compiler-private storage
+use their selected native representation; they do not inherit a foreign ABI.
+
+The ordinary-object representation is a compilation fact, not a stable layout
+promise across compiler versions. It is fixed per concrete type and selected
+target, independent of optimization level. The compiler's selected lifecycle
+representation determines whether destruction needs a separate state byte.
+The constant queries and native `std::layout_of<T>()` agree on size and alignment
+where both apply. Packing, bit-fields and user-selected alignment remain separate
+facilities; this query contract does not introduce them.
 
 A valid passive union uses the greatest field alignment and the greatest field
 size, with its final size rounded up to that alignment. Its fields may
@@ -332,12 +334,11 @@ recursively use the admitted scalar, raw-pointer, integral-enum, fixed-array,
 passive-union, and `[[c_abi]]` record layouts. The union is nonempty, so both
 maxima are defined, and every intermediate and final size must fit `uint64_t`.
 
-References, ordinary classes and structs, interfaces, payload enums,
-`expected`, bare `void`, `nullptr_t`, compiler-private types, symbolic type
-parameters or extents, and every other backend-dependent representation are
-rejected before lowering when queried directly. Structurally valid passive
-unions and `[[c_abi]]` records are the bounded aggregate-layout opt-ins;
-integral scoped enums inherit their declared integer layout.
+Direct references, interfaces, bare `void` and incomplete/opaque types have no
+queryable complete object layout. Symbolic operands defer until generic
+substitution; recursive by-value and overflowing layouts are rejected.
+General object queries require the LLVM backend. C++ retains the older bounded
+queries and diagnoses generalized ones even when their use is compile-time only.
 The query grammar is parenthesized and type-only; it does not evaluate an
 expression, and a query is not directly part of the restricted array-extent
 grammar. An earlier `constexpr uint64_t` initialized from a query may name an

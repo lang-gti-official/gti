@@ -810,6 +810,7 @@ public:
     std::uint64_t sizeBytes = 0;
     std::uint32_t abiAlignmentBytes = 0;
     LayoutEvaluationError error = LayoutEvaluationError::None;
+    bool nativeRepresentation = false;
 
     [[nodiscard]] explicit operator bool() const {
       return error == LayoutEvaluationError::None;
@@ -820,6 +821,10 @@ public:
   layoutScalarKind(const SemanticType &type);
 
   [[nodiscard]] LayoutEvaluation evaluateLayout(const SemanticType &type) const;
+  [[nodiscard]] LayoutEvaluation
+  evaluateObjectLayout(const SemanticType &type,
+                       std::vector<SemanticType> &active,
+                       bool storedReference = false) const;
 
   [[nodiscard]] static const Token &
   lastArrayExtentToken(const ArrayExtentExpr &extent);
@@ -1988,6 +1993,7 @@ private:
       // shallower or equal depth leaves every nested limit at least as wide.
       std::size_t depth = 0;
       std::vector<Diagnostic> warnings;
+      bool nativeObjectLayout = false;
     };
     static constexpr std::size_t capacity = 65536;
     std::unordered_map<std::size_t, std::vector<Result>> results;

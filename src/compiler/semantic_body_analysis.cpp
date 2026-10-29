@@ -1,3 +1,4 @@
+#include "gti/object_layout.h"
 #include "semantic_analyzer_impl.h"
 
 #include <iterator>
@@ -10405,6 +10406,25 @@ auto SemanticVisitor::Impl::layoutScalarKind(const SemanticType &type)
 
 auto SemanticVisitor::Impl::evaluateLayout(const SemanticType &type) const
     -> LayoutEvaluation {
+  std::vector<SemanticType> active;
+  return evaluateObjectLayout(type, active);
+}
+
+auto SemanticVisitor::Impl::evaluateObjectLayout(
+    const SemanticType &type, std::vector<SemanticType> &active,
+    bool storedReference) const -> LayoutEvaluation {
+  // Pointer/owner indirection does not demand the pointee's layout. A stored
+  // reference has pointer representation, but a reference is not itself a
+  // source-queryable object type.
+  if (type.kind == SemanticType::CString ||
+      type.kind == SemanticType::NullPtr ||
+      type.kind == SemanticType::UniqueOwner ||
+      (storedReference && type.kind == SemanticType::Reference)) {
+    auto layout = evaluateObjectLayout(
+        SemanticType::rawPointerTo(SemanticType::Void), active);
+    layout.nativeRepresentation = true;
+    return layout;
+  }
   if (const std::optional<TargetScalarKind> scalar = layoutScalarKind(type)) {
     const std::optional<TargetTypeLayout> layout =
         target.dataLayout.scalarLayout(*scalar);
@@ -10414,25 +10434,171 @@ auto SemanticVisitor::Impl::evaluateLayout(const SemanticType &type) const
     return {.sizeBytes = layout->sizeBytes,
             .abiAlignmentBytes = layout->abiAlignmentBytes};
   }
-  if (type.kind == SemanticType::Class) {
-    const ClassTypeInfo *record = semanticModel.findClassType(type.classId);
-    if (record != nullptr && record->cAbiRecord && record->cAbiLayout) {
-      return {.sizeBytes = record->cAbiLayout->sizeBytes,
-              .abiAlignmentBytes = record->cAbiLayout->abiAlignmentBytes};
-    }
-    if (record != nullptr && record->kind == ClassKind::Union &&
-        record->unionLayout) {
-      return {.sizeBytes = record->unionLayout->sizeBytes,
-              .abiAlignmentBytes = record->unionLayout->abiAlignmentBytes};
-    }
+  if (containsOpenTypeParameter(type))
+    return {.error = type.kind == SemanticType::Array &&
+                             type.arrayLengthParameterId != 0
+                         ? LayoutEvaluationError::SymbolicExtent
+                         : LayoutEvaluationError::SymbolicType};
+  // Bound expanding generic containment as well as exact by-value cycles.
+  if (active.size() >= 128 ||
+      std::find(active.begin(), active.end(), type) != active.end())
     return {.error = LayoutEvaluationError::UnsupportedType};
-  }
-  if (type.kind == SemanticType::Enum) {
-    const EnumTypeInfo *enumeration = semanticModel.findEnumType(type.enumId);
-    if (enumeration == nullptr || enumeration->payload) {
+  active.push_back(type);
+  struct Pop {
+    std::vector<SemanticType> &types;
+    ~Pop() { types.pop_back(); }
+  } pop{active};
+  const auto result = [](ObjectLayout layout) -> LayoutEvaluation {
+    if (!layout.valid ||
+        layout.alignment > std::numeric_limits<std::uint32_t>::max())
+      return {.error = LayoutEvaluationError::SizeOverflow};
+    return {.sizeBytes = layout.size,
+            .abiAlignmentBytes = static_cast<std::uint32_t>(layout.alignment),
+            .nativeRepresentation = true};
+  };
+  const auto record = [&](std::span<const SemanticType> fields,
+                          bool nonempty) -> LayoutEvaluation {
+    std::vector<ObjectLayout> layouts;
+    for (const auto &field : fields) {
+      const auto layout = evaluateObjectLayout(field, active, true);
+      if (!layout)
+        return layout;
+      layouts.push_back({layout.sizeBytes, layout.abiAlignmentBytes});
+    }
+    if (layouts.empty() && nonempty)
+      layouts.push_back({1, 1});
+    return result(objectRecordLayout(layouts));
+  };
+  const auto pointer = SemanticType::rawPointerTo(SemanticType::Void);
+  if (type.kind == SemanticType::StringView)
+    return record(std::vector<SemanticType>{pointer, SemanticType::UInt64},
+                  true);
+  if (type.kind == SemanticType::FunctionItem)
+    return {
+        .sizeBytes = 1, .abiAlignmentBytes = 1, .nativeRepresentation = true};
+  if (type.kind == SemanticType::Lambda)
+    return record(type.lambdaCaptureTypes(), true);
+  if (type.kind == SemanticType::Class) {
+    const ClassInfo *owner = classInfo(type);
+    if (owner == nullptr || owner->declaration == nullptr ||
+        owner->declaration->isForwardDeclaration() || owner->cOpaqueHandle ||
+        (!storedReference && owner->kind == ClassKind::Interface))
+      return {.error = LayoutEvaluationError::UnsupportedType};
+    if (owner->cAbiRecord && owner->cAbiLayout) {
+      return {.sizeBytes = owner->cAbiLayout->sizeBytes,
+              .abiAlignmentBytes = owner->cAbiLayout->abiAlignmentBytes};
+    }
+    if (owner->kind == ClassKind::Union && owner->unionLayout) {
+      return {.sizeBytes = owner->unionLayout->sizeBytes,
+              .abiAlignmentBytes = owner->unionLayout->abiAlignmentBytes};
+    }
+    // Trusted capabilities select representation by declaration identity.
+    // Public library wrappers go through the ordinary field rule below.
+    switch (owner->compilerCapability) {
+    case CompilerCapabilityTypeKind::FunctionPointer:
+    case CompilerCapabilityTypeKind::MutexLockToken:
+      return record(std::vector<SemanticType>{pointer}, true);
+    case CompilerCapabilityTypeKind::SharedOwner:
+      return record(std::vector<SemanticType>{pointer, pointer}, true);
+    case CompilerCapabilityTypeKind::ThreadHandle:
+      return record(
+          std::vector<SemanticType>(type.arguments.empty() ? 1 : 4, pointer),
+          true);
+    case CompilerCapabilityTypeKind::AtomicStorage:
+      return type.arguments.size() == 1
+                 ? evaluateObjectLayout(type.arguments.front(), active, true)
+                 : LayoutEvaluation{.error =
+                                        LayoutEvaluationError::UnsupportedType};
+    case CompilerCapabilityTypeKind::MutexStorage:
+      if (type.arguments.size() != 1)
+        return {.error = LayoutEvaluationError::UnsupportedType};
+      return record(
+          std::vector<SemanticType>{
+              SemanticType::arrayOf(SemanticType::UInt64, 8),
+              type.arguments.front(), SemanticType::UInt8},
+          true);
+    case CompilerCapabilityTypeKind::PolymorphicStorage: {
+      if (type.valueArguments.size() != 2 ||
+          type.valueArguments[0].kind != CompileTimeValue::UInt64 ||
+          type.valueArguments[1].kind != CompileTimeValue::UInt64)
+        return {.error = LayoutEvaluationError::UnsupportedType};
+      const auto address = evaluateObjectLayout(pointer, active);
+      const auto payload = alignObjectExtent(
+          {type.valueArguments[0].value, type.valueArguments[1].value});
+      const std::vector<ObjectLayout> fields{
+          {address.sizeBytes, address.abiAlignmentBytes},
+          {address.sizeBytes, address.abiAlignmentBytes},
+          payload};
+      return result(objectRecordLayout(fields));
+    }
+    case CompilerCapabilityTypeKind::None:
+    case CompilerCapabilityTypeKind::UninitializedStorage:
+      break;
+    default:
       return {.error = LayoutEvaluationError::UnsupportedType};
     }
-    return evaluateLayout(enumeration->underlyingType);
+    const auto *lifecycle =
+        semanticModel.findClassLifecycle(*owner->declaration);
+    if (!lifecycle)
+      return {.error = LayoutEvaluationError::UnsupportedType};
+    const auto substitution = classSubstitution(type);
+    std::vector<SemanticType> fields;
+    if (owner->compilerCapability ==
+        CompilerCapabilityTypeKind::UninitializedStorage) {
+      if (type.arguments.size() != 1)
+        return {.error = LayoutEvaluationError::UnsupportedType};
+      fields.push_back(type.arguments.front());
+    }
+    bool primaryDispatch = false;
+    for (const auto &base : owner->bases) {
+      const auto concrete = substituteType(base.type, substitution);
+      fields.push_back(concrete);
+      if (!base.interface) {
+        const auto *baseOwner = classInfo(concrete);
+        primaryDispatch = baseOwner != nullptr && baseOwner->polymorphic;
+      }
+    }
+    for (std::size_t index = 0; index < owner->fields.size(); ++index) {
+      const auto field = metaFieldFacts(type, index);
+      if (!field)
+        return {.error = LayoutEvaluationError::UnsupportedType};
+      // Late-bound extents and aliases are retained on the declaration's
+      // binding, just as concrete HIR field discovery consumes them.
+      const auto *binding = field->declaration
+                                ? semanticModel.findBinding(*field->declaration)
+                                : nullptr;
+      fields.push_back(binding && binding->type != SemanticType::Unknown
+                           ? substituteType(binding->type, substitution)
+                           : field->type);
+    }
+    // Consume the selected lifecycle representation. Do not infer storage
+    // from the presence of a destructor: compact-owner proofs may elide it.
+    if (lifecycle->requiresActiveDropState)
+      fields.push_back(SemanticType::UInt8);
+    if (owner->polymorphic && !primaryDispatch)
+      fields.push_back(pointer);
+    return record(fields, true);
+  }
+  if (type.kind == SemanticType::Enum) {
+    const auto enumeration = enumTypeFor(type);
+    if (!enumeration) {
+      return {.error = LayoutEvaluationError::UnsupportedType};
+    }
+    if (!enumeration->payload)
+      return evaluateObjectLayout(enumeration->underlyingType, active);
+    std::vector<ObjectLayout> alternatives{{1, 1}};
+    for (const auto &variant : enumeration->enumerators) {
+      const auto layout = record(variant.payloadTypes, false);
+      if (!layout)
+        return layout;
+      alternatives.push_back({layout.sizeBytes, layout.abiAlignmentBytes});
+    }
+    const auto discriminant =
+        evaluateObjectLayout(SemanticType::UInt32, active);
+    const std::vector<ObjectLayout> fields{
+        {discriminant.sizeBytes, discriminant.abiAlignmentBytes},
+        objectUnionLayout(alternatives)};
+    return result(objectRecordLayout(fields));
   }
   if (type.kind != SemanticType::Array) {
     return {.error = type.kind == SemanticType::TypeParameter
@@ -10448,16 +10614,19 @@ auto SemanticVisitor::Impl::evaluateLayout(const SemanticType &type) const
   if (type.arguments.size() != 1) {
     return {.error = LayoutEvaluationError::UnsupportedType};
   }
-  const LayoutEvaluation element = evaluateLayout(type.arguments.front());
+  const LayoutEvaluation element =
+      evaluateObjectLayout(type.arguments.front(), active);
   if (!element) {
     return element;
   }
-  if (element.sizeBytes >
-      std::numeric_limits<std::uint64_t>::max() / type.arrayLength) {
+  const auto array = objectArrayLayout(
+      {element.sizeBytes, element.abiAlignmentBytes}, type.arrayLength);
+  if (!array.valid) {
     return {.error = LayoutEvaluationError::SizeOverflow};
   }
-  return {.sizeBytes = element.sizeBytes * type.arrayLength,
-          .abiAlignmentBytes = element.abiAlignmentBytes};
+  return {.sizeBytes = array.size,
+          .abiAlignmentBytes = element.abiAlignmentBytes,
+          .nativeRepresentation = element.nativeRepresentation};
 }
 
 auto SemanticVisitor::Impl::lastArrayExtentToken(const ArrayExtentExpr &extent)
@@ -10547,10 +10716,11 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
   }
 
   const LayoutEvaluation layout = evaluateLayout(queriedType);
+  if (layout.nativeRepresentation)
+    semanticModel.requireNativeObjectLayout();
   if (!layout) {
-    if (analyzingDependentConstantCondition &&
-        (layout.error == LayoutEvaluationError::SymbolicType ||
-         layout.error == LayoutEvaluationError::SymbolicExtent)) {
+    if (layout.error == LayoutEvaluationError::SymbolicType ||
+        layout.error == LayoutEvaluationError::SymbolicExtent) {
       return;
     }
     std::string message;
@@ -10570,23 +10740,25 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
                 "object representation is specified.";
       break;
     case LayoutEvaluationError::SizeOverflow:
-      message = "The fixed-array layout queried by '" + expr.keyword().lexeme +
+      message = "The object layout queried by '" + expr.keyword().lexeme +
                 "' exceeds uint64_t.";
       break;
     case LayoutEvaluationError::UnsupportedType:
     case LayoutEvaluationError::None:
       message = "Type '" + typeRefSpelling(expr.type()) +
-                "' has no GTI layout contract for '" + expr.keyword().lexeme +
-                "'.";
+                "' is not a complete concrete object type with a finite "
+                "layout for '" +
+                expr.keyword().lexeme + "'.";
       break;
     }
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2063", DiagnosticPhase::Semantics,
         layoutDiagnosticSpan(expr.type(), layout.error), std::move(message));
     diagnostic.hints.emplace_back(
-        "Use a primitive scalar, one-level raw pointer, integral scoped "
-        "enum, valid passive union or [[c_abi]] record, or concrete "
-        "non-zero fixed array whose element layout is supported.");
+        "Use a complete object type after generic substitution. Void, "
+        "references, interfaces and incomplete types cannot be queried "
+        "directly; fixed-array extents must be positive and the complete "
+        "layout must fit uint64_t.");
     diagnostics.emplace_back(std::move(diagnostic));
     return;
   }

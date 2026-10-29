@@ -1,6 +1,7 @@
 #include "layout.h"
 #include "atomic_types.h"
 #include "closure_environment.h"
+#include "gti/object_layout.h"
 #include "memory_types.h"
 #include "mutexes.h"
 #include "placement.h"
@@ -111,6 +112,21 @@ TypeLayout Layouts::describe(llvm::Type *storage, bool addressOnly,
   if (!storage->isSized())
     throw BackendUnsupportedError(
         "LLVM storage requires a complete sized type");
+  std::vector<std::uint64_t> expectedOffsets;
+  std::optional<ObjectLayout> expectedRecord;
+  if (auto *record = llvm::dyn_cast<llvm::StructType>(storage);
+      record && !record->isPacked()) {
+    std::vector<ObjectLayout> fields;
+    for (auto *field : record->elements())
+      fields.push_back({data.getTypeAllocSize(field).getFixedValue(),
+                        data.getABITypeAlign(field).value()});
+    expectedRecord = objectRecordLayout(fields, &expectedOffsets);
+    if (!expectedRecord->valid ||
+        expectedRecord->size > static_cast<std::uint64_t>(
+                                   std::numeric_limits<std::int64_t>::max()))
+      throw BackendUnsupportedError(
+          "LLVM record extent exceeds the target object-size limit");
+  }
   const auto size = data.getTypeAllocSize(storage).getFixedValue();
   if (size >
       static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
@@ -128,6 +144,11 @@ TypeLayout Layouts::describe(llvm::Type *storage, bool addressOnly,
     for (unsigned index = 0; index < record->getNumElements(); ++index)
       result.fieldOffsets.push_back(layout->getElementOffset(index));
   }
+  if (expectedRecord && (expectedRecord->size != result.size ||
+                         expectedRecord->alignment != result.alignment ||
+                         expectedOffsets != result.fieldOffsets))
+    throw std::logic_error(
+        "LLVM object layout disagrees with target storage arithmetic");
   return result;
 }
 

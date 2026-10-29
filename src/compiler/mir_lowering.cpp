@@ -285,6 +285,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
   result.program.programKind_ = source.programKind();
   result.program.foreignStorage_ = source.foreignStorageDeclarations();
   result.program.target_ = source.analysisSeal().target;
+  result.program.nativeObjectLayout_ = source.requiresNativeObjectLayout();
   result.program.failureMetadata_ = failureMetadata;
   for (const HirEnum &enumeration : source.enumDeclarations()) {
     if (!enumeration.payload) {
