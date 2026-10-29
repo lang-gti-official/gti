@@ -8,6 +8,16 @@
 
 namespace lang {
 
+void SemanticConstantTrace::appendTo(Diagnostic &diagnostic) const {
+  for (const auto &call : calls)
+    diagnostic.related.push_back(
+        {call, "During constant evaluation of this call."});
+  if (omittedCalls != 0)
+    diagnostic.hints.push_back(std::to_string(omittedCalls) +
+                               " intermediate constexpr calls omitted from "
+                               "this evaluation trace.");
+}
+
 SemanticMoveOrigins
 SemanticMoveOrigins::merge(const SemanticMoveOrigins &left,
                            const SemanticMoveOrigins &right) {

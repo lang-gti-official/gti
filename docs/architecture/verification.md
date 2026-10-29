@@ -6852,6 +6852,12 @@ compiler on macOS arm64; it does not claim Linux or Windows execution.
 
 ## Ownership diagnostic explanations
 
+`testMirConstantEvaluation` checks bounded executed-call identities, recursive
+omission counts, no successful-result trace, and source-linked failures and
+repairs in bindings, compile-time branches and static assertions.
+`diagnostic_explanations` checks terminal/LSP call-trace agreement across an
+included file, Unicode UTF-16 locations and repair in an unsaved overlay.
+
 `testConstraintFailureProvenance` also checks member-owned `requires` leaf
 causes, exact requirement source ranges, repaired valid MIR, representative
 disjunction evidence and nested member-step elision. Producer tests retain one

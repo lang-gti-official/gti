@@ -328,6 +328,19 @@ private:
             .detail = std::move(detail)};
   }
 
+  MirConstantEvaluation throughCall(MirConstantEvaluation result,
+                                    const Frame &caller) const {
+    constexpr std::size_t limit = 8;
+    if (result.calls.empty())
+      result.calls.reserve(limit);
+    if (result.calls.size() == limit) {
+      result.calls.erase(result.calls.begin() + limit / 2);
+      ++result.omittedCalls;
+    }
+    result.calls.push_back({caller.address, caller.block, caller.instruction});
+    return result;
+  }
+
   // Different MIR projections of one binding may have distinct place IDs.
   // Projections share the canonical whole-root cell. Immutable aggregate
   // values are replaced along the indexed path on assignment, so copying an
@@ -1202,7 +1215,7 @@ private:
                                 SemanticType::Void, {}, {}, {}, depth + 1,
                                 value.value, {}, location, AccessMode::Mutable);
       if (!result)
-        return result;
+        return throughCall(std::move(result), caller);
     }
     // The verifier owns the ordered, exact subobject recipe. Do not reconstruct
     // field order or destructor selection from a native representation.
@@ -1599,7 +1612,7 @@ private:
       auto result = construct(*instruction.constructorTarget, arguments,
                               depth + 1, origins);
       if (!result)
-        return result;
+        return throughCall(std::move(result), frame);
       if (instruction.objectAllocation) {
         const auto *allocation =
             frame.body.findDropObligation(instruction.objectAllocation);
@@ -1769,7 +1782,7 @@ private:
                              std::move(receiver), origins,
                              std::move(receiverOrigin), &reference);
         if (!result)
-          return result;
+          return throughCall(std::move(result), frame);
         evaluated.value = std::move(result.value);
         voidResult = result.voidResult;
       } else if (instruction.receiver && arguments.empty() &&

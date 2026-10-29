@@ -1938,6 +1938,7 @@ private:
     // A failure inside a compiler-trusted library body is anchored at the
     // user's evaluation site; this keeps the library location for a note.
     std::optional<Token> libraryLocation;
+    SemanticConstantTrace trace;
 
     [[nodiscard]] explicit operator bool() const { return value.has_value(); }
   };
