@@ -169,8 +169,8 @@ publication are used. Authenticated API requests never follow redirects.
 ## Hosts and records
 
 Policy revision (2026-10-29): canonical source, PRs, issues and CI moved to
-GitHub `lang-gti-official/gti`. Gitea keeps the reference website and packages;
-the Gitea `gti-lang/gti` `main` is frozen with an empty merge allowlist.
+GitHub `lang-gti-official/gti`, and toolchain releases follow. Gitea keeps only
+the reference website and the `gti add` package registry; the Gitea `gti-lang/gti` `main` is frozen with an empty merge allowlist.
 Publishing to GitHub rewrote commit identities only (author, committer and
 tagger), so every tree is identical while every commit ID differs; the owner
 retains the old-to-new map outside the repository.
