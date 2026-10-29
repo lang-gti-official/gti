@@ -656,6 +656,12 @@ static initialization guard. Data-only namespace storage needs neither route.
 The program-plan verifier checks the hosted call only when a hosted startup is
 present and never invents an entry to satisfy the C++ representation.
 
+Integral-enumerator MIR places designate stable read-only storage. The C++
+storage row uses a private constant variable template keyed by source symbol
+identity, preserving returned loans across generated native statements. A
+native C++ enumerator expression alone would materialize a temporary and
+leave such a loan dangling. LLVM likewise creates constant storage per symbol.
+
 When the selected executable `Module/0` route must construct cleanup-free
 owning program storage at runtime, its copied C++ storage row records a
 lifetime-slot representation. This currently covers class values and concrete
