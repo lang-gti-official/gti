@@ -1,26 +1,31 @@
 ---
 name: agent-workflow
-description: Carry GTI implementation tasks through isolated branches, published checkpoints, validated Gitea PR integration, local-main synchronization, and safe worktree cleanup. Use for repository changes and resuming unfinished implementation tasks; read-only discussions and audits do not create branches or PRs.
+description: Carry GTI implementation tasks through isolated branches, published checkpoints, focused validation, GitHub merge-queue integration, local-main synchronization, and safe worktree cleanup. Use for repository changes and resuming unfinished implementation tasks; read-only discussions and audits do not create branches or PRs.
 ---
 
 # GTI Agent Workflow — Claude Client
 
 Read [the canonical workflow skill](../../../.codex/skills/agent-workflow/SKILL.md)
-completely before task actions. It owns Gitea publication, explicit imported-task
-rehosting, advisory CI, exact-source/risk-based batch validation, bounded logs,
-waiting, sidebar titles, integration and cleanup. Do not maintain a competing
-GitHub or CI-gated lifecycle here.
+completely before task actions. It owns GitHub publication, Gitea-era task
+rehosting, focused validation, merge-queue integration, degraded-mode batches,
+bounded logs, waiting, sidebar titles and cleanup. Do not maintain a competing
+lifecycle here.
+
+The short version: run focused checks (reproducer, owning tests, affected
+cross-phase consumers, `compiler_pipeline`, smoke), record them with `verify`,
+and `finish` into the merge queue. Never run the complete suite to finish a
+task; the queue runs it on the exact candidate.
 
 For a pre-cutover worktree, read that skill from the current primary checkout,
 not its stale branch copy, and invoke the primary helper with
-`--repo <task-worktree>` until current main is reconciled. Do not restore GitHub
-to satisfy an old helper; preserve live validation before explicit rehosting.
+`--repo <task-worktree>`. Do not restore Gitea as `origin` to satisfy an old
+helper; preserve live validation before explicit rehosting.
 
 ## Claude-specific worktree handling
 
-The canonical Gitea repository is `gti-lang/gti` on
-`git.internal.howetotech.dev`; no workflow/helper pushes to GitHub or a backup.
-The helper requires a `codex/` branch for every client.
+The canonical repository is `lang-gti-official/gti` on GitHub; the helper uses
+the authenticated GitHub CLI. The helper requires a `codex/` branch for every
+client.
 
 Claude Code's managed session worktree may be inside the primary checkout's
 `.claude/worktrees/`, which the helper cannot adopt. Let the helper create a
@@ -34,7 +39,7 @@ python3 scripts/agent_workflow.py start <task> --title '<outcome>' \
 Make task edits/builds/checks there with absolute paths and preserve the
 session worktree. `--adopt` is for an existing clean task checkout outside
 primary, not a way around ownership or freshness checks. Retain the ordinary
-Gitea PR URL; attach it only when the client's PR tool supports that host.
+GitHub PR URL, and attach it with the client's PR tool when one is available.
 
 The stash stack is shared across worktrees: never use an unqualified
 `git stash`/`git stash pop` or blanket-stash another active checkout.

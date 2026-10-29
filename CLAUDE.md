@@ -25,16 +25,19 @@ does not restate it. Put durable rules in `AGENTS.md`, not here.
 
 ## Task Lifecycle
 
-Canonical `origin` is `https://git.internal.howetotech.dev/gti-lang/gti.git`.
-If an older worktree still names GitHub, follow the current primary checkout's
-`AGENTS.md` and workflow skill, not that worktree's stale hosting instructions.
+Canonical `origin` is `https://github.com/lang-gti-official/gti.git`. Gitea
+keeps only the reference website and packages; its `main` is frozen. If an
+older worktree still names Gitea, follow the current primary checkout's
+`AGENTS.md` and workflow skill, and move its task over with `rehost`.
 
-An implementation task ends with a merged Gitea PR and a synchronized primary
-`main`, through the `agent-workflow` skill and
+An implementation task ends when its PR is ready and in the merge queue, with
+focused validation recorded; the queue merges it and `sync` updates the primary
+`main`. This runs through the `agent-workflow` skill and
 [`docs/architecture/agent-workflow.md`](docs/architecture/agent-workflow.md).
-`main` is protected against direct pushes. Read-only reviews and audits create
-no branch or PR, and explicit "PR only", "leave local", or "review first"
-instructions override integration. What is specific to Claude Code:
+`main` accepts changes only through the merge queue. Read-only reviews and
+audits create no branch or PR, and explicit "PR only", "leave local", or
+"review first" instructions override integration. What is specific to Claude
+Code:
 
 - Claude Code's managed worktrees live under `.claude/worktrees/`, inside the
   primary checkout, and `scripts/agent_workflow.py` refuses them. Let its
@@ -45,15 +48,12 @@ instructions override integration. What is specific to Claude Code:
   enforces it.
 - The Git stash stack is shared by every worktree and session. Never use a bare
   `git stash` or `git stash pop`.
-- Full builds and full suites go through the shared build window, because
-  several Claude Code sessions commonly validate at once on this machine:
-  `python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8`
-  and `python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12`.
+- Do not run the complete suite to finish a task: the merge queue runs it.
   Focused `ctest -R '^name$'` runs and single-file `gti` compiles need no slot.
-  The helper's `verify` takes a suite slot itself and no longer holds the
-  metadata lock while checks run, so `start --adopt`, `status`, `checkpoint`
-  and `cleanup` do not wait on a peer's validation. Check
-  `python3 scripts/build_window.py --status` before starting heavy work.
+  Builds and any broad run still go through the shared build window, because
+  several sessions share this machine:
+  `python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8`.
+  Check `python3 scripts/build_window.py --status` before starting heavy work.
 
 ## Skills
 

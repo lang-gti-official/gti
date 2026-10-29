@@ -9,6 +9,27 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.493.3 - Source moves to GitHub
+
+- GTI's source, pull requests, issues and CI now live at
+  https://github.com/lang-gti-official/gti. Update Lazy specs and clones to
+  `https://github.com/lang-gti-official/gti.git`; `lazy.lua` and the local
+  installer's preview source already point there. Toolchain releases move to
+  GitHub Releases next; until then the installer downloads the existing
+  releases from Gitea. The `gti add` package registry and the reference
+  website stay on Gitea.
+- Every change now reaches `main` through a merge queue whose CI runs the
+  complete test suite on the exact candidate, sharded across macOS arm64 and
+  Linux x64. Contributors run focused checks only.
+
+## 0.493.2 - Thread-local owner assignment
+
+- Assigning a new value to a `thread_local` owner, such as a class with a
+  destructor or a `std::unique_ptr`, no longer stops with an internal compiler
+  error. The previous value is destroyed once, on the assigning thread, before
+  the new value is stored. This requires the LLVM backend; the retained C++
+  backend still does not support the assignment.
+
 ## 0.493.1 - Reserved standard module names
 
 - A source file outside the standard library can no longer declare a module

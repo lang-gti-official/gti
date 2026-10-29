@@ -1,16 +1,16 @@
 ---
 name: finish-release
-description: Apply GTI version and release policy to locally validated work delivered through the agent-workflow PR lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. Gitea CI and asynchronous release packaging do not block completion.
+description: Apply GTI version and release policy to focused-validated work delivered through the agent-workflow merge-queue lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. Asynchronous release packaging does not block completion.
 ---
 
-# Finish A GTI Release
+# Finish A GTI Release — Claude Client
 
-Read [the canonical release skill](../../../.codex/skills/finish-release/SKILL.md)
-completely and apply it with this client's
-[workflow adapter](../agent-workflow/SKILL.md).
+Read [the canonical finish-release skill](../../../.codex/skills/finish-release/SKILL.md)
+completely before deciding VERSION or delivery. It owns the version policy,
+`Release-Impact` trailers, delivery through the merge queue, and the rule that
+toolchain releases move to GitHub Releases while the `gti add` package registry
+stays on Gitea.
+Source branches and PRs go only to the canonical GitHub repository.
 
-The canonical Gitea release policy owns VERSION, local/managed verification,
-publication and completion. GitHub and queued CI are not delivery gates.
-Existing Linux runners publish automatically; Apple Silicon stable publication
-is manual under the canonical macOS packaging/runtime-validation contract.
-No runner installation or toolchain installation is implied by this skill.
+Deliver through [agent-workflow](../agent-workflow/SKILL.md), keeping this
+client's separate task-worktree handling.

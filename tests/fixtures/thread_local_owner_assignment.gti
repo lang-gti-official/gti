@@ -1,0 +1,46 @@
+import std.io;
+import std.memory;
+import std.thread;
+import std.atomic;
+
+// Assigning to a thread-local owner destroys the previous value exactly once,
+// on the assigning thread, before the new value is stored. Thread exit then
+// destroys the final value.
+std::atomic<int> drops{0};
+
+class Token {
+public:
+  int32_t tag;
+  Token(int32_t value) : tag(value) {}
+  ~Token() {
+    [[discard]] drops.fetch_add(1);
+    std::println(this.tag);
+  }
+};
+
+thread_local mut Token current = Token(1);
+thread_local mut std::unique_ptr<int32_t> boxed = std::make_unique<int32_t>(10);
+
+int32_t replace_twice(int32_t base) {
+  current = Token(base + 1);
+  current = Token(base + 2);
+  boxed = std::make_unique<int32_t>(base);
+  boxed = std::make_unique<int32_t>(base + 1);
+  return current.tag + *boxed;
+}
+
+int main() {
+  if (replace_twice(10) != 23) { return 1; }
+  // The initial token and the first replacement are gone; the second remains.
+  if (drops.load() != 2) { return 2; }
+  auto started = std::thread::start([]() -> void {
+    if (replace_twice(100) != 203) { std::println(-1); }
+  });
+  if (!started) { return 3; }
+  mut auto worker = std::move(started).value();
+  if (!worker.join()) { return 4; }
+  // The worker destroyed its own initial token, its first replacement and,
+  // at thread exit, its final token.
+  if (drops.load() != 5 || current.tag != 12) { return 5; }
+  return 0;
+}
