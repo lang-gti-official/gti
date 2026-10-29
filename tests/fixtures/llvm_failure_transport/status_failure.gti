@@ -1,0 +1,22 @@
+#include <std/panic>
+mut int drops = 0;
+class Ticket {
+  int id;
+public:
+  Ticket(int id) : id(id) {}
+  ~Ticket() { drops = drops * 10 + this.id; }
+};
+int leaf(int value) {
+  Ticket local{1};
+  return value + 1;
+}
+int outer(int value) { Ticket local{2}; return leaf(value); }
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    if (drops != 12) { std::panic("incorrect cleanup"); }
+    std::panic("cleanup verified");
+  }
+};
+int main() { Guard guard{}; return outer(2147483647); }
