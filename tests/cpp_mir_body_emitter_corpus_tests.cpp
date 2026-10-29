@@ -275,7 +275,8 @@ void testGeneralTextStepMatchesProductionEmission() {
     if (source.filename() == "066-managed-threads.gti" ||
         source.filename() == "098-shared-ownership.gti" ||
         source.filename() == "178-wrapping-atomic-counters.gti" ||
-        source.filename() == "179-weak-ownership.gti") {
+        source.filename() == "179-weak-ownership.gti" ||
+        source.filename() == "180-compact-source-owners.gti") {
       bool unsupported = false;
       try {
         static_cast<void>(gti_test::emitCpp(frontend, frontend.mir,

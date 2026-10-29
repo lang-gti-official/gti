@@ -702,6 +702,7 @@ struct HirClassInstance {
   HirBody staticFieldInitializers;
   std::optional<HirDestructorInstanceId> destructor;
   bool requiresActiveDropState = false;
+  std::optional<SymbolId> inactiveDropPointerField;
   bool requiresActiveCleanup = false;
 };
 

@@ -1330,6 +1330,10 @@ struct ClassLifecycleInfo {
   SpecialMemberStatus moveAssignment = SpecialMemberStatus::Deleted;
   SpecialMemberStatus destructor = SpecialMemberStatus::Generated;
   bool requiresActiveDropState = false;
+  // The complete source destructor is inert when this direct pointer field
+  // is null. Native storage can encode retirement in that field instead of a
+  // separate byte; the logical cleanup obligation remains unchanged.
+  std::optional<SymbolId> inactiveDropPointerField;
   SemanticTypeTraits traits{};
   bool polymorphic = false;
 };

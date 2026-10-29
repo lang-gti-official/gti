@@ -359,6 +359,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .destructorStatus = instance.destructorStatus,
         .destructor = instance.destructor,
         .requiresActiveDropState = instance.requiresActiveDropState,
+        .inactiveDropPointerField = instance.inactiveDropPointerField,
         .requiresActiveCleanup = instance.requiresActiveCleanup};
     lowered.fields.reserve(instance.fields.size());
     for (const HirClassTypeAlias &alias : instance.typeAliases)

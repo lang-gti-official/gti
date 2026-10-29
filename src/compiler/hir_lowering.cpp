@@ -545,6 +545,8 @@ private:
                                                   : lifecycle->destructor,
          .requiresActiveDropState =
              lifecycle != nullptr && lifecycle->requiresActiveDropState,
+         .inactiveDropPointerField =
+             lifecycle ? lifecycle->inactiveDropPointerField : std::nullopt,
          .requiresActiveCleanup =
              instanceProvider->requiresActiveCleanupFor(resolvedType)});
     instanceIndex.recordClass(resolvedType.classId, resolvedType.arguments,

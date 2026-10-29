@@ -9019,8 +9019,9 @@ prerequisite checkpoints as full acceptance.
   private capability remains only for compatibility and independent tests.
 - **Accepted delivery costs:** the owner approved LLVM-only wrapping operations
   and the resulting C++ support regression for public shared/weak ownership.
-  Source handles occupy 24 bytes versus 16 bytes for the former private strong
-  handle. Co-allocation reduces factory allocations from two to one; weak
+  The initial source handles occupied 24 bytes versus 16 bytes for the former
+  private strong handle. The general null-guarded-destructor representation now
+  restores both source handles to 16 bytes on supported 64-bit LLVM targets. Co-allocation reduces factory allocations from two to one; weak
   observers retain that allocation after payload destruction. These costs were
   explicitly accepted on 2026-10-28. Measured optimized retain/release,
   contended-count and allocation workloads remain within the accepted budget;
