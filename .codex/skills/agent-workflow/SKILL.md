@@ -5,8 +5,9 @@ description: Carry GTI implementation tasks through isolated branches, published
 
 # GTI Agent Workflow
 
-The normal implementation outcome is a PR that is ready and in the merge
-queue with its focused validation recorded; the queue merges it, and `sync`
+The normal implementation outcome is a PR that is ready, with its focused
+validation recorded, and handed to integration: labelled for a rollup or in the
+merge queue. The queue merges it, and `sync`
 brings the primary checkout to current `main` for the user's local installer.
 The repository owner's standing authorization is in `AGENTS.md`. Explicit
 instructions such as "PR only", "leave local", "do not merge", or a
@@ -123,15 +124,25 @@ deferred, never as passed.
    native runtime and build-system changes.
 3. Write the final PR description to a temporary file: behaviour, exactly
    which checks ran, and "complete suite deferred to the merge queue". Run
-   `finish <task> --body-file <file>`. It marks the PR ready, checks the
-   `main` ruleset, and adds the PR to the merge queue pinned to the verified
-   head. The task is then `queued`; that is the normal completion point.
+   `finish <task> --body-file <file>`. It marks the PR ready and checks the
+   `main` ruleset. A PR that is not Risk-system is labelled `rollup=maybe`
+   (`rollup=always` when automation-only) and the task becomes `rollup`: the
+   rollup bot combines it with other green PRs into one queue entry. A
+   Risk-system diff (build/toolchain files, workflows, test registration, CI
+   configuration scripts, runtime ABI/layout headers), a PR labelled
+   `rollup=never` or `rollup-failed`, or `finish --no-rollup` instead joins the
+   merge queue alone pinned to the verified head, and the task becomes
+   `queued`. Both `rollup` and `queued` are normal completion points.
    Use `--pr-only` when the user requested review before integration.
 4. The queue merges asynchronously. Run `sync <task>` (or `finish` again) once
-   it has merged. If the queue removes the PR because the complete suite failed,
-   the failure belongs to this change: reproduce the failing tests locally,
-   repair them without weakening unrelated expectations, verify, and `finish`
-   again. Never wait in a polling loop for the queue.
+   it has merged. A PR merged as part of a rollup counts as merged, including
+   one the bot closed with its integration proof. If a rollup fails, the bot
+   labels its members `rollup-failed` and queues each alone. If the queue
+   removes the PR itself because the complete suite failed, the failure
+   belongs to this change: reproduce the failing tests locally, repair them
+   without weakening unrelated expectations, verify, and `finish` again (it
+   then queues alone). A `needs-rebase` label means reconcile with main. Never
+   wait in a polling loop for the queue.
 
 `protection` audits server enforcement. `protection --configure` installs the
 owner-approved `main` ruleset: pull requests only, the merge queue and the
@@ -181,7 +192,7 @@ synced, and any cleanup exception. State that the checkout is ready for the
 installer only after sync.
 Run the installer automatically only when the user asked for installation.
 After delivering the requested outcome, rename the chat `Complete — <task>`.
-A queued task whose focused validation is recorded is complete; title it
-`Complete — <task> (queued)` until it merges. A batch component handed off for
+A queued or rollup-labelled task whose focused validation is recorded is
+complete; title it `Complete — <task> (queued)` until it merges. A batch component handed off for
 integration is `Handed off — <task>`.
 Explicit PR-only or local-only requests use their requested delivery boundary.

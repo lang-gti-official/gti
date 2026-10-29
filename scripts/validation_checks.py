@@ -30,6 +30,34 @@ SHARED = ("include/gti/semantic", "include/gti/hir", "include/gti/mir",
 AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 # CI workflow edits select full coverage, so the queue validates the jobs it changes.
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
+AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
+                      "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
+                      "rollup.py"}
+# Exactly the existing harnesses that CI's workflow-regression job runs. The
+# batch, validation and preview-submit scripts are covered by agent_workflow_test.
+AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build_window_test.py",
+                    "bounded_log_test.py", "release_version_test.py", "ci_resources_test.py",
+                    "repository_hosting_test.py", "rollup_test.py"}
+# A rollup's membership record lists queue-validated members; unlike a degraded-
+# mode batch manifest it adds no admission obligation, so it leaves the
+# classification of the members' own paths unchanged.
+ROLLUP_MANIFEST = re.compile(re.escape(BATCH_DIRECTORY) + r"rollup-[0-9]{8}-[0-9]{1,4}\.json\Z")
+# Changes that must validate alone in the merge queue and never inside a rollup:
+# build-system and toolchain files, CI workflows, test registration and
+# throughput, CI configuration scripts, and the runtime ABI/layout surface that
+# generated code links against. A deliberately small, conservative path rule.
+# TODO: read the `risk = "system"` areas of tests/ownership.toml once it lands.
+SYSTEM_RISK_FILES = {"tests/CMakeLists.txt", "tests/TestThroughput.cmake", "CMakePresets.json",
+                     "include/gti/object_layout.h", "runtime/src/atomic_lane.h"}
+SYSTEM_RISK_PREFIXES = ("cmake/", ".github/workflows/", "scripts/configure_ci_", "runtime/include/gti/",
+                        "src/compiler/llvm/abi.", "src/compiler/llvm/layout.",
+                        "src/compiler/llvm/native_c_abi.", "src/compiler/llvm/runtime_abi.")
+
+
+def system_risk(paths):
+    """The paths that make a change Risk-system: it must validate alone, never in a rollup."""
+    return sorted({path for path in paths if path in SYSTEM_RISK_FILES or path.startswith(SYSTEM_RISK_PREFIXES)
+                   or Path(path).name == "CMakeLists.txt" or path.endswith((".cmake", ".cmake.in"))})
 
 
 def focused_scope(paths):
@@ -180,14 +208,10 @@ def ci_mode(event, paths):
             return "draft"
     # Compiler tests, CMake and packaged scripts are deliberately not inferred
     # safe just because their filename includes 'test' or 'workflow'.
-    automation_scripts = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
-                          "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
-    automation_tests = {name.removesuffix(".py") + "_test.py" for name in automation_scripts}
-    automation_tests |= {"validation_ci_test.py", "release_version_test.py", "ci_resources_test.py",
-                         "repository_hosting_test.py"}
-    if paths and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
-                     path in {"scripts/" + name for name in automation_scripts} or
-                     path in {"tests/" + name for name in automation_tests} for path in paths):
+    own = [path for path in paths if not ROLLUP_MANIFEST.fullmatch(path)]
+    if own and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
+                   path in {"scripts/" + name for name in AUTOMATION_SCRIPTS} or
+                   path in {"tests/" + name for name in AUTOMATION_TESTS} for path in own):
         return "automation"
     return "full"
 

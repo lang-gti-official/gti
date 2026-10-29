@@ -31,6 +31,22 @@ SCHEMA = 4
 # and on merge_group (the complete integration suite of the queued candidate).
 GATE_CHECK = "CI gate"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
+# Rollups (scripts/rollup.py) compose several green PRs into one queue entry.
+# `finish` labels an eligible PR for them instead of queueing it alone.
+ROLLUP_MAYBE, ROLLUP_ALWAYS, ROLLUP_NEVER = "rollup=maybe", "rollup=always", "rollup=never"
+ROLLUP_CHOICES = (ROLLUP_MAYBE, ROLLUP_ALWAYS, ROLLUP_NEVER)
+ROLLUP_FAILED, ROLLUP_REBASE = "rollup-failed", "needs-rebase"
+ROLLUP_BRANCH = re.compile(r"rollup/[0-9]{8}-[0-9]{1,4}\Z")
+# The bot's comment when it closes a member whose head a merged rollup carried.
+ROLLUP_MARKER = re.compile(r"<!-- gti-rollup-integrated: (\{[^\n]*?\}) -->")
+
+
+def rollup_marker(record):
+    return "<!-- gti-rollup-integrated: " + json.dumps(record, sort_keys=True) + " -->"
+
+
+def label_names(pr):
+    return {label.get("name") for label in pr.get("labels") or [] if isinstance(label, dict)}
 LOCK_WAIT_SECONDS = 30.0
 
 
@@ -79,8 +95,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 class GitHub:
     """GitHub REST/GraphQL for the canonical repository; credentials never follow redirects."""
 
-    def __init__(self, primary=None):
-        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    def __init__(self, primary=None, token=None):
+        # An explicit token (the rollup bot's App token) is used as given.
+        token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         if not token:
             # The authenticated GitHub CLI is the normal credential source; the
             # token is read from it, never stored by this helper.
@@ -606,15 +623,40 @@ class Workflow:
                "{pullRequestId: $id, expectedHeadOid: $head}) { mergeQueueEntry { position } } }")
     READY = "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { clientMutationId } }"
 
-    def finish(self, task, body, pr_only=False):
-        """Hand a focused-validated task to the merge queue, which owns integration.
+    def rollup_label(self, state, pr, root, base, head):
+        """`rollup=always`/`rollup=maybe` for a PR a rollup may carry, else None (validate alone)."""
+        if state.get("batch") or label_names(pr) & {ROLLUP_NEVER, ROLLUP_FAILED}:
+            return None
+        import validation_checks as checks
+        paths = git(root, "diff", "--name-only", base + "..." + head).splitlines()
+        # Every path any commit touched, so a reverted system change still counts.
+        touched = git(root, "log", "--format=", "--name-only", base + ".." + head).splitlines()
+        if checks.system_risk(set(paths) | set(filter(None, touched))):
+            return None
+        return ROLLUP_ALWAYS if checks.ci_mode({}, paths) == "automation" else ROLLUP_MAYBE
 
-        The queue builds and validates the exact candidate against current
-        main, so the task's own evidence binds to its head. The queue merges
-        asynchronously; `sync` advances local main once GitHub reports it.
+    def set_rollup_label(self, pr, label):
+        names = label_names(pr)
+        for other in ROLLUP_CHOICES:
+            if other != label and other in names:
+                self.api.request("DELETE", f"/issues/{pr['number']}/labels/" + urllib.parse.quote(other, safe=""))
+        if label not in names:
+            self.api.request("POST", f"/issues/{pr['number']}/labels", {"labels": [label]})
+
+    def finish(self, task, body, pr_only=False, rollup=True):
+        """Hand a focused-validated task to integration, which the merge queue owns.
+
+        An eligible PR is labelled for a rollup (phase `rollup`): the rollup bot
+        composes it with other green PRs into one queue entry. Otherwise, or
+        with `rollup=False`, it joins the queue alone (phase `queued`). The
+        queue validates the exact candidate against current main, so the task's
+        own evidence binds to its head. `sync` advances local main once merged.
         """
         state = self.load(task)
         pr = self.pull(state)
+        if not pr.get("merged") and pr["state"] != "open":
+            # A rollup bot closure is integration only with its proof; sync checks it.
+            return self.sync(task)
         if not pr.get("merged"):
             if state.get("admission") or state.get("integration_batch"):
                 raise WorkflowError("Component is ready for integration, not directly mergeable; finish its validated batch or batch withdraw first")
@@ -648,6 +690,14 @@ class Workflow:
                 return state
             self.protection()
             if state.get("queued", {}).get("head") != head:
+                label = self.rollup_label(state, pr, root, base, head) if rollup else None
+                if label:
+                    self.set_rollup_label(pr, label)
+                    if state.get("rollup", {}).get("head") != head or state["rollup"].get("label") != label:
+                        state["rollup"] = {"head": head, "label": label, "at": self.now()}
+                    self.save(state, "rollup")
+                    return state
+                self.set_rollup_label(pr, ROLLUP_NEVER)
                 # The expected head pins the validated commit; a push meanwhile is refused.
                 self.api.graphql(self.ENQUEUE, {"id": pr["node_id"], "head": head})
                 state["queued"] = {"head": head, "at": self.now()}
@@ -666,9 +716,9 @@ class Workflow:
         GitHub need not mark component PRs merged. Never enable heuristic
         detection or manual-merge overrides just to make their UI say merged.
         """
-        if pr.get("merged"):
+        if pr.get("merged") and pr.get("merge_commit_sha") and self.ancestor(pr["merge_commit_sha"], main):
             commit = pr["merge_commit_sha"]
-        elif state.get("integration_batch"):
+        elif not pr.get("merged") and state.get("integration_batch"):
             batch = self.load(state["integration_batch"])
             combined = self.pull(batch)
             members = batch.get("batch", {}).get("members", [])
@@ -688,11 +738,44 @@ class Workflow:
             if manifest != {"schema": 1, "base": batch["batch"]["base"], "members": members}:
                 raise WorkflowError("Merged batch manifest differs from component integration records")
             commit = combined["merge_commit_sha"]
+        elif pr["state"] == "closed" and (proof := self.rollup_proof(pr, main)):
+            commit = proof["merge_commit"]
+            state["integrated_via_rollup"] = proof
+        elif pr.get("merged"):
+            commit = pr["merge_commit_sha"]
         else:
             raise WorkflowError("PR has not merged; do not advance local main")
         if not self.ancestor(pr["head"]["sha"], main) or not self.ancestor(commit, main):
             raise WorkflowError("Integrated source/merge commits are not reachable from current remote main")
         return commit
+
+    def rollup_proof(self, pr, main):
+        """A merged rollup that carried this PR's exact head into main, named by the bot's comment.
+
+        The comment only says where to look: the rollup must be a merged
+        canonical rollup PR whose head contains this PR's head, and both its
+        merge commit and this head must be reachable from main.
+        """
+        head = pr["head"]["sha"]
+        comments = self.api.request("GET", f"/issues/{pr['number']}/comments?per_page=100") or []
+        for comment in reversed(comments):
+            found = ROLLUP_MARKER.search(comment.get("body") or "")
+            if not found:
+                continue
+            try:
+                record = json.loads(found.group(1))
+                number = int(record["rollup"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            if record.get("head") != head:
+                continue
+            rollup = self.api.request("GET", f"/pulls/{number}")
+            commit = rollup.get("merge_commit_sha")
+            if (rollup.get("merged") and commit and ROLLUP_BRANCH.fullmatch(rollup.get("head", {}).get("ref") or "")
+                    and self.matches(rollup, rollup["head"]["ref"]) and self.ancestor(commit, main)
+                    and self.ancestor(head, rollup["head"]["sha"]) and self.ancestor(head, main)):
+                return {"rollup": number, "pr_url": rollup.get("html_url"), "head": head, "merge_commit": commit}
+        return None
 
     def sync(self, task):
         state = self.load(task)
@@ -730,7 +813,7 @@ class Workflow:
             self.save(state, "sync-blocked")
             raise WorkflowError("PR merged, but local edits block main sync; back up overlapping files and reconcile them before retrying sync")
         state["local_main"] = git(self.primary, "rev-parse", "HEAD")
-        if not pr.get("merged"):
+        if not pr.get("merged") and not state.get("integrated_via_rollup"):
             batch = self.load(state["integration_batch"])
             if pr["state"] == "open":
                 self.api.request("PATCH", f"/pulls/{state['pr']}", {
@@ -894,6 +977,7 @@ def main():
     finish.add_argument("task")
     finish.add_argument("--body-file", required=True)
     finish.add_argument("--pr-only", action="store_true")
+    finish.add_argument("--no-rollup", action="store_true", help="queue this PR alone instead of labelling it for a rollup")
     abandon = sub.add_parser("abandon")
     abandon.add_argument("task")
     abandon.add_argument("--reason", required=True)
@@ -932,7 +1016,8 @@ def main():
             elif args.command == "checkpoint":
                 result = workflow.checkpoint(args.task, args.message, args.paths)
             elif args.command == "finish":
-                result = workflow.finish(args.task, Path(args.body_file).read_text(), args.pr_only)
+                result = workflow.finish(args.task, Path(args.body_file).read_text(), args.pr_only,
+                                         rollup=not args.no_rollup)
             elif args.command == "abandon":
                 result = workflow.abandon(args.task, args.reason)
             elif args.command == "protection":

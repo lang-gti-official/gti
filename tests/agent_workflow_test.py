@@ -80,6 +80,7 @@ class GitHub:
             pr = {**payload, "number": number, "node_id": f"PR_{number}",
                   "html_url": f"https://example.invalid/pull/{number}", "state": "open",
                   "draft": bool(payload.get("draft")), "merged": False, "merge_commit_sha": None,
+                  "labels": [], "comments": [],
                   "head": {"ref": payload["head"], "sha": head,
                            "repo": {"full_name": module.REPOSITORY}},
                   "base": {"ref": "main", "repo": {"full_name": module.REPOSITORY}}}
@@ -89,6 +90,8 @@ class GitHub:
                 raise Error("simulated lost create response")
             return pr
         pr = self.pr(int(path.split("/")[2]))
+        if path.startswith("/issues/"):
+            return self.issue(pr, method, path, payload)
         if method == "GET":
             return pr.copy()
         if method == "PATCH":
@@ -97,6 +100,25 @@ class GitHub:
                 self.lose_close_response = False
                 raise Error("simulated lost close response")
             return pr
+        raise AssertionError((method, path, payload))
+
+    def issue(self, pr, method, path, payload):
+        """Labels and comments go through the issues API for PRs."""
+        rest = path.split("/", 3)[3]
+        if rest == "labels" and method == "POST":
+            for name in payload["labels"]:
+                if name not in {label["name"] for label in pr["labels"]}:
+                    pr["labels"].append({"name": name})
+            return pr["labels"]
+        if rest.startswith("labels/") and method == "DELETE":
+            name = module.urllib.parse.unquote(rest.split("/", 1)[1])
+            pr["labels"] = [label for label in pr["labels"] if label["name"] != name]
+            return pr["labels"]
+        if rest.startswith("comments") and method == "GET":
+            return copy.deepcopy(pr["comments"])
+        if rest == "comments" and method == "POST":
+            pr["comments"].append({"body": payload["body"]})
+            return pr["comments"][-1]
         raise AssertionError((method, path, payload))
 
     def pr(self, number):
@@ -252,7 +274,7 @@ class Lifecycle(unittest.TestCase):
         self.flow.protection(True)
         (self.primary / "base.txt").write_text("user edit\n")
         self.flow.verify("task", [[sys.executable, "-c", "pass"]])
-        state = self.flow.finish("task", "Final implementation and passing tests")
+        state = self.flow.finish("task", "Final implementation and passing tests", rollup=False)
         self.assertEqual(state["phase"], "synced")
         self.assertEqual((self.primary / "base.txt").read_text(), "user edit\n")
         self.assertTrue((self.primary / "feature.txt").is_file())
@@ -285,14 +307,14 @@ class Lifecycle(unittest.TestCase):
         self.ready()
         self.advance_remote()
         advanced = git(self.remote, "rev-parse", "main")
-        state = self.flow.finish("task", "description")
+        state = self.flow.finish("task", "description", rollup=False)
         self.assertEqual(state["phase"], "synced")
         self.assertTrue(self.flow.ancestor(advanced, git(self.primary, "rev-parse", "main")))
 
     def test_queue_builds_on_main_that_advances_while_queued(self):
         self.ready()
         self.api.before_enqueue = self.advance_remote
-        state = self.flow.finish("task", "description")
+        state = self.flow.finish("task", "description", rollup=False)
         merge = state["merge_commit"]
         # The candidate's first parent is the main that advanced while queued.
         self.assertEqual(git(self.primary, "log", "-1", "--format=%s", merge + "^1"), "another task")
@@ -301,24 +323,24 @@ class Lifecycle(unittest.TestCase):
     def test_queued_task_waits_for_the_merge_then_syncs(self):
         self.ready()
         self.api.queue_async = True
-        state = self.flow.finish("task", "description")
+        state = self.flow.finish("task", "description", rollup=False)
         self.assertEqual(state["phase"], "queued")
         self.assertFalse(self.api.prs[0]["merged"])
         with self.assertRaisesRegex(Error, "has not merged"):
             self.flow.sync("task")
-        self.flow.finish("task", "description")  # retry does not enqueue twice
+        self.flow.finish("task", "description", rollup=False)  # retry does not enqueue twice
         self.assertEqual(len(self.api.enqueued), 1)
         self.api.merge_queue_head()
-        self.assertEqual(self.flow.finish("task", "description")["phase"], "synced")
+        self.assertEqual(self.flow.finish("task", "description", rollup=False)["phase"], "synced")
 
     def test_new_commit_and_dirty_files_refuse_merge(self):
         self.ready()
         (self.worktree / "feature.txt").write_text("unfinished\n")
         with self.assertRaisesRegex(Error, "Uncommitted"):
-            self.flow.finish("task", "description")
+            self.flow.finish("task", "description", rollup=False)
         self.flow.checkpoint("task", "new checkpoint", ["feature.txt"])
         with self.assertRaisesRegex(Error, "differs from the recorded validation"):
-            self.flow.finish("task", "description")
+            self.flow.finish("task", "description", rollup=False)
 
     def test_failed_checks_never_ready(self):
         self.start()
@@ -337,7 +359,7 @@ class Lifecycle(unittest.TestCase):
         self.assertFalse(self.api.prs[0]["draft"])
         self.api.reject_enqueue = True
         with self.assertRaisesRegex(Error, "server rejected"):
-            self.flow.finish("task", "description")
+            self.flow.finish("task", "description", rollup=False)
         self.assertFalse(self.api.prs[0]["merged"])
 
     def test_sync_overlap_and_divergent_main_preserved(self):
@@ -347,7 +369,7 @@ class Lifecycle(unittest.TestCase):
         self.flow.verify("task", [[sys.executable, "-c", "pass"]])
         (self.primary / "base.txt").write_text("local edit\n")
         with self.assertRaisesRegex(Error, "local edits"):
-            self.flow.finish("task", "description")
+            self.flow.finish("task", "description", rollup=False)
         self.assertEqual((self.primary / "base.txt").read_text(), "local edit\n")
         git(self.primary, "add", "base.txt")
         git(self.primary, "commit", "-m", "preserve unique local work")
@@ -359,7 +381,7 @@ class Lifecycle(unittest.TestCase):
 
     def test_cleanup_rejects_dirty_ignored_and_new_commits(self):
         self.ready()
-        self.flow.finish("task", "description")
+        self.flow.finish("task", "description", rollup=False)
         secret = self.worktree / ".env"
         secret.write_text("local secret\n")
         with self.assertRaisesRegex(Error, "ignored files"):
@@ -467,7 +489,7 @@ class Lifecycle(unittest.TestCase):
     def test_sync_needs_no_backup_remote_and_never_pushes_one(self):
         git(self.primary, "remote", "remove", "github-backup")
         self.ready()
-        state = self.flow.finish("task", "description")
+        state = self.flow.finish("task", "description", rollup=False)
         self.assertEqual(state["phase"], "synced")
         self.assertNotIn("mirror", state)
 
@@ -605,13 +627,13 @@ class Lifecycle(unittest.TestCase):
         self.flow.protection(True)
         self.flow.verify("task", [[sys.executable, "-c", "pass"]])
         with self.assertRaisesRegex(Error, "would be overwritten"):
-            self.flow.finish("task", "description")
+            self.flow.finish("task", "description", rollup=False)
         self.assertEqual(secret.read_text(), "preserve user secret")
         self.assertEqual(self.flow.load("task")["phase"], "sync-blocked")
 
     def test_reconcile_never_mutates_integrated_branch(self):
         self.ready()
-        self.flow.finish("task", "description")
+        self.flow.finish("task", "description", rollup=False)
         head = git(self.worktree, "rev-parse", "HEAD")
         with self.assertRaisesRegex(Error, "integrated"):
             self.flow.reconcile("task")
@@ -639,11 +661,11 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(len(self.api.prs), 1)
         self.flow.reconcile("task")
         self.flow.verify("task", [[sys.executable, "-c", "pass"]])
-        self.flow.finish("task", "description")
+        self.flow.finish("task", "description", rollup=False)
 
     def test_recover_merged_pr_without_recreating_branch(self):
         self.ready()
-        self.flow.finish("task", "description")
+        self.flow.finish("task", "description", rollup=False)
         self.flow.file("task").unlink()
         state = self.flow.start("task", "Task outcome", self.worktree, self.branch, adopt=True)
         self.assertEqual(state["phase"], "synced")
@@ -855,7 +877,7 @@ class Lifecycle(unittest.TestCase):
 
     def test_closed_remote_branch_never_reused(self):
         self.ready()
-        self.flow.finish("task", "description")
+        self.flow.finish("task", "description", rollup=False)
         old = git(self.remote, "rev-parse", self.branch)
         git(self.primary, "worktree", "remove", str(self.worktree))
         git(self.primary, "branch", "-d", self.branch)
@@ -864,6 +886,140 @@ class Lifecycle(unittest.TestCase):
             self.flow.start("new-task", "new task", self.worktree, self.branch)
         self.assertEqual(git(self.remote, "rev-parse", self.branch), old)
         self.assertFalse(self.worktree.exists())
+
+    def labels(self, number=1):
+        return [label["name"] for label in self.api.prs[number - 1]["labels"]]
+
+    def test_finish_labels_an_eligible_pr_for_a_rollup_instead_of_queueing(self):
+        self.ready()
+        state = self.flow.finish("task", "description")
+        self.assertEqual(state["phase"], "rollup")
+        self.assertEqual(state["rollup"]["head"], state["verified"]["head"])
+        self.assertEqual(self.labels(), [module.ROLLUP_MAYBE])
+        self.assertEqual(self.api.enqueued, [])
+        self.assertFalse(self.api.prs[0]["draft"])
+        # A retry is a normal completion point: no second label, no queue entry.
+        self.assertEqual(self.flow.finish("task", "description")["phase"], "rollup")
+        self.assertEqual(self.labels(), [module.ROLLUP_MAYBE])
+        with self.assertRaisesRegex(Error, "has not merged"):
+            self.flow.sync("task")
+
+    def test_automation_only_changes_are_always_rollup_eligible(self):
+        self.start()
+        (self.worktree / "docs").mkdir()
+        self.checkpoint("notes\n", "docs/notes.md")
+        self.flow.protection(True)
+        self.flow.verify("task", [[sys.executable, "-c", "pass"]])
+        self.assertEqual(self.flow.finish("task", "description")["phase"], "rollup")
+        self.assertEqual(self.labels(), [module.ROLLUP_ALWAYS])
+
+    def test_system_risk_changes_validate_alone(self):
+        for name in ("CMakeLists.txt", "cmake/Toolchain.cmake", "runtime/include/gti/c_abi.h", "reverted"):
+            with self.subTest(name=name):
+                self.tearDown()
+                self.setUp()
+                self.start()
+                if name == "reverted":
+                    # A system path touched by any commit counts, even if a later one reverts it.
+                    (self.worktree / "CMakeLists.txt").write_text("project(x)\n")
+                    self.flow.checkpoint("task", "touch build", ["CMakeLists.txt"])
+                    (self.worktree / "CMakeLists.txt").unlink()
+                    self.flow.checkpoint("task", "revert build", ["CMakeLists.txt"])
+                    self.checkpoint()
+                else:
+                    (self.worktree / name).parent.mkdir(parents=True, exist_ok=True)
+                    self.checkpoint("system\n", name)
+                self.flow.protection(True)
+                self.flow.verify("task", [[sys.executable, "-c", "pass"]])
+                state = self.flow.finish("task", "description")
+                self.assertEqual(state["phase"], "synced")
+                self.assertEqual(self.labels(), [module.ROLLUP_NEVER])
+                self.assertEqual(len(self.api.enqueued), 1)
+
+    def test_no_rollup_and_failed_rollups_queue_alone(self):
+        self.ready()
+        self.api.queue_async = True
+        self.assertEqual(self.flow.finish("task", "description")["phase"], "rollup")
+        state = self.flow.finish("task", "description", rollup=False)
+        self.assertEqual(state["phase"], "queued")
+        self.assertEqual(self.labels(), [module.ROLLUP_NEVER])
+        self.assertEqual(self.api.enqueued, [(1, state["verified"]["head"])])
+        # A PR the bot marked rollup-failed validates alone without --no-rollup.
+        self.tearDown()
+        self.setUp()
+        self.ready()
+        self.api.prs[0]["labels"].append({"name": module.ROLLUP_FAILED})
+        self.assertEqual(self.flow.finish("task", "description")["phase"], "synced")
+        self.assertIn(module.ROLLUP_NEVER, self.labels())
+
+    def test_cli_no_rollup_requests_a_direct_queue_entry(self):
+        body = self.root / "body.md"
+        body.write_text("description")
+        calls = []
+        fake = types.SimpleNamespace(lock=contextlib_null, finish=lambda *args, **kwargs: calls.append((args, kwargs)) or {})
+        for argv, expected in ((["finish", "task", "--body-file", str(body), "--no-rollup"], False),
+                               (["finish", "task", "--body-file", str(body)], True)):
+            with unittest.mock.patch.object(module, "Workflow", return_value=fake), \
+                    unittest.mock.patch.object(sys, "argv", ["agent_workflow.py", *argv]), \
+                    unittest.mock.patch("builtins.print"):
+                self.assertEqual(module.main(), 0)
+            self.assertEqual(calls[-1][1], {"rollup": expected})
+
+    def merge_rollup(self, member_head):
+        """What the bot and the queue do: a rollup branch carrying the member's head merges into main."""
+        base = git(self.remote, "rev-parse", "main")
+        tree = git(self.remote, "merge-tree", "--write-tree", base, member_head).splitlines()[0]
+        head = git(self.remote, "commit-tree", tree, "-p", base, "-p", member_head, "-m", "Merge #1")
+        git(self.remote, "update-ref", "refs/heads/rollup/20261029-1", head)
+        rollup = self.api.request("POST", "/pulls", {"base": "main", "head": "rollup/20261029-1",
+                                                     "title": "Rollup of 2 pull requests", "draft": False})
+        merge = git(self.remote, "commit-tree", tree, "-p", base, "-p", head, "-m", "Merge queue candidate")
+        git(self.remote, "update-ref", "refs/heads/main", merge)
+        rollup.update(merged=True, state="closed", merge_commit_sha=merge)
+        return rollup
+
+    def test_sync_after_a_rollup_merge_requires_the_bots_proof(self):
+        self.ready()
+        head = self.flow.finish("task", "description")["rollup"]["head"]
+        rollup = self.merge_rollup(head)
+        member = self.api.prs[0]
+        with self.assertRaisesRegex(Error, "has not merged"):
+            self.flow.sync("task")
+        # A closed PR without a marker, or with one naming an unmerged or wrong rollup, is not integration.
+        member["state"] = "closed"
+        with self.assertRaisesRegex(Error, "has not merged"):
+            self.flow.sync("task")
+        member["comments"].append({"body": module.rollup_marker({"rollup": rollup["number"], "head": "0" * 40,
+                                                                 "merge_commit": rollup["merge_commit_sha"]})})
+        rollup["merged"] = False
+        member["comments"].append({"body": module.rollup_marker({"rollup": rollup["number"], "head": head,
+                                                                 "merge_commit": rollup["merge_commit_sha"]})})
+        with self.assertRaisesRegex(Error, "has not merged"):
+            self.flow.finish("task", "description")
+        rollup["merged"] = True
+        state = self.flow.finish("task", "description")
+        self.assertEqual(state["phase"], "synced")
+        self.assertEqual(state["integrated_via_rollup"]["rollup"], rollup["number"])
+        self.assertEqual(state["integrated_via_rollup"]["merge_commit"], rollup["merge_commit_sha"])
+        self.assertTrue((self.primary / "feature.txt").is_file())
+        self.assertEqual(member["state"], "closed")
+        self.flow.cleanup("task")
+        self.assertEqual(self.flow.load("task")["phase"], "completed")
+
+    def test_sync_accepts_a_member_github_marked_merged_by_the_rollup(self):
+        self.ready()
+        head = self.flow.finish("task", "description")["rollup"]["head"]
+        rollup = self.merge_rollup(head)
+        self.api.prs[0].update(merged=True, state="closed", merge_commit_sha=rollup["merge_commit_sha"])
+        self.assertEqual(self.flow.sync("task")["phase"], "synced")
+
+
+class contextlib_null:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
 
 
 def batch_plan(**changes):
@@ -1027,6 +1183,33 @@ class ValidationChecks(unittest.TestCase):
         no_smoke = [dict(row, smoke=[]) for row in good]
         with self.assertRaises(ValueError):
             validation.merge_shards(no_smoke, ["darwin", "linux"])
+
+    def test_automation_lists_match_the_workflow_regression_job(self):
+        for name in validation.AUTOMATION_SCRIPTS:
+            self.assertTrue((ROOT / "scripts" / name).is_file(), name)
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        job = workflow.split("  automation-tests:", 1)[1].split("\n  formatting:", 1)[0]
+        executed = set(re.findall(r"python3 tests/([A-Za-z0-9_]+_test\.py)", job))
+        self.assertEqual(validation.AUTOMATION_TESTS, executed)
+        for name in validation.AUTOMATION_TESTS:
+            self.assertTrue((ROOT / "tests" / name).is_file(), name)
+
+    def test_system_risk_paths_are_conservative(self):
+        for path in ("CMakeLists.txt", "src/compiler/CMakeLists.txt", "tests/CMakeLists.txt",
+                     "tests/TestThroughput.cmake", "cmake/GTIConfig.cmake.in", ".github/workflows/rollup.yml",
+                     "scripts/configure_ci_toolchain.sh", "runtime/include/gti/c_abi.h",
+                     "include/gti/object_layout.h", "src/compiler/llvm/runtime_abi.cpp"):
+            self.assertEqual(validation.system_risk([path, "docs/x.md"]), [path])
+        self.assertEqual(validation.system_risk(["src/compiler/parser.cpp", "docs/index.md", "scripts/rollup.py",
+                                                 "runtime/src/io.cpp", "tests/parser_tests.cpp"]), [])
+
+    def test_rollup_manifest_keeps_its_members_classification(self):
+        event = {"pull_request": {"draft": False}}
+        manifest = ".gti-validation/batches/rollup-20261029-1.json"
+        self.assertEqual(validation.ci_mode(event, ["docs/index.md", manifest]), "automation")
+        self.assertEqual(validation.ci_mode(event, ["src/compiler/parser.cpp", manifest]), "full")
+        for paths in ([manifest], [".gti-validation/batches/rollup-x.json", "docs/index.md"]):
+            self.assertEqual(validation.ci_mode(event, paths), "full")
 
     def test_ci_automation_scope_is_conservative_and_has_its_own_gates(self):
         event = {"pull_request": {"draft": False}}

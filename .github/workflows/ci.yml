@@ -61,6 +61,7 @@ jobs:
           git config --global user.email "ci@example.invalid"
           python3 tests/agent_workflow_test.py
           python3 tests/preview_workflow_test.py
+          python3 tests/rollup_test.py
           python3 tests/build_window_test.py
           python3 tests/bounded_log_test.py
           python3 tests/release_version_test.py scripts/check_release_version.py

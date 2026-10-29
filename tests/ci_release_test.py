@@ -24,8 +24,9 @@ def run(command, cwd, success=True):
 def workflow_contract(root):
     release = (root / ".gitea/workflows/release.yml").read_text()
     ci = (root / ".github/workflows/ci.yml").read_text()
-    # CI runs on GitHub; packages publish only from the Gitea release workflow.
-    assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == ["ci.yml"]
+    # CI and the rollup bot run on GitHub; packages publish only from the Gitea
+    # release workflow.
+    assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == ["ci.yml", "rollup.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
