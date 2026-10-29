@@ -26,6 +26,7 @@ void writeCppBackendMacroIsolation(std::ostream &output) {
       "payload_variant",
       "payload_get",
       "mir_closed_enum_unreachable_v1",
+      "mir_enumerator_storage",
       "payload_equal_v",
       "storage_",
       "RestoreExternalStorage",
@@ -532,6 +533,12 @@ void writeCppSupportPreamble(std::ostream &output,
 struct gti_failure_record_v2;
 
 namespace gti_internal::backend {
+
+// A MIR enumerator place has stable read-only storage, including when a
+// returned loan survives the native full expression that makes the call.
+// Keep distinct source symbols distinct even when their values are equal.
+template <std::uint64_t Index, auto Value>
+static constexpr auto mir_enumerator_storage = Value;
 
 // Payload-enum carrier. MIR, not this native type, selects legal
 // alternatives, transfers GTI obligations and runs source cleanup. The union

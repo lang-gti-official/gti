@@ -656,6 +656,12 @@ static initialization guard. Data-only namespace storage needs neither route.
 The program-plan verifier checks the hosted call only when a hosted startup is
 present and never invents an entry to satisfy the C++ representation.
 
+Integral-enumerator MIR places designate stable read-only storage. The C++
+storage row uses a private constant variable template keyed by source symbol
+identity, preserving returned loans across generated native statements. A
+native C++ enumerator expression alone would materialize a temporary and
+leave such a loan dangling. LLVM likewise creates constant storage per symbol.
+
 When the selected executable `Module/0` route must construct cleanup-free
 owning program storage at runtime, its copied C++ storage row records a
 lifetime-slot representation. This currently covers class values and concrete
@@ -5905,6 +5911,51 @@ initialization are not added by backend work. Constrained range references to
 fixed arrays are the implemented source entry point for whole-array borrowing.
 
 ### LLVM Classes, Lifecycles And Storage
+
+Ordinary non-polymorphic classes with no bases or special representation may
+encode destructor activation in a direct raw-pointer field. The bounded proof
+requires every data field to be a raw pointer and the complete source destructor
+to be `if (this.field != nullptr) { ... }`, without an `else` or preceding/following
+statement. No standard-library name, field count, allocation policy, or thread
+capability grants eligibility. Semantics records the resolved field identity as
+`inactiveDropPointerField` in `ClassLifecycleInfo` before executable body analysis;
+concrete HIR and MIR preserve it. `requiresActiveDropState` remains true: logical
+cleanup ownership is independent of whether the representation needs a byte.
+MIR independently follows the destructor with that field known null and requires
+a terminating path containing only the field observation, inert scalar operations
+and empty lifecycle boundaries. Effects, calls, failure, uncertain branches and
+cycles invalidate the witness. The witness is serialized in `mir-v119`.
+
+LLVM omits the separate byte for this witness, uses the pointer for cleanup
+observation, and nulls it after transferring all fields to a move destination.
+A null live value and a retired value need not be distinguishable because their
+complete cleanup effects coincide. This is not an object-liveness test: all
+logical fields still transfer when the marker is null, including non-null data
+in another pointer field. All fields are passive, so no child obligation
+is hidden by this equivalence. Construction rollback remains authoritative:
+only completed objects acquire a cleanup obligation, and constructor failure
+does not invoke the incomplete object's source destructor. The null marker is
+not a replacement for tracking partial construction.
+
+Cleanup invokes the exact destructor on the original receiver. Its fields remain
+unchanged by the compiler during the source body; the marker is cleared on both
+successful and failed return before observing or propagating failure. The private
+native-unwind evaluation path likewise clears it on its landing edge. Destruction
+requires exclusive access and writable backing bytes throughout cleanup, and a
+failed lifetime end never permits a retry. These existing contracts justify the
+retirement store without introducing alias exceptions or moving the source body
+to a temporary receiver. Arrays, nested fields, captures, payload alternatives,
+raw relocation, thread transport and container elements use the same selected
+type layout and recursive lifetime transitions, at every optimization level.
+
+The source shared and weak owners expose their existing null-release behavior
+with an explicit destructor guard. Both occupy two pointer lanes (16 bytes on
+the supported 64-bit native targets), including array stride. Unrelated pointer
+owners receive the same optimization; effects on the null path, owning fields,
+bases and polymorphism retain the existing active byte. C++ retains its existing
+representation. Native layout queries must consume the physical witness rather
+than deriving a byte from `requiresActiveDropState` alone.
+
 
 The O-LLVM-06 execution profile admits exact concrete, non-polymorphic,
 classes, including immovable and concrete generic classes. `layout.cpp`

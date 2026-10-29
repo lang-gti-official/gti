@@ -5,9 +5,123 @@
 
 #include <algorithm>
 #include <climits>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace lang::mir_detail {
+
+bool nullGuardedDestructor(const MirProgram &program,
+                           const MirClassInstance &owner) {
+  if (!owner.inactiveDropPointerField || !owner.requiresActiveDropState ||
+      !owner.destructor || owner.kind == ClassKind::Union ||
+      owner.kind == ClassKind::Interface || owner.polymorphic ||
+      !owner.bases.empty() || !owner.structuralBases.empty() ||
+      owner.cAbiRecord || owner.cOpaqueHandle || owner.unionLayout ||
+      owner.compilerCapability != CompilerCapabilityTypeKind::None ||
+      owner.declaredFields.empty())
+    return false;
+  bool found = false;
+  for (const auto &field : owner.declaredFields) {
+    if (field.type.kind != SemanticType::RawPointer ||
+        field.requiresActiveCleanup)
+      return false;
+    if (field.symbol == *owner.inactiveDropPointerField) {
+      if (found)
+        return false;
+      found = true;
+    }
+  }
+  const auto *destructor = program.findDestructorInstance(*owner.destructor);
+  if (!found || !destructor || destructor->owner != owner.id)
+    return false;
+  const auto &body = destructor->body;
+  enum class Fact { Unknown, Null, False, True };
+  std::unordered_map<MirValueId, Fact> values;
+  const auto literal = [](const Literal &value) {
+    if (std::holds_alternative<std::nullptr_t>(value))
+      return Fact::Null;
+    if (const auto *boolean = std::get_if<bool>(&value))
+      return *boolean ? Fact::True : Fact::False;
+    return Fact::Unknown;
+  };
+  const auto operand = [&](const MirOperand &input) {
+    if (input.literal)
+      return literal(*input.literal);
+    const auto it = values.find(input.value);
+    return it == values.end() ? Fact::Unknown : it->second;
+  };
+  // The null path must terminate without touching any other storage, running
+  // user code, changing ownership or raising failure. Cycles and unknown
+  // control fail closed; this is a proof of a path, not a second interpreter.
+  std::unordered_set<MirBlockId> visited;
+  auto next = body.entry;
+  while (visited.insert(next).second) {
+    const auto *block = body.findBlock(next);
+    if (!block || !block->parameters.empty())
+      return false;
+    for (const auto &row : block->instructions) {
+      if (row.tombstone)
+        continue;
+      if (!row.lifecycle.empty())
+        return false;
+      Fact result = Fact::Unknown;
+      if (row.kind == MirInstructionKind::Lifecycle && !row.result &&
+          row.operands.empty())
+        continue;
+      if (row.kind == MirInstructionKind::Load && row.operands.size() == 1) {
+        const auto &input = row.operands.front();
+        const auto *place = body.findPlace(input.place);
+        if (input.kind != MirOperandKind::Copy || !place ||
+            place->root != MirPlaceRootKind::This ||
+            place->projections.size() != 1 ||
+            place->projections.front().kind != MirProjectionKind::Field ||
+            place->projections.front().field !=
+                *owner.inactiveDropPointerField ||
+            place->type.kind != SemanticType::RawPointer)
+          return false;
+        result = Fact::Null;
+      } else if (row.kind == MirInstructionKind::Compute &&
+                 row.operation == MirOperation::Literal && row.literal &&
+                 row.operands.empty()) {
+        result = literal(*row.literal);
+      } else if (row.kind == MirInstructionKind::Compute &&
+                 (row.operation == MirOperation::Equal ||
+                  row.operation == MirOperation::NotEqual) &&
+                 row.operands.size() == 2 &&
+                 operand(row.operands[0]) == Fact::Null &&
+                 operand(row.operands[1]) == Fact::Null) {
+        result =
+            row.operation == MirOperation::Equal ? Fact::True : Fact::False;
+      } else if (row.kind == MirInstructionKind::Compute &&
+                 row.operation == MirOperation::Identity &&
+                 row.operands.size() == 1) {
+        result = operand(row.operands.front());
+      } else {
+        return false;
+      }
+      if (!row.result)
+        return false;
+      values[*row.result] = result;
+    }
+    const auto &term = block->terminator;
+    if (!term.targetArguments.empty() || !term.elseArguments.empty() ||
+        !term.successLifecycle.empty())
+      return false;
+    if (term.kind == MirTerminatorKind::Return)
+      return !term.value && !term.returnLoan;
+    if (term.kind == MirTerminatorKind::Goto) {
+      next = term.target;
+    } else if (term.kind == MirTerminatorKind::Branch && term.value) {
+      const auto fact = operand(*term.value);
+      if (fact != Fact::True && fact != Fact::False)
+        return false;
+      next = fact == Fact::True ? term.target : term.elseTarget;
+    } else {
+      return false;
+    }
+  }
+  return false;
+}
 
 std::optional<MirSelectedReferenceHandoff>
 selectedReferenceHandoff(const MirBody &body, const MirLoan &selected) {

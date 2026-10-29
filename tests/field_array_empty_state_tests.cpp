@@ -128,7 +128,7 @@ int main() {
         "class array aggregates never invent default-constructed scalar SSA "
         "arrays");
     const std::regex placement(
-        R"(false, true> __gti_mir_p_[0-9]+\(std::addressof\(\(__gti_mir_p_[0-9]+\)\[[0-9]+\]\)\))");
+        R"(false, true, true> __gti_mir_p_[0-9]+\(std::addressof\(\(__gti_mir_p_[0-9]+\)\[[0-9]+\]\)\))");
     const auto fieldElements = [&] {
       std::size_t count = 0;
       for (const auto &owner : frontend.mir.classInstances())

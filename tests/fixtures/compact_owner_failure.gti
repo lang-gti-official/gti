@@ -1,0 +1,77 @@
+#include <std/memory>
+#include <std/vector>
+#include <std/string>
+mut int one = 1;
+mut int two = 2;
+mut int three = 3;
+mut int zero = 0;
+class Token {
+  int* id = nullptr;
+  int* divisor = nullptr;
+public:
+  Token(int* id, int* divisor, int constructor_divisor)
+      : id(id), divisor(divisor) {
+    int checked = 12 / constructor_divisor;
+  }
+  ~Token() {
+    if (this.id != nullptr) {
+      unsafe { std::println(*this.id); int checked = 12 / *this.divisor; }
+    }
+  }
+};
+class Pair {
+  mut Token first;
+  Token second;
+public:
+  Pair(Token first, Token second) : first(std::move(first)), second(std::move(second)) {}
+  Token take() && { return std::move(this.first); }
+};
+class InitializedFields {
+  Token first;
+  Token second;
+public:
+  InitializedFields() : first(Token(&one, &one, 1)), second(Token(&two, &one, 0)) {}
+};
+class InitializedArray {
+  Token items[2] = {Token(&one, &one, 1), Token(&two, &one, 0)};
+public:
+  InitializedArray() {}
+};
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 1) {
+    Pair pair{Token(&one, &one, 1), Token(&two, &one, 1)};
+    Token taken = std::move(pair).take();
+    return 0;
+  }
+  if (argc == 2) {
+    Token outer{&three, &one, 1};
+    Token failed{&one, &one, 0};
+    return 1;
+  }
+  if (argc == 3) {
+    Token outer{&three, &one, 1};
+    mut Token previous{&one, &zero, 1};
+    previous = Token(&two, &one, 1);
+    return 2;
+  }
+  if (argc == 4) {
+    Pair pair{Token(&one, &one, 1), Token(&two, &one, 1)};
+    Token taken = std::move(pair).take();
+    int checked = 12 / zero;
+    return 3;
+  }
+  if (argc == 6) {
+    Token outer{&three, &one, 1};
+    InitializedFields failed{};
+    return 5;
+  }
+  if (argc == 7) {
+    Token outer{&three, &one, 1};
+    InitializedArray failed{};
+    return 6;
+  }
+  Token outer{&three, &one, 1};
+  Token failing{&one, &zero, 1};
+  int checked = 12 / zero;
+  return 4;
+}
