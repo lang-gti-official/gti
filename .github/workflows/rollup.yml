@@ -84,6 +84,7 @@ jobs:
           repositories: gti
           permission-contents: write
           permission-pull-requests: write
+          permission-merge-queues: write
           permission-issues: write
           permission-checks: read
           permission-statuses: read

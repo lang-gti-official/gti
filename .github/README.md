@@ -67,6 +67,7 @@ One-time owner setup:
    | --- | --- | --- |
    | Contents | Read and write | push and delete `rollup/*` branches |
    | Pull requests | Read and write | open, close and queue rollup PRs; close integrated members |
+   | Merge queues | Read and write | add rollup PRs and isolated members to the merge queue |
    | Issues | Read and write | labels and comments on PRs |
    | Checks | Read-only | the `CI gate` check run on each head |
    | Commit statuses | Read-only | commit status reads (the bot itself reads check runs today) |
@@ -89,9 +90,7 @@ One-time owner setup:
 The App bypasses no rule: rollup PRs pass the same `CI gate` and merge queue.
 Because the App has no Workflows permission, a PR whose commits touch
 `.github/workflows/` can never be rolled up; such changes are Risk-system and
-validate alone anyway. If GitHub refuses the bot's queue entries, grant the
-App *Merge queues: Read and write* and add `permission-merge-queues: write` to
-the token step. Rotate the private key by generating a new one, replacing the
+validate alone anyway. Rotate the private key by generating a new one, replacing the
 secret and deleting the old key.
 
 Actions are pinned to full commit SHAs. Workflows run with a read-only token; only
