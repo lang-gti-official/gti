@@ -6852,6 +6852,15 @@ compiler on macOS arm64; it does not claim Linux or Windows execution.
 
 ## Ownership diagnostic explanations
 
+`testConstraintFailureProvenance` also checks member-owned `requires` leaf
+causes, exact requirement source ranges, repaired valid MIR, representative
+disjunction evidence and nested member-step elision. Producer tests retain one
+shared immutable leaf across 64 nested member steps and bound concept context
+to eight entries while preserving both ends. `diagnostic_explanations` checks
+the corresponding CLI/LSP cause across files, UTF-16 positions and a repaired
+unsaved overlay. Existing viable-overload tests ensure rejected candidates do
+not publish diagnostics when another candidate succeeds.
+
 `testOwnershipAndMissingIncludeDiagnostics` covers exact move origins, branch
 joins, reinitialization, user-defined projected owners, restored receiver
 fields, shadowing, and the deterministic four-origin bound. It also checks
