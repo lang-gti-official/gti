@@ -7910,6 +7910,9 @@ def test_contextual_signed_integer_diagnostic(executable, root):
 def test_layout_query_tooling(executable, root):
     source = (
         "using Word = uint32_t;\n"
+        "struct Record { uint8_t tag; uint64_t payload; };\n"
+        "constexpr uint64_t record_size = sizeof(Record);\n"
+        "static_assert(record_size == uint64_t(16));\n"
         "constexpr double precise = 0.1d;\n"
         "constexpr uint64_t word_size = sizeof (Word);\n"
         "constexpr uint64_t word_alignment = alignof(Word);\n"
@@ -8059,7 +8062,7 @@ def test_layout_query_tooling(executable, root):
         assert edits and "sizeof(Word)" in edits[0]["newText"], edits
 
         invalid_source = (
-            "class Record { int value = 0;  public: Record() = default; };\n"
+            "class Record;\n"
             "uint64_t bad = sizeof(Record);\n"
         )
         session.send(

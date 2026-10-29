@@ -177,7 +177,8 @@
     "177-capability-predicates.gti": 19,
     "178-wrapping-atomic-counters.gti": 25,
     "179-weak-ownership.gti": 164,
+    "180-compact-source-owners.gti": 193,
     "181-general-object-layout.gti": 170
   },
-  "total": 26974
+  "total": 27167
 }

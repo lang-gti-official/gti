@@ -38,7 +38,8 @@ static_assert(sizeof(Empty) > uint64_t(0));
 int main() {
   if (!matches<Empty>() || !matches<Alias>() || !matches<Borrow>() ||
       !matches<Base>() || !matches<Derived>() || !matches<Wrapped>() ||
-      !matches<Payload<Alias>>() || !matches<Derived[2]>()) { return 1; }
+      !matches<Payload<Alias>>() || !matches<Derived[2]>() ||
+      !matches<Payload<std::unique_ptr<int>>>()) { return 1; }
   uint8_t small = 1;
   uint64_t large = 2;
   auto empty = []() -> int { return 1; };
