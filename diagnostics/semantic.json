@@ -1,5 +1,14 @@
 [
   {
+    "id": "LegacyInclude",
+    "code": "GTI-I0013",
+    "phase": "SourceLoading",
+    "severity": "Warning",
+    "group": "legacy-include",
+    "format": "Prefer module imports over '#include' where available.",
+    "arguments": 0
+  },
+  {
     "id": "IgnoredReturnValue",
     "code": "GTI-S2009",
     "phase": "Semantics",

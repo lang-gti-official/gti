@@ -3344,6 +3344,7 @@ private:
     frontendOptions.requireEntryPoint = project.requireEntryPoint;
     frontendOptions.program = project.program;
     frontendOptions.synthesizeTestEntry = false;
+    frontendOptions.warnLegacyIncludes = true;
     // HIR performs the compiler's concrete generic-instance reanalysis. The
     // LSP retains it only so editor diagnostics agree with `gti check` for
     // the open file's own code; MIR remains code-generation work and is not

@@ -240,6 +240,10 @@ A project applies the same policy from its selected profile:
 disabled-warnings = ["unused-mut"]
 ```
 
+The editor also enables `legacy-include` (`GTI-I0013`), which recommends
+module imports once per file at its first include; ordinary build/check requests
+do not enable this migration advice.
+
 Command-line groups are additive to the profile list. Current warning groups
 are `configuration` (`GTI-S2075`), `unreachable-code` (`GTI-S2095`),
 `unused-mut` (`GTI-S2096`), `unused-unsafe` (`GTI-S2100`), and the optional
