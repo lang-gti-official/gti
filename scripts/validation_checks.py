@@ -181,7 +181,8 @@ def ci_mode(event, paths):
     # Compiler tests, CMake and packaged scripts are deliberately not inferred
     # safe just because their filename includes 'test' or 'workflow'.
     automation_scripts = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
-                          "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
+                          "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py",
+                          "cut_release.py", "check_release_version.py"}
     automation_tests = {name.removesuffix(".py") + "_test.py" for name in automation_scripts}
     automation_tests |= {"validation_ci_test.py", "release_version_test.py", "ci_resources_test.py",
                          "repository_hosting_test.py"}
