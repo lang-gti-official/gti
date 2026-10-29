@@ -528,6 +528,8 @@ enum class IntrinsicKind {
   CStringFromAddress,
   RequireAllocation,
   ThreadScope,
+  AtomicFetchAddWrapping,
+  AtomicFetchSubWrapping,
   Count,
 };
 
@@ -1125,8 +1127,9 @@ struct ClassTypeInfo {
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =
       ConcurrencyCapabilityPolicy::Structural;
-  std::optional<SemanticType> transferCondition;
-  std::optional<SemanticType> shareCondition;
+  std::optional<CapabilityCondition> transferCondition;
+  std::optional<CapabilityCondition> shareCondition;
+  bool unsafeOwned = false;
   bool compilerPrivate = false;
   // `[[reflect_private]]`: reflected access reaches private instance fields
   // from anywhere, so the representation must not hide them either.

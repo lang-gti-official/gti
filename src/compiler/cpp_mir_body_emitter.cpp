@@ -31905,8 +31905,14 @@ public:
         continue;
       writeIndent();
       output << lifetimeSlotSpelling() << '<' << typeSpelling(place.type)
-             << ", false, true> __gti_mir_p_" << place.id
-             << "(std::addressof((";
+             << ", false, true";
+      // fixedArrayPlacement proves an exact constructor field and its inert
+      // empty representation. A failed initializer must leave live C++ element
+      // shells for enclosing-object teardown after MIR has dropped the values.
+      if (!publication.returned &&
+          publication.destination->root == MirPlaceRootKind::This)
+        output << ", true";
+      output << "> __gti_mir_p_" << place.id << "(std::addressof((";
       if (publication.returned)
         output << "*__gti_mir_out_result";
       else if (publication.destination->root == MirPlaceRootKind::This)

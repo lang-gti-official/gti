@@ -96,7 +96,8 @@ CPP_LIMITATIONS = {
     "hierarchy-reference-results": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "owner-reference-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_8743748746c3906f3cb32abc5c52a3d391e4507268de72665a366361f520203d_make_unique'",
     "owner-failure-before-reference": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_1542b921ce78875e430a1cd950d1c99cce26c90908184496243024d42a33bfd9_make_unique'",
-    "shared-owner-reference": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_std::__gti_inst_6c747ef376f3f4cfb185d24c782b604dd9912f48182009d7ad4f7242536225ae_make_shared'",
+    "shared-owner-reference": "wrapping atomic read-modify-write",
+    "shared-polymorphic-owners": "wrapping atomic read-modify-write",
     "inline-hierarchy-fields": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "inline-field-virtual-failure": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
     "inline-field-constructor-rollback": "verified MIR body is outside the complete C++ text vocabulary for '::__gti_program::__gti_entry'",
@@ -1075,8 +1076,13 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
         if cpp_limitation and endpoint.backend == "cpp":
             match = re.search(r"backend diagnostics saved at ([^\n]+)", result.stderr)
             detail = Path(match[1]).read_text(encoding="utf-8") if match else ""
-            if (result.compile_returncode != 65 or "GTI-B0001" not in result.stderr
-                    or cpp_limitation not in detail):
+            if cpp_limitation == "wrapping atomic read-modify-write":
+                supported_rejection = ("GTI-B0003" in result.stderr
+                                       and cpp_limitation in result.stderr)
+            else:
+                supported_rejection = ("GTI-B0001" in result.stderr
+                                       and cpp_limitation in detail)
+            if result.compile_returncode != 65 or not supported_rejection:
                 raise AssertionError(f"{name}: C++ comparator status changed; review coverage: {result}")
             print(f"{name} {endpoint.standard}: C++ comparator REJECTED (not execution evidence)", flush=True)
             print(f"command: {result.command}\n{result.stderr}\n{detail}", flush=True)
@@ -2303,11 +2309,12 @@ int main() {
 """
     shared_needle = "int area(int scale) override { return this.side * this.side / scale; }"
     add("shared-polymorphic-owner-failure", shared_failure, "defined-failure",
-        expected_exit=70, failure_needle=shared_needle, endpoints=TRANSFER_ENDPOINTS)
+        expected_exit=70, failure_needle=shared_needle, endpoints=TRANSFER_ENDPOINTS,
+        cpp_limitation="wrapping atomic read-modify-write")
     add("shared-polymorphic-owner-wrong-cleanup",
         shared_failure.replace("expected_cleanup = 76;", "expected_cleanup = 77;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=shared_needle,
-        endpoints=TRANSFER_ENDPOINTS)
+        endpoints=TRANSFER_ENDPOINTS, cpp_limitation="wrapping atomic read-modify-write")
     storage = (root / SUCCESS_FILES["program-storage"]).read_text(encoding="utf-8")
     storage_marker = "// PROGRAM_STORAGE_MAIN\n"
     if storage.count(storage_marker) != 1:
@@ -2339,6 +2346,9 @@ int main() { return broken.area() + square.area(); }
   return rack.row[0].area() + kept.area();
 }
 """
+    array_field_first_failure = array_field_failure.replace(
+        "row({Square(side), make(divisor)})", "row({make(divisor), Square(side)})"
+    ).replace("expected_cleanup = 54;", "expected_cleanup = 4;")
     array_needle = "Square make(int side) { return Square(12 / side); }"
     add("hierarchy-array-failure", array_failure, "defined-failure",
         expected_exit=70, failure_needle=array_needle, endpoints=TRANSFER_ENDPOINTS)
@@ -2350,6 +2360,12 @@ int main() { return broken.area() + square.area(); }
         expected_exit=70, failure_needle=array_needle, endpoints=TRANSFER_ENDPOINTS)
     add("hierarchy-array-field-wrong-cleanup",
         array_field_failure.replace("expected_cleanup = 54;", "expected_cleanup = 55;"),
+        "wrong-cleanup-trace", expected_exit=70, failure_needle=array_needle,
+        endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-array-field-first-failure", array_field_first_failure, "defined-failure",
+        expected_exit=70, failure_needle=array_needle, endpoints=TRANSFER_ENDPOINTS)
+    add("hierarchy-array-field-first-wrong-cleanup",
+        array_field_first_failure.replace("expected_cleanup = 4;", "expected_cleanup = 5;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=array_needle,
         endpoints=TRANSFER_ENDPOINTS)
     siblings = (root / SUCCESS_FILES["returned-siblings"]).read_text(encoding="utf-8")
@@ -2478,6 +2494,7 @@ def evidence_profiles(root: Path) -> dict[str, tuple[str, ...]]:
         "hierarchy-arrays": (
             "hierarchy-arrays", "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
             "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
+            "hierarchy-array-field-first-failure", "hierarchy-array-field-first-wrong-cleanup",
             "array-former-reject"),
         "program-hierarchy-storage": (
             "program-storage", "program-storage-failure", "global-former-reject",
@@ -2563,6 +2580,7 @@ def main() -> None:
              "replacement-failure", "replacement-wrong-cleanup",
              "hierarchy-array-failure", "hierarchy-array-wrong-cleanup",
              "hierarchy-array-field-failure", "hierarchy-array-field-wrong-cleanup",
+            "hierarchy-array-field-first-failure", "hierarchy-array-field-first-wrong-cleanup",
              "returned-sibling-failure", "returned-sibling-wrong-cleanup",
              "exchanged-transfer-failure", "exchanged-transfer-wrong-cleanup",
              "program-storage-failure",
@@ -2642,6 +2660,12 @@ def main() -> None:
                     case = work / f"{name}-{endpoint.backend}-{endpoint.optimization}-{endpoint.standard or 'native'}"
                     result = execute(gti, root, case, source, endpoint, env,
                                      concurrent=name in CONCURRENT_CASES)
+                    if (endpoint.backend == "cpp" and specification.cpp_limitation
+                            == "wrapping atomic read-modify-write"):
+                        if (result.compile_returncode != 65 or "GTI-B0003" not in result.stderr
+                                or specification.cpp_limitation not in result.stderr):
+                            raise AssertionError(f"{name}: C++ wrapping rejection changed: {result}")
+                        continue
                     divergence = specification.cpp_divergence
                     if divergence and endpoint.backend == "cpp":
                         if (result.error or result.returncode != divergence[0]

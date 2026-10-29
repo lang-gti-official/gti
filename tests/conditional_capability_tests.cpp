@@ -26,7 +26,7 @@ lang::FrontendResult analyze(std::string source) {
                                   {}, {stdlib});
 }
 constexpr std::string_view declarations = R"(
-[[unsafe_transfer(T), unsafe_share(T)]] class Reviewed<T> {
+[[unsafe_owned, unsafe_transfer(T), unsafe_share(T)]] class Reviewed<T> {
   T* pointer = nullptr;
 public:
   Reviewed() {}
@@ -77,8 +77,12 @@ int main() {
             std::vector<lang::SemanticType>{lang::SemanticType::Int32}) {
       concreteInt = instance.traits.transferCapable &&
                     instance.traits.shareCapable &&
-                    instance.transferCondition == lang::SemanticType::Int32 &&
-                    instance.shareCondition == lang::SemanticType::Int32;
+                    instance.transferCondition &&
+                    instance.transferCondition->nodes.front().type ==
+                        lang::SemanticType::Int32 &&
+                    instance.shareCondition &&
+                    instance.shareCondition->nodes.front().type ==
+                        lang::SemanticType::Int32;
     }
   }
   expect(concreteInt, "HIR preserves concrete conditional capability facts");
@@ -87,7 +91,9 @@ int main() {
     bool found = false;
     for (auto &instance : const_cast<std::vector<lang::MirClassInstance> &>(
              forged.classInstances())) {
-      if (instance.transferCondition != lang::SemanticType::Int32)
+      if (!instance.transferCondition ||
+          instance.transferCondition->nodes.front().type !=
+              lang::SemanticType::Int32)
         continue;
       found = true;
       if (mutation == 0)
@@ -194,6 +200,120 @@ int main() {
                            }),
            "malformed or conflicting conditional policies fail closed");
   }
+  const std::string predicates = R"(
+concept CrossThread<T> = std::transferable<T> && std::shareable<T>;
+[[unsafe_transfer(CrossThread<T> && std::transferable<D>),
+  unsafe_share(std::shareable<T> && std::transferable<T> && std::transferable<D>)]]
+class SharedResource<T, D> {
+  T* address = nullptr;
+public:
+  SharedResource() {}
+  ~SharedResource() {}
+};
+[[no_transfer]] struct ReadOnly { int value = 0; };
+[[no_share]] struct ExclusiveOnly { int value = 0; };
+[[no_transfer, no_share]] struct Neither { int value = 0; };
+void send<std::transferable T>(T value) {}
+void read<std::shareable T>(T& value) {}
+)";
+  const auto predicatesGood = analyze(predicates + R"(
+int main() {
+  send(SharedResource<int, int>());
+  SharedResource<int, int> concurrent{}; read(concurrent);
+  SharedResource<ReadOnly, int> local_readonly{};
+  SharedResource<ExclusiveOnly, int> local_exclusive{};
+  SharedResource<Neither, int> local_neither{};
+  SharedResource<int, Neither> local_deleter{};
+  return 0;
+})");
+  if (!predicatesGood.canGenerateCode())
+    for (const auto &diagnostic : predicatesGood.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(predicatesGood.canGenerateCode(),
+         "capability predicates preserve local construction for every payload "
+         "quadrant");
+  for (const auto *payload : {"ReadOnly", "ExclusiveOnly", "Neither"}) {
+    for (bool sharing : {false, true}) {
+      const auto statement =
+          sharing
+              ? std::string("SharedResource<") + payload +
+                    ", int> owner{}; read(owner);"
+              : std::string("send(SharedResource<") + payload + ", int>());";
+      const auto bad =
+          analyze(predicates + "int main() { " + statement + " return 0; }");
+      expect(
+          !bad.canGenerateCode() &&
+              std::any_of(bad.diagnostics.begin(), bad.diagnostics.end(),
+                          [](const auto &d) { return d.code == "GTI-S2029"; }),
+          "both capabilities require the conjunction, not matching-axis "
+          "propagation");
+    }
+  }
+  expect(
+      !analyze(predicates +
+               "int main() { send(SharedResource<int, Neither>()); return 0; }")
+           .canGenerateCode(),
+      "deleter capability participates independently");
+  const auto conditionUse =
+      predicates.find("CrossThread<T>", predicates.find("[["));
+  const auto conditionDefinition = lang::LanguageQueries().definition(
+      predicatesGood, predicatesGood.sourceGraph.entryUnit(), conditionUse + 1);
+  expect(conditionDefinition && conditionDefinition->target.start ==
+                                    predicates.find("CrossThread<T>"),
+         "predicate concept navigation uses the selected source declaration");
+  const auto parameterDefinition = lang::LanguageQueries().definition(
+      predicatesGood, predicatesGood.sourceGraph.entryUnit(),
+      conditionUse + 12);
+  expect(parameterDefinition &&
+             parameterDefinition->target.start ==
+                 predicates.find("<T, D>",
+                                 predicates.find("class SharedResource")) +
+                     1,
+         "predicate type arguments navigate to the class generic binder");
+  const auto either = analyze(R"(
+[[unsafe_transfer(std::transferable<T> || std::shareable<T>)]]
+class Either<T> { public: Either() {} ~Either() {} };
+[[no_transfer]] struct ReadOnly {};
+void send<std::transferable T>(T value) {}
+int main() { send(Either<ReadOnly>()); return 0; }
+)");
+  expect(either.canGenerateCode(),
+         "disjunction uses the same typed capability graph");
+  for (const char *condition : {"std::copyable<T>", "unknown_concept<T>",
+                                "requires(T& value) { value.read(); }"}) {
+    const auto bad = analyze(std::string("[[unsafe_transfer(") + condition +
+                             ")]] class Wrong<T> {}; int main() { return 0; }");
+    expect(!bad.canGenerateCode(),
+           "unsupported capability predicate fails closed");
+  }
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto forged = predicatesGood.mir;
+    bool found = false;
+    for (auto &instance : const_cast<std::vector<lang::MirClassInstance> &>(
+             forged.classInstances())) {
+      if (!instance.transferCondition ||
+          instance.transferCondition->nodes.size() < 3)
+        continue;
+      found = true;
+      if (mutation == 0)
+        instance.transferCondition->nodes.back().left =
+            instance.transferCondition->nodes.size() - 1;
+      if (mutation == 1)
+        instance.transferCondition->nodes.front().kind =
+            static_cast<lang::CapabilityConditionNode::Kind>(999);
+      if (mutation == 2)
+        instance.traits.transferCapable = !instance.traits.transferCapable;
+      break;
+    }
+    expect(found && !lang::verifyMirProgram(forged).valid(),
+           "MIR rejects malformed capability graphs and contradictory concrete "
+           "facts");
+  }
+  const auto predicateFormatted =
+      lang::Formatter().format(predicates + "int main() { return 0; }");
+  expect(analyze(predicateFormatted).canGenerateCode() &&
+             lang::Formatter().format(predicateFormatted) == predicateFormatted,
+         "compound capability predicates round-trip through formatting");
   const auto formatted = lang::Formatter().format(source);
   expect(lang::Formatter().format(formatted) == formatted &&
              analyze(formatted).canGenerateCode(),
@@ -209,6 +329,13 @@ int main() {
                                   std::string::npos;
                          }),
          "hover must distinguish conditional from unconditional assertions");
+  expect(hover &&
+             std::any_of(hover->notes.begin(), hover->notes.end(),
+                         [](const auto &note) {
+                           return note.find("no thread capability granted") !=
+                                  std::string::npos;
+                         }),
+         "hover separates unsafe ownership from thread permission");
   const auto definition = lang::LanguageQueries().definition(
       good, good.sourceGraph.entryUnit(),
       source.find("unsafe_transfer(T)") + 16);

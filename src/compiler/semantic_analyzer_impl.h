@@ -1696,8 +1696,9 @@ private:
         ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferPolicySource;
     std::optional<Token> sharePolicySource;
-    std::optional<SemanticType> transferCondition;
-    std::optional<SemanticType> shareCondition;
+    std::optional<CapabilityCondition> transferCondition;
+    std::optional<CapabilityCondition> shareCondition;
+    bool unsafeOwned = false;
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
@@ -1713,13 +1714,14 @@ private:
   };
 
   struct CapabilityPolicyRegistration {
+    std::optional<Token> unsafeOwnedSource;
     ConcurrencyCapabilityPolicy transfer =
         ConcurrencyCapabilityPolicy::Structural;
     ConcurrencyCapabilityPolicy share = ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferSource;
     std::optional<Token> shareSource;
-    std::optional<SemanticType> transferCondition;
-    std::optional<SemanticType> shareCondition;
+    std::optional<CapabilityCondition> transferCondition;
+    std::optional<CapabilityCondition> shareCondition;
     bool cAbiRecord = false;
     std::optional<Token> cAbiSource;
     bool cOpaqueHandle = false;
@@ -3606,7 +3608,7 @@ private:
                                   const Token &site);
 
   [[nodiscard]] bool containsDisallowedCallableCaptureState(
-      const SemanticType &type, std::unordered_set<ClassId> &visiting,
+      const SemanticType &type, std::vector<SemanticType> &visiting,
       bool reviewedRawState = false, bool checkedBorrows = false) const;
 
   [[nodiscard]] bool
@@ -3665,15 +3667,17 @@ private:
   [[nodiscard]] static std::string
   functionSignatureSpelling(const CallableCandidate &function);
 
-  [[nodiscard]] bool
-  typeRequiresThreads(const SemanticType &type,
-                      std::unordered_set<ClassId> &visiting) const;
+  [[nodiscard]] bool typeRequiresThreads(const SemanticType &type,
+                                         std::unordered_set<ClassId> &visiting,
+                                         bool includeAtomics) const;
 
-  [[nodiscard]] bool typeRequiresThreads(const SemanticType &type) const;
+  [[nodiscard]] bool typeRequiresThreads(const SemanticType &type,
+                                         bool includeAtomics = true) const;
 
   [[nodiscard]] bool
   validateConcurrentSurfaceAvailability(const Token &location,
-                                        std::string_view surface);
+                                        std::string_view surface,
+                                        bool requiresConcurrentProfile = true);
 
   void finalizeCThreadRequirements();
 
@@ -4647,7 +4651,12 @@ private:
 
   [[nodiscard]] CapabilityPolicyRegistration registerClassAttributes(
       const ClassDecl &declaration,
-      const std::vector<GenericParameterInfo> &parameters = {});
+      const std::vector<GenericParameterInfo> &parameters = {},
+      const std::vector<std::string> &scope = {});
+
+  [[nodiscard]] std::optional<CapabilityCondition>
+  resolveCapabilityCondition(const RequiresClause &clause,
+                             const std::vector<std::string> &scope);
 
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope,
@@ -5727,7 +5736,8 @@ private:
   [[nodiscard]] bool isNumericLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isSimdLibraryUnit(SourceUnitId sourceUnit) const;
 
-  [[nodiscard]] bool isFunctionalLibraryUnit(SourceUnitId sourceUnit) const;
+  [[nodiscard]] bool
+  isFunctionPointerLibraryUnit(SourceUnitId sourceUnit) const;
 
   [[nodiscard]] bool
   isDefaultLibraryStorageBorrowCarrier(const ClassInfo &owner) const;

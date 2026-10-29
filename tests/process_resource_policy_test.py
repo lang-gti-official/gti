@@ -13,7 +13,7 @@ import tempfile
 def run(command, environment, expected_status=0):
     result = subprocess.run(command, env=environment, capture_output=True,
                             text=True, timeout=180)
-    assert result.returncode == expected_status, (command, result.stdout, result.stderr)
+    assert result.returncode == expected_status, (command, result.returncode, result.stdout, result.stderr)
     return result
 
 
@@ -84,6 +84,17 @@ def main():
                 "division_by_zero in integer_division\n")
     with tempfile.TemporaryDirectory(prefix="gti-process-provider-") as directory:
         temporary = pathlib.Path(directory)
+        # Fault injection copies the selected library (including in installed
+        # mode), never a build-tree fallback. Ordinary cases below still execute
+        # the unchanged selected library. Only this extra case narrows its bound.
+        limited_library = temporary / "limited-stdlib"
+        shutil.copytree(environment["GTI_STDLIB_PATH"], limited_library)
+        memory = limited_library / "std/memory.gti"
+        original = memory.read_text()
+        needle = "uint64_t size_bytes = std::layout_of<c_size_t>().bytes;"
+        assert original.count(needle) == 1, "native-size fault injection seam changed"
+        memory.write_text(original.replace(needle, "uint64_t size_bytes = uint64_t(1);"))
+        limited_environment = dict(environment, GTI_STDLIB_PATH=str(limited_library))
         for label, flags, native_flags in modes:
             for fixture, native in (
                 ("process_resource_policy", root / "tests/fixtures/process_resource_policy_native.cpp"),
@@ -97,6 +108,13 @@ def main():
                      *native_flags], environment)
                 result = run([str(binary)], environment)
                 assert not result.stdout and not result.stderr, result
+            binary = temporary / f"process-resource-limit-{label}"
+            run([compiler, str(root / "tests/fixtures/process_resource_policy_limit.gti"),
+                 *flags, "-o", str(binary), "--",
+                 str(root / "tests/fixtures/process_resource_policy_native.cpp"),
+                 *native_flags], limited_environment)
+            result = run([str(binary)], limited_environment)
+            assert not result.stdout and not result.stderr, result
             binary = temporary / f"process-storage-cleanup-{label}"
             run([compiler, str(cleanup), *flags, "-o", str(binary), "--",
                  str(root / "tests/fixtures/process_resource_policy_native.cpp"),

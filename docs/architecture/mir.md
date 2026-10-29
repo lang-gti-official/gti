@@ -628,9 +628,13 @@ original additions, not an alternative current schema.
 
 Concrete class rows retain transfer/share policy and any substituted unsafe
 capability condition. The verifier checks that a conditional policy retains
-its condition and that its result agrees with the payload's concrete MIR
-capabilities; nominal facts remain frontend-owned, while real builtin aggregate
-components compose those facts. Removing the condition or changing the derived
+its condition and that its result agrees with the concrete MIR capabilities.
+Conditions are bounded, topologically ordered graphs of typed transfer/share
+queries and conjunction/disjunction nodes. Semantics resolves source concepts
+and transparent queries into this graph; HIR substitutes every leaf's type, and
+MIR replays the graph without consulting public names. The one-parameter unsafe
+assertion is a singleton graph. Nominal facts remain frontend-owned, while real
+builtin aggregate components compose those facts. Removing the condition or changing the derived
 capability is invalid MIR. The declaration catalog preserves the generic
 condition in `lowered-program-v17`, and optimization replay includes these facts.
 

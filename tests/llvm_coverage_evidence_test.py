@@ -510,12 +510,12 @@ def execution_profile_controls(evidence: Path, root: Path) -> None:
                 "ExecutionProfile.SingleThreaded" in default.stdout.splitlines(),
                 "default probe changed its execution profile")
         source.write_text("#include <std/atomic>\nint main() { "
-                          "std::atomic<int> value{0}; return value.load(); }\n",
+                          "std::atomic<int> value{1}; value.wait(0); return value.load(); }\n",
                           encoding="utf-8")
         for arguments in ([], ["single-threaded"]):
             rejected = run([str(evidence), "--probe", str(root), str(source), *arguments])
             require(rejected.returncode == 1 and "GTI-S2084" in rejected.stderr,
-                    "single-threaded atomic probe lost its source rejection")
+                    "single-threaded atomic-wait probe lost its source rejection")
         concurrent = run([str(evidence), "--probe", str(root), str(source), "concurrent"])
         require(concurrent.returncode == 0 and {
                     "ExecutionProfile.Concurrent", "Shape.NativeAtomicOperation"
@@ -630,7 +630,10 @@ def observed_profiles(report: dict, evidence: Path, root: Path,
             for case in profiles[profile]:
                 source = directory / f"{test}-{profile}-{case}.gti"
                 source.write_text(cases[case], encoding="utf-8")
-                result = run([str(evidence), "--probe", str(root), str(source),
+                prepare = getattr(modules[test], "prepare_evidence_case", None)
+                probe_root, probe_source = (prepare(root, case, source, directory)
+                                            if prepare else (root, source))
+                result = run([str(evidence), "--probe", str(probe_root), str(probe_source),
                               metadata[profile]["execution-profile"],
                               *program_request_arguments(requests.get(case))])
                 if result.returncode != 0:

@@ -5,7 +5,7 @@
     "stdlib/std/algorithm.gti": "e99485de4cf40d0e1e5be0d10f86780bc38f170c388473b994bb1a6f786ba656",
     "stdlib/std/array.gti": "2b892b6049d85bf53b146b4b8d1c019477c6657591774f8ef93138cee921510a",
     "stdlib/std/assert.gti": "3a2ce83cc942a9d506e3934de5bc14290b532a4d6258d6fb55fb691656e17015",
-    "stdlib/std/atomic.gti": "b1cd7da3c6b53c1f4ac860ffabdd48a027afa3c5371a196bbbd33b6ad1150409",
+    "stdlib/std/atomic.gti": "543457c8b30ec699b1b78fdec625baa0ca2a7340f7db5901fb80dbc8f0bc94be",
     "stdlib/std/build.gti": "cc88052125790ffa20a1da17c285d7754b89fa94c62f413934f0f9f1aec8e98b",
     "stdlib/std/charconv.gti": "546221ebd010d869a41ca0829f4cd823c27c7773dc5e66c27bea53d22ec8d474",
     "stdlib/std/chrono.gti": "cd8448851fa4e487b0c62c0db24d429d31d195863bc74a1290839c484470c75a",
@@ -13,6 +13,7 @@
     "stdlib/std/cstdio.gti": "8081db343694df6698be59fbc91574fb92cc366e0471681daff43ea17cc7e7f3",
     "stdlib/std/cthread.gti": "8980aedce805131cd3f0a528b55ec31b8e3626b267bfb4321501e236138217d9",
     "stdlib/std/deque.gti": "c0e5fd8a5be59682871b2ded7e2d7e1b066ceec1fb18372288d9f12da2010c80",
+    "stdlib/std/detail/function_pointer.gti": "1fd2aa328643ea7b349c12cad075214b3a4f817534df05c10a2b049fcd66c0e2",
     "stdlib/std/detail/iterator.gti": "37ee100c51eb970cdf06df5f79a8a27afab75f977787ec148b752f1a8bb9aab9",
     "stdlib/std/detail/panic.gti": "670a843164a3b318573d6704dff407d39d0dfed1bb91077bd46a74d83a243c5d",
     "stdlib/std/encoding.gti": "7a2eeea4faadd7aad158f65dc6f9514a06388a4c8336b9fed54ae0bf6c27b633",
@@ -21,14 +22,14 @@
     "stdlib/std/filesystem.gti": "c023d1f5d67afe2662bc2c84c1eff7cde9b285b9dba3025735c28e04c4dcb932",
     "stdlib/std/format.gti": "3056831bf5b91b866384f874f985a7aadc6cac481abfdad07f79fbdaa30f3d06",
     "stdlib/std/forward_list.gti": "46402534f8f4f5ec078811048969c8cf40093e6362a47c3f8b222040dd2b87c1",
-    "stdlib/std/functional.gti": "a84929c26d928d2acc50c67d8a522c83061e6f6767d47640a60af14636d45451",
+    "stdlib/std/functional.gti": "07eecd2698574372b70d02d26dd71ded78b3d82eed3b2b0c5a9b8aba970f8959",
     "stdlib/std/http.gti": "f0064d96b5f74a391dd41e009be1fe76bea7e358067b5ebaad37b74cfceeff44",
     "stdlib/std/io.gti": "84572488c7ccdf86d43e3b3af198177da6c8929fdf96a643a9b298738e1d9983",
     "stdlib/std/iterator.gti": "da61f366c29fe12d500c93a0774efb3922e0013dbd9b545125b656bc98ecc5de",
     "stdlib/std/json.gti": "5deec99fb3912e33e69f418c8b617eb0731abb38cfc0367fa0330ccd698e48bf",
     "stdlib/std/list.gti": "f5dab29ebf10d717fe59d25597d5e1cdd2cea6bcf829acada1265741180c09fe",
     "stdlib/std/map.gti": "0bef1551a41df59a757d08d0d147af5ec656b495af02f8a6d996713556a19564",
-    "stdlib/std/memory.gti": "4303fe1709ce208e5eeb030446663d529e9d7568da78f7ecea76844849449ec4",
+    "stdlib/std/memory.gti": "2d9bf541598746f0061ada0be38a95ccd7112b329bf8a669556f0fe388898fd5",
     "stdlib/std/meta.gti": "9161b27d6fea75f7e7fda0b7cfc47fc79c3e5fc8216060b69005383c5099ac71",
     "stdlib/std/mutex.gti": "426a99e2a8b15c27e4f0883e296a04cebac24f8ede213c7956f1c9bde84ee4b5",
     "stdlib/std/numeric.gti": "e5a9c1c5d786b02b97f57c822f552d3af9695b3746e94530261c212429a8e347",
@@ -392,6 +393,21 @@
       "mode": "run",
       "source": "tests/fixtures/atomic_wait.gti",
       "execution_profile": "concurrent",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "atomic-wrapping",
+      "mode": "run",
+      "source": "tests/fixtures/llvm_atomic_wrapping.gti",
+      "backend": "llvm",
       "optimizations": [
         "O0",
         "O3"
@@ -2240,7 +2256,8 @@
         "exit_code": 0,
         "stdout": "1\n7\n2\n8\n3\n9\n",
         "stderr": ""
-      }
+      },
+      "backend": "llvm"
     },
     {
       "id": "shared-ptr-upcast",
@@ -2254,7 +2271,8 @@
         "exit_code": 0,
         "stdout": "7\n8\n",
         "stderr": ""
-      }
+      },
+      "backend": "llvm"
     },
     {
       "id": "simd",
@@ -2795,6 +2813,21 @@
         "stdout": "beta\nalpha\n1\n2\n3\nthree\ntwo\n102\n103\n9\n",
         "stderr": ""
       }
+    },
+    {
+      "id": "weak-ptr",
+      "mode": "run",
+      "source": "tests/fixtures/weak_ownership.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "backend": "llvm"
     }
   ],
   "entries": [
@@ -3073,6 +3106,27 @@
         "tests/fixtures/atomic_fetch_overflow.gti",
         "tests/fixtures/atomic_orders.gti",
         "tests/fixtures/atomic_scalar.gti"
+      ]
+    },
+    {
+      "id": "atomic.wrapping",
+      "source": "stdlib/std/atomic.gti",
+      "status": "executable",
+      "operations": [
+        "std::atomic::fetch_add_wrapping",
+        "std::atomic::fetch_sub_wrapping"
+      ],
+      "case_ids": [
+        "atomic-wrapping"
+      ],
+      "required_instantiations": [
+        "LLVM-only; both execution profiles; all signed/unsigned integer widths and RMW orders"
+      ],
+      "evidence": [
+        "tests/atomic_tests.cpp",
+        "tests/llvm_atomic_contract_tests.cpp",
+        "tests/llvm_atomic_execution_test.py",
+        "examples/178-wrapping-atomic-counters.gti"
       ]
     },
     {
@@ -3410,6 +3464,25 @@
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti"
+      ]
+    },
+    {
+      "id": "detail.function-pointer-core",
+      "source": "stdlib/std/detail/function_pointer.gti",
+      "status": "executable",
+      "operations": [
+        "gti_internal::function_pointer",
+        "gti_internal::function_pointer_from_item",
+        "gti_internal::function_pointer_invoke"
+      ],
+      "case_ids": [
+        "shared-ptr",
+        "weak-ptr"
+      ],
+      "evidence": [
+        "tests/shared_ownership_tests.cpp",
+        "tests/shared_ownership_runtime_test.py",
+        "tests/borrowing_capture_tests.cpp"
       ]
     },
     {
@@ -3787,8 +3860,6 @@
       "source": "stdlib/std/functional.gti",
       "status": "executable",
       "operations": [
-        "std::function_ptr::function_ptr",
-        "std::function_ptr::operator()",
         "std::function_ref::function_ref",
         "std::function_ref::operator()"
       ],
@@ -3851,6 +3922,33 @@
         "tests/fixtures/complete_range_probe.gti",
         "tests/generic_algorithm_cluster_test.py",
         "stdlib/std/functional.gti"
+      ]
+    },
+    {
+      "id": "functional.function-pointer",
+      "source": "stdlib/std/functional.gti",
+      "status": "executable",
+      "operations": [
+        "std::function_ptr::function_ptr",
+        "std::function_ptr::operator()"
+      ],
+      "case_ids": [
+        "borrowing-callable-erasure",
+        "borrowing-callable-example"
+      ],
+      "required_instantiations": [
+        "shared and exclusive signature-erased callbacks",
+        "stateless function item and captureless lambda",
+        "owning string argument/result",
+        "user-defined generic stored exclusive environment"
+      ],
+      "evidence": [
+        "stdlib/std/functional.gti",
+        "tests/fixtures/checked_callable_erasure.gti",
+        "tests/borrowing_capture_tests.cpp",
+        "tests/borrowing_callbacks_runtime_test.py",
+        "examples/156-borrowing-callbacks.gti",
+        "stdlib/std/detail/function_pointer.gti"
       ]
     },
     {
@@ -4660,19 +4758,6 @@
       ]
     },
     {
-      "id": "memory.scaffold",
-      "source": "stdlib/std/memory.gti",
-      "status": "scaffold",
-      "operations": [
-        "std::weak_ptr public surface"
-      ],
-      "reason": "weak_ptr remains declaration-only.",
-      "evidence": [
-        "stdlib/std/memory.gti",
-        "stdlib/README.md#partial-modules-and-declaration-scaffolds"
-      ]
-    },
-    {
       "id": "memory.shared-ptr",
       "source": "stdlib/std/memory.gti",
       "status": "executable",
@@ -4784,6 +4869,28 @@
       ],
       "required_instantiations": [
         "Base/Derived"
+      ]
+    },
+    {
+      "id": "memory.weak-ptr",
+      "source": "stdlib/std/memory.gti",
+      "status": "executable",
+      "operations": [
+        "std::shared_ptr::downgrade",
+        "std::weak_ptr public surface"
+      ],
+      "case_ids": [
+        "weak-ptr"
+      ],
+      "evidence": [
+        "examples/179-weak-ownership.gti",
+        "tests/fixtures/weak_ownership.gti",
+        "tests/fixtures/weak_ownership_threads.gti",
+        "tests/fixtures/weak_ownership_failure.gti",
+        "tests/shared_ownership_tests.cpp",
+        "tests/shared_ownership_runtime_test.py",
+        "tests/shared_ownership_failure_test.py",
+        "tests/shared_ownership_threads_test.py"
       ]
     },
     {
@@ -5763,6 +5870,7 @@
         "tests/process_resource_policy_test.py",
         "tests/process_provider_target_tests.cpp",
         "tests/fixtures/process_resource_policy.gti",
+        "tests/fixtures/process_resource_policy_limit.gti",
         "examples/libc-region-provider/src/main.gti"
       ]
     },

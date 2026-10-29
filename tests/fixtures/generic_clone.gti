@@ -63,9 +63,6 @@ int main() {
   auto records_copy = records.clone();
   if (records_copy[std::size_t(0)].value != 21) { return 7; }
 
-  // Clone follows the element's contract: shared ownership remains shared.
-  auto shared = std::make_shared<int>(42);
-  auto shared_copy = std::clone(shared);
-  if (shared.use_count() != std::size_t(2) || *shared_copy != 42) { return 8; }
+  // Shared element cloning is covered by shared_ownership.gti (LLVM-only).
   return 0;
 }

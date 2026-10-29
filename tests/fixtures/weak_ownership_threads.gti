@@ -1,0 +1,76 @@
+#include <std/memory>
+#include <std/thread>
+#include <std/panic>
+#include <std/atomic>
+std::atomic<int> drops{0};
+std::atomic<int> ready{0};
+std::atomic<bool> begin{false};
+[[unsafe_transfer, unsafe_share]] class Item {
+public:
+  int value = 73;
+  Item() = default;
+  ~Item() { [[discard]] drops.fetch_add(1); }
+};
+void race(std::weak_ptr<Item> observer) {
+  [[discard]] ready.fetch_add(1);
+  while (!begin.load()) {}
+  for (mut int i = 0; i < 10000; i++) {
+    auto copied = observer.clone();
+    auto locked = copied.lock();
+    if (locked && locked->value != 73) { std::panic("invalid promoted payload"); }
+  }
+}
+[[unsafe_transfer, unsafe_share]] class Publication {
+public:
+  std::atomic<int> first{0};
+  std::atomic<int> second{0};
+  Publication() = default;
+  ~Publication() {
+    // Final retirement acquires writes preceding both releasing owners.
+    if (this.first.load(std::memory_order_relaxed()) != 1 ||
+        this.second.load(std::memory_order_relaxed()) != 1) {
+      std::panic("missing release publication");
+    }
+  }
+};
+int publication() {
+  mut auto owner = std::make_shared<Publication>();
+  auto first_owner = owner.clone();
+  auto first_result = std::thread::start([value = std::move(first_owner)]() -> void {
+    value->first.store(1, std::memory_order_relaxed());
+  });
+  if (!first_result) { return 5; }
+  mut auto first = std::move(first_result).value();
+  auto second_owner = owner.clone();
+  auto second_result = std::thread::start([value = std::move(second_owner)]() -> void {
+    value->second.store(1, std::memory_order_relaxed());
+  });
+  if (!second_result) { return 6; }
+  mut auto second = std::move(second_result).value();
+  auto observer = owner.downgrade();
+  owner.reset();
+  if (!first.join() || !second.join() || !observer.expired()) { return 7; }
+  return 0;
+}
+int main() {
+  for (mut int iteration = 0; iteration < 40; iteration++) {
+    if (publication() != 0) { return 8; }
+    ready.store(0); begin.store(false);
+    mut auto owner = std::make_shared<Item>();
+    auto observer = owner.downgrade();
+    auto first_observer = observer.clone();
+    auto first_result = std::thread::start([weak = std::move(first_observer)]() -> void { race(weak.clone()); });
+    if (!first_result) { return 1; }
+    mut auto first = std::move(first_result).value();
+    auto second_observer = observer.clone();
+    auto second_result = std::thread::start([weak = std::move(second_observer)]() -> void { race(weak.clone()); });
+    if (!second_result) { return 2; }
+    mut auto second = std::move(second_result).value();
+    while (ready.load() != 2) {}
+    begin.store(true);
+    owner.reset();
+    if (!first.join() || !second.join()) { return 3; }
+    if (!observer.expired() || observer.lock() || drops.load() != iteration + 1) { return 4; }
+  }
+  return 0;
+}

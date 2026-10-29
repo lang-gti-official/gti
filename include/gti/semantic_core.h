@@ -717,6 +717,56 @@ struct SemanticType {
   }
 };
 
+// A declaration-bound monotone predicate over concurrency facts. Source concept
+// expressions are resolved once in semantics; concrete HIR/MIR retain the typed
+// leaves and replay this same graph rather than consulting source spellings.
+struct CapabilityConditionNode {
+  enum class Kind { Transfer, Share, Conjunction, Disjunction };
+  Kind kind = Kind::Transfer;
+  SemanticType type = SemanticType::Unknown;
+  std::size_t left = static_cast<std::size_t>(-1);
+  std::size_t right = static_cast<std::size_t>(-1);
+  friend bool operator==(const CapabilityConditionNode &,
+                         const CapabilityConditionNode &) = default;
+};
+struct CapabilityCondition {
+  std::vector<CapabilityConditionNode> nodes;
+  friend bool operator==(const CapabilityCondition &,
+                         const CapabilityCondition &) = default;
+};
+
+template <typename Query>
+[[nodiscard]] std::optional<bool>
+evaluateCapabilityCondition(const CapabilityCondition &condition, Query query) {
+  if (condition.nodes.empty() || condition.nodes.size() > 256)
+    return std::nullopt;
+  std::vector<bool> values;
+  for (const auto &node : condition.nodes) {
+    using Kind = CapabilityConditionNode::Kind;
+    if (node.kind == Kind::Transfer || node.kind == Kind::Share) {
+      if (node.left != static_cast<std::size_t>(-1) ||
+          node.right != static_cast<std::size_t>(-1))
+        return std::nullopt;
+      const auto facts = query(node.type);
+      if (!facts)
+        return std::nullopt;
+      values.push_back(node.kind == Kind::Transfer ? facts->transferCapable
+                                                   : facts->shareCapable);
+    } else if (node.kind == Kind::Conjunction ||
+               node.kind == Kind::Disjunction) {
+      if (node.type != SemanticType::Unknown || node.left >= values.size() ||
+          node.right >= values.size())
+        return std::nullopt;
+      values.push_back(node.kind == Kind::Conjunction
+                           ? values[node.left] && values[node.right]
+                           : values[node.left] || values[node.right]);
+    } else {
+      return std::nullopt;
+    }
+  }
+  return values.back();
+}
+
 struct AppliedConceptRequirement {
   ConceptId conceptId = 0;
   const ConceptApplication *syntax = nullptr;

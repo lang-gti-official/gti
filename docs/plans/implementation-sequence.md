@@ -1370,7 +1370,7 @@ proxy iteration. Its original heading is retained for stable links.
 | --- | --- | --- |
 | Broader callback inline storage / borrowed `function_ref` | Repeatable read/mut wrappers already use source `inline_polymorphic` policy: small cleanup-inert relocatable models inline, others boxed; consuming wrappers remain unique-owned. Measure allocation, registration, clone/reset and invocation separately when extending these profiles. | Inline consuming projection and cleanup-bearing relocation need general lifetime/ownership proofs. Borrowed erasure additionally needs exact origin/escape proof. Existing exact-receiver optimization does not automatically devirtualize owning models. |
 | Bulk byte I/O / response filling | Allocation/copied-byte and throughput evidence for [`cstdio.gti`](../../stdlib/std/cstdio.gti)'s bounded stack-buffer/per-byte append path and real HTTP clients. | Writable capacity, initialized length, native write bounds and success-only prefix publication must be represented; no exposing untracked storage or losing TLS/error policy. |
-| Flat/pool container representations and shared-owner co-allocation | Allocation/cache/lookup measurements against current AVL/bucket implementations and separate shared object/control-block allocation. | Stable entry addresses, immovable elements, borrow invalidation, last-owner cleanup and future weak-owner lifetime remain authoritative. Indexed links are not inherently a language workaround. |
+| Flat/pool container representations | Allocation/cache/lookup measurements against current AVL/bucket implementations. Source shared-owner co-allocation is implemented by the L-OWN-01 source replacement. | Stable entry addresses, immovable elements, borrow invalidation, last-owner cleanup and weak-owner lifetime remain authoritative. Indexed links are not inherently a language workaround. |
 | Cached/preparsed formatting and lower-cost source locations | Measure repeated pattern parsing/argument scans and owned location construction; separate runtime cost from compiler latency. | One parser, bounded CTFE profile and source-owned representation; literal descriptor lifetime/pinning is not interchangeable with owned `source_location` or hidden caller tokens. |
 | Further numeric/SIMD, coroutine/async, module linkage or concurrency breadth | A real client plus existing row prerequisites, not C++ API parity or LLVM availability. | Keep exact arithmetic/failure, target support, ownership and published concurrency contracts; the existing scoped-thread/weak-owner/freestanding gaps are not closed by adoption. |
 
@@ -8996,15 +8996,40 @@ prerequisite checkpoints as full acceptance.
 
 ### L-OWN-01: Shared And Weak Ownership
 
-- **State/role:** the requested strong-ownership and borrowing-composition
-  slice is implemented in 0.354.0 (2026-09-30), with explicit cloning and
-  read-only shared access. Custom copy and move constructor bodies remain
-  out of scope by user decision. Weak ownership and recoverable shared
-  allocation remain open in this broader row.
-- **Scope:** Implement source-defined `shared_ptr` and `weak_ptr` policy over
-  narrow trusted control-block operations, and provide the selected
-  recoverable unique/shared allocation factories. Make copy, move, observation,
-  locking, drop, cycle limitations, and allocation failure explicit.
+- **Source replacement revision (2026-10-29):** strong and weak ownership
+  policy is implemented in ordinary GTI source in 0.491.0. Both handles support
+  explicit cloning, generated movement, reset and swap; weak handles provide
+  expiration/count snapshots and non-resurrecting `lock()`. One allocation
+  contains independently constructed payload and control objects. The final
+  strong release destroys the payload; the final weak credit frees storage.
+  Source guards and process leases reclaim unpublished state on failure.
+- **General prerequisites implemented:** conditional transfer/share predicates,
+  scalar atomics in both execution profiles without a host-thread runtime,
+  explicit wrapping atomic RMW, and the independent `[[unsafe_owned]]`
+  encapsulation assertion. The latter preserves local callbacks over
+  single-thread-only payloads without granting thread capabilities. Unrelated
+  user-defined owners and hidden borrowed/raw dependencies exercise its boundary.
+- **Compiler-private boundary:** raw layout and object lifetime, allocation
+  leases, checked borrowing, function-pointer ABI, atomic target operations and
+  defined-failure propagation remain general compiler/runtime mechanisms. Public
+  source owners do not use private strong-owner operations; the historical
+  private capability remains only for compatibility and independent tests.
+- **Accepted delivery costs:** the owner approved LLVM-only wrapping operations
+  and the resulting C++ support regression for public shared/weak ownership.
+  Source handles occupy 24 bytes versus 16 bytes for the former private strong
+  handle. Co-allocation reduces factory allocations from two to one; weak
+  observers retain that allocation after payload destruction. These costs were
+  explicitly accepted on 2026-10-28. Measured optimized retain/release,
+  contended-count and allocation workloads remain within the accepted budget;
+  performance reports distinguish wall-time evidence from isolated-host claims.
+- **State/role:** source strong and weak ownership supersede the private-backed
+  0.354.0 shared-owner implementation below. Recoverable shared allocation is
+  still separate work. Custom copy/move constructor bodies remain out of scope
+  by owner decision; duplication uses `clone()` and movement is generated.
+- **Scope:** source-defined `shared_ptr` and `weak_ptr` policy over general
+  systems primitives, with narrow trusted mechanisms only where source cannot
+  establish the required invariant. Recoverable allocation factories remain
+  named follow-up work rather than a claim of this implementation.
 - **Accepted shared-access rule:** pointee access is read-only. A mutable
   handle permits reset and swap, not exclusive access to an aliased pointee.
   Shared mutation uses checked synchronization such as `mutex<T>` or
@@ -9037,7 +9062,7 @@ prerequisite checkpoints as full acceptance.
   cases, both custom-body rejection probes (`GTI-S2020`), the five borrowing
   pipeline/runtime/LSP gates, and focused stored/nested/owner-return checks.
   This establishes separation of the experiments, not shared-owner delivery.
-- **Shared-owner implementation slice:** represent a private move-only strong-owner
+- **Historical private-backed slice (superseded):** represent a private move-only strong-owner
   capability by trusted declaration identity, not a public wrapper name or
   the legacy implicitly copyable shared-pointer type. Ordinary GTI owns
   explicit cloning and handle policy. A read-only pointee borrow protects the
@@ -9050,7 +9075,7 @@ prerequisite checkpoints as full acceptance.
   transfer permission; address-stable synchronization objects may require a
   separate general allocation/remote-cleanup distinction, not a mutex-name
   exception.
-- **Implemented slice:** the private nominal capability,
+- **Historical 0.354.0 implementation evidence:** the private nominal capability,
   ordinary source wrapper/factory, semantic ownership and concurrency traits,
   MIR operation/failure contracts, and recursive cleanup recipes are present.
   Focused optimized tests reject implicit copying, writable pointee access,
@@ -9089,8 +9114,8 @@ prerequisite checkpoints as full acceptance.
   100 malformed-source mutations, and 85 examples in four variants; its final
   comparison showcase could not run because `examples/gti-vs-cpp/verify.py`
   is absent. This is not a complete optional-audit pass.
-  Weak ownership remains in the broader row's scope; it is not silently
-  counted as delivered by completing the requested shared-owner campaign.
+  This evidence describes the earlier strong-owner campaign; production weak
+  ownership is delivered by the source replacement revision above.
 - **Exit gate:** exactly-once object/control-block destruction, weak expiration,
   cycles documented as a limitation, allocation failure, and HIR/MIR lifecycle
   tests.
@@ -12384,9 +12409,14 @@ LLVM gap the audit found, runs on LLVM since PR 421.
   destructor's virtual call on `this` runs the destructor's own class on LLVM,
   the owner's lifecycle-dispatch rule. The C++ backend reaches the destroyed
   derived override instead.
-- **C++ backend bugs under GCC on Linux:** `enumerator-references` (a dangling
-  reference to an enumerator temporary) and `hierarchy-array-field-failure`
-  (double destruction after a failed constructor).
+- **C++ backend bugs under GCC on Linux at the audited snapshot:**
+  `enumerator-references` (a dangling reference to an enumerator temporary) and
+  `hierarchy-array-field-failure` (double destruction after a failed
+  constructor). The in-flight L-OWN-01 source-owner change already contained a
+  completed preservation fix for the latter before this acceptance record:
+  rollback restores inert native array-element lifetimes, with independent
+  C++20/C++23 and LLVM failure/cleanup evidence. No further C++ gap work is
+  scheduled here.
 - **C++-only test coverage.** About 70 test files still build their companion
   programs only on the C++ backend. The one-off audit found those programs
   matching on LLVM, but the suite does not keep checking them on LLVM. Adding

@@ -13,7 +13,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:846: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
+          "stderr": "<std/memory>:855: runtime error\\[GTI-R0010\\]: invalid_storage_state in occupied_relocation_destination\\n",
           "stdout": "target 1\nsource 1\nsource 0\nouter guard\n"
         },
         {
@@ -21,7 +21,7 @@
             "a"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:845: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
+          "stderr": "<std/memory>:854: runtime error\\[GTI-R0010\\]: invalid_storage_state in invalid_relocation_source\\n",
           "stdout": "source 1\nsource 0\nouter guard\n"
         },
         {
@@ -30,7 +30,7 @@
             "b"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:843: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
+          "stderr": "<std/memory>:852: runtime error\\[GTI-R0010\\]: invalid_storage_state in relocation_capacity\\n",
           "stdout": "source 2\nsource 1\nsource 0\nouter guard\n"
         }
       ]
@@ -39,7 +39,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:811: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:820: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -47,7 +47,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:812: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
+          "stderr": "<std/memory>:821: runtime error\\[GTI-R0010\\]: invalid_storage_state in duplicate_construction\\n",
           "stdout": "construct 0\ndrop 0\n"
         },
         {
@@ -56,7 +56,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:1581: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
+          "stderr": "<std/memory>:1590: runtime error\\[GTI-R0007\\]: index_out_of_bounds in private_storage\\n",
           "stdout": "construct 0\nconstruct 10\ndrop 10\ndrop 0\n"
         },
         {
@@ -66,7 +66,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:831: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
+          "stderr": "<std/memory>:840: runtime error\\[GTI-R0010\\]: invalid_storage_state in uninitialized_access\\n",
           "stdout": "construct 0\nconstruct 10\nconstruct 20\ndrop 20\ndrop 10\ndrop 0\n"
         }
       ]
@@ -85,7 +85,7 @@
       "cases": [
         {
           "exit": "abort",
-          "stderr": "<std/memory>:390: runtime error\\[GTI-R0011\\]: allocation_failure in private_storage\\n",
+          "stderr": "<std/memory>:392: runtime error\\[GTI-R0011\\]: allocation_failure in private_storage\\n",
           "stdout": "full\n"
         }
       ]
@@ -285,7 +285,7 @@
       "cases": [
         {
           "exit": 70,
-          "stderr": "<std/memory>:278: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
+          "stderr": "<std/memory>:280: runtime error\\[GTI-R0008\\]: empty_owner_access in dereference\\n",
           "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
         },
         {
@@ -293,7 +293,7 @@
             "x"
           ],
           "exit": 70,
-          "stderr": "<std/memory>:286: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
+          "stderr": "<std/memory>:288: runtime error\\[GTI-R0008\\]: empty_owner_access in member_access\\n",
           "stdout": "tag 3\ntag 2\ntag 1\nrelease 1\ntag 9\n"
         }
       ]
@@ -2121,8 +2121,7 @@
       "outcome": "pass"
     },
     "f7-declaration-only-weak-ptr": {
-      "code": "GTI-S2106",
-      "outcome": "rejected"
+      "outcome": "pass"
     },
     "f7-scaffold-operation-link-error": {
       "outcome": "pass"

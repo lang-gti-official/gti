@@ -1081,16 +1081,20 @@ int main() {
     const bool transferable = policy != "[[no_transfer]]";
     bool sawStorage = false;
     bool sawShared = false;
-    for (const auto &instance : frontend.mir.classInstances()) {
+    for (const auto &instance : frontend.hir.classInstances()) {
+      const bool sourceShared =
+          instance.source && instance.source->name().lexeme == "shared_ptr";
       if (instance.compilerCapability !=
               lang::CompilerCapabilityTypeKind::MutexStorage &&
-          instance.compilerCapability !=
-              lang::CompilerCapabilityTypeKind::SharedOwner)
+          !sourceShared)
         continue;
       sawStorage |= instance.compilerCapability ==
                     lang::CompilerCapabilityTypeKind::MutexStorage;
-      sawShared |= instance.compilerCapability ==
-                   lang::CompilerCapabilityTypeKind::SharedOwner;
+      sawShared |= sourceShared;
+      if (sourceShared)
+        expect(instance.compilerCapability ==
+                   lang::CompilerCapabilityTypeKind::None,
+               "shared owner capability policy belongs to ordinary source");
       expect(
           instance.traits.transferCapable == transferable &&
               instance.traits.shareCapable == transferable,

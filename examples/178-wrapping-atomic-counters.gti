@@ -1,0 +1,12 @@
+#include <std/atomic>
+
+// Wrapping is explicit: unlike fetch_add/fetch_sub, these operations use
+// modulo arithmetic. Their result is the value before the atomic update.
+// They need neither the concurrent profile nor a host thread runtime.
+int main() {
+  std::atomic<uint8_t> sequence{uint8_t(255)};
+  auto previous = sequence.fetch_add_wrapping(uint8_t(1), std::memory_order_relaxed());
+  if (previous != uint8_t(255) || sequence.load() != uint8_t(0)) { return 1; }
+  auto wrapped = sequence.fetch_sub_wrapping(uint8_t(1));
+  return wrapped == uint8_t(0) && sequence.load() == uint8_t(255) ? 0 : 2;
+}

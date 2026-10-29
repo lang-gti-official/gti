@@ -4012,6 +4012,8 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::AtomicNotifyOne:
         case IntrinsicKind::AtomicNotifyAll:
         case IntrinsicKind::AtomicStore:
+        case IntrinsicKind::AtomicFetchAddWrapping:
+        case IntrinsicKind::AtomicFetchSubWrapping:
         case IntrinsicKind::AtomicExchange:
         case IntrinsicKind::AtomicCompareExchange:
         case IntrinsicKind::MutexLock:
@@ -5342,14 +5344,14 @@ auto SemanticVisitor::Impl::isSimdLibraryUnit(SourceUnitId sourceUnit) const
          unit->standardLibraryName == "std/simd";
 }
 
-auto SemanticVisitor::Impl::isFunctionalLibraryUnit(
+auto SemanticVisitor::Impl::isFunctionPointerLibraryUnit(
     SourceUnitId sourceUnit) const -> bool {
   if (sourceGraph == nullptr) {
     return false;
   }
   const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
   return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
-         unit->standardLibraryName == "std/functional";
+         unit->standardLibraryName == "std/detail/function_pointer";
 }
 
 auto SemanticVisitor::Impl::isDefaultLibraryStorageBorrowCarrier(
@@ -5747,6 +5749,16 @@ auto SemanticVisitor::Impl::recordTypeUse(const TypeRef &type) -> void {
         genericParameterInfo(parameter->genericParameterId);
     if (info != nullptr) {
       symbol = symbolForDeclaration(info->name);
+    } else {
+      // Declaration attributes are resolved before the enclosing class enters
+      // the class catalog. Its generic binders already have stable symbols.
+      for (const auto &candidate : semanticModel.database().symbols()) {
+        if (candidate.kind == SymbolKind::TypeParameter &&
+            candidate.type == *parameter) {
+          symbol = candidate.id;
+          break;
+        }
+      }
     }
   } else if (const std::optional<ResolvedTypeAlias> alias =
                  resolveTypeAliasPath(type, currentNamespace)) {

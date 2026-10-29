@@ -1,9 +1,11 @@
 #include <std/memory>
+#include <std/atomic>
 
 mut int retired = 0;
 
 struct Referent {
   mut int value;
+  std::atomic<int> observations{0};
   std::unique_ptr<int> token;
   Referent(int value) : value(value), token(std::make_unique<int>(value)) {}
   ~Referent() { retired = retired * 10 + 1; }
@@ -16,10 +18,40 @@ struct Owner {
   ~Owner() { retired = retired * 10 + 2; }
 };
 
+interface View { int read(); void write(int value) mut; };
+class Abstract { public: Abstract() = default; virtual int other() = 0; };
+class Concrete : public Abstract, public View {
+  mut int value = 17;
+public:
+  Concrete() = default;
+  int read() override { return this.value; }
+  void write(int value) mut override { this.value = value; }
+  int other() override { return this.value + 1; }
+};
+struct ViewOwner { mut Concrete object; ViewOwner() : object(Concrete()) {} };
+
+int check_views() {
+  mut ViewOwner owner{};
+  View& adjusted = owner.object;
+  const View* view = &adjusted;
+  View& read = unsafe { std::assume_ref(view, owner) };
+  if (read.read() != 17) { return 4; }
+  mut View& adjusted_mut = owner.object;
+  View* writable = &adjusted_mut;
+  mut View& write = unsafe { std::assume_mut(writable, owner) };
+  write.write(18);
+  Abstract& adjusted_abstract = owner.object;
+  const Abstract* abstract_view = &adjusted_abstract;
+  Abstract& abstract_read = unsafe { std::assume_ref(abstract_view, owner) };
+  return abstract_read.other() == 19 ? 0 : 5;
+}
+
 int main() {
   {
     mut Owner owner{};
     Referent& read = unsafe { std::assume_ref(&owner.item, owner) };
+    read.observations.fetch_add(1);
+    if (read.observations.load() != 1) { return 6; }
     if (read.value != 42) {
       return 1;
     }
@@ -29,5 +61,6 @@ int main() {
       return 2;
     }
   }
-  return retired == 21 ? 0 : 3;
+  if (retired != 21) { return 3; }
+  return check_views();
 }

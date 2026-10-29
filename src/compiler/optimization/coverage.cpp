@@ -293,6 +293,8 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::AtomicNotifyOne:
   case IntrinsicKind::AtomicNotifyAll:
   case IntrinsicKind::AtomicStore:
+  case IntrinsicKind::AtomicFetchAddWrapping:
+  case IntrinsicKind::AtomicFetchSubWrapping:
   case IntrinsicKind::AtomicExchange:
   case IntrinsicKind::AtomicCompareExchange:
   case IntrinsicKind::MutexLock:

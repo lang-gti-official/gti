@@ -1883,8 +1883,20 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     // immediately on a second failure. A caller already unwinding owns its
     // first record, so return the first new failure without replacing that
     // record.
+    // A final source destructor with no children or allocation release has
+    // no remaining cleanup that could observe an incoming failure context.
+    // Propagate its first failure directly, retaining the emergency check.
+    const bool terminalDestructor =
+#if defined(GTI_LLVM_C04_NATIVE_UNWIND)
+        false;
+#else
+        !unique && !shared && recipe.destructor && recipe.aggregate.empty() &&
+        !recipe.fixedArray && !recipe.polymorphicCleanup;
+#endif
+    if (terminalDestructor)
+      function->addFnAttr(llvm::Attribute::InlineHint);
     const auto observe = [&](llvm::Value *status) {
-      if (!cleanupToken) {
+      if (!terminalDestructor && !cleanupToken) {
         llvm::IRBuilder<> entry(&function->getEntryBlock(),
                                 function->getEntryBlock().begin());
         cleanupToken = entry.CreateAlloca(session.layouts().pointer());
@@ -1912,6 +1924,14 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       abandonIfRequested();
       failures.checkIncomingCleanup(ir, scratch);
       abandonIfRequested();
+#if !defined(GTI_LLVM_C04_NATIVE_UNWIND)
+      if (terminalDestructor) {
+        failures.copyChannel(ir, output, scratch);
+        ir.CreateRet(ir.getFalse());
+        ir.SetInsertPoint(next);
+        return;
+      }
+#endif
       auto *secondary =
           llvm::BasicBlock::Create(session.context(), "secondary", function);
       auto *first =

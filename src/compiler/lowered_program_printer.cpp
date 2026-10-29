@@ -587,11 +587,23 @@ private:
     traits(value.traits);
     if (value.transferCondition) {
       output << ";transfer-condition=";
-      type(*value.transferCondition);
+      output << '[';
+      for (const auto &node : value.transferCondition->nodes) {
+        output << number(node.kind) << ':';
+        type(node.type);
+        output << ':' << node.left << ':' << node.right << ';';
+      }
+      output << ']';
     }
     if (value.shareCondition) {
       output << ";share-condition=";
-      type(*value.shareCondition);
+      output << '[';
+      for (const auto &node : value.shareCondition->nodes) {
+        output << number(node.kind) << ':';
+        type(node.type);
+        output << ':' << node.left << ':' << node.right << ';';
+      }
+      output << ']';
     }
     output << ";transfer=" << number(value.transferPolicy)
            << ";share=" << number(value.sharePolicy)

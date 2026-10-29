@@ -97,3 +97,19 @@ def execute(gti: Path, root: Path, case: Path, source: Path, endpoint: Endpoint,
                                generated, f"execution failed: {error}")
     return ExecutionResult(tuple(command), built.returncode, ran.returncode,
                            ran.stdout, ran.stderr, generated)
+
+
+def require_cpp_wrapping_rejection(gti: Path, source: Path, output: Path,
+                                   env: dict[str, str], endpoint: Endpoint,
+                                   *, concurrent: bool = False) -> None:
+    """Positive support-boundary evidence; callers still require native results."""
+    assert endpoint.backend == "cpp"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(b"preserved unsupported output")
+    result = subprocess.run(plan_compile_command(gti, source, output, endpoint,
+                            concurrent=concurrent), capture_output=True, text=True,
+                            env=env, timeout=240)
+    assert (result.returncode == 65 and "GTI-B0003" in result.stderr
+            and "wrapping atomic read-modify-write" in result.stderr
+            and output.read_bytes() == b"preserved unsupported output"), result
+    print(f"RECORDED C++ LIMITATION {source.name}: wrapping atomics", flush=True)

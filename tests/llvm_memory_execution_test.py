@@ -2,6 +2,7 @@
 """Exact memory/lifetime execution, without a generated-C++ native fallback."""
 
 import os
+import shutil
 from pathlib import Path
 import sys
 import subprocess
@@ -38,6 +39,25 @@ EXPECTED_STDOUT = {
 # pass: the fixture independently checks values and exactly-once destruction.
 NATIVE_ONLY = {"relocation-composition"}
 INLINE_CASES = {
+    # Retained private capability; loaded only in an isolated trusted memory leaf.
+    "private-shared-capability": r'''
+mut int drops = 0;
+class Payload {
+public:
+  int value;
+  Payload(int value) : value(value) {}
+  ~Payload() { drops += this.value == 7 ? 1 : 10; }
+};
+int main() {
+  {
+    auto unique = gti_internal::allocate_unique_owner<Payload>(7);
+    auto shared = gti_internal::shared_owner_from_unique(std::move(unique));
+    auto copy = gti_internal::shared_owner_clone(shared);
+    if (gti_internal::shared_owner_use_count(copy) != uint64_t(2)) { return 1; }
+  }
+  return drops == 1 ? 0 : 3;
+}
+''',
     # Restoring swap, exchange and indexed swap relocate between disjoint
     # initialized places without copying or running cleanup. Each live object
     # must be destroyed exactly once afterwards, whole arrays swap as one
@@ -166,6 +186,24 @@ FAILURES = {"guard-cleanup": ("llvm_memory_guard_cleanup.gti", "GTI-R0014",
                               "Boolean-guard cleanup trace observed")}
 
 
+def prepare_evidence_case(root: Path, name: str, source: Path, work: Path):
+    """Keep legacy private primitive coverage separate from the public owner.
+
+    The exact case text is appended to a disposable trusted memory leaf. The
+    ordinary compiler still rejects private names in application source; no
+    trust check or production library declaration is changed for this test.
+    """
+    if name != "private-shared-capability":
+        return root, source
+    overlay = work / "private-shared-library"
+    standard_library = overlay / "stdlib"
+    shutil.copytree(root / "stdlib", standard_library)
+    memory = standard_library / "std/memory.gti"
+    with memory.open("a", encoding="utf-8") as output:
+        output.write("\n" + source.read_text(encoding="utf-8"))
+    return overlay, memory
+
+
 def evidence_cases(root: Path) -> dict[str, str]:
     fixtures = root / "tests/fixtures"
     cases = {
@@ -273,11 +311,24 @@ def main():
                 source.write_text(INLINE_CASES[name], encoding="utf-8")
             else:
                 source = root / "tests/fixtures" / CASES[name]
+            case_root, source = prepare_evidence_case(root, name, source, work)
+            case_env = {**env, "GTI_STDLIB_PATH": str(case_root / "stdlib")}
             observed = []
             for endpoint in endpoints:
                 if name in NATIVE_ONLY and endpoint.backend == "cpp":
                     continue
-                result = execute(gti, root, work / f"{name}-{endpoint}", source, endpoint, env)
+                if name in {"shared", "empty-shared"} and endpoint.backend == "cpp":
+                    destination = work / f"unsupported-{name}-{endpoint.standard}"
+                    destination.write_bytes(b"preserved")
+                    rejected = subprocess.run([str(gti), str(source), "--backend", "cpp",
+                        "--std", endpoint.standard, "-O3", "-o", str(destination)],
+                        capture_output=True, text=True, env=env, timeout=120)
+                    assert (rejected.returncode == 65 and "GTI-B0003" in rejected.stderr
+                            and "wrapping atomic read-modify-write" in rejected.stderr
+                            and destination.read_bytes() == b"preserved"), rejected
+                    print(f"RECORDED C++ LIMITATION {name}: wrapping atomics", flush=True)
+                    continue
+                result = execute(gti, root, work / f"{name}-{endpoint}", source, endpoint, case_env)
                 if result.error or result.observable != (0, EXPECTED_STDOUT.get(name, ""), ""):
                     raise AssertionError(f"{name} {endpoint}: {result}")
                 if name == "structural-relocation":
@@ -288,7 +339,7 @@ def main():
             if any(value != observed[0] for value in observed):
                 raise AssertionError(f"memory observable drift: {name}: {observed}")
             coverage = ("native LLVM O0-O3 source-contract oracle (known C++ representation gap)"
-                        if name in NATIVE_ONLY else "C++20/23O3 and native LLVM O0-O3")
+                        if name in NATIVE_ONLY or name in {"shared", "empty-shared"} else "C++20/23O3 and native LLVM O0-O3")
             print(f"{name}: {coverage} passed", flush=True)
         for name, (filename, code, marker) in FAILURES.items():
             if selected and selected != name:

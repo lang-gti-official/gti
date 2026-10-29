@@ -27,6 +27,8 @@ def frozen_plan(case, compiler, cxx, runtime, repository, scratch):
     for optimization in optimizations:
         output = case_root / f'program-{optimization}'
         command = [str(compiler), str(repository / case['source']), '--cxx', str(cxx), f'-{optimization}']
+        if case.get('backend') is not None:
+            command += ['--backend', case['backend']]
         if case.get('execution_profile') is not None:
             command += ['--execution-profile', str(case['execution_profile'])]
         steps.append({
@@ -56,8 +58,9 @@ def equivalent(case, root):
     assert context.source == case['source']
     assert context.source_sha256 == hashlib.sha256((root / case['source']).read_bytes()).hexdigest()
     assert context.loading == 'stdlib-surface-native-fixture-with-compiler-overrides'
-    assert set(context.unresolved) == {
-        'llvm-target-applicability', 'native-fixture-build-contract', 'implicit-shipped-backend'}
+    assert set(context.unresolved) == ({
+        'llvm-target-applicability', 'native-fixture-build-contract'} |
+        ({'implicit-shipped-backend'} if not case.get('backend') else set()))
     assert contextual['case'] == case and contextual['observed'] == 'unrun'
     assert contextual['role'] == ('positive-admission' if case['mode'] == 'run' else 'expected-rejection-control')
     assert contextual['runtime_environment'] == 'inherited-separately'

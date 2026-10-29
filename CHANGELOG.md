@@ -9,6 +9,35 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.491.0 - Source-defined shared and weak ownership
+
+- `std::shared_ptr` now implements its handle, explicit cloning, reference
+  counts, final release, upcasts and allocation policy in GTI source. The
+  factory constructs the payload and control in one allocation, preserving
+  read-only borrowing, constructor rollback and last-owner cleanup.
+- `[[unsafe_owned]]` reviews a class or struct's raw ownership representation
+  independently of thread permission. Generic payloads are checked separately,
+  and checked borrows remain tracked. This enables local callbacks to own shared
+  or weak handles of thread-affine payloads.
+- Scalar atomics are available in both execution profiles and no longer
+  require a host thread runtime. Thread creation and atomic wait/notification
+  retain their separate restrictions.
+- Unsafe transfer/share declarations accept bounded capability predicates,
+  including conjunctions needed by owners whose last release can run on
+  another thread. False predicates preserve local usability.
+- Explicit wrapping atomic add/subtract operations are available on LLVM.
+  Existing checked operations retain their arithmetic contract. Consequently,
+  the source shared owner now requires LLVM; C++ reports `GTI-B0003` for its
+  wrapping atomic operation. This backend support change is deliberate.
+- `std::weak_ptr` implements explicit weak cloning, promotion through `lock()`,
+  expiry/count snapshots, reset and swap in source. Weak observers retain the
+  control block after payload destruction and cannot revive an expired object.
+  Shared and weak handles use the same conditional thread permissions.
+- C++ constructor rollback now restores inert array-element lifetimes before
+  enclosing-object teardown, preventing invalid or repeated cleanup under GCC.
+- Synthesized receiver witnesses retain their concrete place identity, allowing
+  lexical debug information for unsafe raw-reference returns tied to `this`.
+
 ## 0.490.0 - Per-file include migration advice
 
 - The language server recommends module imports at the first `#include` in

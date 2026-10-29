@@ -8,7 +8,7 @@ from lsp_smoke_test import LspSession, lsp_position
 
 def main():
     source = ("// 😀 UTF-16 control\n"
-              "[[unsafe_transfer(T), unsafe_share(T)]] class Owner<T> { T* pointer = nullptr; };\n"
+              "[[unsafe_owned, unsafe_transfer(T), unsafe_share(T)]] class Owner<T> { T* pointer = nullptr; };\n"
               "int main() { return 0; }\n")
     with tempfile.TemporaryDirectory(prefix="gti-conditional-lsp-") as directory:
         path = pathlib.Path(directory) / "owner.gti"
@@ -49,6 +49,17 @@ def main():
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 3}, "contentChanges": [{"text": source}]}})
             assert not diagnostics(3)
+            duplicate = source.replace("unsafe_owned,", "unsafe_owned, unsafe_owned,")
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+                "textDocument": {"uri": uri, "version": 4}, "contentChanges": [{"text": duplicate}]}})
+            error = next(d for d in diagnostics(4) if d["code"] == "GTI-S2059")
+            offset = duplicate.index("unsafe_owned", duplicate.index("unsafe_owned") + 1)
+            assert error["range"] == {"start": lsp_position(duplicate, offset),
+                                      "end": lsp_position(duplicate, offset + len("unsafe_owned"))}, error
+            assert "more than once" in error["message"] and error.get("relatedInformation"), error
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+                "textDocument": {"uri": uri, "version": 5}, "contentChanges": [{"text": source}]}})
+            assert not diagnostics(5)
         finally:
             session.close()
     print("conditional capability LSP binder navigation and versioned diagnostics passed")

@@ -97,7 +97,7 @@ obtain metadata releases the object region before returning an error.
 | --- | --- |
 | Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in `stdlib/std/memory.gti`; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |
 | Prefix storage used by strings/vectors and related clients | Source raw-buffer/prefix state and matching process/resource leases in `<std/memory>`. Terminated string policy adds one initialized NUL slot. S-ALLOC-09 and its performance/regression acceptance are integrated in 0.397.0; the native engine, prelude declarations, semantic type/intrinsic family, construction-preflight instruction, representation and private optimizer facts are retired. General object-lifetime and checked-loan mechanisms remain. |
-| Unique ownership and generated allocation resources | `mir_object_allocation_v1` and scalar unique allocation in `cpp_failure_support_writer.cpp` still acquire native storage; verified MIR owns construction, publication, failure and cleanup. Shared ownership additionally uses its native control block. These are remaining migration clients, not reasons to put sparse allocation policy back in the backend. |
+| Unique ownership and generated allocation resources | `mir_object_allocation_v1` and scalar unique allocation in `cpp_failure_support_writer.cpp` still acquire native storage; verified MIR owns construction, publication, failure and cleanup. Legacy private shared ownership additionally uses its native control block; public shared ownership now allocates its source aggregate through process leases. These are remaining migration clients, not reasons to put sparse allocation policy back in the backend. |
 | Native service implementation state | Runtime file/process/HTTP/thread/synchronization and conversion implementations use native containers or host handles internally. Their buffer/handle lifetimes belong to their service boundaries; they do not supply sparse-storage metadata. |
 | Compiler and tool memory | C++ containers in compiler, driver, LSP and tooling are host implementation state, outside GTI-program allocation policy. |
 
@@ -207,7 +207,7 @@ not permission to weaken existing safety or reject previously supported users.
 | M05 | Non-polymorphic unique allocation and release | `allocate_unique_owner`, private `unique_owner<T>` and generated allocation support. | Source lease/engagement state, constructor rollback, exactly-once final drop, safe borrow anchoring, movement and replacement. A sparse storage field is not automatically API/performance-equivalent. |
 | M06 | Polymorphic unique-owner conversion and destruction | Private unique upcast and dynamic cleanup bindings. | Retain original allocation/release authority while changing the view; execute the actual dynamic object's cleanup. Ordinary base-pointer destruction is not a substitute. |
 | M07 | Optional engagement, access and reset | Private `optional_storage<T>`. | Source inline storage plus engagement state, inactive-access failures and checked loans. Public `uninitialized<T>` is fixed-address for non-bitwise-relocatable payloads; preserving movable owning optional needs a general carrier/lifecycle solution. A flag alone is insufficient. |
-| M08 | Shared control-block allocation, retain/release and observation | Private `shared_owner<T>` and native atomic control block. | Source ownership state plus public atomic operations, correct memory orders/count overflow, last-owner cleanup, promotion rollback, thread capabilities and polymorphic release. Weak ownership is additional work, not unlocked automatically. |
+| M08 | Shared control-block allocation, retain/release and observation | Source `shared_ptr<T>` and source atomic control block (LLVM). | General layout/lifetime, allocation, atomics, function pointers and capability predicates remain compiler-supported. Weak ownership is additional work, not unlocked automatically. |
 | M10 | Container guard predicates and formatting of failures | Source computes many predicates but calls private `require_*`/bounds helpers. | Source can own predicates/message policy. Preserve stable failure categories, location, cleanup and optimizer proof identity through a general failure interface; replacing everything with generic panic is not equivalent. |
 
 S22–S24 use the representation accepted in
@@ -535,17 +535,25 @@ to one exact installed standard-library unit: `unique_owner<T>`, `shared_owner<T
 managed threads to `<std/thread>`, atomics to `<std/atomic>`, mutexes to
 `<std/mutex>`, and defined integer arithmetic to `<std/numeric>`. Iterator and
 callable structural constraints are similarly owned by `<std/iterator>` and
-`<std/functional>`. Aliases preserve the selected semantic type; reusing a
+`<std/functional>`; function-pointer primitives bind to the shared leaf
+`<std/detail/function_pointer>`. Aliases preserve the selected semantic type; reusing a
 declaration or qualified spelling in application source creates no capability.
 HIR/MIR retain selected intrinsic identity, and the backend queries semantic
 capability facts rather than recognizing a source name before choosing its
 representation.
 
-`shared_owner<T>` is a nominal move-only strong token, not the legacy implicit
+The retained legacy private `shared_owner<T>` is a nominal move-only strong token, not the legacy implicit
 shared-pointer type. Its private operations create an empty token, consume an
 existing unique owner, explicitly retain, borrow read-only, observe emptiness
 or count, swap, and explicitly consume one token into a public polymorphic-base
-view. The public `shared_ptr` policy remains ordinary GTI.
+view. Public `shared_ptr` no longer instantiates it: its source handle holds a
+control pointer and read-only view pointer, and its source control holds an
+atomic count, erased allocation address and exact-type destruction thunk. A
+source aggregate co-allocates this control and its payload field; generated
+field lifetime and a source process lease own rollback and final cleanup. The
+new wrapping atomic decrement is LLVM-only, so C++ rejects executable shared
+ownership with an explicit unsupported-operation diagnostic. The following
+private-token details describe the retained legacy mechanism.
 MIR verifies each exact capability/operand/result, its loan anchor, failure
 outcome, and invocation handoff. A shared drop recipe contains one unprojected
 unique-owner recipe, executed only on final release; passive pointees still
@@ -925,6 +933,16 @@ Generic ratio durations, sleep, calendars, formatting, parsing, time zones,
 and additional clocks remain outside this first observation slice.
 
 ## Managed Concurrency Boundary
+
+Scalar atomic storage and operations are available in both execution profiles
+without a host thread runtime. Explicit wrapping integer add/subtract use typed
+RMW intrinsics; the shared owner proves a positive count before its total
+wrapping decrement. Checked add/subtract retain their source compare/exchange
+loops and defined overflow behavior. Blocking wait/notification retains the
+concurrent-profile and host-thread-runtime requirements, carried
+through the existing transitive thread-runtime call-effect analysis. This
+separates a general atomic mechanism from permission to create or coordinate
+workers; reference-count algorithms can remain ordinary source in either profile.
 
 The public managed-thread type is the ordinary source-defined `std::thread`
 class in `<std/thread>`. The compiler does not recognize that class, its

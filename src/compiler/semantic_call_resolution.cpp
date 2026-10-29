@@ -3313,7 +3313,7 @@ auto SemanticVisitor::Impl::reportUnsupportedCallableReturn(
 }
 
 auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
-    const SemanticType &type, std::unordered_set<ClassId> &visiting,
+    const SemanticType &type, std::vector<SemanticType> &visiting,
     bool reviewedRawState, bool checkedBorrows) const -> bool {
   if (type.kind == SemanticType::FunctionItem) {
     // Parameters and results describe the selected target; they are not
@@ -3351,8 +3351,28 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
       if (traits.transferCapable && !traits.containsBorrowedState)
         reviewedRawState = true;
     }
-    if (!visiting.insert(type.classId).second) {
+    // Concrete identities matter: Wrapper<Wrapper<Raw>> must not stop at
+    // the repeated declaration and silently accept its innermost payload.
+    if (std::find(visiting.begin(), visiting.end(), type) != visiting.end())
       return false;
+    if (visiting.size() >= 256)
+      return true;
+    visiting.push_back(type);
+    if (owner.unsafeOwned) {
+      // The unsafe assertion reviews this representation, not its erased
+      // generic payloads. Those must independently own their lifetime, even
+      // when this class itself is nested inside another reviewed wrapper.
+      const auto &arguments = owner.exactSpecializationPrimary != 0
+                                  ? owner.exactTypeArguments
+                                  : type.arguments;
+      for (const SemanticType &argument : arguments) {
+        if (containsDisallowedCallableCaptureState(argument, visiting, false,
+                                                   false)) {
+          visiting.pop_back();
+          return true;
+        }
+      }
+      reviewedRawState = true;
     }
     const GenericSubstitution substitution = classSubstitution(type);
     bool found = false;
@@ -3372,7 +3392,7 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
             reviewedRawState, checkedBorrows);
       }
     }
-    visiting.erase(type.classId);
+    visiting.pop_back();
     return found;
   }
   if (type.kind == SemanticType::Enum && type.enumId != 0 &&
@@ -3401,7 +3421,7 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
 
 auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
     const SemanticType &type, bool checkedBorrows) const -> bool {
-  std::unordered_set<ClassId> visiting;
+  std::vector<SemanticType> visiting;
   return containsDisallowedCallableCaptureState(type, visiting, false,
                                                 checkedBorrows);
 }
@@ -4550,11 +4570,12 @@ auto SemanticVisitor::Impl::functionSignatureSpelling(
 }
 
 auto SemanticVisitor::Impl::typeRequiresThreads(
-    const SemanticType &type, std::unordered_set<ClassId> &visiting) const
-    -> bool {
+    const SemanticType &type, std::unordered_set<ClassId> &visiting,
+    bool includeAtomics) const -> bool {
   if (std::any_of(type.arguments.begin(), type.arguments.end(),
                   [&](const SemanticType &argument) {
-                    return typeRequiresThreads(argument, visiting);
+                    return typeRequiresThreads(argument, visiting,
+                                               includeAtomics);
                   })) {
     return true;
   }
@@ -4569,7 +4590,7 @@ auto SemanticVisitor::Impl::typeRequiresThreads(
     return true;
   }
   if (owner->compilerCapability == CompilerCapabilityTypeKind::AtomicStorage) {
-    return true;
+    return includeAtomics;
   }
   if (owner->compilerCapability == CompilerCapabilityTypeKind::MutexStorage ||
       owner->compilerCapability == CompilerCapabilityTypeKind::MutexLockToken) {
@@ -4583,7 +4604,8 @@ auto SemanticVisitor::Impl::typeRequiresThreads(
       std::any_of(owner->bases.begin(), owner->bases.end(),
                   [&](const ClassBaseTypeInfo &base) {
                     return typeRequiresThreads(
-                        substituteType(base.type, substitution), visiting);
+                        substituteType(base.type, substitution), visiting,
+                        includeAtomics);
                   }) ||
       std::any_of(
           owner->fields.begin(), owner->fields.end(),
@@ -4596,16 +4618,17 @@ auto SemanticVisitor::Impl::typeRequiresThreads(
             return member != owner->members.end() &&
                    typeRequiresThreads(
                        substituteType(member->second.symbol.type, substitution),
-                       visiting);
+                       visiting, includeAtomics);
           });
   visiting.erase(owner->id);
   return required;
 }
 
-auto SemanticVisitor::Impl::typeRequiresThreads(const SemanticType &type) const
+auto SemanticVisitor::Impl::typeRequiresThreads(const SemanticType &type,
+                                                bool includeAtomics) const
     -> bool {
   std::unordered_set<ClassId> visiting;
-  return typeRequiresThreads(type, visiting);
+  return typeRequiresThreads(type, visiting, includeAtomics);
 }
 
 auto SemanticVisitor::Impl::rawBorrowArgument(const ExprPtr &argument,
@@ -5031,20 +5054,24 @@ auto SemanticVisitor::Impl::finalizeCThreadRequirements() -> void {
 }
 
 auto SemanticVisitor::Impl::validateConcurrentSurfaceAvailability(
-    const Token &location, std::string_view surface) -> bool {
-  if (target.executionProfile == ExecutionProfile::Concurrent &&
-      target.runtimeCapabilities.threads) {
+    const Token &location, std::string_view surface,
+    bool requiresConcurrentProfile) -> bool {
+  if (!requiresConcurrentProfile ||
+      (target.executionProfile == ExecutionProfile::Concurrent &&
+       target.runtimeCapabilities.threads)) {
     return true;
   }
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2084", DiagnosticPhase::Semantics, location,
-      target.executionProfile != ExecutionProfile::Concurrent
+      requiresConcurrentProfile &&
+              target.executionProfile != ExecutionProfile::Concurrent
           ? std::string(surface) + " requires the concurrent execution profile."
           : std::string(surface) +
                 " is unavailable because the selected target does not "
                 "provide thread-capable concurrency support.");
   diagnostic.hints.emplace_back(
-      target.executionProfile != ExecutionProfile::Concurrent
+      requiresConcurrentProfile &&
+              target.executionProfile != ExecutionProfile::Concurrent
           ? "Select the concurrent execution profile for programs that "
             "use threads or synchronization APIs."
           : "Select a target whose runtime capability set includes "
@@ -5151,8 +5178,17 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
                     [&](const SemanticType &parameter) {
                       return typeRequiresThreads(parameter);
                     });
+    const bool requiresProfile =
+        typeRequiresThreads(ownerType, false) ||
+        typeRequiresThreads(function.returnType, false) ||
+        std::any_of(function.parameterTypes.begin(),
+                    function.parameterTypes.end(),
+                    [&](const SemanticType &type) {
+                      return typeRequiresThreads(type, false);
+                    });
     if (requiresThreads &&
-        !validateConcurrentSurfaceAvailability(paren, "This concurrency API")) {
+        !validateConcurrentSurfaceAvailability(paren, "This concurrency API",
+                                               requiresProfile)) {
       return false;
     }
   }
@@ -7081,6 +7117,16 @@ auto SemanticVisitor::Impl::bindIntrinsicCallDeclaration(
   ResolvedCallInfo resolved = *existing;
   resolved.function = function.id;
   resolved.declaration = function.declaration;
+  if (!instanceAnalysisActive && function.declaration != nullptr &&
+      (function.record().intrinsic == IntrinsicKind::AtomicWait ||
+       function.record().intrinsic == IntrinsicKind::AtomicNotifyOne ||
+       function.record().intrinsic == IntrinsicKind::AtomicNotifyAll)) {
+    requestSession.cThreadCallUses.push_back(
+        {.caller = currentFunctionDeclaration,
+         .callee = function.declaration,
+         .location = call.paren(),
+         .trusted = isCompilerTrustedRequester(call.paren())});
+  }
   semanticModel.record(call, resolved);
   recordSelectedCallOccurrence(call, std::move(resolved));
 }

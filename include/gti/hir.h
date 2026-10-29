@@ -677,8 +677,8 @@ struct HirClassInstance {
       ConcurrencyCapabilityPolicy::Structural;
   ConcurrencyCapabilityPolicy sharePolicy =
       ConcurrencyCapabilityPolicy::Structural;
-  std::optional<SemanticType> transferCondition;
-  std::optional<SemanticType> shareCondition;
+  std::optional<CapabilityCondition> transferCondition;
+  std::optional<CapabilityCondition> shareCondition;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   std::vector<HirVirtualDispatch> virtualDispatch;

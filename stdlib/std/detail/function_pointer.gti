@@ -1,0 +1,10 @@
+// Leaf invocation vocabulary shared by memory and owning callable policy.
+namespace gti_internal {
+// Non-null GTI invocation address with its defined-failure convention. This
+// is not a C function pointer and never retains a callable environment.
+class function_pointer<Signature> {};
+function_pointer<Signature> function_pointer_from_item<Signature, F>(F target);
+R function_pointer_invoke<R, Args...>(function_pointer<R(Args...)>& target,
+                                    Args... args);
+
+}
