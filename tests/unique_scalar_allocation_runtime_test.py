@@ -63,6 +63,22 @@ def main():
                 assert (result.returncode, result.stdout, result.stderr) == expected, (
                     name, mode, result, expected)
                 print(f"{name}: {mode} passed", flush=True)
+        # The native backend owns the same scalar pointees, including a null
+        # pointer, a native function pointer and an integral enum. Its owners
+        # do not allocate through C++ operator new, so the injected-exhaustion
+        # companion has no effect there and only the success fixture runs.
+        name = "unique_scalar_allocation"
+        for level in ("O0", "O2"):
+            binary = pathlib.Path(temporary) / f"{name}-llvm-{level}"
+            command = [str(compiler), str(fixtures / f"{name}.gti"), "--backend", "llvm",
+                       f"-{level}", "-o", str(binary), "--",
+                       str(fixtures / "unique_scalar_allocation_fault.cpp")]
+            built = run(command)
+            assert built.returncode == 0, (command, built.stdout, built.stderr)
+            result = run([str(binary)])
+            assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (
+                name, level, result)
+            print(f"{name}: llvm-{level} passed", flush=True)
 
 
 if __name__ == "__main__":

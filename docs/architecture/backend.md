@@ -5374,7 +5374,10 @@ closure's relocation moves exactly its captures.
 A unique owner of a polymorphic view (including an interface or
 abstract class) is one handle; its pointee need not be a complete object type.
 `uniqueOwnerPointee` states that representation rule for placement, admission
-and null-owner field publication alike.
+and null-owner field publication alike. A `nullptr_t` value and a native
+function pointer are also owner pointees: each is one passive address-sized
+slot. Unique construction accepts them, and integral enums, as passive scalar
+pointees. A reference to a `nullptr_t` value is a passive reference.
 The shared inline-storage exclusion follows exact fields/state bases and array
 elements, stops at references/raw pointers, and fails closed on unknown or cyclic
 storage. It grants no layout or borrow authority. Body and memory-store guards
