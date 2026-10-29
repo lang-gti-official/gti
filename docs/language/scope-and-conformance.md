@@ -182,10 +182,8 @@ behavior after an `unsafe` proof obligation is violated are outside the
 compatibility guarantee.
 
 The coordinated module-only change explicitly revises the earlier pre-1.0
-promise to preserve `#include`. This unreleased phase 1 prototype rejects that
-syntax; it does not silently reinterpret it as an import. Phase 2 must complete
-the production module contract before this breaking change is merged or
-released. The selected C++ backend standard, manifest schema, package version,
+promise to preserve `#include`. GTI 0.493.0 rejects that syntax; it does not
+silently reinterpret it as an import. The selected C++ backend standard, manifest schema, package version,
 metadata schema, and installed compiler-library version are not GTI language
 editions.
 

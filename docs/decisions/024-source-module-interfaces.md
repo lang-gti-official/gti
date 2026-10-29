@@ -1,11 +1,11 @@
 # 024: Explicit Source Module Interfaces
 
-> **2026-10-29 module-only campaign amendment (unreleased):** The owner has
+> **2026-10-29 module-only amendment (released in 0.493.0):** The owner
 > selected a coordinated hard removal of GTI `#include`, including
-> `export #include`, before 1.0. Phase 1 mechanically converts the source corpus
-> and rejects the removed syntax; phase 2 establishes production module
-> completeness and supplies release acceptance. Neither phase is merged into
-> `main` or released until phase 2 completes. The historical include-preservation
+> `export #include`, before 1.0. Phase 1 mechanically converted the source
+> corpus and rejects the removed syntax; phase 2 established production module
+> completeness. Both were released together in 0.493.0 after targeted
+> acceptance; the final full suite was deferred by owner decision. The historical include-preservation
 > commitments below describe earlier releases and are explicitly superseded by
 > this decision for the forthcoming breaking release. Existing released editions
 > are not silently reinterpreted.
@@ -24,7 +24,7 @@ Revised in 0.393.0: republished includes, standard-library modules, and
 configuration sharing by replay. Separate compilation and independent module
 linkage remain outside this decision.
 
-## Module identity revision (2026-10-29, unreleased)
+## Module identity revision (2026-10-29, released in 0.493.0)
 
 The production module-only campaign supersedes the original program-wide
 qualified-name uniqueness rule. The semantic declaration owner is the logical

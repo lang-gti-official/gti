@@ -114,8 +114,8 @@ source. An optional unit does not automatically re-export its own dependencies.
 
 ### Standard-library modules
 
-Public units are explicit module interfaces in the unreleased module-only
-transition. `stdlib/module-map.json` registers their names; private files are
+Public units are explicit module interfaces since the 0.493.0 module-only
+release. `stdlib/module-map.json` registers their names; private files are
 not addressable through a named-import fallback:
 
 ```gti

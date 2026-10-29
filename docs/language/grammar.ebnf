@@ -62,8 +62,8 @@ export-declaration     = "export" declaration ;
    units once. Cycles are invalid. A source unit sees its own declarations, the
    exported declarations of its imports and explicit re-exports, and the
    implicit standard prelude. Only the entry may define top-level main.
-   In this unreleased transition, #include and export #include are
-   rejected with GTI-I0014 without loading a dependency. *)
+   Since 0.493.0, #include and export #include are rejected with
+   GTI-I0014 without loading a dependency. *)
 
 program                = { declaration } END_OF_FILE ;
 
