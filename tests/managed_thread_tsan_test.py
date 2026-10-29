@@ -42,7 +42,9 @@ def main() -> int:
     compiler = pathlib.Path(sys.argv[1]).resolve()
     source = pathlib.Path(sys.argv[2]).resolve()
     native_compiler = pathlib.Path(sys.argv[3]).absolute()
-    source_owner = source.stem in {"shared_mutex_threads", "transfer_function_threads"}
+    source_owner = source.stem in {"shared_mutex_threads", "transfer_function_threads",
+                                     "shared_ownership_threads", "weak_ownership_threads",
+                                     "shared_ownership_release_race"}
     if source_owner:
         assert len(sys.argv) == 6, "LLVM helper and matching native compiler are required"
         native_compiler = pathlib.Path(sys.argv[5]).absolute()
@@ -111,7 +113,7 @@ def main() -> int:
                 # closure explicitly with the same native sanitizer toolchain.
                 objects = [str(binary) + ".o"]
                 for unit in ("execution", "failure", "thread", "cthread_state",
-                             "memory", "atomic_wait", "mutex"):
+                             "memory", "atomic_wait", "mutex", "io"):
                     runtime_object = root / f"runtime-{unit}.o"
                     compiled = execute([str(native_compiler), "-std=c++20", "-O1", "-g",
                                         "-fsanitize=thread", "-fno-omit-frame-pointer",

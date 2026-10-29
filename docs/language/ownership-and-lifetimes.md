@@ -360,9 +360,9 @@ are rejected by GTI semantics, `std::move` transfers it explicitly, and its
 use-after-move state is tracked through control flow. Copyable aggregates remain
 ordinary copyable values.
 
-Borrowed references, unique owners and strong shared owners are source-reachable.
-Weak ownership is a separate incomplete API; it is not a prerequisite for the
-implemented strong-owner cloning, movement, checked access and final cleanup.
+Borrowed references, unique owners, strong shared owners and weak observers are
+source-reachable. Weak observation is not a prerequisite for strong-owner
+cloning, movement, checked access and final cleanup.
 
 ## References
 

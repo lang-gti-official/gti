@@ -5601,6 +5601,8 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(managed_thread_tsan PROPERTIES TIMEOUT 300)
     foreach(fixture shared_mutex_threads transfer_function_threads
+                    shared_ownership_threads weak_ownership_threads
+                    shared_ownership_release_race
                     scoped_parallel_threads scoped_parallel_cleanup)
       add_test(
         NAME ${fixture}_tsan
@@ -5688,6 +5690,9 @@ if(Python3_Interpreter_FOUND)
       managed_thread_tsan
       shared_mutex_threads_tsan
       transfer_function_threads_tsan
+      shared_ownership_threads_tsan
+      weak_ownership_threads_tsan
+      shared_ownership_release_race_tsan
       scoped_parallel_threads_tsan
       scoped_parallel_cleanup_tsan
       atomic_tsan
@@ -5696,6 +5701,8 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(
       managed_thread_tsan shared_mutex_threads_tsan transfer_function_threads_tsan
+      shared_ownership_threads_tsan weak_ownership_threads_tsan
+      shared_ownership_release_race_tsan
       scoped_parallel_threads_tsan scoped_parallel_cleanup_tsan
       atomic_tsan mutex_tsan
       PROPERTIES SKIP_RETURN_CODE 77
