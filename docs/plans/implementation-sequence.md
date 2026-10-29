@@ -12343,6 +12343,28 @@ status transport until a reviewed migration. Promotion does not require it.
 of them Linux x86_64. Linux evidence needs the managed runners; nothing in
 this candidate claims it.
 
+
+#### Linux x86_64 Default Promotion (2026-10-29)
+
+**Owner revision.** The owner extended the LLVM default to Linux x86_64. Linux
+arm64 and other targets keep C++ until their own evidence passes. ADR 031's
+"Default Backend On Linux x86_64" records the selection.
+
+**Evidence** (Ubuntu x86_64 runners, system LLVM 21, GTI built with GCC 14):
+
+| | result |
+| --- | --- |
+| full suite, C++ default (main 62faeed89) | 936 pass, 8 timeouts, 7 failures |
+| full suite, LLVM default (this promotion) | same set after a stub cross-toolchain test pins `--backend cpp`; no LLVM wrong code or refusal |
+| both-backend program sweep (4,040 programs) | every program C++ compiles matches on LLVM except the recorded base-destructor divergence |
+| bundled LLVM 20.1.0 release configuration | builds and links unchanged; `^llvm_` passes once bundled builds build `clang` and `opt` for the tests |
+
+**Recorded Linux failures common to both defaults:** the C++ backend under GCC
+fails `enumerator-references` (C++20 O3), `hierarchy-array-field-failure` (O3,
+R0014) and an `encoding_runtime` C++ -O1 compile timeout; three LSP tests time
+out waiting for messages; eight tests time out on the shared runners. None
+involves LLVM.
+
 #### LLVM Campaign Waves And Validation
 
 ##### Current Milestone Ownership
@@ -12679,11 +12701,11 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | ID | State | Scope and gate |
 | --- | --- | --- |
 | `Q-DIAG-01` | foundation complete; migration active | One checked JSON source now generates the private typed diagnostic identity/default-severity/group/format table and rejects duplicate identities or invalid placeholder contracts. The first semantic/source producers (`GTI-S2009`, `GTI-S2075`, `GTI-S2095`, and `GTI-S2096`) use it; remaining subsystems migrate in bounded slices while preserving current spans/messages unless intentionally changed. |
-| `Q-DIAG-02` | planned; entry slice | Establish the [diagnostic-quality baseline](diagnostic-quality.md#acceptance-and-measurement): application-derived corpus, per-case correctness/actionability rubric, CLI/LSP parity and analysis-cost budgets. Existing structured and bounded causal explanations are the starting point, not missing infrastructure. |
-| `Q-DIAG-03` | planned; after 02 | Extend producer-owned ownership/borrow witnesses and snapshot-safe causal links; prove accurate joins, projections, captures and endpoints without a second flow analysis. See the [facility contract](diagnostic-quality.md#general-facilities). |
+| `Q-DIAG-02` | partial; selected move/recovery cases | Initial [evidence and recovery cases](diagnostic-quality.md#initial-evidence-and-recovery-slice) are registered; the full application-derived corpus, per-case quality rubric and cross-family analysis-cost baseline remain open. Existing structured explanations are the starting point, not missing infrastructure. |
+| `Q-DIAG-03` | partial; bounded move witnesses | Whole-binding/projected-place witnesses own bounded spans and disclose omitted causes without inflating repeated joins. Remaining capture/loan/endpoint families and broader cost acceptance stay open. See the [facility contract](diagnostic-quality.md#general-facilities). |
 | `Q-DIAG-04` | planned; after 02 and 03 evidence contract | Extend existing overload/concept and constexpr failure evidence; bounded nested traces explain exact requirements without changing resolution or adding a diagnostic evaluator. |
-| `Q-DIAG-05` | planned; after 02 and 03 cause identity | Causal recovery suppresses only proven dependent errors, retains independent errors and keeps invalid results out of executable lowering; coordinate A-REC-01. |
-| `Q-DIAG-06` | planned; after 02 and source-identity contract | Applicability-aware atomic repair groups, starting with discard and missing-include pilots; exact-snapshot apply/reanalysis/idempotence and stale-edit negatives. No automatic ownership-changing advice. |
+| `Q-DIAG-05` | partial; lookup-to-pointer recovery | Request-owned lookup error identities propagate through grouping/inferred bindings to suppress dependent pointer-operand diagnostics while preserving independent errors and code-generation rejection. Generalized call/constraint/parser recovery and A-REC-01 coordination remain open. |
+| `Q-DIAG-06` | partial; single-open-document repairs | Conservative applicability, atomic/alternative groups and snapshot-bound LSP actions have discard/include pilots. Cross-file transactions, producer proof migration and richer prerequisite contracts remain open. No automatic ownership-changing advice. |
 | `Q-DIAG-07` | planned; alongside family rollout after 03/06 contracts | Shared CLI/LSP explanations, multi-location presentation and tested explain-code material; no message parsing or duplicate semantic decisions. |
 | `Q-DIAG-08` | planned; after 03-07 | Close the selected diagnostic corpus against every applicable quality dimension, cross-phase regression and cost gate; adopt ongoing per-feature explanation tests. Not a claim of universal Rust parity. |
 | `Q-FAIL-01` | hosted consumer, same-thread native-callback firewall, and managed-task handoff/re-raise complete; broader M-FAIL integration active | The versioned C ABI, exact escaped ordinary/emergency reports, artifact/site/outcome validation, status 70, observer firewall, report-I/O fallbacks, terminal arbitration, callback termination adapter, and worker ordinary/`GTI-R0014` containment are implemented and focused tests pass. Embedding, foreign-thread callback containment, and broader checked families remain co-delivered with their M-FAIL/M-BACK slices. |

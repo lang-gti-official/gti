@@ -1,7 +1,8 @@
 # Diagnostic Quality And Explanations
 
-Status: proposed campaign; existing foundations are identified below, not
-claimed as newly implemented. Reviewed against canonical main
+Status: campaign begun with bounded ownership-witness and lookup-recovery
+slices; the cross-family baseline and remaining milestones are not complete.
+The initial inventory was reviewed against canonical main
 `71b1c679e31b8609538f1746c6c85574995cb297` on 2026-10-28.
 The [implementation sequence](implementation-sequence.md#q-quality-diagnostics-conformance-and-release)
 owns scheduling and milestone status. This document owns the design and
@@ -45,8 +46,9 @@ The following inspected implementation is the starting point:
 | Terminal and editor | `src/cli/`, `src/lsp/main.cpp`, `tests/diagnostic_explanations_test.py` | Cross-family parity, repair grouping/applicability and snapshot-bound causal details |
 | Recovery and regression tests | `tests/compiler_diagnostics_tests.cpp`, `tests/diagnostic_recovery_lsp_test.py`, `tests/diagnostic_registry_generator_test.py` | Representative scored corpus, causal cascade suppression and systematic repair validation |
 
-Current `FixIt` has one span/replacement/message and a `preferred` Boolean;
-preference is not a safety/applicability classification. Existing related notes
+The initial `FixIt` model had one span/replacement/message and a `preferred`
+Boolean. The first repair slice adds conservative applicability and atomic
+group identity; preference is still not a safety classification. Existing related notes
 are useful and must remain available. The absence of a general cause graph does
 not justify replacing already-correct family-specific evidence structures.
 
@@ -171,8 +173,40 @@ tested with valid and invalid examples, not maintained as competing semantics.
 
 ## Delivery Sequence
 
-Every new row below is **planned**. The first deliverable is a baseline and one
-complete ownership-explanation improvement, not an infrastructure rewrite.
+The rows below are campaign gates, not claims that the first bounded slices
+complete a whole gate. The first deliverable is a baseline and one complete
+ownership-explanation improvement, not an infrastructure rewrite.
+
+### Initial Evidence And Recovery Slice
+
+Facilities 1 and 2 now share producer-owned `SemanticMoveOrigins` between
+whole-binding and projected-place consumers. Four deterministic spans are kept;
+omission is explicit and conservatively counted through repeated joins. This
+does not change the ownership lattice or add a proof graph. Facility 3 begins
+with failed lookup identities retained through grouping/inferred bindings and
+pointer arithmetic, where a concrete duplicate diagnostic was reproduced.
+Unknown without a root remains distinct from a diagnosed failure.
+
+| Selected case | Previous gap | Owning acceptance |
+| --- | --- | --- |
+| Six alternative moves of a user-defined owner | Four causes shown with silent truncation | Four ordered spans, explicit omission, repeatable output |
+| Repeated join of bounded witnesses | No observable truncation contract | Bounded producer storage; joining the same evidence cannot increase the omitted count |
+| Restored/projected/shadowed owners | Preserve existing correct behavior | Existing ownership corpus; restoration clears visible and omitted evidence |
+| Undefined offset, grouped/inferred and used in pointer arithmetic | Root plus secondary pointer-type errors | One root; dependent chain suppressed; invalid known offsets and pointees still diagnosed |
+| Repair in an editor overlay | Recovery identities must not survive repair | CLI/LSP code and cause agreement; next version clears root; independent errors remain |
+
+These cases are an initial Q-DIAG-02 baseline, not the full family inventory or
+an overall quality score. The registered diagnostic explanation tests and
+compiler diagnostic tests own the executable assertions. Constraint traces,
+constexpr frames, capture/lifetime witnesses and parser-wide root identities
+remain future slices. Do not mark Q-DIAG-03 or Q-DIAG-05 complete from this work.
+
+Facility 4's first slice adds conservative `FixIt` applicability, diagnostic-local
+atomic/alternative group identities and exact-snapshot LSP validation. Existing
+producers remain review-required; no automatic ownership or mutability choice is
+introduced. Discard and include pilots cover application, reanalysis, idempotence
+and stale-overlay rejection. Cross-file transactions, broader producer proof
+migration and richer prerequisites remain open; Q-DIAG-06 is partial, not closed.
 
 | Milestone | Dependencies and bounded work | Exit evidence |
 | --- | --- | --- |

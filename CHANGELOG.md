@@ -34,6 +34,35 @@ for what minor and patch releases mean.
   control block after payload destruction and cannot revive an expired object.
   Shared and weak handles use the same conditional thread permissions.
 
+## 0.489.1 - Native unique owners of null and function pointers
+
+- The native backend now builds `std::make_unique<nullptr_t>(nullptr)`,
+  `std::make_unique<callback>(f)` for a native function pointer type, and
+  `std::make_unique<E>(value)` for an integral enum. It also builds a
+  reference to a `nullptr_t` value. These previously failed with `GTI-B0003`,
+  although the C++ backend ran them.
+
+## 0.489.0 - LLVM is the default backend on Linux x86_64
+
+- Linux x86_64 now builds with the LLVM backend by default, as macOS arm64
+  already does. `--backend cpp`, a profile's `backend = "cpp"`, `--std` and
+  C++ retention still select the C++ backend. Linux arm64 and other targets
+  keep C++ as their default.
+- Release builds that bundle LLVM 20.1 also build its `clang` and `opt` so the
+  native-backend tests run against the pinned release LLVM.
+
+## 0.488.3 - Apple M1 tuning on the native backend
+
+- On macOS arm64 the native backend now tunes optimization and scheduling for
+  Apple M1, as clang does by default, instead of a generic Arm core. Programs
+  still use only the generic Armv8 instruction set, so they run on every
+  Apple silicon Mac and atomics keep their existing instruction sequences.
+  Compared with 0.488.2 at `-O2`, `vector-checked-loop` runs in 0.90 of the
+  time, now level with the C++ backend, and `game-update-stage` in 0.97.
+  Short loops carrying one serial calculation can be a few percent slower:
+  LLVM's Apple M1 tuning unrolls them, as it does for clang-compiled C++
+  (`checked-scalar-chain` runs in 1.04 of the time).
+
 ## 0.488.1 - Native global copies, function-pointer fields, base returns and nested holders
 
 ### Native function-pointer fields, base returns and mutex text witnesses

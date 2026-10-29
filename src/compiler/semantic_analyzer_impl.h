@@ -877,7 +877,7 @@ private:
     std::vector<PlaceProjection> projections;
     ValueState state = ValueState::Available;
     // Diagnostic provenance only; never participates in ownership decisions.
-    std::vector<SourceSpan> moveOrigins;
+    SemanticMoveOrigins moveOrigins;
   };
 
   // The catalog owns exactly one declaration record for each source callable.
@@ -1431,12 +1431,13 @@ private:
 
   struct Symbol {
     SemanticType type = SemanticType::Unknown;
+    SemanticRecoveryIdentity recoveryCause;
     std::optional<ConstantValue> constant;
     SourceUnitId sourceUnit = 0;
     bool assignable = false;
     ValueState valueState = ValueState::Available;
     // Diagnostic provenance only; never participates in ownership decisions.
-    std::vector<SourceSpan> moveOrigins;
+    SemanticMoveOrigins moveOrigins;
     std::vector<RawPointerOrigin> rawPointerOrigins;
     std::vector<ProjectedRawPointerOrigins> rawPointerFields;
     std::vector<CallableCandidate> overloads;
@@ -6244,11 +6245,8 @@ private:
 
   void setProjectedValueState(const SemanticPlace &place, ValueState state,
                               const Token &origin);
-  static std::vector<SourceSpan>
-  mergedMoveOrigins(const std::vector<SourceSpan> &left,
-                    const std::vector<SourceSpan> &right);
   static void appendMoveContext(Diagnostic &diagnostic,
-                                const std::vector<SourceSpan> &origins);
+                                const SemanticMoveOrigins &origins);
   void appendReadOnlyPlaceContext(Diagnostic &diagnostic,
                                   const ExprPtr &expression) const;
 
@@ -6913,6 +6911,9 @@ private:
     // for-loop increment, a comma's left operand, and what a discarded
     // grouping, comma or conditional evaluates in its place.
     std::unordered_set<const Expr *> discardedResults;
+    // Request-owned syntax keys; roots own their spans and never refer into
+    // diagnostics storage. Each expression reanalysis replaces its evidence.
+    std::unordered_map<const Expr *, SemanticRecoveryIdentity> recoveryCauses;
     std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
     std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;

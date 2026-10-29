@@ -52,11 +52,22 @@ struct RelatedDiagnostic {
                          const RelatedDiagnostic &) = default;
 };
 
+enum class RepairApplicability {
+  MachineApplicable,
+  RequiresReview,
+  Incomplete,
+};
+
 struct FixIt {
   SourceSpan span;
   std::string replacement;
   std::string message;
   bool preferred = true;
+  // Preference is presentation, not proof that a repair preserves intent.
+  RepairApplicability applicability = RepairApplicability::RequiresReview;
+  // Within one diagnostic, equal nonempty IDs form an atomic edit group.
+  // Different IDs are alternatives; an empty ID is a legacy singleton.
+  std::string repairId;
 
   friend bool operator==(const FixIt &, const FixIt &) = default;
 };

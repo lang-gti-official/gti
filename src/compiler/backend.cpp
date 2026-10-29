@@ -24,8 +24,11 @@ std::optional<BackendKind> parseBackendKind(std::string_view name) {
 }
 
 BackendKind defaultBackend(const TargetInfo &target) {
-  return target.os == "macos" && target.arch == "arm64" ? BackendKind::Llvm
-                                                        : BackendKind::Cpp;
+  // LLVM is the default where its promotion evidence holds: macOS arm64 and
+  // Linux x86_64. Other targets keep C++ until their own gates pass.
+  const bool promoted = (target.os == "macos" && target.arch == "arm64") ||
+                        (target.os == "linux" && target.arch == "x86_64");
+  return promoted ? BackendKind::Llvm : BackendKind::Cpp;
 }
 
 } // namespace lang

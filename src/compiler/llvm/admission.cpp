@@ -51,7 +51,8 @@ bool passiveArrayElement(const SemanticType &type) {
          (type.kind == SemanticType::RawPointer &&
           type.arguments.size() == 1) ||
          type.kind == SemanticType::CString ||
-         type.kind == SemanticType::NativeFunction;
+         type.kind == SemanticType::NativeFunction ||
+         type.kind == SemanticType::NullPtr;
 }
 
 // A fixed array of counted text views, or of such arrays. Each element is a

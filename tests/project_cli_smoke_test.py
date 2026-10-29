@@ -3424,7 +3424,11 @@ def main():
                 + f'native-target = "{cross_triple}"\n',
                 encoding="utf-8",
             )
-            run([gti, "build", "--target", cross_triple], cwd=cross_project)
+            # The stub stands in for the C++ backend's native compiler, so
+            # these builds select that backend explicitly: the default for a
+            # promoted LLVM target would never invoke the stub.
+            run([gti, "build", "--target", cross_triple, "--backend", "cpp"],
+                cwd=cross_project)
             recorded = record.read_text(encoding="utf-8").splitlines()
             assert f"--target={cross_triple}" in recorded, recorded
             sysroot = (cross_project / "sysroot").resolve()
@@ -3456,7 +3460,7 @@ def main():
                 encoding="utf-8",
             )
             missing_cc = run(
-                [gti, "build", "--target", cross_triple],
+                [gti, "build", "--target", cross_triple, "--backend", "cpp"],
                 expected=65,
                 cwd=cross_project,
             )
@@ -3470,6 +3474,8 @@ def main():
                     cross_triple,
                     "--cc",
                     str(stub),
+                    "--backend",
+                    "cpp",
                 ],
                 cwd=cross_project,
             )

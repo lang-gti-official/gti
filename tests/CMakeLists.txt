@@ -27,6 +27,32 @@ set_tests_properties(native_variable_bindgen PROPERTIES TIMEOUT 600)
 # moving their target ownership out of the root project file.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
+# The native-backend tests compile emitted IR with the clang and opt of the
+# configured LLVM. An installed LLVM provides them beside its CMake package; a
+# bundled LLVM provides them as its own targets, built with the tests so the
+# same evidence runs against the pinned release LLVM.
+if(GTI_BUNDLE_LLVM AND TARGET clang AND TARGET opt)
+  add_custom_target(gti_llvm_test_tools ALL)
+  add_dependencies(gti_llvm_test_tools clang opt)
+  set(GTI_LLVM_TEST_CLANG "$<TARGET_FILE:clang>")
+  set(GTI_LLVM_TEST_OPT "$<TARGET_FILE:opt>")
+else()
+  find_program(GTI_LLVM_TEST_CLANG NAMES clang HINTS "${LLVM_TOOLS_BINARY_DIR}" NO_DEFAULT_PATH)
+  set(GTI_LLVM_TEST_OPT "${LLVM_TOOLS_BINARY_DIR}/opt")
+endif()
+
+if(TARGET gti_lsp)
+  add_executable(gti_lsp_repair_contract_tests lsp_repair_contract_tests.cpp)
+  target_include_directories(gti_lsp_repair_contract_tests SYSTEM PRIVATE
+    ${GTI_LLVM_INCLUDE_DIRS})
+  target_link_libraries(gti_lsp_repair_contract_tests PRIVATE
+    gti_driver gti_lsp_state Threads::Threads)
+  target_compile_definitions(gti_lsp_repair_contract_tests PRIVATE
+    GTI_VERSION="${PROJECT_VERSION}"
+    GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}")
+  add_test(NAME lsp_repair_groups COMMAND gti_lsp_repair_contract_tests)
+endif()
+
 add_executable(gti_code_snippet_tests code_snippet_tests.cpp)
 target_link_libraries(gti_code_snippet_tests PRIVATE gti_compiler)
 add_test(NAME code_snippets COMMAND gti_code_snippet_tests)
@@ -1854,7 +1880,7 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME llvm_simd_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_simd_execution_test.py"
                    --emitter "$<TARGET_FILE:gti_llvm_simd_lowering_tests>"
-                   --clang "${LLVM_TOOLS_BINARY_DIR}/clang++" --opt "${LLVM_TOOLS_BINARY_DIR}/opt"
+                   --clang "${GTI_LLVM_TEST_CLANG}" --opt "${GTI_LLVM_TEST_OPT}"
                    --output-root "${CMAKE_BINARY_DIR}/Testing/llvm-simd-execution")
   set_tests_properties(llvm_simd_execution PROPERTIES TIMEOUT 1200 PROCESSORS 1)
   add_test(NAME llvm_simd_source
@@ -2157,7 +2183,6 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/runtime-synchronization-evidence"
               --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(runtime_synchronization PROPERTIES TIMEOUT 180)
-    find_program(GTI_LLVM_TEST_CLANG NAMES clang HINTS "${LLVM_TOOLS_BINARY_DIR}" NO_DEFAULT_PATH)
     if(GTI_LLVM_TEST_CLANG)
       add_test(NAME llvm_atomic_wait_service
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_atomic_wait_service_test.py"
@@ -4294,7 +4319,9 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/encoding_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
-  set_tests_properties(encoding_runtime PROPERTIES TIMEOUT 300)
+  # Its GCC sanitized build may take minutes under a parallel suite;
+  # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
+  set_tests_properties(encoding_runtime PROPERTIES TIMEOUT 1800)
   add_test(
     NAME source_location_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -5620,6 +5647,13 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(diagnostic_explanations PROPERTIES TIMEOUT 120)
     add_test(
+      NAME lsp_repair_contract
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_repair_contract_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(lsp_repair_contract PROPERTIES TIMEOUT 120)
+    add_test(
       NAME lsp_include_suggestions
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/lsp_include_suggestions_test.py"
@@ -5806,6 +5840,14 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")
+
+# Every build-tree test runs the compiler's self-checks, such as the
+# lowered-program construction seal, that ordinary compiles skip. Tests that
+# exercise a self-check also enable it explicitly, so they do not depend on
+# this inventory.
+get_property(gti_validation_tests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${gti_validation_tests} APPEND PROPERTY ENVIRONMENT
+  "GTI_COMPILER_VALIDATION=1")
 
 # Release binaries intentionally contain no source-tree resource fallback.
 # Every build-tree test runs before staging, including newly registered CLI/LSP

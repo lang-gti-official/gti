@@ -1920,8 +1920,13 @@ std::vector<LoweredProgramIssue>
 verifyLoweredProgram(const LoweredProgram &program) {
   std::vector<LoweredProgramIssue> issues =
       lowered_detail::verifyLoweredProgramContents(program);
-  const std::uint64_t currentSeal = constructionSeal(program);
-  if (!program.constructionSeal_ || *program.constructionSeal_ != currentSeal) {
+  if (!loweredProgramSealValidation()) {
+    return issues;
+  }
+  // An unsealed program was built while validation was disabled; it cannot
+  // prove it is unchanged, so validation still rejects it.
+  if (!program.constructionSeal_ ||
+      *program.constructionSeal_ != constructionSeal(program)) {
     addIssue(issues, LoweredProgramIssueKind::InvalidConstructionSeal,
              "lowered program differs from its immutable construction seal");
   }

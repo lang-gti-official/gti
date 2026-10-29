@@ -2355,6 +2355,37 @@ void testVerificationEvidenceOwnsItsProgram() {
   }
 }
 
+void testSealValidationIsAnExplicitSelfCheck() {
+  // Ordinary compiles neither seal nor re-check; the inventory still runs.
+  lang::setLoweredProgramSealValidation(false);
+  std::optional<lang::LoweredProgram> unsealed = buildDetachedProgram();
+  expect(unsealed.has_value() && lang::verifyLoweredProgram(*unsealed).empty(),
+         "a program built without validation is admitted without a seal");
+  if (unsealed) {
+    lang::LoweredProgram renamed = *unsealed;
+    auto &declarations = lang::LoweredProgramTestAccess::declarations(renamed);
+    expect(!declarations.empty(), "the seal fixture should have declarations");
+    if (!declarations.empty()) {
+      declarations.front().name += "_forged";
+      expect(!hasIssue(lang::verifyLoweredProgram(renamed),
+                       lang::LoweredProgramIssueKind::InvalidConstructionSeal),
+             "without validation, consumers do not re-check the seal");
+    }
+    lang::LoweredProgram missing = *unsealed;
+    lang::LoweredProgramTestAccess::generatedItems(missing).pop_back();
+    expect(!lang::verifyLoweredProgram(missing).empty(),
+           "without validation, inventory forgeries are still rejected");
+    lang::setLoweredProgramSealValidation(true);
+    expect(hasIssue(lang::verifyLoweredProgram(*unsealed),
+                    lang::LoweredProgramIssueKind::InvalidConstructionSeal),
+           "validation rejects a program that was never sealed");
+  }
+  lang::setLoweredProgramSealValidation(true);
+  const std::optional<lang::LoweredProgram> sealed = buildDetachedProgram();
+  expect(sealed.has_value() && lang::verifyLoweredProgram(*sealed).empty(),
+         "a program built with validation passes its own seal");
+}
+
 void testMutationRejection() {
   std::optional<lang::LoweredProgram> built = buildDetachedProgram();
   expect(built.has_value(),
@@ -3425,6 +3456,8 @@ int main() {
 } // namespace
 
 int main() {
+  // These tests forge lowered programs, so they always check the seal.
+  lang::setLoweredProgramSealValidation(true);
   testSourceDebugRecordOwnership();
   testSemanticSourceDebugProducers();
   testInitializerSourceDebugProducers();
@@ -3444,6 +3477,7 @@ int main() {
   testDebugReceiverFragments();
   testVerificationEvidenceOwnsItsProgram();
   testMutationRejection();
+  testSealValidationIsAnExplicitSelfCheck();
   testConcreteBranchSymbols();
   testConcreteLambdaPacks();
   testConcreteClassAliases();

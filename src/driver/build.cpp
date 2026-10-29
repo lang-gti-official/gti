@@ -1518,6 +1518,7 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
     identity.add("llvm.triple", backend->triple);
     identity.add("llvm.data-layout", backend->dataLayout);
     identity.add("llvm.cpu", backend->cpu);
+    identity.add("llvm.tune-cpu", backend->tuneCpu);
     identity.add("llvm.features", backend->features);
     identity.add("llvm.relocation", backend->relocation);
     identity.add("llvm.code-model", backend->codeModel);
