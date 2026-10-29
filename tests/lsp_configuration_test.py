@@ -191,7 +191,7 @@ def test_selected_profile_policies(executable, root):
         'manifest-version = 1\n[package]\nname = "policies"\nversion = "0.1.0"\n'
         '[targets.policies]\nkind = "executable"\nroot = "main.gti"\n'
         '[profiles.dev]\nexecution-profile = "single-threaded"\n'
-        'raw-pointer-audit = "off"\ndisabled-warnings = ["unused-mut"]\n'
+        'raw-pointer-audit = "off"\ndisabled-warnings = ["unused-mut", "legacy-include"]\n'
         '[profiles.release]\nexecution-profile = "concurrent"\nraw-pointer-audit = "warn"\n'
     ))
     source = (
@@ -216,13 +216,13 @@ def test_selected_profile_policies(executable, root):
         dev = diagnostics_for(session, uri, version=1)
         codes = {d.get("code") for d in dev}
         assert "GTI-S2084" in codes, dev
-        assert not codes.intersection({"GTI-S2096", "GTI-S2101"}), dev
+        assert not codes.intersection({"GTI-S2096", "GTI-S2101", "GTI-I0013"}), dev
         session.send({
             "jsonrpc": "2.0", "method": "workspace/didChangeConfiguration",
             "params": {"settings": {"gti": {"profile": "release"}}},
         })
         release = diagnostics_for(session, uri, predicate=lambda items:
-            {"GTI-S2096", "GTI-S2101"}.issubset({d.get("code") for d in items}))
+            {"GTI-S2096", "GTI-S2101", "GTI-I0013"}.issubset({d.get("code") for d in items}))
         assert not any(d.get("severity") == 1 for d in release), release
         assert all(d["severity"] == 2 for d in release if d.get("code") == "GTI-S2101")
     finally:

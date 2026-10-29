@@ -5686,7 +5686,9 @@ def test_standalone_managed_thread_profile(executable, root):
         and "concurrent execution profile" in diagnostic["message"]
         for diagnostic in default_diagnostics
     )
-    assert analyze(["--execution-profile", "concurrent"]) == []
+    concurrent = analyze(["--execution-profile", "concurrent"])
+    assert [d["code"] for d in concurrent] == ["GTI-I0013"], concurrent
+    assert concurrent[0]["severity"] == 2, concurrent
 
 
 def test_diagnostic_code_actions(executable, root):
@@ -9157,9 +9159,8 @@ def test_canonical_document_identity(executable, root):
                 for diagnostic in message.get("params", {}).get("diagnostics", [])
             )
         )
-        assert "overlay_value" in root_diagnostics["params"]["diagnostics"][0][
-            "message"
-        ]
+        assert any(d.get("code") == "GTI-S2001" and "overlay_value" in d["message"]
+                   for d in root_diagnostics["params"]["diagnostics"])
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -9270,7 +9271,8 @@ def test_watched_dependency_reanalysis(executable, root):
                 for diagnostic in message.get("params", {}).get("diagnostics", [])
             )
         )
-        assert "watched_value" in changed["params"]["diagnostics"][0]["message"]
+        assert any(d.get("code") == "GTI-S2001" and "watched_value" in d["message"]
+                   for d in changed["params"]["diagnostics"])
     finally:
         session.close()
 
@@ -11933,7 +11935,9 @@ def main():
     assert len(initial_publications) == 1
     initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 11, diagnostics
+    assert len(diagnostics) == 12, diagnostics
+    include_advice = [d for d in diagnostics if d["code"] == "GTI-I0013"]
+    assert len(include_advice) == 1 and include_advice[0]["severity"] == 2, diagnostics
     missing_return = next(
         diagnostic
         for diagnostic in diagnostics
