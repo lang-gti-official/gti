@@ -1,4 +1,3 @@
-#include "gti/object_layout.h"
 #include "semantic_analyzer_impl.h"
 
 #include <iterator>
