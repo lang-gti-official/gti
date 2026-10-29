@@ -509,16 +509,24 @@ use a grey comment-style default; themes can override
 `@lsp.mod.inactiveCode.gti`.
 
 Use the complete `https://` URL, and write `version = "*"` without a
-backslash. The selected tag must have a matching toolchain archive on the
-installer's release host; syncing Git tags does not create or copy release
-binaries. Older tags from before the hostname migration still contain the old
-installer. Toolchain releases now publish to GitHub Releases (a daily
-`nightly` for Linux x64 and Apple Silicon; see
+backslash. The plugin downloads toolchains from GitHub Releases: a daily
+`nightly` for Linux x64 and Apple Silicon (see
 [GitHub nightly publication](docs/architecture/build-and-driver.md#github-nightly-publication)).
-Until the installer switches to them, it downloads the frozen Gitea archives,
-where nightly is Linux x64 only and no stable archive exists for a version cut
-after the freeze. Otherwise build locally and set `GTI_PATH` and `GTI_LSP_PATH`
-to those executables (and `GTI_TREE_SITTER_PATH` to the built parser).
+Select it before the spec loads:
+
+```lua
+vim.g.gti_channel = "nightly"
+```
+
+The default stable channel needs a published `v<VERSION>` release matching the
+checkout. Stable releases are not yet published on GitHub, so a stable install
+stops with an error naming the missing tag and the nightly channel; it never
+installs a different version. The selected tag must have a matching toolchain
+archive; syncing Git tags does not create or copy release binaries. A tag cut
+before the switch to GitHub Releases runs its own older installer, which
+downloads from the frozen Gitea releases. Otherwise build locally and set
+`GTI_PATH` and `GTI_LSP_PATH` to those executables (and `GTI_TREE_SITTER_PATH`
+to the built parser).
 When supplying your own toolchain, set `build = false` in the Lazy spec to
 disable its release-download hook.
 

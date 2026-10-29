@@ -24,9 +24,42 @@ local ok, problem = xpcall(function()
 
   local installer = dofile(vim.fs.joinpath(repository, "lua", "gti", "installer.lua"))
   local expected_release_url =
-    "https://git.internal.howetotech.dev/gti-lang/gti/releases/download/nightly/BUILD_ID"
+    "https://github.com/lang-gti-official/gti/releases/download/nightly/BUILD_ID"
   if installer.release_url("nightly", "BUILD_ID") ~= expected_release_url then
-    fail("installer does not resolve release assets from the Gitea package host")
+    fail("installer does not resolve release assets from GitHub Releases")
+  end
+
+  -- An unpublished stable release fails clearly and names the nightly
+  -- channel; it never falls back to another version or host. Stub downloaders
+  -- keep this offline.
+  local offline = vim.fs.joinpath(temporary, "offline-bin")
+  vim.fn.mkdir(offline, "p")
+  for _, name in ipairs({ "curl", "wget" }) do
+    local stub = vim.fs.joinpath(offline, name)
+    vim.fn.writefile({ "#!/bin/sh", "echo 'The requested URL returned error: 404' >&2", "exit 22" }, stub)
+    vim.uv.fs_chmod(stub, 493)
+  end
+  local saved_path = vim.env.PATH
+  vim.env.PATH = offline .. ":" .. saved_path
+  local missing_ok, missing = pcall(installer.install, {
+    root = vim.fs.joinpath(temporary, "unpublished"),
+    channel = "stable",
+    version = "0.0.0",
+    platform = platform,
+  })
+  vim.env.PATH = saved_path
+  missing = tostring(missing)
+  if missing_ok
+    or not missing:find("no stable GTI v0.0.0 toolchain", 1, true)
+    or not missing:find('vim.g.gti_channel = "nightly"', 1, true)
+    or not missing:find(
+      "https://github.com/lang-gti-official/gti/releases/download/v0.0.0/gti-v0.0.0-" .. platform .. ".tar.gz",
+      1,
+      true
+    )
+    or missing:find("howetotech", 1, true)
+  then
+    fail("an unpublished stable release must fail clearly and name the nightly channel: " .. missing)
   end
   local installed = installer.install({
     root = temporary,

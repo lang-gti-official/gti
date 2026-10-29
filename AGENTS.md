@@ -292,10 +292,9 @@ Two channels publish this repository, and they answer different questions.
 Toolchain releases publish to GitHub Releases on `lang-gti-official/gti`.
 `.github/workflows/nightly.yml` packages `linux-x64` and `darwin-arm64` on
 GitHub-hosted runners; `linux-arm64` waits for a reviewed linux-aarch64 runtime
-compiler profile. The frozen Gitea workflow (`.gitea/workflows/release.yml`)
-no longer runs, and the installer keeps downloading the existing Gitea archives
-until its switch to GitHub lands after the first GitHub nightly is verified. Do
-not publish toolchain releases to Gitea. The `gti add` package registry stays
+compiler profile. The Neovim installer downloads from GitHub Releases. The
+frozen Gitea workflow (`.gitea/workflows/release.yml`) no longer runs. Do not
+publish toolchain releases to Gitea. The `gti add` package registry stays
 on Gitea and is unaffected. See "Published Toolchain Channels" in
 `docs/architecture/build-and-driver.md`.
 
@@ -305,7 +304,9 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
   users through this channel.
 - **Stable** is `v<VERSION>`, the channel someone pins to. Its GitHub
   publication belongs to the later beta/stable release train and is not
-  automated yet: a `VERSION` advance does not publish a stable release today.
+  automated yet: a `VERSION` advance does not publish a stable release today,
+  and the installer's stable channel reports the missing `v<VERSION>` and
+  points at nightly rather than installing another version.
 
 Advance `VERSION` only when a user of the toolchain would observe the change:
 language surface, CLI or driver behavior, diagnostics they would see, packaged

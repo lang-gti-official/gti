@@ -82,9 +82,12 @@ def main():
     expect(f'CANONICAL = "{CANONICAL_ROOT}.git"' in text(root, "scripts/install_neovim_local.py"),
            "the local installer must resolve preview source from canonical GitHub")
     installer = text(root, "lua/gti/installer.lua")
-    expect(f'local release_server = "{PACKAGE_SERVER}"' in installer
-           and 'local repository = "gti-lang/gti"' in installer,
-           "the installer keeps the existing Gitea archives until the GitHub release switch lands")
+    expect('local release_server = "https://github.com"' in installer
+           and 'local repository = "lang-gti-official/gti"' in installer
+           and PACKAGE_SERVER not in installer and "gti-lang" not in installer,
+           "the installer downloads toolchain releases from GitHub Releases, never Gitea")
+    expect('vim.g.gti_channel = \\"nightly\\"' in installer and "stable_unavailable" in installer,
+           "an unpublished stable release must fail clearly and name the nightly channel")
     expect("*.gti linguist-language=C++" in text(root, ".gitattributes"),
            "GTI source language classification must remain intact")
     helper = text(root, "scripts/agent_workflow.py")

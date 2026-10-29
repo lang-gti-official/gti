@@ -175,13 +175,20 @@ package does not load a downstream LLVM package.
 
 Source lives on GitHub (`lang-gti-official/gti`), and toolchain releases
 publish to its GitHub Releases through `.github/workflows/nightly.yml`, described
-under [GitHub nightly publication](#github-nightly-publication). Until the
-installer switch lands, after the first GitHub nightly is verified, the plugin
-keeps downloading the existing archives from the frozen self-hosted Gitea
-release (`gti-lang/gti`) at
-`https://git.internal.howetotech.dev/gti-lang/gti/releases/download/<tag>/<asset>`.
-Those Gitea archives no longer advance: their nightly is Linux x64 only and no
-stable release exists for a version cut after the freeze.
+under [GitHub nightly publication](#github-nightly-publication). The plugin
+downloads them from
+`https://github.com/lang-gti-official/gti/releases/download/<tag>/<asset>`.
+A Lazy checkout runs its own installer, so a Git tag cut before this switch
+still downloads from the frozen self-hosted Gitea release (`gti-lang/gti`),
+whose archives no longer advance.
+
+The `nightly` channel reads the rolling `nightly` release. The default `stable`
+channel downloads `v<VERSION>` for the checkout's `VERSION`. GitHub stable
+publication belongs to the later beta/stable release train, so until a
+`v<VERSION>` release exists there the stable download fails with an error that
+names that tag and the nightly channel (`vim.g.gti_channel = "nightly"` or
+`GTI_CHANNEL=nightly`). The installer never falls back to Gitea, to another
+version, or to a nightly build on its own.
 The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
 shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
 published only after native validation on its platform. The GitHub nightly

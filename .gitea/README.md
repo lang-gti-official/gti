@@ -9,10 +9,10 @@ keeps two roles:
   (libc and the like).
 
 Toolchain releases (compiler archives and the Neovim plugin's downloads)
-publish to GitHub Releases through `.github/workflows/nightly.yml`. The existing
-`gti-lang/gti` release archives stay downloadable, and the installer keeps
-using them until its switch to GitHub lands after the first GitHub nightly is
-verified.
+publish to GitHub Releases through `.github/workflows/nightly.yml`, and the
+Neovim installer downloads from there. The existing `gti-lang/gti` release
+archives stay downloadable for plugin tags cut before that switch, whose own
+installer still names Gitea.
 
 The `gti-lang/gti` source repository is frozen: its `main` merge allowlist is
 empty, so no merge lands there. Its history remains readable. GitHub history
