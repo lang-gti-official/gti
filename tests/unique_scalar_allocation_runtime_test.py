@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 """Scalar make_unique initialization, ownership, and injected exhaustion."""
 
+import os
 import pathlib
 import subprocess
 import sys
 import tempfile
 
 from allocation_abort_runtime_test import ABORT_STATUS
+
+def expected_result(suffix, site):
+    failure = (f"<std/memory>:{site}: runtime error[GTI-R0011]: "
+               "allocation_failure in unique_owner\n")
+    if suffix == "_failure":
+        return (ABORT_STATUS, "argument\n", failure)
+    if suffix == "_cleanup_failure":
+        return (ABORT_STATUS, "cleanup\n", failure)
+    return (0, "", "")
+
 
 def run(command):
     return subprocess.run(command, capture_output=True, text=True, timeout=120)
@@ -42,16 +53,8 @@ def main():
                 assert "::gti_internal::backend::mir_allocate_unique_scalar_v1<" in generated
                 assert "GTI_FAILURE_DETAIL_UNIQUE_OWNER_V1" in generated
                 result = run([str(binary)])
-                expected = (0, "", "")
-                if suffix == "_failure":
-                    expected = (ABORT_STATUS, "argument\n",
-                                f"<std/memory>:{site}: runtime error[GTI-R0011]: "
-                                "allocation_failure in unique_owner\n")
-                elif suffix == "_cleanup_failure":
-                    expected = (ABORT_STATUS, "cleanup\n",
-                                f"<std/memory>:{site}: runtime error[GTI-R0011]: "
-                                "allocation_failure in unique_owner\n")
-                else:
+                expected = expected_result(suffix, site)
+                if suffix == "":
                     # Both source types must coexist as distinct native generic
                     # arguments; separate translation units hide this collision.
                     assert "unique_ptr<char8_t>" in generated
@@ -65,20 +68,23 @@ def main():
                 print(f"{name}: {mode} passed", flush=True)
         # The native backend owns the same scalar pointees, including a null
         # pointer, a native function pointer and an integral enum. Its owners
-        # do not allocate through C++ operator new, so the injected-exhaustion
-        # companion has no effect there and only the success fixture runs.
-        name = "unique_scalar_allocation"
-        for level in ("O0", "O2"):
-            binary = pathlib.Path(temporary) / f"{name}-llvm-{level}"
-            command = [str(compiler), str(fixtures / f"{name}.gti"), "--backend", "llvm",
-                       f"-{level}", "-o", str(binary), "--",
-                       str(fixtures / "unique_scalar_allocation_fault.cpp")]
-            built = run(command)
-            assert built.returncode == 0, (command, built.stdout, built.stderr)
-            result = run([str(binary)])
-            assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (
-                name, level, result)
-            print(f"{name}: llvm-{level} passed", flush=True)
+        # allocate through the runtime's POSIX provider rather than C++ operator
+        # new; the companion fails that provider through the same switch, so
+        # exhaustion and failure during cleanup are checked on both backends.
+        suffixes = ("",) if os.name == "nt" else ("", "_failure", "_cleanup_failure")
+        for suffix in suffixes:
+            name = "unique_scalar_allocation" + suffix
+            for level in ("O0", "O2"):
+                binary = pathlib.Path(temporary) / f"{name}-llvm-{level}"
+                command = [str(compiler), str(fixtures / f"{name}.gti"), "--backend", "llvm",
+                           f"-{level}", "-o", str(binary), "--",
+                           str(fixtures / "unique_scalar_allocation_fault.cpp")]
+                built = run(command)
+                assert built.returncode == 0, (command, built.stdout, built.stderr)
+                result = run([str(binary)])
+                assert (result.returncode, result.stdout, result.stderr) == expected_result(
+                    suffix, site), (name, level, result)
+                print(f"{name}: llvm-{level} passed", flush=True)
 
 
 if __name__ == "__main__":
