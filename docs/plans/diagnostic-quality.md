@@ -201,6 +201,13 @@ compiler diagnostic tests own the executable assertions. Constraint traces,
 constexpr frames, capture/lifetime witnesses and parser-wide root identities
 remain future slices. Do not mark Q-DIAG-03 or Q-DIAG-05 complete from this work.
 
+Q-DIAG-04 now begins with member-owned `requires` failures: the ordinary
+resolver retains a representative terminal cause, with explicit elision for
+intermediate member steps, alternative branches and long concept chains.
+User-defined constrained members have positive/repaired cases and multi-file
+CLI/LSP overlay coverage. This is not complete overload-tree or constexpr-frame
+coverage, and the broader cross-family quality baseline remains open.
+
 Facility 4's first slice adds conservative `FixIt` applicability, diagnostic-local
 atomic/alternative group identities and exact-snapshot LSP validation. Existing
 producers remain review-required; no automatic ownership or mutability choice is

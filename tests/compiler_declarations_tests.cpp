@@ -1,3 +1,4 @@
+#include "../src/compiler/semantic_diagnostics.h"
 #include "compiler_test_fixture.h"
 #include "native_symbol_spelling.h"
 
@@ -5112,6 +5113,129 @@ int main() {
 }
 
 void testConstraintFailureProvenance() {
+  lang::SemanticConstraintFailure evidence;
+  evidence.argument = lang::SemanticType::Bool;
+  for (int index = 0; index < 24; ++index)
+    evidence.context.push_back({"Contract" + std::to_string(index), {}, {}});
+  auto retained =
+      lang::SemanticMemberConstraintCause::retain(std::move(evidence));
+  const auto leaf = retained.leaf;
+  expect(leaf->context.size() == 8 && leaf->context.capacity() == 8 &&
+             retained.omittedApplications == 16 &&
+             leaf->context.front().name == "Contract0" &&
+             leaf->context.back().name == "Contract23",
+         "bounded member evidence preserves outer and innermost applications");
+  for (int depth = 0; depth < 64; ++depth) {
+    lang::SemanticConstraintFailure wrapper;
+    wrapper.memberFailure.emplace();
+    wrapper.memberFailure->constraintCause = std::move(retained);
+    retained = lang::SemanticMemberConstraintCause::retain(std::move(wrapper));
+  }
+  expect(retained.leaf == leaf && retained.omittedMemberSteps == 64 &&
+             retained.omittedApplications == 16 && !leaf->memberFailure,
+         "nested member evidence shares one immutable leaf rather than a "
+         "recursive tree");
+  lang::SemanticConstraintFailure branchEvidence;
+  branchEvidence.alternatives.resize(2);
+  branchEvidence.alternatives.front().memberFailure.emplace();
+  branchEvidence.alternatives.front().memberFailure->constraintCause = retained;
+  const auto representative =
+      lang::SemanticMemberConstraintCause::retain(std::move(branchEvidence));
+  expect(
+      representative.leaf == leaf && representative.omittedAlternatives == 1,
+      "sampling a failed disjunction explicitly accounts for other branches");
+
+  const std::string memberContract = R"(
+concept readable<T> = requires(T& value) { { value.snapshot() } -> int; };
+struct Wrapper<T> {
+  int snapshot() requires std::integral<T> { return 7; }
+public:
+  Wrapper() = default;
+};
+int read<T>(T& value) requires readable<T> { return value.snapshot(); }
+int main() { Wrapper<bool> value{}; return read(value); }
+)";
+  const auto memberRejected = lang::Frontend().analyze(
+      "member-contract.gti", memberContract, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const auto *memberDiagnostic =
+      findDiagnosticByCode(memberRejected.diagnostics, "GTI-S2029");
+  expect(!memberRejected.canGenerateCode() && memberDiagnostic &&
+             memberDiagnostic->fixes.empty() &&
+             memberDiagnostic->primary.start ==
+                 memberContract.find("value); }") &&
+             hasRelatedDiagnostic(memberRejected.diagnostics,
+                                  "Member requirement failed:") &&
+             hasRelatedDiagnostic(memberRejected.diagnostics, "Type 'bool'") &&
+             hasRelatedDiagnostic(memberRejected.diagnostics, "std::integral"),
+         "a rejected member retains the concrete failure of its own contract");
+  expect(
+      hasDiagnosticHint(memberRejected.diagnostics,
+                        "A member candidate was found") &&
+          !hasDiagnosticHint(memberRejected.diagnostics,
+                             "Provide a public, safe, read-only"),
+      "an existing constrained member does not receive missing-member advice");
+  bool exactRequirement = false;
+  if (memberDiagnostic)
+    for (const auto &related : memberDiagnostic->related)
+      exactRequirement |=
+          related.span.source.ends_with("member-contract.gti") &&
+          related.span.start == memberContract.find("integral<T>");
+  expect(exactRequirement,
+         "the nested requirement retains its declaration span");
+  std::string memberRepaired = memberContract;
+  memberRepaired.replace(memberRepaired.find("Wrapper<bool>"), 13,
+                         "Wrapper<int>");
+  const auto memberAccepted = lang::Frontend().analyze(
+      "member-contract-repaired.gti", memberRepaired,
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      memberAccepted.canGenerateCode() &&
+          lang::verifyMirProgram(memberAccepted.mir).valid(),
+      "repairing the member constraint preserves ordinary selection and MIR");
+
+  std::string disjunctiveMember = memberContract;
+  const auto clause = disjunctiveMember.find("std::integral<T>");
+  disjunctiveMember.replace(clause, std::string("std::integral<T>").size(),
+                            "std::integral<T> || std::floating_point<T>");
+  const auto memberAlternatives = lang::Frontend().analyze(
+      "member-alternatives.gti", disjunctiveMember, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  expect(
+      !memberAlternatives.canGenerateCode() &&
+          hasRelatedDiagnostic(memberAlternatives.diagnostics, "Type 'bool'") &&
+          hasDiagnosticHint(memberAlternatives.diagnostics,
+                            "other failing disjunction branches omitted"),
+      "member disjunction explanations label their representative leaf "
+      "honestly");
+
+  const std::string nestedMember = R"(
+concept readable<T> = requires(T& value) { { value.snapshot() } -> int; };
+struct Leaf<T> {
+  int snapshot() requires std::integral<T> { return 0; }
+public: Leaf() = default;
+};
+struct Outer<T> {
+  int snapshot() requires readable<T> { return 0; }
+public: Outer() = default;
+};
+int read<T>(T& value) requires readable<T> { return value.snapshot(); }
+int main() { Outer<Outer<Leaf<bool>>> value{}; return read(value); }
+)";
+  const auto nestedMemberFailure = lang::Frontend().analyze(
+      "nested-member.gti", nestedMember, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(
+      !nestedMemberFailure.canGenerateCode() &&
+          hasRelatedDiagnostic(nestedMemberFailure.diagnostics,
+                               "Type 'bool'") &&
+          hasRelatedDiagnostic(nestedMemberFailure.diagnostics,
+                               "std::integral") &&
+          hasDiagnosticHint(nestedMemberFailure.diagnostics,
+                            "2 intermediate member-requirement steps omitted"),
+      "nested members preserve the terminal cause with explicit intermediate "
+      "elision");
+
   const std::string prefix = R"(
 namespace library {
 concept snapshot_as<R, T> = requires(T& value) { { value.snapshot() } -> R; };

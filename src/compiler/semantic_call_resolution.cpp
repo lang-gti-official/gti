@@ -5672,6 +5672,7 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
   const CallableCandidate *selected = nullptr;
   const CallableCandidate *rejectedShape = nullptr;
   const CallableCandidate *rejectedConstraints = nullptr;
+  std::optional<ConstraintFailure> rejectedConstraintCause;
   for (const auto &candidate : overloads.overloads) {
     if (candidate.staticMember || candidate.parameterPack ||
         !std::ranges::equal(candidate.parameterTypes, parameters) ||
@@ -5684,9 +5685,12 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
         rejectedShape = &candidate;
       continue;
     }
-    if (firstRequirementFailure(candidate.requirements)) {
-      if (rejectedConstraints == nullptr)
+    if (auto cause = firstRequirementFailure(candidate.requirements)) {
+      if (rejectedConstraints == nullptr) {
         rejectedConstraints = &candidate;
+        if (failure != nullptr)
+          rejectedConstraintCause = std::move(cause);
+      }
       continue;
     }
     if (selected)
@@ -5694,10 +5698,14 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
     selected = &candidate;
   }
   if (selected == nullptr) {
-    return rejectedConstraints != nullptr
-               ? reject(MemberRequirementFailureKind::Constraints,
-                        rejectedConstraints)
-               : reject(MemberRequirementFailureKind::Shape, rejectedShape);
+    if (rejectedConstraints != nullptr) {
+      reject(MemberRequirementFailureKind::Constraints, rejectedConstraints);
+      if (failure != nullptr && rejectedConstraintCause)
+        failure->constraintCause = SemanticMemberConstraintCause::retain(
+            std::move(*rejectedConstraintCause));
+      return false;
+    }
+    return reject(MemberRequirementFailureKind::Shape, rejectedShape);
   }
   if (selected->access != AccessModifier::Public)
     return reject(MemberRequirementFailureKind::Inaccessible, selected);
