@@ -926,6 +926,20 @@ class ValidationChecks(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validation.admission("full", failed)
 
+    def test_ci_automation_paths_name_real_files_that_ci_runs(self):
+        # A name for a missing harness would let a future file of that name
+        # skip native CI without review, so the inventory names only real
+        # scripts and exactly the harnesses the workflow-regression job runs.
+        root = Path(__file__).resolve().parents[1]
+        for name in validation.AUTOMATION_SCRIPTS:
+            self.assertTrue((root / "scripts" / name).is_file(), name)
+        workflow = (root / ".gitea/workflows/ci.yml").read_text()
+        job = workflow.split("  automation-tests:", 1)[1].split("\n  formatting:", 1)[0]
+        executed = set(re.findall(r"python3 tests/([A-Za-z0-9_]+_test\.py)", job))
+        self.assertEqual(validation.AUTOMATION_TESTS, executed)
+        for name in validation.AUTOMATION_TESTS:
+            self.assertTrue((root / "tests" / name).is_file(), name)
+
     def test_ci_automation_scope_is_conservative_and_has_its_own_gates(self):
         event = {"pull_request": {"draft": False}}
         self.assertEqual(validation.ci_mode(event, ["scripts/validation_batch.py", "tests/agent_workflow_test.py",

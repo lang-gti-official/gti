@@ -29,6 +29,13 @@ SHARED = ("include/gti/semantic", "include/gti/hir", "include/gti/mir",
           "src/compiler/cpp_", "src/compiler/optimization/", "runtime/")
 AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md", ".gitea/workflows/ci.yml"}
+AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
+                      "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
+# Exactly the existing harnesses that CI's workflow-regression job runs. The
+# batch, validation and preview-submit scripts are covered by agent_workflow_test.
+AUTOMATION_TESTS = {"agent_workflow_test.py", "preview_workflow_test.py", "build_window_test.py",
+                    "bounded_log_test.py", "release_version_test.py", "ci_resources_test.py",
+                    "repository_hosting_test.py"}
 
 
 def focused_scope(paths):
@@ -179,14 +186,9 @@ def ci_mode(event, paths):
             return "draft"
     # Compiler tests, CMake and packaged scripts are deliberately not inferred
     # safe just because their filename includes 'test' or 'workflow'.
-    automation_scripts = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
-                          "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
-    automation_tests = {name.removesuffix(".py") + "_test.py" for name in automation_scripts}
-    automation_tests |= {"validation_ci_test.py", "release_version_test.py", "ci_resources_test.py",
-                         "repository_hosting_test.py"}
     if paths and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
-                     path in {"scripts/" + name for name in automation_scripts} or
-                     path in {"tests/" + name for name in automation_tests} for path in paths):
+                     path in {"scripts/" + name for name in AUTOMATION_SCRIPTS} or
+                     path in {"tests/" + name for name in AUTOMATION_TESTS} for path in paths):
         return "automation"
     return "full"
 
