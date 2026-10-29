@@ -509,6 +509,19 @@ broader consumer coverage; full integration/release campaigns and the combined
 batch protocol below retain their explicit full-suite requirements. This is
 test selection, not permission to skip an affected, failed or mandatory gate.
 
+[`tests/ownership.toml`](../../tests/ownership.toml) is the shared source for
+this selection. It maps source paths to their owning (T1) and consumer (T2)
+CTest tests and marks `shared` and `system` risk; `system` areas (ABI/layout,
+runtime services and allocation, CMake/toolchain, CI and release workflows,
+test infrastructure) validate alone and are never combined with other
+changes. It is the one source the planner, PR CI and reviewers share: the
+verify-change planner selects from it, CI's workflow regression job
+validates it, and reviewers check a change's evidence against it. Its
+selection is a lower bound that the author extends from the changed
+invariant. `tests/ownership_map_test.py` keeps it complete: every tracked
+source file has an area or a stated reason, and the `test_ownership_map`
+CTest requires every named test to be registered.
+
 The compiler-smoke execution covers scalar control flow and owning strings in
 a vector at O0/O3. The GTI executable itself is always optimized. Each plan
 also includes `compiler_pipeline`. Shared semantic/IR/representation/runtime
@@ -695,7 +708,8 @@ weakening unrelated expectations, verifies and re-queues. The Linux
 workflow-regression job installs CMake (including CTest) and Make explicitly
 before its real, disposable CMake/CTest batch fixtures run. `CIEnvironment` in
 `agent_workflow` executes these shell steps with missing event aliases and an
-initially tool-free PATH. The lightweight job also runs `repository_hosting`.
+initially tool-free PATH. The lightweight job also runs `repository_hosting`,
+the ownership-map coverage check and the planner's tests.
 
 Automation-only and source-only GTI stdlib local owning checks may use
 `verify --focused`, which checks the actual diff and does not reserve a

@@ -21,15 +21,55 @@ not a second semantic or test-selection authority.
    Read activated skill instructions completely.
 3. Use the user-specified base when present. Otherwise verify the working tree
    against `HEAD`, including staged, unstaged, and untracked files.
-4. Run the deterministic surface planner from the repository root:
+4. Run the deterministic planner from the repository root:
 
    ```sh
    python3 .codex/skills/verify-change/scripts/plan_checks.py
    ```
 
    For staged changes, pass `--staged`. For a branch or commit range, pass
-   `--base <ref>`. Treat its candidates as a lower bound; inspect the diff and
-   expand them from the canonical verification document.
+   `--base <ref>`; `--paths <path>...` plans for named paths, and
+   `--format json` gives the same plan as data. Treat its candidates as a
+   lower bound; inspect the diff and expand them from the canonical
+   verification document.
+
+## Read The Planner Output
+
+The planner selects tests from [`tests/ownership.toml`](../../../tests/ownership.toml),
+the test-ownership map that PR CI and reviewers also use. Each map area names
+source paths, the CTest tests that own them and the downstream phases and
+tooling that consume them. For the changed paths the planner prints:
+
+- each matched **area** and the changed paths it selected; nested areas
+  (for example `llvm-backend` and `llvm-abi-layout`) both apply;
+- the **baseline** every implementation change runs: `compiler_pipeline`
+  and the native O0/O3 smoke
+  (`python3 scripts/validation_checks.py smoke --build build`);
+- **T0**, the registered tests whose CMake registration names a changed test,
+  fixture or harness file;
+- **T1**, the owning tests, and **T2**, the consumer tests, each as one
+  runnable `ctest ... -R '<anchored regex>'` command, followed by a
+  per-test list of the areas that selected it;
+- the format, build, Tree-sitter, agent-workflow and ownership-map checks the
+  changed files need;
+- the highest **risk** among matched areas. `shared` (the SHARED floor in
+  `scripts/validation_checks.py`) means T2 at least, with the subsystem-wide
+  sweeps the map lists as consumers. `system` (ABI/layout/calling convention,
+  runtime services and allocation, CMake/toolchain, CI and release workflows,
+  test infrastructure) means set rollup=never and validate the change alone,
+  never combined with other changes; still do not run a near-full suite
+  locally, because the merge queue runs it;
+- **uncovered** paths that no area owns. Add an area, or an `[[unowned]]`
+  entry with its reason, in the same change; `tests/ownership_map_test.py`
+  fails while a tracked file under `src/`, `include/`, `runtime/`, `stdlib/`,
+  `scripts/` or `lua/` has neither.
+
+The selection is a lower bound, never a proof of sufficiency. The author
+extends it from their own analysis of the changed invariant: which phases and
+tools consume the changed fact, which feature regressions exercise it, and
+which platform, runtime or performance obligations apply. A test the map does
+not name is not thereby excused. When review finds a consumer the map missed,
+add it to the owning area so the next change inherits it.
 
 ## Select Evidence
 
@@ -37,8 +77,8 @@ Select T1/T2/T3 from the invariant changed, using the canonical
 [batch validation contract](../../../docs/architecture/agent-workflow.md#risk-based-batch-validation).
 T1 is confined recovery/diagnostic or otherwise narrow behavior; T2 changes
 semantic/shared compiler behavior; T3 changes system, ABI/runtime or optimizer
-invariants. "ICE" and a small diff do not establish low risk. The script's
-critical-path floor is conservative; review can raise it. T2/T3 plans must
+invariants. "ICE" and a small diff do not establish low risk. The planner's
+risk is a floor from the map; review can raise it. T2/T3 plans must
 name relevant broader subsystem checks and all required platforms.
 
 For a fix, retain evidence of the intended original failure and its corrected

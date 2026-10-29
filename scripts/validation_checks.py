@@ -30,6 +30,13 @@ SHARED = ("include/gti/semantic", "include/gti/hir", "include/gti/mir",
 AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
 # CI workflow edits select full coverage, so the queue validates the jobs it changes.
 AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
+AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
+                      "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
+# Workflow harnesses that need no compiler build. tests/ownership.toml is not
+# automation: its test_ownership_map inventory check needs a configured build.
+AUTOMATION_TESTS = {name.removesuffix(".py") + "_test.py" for name in AUTOMATION_SCRIPTS} | {
+    "validation_ci_test.py", "release_version_test.py", "ci_resources_test.py",
+    "repository_hosting_test.py", "ownership_map_test.py", "plan_checks_test.py"}
 
 
 def focused_scope(paths):
@@ -180,14 +187,9 @@ def ci_mode(event, paths):
             return "draft"
     # Compiler tests, CMake and packaged scripts are deliberately not inferred
     # safe just because their filename includes 'test' or 'workflow'.
-    automation_scripts = {"agent_workflow.py", "validation_batch.py", "validation_checks.py",
-                          "preview_workflow.py", "preview_submit.py", "build_window.py", "bounded_log.py"}
-    automation_tests = {name.removesuffix(".py") + "_test.py" for name in automation_scripts}
-    automation_tests |= {"validation_ci_test.py", "release_version_test.py", "ci_resources_test.py",
-                         "repository_hosting_test.py"}
     if paths and all(path in AUTOMATION_FILES or path.startswith(AUTOMATION) or
-                     path in {"scripts/" + name for name in automation_scripts} or
-                     path in {"tests/" + name for name in automation_tests} for path in paths):
+                     path in {"scripts/" + name for name in AUTOMATION_SCRIPTS} or
+                     path in {"tests/" + name for name in AUTOMATION_TESTS} for path in paths):
         return "automation"
     return "full"
 
@@ -432,6 +434,9 @@ def main(argv=None):
     shard.add_argument("--jobs", type=int, default=4)
     shard.add_argument("--report", required=True)
     shard.add_argument("--log")
+    smoke_parser = sub.add_parser("smoke", help="run only the native O0/O3 compiler smoke")
+    smoke_parser.add_argument("--build", required=True)
+    smoke_parser.add_argument("--log")
     for name in ("focused", "full"):
         run_parser = sub.add_parser(name)
         run_parser.add_argument("--build", required=True)
@@ -470,6 +475,15 @@ def main(argv=None):
                 log.close()
         Path(args.report).write_text(json.dumps(report, indent=2) + "\n")
         print("GTI_SHARD_RESULT=" + json.dumps({k: report[k] for k in ("platform", "index", "shards")}))
+        return
+    if args.command == "smoke":
+        log = Path(args.log).open("w") if args.log else None
+        try:
+            executed = smoke(root, Path(args.build).resolve(), log)
+        finally:
+            if log:
+                log.close()
+        print("GTI_SMOKE_RESULT=" + json.dumps(executed))
         return
     if args.jobs < 1:
         raise ValueError("jobs must be positive")

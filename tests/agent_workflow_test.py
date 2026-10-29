@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Exercise the GitHub task lifecycle with real disposable Git repositories and no automatic backup pushes."""
 
+import contextlib
 import copy
+import io
 import json
 import os
 from pathlib import Path
@@ -1056,6 +1058,42 @@ class ValidationChecks(unittest.TestCase):
         event["changes"] = {}
         event["pull_request"]["draft"] = False
         self.assertEqual(validation.ci_mode(event, ["src/compiler/parser.cpp"]), "full")
+
+    @unittest.skipIf(os.name == "nt", "The fake compiler and its outputs are POSIX scripts")
+    def test_smoke_command_runs_each_program_at_o0_and_o3(self):
+        with tempfile.TemporaryDirectory(prefix="gti-smoke-command-") as temporary:
+            build = Path(temporary)
+            calls = build / "calls.txt"
+            compiler = build / "gti"
+            # Each "compiled" program records its own run, so the test proves
+            # that the subcommand executes the outputs it asked for.
+            compiler.write_text(f"#!{sys.executable}\nimport pathlib, sys\n"
+                                f"calls = pathlib.Path({str(calls)!r})\n"
+                                "output = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])\n"
+                                "with calls.open('a') as log: log.write('compile ' + output.name + '\\n')\n"
+                                "output.write_text('#!/bin/sh\\necho run ' + output.name + "
+                                f"' >> {calls}\\n')\n"
+                                "output.chmod(0o755)\n")
+            compiler.chmod(0o755)
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                validation.main(["smoke", "--build", str(build)])
+            expected = ["scalar-O0", "scalar-O3", "owners-O0", "owners-O3"]
+            self.assertEqual(stdout.getvalue(), "GTI_SMOKE_RESULT=" + json.dumps(expected) + "\n")
+            log = calls.read_text().splitlines()
+            self.assertEqual([line for line in log if line.startswith("run ")],
+                             ["run " + name for name in expected])
+
+    def test_automation_job_harnesses_are_classified_as_automation(self):
+        _, script = CIEnvironment.step("automation-tests", "Verify workflow, batch, preservation and resource rules")
+        harnesses = re.findall(r"^python3 tests/([A-Za-z0-9_]+_test\.py)\b", script, re.M)
+        self.assertIn("ownership_map_test.py", harnesses)
+        self.assertIn("plan_checks_test.py", harnesses)
+        for harness in harnesses:
+            with self.subTest(harness=harness):
+                self.assertTrue((ROOT / "tests" / harness).is_file())
+                self.assertIn(harness, validation.AUTOMATION_TESTS)
+                self.assertEqual(validation.ci_mode({}, ["tests/" + harness]), "automation")
 
     def test_platform_scoped_gates_keep_other_hosts_obligations(self):
         plan = batch_plan(platforms=["darwin", "linux"],
