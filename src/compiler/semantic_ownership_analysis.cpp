@@ -5091,6 +5091,7 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   worker->macroLookupBase = macroLookupBase;
   worker->nextExpansion = nextExpansion;
   worker->valueFlow = valueFlow;
+  worker->valueFlow.rebindCallables(worker->catalog);
   for (const auto *definition : constexprDefinitionsAnalyzed)
     if (declaredBeforeCurrent(definition))
       worker->constexprDefinitionsAnalyzed.insert(definition);

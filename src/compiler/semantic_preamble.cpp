@@ -19,6 +19,11 @@ SemanticVisitor::buildPreamble(Program prefix) {
   impl->buildingPreamble = true;
   (void)impl->check(prefix);
   impl->buildingPreamble = false;
+  // A prefix can be incomplete even when the full program is valid (for
+  // example a constexpr prototype completed by a later implementation unit).
+  // Its provisional diagnostics must not become cached program diagnostics.
+  if (impl->hadError())
+    return nullptr;
   impl->freezePreamble();
   // The caller's graph, sources and metrics die with this analysis; a
   // resumed analysis supplies its own.
@@ -96,6 +101,7 @@ auto SemanticVisitor::Impl::blankLikeThis() const -> std::unique_ptr<Impl> {
 auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   const Impl &source = *adoptedPreamble->state;
   requestSession = source.requestSession;
+  valueFlow.rebindCallables(catalog);
   // Request-local budgets and query states are never shared with the
   // preamble or with another resumed analysis.
   requestSession.constexprWork.reset();

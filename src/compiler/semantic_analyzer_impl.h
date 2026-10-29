@@ -6646,10 +6646,12 @@ private:
     SemanticCatalog() = default;
     SemanticCatalog(SemanticCatalog &&) noexcept = default;
     SemanticCatalog &operator=(SemanticCatalog &&) noexcept = default;
-    // A copy owns its own callable declarations and re-points
-    // callableDeclarationsBySyntax at them; everything else is value state.
+    // A copy owns its callable records and rebinds every candidate/index to
+    // those records. Syntax pointers refer to shared immutable AST ownership.
     SemanticCatalog(const SemanticCatalog &other);
     SemanticCatalog &operator=(const SemanticCatalog &other);
+    void rebindCallables(Symbol &symbol) const;
+    void rebindCallables();
 
     void clear() { *this = SemanticCatalog{}; }
     [[nodiscard]] SemanticCatalog snapshotForInstanceAnalysis() const;
@@ -6763,6 +6765,8 @@ private:
     // summaries and call writes see them.
     std::unordered_map<const VariableDecl *, Symbol> staticFieldSymbols;
 
+    void rebindCallables(const SemanticCatalog &catalog);
+
     void clear() {
       scopes.clear();
       rawOperatorResults.clear();
@@ -6776,25 +6780,41 @@ private:
     }
 
     void beginBody(const SemanticCatalog &catalog) {
-      namespaceSymbols = catalog.namespaceSymbols;
-      internalNamespaceSymbols = catalog.internalNamespaceSymbols;
-      visibleNamespaceSymbols = catalog.visibleNamespaceSymbols;
+      namespaceSymbols.clear();
+      internalNamespaceSymbols.clear();
+      visibleNamespaceSymbols.clear();
       staticFieldSymbols.clear();
       extendBody(catalog);
     }
 
-    // Adds the catalog's symbols a body phase does not know yet, keeping
-    // the ones an earlier body phase declared or refined (globals from the
-    // trusted prefix a resumed analysis adopted; see checkResumed).
+    // Refresh complete declaration sets (including overloads and ambiguity)
+    // while retaining variable flow facts established by an earlier body
+    // phase, such as the trusted prefix adopted by checkResumed.
     void extendBody(const SemanticCatalog &catalog) {
-      for (const auto &[name, symbol] : catalog.namespaceSymbols)
-        namespaceSymbols.try_emplace(name, symbol);
+      const auto refresh = [](DeclarationIndex<Symbol> &current,
+                              const DeclarationIndex<Symbol> &complete) {
+        if (current.empty()) {
+          current = complete;
+          return;
+        }
+        std::unordered_map<const VariableDecl *, const Symbol *> values;
+        current.forEachValue([&](const Symbol &symbol) {
+          if (symbol.variableDeclaration != nullptr)
+            values.emplace(symbol.variableDeclaration, &symbol);
+        });
+        auto updated = complete;
+        updated.forEachValue([&](Symbol &symbol) {
+          const auto previous = values.find(symbol.variableDeclaration);
+          if (previous != values.end())
+            symbol = *previous->second;
+        });
+        current = std::move(updated);
+      };
+      refresh(namespaceSymbols, catalog.namespaceSymbols);
       for (const auto &[unit, symbols] : catalog.internalNamespaceSymbols)
-        for (const auto &[name, symbol] : symbols)
-          internalNamespaceSymbols[unit].try_emplace(name, symbol);
+        refresh(internalNamespaceSymbols[unit], symbols);
       for (const auto &[unit, symbols] : catalog.visibleNamespaceSymbols)
-        for (const auto &[name, symbol] : symbols)
-          visibleNamespaceSymbols[unit].try_emplace(name, symbol);
+        refresh(visibleNamespaceSymbols[unit], symbols);
       for (const auto &owner : catalog.classes)
         for (const auto &[_, member] : owner.members)
           if (member.symbol.bindingKind == SemanticBindingKind::StaticField &&

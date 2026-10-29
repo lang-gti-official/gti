@@ -26,6 +26,9 @@ add_test(NAME module_queries COMMAND gti_module_query_tests)
 add_executable(gti_module_identity_tests module_identity_tests.cpp)
 target_link_libraries(gti_module_identity_tests PRIVATE gti_compiler)
 add_test(NAME module_semantic_identity COMMAND gti_module_identity_tests)
+add_executable(gti_module_preamble_tests module_preamble_tests.cpp)
+target_link_libraries(gti_module_preamble_tests PRIVATE gti_compiler)
+add_test(NAME module_preamble_identity COMMAND gti_module_preamble_tests)
 add_test(NAME module_system_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_system_runtime_test.py"
     $<TARGET_FILE:gti>)

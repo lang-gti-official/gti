@@ -51,6 +51,13 @@ public:
     values.clear();
     alternatives.clear();
   }
+  template <class Visitor> void forEachValue(Visitor &&visitor) {
+    for (auto &[_, value] : values)
+      visitor(value);
+    for (auto &[_, candidates] : alternatives)
+      for (auto &candidate : candidates)
+        visitor(candidate);
+  }
   void addAlternative(const std::string &name, const Value &value) {
     auto &candidates = alternatives[name];
     if (candidates.empty())

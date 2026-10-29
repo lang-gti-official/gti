@@ -163,6 +163,20 @@ declaration, seals its body association, and gives MIR the existing call,
 ownership and cleanup contracts. The definition is not a second namespace
 function. No generated C++ signature matching supplies GTI meaning.
 
+Semantic catalog copies own their callable records and rebind every overload
+candidate to those copied records, including visible ambiguity alternatives,
+class members, protocol operations and enum symbols. Copied body-flow scopes
+and indexes use the receiving catalog as well. Completing an interface prototype
+in a resumed request therefore updates only that request; it cannot mutate the
+cached preamble or retain a candidate pointing at the preamble's incomplete
+record. After registration resumes, declaration indexes refresh from the complete
+catalog while existing variable flow facts retain their declaration identity.
+This keeps added overloads and ambiguities equivalent to uncached analysis.
+A prefix that produces semantic errors is not cached: it may be incomplete
+without a later implementation body, as with a separate constexpr definition.
+The frontend then analyzes the complete program and publishes only those
+diagnostics, rather than preserving provisional prefix errors.
+
 Artifact builds set `FrontendOptions::lowerReachableOnly`. The complete program
 is still analyzed, but MIR and everything after it receive only the instances
 reachable from the program roots; see

@@ -641,6 +641,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             worker->macroLookupBase = macroLookupBase;
             worker->nextExpansion = nextExpansion;
             worker->valueFlow = valueFlow;
+            worker->valueFlow.rebindCallables(worker->catalog);
             // Initializer effects close over the completed program, so every
             // analysed constexpr definition is available to the concrete
             // instances they reach, exactly as to their HIR reanalysis.
@@ -11230,6 +11231,7 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   worker->macroLookupBase = macroLookupBase;
   worker->nextExpansion = nextExpansion;
   worker->valueFlow = valueFlow;
+  worker->valueFlow.rebindCallables(worker->catalog);
   // Cached summaries must describe global pointer inputs, not freeze the
   // first caller's current value. Direct addresses of globals stay ordinary
   // absolute places; only raw values loaded from their storage are symbolic.
