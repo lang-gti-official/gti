@@ -12397,8 +12397,14 @@ LLVM gap the audit found, runs on LLVM since PR 421.
   (`operator new`) or replace the runtime's `gti_rt_posix_memalign_v1`. On
   LLVM, unique owners allocate through that runtime function, and on C++
   through `operator new`. No GTI document fixes which allocator backs a unique
-  owner. Source-only GTI cannot see the difference; these companions can, and
-  their tests stay C++-only.
+  owner. Source-only GTI cannot see the difference; these companions can.
+  Since 2026-10-29 the `unique_scalar_allocation_failure`,
+  `unique_scalar_allocation_cleanup_failure` and `process_allocation_elision`
+  programs also run with companions that replace the runtime's POSIX provider
+  through the same switch or probe, so `unique_scalar_allocation_runtime` and
+  `process_allocation_elision` check exhaustion, failure during cleanup and
+  owner release on LLVM as well (not on Windows). The other three tests stay
+  C++-only.
 - **Recorded C++ lifecycle bug.** In `llvm_dispatch_lifecycle_phases`, a base
   destructor's virtual call on `this` runs the destructor's own class on LLVM,
   the owner's lifecycle-dispatch rule. The C++ backend reaches the destroyed

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Process-owner allocations can disappear; escaping owners still allocate."""
 
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -47,6 +48,25 @@ def main():
                 assert (result.returncode, result.stderr) == (0, "") and result.stdout in accepted, (
                     standard, level, result)
                 print(f"Process allocation elision: {standard}/{level} passed", flush=True)
+        if os.name == "nt":
+            return
+        # Native-backend owners allocate through the runtime's POSIX provider,
+        # which the companion counts with the same probe. Elision of the
+        # non-escaping owner is permitted but not required; the escaping owner
+        # must allocate and release exactly once.
+        for level in ("O0", "O2"):
+            binary = Path(directory) / f"llvm-{level}"
+            built = subprocess.run([
+                str(compiler), str(fixtures / "process_allocation_elision.gti"),
+                "--backend", "llvm", f"-{level}", "-o", str(binary),
+                "--", str(fixtures / "process_allocation_elision.cpp")],
+                capture_output=True, text=True, timeout=120)
+            assert built.returncode == 0, built
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30)
+            accepted = {"1 1\n1 1\n"} if level == "O0" else {"0 0\n1 1\n", "1 1\n1 1\n"}
+            assert (result.returncode, result.stderr) == (0, "") and result.stdout in accepted, (
+                level, result)
+            print(f"Process allocation elision: llvm/{level} passed", flush=True)
 
 
 if __name__ == "__main__":
