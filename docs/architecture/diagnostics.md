@@ -9,6 +9,19 @@ LSP consume the same policy and source spans.
 
 Status: Current infrastructure and conventions.
 
+Staged MIR constant-evaluation failures retain executed caller identities,
+which semantic staging maps to source spans before its HIR/MIR snapshot expires.
+`GTI-S2057` in constexpr bindings, `if constexpr` and `static_assert` appends
+outer-to-inner call notes without replacing the failing operation or changing
+evaluation/admission. MIR stores at most eight callers (the innermost four and
+outermost four), with an exact omitted-call count; source mapping counts any
+unavailable location as omitted rather than inventing a span. The written root
+request adds one source note. Recursive calls remain distinct execution frames
+even when their source locations repeat. Successful execution allocates no
+trace. These notes are explanatory, not an automatic repair. CLI and LSP share
+them. This is the staged MIR profile, not a claim of complete AST compatibility,
+generic-instantiation or every constant-context trace coverage.
+
 `GTI-S2012` rejects zero-argument class/struct construction when no constructor
 was explicitly declared for it. The construction site is primary; a related
 span names the type declaration, and the hint suggests supplying required

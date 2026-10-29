@@ -127,6 +127,13 @@ struct SemanticConstraintFailure {
   std::optional<std::string> conceptExplanation;
 };
 
+struct SemanticConstantTrace {
+  std::vector<SourceSpan> calls;
+  std::size_t omittedCalls = 0;
+
+  void appendTo(Diagnostic &diagnostic) const;
+};
+
 class SemanticDiagnosticReporter {
 public:
   SemanticDiagnosticReporter(const SemanticModel &semantics,

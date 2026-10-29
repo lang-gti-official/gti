@@ -1942,6 +1942,7 @@ auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
     }
     reporter.reportStaticAssertEvaluationFailure(
         stmt, evaluated.failure, evaluated.detail, evaluated.location);
+    evaluated.trace.appendTo(diagnostics.back());
     appendStaticAssertSubstitutions(diagnostics.back());
     semanticModel.recordStaticAssertResult(stmt, StaticAssertResult::Failed);
     return;
@@ -14407,12 +14408,14 @@ auto SemanticVisitor::Impl::reportConstexprFailure(
   reporter.reportConstexprFailure(declaration, type, evaluation.failure,
                                   evaluation.detail, evaluation.location,
                                   evaluation.libraryLocation);
+  evaluation.trace.appendTo(diagnostics.back());
 }
 
 auto SemanticVisitor::Impl::reportConstexprConditionFailure(
     const IfStmt &statement, const ConstexprEvaluation &evaluation) -> void {
   reporter.reportConstexprConditionFailure(
       statement, evaluation.failure, evaluation.detail, evaluation.location);
+  evaluation.trace.appendTo(diagnostics.back());
 }
 
 auto SemanticVisitor::Impl::constexprBindingValue(

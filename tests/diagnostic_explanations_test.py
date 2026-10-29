@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position
+from lsp_smoke_test import LspSession, lsp_position, without_include_advice
 
 
 def run(compiler, server, root):
@@ -81,10 +81,10 @@ int main() {
             "textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": source}}})
 
         def publication(version):
-            return session.receive_until(lambda message:
+            return without_include_advice(session.receive_until(lambda message:
                 message.get("method") == "textDocument/publishDiagnostics"
                 and message["params"].get("uri") == uri
-                and message["params"].get("version") == version)["params"]["diagnostics"]
+                and message["params"].get("version") == version)["params"]["diagnostics"])
 
         diagnostics = publication(1)
         error = next(d for d in diagnostics if d.get("code") == "GTI-S2018")
@@ -196,6 +196,46 @@ int main() { Wrapper<bool> value{}; return read(/* 😀 */ value); }
             "textDocument": {"uri": uri, "version": 8},
             "contentChanges": [{"text": fixed_member}]}})
         assert not publication(8), "repair must clear nested causes from the next snapshot"
+
+        helper_path = root / "constant-helper.gti"
+        helper = '''constexpr int divide(int value) { return 100 / value; }
+constexpr int middle(int value) { /* 😀 */ return divide(value); }
+constexpr int outer(int value) { return middle(value); }
+'''
+        helper_path.write_text(helper)
+        constant = '''#include "constant-helper.gti"
+constexpr int result = outer(0);
+int main() { return 0; }
+'''
+        output = terminal(constant)
+        assert output.count("Constant evaluation requested here.") == 3, output
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri, "version": 9},
+            "contentChanges": [{"text": constant}]}})
+        # The failing operation belongs to the included file. The adapter
+        # publishes it there, not at the root request's URI.
+        constant_diagnostics = session.receive_until(lambda message:
+            message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == helper_path.as_uri()
+            and any(d.get("code") == "GTI-S2057"
+                    for d in message["params"]["diagnostics"]))["params"]["diagnostics"]
+        assert any(d.get("code") == "GTI-S2057" for d in constant_diagnostics), constant_diagnostics
+        failed = next(d for d in constant_diagnostics if d.get("code") == "GTI-S2057")
+        trace = [n for n in failed["relatedInformation"]
+                 if n["message"] == "Constant evaluation requested here."]
+        assert len(trace) == 3 and not failed.get("data", {}).get("fixes"), failed
+        assert trace[0]["location"]["uri"] == uri, trace
+        assert trace[1]["location"]["uri"] == helper_path.as_uri(), trace
+        assert trace[2]["location"]["range"]["start"] == lsp_position(
+            helper, helper.index("divide(value)") + len("divide(value")), trace
+        # The source snapshot changes, not the library file on disk.
+        session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri, "version": 10},
+            "contentChanges": [{"text": constant.replace("outer(0)", "outer(100)")}]}})
+        cleared = session.receive_until(lambda message:
+            message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == helper_path.as_uri())["params"]["diagnostics"]
+        assert not cleared, "repair must clear the constexpr call trace in the dependency"
     finally:
         session.close()
 
