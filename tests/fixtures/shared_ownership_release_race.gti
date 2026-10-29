@@ -1,0 +1,63 @@
+import std.memory;
+import std.thread;
+import std.atomic;
+import std.panic;
+// The final strong release must acquire every other owner's prior payload
+// reads before the payload destructor writes. ThreadSanitizer reports the
+// plain destructor store as a data race if that acquisition is missing.
+std::atomic<int> drops{0};
+std::atomic<int> ready{0};
+std::atomic<bool> begin{false};
+[[unsafe_transfer, unsafe_share]] class Item {
+public:
+  mut int value = 73;
+  Item() = default;
+  ~Item() {
+    this.value = 0;
+    [[discard]] drops.fetch_add(1);
+  }
+};
+void promote(std::weak_ptr<Item> observer) {
+  [[discard]] ready.fetch_add(1);
+  while (!begin.load()) {}
+  for (mut int i = 0; i < 4000; i++) {
+    auto locked = observer.lock();
+    if (locked && locked->value != 73) { std::panic("promoted a retired payload"); }
+  }
+}
+void retain(std::shared_ptr<Item> owner) {
+  [[discard]] ready.fetch_add(1);
+  while (!begin.load()) {}
+  for (mut int i = 0; i < 1000; i++) {
+    auto copy = owner.clone();
+    if (copy->value != 73) { std::panic("retained a retired payload"); }
+  }
+}
+int main() {
+  for (mut int iteration = 0; iteration < 40; iteration++) {
+    ready.store(0);
+    begin.store(false);
+    mut auto owner = std::make_shared<Item>();
+    auto first_observer = owner.downgrade();
+    auto second_observer = owner.downgrade();
+    auto retained = owner.clone();
+    auto first_result = std::thread::start(
+        [weak = std::move(first_observer)]() -> void { promote(weak.clone()); });
+    if (!first_result) { return 1; }
+    mut auto first = std::move(first_result).value();
+    auto second_result = std::thread::start(
+        [weak = std::move(second_observer)]() -> void { promote(weak.clone()); });
+    if (!second_result) { return 2; }
+    mut auto second = std::move(second_result).value();
+    auto third_result = std::thread::start(
+        [strong = std::move(retained)]() -> void { retain(strong.clone()); });
+    if (!third_result) { return 3; }
+    mut auto third = std::move(third_result).value();
+    while (ready.load() != 3) {}
+    begin.store(true);
+    owner.reset();
+    if (!first.join() || !second.join() || !third.join()) { return 4; }
+    if (drops.load() != iteration + 1) { return 5; }
+  }
+  return 0;
+}
