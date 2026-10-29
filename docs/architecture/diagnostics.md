@@ -1337,8 +1337,8 @@ leaf from the resolver's existing failure result. No requirement is reevaluated
 by the reporter. `SemanticMemberConstraintCause` shares one immutable leaf;
 straight nested member chains collapse with an explicit intermediate-step count.
 Failed disjunctions select their first failing branch in source order and report
-a lower bound on omitted branches, not an exhaustive repair list. More than one
-rejected member candidate is likewise identified explicitly. The retained leaf
+a lower bound on omitted branches, not an exhaustive repair list. The existing
+resolver's first rejected member candidate supplies this evidence. The retained leaf
 keeps at most eight concept applications (four outermost and four innermost),
 with an exact omitted-application count. Its exact failure kind, types and leaf
 location remain intact. This bounds the new member-cause storage; it does not

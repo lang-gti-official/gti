@@ -5673,7 +5673,6 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
   const CallableCandidate *rejectedShape = nullptr;
   const CallableCandidate *rejectedConstraints = nullptr;
   std::optional<ConstraintFailure> rejectedConstraintCause;
-  std::size_t rejectedConstraintCandidates = 0;
   for (const auto &candidate : overloads.overloads) {
     if (candidate.staticMember || candidate.parameterPack ||
         !std::ranges::equal(candidate.parameterTypes, parameters) ||
@@ -5687,7 +5686,6 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
       continue;
     }
     if (auto cause = firstRequirementFailure(candidate.requirements)) {
-      ++rejectedConstraintCandidates;
       if (rejectedConstraints == nullptr) {
         rejectedConstraints = &candidate;
         if (failure != nullptr)
@@ -5705,8 +5703,6 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
       if (failure != nullptr && rejectedConstraintCause)
         failure->constraintCause = SemanticMemberConstraintCause::retain(
             std::move(*rejectedConstraintCause));
-      if (failure != nullptr)
-        failure->rejectedConstraintCandidates = rejectedConstraintCandidates;
       return false;
     }
     return reject(MemberRequirementFailureKind::Shape, rejectedShape);

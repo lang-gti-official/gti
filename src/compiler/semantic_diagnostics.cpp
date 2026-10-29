@@ -170,8 +170,14 @@ SemanticMemberConstraintCause::retain(SemanticConstraintFailure failure) {
   constexpr std::size_t contextLimit = 8;
   if (failure.context.size() > contextLimit) {
     cause.omittedApplications = failure.context.size() - contextLimit;
-    failure.context.erase(failure.context.begin() + contextLimit / 2,
-                          failure.context.end() - contextLimit / 2);
+    std::vector<SemanticConstraintContext> bounded;
+    bounded.reserve(contextLimit);
+    for (std::size_t index = 0; index < contextLimit / 2; ++index)
+      bounded.push_back(std::move(failure.context[index]));
+    for (std::size_t index = failure.context.size() - contextLimit / 2;
+         index < failure.context.size(); ++index)
+      bounded.push_back(std::move(failure.context[index]));
+    failure.context = std::move(bounded);
   }
   failure.callArgument.reset();
   failure.callArgumentIndex.reset();
@@ -274,12 +280,6 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
       diagnostic.hints.push_back(std::move(reason));
     if (detail.constraintCause && detail.constraintCause->leaf) {
       const auto &cause = *detail.constraintCause;
-      if (detail.rejectedConstraintCandidates > 1)
-        diagnostic.hints.push_back(
-            "Showing the first of " +
-            std::to_string(detail.rejectedConstraintCandidates) +
-            " member candidates with unsatisfied requirements; their causes "
-            "may differ.");
       std::vector<Diagnostic> nested;
       SemanticDiagnosticReporter(semantics, nested)
           .reportConstraintFailure(location ? *location : leaf.parameter,
@@ -538,6 +538,16 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     }
     switch (failure.structural) {
     case StructuralConstraintKind::ReadMember: {
+      if (failure.memberFailure &&
+          failure.memberFailure->kind ==
+              MemberRequirementFailureKind::Constraints) {
+        diagnostic.hints.emplace_back(
+            "A member candidate was found, but its requires "
+            "clause "
+            "is not satisfied. The related cause explains this rejection; "
+            "satisfying it may reveal another requirement.");
+        break;
+      }
       const bool permitsUnsafe = memberQuery && memberQuery->unsafeKeyword();
       const std::string safety = permitsUnsafe ? "public" : "public, safe";
       if (memberQuery && memberQuery->parameters().empty() &&

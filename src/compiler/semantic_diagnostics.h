@@ -80,7 +80,6 @@ struct SemanticMemberRequirementFailure {
   SemanticType actualResult = SemanticType::Unknown;
   SemanticType requiredResult = SemanticType::Unknown;
   std::optional<SemanticMemberConstraintCause> constraintCause;
-  std::size_t rejectedConstraintCandidates = 0;
 };
 
 struct SemanticConstraintContext {

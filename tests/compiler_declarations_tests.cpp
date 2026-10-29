@@ -5120,7 +5120,8 @@ void testConstraintFailureProvenance() {
   auto retained =
       lang::SemanticMemberConstraintCause::retain(std::move(evidence));
   const auto leaf = retained.leaf;
-  expect(leaf->context.size() == 8 && retained.omittedApplications == 16 &&
+  expect(leaf->context.size() == 8 && leaf->context.capacity() == 8 &&
+             retained.omittedApplications == 16 &&
              leaf->context.front().name == "Contract0" &&
              leaf->context.back().name == "Contract23",
          "bounded member evidence preserves outer and innermost applications");
@@ -5134,12 +5135,12 @@ void testConstraintFailureProvenance() {
              retained.omittedApplications == 16 && !leaf->memberFailure,
          "nested member evidence shares one immutable leaf rather than a "
          "recursive tree");
-  lang::SemanticConstraintFailure alternatives;
-  alternatives.alternatives.resize(2);
-  alternatives.alternatives.front().memberFailure.emplace();
-  alternatives.alternatives.front().memberFailure->constraintCause = retained;
+  lang::SemanticConstraintFailure branchEvidence;
+  branchEvidence.alternatives.resize(2);
+  branchEvidence.alternatives.front().memberFailure.emplace();
+  branchEvidence.alternatives.front().memberFailure->constraintCause = retained;
   const auto representative =
-      lang::SemanticMemberConstraintCause::retain(std::move(alternatives));
+      lang::SemanticMemberConstraintCause::retain(std::move(branchEvidence));
   expect(
       representative.leaf == leaf && representative.omittedAlternatives == 1,
       "sampling a failed disjunction explicitly accounts for other branches");
@@ -5168,6 +5169,12 @@ int main() { Wrapper<bool> value{}; return read(value); }
              hasRelatedDiagnostic(memberRejected.diagnostics, "Type 'bool'") &&
              hasRelatedDiagnostic(memberRejected.diagnostics, "std::integral"),
          "a rejected member retains the concrete failure of its own contract");
+  expect(
+      hasDiagnosticHint(memberRejected.diagnostics,
+                        "A member candidate was found") &&
+          !hasDiagnosticHint(memberRejected.diagnostics,
+                             "Provide a public, safe, read-only"),
+      "an existing constrained member does not receive missing-member advice");
   bool exactRequirement = false;
   if (memberDiagnostic)
     for (const auto &related : memberDiagnostic->related)
