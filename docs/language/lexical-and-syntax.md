@@ -178,6 +178,27 @@ Ordinary imports do not re-export their dependencies. Loading is canonicalized,
 load-once, and cycle-checked; it is not textual substitution. Only the entry
 source unit may define `main`.
 
+### Migrating Existing Source
+
+Replace `#include <vector>` with `import std.vector;`. A local dependency such
+as `#include "geometry.gti"` becomes `import "geometry.gti";`, and that file
+must start with `export module geometry;`. Mark the declarations its callers
+use with `export`; imports do not expose every declaration automatically.
+Replace `export #include` with `export import` only when that dependency is
+intended to be part of the importing interface's public API.
+
+For a package API, register the interface in `[modules]` in `gti.toml` and import
+its registered name, qualified by the dependency alias when appropriate. Keep
+private interfaces inside their owner's root and import them with quoted paths;
+do not register them merely to work around visibility. Register implementation
+files with their interface and use the matching `module name;` header. See the
+[module-system example](../../examples/module-system/README.md) for a complete
+package with split generic bodies and unrelated private names.
+
+Native C/C++ headers used by bindgen and the native toolchain retain their
+native meaning. The change removes GTI source includes, not native header input.
+There is no compatibility switch that restores GTI include behavior.
+
 ### Explicit Module Interfaces
 
 A module interface starts with `export module name;` before other tokens.

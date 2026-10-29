@@ -34,6 +34,10 @@ add_test(NAME module_initialization_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_initialization_runtime_test.py"
     $<TARGET_FILE:gti>)
 set_tests_properties(module_initialization_runtime PROPERTIES TIMEOUT 240)
+add_test(NAME module_cpp_boundary
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_cpp_boundary_test.py"
+    $<TARGET_FILE:gti>)
+set_tests_properties(module_cpp_boundary PROPERTIES TIMEOUT 180)
 if(TARGET gti_lsp)
   add_test(NAME module_map_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_map_lsp_test.py"

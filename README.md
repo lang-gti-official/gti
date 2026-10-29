@@ -52,9 +52,10 @@ source graph -> frontend -> checked AST -> typed HIR/MIR
 > release is published; GTI 1.0 then freezes Edition 1 under the published
 > [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md).
 
-This branch contains the unreleased phase 1 module-only conversion. GTI
+This branch contains the unreleased phase 2 module-only release candidate. GTI
 `#include` is rejected; the examples below use explicit imports. The change is
-held from main and release until phase 2 completes production module support.
+held from main and release until production verification completes. See the
+[migration guide](docs/language/lexical-and-syntax.md#migrating-existing-source).
 
 ## A small example
 

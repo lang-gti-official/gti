@@ -9,6 +9,32 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.492.0 - First-class modules (release candidate)
+
+- **Breaking:** GTI `#include` and `export #include` are removed. Use
+  `import std.vector;` for standard modules, registered named imports for
+  package APIs, and quoted imports for interfaces within the same source owner.
+  Imported files start with `export module name;` and explicitly export their
+  public declarations. Use `export import` for deliberate re-exports.
+- Registered implementation files start with `module name;` and share their
+  interface's private declarations. Split function and generic member bodies
+  preserve declaration-owned defaults and constraints. Private declarations in
+  unrelated modules have distinct identities; conflicting visible names are
+  diagnosed at use. Module names support dotted components.
+- Standard-library public imports come from an installed module map. Internal
+  helpers are private interfaces, and source ownership never grants compiler
+  trust. Generated bindings have explicit or deterministic module identities.
+- Module imports support editor completion, hover, definition and references.
+  Missing imports preserve available editor analysis; creating an imported file
+  or changing a module map refreshes dependent files. Import quick fixes use
+  public APIs and verified re-export paths.
+- Startup includes registered implementation units and their dependencies in
+  deterministic module order, once per module. Cycles through implementations
+  are rejected. LLVM supports distinct private nominal names; the retained C++
+  backend diagnoses unsupported representation collisions with `GTI-B0003`.
+- This candidate remains on the draft campaign branch until production
+  validation completes. See the [module migration guide](docs/language/lexical-and-syntax.md#migrating-existing-source).
+
 ## 0.491.0 - Source-defined shared and weak ownership
 
 - `std::shared_ptr` now implements its handle, explicit cloning, reference
