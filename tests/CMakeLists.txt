@@ -5591,6 +5591,11 @@ if(Python3_Interpreter_FOUND)
         "${PROJECT_SOURCE_DIR}/tests/thread_local_runtime_test.py"
         "$<TARGET_FILE:gti>")
     set_tests_properties(thread_local_end_to_end PROPERTIES TIMEOUT 900)
+    add_test(NAME thread_local_owner_assignment
+      COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/thread_local_owner_assignment_test.py"
+        "$<TARGET_FILE:gti>")
+    set_tests_properties(thread_local_owner_assignment PROPERTIES TIMEOUT 300)
     add_test(
       NAME managed_thread_tsan
       COMMAND "${Python3_EXECUTABLE}"

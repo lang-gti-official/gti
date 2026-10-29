@@ -16,6 +16,18 @@ namespace lang {
 
 namespace {
 
+// The first-use outcomes a thread-local access raises through its
+// EnsureThreadLocal guard rather than through the accessing instruction.
+[[nodiscard]] bool threadLocalGuardOutcome(DefinedFailureOutcome outcome) {
+  return outcome.code == DefinedFailureCode::HostedRuntimeContractFailure &&
+         (outcome.detail ==
+              DefinedFailureDetail::RecursiveThreadLocalInitialization ||
+          outcome.detail ==
+              DefinedFailureDetail::ThreadLocalInitializationDuringShutdown ||
+          outcome.detail ==
+              DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime);
+}
+
 [[nodiscard]] bool isMirFixedWidthIntegerType(const SemanticType &type) {
   return type.kind == SemanticType::Int8 || type.kind == SemanticType::Int16 ||
          type.kind == SemanticType::Int32 || type.kind == SemanticType::Int64 ||
@@ -3323,18 +3335,8 @@ private:
     if (instruction.kind != MirInstructionKind::EnsureThreadLocal) {
       bool movedThreadLocalDetector = false;
       for (auto &origin : instruction.definedFailure.localOrigins) {
-        const auto removed = std::erase_if(origin.outcomes, [&](const auto
-                                                                    outcome) {
-          return outcome.code ==
-                     DefinedFailureCode::HostedRuntimeContractFailure &&
-                 (outcome.detail == DefinedFailureDetail::
-                                        RecursiveThreadLocalInitialization ||
-                  outcome.detail ==
-                      DefinedFailureDetail::
-                          ThreadLocalInitializationDuringShutdown ||
-                  outcome.detail ==
-                      DefinedFailureDetail::ThreadLocalOutsideAttachedLifetime);
-        });
+        const auto removed =
+            std::erase_if(origin.outcomes, threadLocalGuardOutcome);
         movedThreadLocalDetector |= removed != 0;
       }
       std::erase_if(instruction.definedFailure.localOrigins,
@@ -4636,15 +4638,7 @@ private:
         auto failure = threadValue->definedFailure;
         for (auto &origin : failure.localOrigins)
           std::erase_if(origin.outcomes, [](const auto outcome) {
-            return outcome.code !=
-                       DefinedFailureCode::HostedRuntimeContractFailure ||
-                   (outcome.detail != DefinedFailureDetail::
-                                          RecursiveThreadLocalInitialization &&
-                    outcome.detail !=
-                        DefinedFailureDetail::
-                            ThreadLocalInitializationDuringShutdown &&
-                    outcome.detail != DefinedFailureDetail::
-                                          ThreadLocalOutsideAttachedLifetime);
+            return !threadLocalGuardOutcome(outcome);
           });
         std::erase_if(failure.localOrigins, [](const auto &origin) {
           return origin.outcomes.empty();
@@ -11500,6 +11494,18 @@ private:
                             .info = value->info};
       MirInstructionId preparation = 0;
       const MirPlace *replacementPlace = output.findPlace(destination);
+      // A thread-local destination's first-use outcomes belong to the
+      // EnsureThreadLocal guard already emitted for that place; appending the
+      // store moves them there. They do not make the replacement fallible.
+      const bool replacementFallible = std::any_of(
+          assign.definedFailure.localOrigins.begin(),
+          assign.definedFailure.localOrigins.end(), [](const auto &origin) {
+            return std::any_of(
+                origin.outcomes.begin(), origin.outcomes.end(),
+                [](const DefinedFailureOutcome outcome) {
+                  return !threadLocalGuardOutcome(outcome);
+                });
+          });
       const bool checkedReplacement =
           replacementPlace != nullptr &&
           !replacementPlace->projections.empty() &&
@@ -11513,7 +11519,7 @@ private:
       if (replacementPlace != nullptr &&
           (assign.operation == MirOperation::Assign ||
            assign.operation == MirOperation::None) &&
-          (assign.definedFailure.localOrigins.empty() || checkedReplacement)) {
+          (!replacementFallible || checkedReplacement)) {
         std::unordered_set<HirClassInstanceId> visiting;
         auto cleanup = uniqueCleanupType(replacementPlace->type, visiting);
         if (cleanup) {
@@ -11523,8 +11529,9 @@ private:
                                  .destination = destination,
                                  .replacementCleanup = *cleanup,
                                  .info = value->info};
-          prepare.definedFailure.localOrigins =
-              std::exchange(assign.definedFailure.localOrigins, {});
+          if (checkedReplacement)
+            prepare.definedFailure.localOrigins =
+                std::exchange(assign.definedFailure.localOrigins, {});
           if (mirDropHasPolymorphicCleanup(*cleanup))
             prepare.definedFailure.propagation =
                 FailurePropagationKind::Destructor;
