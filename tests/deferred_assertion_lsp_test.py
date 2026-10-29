@@ -5,7 +5,7 @@ import pathlib
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position, semantic_tokens_by_position
+from lsp_smoke_test import without_include_advice, LspSession, lsp_position, semantic_tokens_by_position
 
 
 def main():
@@ -19,11 +19,11 @@ def main():
         session = LspSession(sys.argv[1])
 
         def published(version):
-            return session.receive_until(lambda message:
+            return without_include_advice(session.receive_until(lambda message:
                 message.get("method") == "textDocument/publishDiagnostics"
                 and message["params"].get("uri") == uri
                 and message["params"].get("version") == version
-            )["params"]["diagnostics"]
+            )["params"]["diagnostics"])
 
         def change(version, text):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {

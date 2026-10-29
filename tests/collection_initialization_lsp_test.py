@@ -3,7 +3,7 @@
 import pathlib
 import sys
 import tempfile
-from lsp_smoke_test import LspSession
+from lsp_smoke_test import without_include_advice, LspSession
 
 
 def main():
@@ -26,8 +26,8 @@ def main():
             return reply["result"]
 
         def diagnostics(version):
-            return session.receive_until(lambda m: m.get("method") == "textDocument/publishDiagnostics"
-                and m["params"].get("version") == version)["params"]["diagnostics"]
+            return without_include_advice(session.receive_until(lambda m: m.get("method") == "textDocument/publishDiagnostics"
+                and m["params"].get("version") == version)["params"]["diagnostics"])
 
         def change(version, text):
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {

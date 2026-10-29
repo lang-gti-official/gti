@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 
-from lsp_smoke_test import LspSession, lsp_position
+from lsp_smoke_test import without_include_advice, LspSession, lsp_position
 
 
 def run(compiler, server, root):
@@ -45,10 +45,10 @@ int main() { auto result = relay(); return result ? 1 : 0; }
             "textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": source}}})
 
         def publication(version):
-            return session.receive_until(lambda message:
+            return without_include_advice(session.receive_until(lambda message:
                 message.get("method") == "textDocument/publishDiagnostics"
                 and message["params"].get("uri") == uri
-                and message["params"].get("version") == version)["params"]["diagnostics"]
+                and message["params"].get("version") == version)["params"]["diagnostics"])
 
         errors = publication(1)
         error = next(d for d in errors if d.get("code") == "GTI-S2018")

@@ -990,6 +990,12 @@ required; it is tracked in
 
 ## Protocol Boundary
 
+Editor snapshots enable the compiler's `legacy-include` warning
+(`GTI-I0013`) once per file, at its first `#include`. Each new snapshot recomputes
+that location, so removing the first include moves the warning to the next one,
+and removing all includes clears it. The usual warning policy can suppress the
+group. Module conversion has no automatic fix because it can change visibility.
+
 `src/lsp/main.cpp` owns JSON-RPC IDs, capabilities, URIs, UTF-8 byte to LSP
 position conversion, request/result serialization, diagnostic publication,
 workspace edits, cancellation, and semantic-token wire encoding. It advertises
