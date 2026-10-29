@@ -13,10 +13,11 @@ repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 case "$(uname -s)" in
   Linux)
     # GCC 14 is the reviewed Linux x86_64 profile; LLVM 20 matches the pinned
-    # release LLVM and ships in noble-updates.
+    # release LLVM and ships in noble-updates. Ubuntu packages the Clang CMake
+    # package (and the clang the LLVM tests run) in clang-20, not libclang-20-dev.
     sudo apt-get update
     sudo apt-get install -y --no-install-recommends \
-      build-essential ccache clang cmake g++-14 gcc-14 ninja-build \
+      build-essential ccache clang-20 cmake g++-14 gcc-14 ninja-build \
       libcurl4-openssl-dev llvm-20-dev libclang-20-dev
     cc=gcc-14
     cxx=g++-14
