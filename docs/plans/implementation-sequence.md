@@ -4379,9 +4379,12 @@ do not expose C++ object layout as GTI semantics.
   complete; bounded systems-readiness substrate.
 - **Current disposition:** recursive raw pointers, exact integral scoped enums,
   valid passive unions and concrete native records now share the query contract,
-  beyond the initial scalar/array profile below. Ordinary-object placement
-  uses runtime `layout_of<T>()`; it does not make ordinary class `sizeof` a
-  frontend constant or promise stable foreign ABI. See
+  beyond the initial scalar/array profile below. **Revision (2026-10-29):**
+  general complete concrete object queries now produce frontend constants
+  from the selected native representation, agreeing with `layout_of<T>()`
+  where both apply. Generic queries defer to substitution; LLVM generates
+  these programs and C++ retains the older bounded profile. This supersedes
+  the original nominal-type exclusion below without promising stable ABI. See
   [static semantics §3.11](../language/static-semantics.md#311-bounded-constant-evaluation).
 - **Scope:** Add grammar, semantic, constexpr, HIR, MIR, formatter,
   Tree-sitter, LSP, and backend support for types whose layout is already a GTI

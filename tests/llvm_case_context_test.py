@@ -60,7 +60,9 @@ def equivalent(cases: tuple[CaseContext, ...], root: Path) -> None:
                 "mode": "sealed-lowered-program-inventory" if native_only else "--emit-cpp", "returncode": 0,
                 "output_required": True, "oracle": "reviewed MIR body census"}
             if native_only:
-                expected_observation["cpp_rejection"] = "GTI-B0003: wrapping atomic read-modify-write"
+                expected_observation["cpp_rejection"] = (
+                    "GTI-B0003: general sizeof/alignof" if source.name == "181-general-object-layout.gti"
+                    else "GTI-B0003: wrapping atomic read-modify-write")
             assert declared["compile_observation"] == expected_observation
             assert declared["case"]["execution_profile"] == (
                 "concurrent" if source.name in PRE_EXTRACTION_CONCURRENT else "single-threaded")
@@ -135,7 +137,10 @@ def main() -> None:
                                *(["--execution-profile", "concurrent"]
                                  if source.name in PRE_EXTRACTION_CONCURRENT else []), "-o", str(output)]
             assert output.read_bytes() == b"preserved unsupported output"
-            return subprocess.CompletedProcess(command, 65, "", "GTI-B0003: wrapping atomic read-modify-write")
+            rejection = ("GTI-B0003: general sizeof/alignof"
+                         if source.name == "181-general-object-layout.gti"
+                         else "GTI-B0003: wrapping atomic read-modify-write")
+            return subprocess.CompletedProcess(command, 65, "", rejection)
         output = Path(command[-1])
         expected_command, expected_options = frozen_plan(
             source, Path(command[0]), root, output, inherited)

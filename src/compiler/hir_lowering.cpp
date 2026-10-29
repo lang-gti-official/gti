@@ -214,6 +214,7 @@ private:
     instanceProvider = &provider;
     baseModel = &semantics;
     output = {};
+    output.program.nativeObjectLayout_ = semantics.requiresNativeObjectLayout();
     output.program.executionProfile_ = target.executionProfile;
     output.program.sourceDebugProfile_ = baseModel->sourceDebugProfile();
     output.program.programKind_ = baseModel->programKind();
@@ -2109,6 +2110,7 @@ private:
   }
 
   void retainInstanceSymbols(const SemanticModel &model) {
+    output.program.nativeObjectLayout_ |= model.requiresNativeObjectLayout();
     const auto &symbols = model.database().symbols();
     output.program.concreteSymbols.insert(output.program.concreteSymbols.end(),
                                           symbols.begin(), symbols.end());

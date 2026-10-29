@@ -1152,10 +1152,10 @@ enum class holder { one(resource value), none };
 uint64_t payload_size() { return sizeof(holder); }
 int main() { return 0; }
 )");
-  expect(hasCode(stableLayout, "GTI-S2063") &&
-             hasMessage(stableLayout, "has no GTI layout contract"),
-         "owning payload enums should retain the stable layout-query "
-         "diagnostic before HIR lowering");
+  expect(stableLayout.canGenerateCode() &&
+             stableLayout.mir.requiresNativeObjectLayout() &&
+             lang::verifyMirProgram(stableLayout.mir).valid(),
+         "owning payload enums have a general native layout constant");
 }
 
 void testBorrowedPayloadPatterns() {

@@ -2847,12 +2847,28 @@
         "concrete_instance_adapter": 72,
         "thread_local_storage": 0
       }
+    },
+    "181-general-object-layout.gti": {
+      "declarations": 1784,
+      "bodies": 170,
+      "generated_items": 109,
+      "generated_kinds": {
+        "program_initialization": 1,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 31,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 8,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 49,
+        "thread_local_storage": 0
+      }
     }
   },
   "totals": {
-    "declarations": 216841,
-    "bodies": 27127,
-    "generated_items": 15888
+    "declarations": 218625,
+    "bodies": 27297,
+    "generated_items": 15997
   },
   "target": "arm64-apple-macos",
   "variants": {
@@ -2924,9 +2940,9 @@
         }
       },
       "totals": {
-        "declarations": 216841,
-        "bodies": 27123,
-        "generated_items": 15884
+        "declarations": 218625,
+        "bodies": 27293,
+        "generated_items": 15993
       }
     }
   }

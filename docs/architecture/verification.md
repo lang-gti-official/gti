@@ -11158,12 +11158,13 @@ library behavior, including constants and exported value objects.
 
 The reviewed module migration census retains the original 177 top-level examples
 and 454 registered LLVM evidence cases. Reconciliation adds the compact-owner
-example 180, bringing the top-level inventory to 178. Declaration counts change
+example 180 and general-layout example 181, bringing the top-level inventory to 179. Declaration counts change
 in 116 original examples;
 only example 146 adds executable bodies: its public iterator wrapper adds 12
 bodies and four concrete-instance adapters on both target profiles. The MIR
 census records the same 12-body increase. The standard-library surface adds the
-portable aggregate case, bringing its inventory to 194 cases. These reviewed
+portable aggregate case; reconciliation also adds the general-layout case,
+bringing its inventory to 195 cases. These reviewed
 inventory changes do not replace execution, rejection or platform acceptance.
 
 Reachable executable lowering is owned by `testReachableExecutableLowering` in

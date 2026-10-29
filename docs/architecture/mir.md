@@ -3284,7 +3284,36 @@ parameter expression.
 
 A valid HIR constant `sizeof`/`alignof` query lowers to an ordinary unsigned-64
 `MirOperation::Literal` containing the retained frontend value; its source HIR
-identity remains available as provenance. Runtime object representation queries
+identity remains available as provenance. General complete-object constants use
+the selected native representation. A program-level `native-object-layout` fact
+survives semantic overlays, staged constexpr evaluation and result reuse, HIR,
+MIR optimization and serialization, including queries erased before body
+lowering. The C++ backend rejects that fact instead of silently consuming native
+aggregate constants. Primitive and other previously supported bounded queries
+do not set it. No new constant-execution operation is needed: staged MIR evaluates
+the same retained literal, so early array extents and assertions keep their
+existing semantic timing.
+
+Early queries use resolved fields, concrete substitutions, enum alternatives
+and lifecycle representation witnesses. Stored references and owning
+indirection do not recursively demand their referents. The layout dependency
+walk also checks generic class assertions in isolated semantic instance
+contexts, reusing ordinary assertion analysis and its existing constant engine.
+An open instance owns its own assertions, so an assertion can query its class's
+layout without recursively evaluating itself. No object initialization or
+unrelated generic argument instantiation is needed. Nested assertion queries
+share a bounded instantiation-work budget and stop expanding after the first
+resource failure; a depth cap alone would not bound branching invalid assertions.
+Staged workers share that budget, and resource-exhausted speculative results
+cannot enter the successful constant-result cache.
+Checked size/padding
+arithmetic in `object_layout.h` is shared with native record-layout verification;
+native execution tests compare constant results with `ObjectSize` and
+`ObjectAlignment` over unrelated user objects and library owners. A selected
+inactive-drop pointer witness omits the physical active-state byte without
+changing the semantic cleanup obligation.
+
+Runtime object representation queries
 are a separate contract: trusted declaration-bound `ObjectSize` and
 `ObjectAlignment` calls preserve one concrete `objectLayoutType` in HIR and MIR,
 with no runtime operands, parameter types, borrow origins or lifecycle events.

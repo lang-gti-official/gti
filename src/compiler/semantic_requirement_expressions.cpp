@@ -627,6 +627,8 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     return true;
   }
   const SemanticType actual = worker->analyze(query.expression());
+  if (worker->semanticModel.requiresNativeObjectLayout())
+    semanticModel.requireNativeObjectLayout();
   for (const auto &diagnostic : worker->diagnostics)
     if (diagnostic.severity == DiagnosticSeverity::Error)
       return reject(diagnostic.message);
@@ -782,6 +784,8 @@ auto SemanticVisitor::Impl::constraintPredicateSatisfied(
   auto context = worker->makeConstexprInterpreter();
   const auto evaluated =
       worker->evaluateConstexprExpression(*application.predicate, context);
+  if (worker->semanticModel.requiresNativeObjectLayout())
+    semanticModel.requireNativeObjectLayout();
   for (const auto &diagnostic : worker->diagnostics)
     if (diagnostic.severity == DiagnosticSeverity::Error)
       return reject(diagnostic.message);

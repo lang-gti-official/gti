@@ -7,6 +7,7 @@
 #include "gti/frontend_work.h"
 #include "gti/generic_instantiation_limits.h"
 #include "gti/instance_analysis_cache.h"
+#include "gti/object_layout.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"
 #include "semantic_declaration_index.h"
@@ -812,6 +813,7 @@ public:
     std::uint64_t sizeBytes = 0;
     std::uint32_t abiAlignmentBytes = 0;
     LayoutEvaluationError error = LayoutEvaluationError::None;
+    bool nativeRepresentation = false;
 
     [[nodiscard]] explicit operator bool() const {
       return error == LayoutEvaluationError::None;
@@ -821,7 +823,30 @@ public:
   [[nodiscard]] static std::optional<TargetScalarKind>
   layoutScalarKind(const SemanticType &type);
 
-  [[nodiscard]] LayoutEvaluation evaluateLayout(const SemanticType &type) const;
+  [[nodiscard]] LayoutEvaluation
+  evaluateLayout(const SemanticType &type,
+                 std::vector<SemanticType> *completeClasses = nullptr) const;
+  [[nodiscard]] bool validateLayoutClassAssertions(
+      const std::vector<SemanticType> &completeClasses, const Token &query);
+  struct ObjectLayoutContext {
+    struct Completed {
+      SemanticType type;
+      bool storedReference;
+      LayoutEvaluation layout;
+    };
+    std::vector<SemanticType> active;
+    std::vector<Completed> completed;
+  };
+  struct LayoutAssertionWork {
+    std::size_t instances = 0;
+    std::optional<SemanticDiagnostic> failure;
+  };
+  [[nodiscard]] LayoutEvaluation
+  evaluateObjectLayout(const SemanticType &type, ObjectLayoutContext &context,
+                       bool storedReference = false) const;
+  [[nodiscard]] LayoutEvaluation
+  computeObjectLayout(const SemanticType &type, ObjectLayoutContext &context,
+                      bool storedReference) const;
 
   [[nodiscard]] static const Token &
   lastArrayExtentToken(const ArrayExtentExpr &extent);
@@ -1992,6 +2017,7 @@ private:
       // shallower or equal depth leaves every nested limit at least as wide.
       std::size_t depth = 0;
       std::vector<Diagnostic> warnings;
+      bool nativeObjectLayout = false;
     };
     static constexpr std::size_t capacity = 65536;
     std::unordered_map<std::size_t, std::vector<Result>> results;
@@ -7122,6 +7148,9 @@ private:
     // concreteClassAssertionsFail().
     std::unordered_map<InstanceAnalysisKey, bool, InstanceAnalysisKeyHash>
         classAssertionOutcomes;
+    // Shared only along an active layout query's assertion/staging chain.
+    // A depth limit alone cannot bound branching invalid assertions.
+    std::shared_ptr<LayoutAssertionWork> layoutAssertionWork;
     // While a concrete instance is analysed, each static assertion's own
     // diagnostics are also copied here. If one fails, or the instance's class
     // assertion did, they are all the analysis reports; see

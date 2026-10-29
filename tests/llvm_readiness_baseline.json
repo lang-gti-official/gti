@@ -10,8 +10,8 @@
       "id": "shipped-examples",
       "kind": "source-census",
       "manifest": "tests/mir_census_baseline.json",
-      "member_count": 178,
-      "inventory_sha256": "3e477bff8e2842f580053ab869966092ffbf30358fcf0ff77a3882587c32fa9e"
+      "member_count": 179,
+      "inventory_sha256": "8c28b73a070fc8439069dba08828fe8fb999680d066f36ae43ff58ecbc3f221f"
     },
     {
       "id": "registered-llvm-evidence",
@@ -23,8 +23,8 @@
       "id": "stdlib-surface",
       "kind": "source-backed-surface-manifest",
       "manifest": "tests/stdlib_surface_manifest.json",
-      "member_count": 194,
-      "inventory_sha256": "4fadb0b91d78014528a401a83cacf4bad3d19424287a0c74f98359125e2f4040"
+      "member_count": 195,
+      "inventory_sha256": "1328cdb4c3c529da46a397490800bbc0d7793867520fb4d1c3ea4a59a022a0a3"
     }
   ],
   "family_obligations": [

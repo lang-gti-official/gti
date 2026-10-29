@@ -119,6 +119,10 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
             "' require the LLVM backend",
         declaration.source);
   }
+  if (verified->program().mir().requiresNativeObjectLayout())
+    throw BackendUnsupportedError(
+        "general sizeof/alignof queries require the LLVM backend's "
+        "native GTI object representation");
   // New native atomic operations deliberately remain LLVM-only. Reject their
   // exact executable identities before representation planning, rather than
   // misreporting a valid program as a C++ emitter invariant failure.

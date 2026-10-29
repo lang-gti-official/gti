@@ -1539,6 +1539,21 @@
       }
     },
     {
+      "id": "memory-general-layout",
+      "mode": "run",
+      "source": "examples/181-general-object-layout.gti",
+      "backend": "llvm",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "memory-layout",
       "mode": "run",
       "source": "examples/119-runtime-object-layout.gti",
@@ -4901,7 +4916,8 @@
         "std::layout_queryable<T>"
       ],
       "case_ids": [
-        "memory-layout"
+        "memory-layout",
+        "memory-general-layout"
       ],
       "required_instantiations": [
         "std::layout_of<Envelope<Owner>>()",
@@ -4914,7 +4930,9 @@
         "examples/119-runtime-object-layout.gti",
         "tests/runtime_object_layout_tests.cpp",
         "tests/runtime_object_layout_test.py",
-        "docs/language/standard-library.md"
+        "docs/language/standard-library.md",
+        "examples/181-general-object-layout.gti",
+        "tests/general_object_layout_test.py"
       ]
     },
     {

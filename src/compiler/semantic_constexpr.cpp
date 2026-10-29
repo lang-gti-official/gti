@@ -570,6 +570,8 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   // This worker can reanalyse an instance whose reanalysis is open here or
   // further up; it must see that one owns the instance's assertions.
   worker.impl->requestSession.openReanalyses = openReanalyses();
+  worker.impl->requestSession.layoutAssertionWork =
+      requestSession.layoutAssertionWork;
   worker.impl->nextLambdaId = nextLambdaId;
   return *worker.impl;
 }
@@ -643,6 +645,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
         context.work->steps + reused->steps <= constexprExpressionStepLimit) {
       context.work->steps += reused->steps;
       appendStagedWarnings(reused->warnings);
+      if (reused->nativeObjectLayout)
+        semanticModel.requireNativeObjectLayout();
       if (workMetrics != nullptr)
         ++workMetrics->constexprStagedReuses;
       return ConstexprEvaluation{.value = reused->value, .location = callSite};
@@ -707,6 +711,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     return std::nullopt;
   }
   appendStagedWarnings(hir.diagnostics);
+  if (hir.program.requiresNativeObjectLayout())
+    semanticModel.requireNativeObjectLayout();
   const auto *entry = sourceGraph->findUnit(sourceGraph->entryUnit());
   if (entry == nullptr) {
     return std::nullopt;
@@ -925,12 +931,18 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     return std::nullopt;
   };
   if (result) {
-    if (reuseKey && StagedConstantResults::reusable(*result.value))
-      stagedConstants->record({.key = *reuseKey,
-                               .value = *result.value,
-                               .steps = context.work->steps - stepsBefore,
-                               .depth = depth,
-                               .warnings = hir.diagnostics});
+    // A speculative predicate can consume a nested assertion diagnostic, but
+    // an exhausted layout query still has no reusable completed result.
+    if (reuseKey && StagedConstantResults::reusable(*result.value) &&
+        (!requestSession.layoutAssertionWork ||
+         !requestSession.layoutAssertionWork->failure))
+      stagedConstants->record(
+          {.key = *reuseKey,
+           .value = *result.value,
+           .steps = context.work->steps - stepsBefore,
+           .depth = depth,
+           .warnings = hir.diagnostics,
+           .nativeObjectLayout = hir.program.requiresNativeObjectLayout()});
     return ConstexprEvaluation{.value = std::move(result.value),
                                .location = callSite};
   }

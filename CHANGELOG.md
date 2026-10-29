@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.492.0 - First-class modules
+## 0.493.0 - First-class modules
 
 - **Breaking:** GTI `#include` and `export #include` are removed. Use
   `import std.vector;` for standard modules, registered named imports for
