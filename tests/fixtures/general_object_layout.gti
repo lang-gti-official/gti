@@ -1,0 +1,61 @@
+#include <std/memory>
+#include <std/atomic>
+#include <std/functional>
+#include <std/simd>
+
+struct Empty {};
+struct Pair { uint8_t tag = 0; uint64_t value = 0; public: Pair() = default; };
+struct Array<T, uint64_t N> { T values[N] = {}; };
+using Alias = Array<Pair, 3>;
+struct Borrow { Pair& value; Borrow(Pair& value) : value(value) {} };
+interface Reader { int read(); };
+class Base {
+  uint64_t value = 7;
+public:
+  Base() = default;
+  virtual int read() { return int(this.value); }
+};
+class Derived : public Reader, public Base {
+  uint8_t tag = 1;
+public:
+  Derived() = default;
+  int read() override { return int(this.tag); }
+};
+struct Wrapped { Derived value; uint8_t tail; };
+enum class Payload<T> { Empty, Value(T value), Count(uint64_t count) };
+
+bool matches<T>() requires std::layout_queryable<T> {
+  std::layout actual = std::layout_of<T>();
+  return sizeof(T) == actual.bytes && alignof(T) == actual.alignment;
+}
+bool matches_value<T>(T& value, uint64_t bytes, uint64_t alignment, int expected) {
+  int actual = value();
+  return actual == expected && sizeof(T) == bytes && alignof(T) == alignment;
+}
+constexpr uint64_t array_bytes<T, uint64_t N>() { return sizeof(T[N]); }
+static_assert(array_bytes<Pair, 3>() == uint64_t(48));
+static_assert(sizeof(Alias) == uint64_t(48));
+static_assert(sizeof(Borrow) == sizeof(Pair*));
+static_assert(sizeof(Empty) > uint64_t(0));
+int exact_function() { return 7; }
+
+int main() {
+  if (!matches<Empty>() || !matches<Alias>() || !matches<Borrow>() ||
+      !matches<Base>() || !matches<Derived>() || !matches<Wrapped>() ||
+      !matches<Payload<Alias>>() || !matches<Derived[2]>() ||
+      !matches<Payload<std::unique_ptr<int>>>()) { return 1; }
+  if (!matches<std::atomic<uint64_t>>() || !matches<std::simd<float, 4>>() ||
+      !matches<std::function_ptr<int()>>() ||
+      !matches<std::storage<Pair>>()) { return 4; }
+  uint8_t small = 1;
+  uint64_t large = 2;
+  auto empty = []() -> int { return 1; };
+  auto captured = [small, large]() -> int { return int(small) + int(large); };
+  auto borrowed = [&large]() -> int { return int(large); };
+  if (!matches_value(empty, uint64_t(1), uint64_t(1), 1) ||
+      !matches_value(captured, uint64_t(16), uint64_t(8), 3) ||
+      !matches_value(borrowed, uint64_t(8), uint64_t(8), 2)) { return 2; }
+  if (!matches_value(exact_function, uint64_t(1), uint64_t(1), 7)) { return 5; }
+  if (empty() != 1 || captured() != 3 || borrowed() != 2) { return 3; }
+  return 0;
+}

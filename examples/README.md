@@ -377,6 +377,7 @@ is a teaching helper, not a production server.
 | `178-wrapping-atomic-counters.gti` | explicit modulo atomic updates and prior-value results without a host thread runtime |
 | `179-weak-ownership.gti` | source-defined weak observation, checked promotion, expiry, and local owning callbacks with thread-affine payloads |
 | `180-compact-source-owners.gti` | general null-guarded pointer owners, compact shared/weak handles and exactly-once moved cleanup; LLVM only |
+| [181-general-object-layout.gti](181-general-object-layout.gti) | General `sizeof(T)` and `alignof(T)` constants, generic storage extents, and native runtime layout agreement (LLVM). |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

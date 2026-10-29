@@ -2985,6 +2985,11 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/runtime_object_layout_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(runtime_object_layout_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME general_object_layout_runtime
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${PROJECT_SOURCE_DIR}/tests/general_object_layout_test.py"
+                   "$<TARGET_FILE:gti>")
+  set_tests_properties(general_object_layout_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME string_index_range_runtime
     COMMAND "${Python3_EXECUTABLE}"

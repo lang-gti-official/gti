@@ -1886,33 +1886,47 @@ a borrow, access storage, or require `unsafe`. It is itself a scalar constant
 expression and may participate in ordinary frontend constant evaluation, such
 as a comparison used by an `if constexpr` condition.
 
-After transparent alias resolution, the bounded operand set is:
+After transparent alias resolution, a complete concrete object type is
+queryable. This includes scalar and pointer types, ordinary classes and structs,
+concrete generic instances, integral and payload enums, passive unions,
+`[[c_abi]]` records, owners, views, callable values and positive fixed arrays.
+Owning or immovable fields do not prevent a query. A reference stored inside an
+object contributes its selected representation; a direct reference operand is
+not an object query.
 
-- `bool`, `char`, `float`, `double`, `int`, `uint`, and every canonical or
-  compatibility spelling of the fixed-width signed and unsigned integers;
-- recursive raw pointers, including `void*`, qualified pointer slots and pointers
-  whose pointee does not itself have a queryable layout; and
-- integral scoped enums, whose layout is the layout of their exact underlying
-  fixed-width integer type;
-- valid passive unions and concrete `[[c_abi]]` structs whose compiler-owned
-  aggregate layout is available; and
-- a fixed array whose element type is supported recursively and whose every
-  extent is a concrete positive value.
+`sizeof(T)` is the byte extent of one complete object, including internal and
+tail padding, dispatch storage and any required destruction-state storage.
+`alignof(T)` is its required alignment in bytes. The same concrete type and
+target use the same representation throughout a compilation and at every
+optimization level. A compiler-proven alternative destruction-state encoding
+may remove a physical state byte; queries describe that selected representation.
+These facts do **not** promise stable layout across compiler versions or a
+foreign ABI. Use the separate `[[c_abi]]` contract for native interoperability.
 
 For a fixed array, `sizeof(T[N])` is the checked product of `N` and
 `sizeof(T)`, and `alignof(T[N])` is `alignof(T)`. The rule applies recursively
-to multidimensional arrays. A zero or symbolic extent, or a product that does
-not fit `uint64_t`, is ill-formed.
+to multidimensional arrays. Every extent must be positive after substitution,
+and every intermediate offset, padding calculation and extent must fit
+`uint64_t`. Native materialization additionally obeys the target's addressable
+object-size limit. Empty complete objects have nonzero size.
 
-Bare `void`, `nullptr_t`, references, ordinary classes/structs, opaque-handle
-pointees, interfaces, payload enums, `expected`, compiler-private types, and
-symbolic type parameters have no source-queryable layout when queried
-directly. Passive unions and `[[c_abi]]` records are the bounded nominal layout
-opt-ins; integral scoped enums inherit their declared integer layout.
-Unsupported complete operands are rejected as
-`GTI-S2063` before HIR lowering; a direct opaque-handle operand retains its
-focused incomplete-type `GTI-S2065`, and an unresolved name retains its
-ordinary type-resolution diagnostic without a duplicate layout diagnostic.
+Queries in generic definitions defer until their operands are concrete;
+instantiation checks the resulting object type. A query checks the class-level
+static assertions of the concrete classes needed by value, even when the query
+is erased during constant evaluation. It does not initialize fields or invoke
+constructors or destructors. Indirection does not require the pointee's layout
+or class assertions. Bare `void`, direct references,
+interfaces, incomplete/opaque types, recursive by-value layouts, zero extents
+and overflowing layouts are rejected. Invalid resolved queries use `GTI-S2063`;
+opaque operands retain `GTI-S2065`, and unresolved names retain their ordinary
+type-resolution diagnostic without a duplicate layout diagnostic.
+
+General object queries use the native GTI representation and require LLVM
+code generation. The deprecated C++ backend retains its existing bounded
+scalar, pointer, integral-enum, passive-union, native-record and array queries;
+it rejects generalized uses with `GTI-B0003`, including queries erased by
+constant evaluation. The source grammar, formatter and editor spelling are
+unchanged. See [general object layout](../../examples/181-general-object-layout.gti).
 
 The query itself is not an `array-extent-expression`. Its computed value may
 still feed that restricted grammar through an earlier non-negative

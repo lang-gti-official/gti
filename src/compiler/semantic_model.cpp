@@ -2049,6 +2049,7 @@ SemanticModel::findDestructor(const DestructorDecl &declaration) const {
 }
 
 void SemanticModel::clear() {
+  nativeObjectLayout_ = false;
   sourceDebug_ = {};
   sourceDebugProfile_ = SourceDebugProfile::None;
   foreignStorage_.clear();

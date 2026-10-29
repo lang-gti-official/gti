@@ -202,10 +202,14 @@ int main() {
   if (resultLayouts.canGenerateCode())
     expect(!gti_test::emitCppText(resultLayouts).empty(),
            "result and text layouts emit through verified MIR");
-  rejected(prefix + "struct Ordinary { int value; };\n"
-                    "constexpr uint64_t bytes = sizeof(Ordinary); int main() { "
-                    "return 0; }",
-           "GTI-S2063", "runtime API does not widen compile-time sizeof");
+  const auto constantLayout = analyze(
+      prefix + "struct Ordinary { int value; };\n"
+               "constexpr uint64_t bytes = sizeof(Ordinary); "
+               "static_assert(bytes == uint64_t(4)); int main() { return 0; }");
+  expect(constantLayout.canGenerateCode() &&
+             constantLayout.mir.requiresNativeObjectLayout(),
+         "ordinary object sizeof is a native constant independently of the "
+         "runtime layout descriptor");
   rejected(prefix + "constexpr std::layout descriptor = std::layout_of<int>(); "
                     "int main() { return 0; }",
            "GTI-S2057", "runtime query is not a constant expression");

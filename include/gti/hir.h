@@ -937,6 +937,9 @@ struct HirEmbeddingPlan {
 
 class HirProgram {
 public:
+  [[nodiscard]] bool requiresNativeObjectLayout() const {
+    return nativeObjectLayout_;
+  }
   [[nodiscard]] const std::vector<ForeignStorageInfo> &
   foreignStorageDeclarations() const {
     return foreignStorage_;
@@ -1079,6 +1082,7 @@ private:
   std::vector<std::shared_ptr<const Stmt>> sourceStatementOwners_;
   friend class HirLowerer;
 
+  bool nativeObjectLayout_ = false;
   bool valid_ = true;
   SourceDebugProfile sourceDebugProfile_ = SourceDebugProfile::None;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;

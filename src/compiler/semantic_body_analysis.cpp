@@ -10403,8 +10403,148 @@ auto SemanticVisitor::Impl::layoutScalarKind(const SemanticType &type)
   }
 }
 
-auto SemanticVisitor::Impl::evaluateLayout(const SemanticType &type) const
+auto SemanticVisitor::Impl::evaluateLayout(
+    const SemanticType &type, std::vector<SemanticType> *completeClasses) const
     -> LayoutEvaluation {
+  ObjectLayoutContext context;
+  const LayoutEvaluation layout = evaluateObjectLayout(type, context);
+  if (layout && completeClasses)
+    for (const auto &completed : context.completed)
+      if (completed.type.kind == SemanticType::Class)
+        completeClasses->push_back(completed.type);
+  return layout;
+}
+
+auto SemanticVisitor::Impl::validateLayoutClassAssertions(
+    const std::vector<SemanticType> &completeClasses, const Token &query)
+    -> bool {
+  auto &work = requestSession.layoutAssertionWork;
+  struct RestoreWork {
+    std::shared_ptr<LayoutAssertionWork> &work;
+    bool root;
+    ~RestoreWork() {
+      if (root)
+        work.reset();
+    }
+  } restore{work, !work};
+  const auto validate = [&]() -> bool {
+    for (const SemanticType &type : completeClasses) {
+      if (work && work->failure)
+        return false;
+      const ClassInfo *owner = classInfo(type);
+      if (!owner || owner->genericParameters.empty() || !owner->declaration ||
+          !declaresConcreteClassStaticAssertions(owner->declaration->members()))
+        continue;
+      const auto known = knownConcreteClassAssertionOutcome(
+          type.classId, type.arguments, type.valueArguments);
+      if (known && !*known)
+        continue;
+      const InstanceAnalysisKey key{
+          .kind = InstanceAnalysisKind::ClassFieldInitializers,
+          .declaration = type.classId,
+          .classTypes = type.arguments,
+          .classValues = type.valueArguments};
+      const auto open = openReanalyses();
+      // An assertion may query its own complete representation. Its enclosing
+      // analysis owns that assertion, just as for staged constant evaluation.
+      if (std::find(open->begin(), open->end(), key) != open->end())
+        continue;
+      if (!work)
+        work = std::make_shared<LayoutAssertionWork>();
+      if (open->size() >= constexprCallDepthLimit) {
+        report(query,
+               "Layout query class assertions exceeded the compiler "
+               "instantiation-depth limit.",
+               "GTI-S2063");
+        work->failure = diagnostics.back();
+        return false;
+      }
+      if (work->instances >= constexprExpressionStepLimit) {
+        report(query,
+               "Layout query class assertions exceeded the compiler "
+               "instantiation-work limit.",
+               "GTI-S2063");
+        work->failure = diagnostics.back();
+        return false;
+      }
+      ++work->instances;
+      // A query must validate the classes it needs by value, even when it is
+      // erased before HIR. Reuse ordinary assertion analysis in an isolated
+      // context: no field initialization, lifetime event, or caller-flow edit.
+      auto worker = unevaluatedExpressionWorker();
+      worker->prepareInstanceAnalysis();
+      worker->openReanalyses()->push_back(key);
+      worker->requestSession.assertionsOwnedUpChain = false;
+      if (!worker->prepareClassInstanceContext(type.classId, type.arguments,
+                                               type.valueArguments)) {
+        report(query, "Layout query could not validate the concrete class.",
+               "GTI-S2063");
+        return false;
+      }
+      worker->analyzeConcreteClassStaticAssertions(
+          owner->declaration->members());
+      worker->finishClassInstanceContext();
+      if (worker->semanticModel.requiresNativeObjectLayout())
+        semanticModel.requireNativeObjectLayout();
+      const bool failed =
+          work->failure.has_value() ||
+          std::any_of(worker->diagnostics.begin(), worker->diagnostics.end(),
+                      [](const SemanticDiagnostic &diagnostic) {
+                        return diagnostic.severity == DiagnosticSeverity::Error;
+                      });
+      diagnostics.insert(diagnostics.end(), worker->diagnostics.begin(),
+                         worker->diagnostics.end());
+      recordConcreteClassAssertionOutcome(type.classId, type.arguments,
+                                          type.valueArguments, failed);
+      if (failed)
+        return false;
+    }
+    return !work || !work->failure;
+  };
+  const bool valid = validate();
+  // A requirement may consume an ordinary invalid-class diagnostic. Resource
+  // exhaustion is different: it cannot establish that a requirement is false.
+  // Preserve it at the root even if an intervening speculative probe erased it.
+  if (restore.root && work && work->failure &&
+      std::none_of(diagnostics.begin(), diagnostics.end(),
+                   [&](const auto &diagnostic) {
+                     return diagnostic.code == work->failure->code &&
+                            diagnostic.message == work->failure->message;
+                   }))
+    diagnostics.push_back(*work->failure);
+  return valid;
+}
+
+auto SemanticVisitor::Impl::evaluateObjectLayout(const SemanticType &type,
+                                                 ObjectLayoutContext &context,
+                                                 bool storedReference) const
+    -> LayoutEvaluation {
+  for (const auto &completed : context.completed)
+    if (completed.type == type && completed.storedReference == storedReference)
+      return completed.layout;
+  const auto layout = computeObjectLayout(type, context, storedReference);
+  if (layout)
+    context.completed.push_back({type, storedReference, layout});
+  return layout;
+}
+
+auto SemanticVisitor::Impl::computeObjectLayout(const SemanticType &type,
+                                                ObjectLayoutContext &context,
+                                                bool storedReference) const
+    -> LayoutEvaluation {
+  auto &active = context.active;
+  // Pointer/owner indirection does not demand the pointee's layout. A stored
+  // reference has pointer representation, but a reference is not itself a
+  // source-queryable object type.
+  if (type.kind == SemanticType::CString ||
+      type.kind == SemanticType::NullPtr ||
+      type.kind == SemanticType::UniqueOwner ||
+      (storedReference && type.kind == SemanticType::Reference)) {
+    auto layout = evaluateObjectLayout(
+        SemanticType::rawPointerTo(SemanticType::Void), context);
+    layout.nativeRepresentation = true;
+    return layout;
+  }
   if (const std::optional<TargetScalarKind> scalar = layoutScalarKind(type)) {
     const std::optional<TargetTypeLayout> layout =
         target.dataLayout.scalarLayout(*scalar);
@@ -10414,25 +10554,172 @@ auto SemanticVisitor::Impl::evaluateLayout(const SemanticType &type) const
     return {.sizeBytes = layout->sizeBytes,
             .abiAlignmentBytes = layout->abiAlignmentBytes};
   }
-  if (type.kind == SemanticType::Class) {
-    const ClassTypeInfo *record = semanticModel.findClassType(type.classId);
-    if (record != nullptr && record->cAbiRecord && record->cAbiLayout) {
-      return {.sizeBytes = record->cAbiLayout->sizeBytes,
-              .abiAlignmentBytes = record->cAbiLayout->abiAlignmentBytes};
-    }
-    if (record != nullptr && record->kind == ClassKind::Union &&
-        record->unionLayout) {
-      return {.sizeBytes = record->unionLayout->sizeBytes,
-              .abiAlignmentBytes = record->unionLayout->abiAlignmentBytes};
-    }
+  if (containsOpenTypeParameter(type))
+    return {.error = type.kind == SemanticType::Array &&
+                             type.arrayLengthParameterId != 0
+                         ? LayoutEvaluationError::SymbolicExtent
+                         : LayoutEvaluationError::SymbolicType};
+  // Bound expanding generic containment as well as exact by-value cycles.
+  if (active.size() >= 128 ||
+      std::find(active.begin(), active.end(), type) != active.end())
     return {.error = LayoutEvaluationError::UnsupportedType};
-  }
-  if (type.kind == SemanticType::Enum) {
-    const EnumTypeInfo *enumeration = semanticModel.findEnumType(type.enumId);
-    if (enumeration == nullptr || enumeration->payload) {
+  active.push_back(type);
+  struct Pop {
+    std::vector<SemanticType> &types;
+    ~Pop() { types.pop_back(); }
+  } pop{active};
+  const auto result = [](ObjectLayout layout) -> LayoutEvaluation {
+    if (!layout.valid ||
+        layout.alignment > std::numeric_limits<std::uint32_t>::max())
+      return {.error = LayoutEvaluationError::SizeOverflow};
+    return {.sizeBytes = layout.size,
+            .abiAlignmentBytes = static_cast<std::uint32_t>(layout.alignment),
+            .nativeRepresentation = true};
+  };
+  const auto record = [&](std::span<const SemanticType> fields,
+                          bool nonempty) -> LayoutEvaluation {
+    std::vector<ObjectLayout> layouts;
+    for (const auto &field : fields) {
+      const auto layout = evaluateObjectLayout(field, context, true);
+      if (!layout)
+        return layout;
+      layouts.push_back({layout.sizeBytes, layout.abiAlignmentBytes});
+    }
+    if (layouts.empty() && nonempty)
+      layouts.push_back({1, 1});
+    return result(objectRecordLayout(layouts));
+  };
+  const auto pointer = SemanticType::rawPointerTo(SemanticType::Void);
+  if (type.kind == SemanticType::StringView)
+    return record(std::vector<SemanticType>{pointer, SemanticType::UInt64},
+                  true);
+  if (type.kind == SemanticType::FunctionItem)
+    return {
+        .sizeBytes = 1, .abiAlignmentBytes = 1, .nativeRepresentation = true};
+  if (type.kind == SemanticType::Lambda)
+    return record(type.lambdaCaptureTypes(), true);
+  if (type.kind == SemanticType::Class) {
+    const ClassInfo *owner = classInfo(type);
+    if (owner == nullptr || owner->declaration == nullptr ||
+        owner->declaration->isForwardDeclaration() || owner->cOpaqueHandle ||
+        (!storedReference && owner->kind == ClassKind::Interface))
+      return {.error = LayoutEvaluationError::UnsupportedType};
+    if (owner->cAbiRecord && owner->cAbiLayout) {
+      return {.sizeBytes = owner->cAbiLayout->sizeBytes,
+              .abiAlignmentBytes = owner->cAbiLayout->abiAlignmentBytes};
+    }
+    if (owner->kind == ClassKind::Union && owner->unionLayout) {
+      return {.sizeBytes = owner->unionLayout->sizeBytes,
+              .abiAlignmentBytes = owner->unionLayout->abiAlignmentBytes};
+    }
+    // Trusted capabilities select representation by declaration identity.
+    // Public library wrappers go through the ordinary field rule below.
+    switch (owner->compilerCapability) {
+    case CompilerCapabilityTypeKind::FunctionPointer:
+    case CompilerCapabilityTypeKind::MutexLockToken:
+      return record(std::vector<SemanticType>{pointer}, true);
+    case CompilerCapabilityTypeKind::SharedOwner:
+      return record(std::vector<SemanticType>{pointer, pointer}, true);
+    case CompilerCapabilityTypeKind::ThreadHandle:
+      return record(
+          std::vector<SemanticType>(type.arguments.empty() ? 1 : 4, pointer),
+          true);
+    case CompilerCapabilityTypeKind::AtomicStorage:
+      return type.arguments.size() == 1
+                 ? evaluateObjectLayout(type.arguments.front(), context, true)
+                 : LayoutEvaluation{.error =
+                                        LayoutEvaluationError::UnsupportedType};
+    case CompilerCapabilityTypeKind::MutexStorage:
+      if (type.arguments.size() != 1)
+        return {.error = LayoutEvaluationError::UnsupportedType};
+      return record(
+          std::vector<SemanticType>{
+              SemanticType::arrayOf(SemanticType::UInt64, 8),
+              type.arguments.front(), SemanticType::UInt8},
+          true);
+    case CompilerCapabilityTypeKind::PolymorphicStorage: {
+      if (type.valueArguments.size() != 2 ||
+          type.valueArguments[0].kind != CompileTimeValue::UInt64 ||
+          type.valueArguments[1].kind != CompileTimeValue::UInt64)
+        return {.error = LayoutEvaluationError::UnsupportedType};
+      const auto address = evaluateObjectLayout(pointer, context);
+      const auto payload = alignObjectExtent(
+          {type.valueArguments[0].value, type.valueArguments[1].value});
+      const std::vector<ObjectLayout> fields{
+          {address.sizeBytes, address.abiAlignmentBytes},
+          {address.sizeBytes, address.abiAlignmentBytes},
+          payload};
+      return result(objectRecordLayout(fields));
+    }
+    case CompilerCapabilityTypeKind::None:
+    case CompilerCapabilityTypeKind::UninitializedStorage:
+      break;
+    default:
       return {.error = LayoutEvaluationError::UnsupportedType};
     }
-    return evaluateLayout(enumeration->underlyingType);
+    const auto *lifecycle =
+        semanticModel.findClassLifecycle(*owner->declaration);
+    if (!lifecycle)
+      return {.error = LayoutEvaluationError::UnsupportedType};
+    const auto substitution = classSubstitution(type);
+    std::vector<SemanticType> fields;
+    if (owner->compilerCapability ==
+        CompilerCapabilityTypeKind::UninitializedStorage) {
+      if (type.arguments.size() != 1)
+        return {.error = LayoutEvaluationError::UnsupportedType};
+      fields.push_back(type.arguments.front());
+    }
+    bool primaryDispatch = false;
+    for (const auto &base : owner->bases) {
+      const auto concrete = substituteType(base.type, substitution);
+      fields.push_back(concrete);
+      if (!base.interface) {
+        const auto *baseOwner = classInfo(concrete);
+        primaryDispatch = baseOwner != nullptr && baseOwner->polymorphic;
+      }
+    }
+    for (std::size_t index = 0; index < owner->fields.size(); ++index) {
+      const auto field = metaFieldFacts(type, index);
+      if (!field)
+        return {.error = LayoutEvaluationError::UnsupportedType};
+      // Late-bound extents and aliases are retained on the declaration's
+      // binding, just as concrete HIR field discovery consumes them.
+      const auto *binding = field->declaration
+                                ? semanticModel.findBinding(*field->declaration)
+                                : nullptr;
+      fields.push_back(binding && binding->type != SemanticType::Unknown
+                           ? substituteType(binding->type, substitution)
+                           : field->type);
+    }
+    // Consume the selected lifecycle representation. Do not infer storage
+    // from the presence of a destructor: compact-owner proofs may elide it.
+    if (lifecycle->requiresActiveDropState &&
+        !lifecycle->inactiveDropPointerField)
+      fields.push_back(SemanticType::UInt8);
+    if (owner->polymorphic && !primaryDispatch)
+      fields.push_back(pointer);
+    return record(fields, true);
+  }
+  if (type.kind == SemanticType::Enum) {
+    const auto enumeration = enumTypeFor(type);
+    if (!enumeration) {
+      return {.error = LayoutEvaluationError::UnsupportedType};
+    }
+    if (!enumeration->payload)
+      return evaluateObjectLayout(enumeration->underlyingType, context);
+    std::vector<ObjectLayout> alternatives{{1, 1}};
+    for (const auto &variant : enumeration->enumerators) {
+      const auto layout = record(variant.payloadTypes, false);
+      if (!layout)
+        return layout;
+      alternatives.push_back({layout.sizeBytes, layout.abiAlignmentBytes});
+    }
+    const auto discriminant =
+        evaluateObjectLayout(SemanticType::UInt32, context);
+    const std::vector<ObjectLayout> fields{
+        {discriminant.sizeBytes, discriminant.abiAlignmentBytes},
+        objectUnionLayout(alternatives)};
+    return result(objectRecordLayout(fields));
   }
   if (type.kind != SemanticType::Array) {
     return {.error = type.kind == SemanticType::TypeParameter
@@ -10448,16 +10735,19 @@ auto SemanticVisitor::Impl::evaluateLayout(const SemanticType &type) const
   if (type.arguments.size() != 1) {
     return {.error = LayoutEvaluationError::UnsupportedType};
   }
-  const LayoutEvaluation element = evaluateLayout(type.arguments.front());
+  const LayoutEvaluation element =
+      evaluateObjectLayout(type.arguments.front(), context);
   if (!element) {
     return element;
   }
-  if (element.sizeBytes >
-      std::numeric_limits<std::uint64_t>::max() / type.arrayLength) {
+  const auto array = objectArrayLayout(
+      {element.sizeBytes, element.abiAlignmentBytes}, type.arrayLength);
+  if (!array.valid) {
     return {.error = LayoutEvaluationError::SizeOverflow};
   }
-  return {.sizeBytes = element.sizeBytes * type.arrayLength,
-          .abiAlignmentBytes = element.abiAlignmentBytes};
+  return {.sizeBytes = array.size,
+          .abiAlignmentBytes = element.abiAlignmentBytes,
+          .nativeRepresentation = element.nativeRepresentation};
 }
 
 auto SemanticVisitor::Impl::lastArrayExtentToken(const ArrayExtentExpr &extent)
@@ -10546,11 +10836,13 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
     return;
   }
 
-  const LayoutEvaluation layout = evaluateLayout(queriedType);
+  std::vector<SemanticType> completeClasses;
+  const LayoutEvaluation layout = evaluateLayout(queriedType, &completeClasses);
+  if (layout.nativeRepresentation)
+    semanticModel.requireNativeObjectLayout();
   if (!layout) {
-    if (analyzingDependentConstantCondition &&
-        (layout.error == LayoutEvaluationError::SymbolicType ||
-         layout.error == LayoutEvaluationError::SymbolicExtent)) {
+    if (layout.error == LayoutEvaluationError::SymbolicType ||
+        layout.error == LayoutEvaluationError::SymbolicExtent) {
       return;
     }
     std::string message;
@@ -10570,26 +10862,31 @@ auto SemanticVisitor::Impl::visitLayoutQueryExpr(const LayoutQuery &expr)
                 "object representation is specified.";
       break;
     case LayoutEvaluationError::SizeOverflow:
-      message = "The fixed-array layout queried by '" + expr.keyword().lexeme +
+      message = "The object layout queried by '" + expr.keyword().lexeme +
                 "' exceeds uint64_t.";
       break;
     case LayoutEvaluationError::UnsupportedType:
     case LayoutEvaluationError::None:
       message = "Type '" + typeRefSpelling(expr.type()) +
-                "' has no GTI layout contract for '" + expr.keyword().lexeme +
-                "'.";
+                "' is not a complete concrete object type with a finite "
+                "layout for '" +
+                expr.keyword().lexeme + "'.";
       break;
     }
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2063", DiagnosticPhase::Semantics,
         layoutDiagnosticSpan(expr.type(), layout.error), std::move(message));
     diagnostic.hints.emplace_back(
-        "Use a primitive scalar, one-level raw pointer, integral scoped "
-        "enum, valid passive union or [[c_abi]] record, or concrete "
-        "non-zero fixed array whose element layout is supported.");
+        "Use a complete object type after generic substitution. Void, "
+        "references, interfaces and incomplete types cannot be queried "
+        "directly; fixed-array extents must be positive and the complete "
+        "layout must fit uint64_t.");
     diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
+
+  if (!validateLayoutClassAssertions(completeClasses, expr.keyword()))
+    return;
 
   const std::uint64_t value = expr.kind() == LayoutQueryKind::Size
                                   ? layout.sizeBytes
