@@ -625,6 +625,11 @@ if(GTI_LLVM_RUNTIME_TEST_COMPILER)
             "$<TARGET_FILE:gti_llvm_instrumented_source>" "${PROJECT_SOURCE_DIR}"
             "${GTI_LLVM_RUNTIME_TEST_COMPILER}")
   set_tests_properties(shared_ownership_instrumented PROPERTIES TIMEOUT 600)
+  add_test(NAME compact_owner_layout_instrumented
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compact_owner_layout_runtime_test.py"
+            "$<TARGET_FILE:gti>" --instrumented-emitter "$<TARGET_FILE:gti_llvm_instrumented_source>"
+            --clang "${GTI_LLVM_RUNTIME_TEST_COMPILER}")
+  set_tests_properties(compact_owner_layout_instrumented PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_native_runtime_identity
     COMMAND gti_llvm_cache_tests --runtime-probe "${GTI_LLVM_RUNTIME_TEST_COMPILER}")
   set_tests_properties(llvm_native_runtime_identity PROPERTIES TIMEOUT 180)
