@@ -800,9 +800,11 @@ set_tests_properties(out_of_class_cleanup PROPERTIES TIMEOUT 600)
 add_test(NAME explicit_default_constructors
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/explicit_default_constructors_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(explicit_default_constructors PROPERTIES TIMEOUT 600)
-add_test(NAME explicit_default_constructors_lsp
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/explicit_default_constructors_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-set_tests_properties(explicit_default_constructors_lsp PROPERTIES TIMEOUT 120)
+if(GTI_BUILD_LSP)
+  add_test(NAME explicit_default_constructors_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/explicit_default_constructors_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(explicit_default_constructors_lsp PROPERTIES TIMEOUT 120)
+endif()
 add_test(NAME out_of_class_performance
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_performance_test.py" $<TARGET_FILE:gti>
           "${PROJECT_BINARY_DIR}/Testing/out-of-class-performance")
@@ -2399,10 +2401,12 @@ if(Python3_Interpreter_FOUND)
     llvm_memory_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_memory_execution_test.py"
   )
-  add_test(NAME array_publication_lsp
-           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/array_publication_lsp_test.py"
-                   "$<TARGET_FILE:gti_lsp>")
-  set_tests_properties(array_publication_lsp PROPERTIES TIMEOUT 120)
+  if(GTI_BUILD_LSP)
+    add_test(NAME array_publication_lsp
+             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/array_publication_lsp_test.py"
+                     "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(array_publication_lsp PROPERTIES TIMEOUT 120)
+  endif()
   add_test(NAME runtime_abi_inventory
            COMMAND "${Python3_EXECUTABLE}"
                    "${PROJECT_SOURCE_DIR}/tests/runtime_abi_inventory_test.py"

@@ -460,6 +460,9 @@ def main(argv=None):
             print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
         return
     if args.command == "shard":
+        for path in (args.report, args.log):
+            if path:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
         log = Path(args.log).open("w") if args.log else None
         try:
             report = run_shard(root, Path(args.build).resolve(), args.shards, args.index,
