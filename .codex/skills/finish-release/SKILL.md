@@ -1,12 +1,13 @@
 ---
 name: finish-release
-description: Apply GTI version and release policy to locally validated work delivered through the agent-workflow PR lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. Gitea CI and asynchronous release packaging do not block completion.
+description: Apply GTI version and release policy to focused-validated work delivered through the agent-workflow merge-queue lifecycle. Use when an implementation is ready to deliver or the user asks to commit, publish or release. Asynchronous release packaging does not block completion.
 ---
 
 # Finish A GTI Release
 
 Deliver validated work through [agent-workflow](../agent-workflow/SKILL.md).
-The normal implementation outcome is a merged PR and synchronized local main;
+The normal implementation outcome is a PR in the merge queue, then a merged PR
+and synchronized local main;
 explicit PR-only/local-only instructions override integration. Apply release
 policy below without bypassing that lifecycle.
 
@@ -16,13 +17,10 @@ policy below without bypassing that lifecycle.
   asked to leave local. Unfinished implementation checkpoints may be published
   to their task branch and draft PR under agent-workflow.
 - Commit completed in-scope repository changes after local validation.
-- Focused batch admission is a handoff, not a release. Component fixes retain
-  their original PRs and version decisions; the integrator reconciles VERSION
-  and release notes in the combined candidate. Do not tag, install or publish
-  a stable release from an admitted component. Complete the canonical
-  [batch validation contract](../../../docs/architecture/agent-workflow.md#risk-based-batch-validation)
-  and required local/managed-runner platform gates before merging the batch and
-  syncing main. Gitea CI is advisory and must not delay this boundary.
+- Degraded-mode batch admission is a handoff, not a release. Component fixes
+  retain their original PRs and version decisions; the integrator reconciles
+  VERSION and release notes in the combined candidate. Do not tag, install or
+  publish a stable release from an admitted component.
 - Treat a change as release-bearing when repository version policy requires a
   `VERSION` advance, when it changes shipped behavior or packaging, or when the
   user explicitly requests a release.
@@ -44,42 +42,34 @@ policy below without bypassing that lifecycle.
 2. Fetch the remote before publication. If the destination branch advanced,
    reconcile it without discarding local or remote work. Do not force-push or
    rewrite shared history.
-   The destination must be GTI's canonical Gitea repository (`origin`,
-   `gti-lang/gti` at `git.internal.howetotech.dev`). There is no automatic
-   backup push; never publish branches, issues, PRs or releases to GitHub.
-3. Run the proportionate local build, tests, packaging checks, formatting, and
+   The destination must be GTI's canonical GitHub repository (`origin`,
+   `lang-gti-official/gti`). Never publish source branches or PRs to Gitea;
+   its `main` is frozen and it keeps only the reference site and packages.
+3. Run the focused build, tests, packaging checks, formatting, and
    release-version checks (`python3 scripts/check_release_version.py
-   origin/main HEAD`). Gitea CI is confirmation, not a substitute for local
-   gates. Apply `verify-change`'s evidence ledger and delta-based revalidation:
-   retain exact-head results if main advances, reconcile, then obtain fresh
-   acceptance without dropping required gates or relabeling previous passes.
-   Use the [execution contract](../../../docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting)
-   for bounded output and waiting on existing local/managed-runner validation
-   handles; advisory Gitea CI is not a completion dependency.
+   origin/main HEAD`) that `verify-change` selects. The merge queue runs the
+   complete suite; do not repeat it locally. Use the
+   [execution contract](../../../docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting)
+   for bounded output and waiting.
 4. Stage only the intended files, review `git diff --cached`, and create a
    focused commit.
 
 ## Initiate The Release
 
-Use the repository's Gitea release workflow as the tag and release authority.
-For the current workflow, merging a release-bearing PR with an advanced
-`VERSION` into canonical Gitea `main` dispatches Linux x64 packaging and
-publication of the matching `v<VERSION>` tag and Gitea release. Apple Silicon
-archives are manually built, validated and uploaded to that same immutable
-stable release; follow the manual macOS contract in the release policy.
-There is no macOS Actions runner, and no service installation is authorized.
-Do not also push a competing tag.
+Packages stay on Gitea releases until GitHub is proven for them. The Gitea
+release workflow (`.gitea/workflows/release.yml`) remains the tag and release
+authority, but it fired on pushes to Gitea `main`, which is now frozen. Until a
+GitHub workflow publishes to Gitea releases, merging a release-bearing PR does
+not publish anything: report the intended version and leave publication to
+the owner. Never tag a version mismatch or an unvalidated tree by hand, and do
+not push a competing tag.
 
-Manual workflow dispatch may rebuild the release for the selected commit, but
-the workflow still owns tag creation. Never tag a version mismatch or an
-unvalidated tree by hand.
+## Finish After Queueing
 
-## Finish After Dispatch
-
-Respect required local validation, PR freshness and reviews before integration;
-never force a merge or administratively bypass them. Do not wait for advisory
-Gitea CI; record its actual pending/failed state separately. Once integration and local-main sync succeed,
-report the PR, commit, intended version when applicable, validation and cleanup.
-Do not wait for post-merge packaging or release publication. A merge/sync failure
-is an incomplete task and must remain visible; a later asynchronous packaging
-failure can be handled separately.
+Respect required reviews and the merge queue; never force a merge or
+administratively bypass them. Once the PR is queued with recorded focused
+validation, report the PR, the intended version when applicable, exactly which
+checks ran, and that the complete suite is the queue's. After the queue merges
+it and local-main sync succeeds, report the merge and local commit. A queue
+removal or sync failure keeps the task open and visible; a later asynchronous
+packaging failure can be handled separately.

@@ -173,9 +173,10 @@ package does not load a downstream LLVM package.
 
 ## Published Toolchain Channels
 
-The self-hosted Gitea (`gti-lang/gti`) is the Git, tag, workflow, and release
-authority. No helper or workflow publishes to GitHub or a backup. Release
-archives are downloaded by the plugin from
+Source lives on GitHub (`lang-gti-official/gti`); packages stay on the
+self-hosted Gitea (`gti-lang/gti`), which remains the tag and release authority
+until GitHub is proven for packages. Release archives are downloaded by the
+plugin from
 `https://git.internal.howetotech.dev/gti-lang/gti/releases/download/<tag>/<asset>`.
 The plugin uses a full HTTPS Git URL, not owner/repository shorthand. Archive
 shapes exist for Linux x64, Linux arm64, and macOS arm64, but an archive is
@@ -210,7 +211,7 @@ retained versions without assuming
 an Intel or Apple Silicon installation prefix. Existing build generators are
 preserved while configuration/install rules are refreshed.
 
-`--preview` selects the canonical Gitea `preview` commit directly and builds
+`--preview` selects the canonical GitHub `preview` commit directly and builds
 CLI, LSP and parser together in a persistent detached worktree under the
 primary checkout's sibling `gti-preview-installs/<full-commit>`. It never
 switches or resets the calling checkout or incorporates its uncommitted work.

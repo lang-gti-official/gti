@@ -264,7 +264,7 @@ def candidate_checks(paths: list[str], groups: dict[str, list[str]]) -> list[Che
             Check(
                 "agent-workflow",
                 "python3 tests/agent_workflow_test.py",
-                "workflow/batch lifecycle, advisory CI classification and evidence integrity changed",
+                "workflow/batch lifecycle, CI classification and evidence integrity changed",
             )
         )
     if "build/release" in groups and not automation_only:

@@ -39,9 +39,10 @@ release and validation narratives retain their original checkpoint language,
 including past publication holds, platform counts and intermediate failures.
 They do not reopen completed capabilities or authorize an old release/install
 procedure. Historical issue numbers refer to their recorded host; all new
-integration follows the current [Gitea workflow](../architecture/agent-workflow.md).
-Gitea at `git.internal.howetotech.dev/gti-lang/gti` is canonical for source,
-PRs, issues, CI and releases; earlier hosting selections below are history.
+integration follows the current [agent workflow](../architecture/agent-workflow.md).
+GitHub `lang-gti-official/gti` is canonical for source, PRs, issues and CI, with
+packages and the reference website on Gitea; earlier hosting selections below
+are history.
 Reproduce a remaining
 composition against current main before treating a past rejection as a new
 compiler task.

@@ -28,7 +28,8 @@ SHARED = ("include/gti/semantic", "include/gti/hir", "include/gti/mir",
           "src/compiler/semantic_generic", "src/compiler/mir_", "src/compiler/hir_",
           "src/compiler/cpp_", "src/compiler/optimization/", "runtime/")
 AUTOMATION = ("docs/", ".codex/", ".claude/", ".agents/")
-AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md", ".gitea/workflows/ci.yml"}
+# CI workflow edits select full coverage, so the queue validates the jobs it changes.
+AUTOMATION_FILES = {"AGENTS.md", "CLAUDE.md", "README.md"}
 
 
 def focused_scope(paths):
@@ -191,17 +192,30 @@ def ci_mode(event, paths):
     return "full"
 
 
-def admission(mode, results):
-    if mode in {"draft", "component"}:
-        raise ValueError("Awaiting integration: draft/component PRs cannot merge directly; prepare a validated batch or withdraw admission")
-    required = {"validation-plan", "formatting", "release-version", "tree-sitter", "automation-tests"}
+LINT_JOBS = {"plan", "formatting", "release-version", "tree-sitter", "automation-tests"}
+EVENTS = {"pull_request", "merge_group"}
+
+
+def admission(mode, results, event="pull_request"):
+    """The one required check. A PR proves its fast checks before it may queue;
+    the merge queue proves the complete suite on the exact candidate."""
+    if event not in EVENTS:
+        raise ValueError("Unknown CI event")
+    if mode == "component":
+        raise ValueError("Awaiting integration: a batch component cannot merge directly; finish its validated batch or withdraw admission")
+    required = set(LINT_JOBS)
     if mode == "full":
-        required |= {"build-and-test", "compiler-sanitizers"}
+        # Installed-toolchain and docgen checks run inside the first Linux shard.
+        required |= {"fast"} if event == "pull_request" else {"integration", "sanitizers"}
+    elif mode == "draft":
+        if event != "pull_request":
+            raise ValueError("A draft cannot enter the merge queue")
     elif mode != "automation":
         raise ValueError("Unknown CI validation mode")
     missing = sorted(key for key in required if results.get(key, {}).get("result") != "success")
     if missing:
         raise ValueError("Required validation did not pass: " + ", ".join(missing))
+    return required
 
 
 def build_cache(root, build):
@@ -236,6 +250,48 @@ def results(path, expected, required):
     if set(required) & set(skipped):
         raise ValueError("A required member regression/owning/smoke test was skipped")
     return skipped
+
+
+def shard_assignment(names, durations, shards, default=30.0):
+    """Deterministic cost-balanced partition: longest first onto the lightest shard."""
+    if shards < 1:
+        raise ValueError("shards must be positive")
+    loads, assigned = [0.0] * shards, [[] for _ in range(shards)]
+    for name in sorted(names, key=lambda item: (-float(durations.get(item, default)), item)):
+        index = min(range(shards), key=lambda candidate: (loads[candidate], candidate))
+        assigned[index].append(name)
+        loads[index] += float(durations.get(name, default))
+    return [sorted(rows) for rows in assigned]
+
+
+def merge_shards(reports, platforms):
+    """Prove that each platform's shards ran exactly its whole inventory once."""
+    summary = {}
+    for platform in sorted(platforms):
+        rows = [report for report in reports if report.get("platform") == platform]
+        if not rows:
+            raise ValueError("No shard results for required platform " + platform)
+        first = rows[0]
+        count = first.get("shards")
+        if (not isinstance(count, int) or count < 1 or len(rows) != count or
+                sorted(report.get("index") for report in rows) != list(range(count))):
+            raise ValueError("Incomplete or duplicated shards for " + platform)
+        for report in rows:
+            if (report.get("scope") != "shard" or report.get("shards") != count or
+                    report.get("head") != first.get("head") or report.get("tree") != first.get("tree") or
+                    report.get("inventory") != first.get("inventory") or report.get("build_type") not in OPTIMIZED):
+                raise ValueError("Shards for " + platform + " disagree on source, inventory or build")
+        executed = [name for report in rows for name in report.get("tests", [])]
+        if len(executed) != len(set(executed)) or set(executed) != set(first["inventory"]):
+            raise ValueError("Shards for " + platform + " did not run their inventory exactly once")
+        if not any(report.get("smoke") for report in rows):
+            raise ValueError("No compiler smoke result for " + platform)
+        summary[platform] = {"head": first["head"], "tests": len(executed), "shards": count,
+                             "skipped": sorted(name for report in rows for name in report.get("skipped", []))}
+    heads = {row["head"] for row in summary.values()}
+    if len(heads) != 1:
+        raise ValueError("Platforms validated different sources")
+    return summary
 
 
 def smoke(root, build, log=None):
@@ -329,6 +385,32 @@ def run(root, build, required, full, targets=(), extra=(), jobs=4, log=None, jun
             "compiler": str(build / "gti"), "required": sorted(required), "smoke": smoke_results}
 
 
+def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=None):
+    cache = build_cache(root, build)
+    if not 0 <= index < shards:
+        raise ValueError("shard index out of range")
+    subprocess.run(["cmake", "--build", str(build), "--parallel", str(jobs)],
+                   check=True, cwd=root, stdout=log, stderr=subprocess.STDOUT)
+    document = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
+    expected = inventory(document, {SMOKE})
+    table = json.loads(Path(durations).read_text())
+    selected = shard_assignment(expected, table["seconds"], shards, table.get("default_seconds", 30))[index]
+    skipped = []
+    if selected:
+        with tempfile.TemporaryDirectory(prefix="gti-validation-shard-") as directory:
+            report = Path(junit) if junit else Path(directory) / "ctest.xml"
+            subprocess.run(["ctest", "--test-dir", str(build), "--no-tests=error", "--output-on-failure",
+                            "--parallel", str(jobs), "--output-junit", str(report),
+                            "-R", "^(" + "|".join(re.escape(name) for name in selected) + ")$"],
+                           check=True, stdout=log, stderr=subprocess.STDOUT)
+            skipped = results(report, set(selected), set(selected) & {SMOKE})
+    smoke_results = smoke(root, build, log) if index == 0 else []
+    return {"head": git(root, "rev-parse", "HEAD"), "tree": git(root, "rev-parse", "HEAD^{tree}"),
+            "platform": sys.platform, "build_type": cache["CMAKE_BUILD_TYPE"], "scope": "shard",
+            "shards": shards, "index": index, "inventory": sorted(expected), "tests": selected,
+            "skipped": skipped, "smoke": smoke_results}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -339,6 +421,17 @@ def main(argv=None):
     gate = sub.add_parser("ci-gate")
     gate.add_argument("--mode", required=True)
     gate.add_argument("--results", required=True)
+    gate.add_argument("--event", default="pull_request")
+    gate.add_argument("--shard-reports", help="directory of shard reports, required for merge_group full")
+    gate.add_argument("--platforms", default="darwin,linux")
+    shard = sub.add_parser("shard")
+    shard.add_argument("--build", required=True)
+    shard.add_argument("--shards", type=int, required=True)
+    shard.add_argument("--index", type=int, required=True)
+    shard.add_argument("--durations", default="tests/ci_test_durations.json")
+    shard.add_argument("--jobs", type=int, default=4)
+    shard.add_argument("--report", required=True)
+    shard.add_argument("--log")
     for name in ("focused", "full"):
         run_parser = sub.add_parser(name)
         run_parser.add_argument("--build", required=True)
@@ -358,7 +451,25 @@ def main(argv=None):
         if args.mode == "metadata":
             print("Metadata-only PR edit: no compiler validation or integration acceptance is claimed.")
             return
-        admission(args.mode, json.loads(args.results))
+        admission(args.mode, json.loads(args.results), args.event)
+        if args.mode == "full" and args.event == "merge_group":
+            if not args.shard_reports:
+                raise ValueError("The merge queue gate needs the shard reports")
+            reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]
+            summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
+            print("GTI_INTEGRATION_RESULT=" + json.dumps(summary, sort_keys=True))
+        return
+    if args.command == "shard":
+        log = Path(args.log).open("w") if args.log else None
+        try:
+            report = run_shard(root, Path(args.build).resolve(), args.shards, args.index,
+                               root / args.durations, args.jobs, log,
+                               str(Path(args.report).with_suffix(".xml")))
+        finally:
+            if log:
+                log.close()
+        Path(args.report).write_text(json.dumps(report, indent=2) + "\n")
+        print("GTI_SHARD_RESULT=" + json.dumps({k: report[k] for k in ("platform", "index", "shards")}))
         return
     if args.jobs < 1:
         raise ValueError("jobs must be positive")

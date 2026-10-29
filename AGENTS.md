@@ -1,12 +1,14 @@
 # GTI Repository Guidance
 
-**Canonical host (2026-10-24): [Gitea](https://git.internal.howetotech.dev/gti-lang/gti).**
-`origin` must use `https://git.internal.howetotech.dev/gti-lang/gti.git` for
-source, branches, PRs, issues, CI and releases. GitHub-era hosting instructions
-in older checkouts or historical notes are superseded. When resuming an old
-worktree, read the current primary checkout's guidance and workflow skill;
-use its helper with `--repo <task-worktree>` until current main is reconciled.
-Do not restore GitHub remotes or use `gh` to publish GTI work.
+**Canonical host (2026-10-29): [GitHub](https://github.com/lang-gti-official/gti).**
+`origin` must use `https://github.com/lang-gti-official/gti.git` for source,
+branches, PRs, issues and CI. Gitea (`git.internal.howetotech.dev`) keeps the
+standalone reference website and the published packages until GitHub is proven
+for them; its `gti-lang/gti` `main` is frozen and accepts no merges. GitHub
+history carries rewritten commit identities (identical trees, new commit IDs),
+so Gitea-era branches and task records move over by tree identity (`rehost`).
+When resuming an old worktree, read the current primary checkout's guidance and
+workflow skill, and use its helper with `--repo <task-worktree>`.
 
 GTI is an independent, experimental, statically typed systems language with
 strong C++ syntax familiarity, explicit ownership, and deterministic cleanup.
@@ -86,42 +88,42 @@ not a C++ wrapper, and neither backend defines its semantics.
 - Explicit requests such as "PR only", "leave local", "do not merge", or
   "review first" override automatic integration. Read-only reviews/discussions
   do not authorize implementation or publication. Installation remains opt-in.
-- Use [risk-based batch validation](docs/architecture/agent-workflow.md#risk-based-batch-validation)
-  for concurrent compiler fixes. T1 confined fixes require a meaningful
-  regression, owning and affected cross-phase checks plus compiler smoke; T2
-  semantic/shared compiler changes add relevant subsystem coverage; T3 system,
-  ABI/runtime and optimizer-invariant changes retain their full/platform
-  obligations. Classify the changed invariant, never the word "ICE" or patch
-  size. Record the original failure where practical, with bounded execution
+- **Contributors validate their change; the merge queue validates
+  integration.** Before a task is complete, run only the focused checks its
+  changed invariant needs: the exact reproducer or new regression (for a fix,
+  failing on the parent revision for the intended reason), the owning
+  subsystem's tests, and the affected cross-phase and tooling consumers, plus
+  `compiler_pipeline` and the native smoke. Record exactly what ran with
+  `verify`. Never run the complete suite locally to finish a feature or fix:
+  the merge queue runs it on the exact candidate that becomes `main`, on every
+  required platform. Deferring it to the queue is complete work, not a gap;
+  never describe focused evidence as full validation. Run broad local suites
+  only to diagnose an integration failure assigned to your change (and then
+  only its failing tests), when the owner asks, or in the degraded mode below.
+- Classify by [risk](docs/architecture/agent-workflow.md#risk-based-batch-validation),
+  which decides how broad the focused checks are, never by the word "ICE" or
+  patch size. T1 confined fixes need a meaningful regression, owning and
+  affected cross-phase checks plus compiler smoke; T2 semantic/shared compiler
+  changes add relevant subsystem coverage; T3 system, ABI/runtime and
+  optimizer-invariant changes add their platform, runtime and performance
+  gates. Record the original failure where practical, with bounded execution
   for resource-exhaustion cases and an explicit reason when reproduction is
   unavailable. Code-generation fixes must check resulting execution, cleanup
   and rejection behavior where applicable, not just absence of the crash.
-  Independent isolated changes do not automatically require an all-target build
-  or full CTest run. Select acceptance from the changed invariant and affected
-  consumers; retain applicable platform, ABI/runtime and performance gates.
-  Shared-contract/cross-cutting changes and designated full integration or
-  release campaigns require broader coverage, including the full suite where
-  specified. The combined-batch requirements below remain unchanged.
-- `batch enroll` records focused admission against the published source;
-  it means **ready for integration**, not merged, released or fully verified.
-  Select at most eight admitted tasks explicitly with `batch prepare` and run
-  `batch verify` once on the combined candidate for each required platform.
-  A designated integration agent owns this campaign and failure attribution;
-  fixes return to the owner of the violated invariant, rather than changing
-  unrelated tests to accommodate a regression. Preserve each original PR and
-  commit. Do not start duplicate per-component full campaigns. Collect ready
-  changes for no more than ten minutes; a lone ready change may form a batch
-  immediately and never waits for unfinished features. See `batch status`.
-- Gitea CI is advisory, not a development, validation, merge or completion
-  gate. Never wait for queued/running Actions or require a passing Gitea check
-  before integration. Keep required exact-source local/managed-runner validation,
-  full combined compiler coverage, platform/performance checks and reviews.
-  Draft/component CI runs inexpensive checks; ready compiler candidates also
-  run native/sanitizer feedback without blocking their locally validated merge.
-  Use `protection --configure --advisory-ci` to remove required Gitea check
-  contexts/app pins while preserving PR-only/up-to-date/admin/review protection.
-  This policy change is owner-authorized. Report pending/failed CI honestly;
-  investigate known failures without calling them passes or hiding local failures.
+- **CI is the required integration gate.** The `main` ruleset requires pull
+  requests, the merge queue and the `CI gate` check, with no bypass for any
+  role. A PR's `CI gate` runs the fast checks (lint, workflow regressions, and
+  a macOS arm64 and Linux x64 build with `feedback-fast` and
+  `compiler_pipeline`); the queue's `CI gate` runs the complete suite in
+  cost-balanced shards on both platforms, the sanitizer subset and the
+  installed-toolchain checks, and proves the shards covered every registered
+  test. A failure in the queue belongs to the change that introduced it: its
+  owner repairs it, and other agents never weaken unrelated expectations to
+  accommodate it. Do not start a local suite to duplicate a queue run.
+- Degraded mode: if GitHub Actions is unavailable for more than four hours, a
+  designated integrator may validate one combined candidate with `batch` on a
+  remote runner and record that evidence on the PR. Agents never fall back to
+  per-PR local full suites.
 - Completed features may enter the opt-in `preview` source branch through
   `python3 scripts/agent_workflow.py preview submit <task> --tests <focused-ctest-names>`
   while their original PRs continue full validation and review. Submission is
@@ -136,14 +138,13 @@ not a C++ wrapper, and neither backend defines its semantics.
   append-only removal. Preview is never merged wholesale into main and never
   weakens the original PR's acceptance. Local installation uses the user's
   explicit `install_neovim_local.py --preview` selection.
-- Gitea at `https://git.internal.howetotech.dev/gti-lang/gti.git`
-  (remote `origin`) is canonical for branches, PRs, issues, CI, tags and
-  releases. Publish only there. GitHub automation is retired; neither the
-  helper nor workflows push to GitHub or any backup. A future private backup
-  requires separate owner configuration. The archived
-  `gti-legacy-gitea-20261024` repository preserves the older, distinct tracker.
-  Imported GitHub task records require explicit `rehost <task> --pr <number>`
-  after checking the mapping; never reuse a historical PR number by assumption
+- GitHub at `https://github.com/lang-gti-official/gti.git` (remote `origin`)
+  is canonical for branches, PRs, issues and CI. The helper authenticates
+  through the GitHub CLI (`gh auth login`) or `GH_TOKEN`, never a stored
+  token. Gitea keeps the reference website and packages; nothing else is
+  published there. Gitea-era task records move over with explicit
+  `rehost <task> --pr <number>`, which requires the migrated PR head to carry
+  the task's published tree; never reuse a historical PR number by assumption
   or rewrite a live verification record.
 - Begin from current canonical `origin/main` in a clean task-specific branch
   and worktree. Publish the branch immediately; create a draft PR after the
@@ -183,13 +184,13 @@ not a C++ wrapper, and neither backend defines its semantics.
   [remote-runner contract](docs/architecture/agent-workflow.md#remote-buildtest-hosts);
   detached run IDs remember their original connection. Do not leave ad hoc
   clones or builds on any runner.
-- Use `scripts/agent_workflow.py` for lifecycle operations. Reconcile upstream,
-  validate the resulting head/base, and merge only through Gitea PRs. Respect
-  required local validation and reviews; Gitea CI is advisory. No direct
-  pushes to `main`, rewritten shared history,
-  or administrative bypasses. The owner authorizes the helper's `protection
-  --configure` to establish this PR-only/up-to-date rule; preserve existing
-  review and status requirements.
+- Use `scripts/agent_workflow.py` for lifecycle operations. `finish` marks the
+  PR ready and adds it to the merge queue pinned to the verified head; the
+  queue merges asynchronously and `sync` advances local `main` once it lands.
+  Reconcile only to resolve conflicts: an advancing `main` does not void
+  focused evidence. No direct pushes to `main`, rewritten shared history, or
+  administrative bypasses. The owner authorizes the helper's
+  `protection --configure` to establish the `main` ruleset.
 - Preserve unrelated primary-checkout edits and unique commits during sync.
   Confirm remote integration before archiving/removing a task worktree or
   deleting its branches. Preserve needed ignored files and any residual source
@@ -286,8 +287,10 @@ one-off implementation-note or redesign files when an existing category fits.
 ## Release Channels And VERSION
 
 Two channels publish this repository, and they answer different questions.
-Both publish through the canonical Gitea release workflow
-(`.gitea/workflows/release.yml`). Existing Linux runners publish Linux x64.
+Packages stay on Gitea releases. Their workflow (`.gitea/workflows/release.yml`)
+fired on Gitea `main`, which is now frozen, so no release publishes
+automatically until a GitHub workflow publishes to Gitea; until then,
+publication is a manual owner step. Existing Linux runners publish Linux x64.
 Apple Silicon release archives are packaged/validated on macOS and uploaded
 manually to the same immutable stable release; no macOS Actions runner is
 configured. Do not promise automatic macOS/nightly assets or install a runner

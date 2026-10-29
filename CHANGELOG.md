@@ -9,6 +9,18 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.493.3 - Source moves to GitHub
+
+- GTI's source, pull requests, issues and CI now live at
+  https://github.com/lang-gti-official/gti. Update Lazy specs and clones to
+  `https://github.com/lang-gti-official/gti.git`; `lazy.lua` and the local
+  installer's preview source already point there. Packages and the reference
+  website stay on Gitea for now, and the installer still downloads toolchain
+  releases from Gitea.
+- Every change now reaches `main` through a merge queue whose CI runs the
+  complete test suite on the exact candidate, sharded across macOS arm64 and
+  Linux x64. Contributors run focused checks only.
+
 ## 0.493.2 - Thread-local owner assignment
 
 - Assigning a new value to a `thread_local` owner, such as a class with a

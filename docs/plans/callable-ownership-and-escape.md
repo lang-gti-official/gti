@@ -17,8 +17,9 @@
 > owning-wrapper API is implemented, passes the combined 294-test production
 > suite and clean installed-consumer checks, and is installed locally.
 > Those production/install statements record the L-CALL-02 delivery campaign,
-> not a fresh validation of every later main commit. Canonical Gitea workflows
-> own asynchronous Linux release packaging; Apple Silicon publishing is manual.
+> not a fresh validation of every later main commit. At that time the Gitea
+> workflows owned asynchronous Linux release packaging; Apple Silicon publishing
+> was manual.
 > Earlier GitHub-hosting and backup-mirror instructions are superseded. Exact
 > namespace free-function items are stateless values that can be retained,
 > captured, returned through generics and erased by the owning wrappers.

@@ -1,9 +1,38 @@
-# Retired GitHub hosting
+# GTI on GitHub
 
-Canonical source, issues, pull requests, Actions and releases are at
-https://git.internal.howetotech.dev/gti-lang/gti.
+https://github.com/lang-gti-official/gti is canonical for source, branches,
+pull requests, issues and CI. Packages and the reference website stay on Gitea
+for now; see [Gitea](../.gitea/README.md).
 
-GitHub Actions is disabled and its former workflows are preserved under
-`docs/plans/archive/github-actions-20261024/`, not this live workflow directory.
-No helper or workflow pushes to GitHub. A future private backup is a separate
-owner configuration. See [Gitea setup](../.gitea/README.md).
+## Integration
+
+`main` changes only through the merge queue. The `main` ruleset requires pull
+requests, the merge queue and the `CI gate` status check, denies force pushes
+and deletion, and has no bypass actors. Configure or audit it with:
+
+```sh
+python3 scripts/agent_workflow.py protection --configure
+python3 scripts/agent_workflow.py protection
+```
+
+`workflows/ci.yml` reports the single required check, `CI gate`:
+
+- On a pull request: lint (formatting, release version, Tree-sitter), the
+  workflow regression tests, and a macOS arm64 and Linux x64 build running
+  `feedback-fast` and `compiler_pipeline`. Drafts run lint only.
+- In the merge queue: the complete suite on the exact candidate, split into
+  cost-balanced shards (`scripts/validation_checks.py shard`, balanced by
+  `tests/ci_test_durations.json`) on both platforms, the ASan/UBSan subset, the
+  installed-toolchain smoke and deterministic docgen. The gate merges the shard
+  reports and fails unless each platform ran its whole inventory exactly once.
+
+Contributors run focused checks only; the queue owns the complete suite. A
+queue failure belongs to the change that introduced it.
+
+Actions are pinned to full commit SHAs. Workflows run with a read-only token.
+Set positive `GTI_JOBS` and `GTI_TEST_JOBS` repository variables to override
+the CPU/memory-based budgets. Compiler-object caches are separate for native
+and sanitizer profiles; cache errors never skip builds or validation.
+
+The previous GitHub-era workflows are archived under
+`docs/plans/archive/github-actions-20261024/` and do not run.
