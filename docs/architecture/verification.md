@@ -11144,8 +11144,10 @@ modules, application re-exports, and same-name application modules.
 `stdlib_modules` imports every canonical standard module individually; detail
 and experimental facades remain outside the portable aggregate. Removed GTI
 include syntax is a source-loading rejection, including legacy republication.
-These describe the phase 1 test obligations; the unreleased conversion does not
-claim production module readiness or waive unresolved phase 2 acceptance.
+These were the phase 1 test obligations; the conversion alone did not establish
+production readiness. Phase 2's implementation and targeted checks are recorded
+in the campaign plan, along with the owner's decision to defer the final full
+suite until after integration.
 
 Phase 2's `module_preamble_identity` coverage compares fresh and cached global
 lookup, declaration collisions, private homonyms, public ambiguity and recovery

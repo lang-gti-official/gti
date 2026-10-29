@@ -9,7 +9,7 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
-## 0.492.0 - First-class modules (release candidate)
+## 0.492.0 - First-class modules
 
 - **Breaking:** GTI `#include` and `export #include` are removed. Use
   `import std.vector;` for standard modules, registered named imports for
@@ -32,8 +32,9 @@ for what minor and patch releases mean.
   deterministic module order, once per module. Cycles through implementations
   are rejected. LLVM supports distinct private nominal names; the retained C++
   backend diagnoses unsupported representation collisions with `GTI-B0003`.
-- This candidate remains on the draft campaign branch until production
-  validation completes. See the [module migration guide](docs/language/lexical-and-syntax.md#migrating-existing-source).
+- The owner authorized delivery after targeted validation, deferring the final
+  full suite for a later run. See the [module migration guide](docs/language/lexical-and-syntax.md#migrating-existing-source)
+  and the [campaign acceptance record](docs/plans/implementation-sequence.md#phase-2-implementation-campaign-2026-10-29).
 
 ## 0.491.0 - Source-defined shared and weak ownership
 

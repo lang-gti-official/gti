@@ -122,10 +122,18 @@ or production readiness.
 
 ### Phase 2 implementation campaign (2026-10-29)
 
-**Status: active, not production-accepted.** The owner has authorized phase 2
-implementation and the breaking release, using two implementation helpers.
-The phase 1 full-suite prohibition applied only to phase 1. The complete release
-candidate must now pass production verification before the existing PR merges.
+**Status: implementation and targeted acceptance complete; integration authorized.**
+The owner authorized phase 2 and the breaking release using two implementation
+helpers. On 2026-10-29 the owner revised the delivery boundary: merge when the
+targeted checks pass, and defer the final full suite for the owner to run later.
+This explicitly supersedes the original requirement to finish the full
+production campaign before merging; it does not claim that those checks passed.
+The earlier broad macOS run recorded 905 passes and 70 failures. Its known
+failures were repaired and covered by owning checks, including the complete
+219-test compiler aggregate, all 177 trusted-body corpus entries, module/cache
+and editor checks, native execution and reviewed corpus/evidence inventories.
+Final full macOS/Linux and fresh sanitizer campaigns remain deferred. Earlier
+sanitizer and performance evidence retains its original source identity.
 Main's source-defined shared/weak ownership changes have been reconciled; their
 semantics and supported backend regressions remain part of acceptance.
 
@@ -163,10 +171,10 @@ missing-import fixes. Focused development evidence now also covers generic
 member definition families and exact specializations, logical-module startup
 ordering and cycles, missing-file overlay recovery, and the reviewed public
 stdlib surface with shared private interfaces. Private-library test access is
-explicit and does not grant compiler trust. These owning checks pass. This is not
-full production acceptance. Phase 1 ran no full suite; phase 2's full native,
-platform, installed-toolchain and performance gates remain mandatory before
-integration/release. The draft PR remains the two-phase integration boundary.
+explicit and does not grant compiler trust. These owning checks pass. Phase 1
+ran no full suite. Final full native, platform and installed-toolchain coverage
+remains follow-up work under the owner's revised delivery decision above;
+targeted acceptance must not be described as a full-suite pass.
 
 The expected successful runtime cost is unchanged after resolution: module
 ownership and visibility are compile-time facts; selected bodies and startup

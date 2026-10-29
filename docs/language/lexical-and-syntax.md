@@ -166,7 +166,7 @@ must not rescan nearby source text to infer documentation.
 
 ## 2.6 Source Units And Modules
 
-This branch implements the unreleased module-only language transition. GTI
+GTI 0.492.0 implements the module-only language transition. GTI
 `#include` and `export #include` are rejected with `GTI-I0014`; they do not load
 a dependency. Source dependencies use explicit module interfaces and imports.
 The coordinated breaking change is held from release until phase 2 establishes
