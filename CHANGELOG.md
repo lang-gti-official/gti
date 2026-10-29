@@ -9,6 +9,14 @@ GTI remains experimental and pre-1.0. See the
 [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md)
 for what minor and patch releases mean.
 
+## 0.489.1 - Native unique owners of null and function pointers
+
+- The native backend now builds `std::make_unique<nullptr_t>(nullptr)`,
+  `std::make_unique<callback>(f)` for a native function pointer type, and
+  `std::make_unique<E>(value)` for an integral enum. It also builds a
+  reference to a `nullptr_t` value. These previously failed with `GTI-B0003`,
+  although the C++ backend ran them.
+
 ## 0.489.0 - LLVM is the default backend on Linux x86_64
 
 - Linux x86_64 now builds with the LLVM backend by default, as macOS arm64
