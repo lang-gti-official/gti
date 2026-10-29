@@ -225,7 +225,7 @@ def main() -> int:
                     executed.returncode != 70
                     or executed.stdout != ""
                     or any(fragment not in executed.stderr for fragment in fragments)
-                    or "<std/memory>" not in executed.stderr
+                    or "<std/detail/memory_storage>" not in executed.stderr
                 ):
                     return fail(
                         f"run {label} {standard} {optimization}", executed

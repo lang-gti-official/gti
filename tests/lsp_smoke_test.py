@@ -1344,7 +1344,7 @@ def test_duplicate_dependency_diagnostics_keep_include_context(executable, root)
         include_uris = {
             related["location"]["uri"]
             for related in diagnostic["relatedInformation"]
-            if related["message"] == "Included from here."
+            if related["message"] == "Imported from here."
         }
         assert include_uris == {first_uri, second_uri}, diagnostic
     finally:

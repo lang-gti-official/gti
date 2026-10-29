@@ -80,6 +80,11 @@ int main() {
   sources[(app / "local.gti").string()] = "export module dep.net.http;";
   expect(fails("import dep.net.http;", {ambiguous, dependency}),
          "exact local names cannot silently shadow dependency prefixes");
+  auto unambiguous = application;
+  unambiguous.modules = {{"dep.local", app / "local.gti"}};
+  sources[(app / "local.gti").string()] = "export module dep.local;";
+  expect(!fails("import dep.local;", {unambiguous, dependency}),
+         "an alias prefix alone does not shadow a complete local registration");
   sources[implementation.string()] = "module other;";
   expect(fails("import dep.net.http;", {application, dependency}),
          "implementation headers must match the registered module");
@@ -91,6 +96,29 @@ int main() {
   expect(!implementationLoader.hadError() &&
              bodyGraph.moduleForUnit(bodyGraph.entryUnit()) != 0,
          "an implementation entry activates its registered interface");
+  {
+    auto cyclicOwner = dependency;
+    const auto otherInterface = library / "other.gti";
+    const auto otherBody = library / "other_body.gti";
+    cyclicOwner.modules.push_back({"other", otherInterface});
+    cyclicOwner.moduleImplementations.push_back({"other", {otherBody}});
+    auto cycleSources = sources;
+    cycleSources[implementation.string()] = "module net.http; import other;";
+    cycleSources[otherInterface.string()] = "export module other;";
+    cycleSources[otherBody.string()] = "module other; import net.http;";
+    lang::SourceLoader cyclic;
+    cyclic.load(entry, "import dep.net.http;", {}, cycleSources, {},
+                std::nullopt, {application, cyclicOwner});
+    expect(cyclic.hadError() && cyclic.errors().size() == 1 &&
+               cyclic.errors().front().code == "GTI-I0001",
+           "cycles through registered bodies are rejected at source loading");
+    cycleSources[otherBody.string()] = "module other;";
+    lang::SourceLoader acyclic;
+    acyclic.load(entry, "import dep.net.http;", {}, cycleSources, {},
+                 std::nullopt, {application, cyclicOwner});
+    expect(!acyclic.hadError(),
+           "a body may import another module without creating a false cycle");
+  }
   lang::SourceLoader direct;
   direct.load(entry, "module orphan;", {}, sources);
   expect(direct.hadError(),

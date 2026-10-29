@@ -18,7 +18,7 @@ def main():
     lines = source.read_text().splitlines()
     base_site = next(i for i, line in enumerate(lines, 1) if "7 / divisor(1)" in line)
     derived_site = next(i for i, line in enumerate(lines, 1) if "9 / divisor(2)" in line)
-    memory = fixtures.parent.parent / "stdlib/std/memory.gti"
+    memory = fixtures.parent.parent / "stdlib/std/detail/memory_core.gti"
     allocation_site = next(i for i, line in enumerate(memory.read_text().splitlines(), 1)
                            if "return unique_ptr<T>(gti_internal::allocate_unique_owner" in line)
     modes = [(f"{standard}-{level}", [f"-{level}", "--std", standard])
@@ -51,7 +51,7 @@ def main():
                       f"{source.name}:{derived_site}: runtime error[GTI-R0002]: "
                       "division_by_zero in integer_division\n")),
                      (["allocation", "before", "base"], (ABORT_STATUS, "",
-                      f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
+                      f"<std/detail/memory_core>:{allocation_site}: runtime error[GTI-R0011]: "
                       "allocation_failure in unique_owner\n"))]
             for arguments, expected in cases:
                 result = run([str(binary), *arguments])

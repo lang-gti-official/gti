@@ -10,7 +10,7 @@ public:
   Record(int value) : value(value) {}
 
   unsafe int construct_other(Payload* vacant, Payload prepared) mut {
-    unsafe { std::detail::construct_value_at(vacant, std::move(prepared)); }
+    unsafe { std::construct_at(vacant, std::move(prepared)); }
     return this.value + 1;
   }
 };

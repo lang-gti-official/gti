@@ -68,7 +68,7 @@ def inventory(directory: Path) -> dict[str, str]:
 
 def transformed_sources(root: Path, *, failures: bool, release_marker: bool) -> dict[str, str]:
     string = (root / "stdlib/std/string.gti").read_text(encoding="utf-8")
-    memory = (root / "stdlib/std/memory.gti").read_text(encoding="utf-8")
+    memory = (root / "stdlib/std/detail/memory_storage.gti").read_text(encoding="utf-8")
     # Even a no-trigger/control setup validates the uninstrumented anchors.
     for text, anchors in ((string, (CTOR, MOVE, STRING_INCLUDE)),
                           (memory, (MEMORY_INCLUDE, RELEASE))):
@@ -82,7 +82,7 @@ def transformed_sources(root: Path, *, failures: bool, release_marker: bool) -> 
     if release_marker:
         audit.require(failures, "post-release markers are an optional alternative-library observation")
         memory = replace_once(memory, MEMORY_INCLUDE,
-                              MEMORY_INCLUDE + 'import "detail_llvm_hosted_cleanup_trace.gti";\n')
+                              MEMORY_INCLUDE + 'import "../detail_llvm_hosted_cleanup_trace.gti";\n')
         modified_release = replace_once(RELEASE, "    unsafe { process.release(previous); }\n",
                                        "    unsafe { process.release(previous); }\n" + POST_RELEASE)
         memory = replace_once(memory, RELEASE, modified_release)
@@ -90,12 +90,12 @@ def transformed_sources(root: Path, *, failures: bool, release_marker: bool) -> 
                       modified_release.index("process.release(previous)") <
                       modified_release.index("previous.address != nullptr") <
                       modified_release.index("lease-release-returned"), "source release order changed")
-    return {"std/string.gti": string, "std/memory.gti": memory}
+    return {"std/string.gti": string, "std/detail/memory_storage.gti": memory}
 
 
 def anchor_controls(root: Path) -> None:
     for source, anchors in ((root / "stdlib/std/string.gti", (CTOR, MOVE, STRING_INCLUDE)),
-                            (root / "stdlib/std/memory.gti", (MEMORY_INCLUDE, RELEASE))):
+                            (root / "stdlib/std/detail/memory_storage.gti", (MEMORY_INCLUDE, RELEASE))):
         text = source.read_text(encoding="utf-8")
         for anchor in anchors:
             for changed in (text.replace(anchor, "", 1), text + anchor):
@@ -282,7 +282,7 @@ def main() -> None:
         transformed = inventory(library)
         expected = {"std/string.gti"} if failures else set()
         if release_marker:
-            expected.add("std/memory.gti")
+            expected.add("std/detail/memory_storage.gti")
         validate_inventory(original, transformed, expected)
         changed = dict(transformed)
         changed["prelude.gti"] = "0" * 64

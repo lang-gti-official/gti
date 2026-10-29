@@ -830,8 +830,6 @@ completeModuleImport(const FrontendResult &snapshot,
   };
   std::unordered_map<std::string, Choice> choices;
   const auto add = [&](std::string name, const std::filesystem::path &path) {
-    if (entry && path == entry->path)
-      return;
     const auto [position, added] =
         choices.emplace(std::move(name), Choice{path});
     if (!added)
@@ -855,7 +853,8 @@ completeModuleImport(const FrontendResult &snapshot,
     if (candidate.implicitAlias)
       addOwner(candidate, *candidate.implicitAlias);
   for (const auto &[name, choice] : choices) {
-    if (choice.ambiguous || !name.starts_with(prefix))
+    if (choice.ambiguous || (entry && choice.target == entry->path) ||
+        !name.starts_with(prefix))
       continue;
     result.candidates.push_back({.kind = CompletionCandidateKind::Namespace,
                                  .label = name,

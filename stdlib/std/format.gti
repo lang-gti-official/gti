@@ -1,4 +1,5 @@
 export module format;
+import "detail/charconv_parse.gti";
 
 import std.charconv;
 import std.string;

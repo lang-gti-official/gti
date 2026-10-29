@@ -8,6 +8,7 @@ import shutil
 import tempfile
 
 from vector_scalar_constructor_runtime_test import run
+from internal_module_fixture import register_modules
 
 
 def main():
@@ -25,13 +26,13 @@ def main():
     cleanup = f"{fixture.name}:{line(fixture, '// token cleanup')}"
     cases = []
     for scenario in range(8):
-        memory = fixture.parents[2] / "stdlib/std/memory.gti"
+        memory = fixture.parents[2] / "stdlib/std/detail/memory_storage.gti"
         method = "void append_value(T value) mut" if scenario % 2 == 0 else "void append<Args...>(Args... args) mut"
         memory_lines = memory.read_text().splitlines()
         start = next(index for index, text in enumerate(memory_lines) if method in text)
         capacity_line = next(index + 1 for index in range(start, len(memory_lines))
                              if "require_relocation_capacity(this.live < this.capacity())" in memory_lines[index])
-        capacity = f"<std/memory>:{capacity_line}"
+        capacity = f"<std/detail/memory_storage>:{capacity_line}"
         if scenario < 2:
             error = f"{capacity}: runtime error[GTI-R0010]: invalid_storage_state in relocation_capacity\n"
             cases.append((70, "89\n900\n", error))
@@ -58,7 +59,10 @@ def main():
         root = pathlib.Path(directory)
         stdlib = root / "stdlib"
         shutil.copytree(fixture.parent.parent.parent / "stdlib", stdlib)
-        shutil.copy2(helper, stdlib / "std/prefix_constructor_test.gti")
+        (stdlib / "std/prefix_constructor_test.gti").write_text(
+            helper.read_text().replace("export module prefix_constructor_test;",
+                'export module prefix_constructor_test; import "detail/memory_storage.gti";'))
+        register_modules(stdlib, {"prefix_constructor_test": "std/prefix_constructor_test.gti"})
         source = root / fixture.name
         source.write_text(fixture.read_text().replace(
             'import "prefix_constructor_test.gti";',

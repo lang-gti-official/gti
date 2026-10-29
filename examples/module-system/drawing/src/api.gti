@@ -10,6 +10,16 @@ export namespace drawing {
     T read();
     U convert<U>(U input);
   };
+  class Holder<T> {
+  public:
+    Holder() = default;
+    int tag();
+  };
+  class Holder<T&> {
+  public:
+    Holder() = default;
+    int tag();
+  };
   int answer();
   Detail make();
 }

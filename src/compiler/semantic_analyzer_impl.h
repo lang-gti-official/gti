@@ -4702,9 +4702,6 @@ private:
   [[nodiscard]] static bool
   isConcreteExactSpecializationType(const SemanticType &type);
 
-  [[nodiscard]] bool samePackageOwnershipDomain(SourceUnitId left,
-                                                SourceUnitId right) const;
-
   [[nodiscard]] bool
   ownsNominalSpecializationArgument(SourceUnitId sourceUnit,
                                     const SemanticType &argument) const;

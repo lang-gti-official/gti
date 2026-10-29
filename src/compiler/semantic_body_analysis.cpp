@@ -11224,7 +11224,12 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     currentType = SemanticType::Unknown;
     return;
   }
+  const auto qualifierDiagnostics = diagnostics.size();
   recordQualifiedPathUses(expr.name());
+  if (diagnostics.size() != qualifierDiagnostics) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (!validateClassPathAliases(expr.name(), expr.name().last())) {
     currentType = SemanticType::Unknown;
     return;

@@ -1,5 +1,6 @@
 #include "../src/compiler/cpp_representation.h"
 #include "cpp_mir_body_emitter_test_fixture.h"
+#include "private_stdlib_fixture.h"
 
 #include <cctype>
 
@@ -1866,7 +1867,7 @@ int main() {
 
 void testContainerSwapStorageAndMemberResults() {
   const auto frontend =
-      analyzeWithStandardLibrary("container-swap-slots.gti", R"(
+      gti_test::analyzePrivateMemoryFixture("container-swap-slots.gti", R"(
 import std.memory;
 import std.vector;
 import std.forward_list;
@@ -3625,7 +3626,7 @@ int main() {
 )gti";
   // Source containers and direct raw construction share the same exact
   // ObjectConstruct contract; no trusted fixture or container opcode exists.
-  const auto inPlace = analyzeWithStandardLibrary(
+  const auto inPlace = gti_test::analyzePrivateMemoryFixture(
       "generated-in-place-obligation.gti", inPlaceSource);
   if (!inPlace.canGenerateCode())
     for (const auto &diagnostic : inPlace.diagnostics)

@@ -385,6 +385,49 @@ SourceGraph SourceLoader::load(
              "GTI-I0012");
   }
 
+  // File loading alone cannot detect cycles whose edges originate in different
+  // registered bodies: their interfaces may already be completely loaded.
+  // Validate imports after membership is complete, treating each interface and
+  // all its bodies as one module. Prelude layering is not an explicit import.
+  if (!hadError()) {
+    const auto group = [&](SourceUnitId unit) {
+      const auto *module = graph.findModule(graph.moduleForUnit(unit));
+      return module ? module->interfaceUnit : unit;
+    };
+    std::unordered_map<SourceUnitId, std::vector<const SourceImport *>>
+        outgoing;
+    for (const auto &import : graph.imports()) {
+      if (import.target && group(import.requester) != group(*import.target))
+        outgoing[group(import.requester)].push_back(&import);
+    }
+    std::unordered_map<SourceUnitId, LoadState> visited;
+    std::function<bool(SourceUnitId)> visit = [&](SourceUnitId unit) {
+      visited.emplace(unit, LoadState::Visiting);
+      if (const auto edges = outgoing.find(unit); edges != outgoing.end()) {
+        for (const auto *import : edges->second) {
+          const auto target = group(*import->target);
+          const auto prior = visited.find(target);
+          if (prior != visited.end() && prior->second == LoadState::Visiting) {
+            diagnostics.push_back(makeDiagnostic(
+                "GTI-I0001", DiagnosticPhase::SourceLoading, import->name,
+                "Module import cycle detected for '" + import->spelling +
+                    "'."));
+            return false;
+          }
+          if (prior == visited.end() && !visit(target))
+            return false;
+        }
+      }
+      visited[unit] = LoadState::Loaded;
+      return true;
+    };
+    for (const auto &unit : graph.sourceUnits()) {
+      const auto identity = group(unit.id);
+      if (!visited.contains(identity) && !visit(identity))
+        break;
+    }
+  }
+
   // Preludes are layered in order. A unit that an earlier prelude already
   // reaches, or that prelude itself, lies below every later prelude and never
   // depends on one; a later prelude root sees the earlier ones. Otherwise an
@@ -1163,7 +1206,18 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
               "Imported source owner is absent from the resolved graph.");
       }
     }
-    if (hasLocal && target)
+    const std::string dependencyName =
+        target && names.size() == 1 ? target->defaultModule : joinNames(1);
+    const std::pair<std::string, std::filesystem::path> *dependencyModule =
+        nullptr;
+    if (target) {
+      const auto candidate = std::find_if(
+          target->modules.begin(), target->modules.end(),
+          [&](const auto &module) { return module.first == dependencyName; });
+      if (candidate != target->modules.end())
+        dependencyModule = &*candidate;
+    }
+    if (hasLocal && dependencyModule)
       return reject(
           "Module name '" + localName +
           "' is ambiguous with a dependency alias; rename the alias.");
@@ -1173,14 +1227,11 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
       name = localName;
       path = canonicalPath(local->second);
     } else if (target) {
-      name = names.size() == 1 ? target->defaultModule : joinNames(1);
-      const auto module =
-          std::find_if(target->modules.begin(), target->modules.end(),
-                       [&](const auto &entry) { return entry.first == name; });
-      if (module == target->modules.end())
+      name = dependencyName;
+      if (!dependencyModule)
         return reject("Source owner '" + target->name +
                       "' does not declare public module '" + name + "'.");
-      path = canonicalPath(module->second);
+      path = canonicalPath(dependencyModule->second);
     } else {
       if (!owner || owner->kind == SourceOwnerKind::Direct)
         return reject("Named module imports require a registered source owner; "
@@ -1196,6 +1247,7 @@ SourceLoader::resolveImport(const std::vector<Token> &tokens, std::size_t index,
                     "is not a .gti file.");
     expectedName = std::move(name);
   }
+  sourceImport.lookupPath = path;
   std::error_code error;
   if (!std::filesystem::is_regular_file(path, error) &&
       !sourceOverrides->contains(path.string())) {

@@ -1,0 +1,9 @@
+import std;
+
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(42);
+  mut int parsed = 0;
+  auto result = std::from_chars("42", parsed);
+  return result.ec == std::parse_errc::none && values[std::size_t(0)] == parsed ? 0 : 1;
+}

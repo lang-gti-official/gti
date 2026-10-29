@@ -8,6 +8,7 @@ import shutil
 import tempfile
 
 from vector_scalar_constructor_runtime_test import run
+from internal_module_fixture import register_modules
 
 
 def main():
@@ -18,10 +19,10 @@ def main():
     fixture = pathlib.Path(__file__).parent / "fixtures/vector_prepared_constructor_failure.gti"
     lines = fixture.read_text().splitlines()
     helper = fixture.parent / "prefix_constructor_test.gti"
-    memory_lines = (fixture.parents[2] / "stdlib/std/memory.gti").read_text().splitlines()
+    memory_lines = (fixture.parents[2] / "stdlib/std/detail/memory_storage.gti").read_text().splitlines()
     capacity_line = next(index for index, text in enumerate(memory_lines, 1)
                          if "require_relocation_capacity(this.live < this.capacity())" in text)
-    capacity_failure = (f"<std/memory>:{capacity_line}: "
+    capacity_failure = (f"<std/detail/memory_storage>:{capacity_line}: "
                         "runtime error[GTI-R0010]: invalid_storage_state in relocation_capacity\n")
 
     def line(marker):
@@ -64,7 +65,10 @@ def main():
         # application fixture still has no permission to name gti_internal.
         stdlib = pathlib.Path(directory) / "stdlib"
         shutil.copytree(fixture.parent.parent.parent / "stdlib", stdlib)
-        shutil.copy2(helper, stdlib / "std/prefix_constructor_test.gti")
+        (stdlib / "std/prefix_constructor_test.gti").write_text(
+            helper.read_text().replace("export module prefix_constructor_test;",
+                'export module prefix_constructor_test; import "detail/memory_storage.gti";'))
+        register_modules(stdlib, {"prefix_constructor_test": "std/prefix_constructor_test.gti"})
         application = pathlib.Path(directory) / fixture.name
         application.write_text(fixture.read_text().replace(
             'import "prefix_constructor_test.gti";',

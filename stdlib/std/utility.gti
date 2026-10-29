@@ -20,19 +20,7 @@ namespace std {
     }
   }
 
-  namespace detail {
-    // Owning storage record. Its key field is read-only, but an ordinary local
-    // record may still be moved or replaced as a whole. Dictionaries therefore
-    // never expose a mutable reference to this owning record: mutable cursors
-    // publish checked key/mapped projections instead.
-    export struct map_entry<K, V> {
-      K first;
-      mut V second;
 
-      map_entry(K key, V value)
-          : first(std::move(key)), second(std::move(value)) {}
-    };
-  }
 
   export struct pair<T, U> {
     mut T first;

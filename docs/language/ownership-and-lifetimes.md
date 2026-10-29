@@ -34,7 +34,8 @@ std::unique_ptr<Base> erased = std::upcast_unique<Base, Entity>(
 
 These names are standard-library API, not keywords. The current implementation
 defines `std::unique_ptr<T>` as a nominal GTI class in
-`stdlib/std/memory.gti`; application source imports it with
+`stdlib/std/detail/memory_core.gti`, re-exported by `stdlib/std/memory.gti`;
+application source imports it with
 `import std.memory;`.
 Its private field is a compiler-defined owner capability, while dereference,
 member access, boolean conversion, null comparison, movement, and destruction

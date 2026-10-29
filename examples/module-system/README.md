@@ -18,3 +18,7 @@ namespaces or grant access to another module's private declarations.
 
 `drawing::Box<T>` also separates its ordinary and generic method bodies from
 the interface. Instantiations retain the defining module’s private environment.
+`Holder<T>` and `Holder<T&>` demonstrate structurally selected class families
+whose method bodies are also defined in the registered implementation.
+That implementation also supplies `Holder<bool>` as an exact specialization,
+with its method body defined separately.

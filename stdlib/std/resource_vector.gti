@@ -1,4 +1,6 @@
 export module resource_vector;
+import "detail/resource_lease.gti";
+import "detail/memory_storage.gti";
 
 import std.resource;
 import std.memory;

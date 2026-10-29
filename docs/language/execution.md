@@ -543,6 +543,15 @@ Program source units are initialized by this deterministic walk:
    contribute no step.
 
 Implicit prelude edges injected into ordinary units do not repeat step 1.
+An interface and its registered implementation files form one logical module
+group. Visit external imports from the interface, then from its implementations
+in registration order, before initializing any member of that group. This makes
+an implementation's dependencies available to an interface initializer that
+calls a split function body. Initialize the interface's own storage first, then
+implementation storage in explicit registration order. Importing the group
+again, including through a diamond, does not repeat initialization. Module-level
+import cycles, including edges from implementation files, are rejected during
+source loading.
 Absolute paths, source-unit allocation IDs, parse worklist order, hash-table
 order, and backend link order never select this sequence. All program-wide
 initialization and each initializer's full-expression complete before source

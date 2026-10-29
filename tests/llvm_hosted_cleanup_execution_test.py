@@ -123,7 +123,7 @@ def main():
                         library / TRACE_PATH)
         changed = {"std/string.gti"} if failures else set()
         if markers:
-            changed.add("std/memory.gti")
+            changed.add("std/detail/memory_storage.gti")
         transformed = inventory(library)
         validate_inventory(original, transformed, changed)
         (directory / "library.json").write_text(json.dumps(transformed, sort_keys=True),

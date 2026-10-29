@@ -4,6 +4,16 @@ module graphics.geometry;
 namespace drawing {
   T Box<T>::read() { return value; }
   U Box<T>::convert<U>(U input) { return input; }
+  int Holder<U>::tag() { return 1; }
+  int Holder<U&>::tag() { return 2; }
   int answer() { return 40 + offset(); }
   Detail make() { Detail result{.value = answer()}; return result; }
 }
+
+class drawing::Holder<bool> {
+public:
+  Holder() = default;
+  int tag();
+};
+
+int drawing::Holder<bool>::tag() { return 3; }

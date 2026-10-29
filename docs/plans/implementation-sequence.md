@@ -159,9 +159,11 @@ overlays; and initialization/cache behavior across diamonds and repeated imports
 The phase 2 working implementation now includes the source-owner registry,
 installed public map, shared interface/implementation module identities,
 module-aware import queries, partial editor source recovery, and public-map
-missing-import fixes. Focused development evidence exists for ownership,
-identity, generated modules, and recovery; generic member composition and the
-stdlib export review are still undergoing focused verification. This is not
+missing-import fixes. Focused development evidence now also covers generic
+member definition families and exact specializations, logical-module startup
+ordering and cycles, missing-file overlay recovery, and the reviewed public
+stdlib surface with shared private interfaces. Private-library test access is
+explicit and does not grant compiler trust. These owning checks pass. This is not
 full production acceptance. Phase 1 ran no full suite; phase 2's full native,
 platform, installed-toolchain and performance gates remain mandatory before
 integration/release. The draft PR remains the two-phase integration boundary.

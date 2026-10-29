@@ -21,10 +21,10 @@ def main():
                           if "generated_failure =" in line)
     cleanup_site = next(i for i, line in enumerate(lines, 1)
                         if "generated_cleanup_failure =" in line)
-    memory = fixtures.parent.parent / "stdlib/std/memory.gti"
+    memory = fixtures.parent.parent / "stdlib/std/detail/memory_core.gti"
     allocation_site = next(i for i, line in enumerate(memory.read_text().splitlines(), 1)
                            if "return unique_ptr<T>(gti_internal::allocate_unique_owner" in line)
-    allocation = (f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
+    allocation = (f"<std/detail/memory_core>:{allocation_site}: runtime error[GTI-R0011]: "
                   "allocation_failure in unique_owner\n")
     division = lambda site: (f"{source.name}:{site}: runtime error[GTI-R0002]: "
                              "division_by_zero in integer_division\n")

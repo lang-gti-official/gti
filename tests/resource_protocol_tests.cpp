@@ -2,6 +2,7 @@
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "private_stdlib_fixture.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -52,8 +53,16 @@ void diagnostics(const lang::FrontendResult &result) {
     }
   }
 }
-void positive(const std::string &source, std::string_view message) {
-  const auto result = analyze(source);
+auto analyzePrivateResource(const std::string &source) -> lang::FrontendResult {
+  return gti_test::analyzePrivateMemoryFixture(
+      "resource-private-client.gti",
+      "import std.resource; import \"../std/detail/resource_lease.gti\";\n" +
+          source);
+}
+void positive(const std::string &source, std::string_view message,
+              bool privateSource = false) {
+  const auto result =
+      privateSource ? analyzePrivateResource(source) : analyze(source);
   if (!result.canGenerateCode())
     diagnostics(result);
   expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
@@ -69,8 +78,9 @@ void positive(const std::string &source, std::string_view message) {
   }
 }
 void negative(const std::string &source, std::string_view code,
-              std::string_view message) {
-  const auto result = analyze(source);
+              std::string_view message, bool privateSource = false) {
+  const auto result =
+      privateSource ? analyzePrivateResource(source) : analyze(source);
   const bool matched = std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(),
       [&](const auto &diagnostic) { return diagnostic.code == code; });
@@ -247,7 +257,7 @@ int main() {
   return 0;
 }
 )",
-           "empty process leases can be moved and destroyed safely");
+           "empty process leases can be moved and destroyed safely", true);
   for (const auto *operation :
        {"auto result = lease.allocate(std::layout(uint64_t(8), uint64_t(8)));",
         "lease.attach(std::raw_allocation(nullptr, uint64_t(0), uint64_t(1), "
@@ -255,15 +265,16 @@ int main() {
     negative(
         std::string("int main() { mut std::detail::process_lease lease{}; ") +
             operation + "return 0; }",
-        "GTI-S2055", "process lease raw allocation and adoption remain unsafe");
+        "GTI-S2055", "process lease raw allocation and adoption remain unsafe",
+        true);
     negative(
         std::string(
             "void use(std::resource_ref<std::process_resource> resource) { "
             "mut std::detail::resource_lease<std::process_resource> "
             "lease{resource}; ") +
             operation + " } int main() { return 0; }",
-        "GTI-S2055",
-        "resource lease raw allocation and adoption remain unsafe");
+        "GTI-S2055", "resource lease raw allocation and adoption remain unsafe",
+        true);
   }
   negative(R"(
 int main() {
@@ -274,7 +285,7 @@ int main() {
 }
 )",
            "GTI-S2058",
-           "process descriptor adoption cannot forge a private token");
+           "process descriptor adoption cannot forge a private token", true);
   negative(R"(
 void use(std::resource_ref<std::process_resource> resource) {
   std::detail::resource_lease<std::process_resource> lease{
@@ -284,7 +295,7 @@ void use(std::resource_ref<std::process_resource> resource) {
 int main() { return 0; }
 )",
            "GTI-S2058",
-           "resource descriptor adoption cannot forge a private token");
+           "resource descriptor adoption cannot forge a private token", true);
   negative(R"(
 int main() {
   std::process_resource resource{};

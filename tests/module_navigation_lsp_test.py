@@ -79,6 +79,35 @@ def main():
             assert change(3, valid) == []
             restored = query("textDocument/definition", valid, valid.index("dep.net"))
             assert restored["uri"] == replacement.resolve().as_uri(), restored
+
+            # A nonexistent same-owner import is repaired by an unsaved file,
+            # and closing that overlay restores the error without stale queries.
+            missing_path = app / "missing.gti"
+            missing_source = valid.replace("int main()", 'import "missing.gti";\nint main()')
+            assert change(4, missing_source)
+            missing_uri = open_document(session, missing_path,
+                                        "export module missing;\nexport int available() { return 1; }\n")
+            publications = {}
+            versions = {uri: 4, missing_uri: 1}
+
+            def collect(message):
+                if message.get("method") == "textDocument/publishDiagnostics":
+                    params = message["params"]
+                    target = params.get("uri")
+                    if target in versions and params.get("version") == versions[target]:
+                        publications[target] = params["diagnostics"]
+                return len(publications) == len(versions)
+
+            session.receive_until(collect)
+            assert publications[uri] == [] and publications[missing_uri] == [], publications
+            opened = query("textDocument/definition", missing_source, missing_source.index("missing.gti"))
+            assert opened["uri"] == missing_uri, opened
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",
+                          "params": {"textDocument": {"uri": missing_uri}}})
+            assert diagnostics_for(session, uri, 4)
+            assert not query("textDocument/definition", missing_source, missing_source.index("missing.gti"))
+            independent = query("textDocument/definition", missing_source, missing_source.index("dep.net"))
+            assert independent["uri"] == replacement.resolve().as_uri(), independent
             assert not (app / "build").exists()
             assert not (app / "gti.lock").exists()
         finally:

@@ -3413,6 +3413,10 @@ private:
             unit.sourceDigest);
       }
     }
+    for (const auto &import : analysis.sourceGraph.imports()) {
+      if (import.lookupPath && import.lookupPath->string() != rootPath)
+        result.dependencies.try_emplace(fileUriFromPath(*import.lookupPath), 0);
+    }
     for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
       if (project.warnings.suppresses(diagnostic) ||
           project.packageWarnings.suppresses(diagnostic,
@@ -4072,15 +4076,27 @@ private:
           request.includeDiscoveryGeneration != includeDiscoveryGeneration;
       for (const auto &[dependency, digest] : analysis.dependencies) {
         const auto overlay = documents.find(dependency);
-        if (overlay == documents.end()) {
+        const auto snapshot = request.documentGenerations.find(dependency);
+        // Opening exactly the text read by this analysis preserves its facts.
+        if (overlay != documents.end() &&
+            snapshot == request.documentGenerations.end() && digest != 0 &&
+            digest == lang::sourceTextDigest(overlay->second)) {
           continue;
         }
-        const auto snapshot = request.documentGenerations.find(dependency);
-        // The dependency opened after this request was made, so the analysis
-        // read it from disk. That is still its text if the overlay that
-        // opened is exactly what was read.
-        if (snapshot == request.documentGenerations.end() && digest != 0 &&
-            digest == lang::sourceTextDigest(overlay->second)) {
+        if (const auto path = filePathFromUri(dependency)) {
+          const std::string canonical = canonicalPath(*path).string();
+          const auto captured =
+              request.frontendSources.generations.find(canonical);
+          const auto expected =
+              captured == request.frontendSources.generations.end()
+                  ? 0
+                  : captured->second;
+          if (frontendSnapshots.generation(canonical) != expected) {
+            dependencyChanged = true;
+            break;
+          }
+        }
+        if (overlay == documents.end()) {
           continue;
         }
         const auto current = contentGenerations.find(dependency);

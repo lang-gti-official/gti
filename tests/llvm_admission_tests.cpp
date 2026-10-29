@@ -3924,8 +3924,8 @@ void testDispatchPerUseWitnesses() {
   expect(copiedThreadLocal.admitted(),
          "a thread-local copy of program storage is a generated copy: " +
              copiedThreadLocal.limitation());
-  const auto copiedElement = threadLocal(
-      "};\n P values[2] = {P(), P()};\n P value = values[1];");
+  const auto copiedElement =
+      threadLocal("};\n P values[2] = {P(), P()};\n P value = values[1];");
   expect(!copiedElement.admitted() &&
              std::any_of(copiedElement.requirements().begin(),
                          copiedElement.requirements().end(),

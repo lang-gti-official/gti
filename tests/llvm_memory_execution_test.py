@@ -11,7 +11,7 @@ import json
 
 from backend_execution import Endpoint, execute
 from llvm_evidence_manifest import build_manifest
-from internal_module_fixture import iterator_library
+from internal_module_fixture import iterator_library, private_library, private_source
 
 
 CASES = {
@@ -198,12 +198,18 @@ def prepare_evidence_case(root: Path, name: str, source: Path, work: Path):
         overlay = work / "iterator-library"
         iterator_library(root, overlay / "stdlib")
         return overlay, source
+    if name == "provider":
+        overlay = work / "provider-library"
+        private_library(root, overlay / "stdlib", ("detail.memory_storage",))
+        prepared = private_source(source, overlay / source.name,
+                                  ("detail.memory_storage",))
+        return overlay, prepared
     if name != "private-shared-capability":
         return root, source
     overlay = work / "private-shared-library"
     standard_library = overlay / "stdlib"
     shutil.copytree(root / "stdlib", standard_library)
-    memory = standard_library / "std/memory.gti"
+    memory = standard_library / "std/detail/memory_capabilities.gti"
     with memory.open("a", encoding="utf-8") as output:
         output.write("\n" + source.read_text(encoding="utf-8"))
     return overlay, memory
@@ -243,7 +249,7 @@ def evidence_manifest(root: Path) -> dict:
 
 
 def check_structural_failures(binary: Path, root: Path, env: dict[str, str]):
-    lines = (root / "stdlib/std/memory.gti").read_text(encoding="utf-8").splitlines()
+    lines = (root / "stdlib/std/detail/memory_storage.gti").read_text(encoding="utf-8").splitlines()
     def region(start: str, end: str):
         owner = next(index for index, line in enumerate(lines) if "class sparse_slots<" in line)
         begin = next(index for index in range(owner, len(lines)) if start in lines[index])
@@ -268,7 +274,7 @@ def check_structural_failures(binary: Path, root: Path, env: dict[str, str]):
         matches = [index + 1 for index in scope if source in lines[index]]
         if len(matches) != 1:
             raise AssertionError(f"ambiguous structural failure source: {source}: {matches}")
-        stderr = (f"<std/memory>:{matches[0]}: runtime error[GTI-R0010]: "
+        stderr = (f"<std/detail/memory_storage>:{matches[0]}: runtime error[GTI-R0010]: "
                   f"invalid_storage_state in {detail}\n")
         result = subprocess.run([str(binary), *(["case"] * count)], cwd=root,
                                 env=env, capture_output=True, text=True, timeout=15)

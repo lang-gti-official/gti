@@ -16,6 +16,7 @@ import re
 import subprocess
 
 from llvm_runtime_cost_test import CASES, validate_build_report
+from internal_module_fixture import private_library
 
 ENTRIES = ("malloc", "calloc", "realloc", "posix_memalign", "free")
 PROTOTYPES = '''extern "C" {
@@ -24,7 +25,7 @@ PROTOTYPES = '''extern "C" {
   int gti_cost_end(c_ulonglong checksum, c_ulonglong effects);
 }
 '''
-PROVIDER = '''import std.memory;
+PROVIDER = '''import std.memory; import std.detail.memory_storage;
 int main() {
   int count = gti_cost_iterations(); mut uint64_t checksum = 7;
   mut std::detail::process_lease lease{};
@@ -44,7 +45,7 @@ int main() {
   return gti_cost_end(c_ulonglong(checksum), c_ulonglong(0));
 }
 '''
-REJECTIONS = '''import std.memory;
+REJECTIONS = '''import std.memory; import std.detail.memory_storage;
 int main() {
   int count = gti_cost_iterations();
   mut std::detail::process_lease lease{};
@@ -199,6 +200,7 @@ def main():
         cases = {"arithmetic": CASES["arithmetic"][1], "simd": CASES["simd"][1],
                  "process-provider": PROVIDER, "provider-rejections": REJECTIONS,
                  "shared-owner": SHARED_OWNER}
+        private_stdlib = private_library(root, output / "stdlib", ("detail.memory_storage",))
         for name, body in cases.items():
             path = output / f"{name}.gti"
             path.write_text(PROTOTYPES + body)
@@ -212,7 +214,8 @@ def main():
                 binary = output / f"{name}-{backend}-O{level}"
                 report_path = binary.with_suffix(".json")
                 run([args.gti, path, "--backend", backend, f"-O{level}", "--cxx", args.cxx,
-                     "--build-report", report_path, "-o", binary, "--", *native_inputs], kind="gti-build")
+                     "--build-report", report_path, "-o", binary, "--", *native_inputs],
+                    env={**os.environ, "GTI_STDLIB_PATH": str(private_stdlib)}, kind="gti-build")
                 facts = validate_build_report(json.loads(report_path.read_text()), manifest["gti_sha256"], binary)
                 if manifest["compiler_build"] is None:
                     manifest["compiler_build"] = facts["compiler_build"]

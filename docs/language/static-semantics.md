@@ -1301,11 +1301,22 @@ R Box<V>::convert<R>(R result) { return result; }
 
 Owner bindings correspond positionally to the primary's type/value parameters
 and packs. A pack is expanded with `...`. These bindings may be renamed but
-must be distinct and cannot be replaced with concrete arguments or arbitrary
-type patterns. Method bindings are separate and cannot shadow owner bindings.
+must be distinct. A definition-family component repeats its declared structural
+pattern, renaming only its formal leaves: `R Callback<R(Args...)>::read(...)`
+binds the callable-signature component, while `int Holder<U&>::tag()` binds a
+declared reference component. Fixed types, pointer access, signature receiver
+qualifiers and pack positions retain their canonical meaning. A body cannot
+invent a new family pattern or replace an ordinary primary's parameters with
+concrete arguments. Method bindings are separate and cannot shadow owner bindings.
 The compiler preserves canonical generic parameter identities through body
 checking and concrete instantiation; spelling changes do not create a second
 class or method.
+
+An explicitly declared exact specialization can also define its methods
+separately, for example `int Key<int>::code() { ... }`. This attaches to the
+canonical specialized class, rather than specializing a method of an ordinary
+primary. The body belongs to the module owning that specialization, which may
+be the nominal argument's module under the ordinary coherence rule.
 
 The definition completes that exact method; it cannot introduce another member.
 Parameter types, return type, receiver qualifier (`mut` or `&&`), `constexpr`

@@ -10,7 +10,7 @@ if __name__ == "__main__":
     fixture = pathlib.Path(__file__).parent / "fixtures/storage_final_address.gti"
     constructor_line = next(i + 1 for i, line in enumerate(fixture.read_text().splitlines())
                             if "12 / divisor" in line)
-    memory = pathlib.Path(__file__).parent.parent / "stdlib/std/memory.gti"
+    memory = pathlib.Path(__file__).parent.parent / "stdlib/std/detail/memory_storage.gti"
     lines = memory.read_text().splitlines()
     vacancy_line = next(i + 1 for i, line in enumerate(lines)
                         if "require_vacant_storage(!this.initialized(index))" in line)
@@ -18,9 +18,9 @@ if __name__ == "__main__":
                        if "index_bounds_check(index, this.slots)" in line)
     constructor_failure = (f"{fixture.name}:{constructor_line}: runtime error[GTI-R0002]: "
                            "division_by_zero in integer_division\n")
-    duplicate_failure = (f"<std/memory>:{vacancy_line}: runtime error[GTI-R0010]: "
+    duplicate_failure = (f"<std/detail/memory_storage>:{vacancy_line}: runtime error[GTI-R0010]: "
                          "invalid_storage_state in duplicate_construction\n")
-    bounds_failure = (f"<std/memory>:{bounds_line}: runtime error[GTI-R0007]: "
+    bounds_failure = (f"<std/detail/memory_storage>:{bounds_line}: runtime error[GTI-R0007]: "
                       "index_out_of_bounds in private_storage\n")
     release = fixture.with_name("storage_release.gti")
     release_panic_line = next(i + 1 for i, line in enumerate(release.read_text().splitlines())

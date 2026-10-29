@@ -41,6 +41,14 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent.parent
 DIAGNOSTIC = re.compile(r"error\[(GTI-[A-Z0-9]+)\]")
 
 
+def public_modules(root: Path) -> dict[str, str]:
+    """Public names are registered explicitly; private source files are omitted."""
+    document = json.loads((root / "stdlib/module-map.json").read_text(encoding="utf-8"))
+    default = document.get("default")
+    return {name: "std" if name == default else f"std.{name}"
+            for name in document["modules"]}
+
+
 def manifest_modules(root: Path) -> set[str]:
     """Module stems that the surface manifest mentions in any case source."""
     manifest = root / "tests" / "stdlib_surface_manifest.json"
@@ -52,19 +60,19 @@ def manifest_modules(root: Path) -> set[str]:
     except json.JSONDecodeError:
         return set()
     mentioned: set[str] = set()
-    for module in (root / "stdlib" / "std").glob("*.gti"):
+    for module in public_modules(root):
         # A case references its module by fixture name or evidence path, so
         # match on the stem appearing anywhere in the manifest rather than
         # guessing the naming convention.
-        if module.stem in text:
-            mentioned.add(module.stem)
+        if module.rsplit(".", 1)[-1] in text:
+            mentioned.add(module)
     del document
     return mentioned
 
 
-def classify(gti: Path, directory: Path, module: str) -> tuple[str, str]:
+def classify(gti: Path, directory: Path, module: str, spelling: str) -> tuple[str, str]:
     source = directory / f"import-{module}.gti"
-    source.write_text(f"import std.{module};\n\nint main() {{\n  return 0;\n}}\n",
+    source.write_text(f"import {spelling};\n\nint main() {{\n  return 0;\n}}\n",
                       encoding="utf-8")
     run = subprocess.run(
         [str(gti), str(source), "-O0", "--std", "c++23", "--emit-cpp",
@@ -97,17 +105,16 @@ def main() -> int:
     if not gti.is_file():
         print(f"error: {gti} not found; build it first", file=sys.stderr)
         return 1
-    modules = sorted(path.stem for path in
-                     (REPOSITORY_ROOT / "stdlib" / "std").glob("*.gti"))
+    modules = dict(sorted(public_modules(REPOSITORY_ROOT).items()))
     if not modules:
-        print("error: no modules found under stdlib/std", file=sys.stderr)
+        print("error: no public modules registered in stdlib/module-map.json", file=sys.stderr)
         return 1
 
     failures = 0
     with tempfile.TemporaryDirectory(prefix="gti-stdlib-import-") as temporary:
         directory = Path(temporary)
-        for module in modules:
-            state, detail = classify(gti, directory, module)
+        for module, spelling in modules.items():
+            state, detail = classify(gti, directory, module, spelling)
             if state == "ok":
                 print(f"  {module:<16} ok")
                 continue

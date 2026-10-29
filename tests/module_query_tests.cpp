@@ -125,5 +125,12 @@ int main() {
       !invalid.sourceValid && !lang::LanguageQueries().definition(
                                   invalid, invalid.sourceGraph.entryUnit(), 8),
       "an unresolved or mismatched import never invents a definition target");
+  input.packageSourceRoots[0].modules.emplace_back("dep.net.http", entry);
+  input.source = "export module dep.net.http;\nimport dep.ne";
+  input.byteOffset = input.source.size();
+  completion = lang::LanguageQueries().complete(input);
+  expect(!contains(completion, "dep.net.http"),
+         "a self module still participates in ambiguity before completion "
+         "filtering");
   std::cout << "Module query checks passed\n";
 }

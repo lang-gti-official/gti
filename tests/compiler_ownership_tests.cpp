@@ -3,6 +3,7 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_lowering.h"
+#include "private_stdlib_fixture.h"
 
 namespace {
 
@@ -3901,7 +3902,8 @@ int main() { return 0; }
 // Ordinary source prefix ownership: constructor publication, relocation and
 // receiver loans are established by general GTI calls and object lifetimes.
 void testPrefixStorageCapability() {
-  const auto valid = analyzeWithMemory("source-prefix-owner.gti", R"(
+  const auto valid =
+      gti_test::analyzePrivateMemoryFixture("source-prefix-owner.gti", R"(
 concept prefix_fixture_element<T> = std::storage_element<T> && std::relocatable<T>;
 class Prefixed<prefix_fixture_element T> {
   mut std::detail::prefix_owner<T> data;
@@ -3951,8 +3953,8 @@ int main() {
            "lifetime/borrow operations");
   }
 
-  const auto optionalMisuse =
-      analyzeTrustedMemoryFixture("source-prefix-optional-misuse.gti", R"(
+  const auto optionalMisuse = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "source-prefix-optional-misuse.gti", R"(
 import std.optional;
 int main() {
   mut std::detail::prefix_owner<int> values{uint64_t(1)};
@@ -3999,8 +4001,9 @@ int main() {
 
   const auto rejectsLiveLoan = [&](std::string_view borrowed,
                                    std::string_view invocation) {
-    const auto result = analyzeWithMemory("source-prefix-live-loan.gti",
-                                          R"(
+    const auto result =
+        gti_test::analyzePrivateMemoryFixture("source-prefix-live-loan.gti",
+                                              R"(
 int main() {
   mut std::detail::prefix_owner<int> values{uint64_t(2)};
   mut std::detail::prefix_owner<int> other{uint64_t(2)};
@@ -4029,7 +4032,8 @@ int main() {
   rejectsLiveLoan("values", "values.relocate_to(other);");
   rejectsLiveLoan("other", "values.relocate_to(other);");
 
-  const auto immutable = analyzeWithMemory("source-prefix-immutable.gti", R"(
+  const auto immutable =
+      gti_test::analyzePrivateMemoryFixture("source-prefix-immutable.gti", R"(
 int main() {
   std::detail::prefix_owner<int> values{uint64_t(1)};
   values.pop();
@@ -4042,7 +4046,8 @@ int main() {
                            "Mutable method requires a mutable receiver"),
          "ordinary prefix mutators require a writable receiver");
 
-  const auto endedLoan = analyzeWithMemory("source-prefix-ended-loan.gti", R"(
+  const auto endedLoan =
+      gti_test::analyzePrivateMemoryFixture("source-prefix-ended-loan.gti", R"(
 int main() {
   mut std::detail::prefix_owner<int> values{uint64_t(2)};
   mut std::detail::prefix_owner<int> other{uint64_t(2)};
@@ -4104,8 +4109,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend =
-      analyzeTrustedMemoryFixture("receiver-tied-references.gti", source);
+  lang::FrontendResult frontend = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "receiver-tied-references.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected receiver-tied reference diagnostic: "
@@ -4168,7 +4173,8 @@ int main() {
       "and publish the returned loan without copying its referent");
 
   const lang::FrontendResult nested =
-      analyzeTrustedMemoryFixture("nested-receiver-reference.gti", R"(
+      gti_test::analyzeTrustedPrivateMemoryFixture(
+          "nested-receiver-reference.gti", R"(
 class ElementBuffer {
   mut std::detail::prefix_owner<int> data;
 
@@ -4333,7 +4339,8 @@ int main() {
       "reference-return diagnostics should explain each rejected lifetime");
 
   const lang::FrontendResult invalidated =
-      analyzeTrustedMemoryFixture("invalidated-reference.gti", R"(
+      gti_test::analyzeTrustedPrivateMemoryFixture("invalidated-reference.gti",
+                                                   R"(
 class Buffer<std::storage_element T> {
   mut std::detail::prefix_owner<T> data;
 
@@ -12904,8 +12911,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend =
-      analyzeTrustedMemoryFixture("aggregate-ownership.gti", source);
+  lang::FrontendResult frontend = gti_test::analyzeTrustedPrivateMemoryFixture(
+      "aggregate-ownership.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected aggregate-owner diagnostic: "
@@ -13041,7 +13048,8 @@ int main() {
       "the backend should keep immutable move-only aggregates transferable");
 
   const lang::FrontendResult invalid =
-      analyzeTrustedMemoryFixture("invalid-aggregate-ownership.gti", R"(
+      gti_test::analyzeTrustedPrivateMemoryFixture(
+          "invalid-aggregate-ownership.gti", R"(
 class Buffer {
   mut std::detail::prefix_owner<int> data;
 
@@ -13331,7 +13339,7 @@ int main() {
 )";
 
   lang::FrontendResult frontend =
-      analyzeTrustedMemoryFixture("destructor.gti", source);
+      gti_test::analyzeTrustedPrivateMemoryFixture("destructor.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected destructor diagnostic: " << diagnostic.message

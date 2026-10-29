@@ -1,4 +1,5 @@
 export module set;
+import "detail/map_iterators.gti";
 
 import std.map;
 import std.functional;

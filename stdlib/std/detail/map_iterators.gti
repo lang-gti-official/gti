@@ -1,0 +1,224 @@
+export module detail.map_iterators;
+
+import std.vector;
+import std.memory;
+import "map_entry.gti";
+
+export namespace std::detail {
+struct map_node<K, V> {
+  mut map_entry<K, V> entry;
+  mut size_t left = 0;
+  mut size_t right = 0;
+  mut size_t parent = 0;
+  mut int height = 1;
+
+  map_node(K key, V value, size_t ancestor)
+      : entry(map_entry<K, V>(std::move(key), std::move(value))), parent(ancestor) {}
+};
+
+class map_sentinel {
+public:
+  map_sentinel() = default;
+};
+
+class map_iterator<K, V, uint64_t Reverse = 0> {
+  vector<unique_ptr<map_node<K, V>>>& nodes;
+  size_t root;
+  mut size_t position;
+
+public:
+  map_iterator(vector<unique_ptr<map_node<K, V>>>& source, size_t index, size_t root)
+      : nodes(source), root(root), position(index) {}
+
+  map_entry<K, V>& operator*() {
+    gti_internal::require_container_argument(this.position != 0);
+    return this.nodes[this.position - 1]->entry;
+  }
+
+  map_entry<K, V>& operator->() { return *this; }
+
+  bool operator!=(map_sentinel end) { return this.position != 0; }
+  bool operator==(map_sentinel end) { return this.position == 0; }
+  bool operator!=(map_iterator<K, V, Reverse>& other) {
+    return this.position != other.position;
+  }
+  bool operator==(map_iterator<K, V, Reverse>& other) {
+    return this.position == other.position;
+  }
+
+  void operator++() mut {
+    gti_internal::require_container_argument(this.position != 0);
+    mut size_t right = this.nodes[this.position - 1]->right;
+    if constexpr (Reverse != 0) { right = this.nodes[this.position - 1]->left; }
+    if (right != 0) {
+      this.position = right;
+      while (true) {
+        mut size_t next = this.nodes[this.position - 1]->left;
+        if constexpr (Reverse != 0) { next = this.nodes[this.position - 1]->right; }
+        if (next == 0) { break; }
+        this.position = next;
+      }
+    } else {
+      mut size_t child = this.position;
+      mut size_t parent = this.nodes[child - 1]->parent;
+      while (parent != 0) {
+        mut size_t next = this.nodes[parent - 1]->right;
+        if constexpr (Reverse != 0) { next = this.nodes[parent - 1]->left; }
+        if (next != child) { break; }
+        child = parent;
+        parent = this.nodes[child - 1]->parent;
+      }
+      this.position = parent;
+    }
+  }
+
+  void operator--() mut {
+    mut size_t previous = this.position;
+    if (previous == 0) {
+      previous = this.root;
+      gti_internal::require_container_argument(previous != 0);
+      while (true) {
+        mut size_t next = this.nodes[previous - 1]->right;
+        if constexpr (Reverse != 0) { next = this.nodes[previous - 1]->left; }
+        if (next == 0) { break; }
+        previous = next;
+      }
+    } else {
+      mut size_t subtree = this.nodes[previous - 1]->left;
+      if constexpr (Reverse != 0) { subtree = this.nodes[previous - 1]->right; }
+      if (subtree != 0) {
+        previous = subtree;
+        while (true) {
+          mut size_t next = this.nodes[previous - 1]->right;
+          if constexpr (Reverse != 0) { next = this.nodes[previous - 1]->left; }
+          if (next == 0) { break; }
+          previous = next;
+        }
+      } else {
+        mut size_t child = previous;
+        previous = this.nodes[child - 1]->parent;
+        while (previous != 0) {
+          mut size_t next = this.nodes[previous - 1]->left;
+          if constexpr (Reverse != 0) { next = this.nodes[previous - 1]->right; }
+          if (next != child) { break; }
+          child = previous;
+          previous = this.nodes[child - 1]->parent;
+        }
+        gti_internal::require_container_argument(previous != 0);
+      }
+    }
+    this.position = previous;
+  }
+};
+
+class map_entry_projection<K, V> {
+  mut vector<unique_ptr<map_node<K, V>>>& nodes;
+  size_t root;
+  mut size_t position;
+
+public:
+  map_entry_projection(mut vector<unique_ptr<map_node<K, V>>>& source, size_t index, size_t root)
+      : nodes(source), root(root), position(index) {}
+
+  // The owning record is read-only. Only the mapped field is writable.
+  map_entry<K, V>& read_entry() {
+    gti_internal::require_container_argument(this.position != 0);
+    return this.nodes[this.position - 1]->entry;
+  }
+  K& first() { return this.read_entry().first; }
+  K& key() { return this.first(); }
+  V& second() { return this.read_entry().second; }
+  mut V& second() mut {
+    gti_internal::require_container_argument(this.position != 0);
+    return this.nodes[this.position - 1]->entry.second;
+  }
+  V& mapped() { return this.second(); }
+  mut V& mapped() mut { return this.second(); }
+  size_t index() { return this.position; }
+
+  void advance(bool reverse) mut {
+    gti_internal::require_container_argument(this.position != 0);
+    mut size_t right = this.nodes[this.position - 1]->right;
+    if (reverse) { right = this.nodes[this.position - 1]->left; }
+    if (right != 0) {
+      this.position = right;
+      while (true) {
+        mut size_t next = this.nodes[this.position - 1]->left;
+        if (reverse) { next = this.nodes[this.position - 1]->right; }
+        if (next == 0) { break; }
+        this.position = next;
+      }
+    } else {
+      mut size_t child = this.position;
+      mut size_t parent = this.nodes[child - 1]->parent;
+      while (parent != 0) {
+        mut size_t next = this.nodes[parent - 1]->right;
+        if (reverse) { next = this.nodes[parent - 1]->left; }
+        if (next != child) { break; }
+        child = parent;
+        parent = this.nodes[child - 1]->parent;
+      }
+      this.position = parent;
+    }
+  }
+
+  void retreat(bool reverse) mut {
+    mut size_t previous = this.position;
+    if (previous == 0) {
+      previous = this.root;
+      gti_internal::require_container_argument(previous != 0);
+      while (true) {
+        mut size_t next = this.nodes[previous - 1]->right;
+        if (reverse) { next = this.nodes[previous - 1]->left; }
+        if (next == 0) { break; }
+        previous = next;
+      }
+    } else {
+      mut size_t subtree = this.nodes[previous - 1]->left;
+      if (reverse) { subtree = this.nodes[previous - 1]->right; }
+      if (subtree != 0) {
+        previous = subtree;
+        while (true) {
+          mut size_t next = this.nodes[previous - 1]->right;
+          if (reverse) { next = this.nodes[previous - 1]->left; }
+          if (next == 0) { break; }
+          previous = next;
+        }
+      } else {
+        mut size_t child = previous;
+        previous = this.nodes[child - 1]->parent;
+        while (previous != 0) {
+          mut size_t next = this.nodes[previous - 1]->left;
+          if (reverse) { next = this.nodes[previous - 1]->right; }
+          if (next != child) { break; }
+          child = previous;
+          previous = this.nodes[child - 1]->parent;
+        }
+        gti_internal::require_container_argument(previous != 0);
+      }
+    }
+    this.position = previous;
+  }
+};
+
+// The inline projection is a view, not the owning node entry. Replacing or
+// moving a view cannot transfer or mutate a stored key.
+class map_mut_iterator<K, V, uint64_t Reverse = 0> {
+  mut map_entry_projection<K, V> projection;
+public:
+  map_mut_iterator(mut vector<unique_ptr<map_node<K, V>>>& source, size_t index, size_t root)
+      : projection(map_entry_projection<K, V>(source, index, root)) {}
+  map_entry<K, V>& operator*() { return this.projection.read_entry(); }
+  mut map_entry_projection<K, V>& operator*() mut {
+    gti_internal::require_container_argument(this.projection.index() != 0);
+    return this.projection;
+  }
+  map_entry<K, V>& operator->() { return *this; }
+  mut map_entry_projection<K, V>& operator->() mut { return *this; }
+  K& key() { return this.projection.key(); }
+  bool operator!=(map_sentinel end) { return this.projection.index() != 0; }
+  bool operator==(map_sentinel end) { return this.projection.index() == 0; }
+  void operator++() mut { this.projection.advance(Reverse != 0); }
+  void operator--() mut { this.projection.retreat(Reverse != 0); }
+};
+}

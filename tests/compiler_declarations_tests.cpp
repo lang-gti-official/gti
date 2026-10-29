@@ -1,6 +1,7 @@
 #include "../src/compiler/semantic_diagnostics.h"
 #include "compiler_test_fixture.h"
 #include "native_symbol_spelling.h"
+#include "private_stdlib_fixture.h"
 
 namespace {
 
@@ -497,10 +498,8 @@ int main() {
       "an opaque string_view parameter must not be retained in global "
       "storage without an expressible dependency graph");
 
-  const lang::FrontendResult nestedTextView = lang::Frontend().analyze(
-      // Use an existing trusted unit that is not in string's dependency graph;
-      // overriding memory.gti here would create an include cycle.
-      standardLibraryRoot() / "std/cmath.gti", R"(
+  const lang::FrontendResult nestedTextView =
+      gti_test::analyzePrivateMemoryFixture("nested-text-view.gti", R"(
 import std.string;
 import std.memory;
 
@@ -511,8 +510,7 @@ int main() {
   stored.append_value(text.view());
   return 0;
 }
-)",
-      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+)");
   expect(!nestedTextView.canGenerateCode() &&
              hasDiagnosticCode(nestedTextView.diagnostics, "GTI-S2045") &&
              hasDiagnostic(nestedTextView.diagnostics,

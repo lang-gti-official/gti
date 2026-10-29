@@ -1,96 +1,9 @@
 export module resource;
 
+export import "detail/resource_core.gti";
 import std.memory;
-namespace std {
-/// Passive provider descriptor; copying it does not duplicate release authority.
-export using raw_allocation = std::detail::raw_allocation;
-
-/// Signature/effect contract only; satisfying this concept is not a proof that
-/// returned addresses supply disjoint, writable regions until matching release.
-export concept memory_resource<R> = requires(R& resource, layout request) {
-  unsafe { resource.allocate(request) } -> expected<std::detail::raw_allocation, alloc_errc>;
-} && requires(R& resource, std::detail::raw_allocation allocation) {
-  unsafe { resource.release(allocation) } -> void;
-};
-
-/// Reusable checked shared borrow of an explicitly trusted resource.
-/// It retains the provider's lifetime, not ownership or synchronization rights.
-export class resource_ref<memory_resource R> {
-  R& resource;
-public:
-  resource_ref(gti_internal::resource_binding token, R& resource)
-      : resource(resource) {}
-  R& get() { return this.resource; }
-};
-
-/// The caller proves the provider contract for every future use through this
-/// binding and its copies, including overlapping live leases. Successful
-/// nonempty allocations are writable, sufficiently aligned, large enough,
-/// disjoint from all outstanding regions, and contain no preexisting objects
-/// whose lifetime adoption would overwrite. Their addresses and descriptors
-/// remain valid until matching release; release retires exactly that region
-/// and does not access destroyed elements. Raw aliases, independent reset,
-/// reentrant calls and concurrent calls must not violate these promises.
-/// Shared borrowing checks the provider shell's lifetime; it cannot validate
-/// raw memory or add locks.
-export unsafe resource_ref<R> bind_resource<R>(R& resource) requires memory_resource<R> {
-  return resource_ref<R>(gti_internal::resource_binding::trusted, resource);
-}
-
-
-/// Portable process allocation. Direct calls retain the unsafe byte contract.
-export class process_resource {
-public:
-  process_resource() {}
-  unsafe expected<raw_allocation, alloc_errc> allocate(layout request) {
-    gti_internal::process_resource process{};
-    unsafe { return process.allocate(request); }
-  }
-  unsafe void release(raw_allocation allocation) {
-    gti_internal::process_resource process{};
-    unsafe { process.release(allocation); }
-  }
-};
-}
-
-namespace std::detail {
-export class resource_lease<std::memory_resource R> {
-  std::resource_ref<R> resource;
-  mut std::raw_allocation allocation;
-public:
-  resource_lease(std::resource_ref<R> resource)
-      : resource(resource),
-        allocation(std::raw_allocation()) {}
-  resource_lease(gti_internal::resource_binding token, std::resource_ref<R> resource, std::raw_allocation allocation)
-      : resource(resource), allocation(allocation) {}
-  resource_lease(resource_lease<R>& other) = delete;
-  resource_lease(resource_lease<R>&& other) = default;
-  std::resource_ref<R> binding() {
-      return this.resource;
-  }
-  uint64_t alignment() { return this.allocation.alignment; }
-  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
-    unsafe { return this.resource.get().allocate(request); }
-  }
-  std::raw_allocation take() mut {
-    std::raw_allocation previous = this.allocation;
-    this.allocation = std::raw_allocation();
-    return previous;
-  }
-  unsafe void attach(std::raw_allocation allocation) mut { this.allocation = allocation; }
-  void release() mut {
-    std::raw_allocation previous = this.take();
-    if (previous.address != nullptr) {
-      unsafe { this.resource.get().release(previous); }
-    }
-  }
-  ~resource_lease() {
-    if (this.allocation.address != nullptr) {
-      unsafe { this.resource.get().release(this.allocation); }
-    }
-  }
-};
-}
+import "detail/memory_storage.gti";
+import "detail/resource_lease.gti";
 
 namespace std {
 /// Typed owner over a region chosen by a checked, explicitly bound resource.

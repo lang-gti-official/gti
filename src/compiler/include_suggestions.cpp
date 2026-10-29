@@ -325,6 +325,7 @@ void addIncludeSuggestions(
   // graph on every such edit.
   const SourceUnit *entryUnit = std::as_const(result.sourceGraph)
                                     .findUnit(result.sourceGraph.entryUnit());
+  std::vector<std::pair<std::size_t, Candidate>> prepared;
   for (const auto &candidate : searchCandidates) {
     if (entryUnit != nullptr && candidate.path == entryUnit->path)
       continue;
@@ -356,11 +357,37 @@ void addIncludeSuggestions(
     // Cheap lexical prefilter avoids loading dependencies for unrelated files.
     Lexer lexer;
     const auto tokens = lexer.scan(text, candidate.path.string());
+    std::size_t reexports = 0;
+    for (std::size_t index = 1; index < tokens.size(); ++index)
+      if (tokens[index - 1].kind == TokenKind::EXPORT &&
+          tokens[index].kind == TokenKind::IMPORT)
+        ++reexports;
     if (lexer.hadError() ||
-        std::none_of(tokens.begin(), tokens.end(), [&](const auto &token) {
-          return requested.contains(token.lexeme);
-        }))
+        (!reexports &&
+         std::none_of(tokens.begin(), tokens.end(), [&](const auto &token) {
+           return requested.contains(token.lexeme);
+         })))
       continue;
+
+    prepared.emplace_back(reexports, candidate);
+  }
+  // Prefer direct public APIs and smaller facades. Once a precise import is
+  // proved, loading an aggregate facade adds visibility and expensive trials
+  // without repairing anything else at that occurrence.
+  std::sort(prepared.begin(), prepared.end(),
+            [](const auto &left, const auto &right) {
+              return std::tie(left.first, left.second.path) <
+                     std::tie(right.first, right.second.path);
+            });
+  for (const auto &[reexports, candidate] : prepared) {
+    if (reexports &&
+        std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                     [](const auto &diagnostic) {
+                       return !diagnostic.missingIncludeName.empty() &&
+                              diagnostic.fixes.empty();
+                     }))
+      continue;
+    const auto &text = overrides.at(candidate.path.string());
 
     trialOptions.stopAfter = FrontendPhase::Parsing;
     auto parsed = Frontend(trialOptions)
@@ -376,17 +403,31 @@ void addIncludeSuggestions(
       continue;
     StmtList declarations;
     const auto &all = parsed.program.declarations();
-    for (std::size_t index = candidateUnit->declarationStart;
-         index <
-         candidateUnit->declarationStart + candidateUnit->declarationCount;
-         ++index) {
-      declarations.push_back(all[index]);
+    std::set<SourceUnitId> surface{candidateUnit->id};
+    std::vector<SourceUnitId> pending{candidateUnit->id};
+    std::set<std::string> surfacePaths;
+    while (!pending.empty()) {
+      const auto id = pending.back();
+      pending.pop_back();
+      const auto *unit = std::as_const(parsed.sourceGraph).findUnit(id);
+      if (!unit)
+        continue;
+      surfacePaths.insert(unit->path.string());
+      for (std::size_t index = unit->declarationStart;
+           index < unit->declarationStart + unit->declarationCount; ++index)
+        declarations.push_back(all[index]);
+      for (const auto &edge : parsed.sourceGraph.dependencyEdges())
+        if (edge.source == id &&
+            edge.kind == SourceDependencyKind::ExportImport &&
+            surface.insert(edge.target).second)
+          pending.push_back(edge.target);
     }
     std::set<std::string> names;
     declarationNames(declarations, options.target, names);
     std::map<std::string, FrontendResult> trials;
     for (auto &diagnostic : result.diagnostics) {
       if (diagnostic.missingIncludeName.empty() ||
+          (reexports && !diagnostic.fixes.empty()) ||
           !names.contains(diagnostic.missingIncludeName))
         continue;
       const auto &sourceName = diagnostic.primary.source;
@@ -431,7 +472,16 @@ void addIncludeSuggestions(
           (diagnostic.primary.start >= insertion ? replacement.size() : 0);
       const auto definition = LanguageQueries().definition(
           trial, trial.sourceGraph.sourceUnitForPath(sourceName), useOffset);
-      if (!definition || definition->target.source != candidate.path.string())
+      if (!definition)
+        continue;
+      const auto *symbol =
+          trial.semantics.database().findSymbol(definition->symbol);
+      const SourceSpan &selected =
+          symbol ? symbol->nameSpan : definition->target;
+      const auto selectedUnit =
+          trial.sourceGraph.sourceUnitForPath(selected.source);
+      if (!surfacePaths.contains(selected.source) ||
+          !trial.sourceGraph.isExported(selectedUnit, selected.start))
         continue;
       diagnostic.fixes.push_back(
           {.span = {sourceName, insertion, insertion,
@@ -448,6 +498,10 @@ void addIncludeSuggestions(
       continue;
     if (diagnostic.code != "GTI-S2024")
       diagnostic.code = "GTI-S2089";
+    std::sort(diagnostic.fixes.begin(), diagnostic.fixes.end(),
+              [](const auto &left, const auto &right) {
+                return left.replacement < right.replacement;
+              });
     for (auto &fix : diagnostic.fixes) {
       fix.preferred = diagnostic.fixes.size() == 1;
       const std::string hint = fix.message + " to this source file.";

@@ -132,6 +132,45 @@ export Worker second() { Worker result{.value = 22}; return result; }
                          }),
          "same-signature functions from distinct modules stay distinct "
          "candidates at a call");
+  sources[left.string()] =
+      "export module left; export namespace One { struct Value { int value; }; "
+      "int value() { return 1; } } "
+      "export namespace Common = One;";
+  sources[right.string()] = "export module right; export namespace Two { "
+                            "struct Value { int value; }; "
+                            "int value() { return 2; } } "
+                            "export namespace Common = Two;";
+  const std::string aliasConsumer =
+      "import \"left.gti\"; import \"right.gti\"; int main() { return "
+      "Common::value(); }";
+  const auto aliasConflict =
+      lang::Frontend(options).analyze(entry, aliasConsumer, {}, sources);
+  expect(!aliasConflict.semanticValid &&
+             std::any_of(aliasConflict.diagnostics.begin(),
+                         aliasConflict.diagnostics.end(),
+                         [&](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2006" &&
+                                  diagnostic.primary.start ==
+                                      aliasConsumer.find("Common") &&
+                                  diagnostic.related.size() == 2;
+                         }),
+         "namespace alias ambiguity names both candidates at the written "
+         "qualifier");
+  const std::string aliasTypeConsumer =
+      "import \"left.gti\"; import \"right.gti\"; int main() { "
+      "Common::Value value{.value = 0}; return value.value; }";
+  const auto aliasTypeConflict =
+      lang::Frontend(options).analyze(entry, aliasTypeConsumer, {}, sources);
+  expect(!aliasTypeConflict.semanticValid &&
+             std::any_of(aliasTypeConflict.diagnostics.begin(),
+                         aliasTypeConflict.diagnostics.end(),
+                         [&](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2006" &&
+                                  diagnostic.primary.start ==
+                                      aliasTypeConsumer.find("Common") &&
+                                  diagnostic.related.size() == 2;
+                         }),
+         "namespace alias ambiguity in a type names both qualifier candidates");
 
   sources[left.string()] = R"GTI(export module left;
 struct Hidden { int value; int read() { return value; } };
@@ -239,13 +278,57 @@ bool Box<U, N>::read() { return true; }
            "shadowed and redeclared-default bindings");
   }
   sources[left.string()] = R"GTI(export module left;
+export class Callback<R(Args...)> {
+public: Callback() = default; R identity(R value);
+};
+export class Callback<R(Args...) mut> {
+public: Callback() = default; R identity(R value);
+};
+export class Holder<T> { public: Holder() = default; int tag(); };
+export class Holder<T&> { public: Holder() = default; int tag(); };
+export class Holder<const T*> { public: Holder() = default; int tag(); };
+)GTI";
+  sources[body.string()] = R"GTI(module left;
+V Callback<V(Inputs...)>::identity(V value) { return value; }
+V Callback<V(Inputs...) mut>::identity(V value) { return value; }
+int Holder<U>::tag() { return 1; }
+int Holder<U&>::tag() { return 2; }
+int Holder<const U*>::tag() { return 3; }
+)GTI";
+  const std::string familyConsumer =
+      "import left; int main() { Callback<int(bool)> read{}; "
+      "Callback<int(bool) mut> write{}; Holder<int> value{}; Holder<int&> "
+      "reference{}; "
+      "Holder<const int*> pointer{}; return read.identity(20) + "
+      "write.identity(22) "
+      "+ value.tag() + reference.tag() + pointer.tag() - 48; }";
+  for (int pass = 0; pass != 2; ++pass)
+    expectValid(lang::Frontend(options).analyze(entry, familyConsumer, {},
+                                                sources, {}, {owner}),
+                "definition-family method bodies bind the exact structural "
+                "owner pattern");
+  sources[body.string()] = "module left; int Holder<U*>::tag() { return 3; }";
+  const auto wrongProfile = lang::Frontend(options).analyze(
+      entry, "import left; int main() { return 0; }", {}, sources, {}, {owner});
+  expect(!wrongProfile.semanticValid &&
+             std::any_of(wrongProfile.diagnostics.begin(),
+                         wrongProfile.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2120";
+                         }),
+         "a separate definition cannot invent an undeclared pointer-access "
+         "profile");
+
+  sources[left.string()] = R"GTI(export module left;
 export namespace api {
-class Key<T> { public: Key() = default; int code() { return 0; } };
+class Key<T> { public: Key() = default; int code(); };
 concept Counted<T> { int count(T& value); };
 }
 )GTI";
   sources[body.string()] = R"GTI(module left;
-class api::Key<int> { public: Key() = default; int code() { return 42; } };
+int api::Key<U>::code() { return 0; }
+class api::Key<int> { public: Key() = default; int code(); };
+int api::Key<int>::code() { return 42; }
 for concept api::Counted<int> { int count(int& value) { return value; } };
 )GTI";
   const std::string coherentConsumer =
@@ -255,6 +338,21 @@ for concept api::Counted<int> { int count(int& value) { return value; } };
                                               sources, {}, {owner}),
               "registered primary/concept implementations own canonical "
               "specializations and conformances");
+  sources[right.string()] = R"GTI(export module right;
+import left;
+int api::Key<int>::code() { return 7; }
+)GTI";
+  const auto foreignSpecializationBody = lang::Frontend(options).analyze(
+      entry, "import right; int main() { return 0; }", {}, sources, {},
+      {owner});
+  expect(
+      !foreignSpecializationBody.semanticValid &&
+          std::any_of(foreignSpecializationBody.diagnostics.begin(),
+                      foreignSpecializationBody.diagnostics.end(),
+                      [](const auto &diagnostic) {
+                        return diagnostic.code == "GTI-S2120";
+                      }),
+      "a different module cannot attach a body to a canonical specialization");
   sources[right.string()] = R"GTI(export module right;
 import left;
 class api::Key<int> { public: Key() = default; int code() { return 42; } };
@@ -283,7 +381,8 @@ for concept api::Counted<int> { int count(int& value) { return value; } };
   sources[model.string()] = R"GTI(export module model;
 export import lib.left;
 export struct Payload { int value; };
-class api::Key<Payload> { public: Key() = default; int code() { return 42; } };
+class api::Key<Payload> { public: Key() = default; int code(); };
+int api::Key<Payload>::code() { return 42; }
 for concept api::Counted<Payload> {
   int count(Payload& value) { return value.value; }
 };

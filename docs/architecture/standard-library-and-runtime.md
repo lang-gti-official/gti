@@ -112,7 +112,7 @@ obtain metadata releases the object region before returning an error.
 
 | Allocation family | Current owner and rationale |
 | --- | --- |
-| Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in `stdlib/std/memory.gti`; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |
+| Sparse object bytes and per-slot metadata | Source `try_allocate_sparse`, leases and process-resource policy in the private `stdlib/std/detail/memory_storage.gti` interface; POSIX/CRT adapters only acquire or release bytes. The old `gti_rt_memory_allocate_v1`/`release_v1`, sparse C++ allocation/bitmap helpers and sparse capability operations have no remaining consumers and are removed. |
 | Prefix storage used by strings/vectors and related clients | Source raw-buffer/prefix state and matching process/resource leases in `std.memory`. Terminated string policy adds one initialized NUL slot. S-ALLOC-09 and its performance/regression acceptance are integrated in 0.397.0; the native engine, prelude declarations, semantic type/intrinsic family, construction-preflight instruction, representation and private optimizer facts are retired. General object-lifetime and checked-loan mechanisms remain. |
 | Unique ownership and generated allocation resources | `mir_object_allocation_v1` and scalar unique allocation in `cpp_failure_support_writer.cpp` still acquire native storage; verified MIR owns construction, publication, failure and cleanup. Legacy private shared ownership additionally uses its native control block; public shared ownership now allocates its source aggregate through process leases. These are remaining migration clients, not reasons to put sparse allocation policy back in the backend. |
 | Native service implementation state | Runtime file/process/HTTP/thread/synchronization and conversion implementations use native containers or host handles internally. Their buffer/handle lifetimes belong to their service boundaries; they do not supply sparse-storage metadata. |
@@ -724,7 +724,7 @@ or destroyed by the byte provider.
 Those runtime declarations carry a declared contract. The ABI in
 `<gti/memory.h>` is GTI's own, so the compiler binds its meaning by trusted
 declaration identity: semantics classifies a `ProcessMemoryRuntimeOperation`
-only for an exact compiler-private C declaration in `std/memory`'s
+only for an exact compiler-private C declaration in `std/detail/memory_capabilities`'s
 `gti_internal::runtime` block, matching both symbol and signature, and MIR
 verification re-checks that identity and the target-selected family. An
 application declaration of the same symbol stays an ordinary native boundary.

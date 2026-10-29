@@ -208,7 +208,7 @@ private:
 
     std::uint64_t result = 14695981039346656037ULL;
     if (!visiting.insert(source).second) {
-      // SourceLoader diagnoses include cycles. Retain a deterministic marker
+      // SourceLoader diagnoses import cycles. Retain a deterministic marker
       // so a recovered graph cannot recurse indefinitely while computing a
       // cache identity.
       digestText(result, "dependency-cycle");
@@ -1012,7 +1012,7 @@ void Frontend::appendParserDiagnostics(
     for (const SourceDependency &dependency : sourceGraph.dependencyEdges()) {
       if (dependency.target == unit && dependency.directive) {
         diagnostic.related.push_back(
-            {*dependency.directive, "Included from here."});
+            {*dependency.directive, "Imported from here."});
       }
     }
     destination.push_back(std::move(diagnostic));

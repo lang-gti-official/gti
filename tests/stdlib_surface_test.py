@@ -17,6 +17,7 @@ from typing import Any
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from native_fixture_build import build_fixture
 from llvm_case_context import CaseContext, source_digest
+from internal_module_fixture import private_library, private_source
 
 
 SCHEMA = "gti-stdlib-surface-v1"
@@ -49,7 +50,7 @@ def repository_path(repository: pathlib.Path, value: object, label: str) -> path
 
 
 def stdlib_sources(repository: pathlib.Path) -> list[pathlib.Path]:
-    return [repository / "stdlib" / "prelude.gti", *sorted(
+    return [repository / "stdlib" / "prelude.gti", repository / "stdlib/std.gti", *sorted(
         (repository / "stdlib" / "std").rglob("*.gti")
     )]
 
@@ -119,6 +120,11 @@ def validate_manifest(manifest: dict[str, Any], repository: pathlib.Path) -> Non
             f"invalid execution profile for {case_id}",
         )
         repository_path(repository, case.get("source"), f"case {case_id} source")
+        private_modules = case.get("private_modules", [])
+        require(isinstance(private_modules, list) and
+                all(module in {"detail_iterator", "detail.map_entry", "detail.memory_storage"}
+                    for module in private_modules),
+                f"{case_id} must name an explicit supported white-box module setup")
         if "build_timeout_seconds" in case or "build_timeout_reason" in case:
             timeout = case.get("build_timeout_seconds")
             require(
@@ -320,6 +326,9 @@ def case_plan(
     source = repository / case["source"]
     native_sources = [repository / item for item in case.get("native_sources", [])]
     environment = compiler_environment(repository, runtime_library)
+    if case.get("private_modules"):
+        source = case_root / source.name
+        environment["GTI_STDLIB_PATH"] = str(case_root / "stdlib")
     optimizations = (
         case["optimizations"] if case["mode"] == "run" else [case["optimization"]]
     )
@@ -382,7 +391,9 @@ def case_context(case: dict[str, Any], repository: pathlib.Path) -> dict:
         "context": context.record(), "role": case_role(case), "observed": "unrun",
         "case": case,
         "compiler_environment": {"policy": "copy-inherited-and-override",
-                                 "overrides": compiler_environment_overrides(root, runtime)},
+                                 "overrides": {**compiler_environment_overrides(root, runtime),
+                                     **({"GTI_STDLIB_PATH": str(planned["case_root"] / "stdlib")}
+                                        if case.get("private_modules") else {})}},
         "runtime_environment": "inherited-separately",
         "steps": [{
             "optimization": step["optimization"], "command": step["command"],
@@ -410,6 +421,10 @@ def run_case(
 ) -> None:
     plan = case_plan(case, compiler, cxx, runtime_library, repository, scratch)
     plan["case_root"].mkdir()
+    if case.get("private_modules"):
+        private_library(repository, plan["case_root"] / "stdlib", case["private_modules"])
+        source = repository / case["source"]
+        private_source(source, plan["case_root"] / source.name, case["private_modules"])
     for name, contents in plan["files"].items():
         (plan["case_root"] / name).write_bytes(contents)
     for step in plan["steps"]:

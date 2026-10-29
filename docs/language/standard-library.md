@@ -132,19 +132,27 @@ int main() {
 ```
 
 `import std.name;` selects the matching interface in `stdlib/module-map.json`,
-which declares `export module name;` and explicitly exports its declarations. The
-canonical implementation paths remain unchanged so compiler capabilities retain
-their exact trusted declaration identities. The former wrapper directory and
-legacy republication mechanism are removed. An ordinary import exposes only
+which declares `export module name;` and explicitly exports its declarations.
+The former wrapper directory and legacy republication mechanism are removed.
+An ordinary import exposes only
 exports: `std.vector` imports `std.span`, but `std::span` stays invisible to a
 file that imports only `std.vector`. An application interface can re-export a
 standard module with `export import std.vector;`.
 
-Phase 1 mechanically preserves the previous directly visible API surface,
-including sharing declarations used by other standard units. It does not relax
-compiler-private capability access. Phase 2 must review public and internal
-exports, provide any required package-private sharing, and validate the library
-as a production module-only system before release.
+Public interfaces export their API declarations explicitly. File-local
+`detail` declarations stay private; shared iterator, parsing, allocation and
+resource helpers live in unlisted interfaces under `std/detail/`, imported
+explicitly by their owning library clients. Applications cannot import those
+files through the public map or bypass the source-owner boundary with a quoted
+path. Public aliases and inferred return types can retain private representation
+types without making their implementation names visible.
+
+Public vocabulary shared by several interfaces is declared once and deliberately
+re-exported: `std.charconv` re-exports its parsing enums/result, `std.memory` its
+low-level public API, and `std.resource` its resource vocabulary. Private helper
+imports are not re-exported with those public types. Memory capabilities bind to
+their exact trusted declarations in `std/detail/memory_capabilities.gti`;
+source ownership and public module names confer no compiler privilege.
 
 `import std;` imports the portable public standard library in one declaration.
 It is an ordinary source interface in `stdlib/std.gti`, re-exporting the named

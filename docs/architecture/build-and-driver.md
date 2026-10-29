@@ -1392,7 +1392,7 @@ The owning package writes `import geometry;`. Consumers write
 shorter `import dependency;` selects the dependency's `main` module. An
 exact local-name/dependency-alias-prefix collision is an error. For example,
 `import net.http;` is ambiguous if both local module `net.http` and direct alias
-`net` exist; directory structure never resolves that ambiguity. Only direct
+`net` exposes module `http`; directory structure never resolves that ambiguity. Only direct
 dependency aliases resolve; re-exporting declarations never leaks aliases.
 Direct compilation remains manifest-independent and can write a relative
 quoted import instead.

@@ -81,6 +81,9 @@ struct SourceImport {
   std::optional<std::string> completionPrefix;
   bool quoted = false;
   bool reexport = false;
+  // Authorized canonical lookup, including an interface that does not yet
+  // exist. Editors track its creation/overlay without inventing a target.
+  std::optional<std::filesystem::path> lookupPath;
   std::optional<SourceUnitId> target;
   SourceImportResolution resolution = SourceImportResolution::Unresolved;
 };

@@ -441,8 +441,10 @@ name: absent/foreign owner, unmatched signature or receiver, duplicate body,
 pure/native/compiler-provided declaration, repeated declaration-only specifiers
 or defaults, or owner generic arguments that do not bind the primary's formal
 parameters. Ordinary generic owners and methods support separate definitions;
-concrete owner specializations and definition-family patterns are not admitted
-by that binding rule. The related
+definition-family owners must repeat one declared structural pattern, preserving
+fixed types, access, receiver qualifiers and pack positions.
+An explicitly declared exact specialization uses its concrete owner spelling
+and must receive its body in that specialization's module. The related
 span identifies the original method or owner when one is known. The message
 states the violated rule; no speculative signature, ownership, access or
 default-argument edit is offered. Missing selected bodies retain `GTI-S2106`.

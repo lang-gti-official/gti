@@ -3586,7 +3586,8 @@ void testBackendProfileAuthority() {
         temporary.root(), "app", "dev", TargetInfo::host(), overrides));
   };
   // An omitted backend is the target's default: LLVM on arm64 macOS and
-  // x86_64 Linux, C++ elsewhere. Retaining C++ output configures the C++ backend instead.
+  // x86_64 Linux, C++ elsewhere. Retaining C++ output configures the C++
+  // backend instead.
   const auto omitted = resolve();
   const BackendKind hostDefault = defaultBackend(TargetInfo::host());
   expect(omitted.succeeded() && omitted.plan->backend() == hostDefault &&

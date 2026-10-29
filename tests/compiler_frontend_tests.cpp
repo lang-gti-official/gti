@@ -552,7 +552,7 @@ int broken = 1
   expect(!invalidDependency.syntaxValid &&
              hasDiagnosticCode(invalidDependency.diagnostics, "GTI-P0001") &&
              hasRelatedDiagnostic(invalidDependency.diagnostics,
-                                  "Included from here"),
+                                  "Imported from here"),
          "dependency parser diagnostics should retain the incoming include "
          "location");
 

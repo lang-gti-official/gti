@@ -4097,6 +4097,14 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     return;
   }
 
+  NamePath qualifier(std::vector<Token>{});
+  for (std::size_t index = 0; index + 1 < type.name.segments.size(); ++index) {
+    qualifier.segments.push_back(type.name.segments[index]);
+    if (index == 0 && resolveTypeParameter(qualifier))
+      break;
+    if (reportAmbiguousName(type.name.segments[index], pathSpelling(qualifier)))
+      return;
+  }
   if (reportAmbiguousName(type.name.last(), pathSpelling(type.name)))
     return;
   if (const std::optional<ResolvedTypeAlias> alias =

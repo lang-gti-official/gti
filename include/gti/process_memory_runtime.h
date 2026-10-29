@@ -11,10 +11,11 @@ namespace lang {
 
 // Declared contract of GTI's own process-allocator runtime ABI
 // (`runtime/include/gti/memory.h`). Semantics selects an operation only for an
-// exact compiler-private C declaration in the trusted `std/memory` library
-// unit; an application declaration or public spelling of the same symbol
-// stays an ordinary native declaration. Calls remain ordinary native calls:
-// the classification lets MIR state each declaration's effects precisely.
+// exact compiler-private C declaration in trusted
+// `std/detail/memory_capabilities` unit; an application declaration or public
+// spelling of the same symbol stays an ordinary native declaration. Calls
+// remain ordinary native calls: the classification lets MIR state each
+// declaration's effects precisely.
 enum class ProcessMemoryRuntimeOperation : std::uint8_t {
   None,
   NativeSizeMax,
@@ -55,8 +56,8 @@ exactProcessMemoryRuntimeOperation(std::string_view symbol,
                                    const SemanticType &returnType,
                                    std::span<const SemanticType> parameters);
 
-// `std/memory` declares the aligned CRT pair on Windows and the POSIX family
-// on every other target; the two common queries exist on both.
+// The memory capability interface declares the aligned CRT pair on Windows and
+// the POSIX family on every other target; the two common queries exist on both.
 [[nodiscard]] bool
 processMemoryRuntimeSelectedForTarget(ProcessMemoryRuntimeOperation operation,
                                       std::string_view os);

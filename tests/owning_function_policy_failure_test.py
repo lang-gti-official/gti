@@ -17,7 +17,7 @@ def main():
     compiler = Path(sys.argv[1]).resolve()
     fixtures = Path(__file__).resolve().parent / "fixtures"
     source = fixtures / "owning_function_policy_failure.gti"
-    memory = fixtures.parent.parent / "stdlib/std/memory.gti"
+    memory = fixtures.parent.parent / "stdlib/std/detail/memory_core.gti"
     lines = memory.read_text().splitlines()
     read = [i for i, line in enumerate(lines, 1)
             if "return gti_internal::unique_owner_borrow(" in line]
@@ -26,10 +26,10 @@ def main():
     assert len(read) == len(mutable) == 2
     allocation_site = next(i for i, line in enumerate(lines, 1)
                            if "return unique_ptr<T>(gti_internal::allocate_unique_owner" in line)
-    allocation = (f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
+    allocation = (f"<std/detail/memory_core>:{allocation_site}: runtime error[GTI-R0011]: "
                   "allocation_failure in unique_owner\n")
     # An empty repeatable wrapper reaches its boxed owner through get().
-    empty = lambda site: (f"<std/memory>:{site}: runtime error[GTI-R0008]: "
+    empty = lambda site: (f"<std/detail/memory_core>:{site}: runtime error[GTI-R0008]: "
                           "empty_owner_access in dereference\n")
     cases = [(70, "9\n", empty(read[0])),
              (70, "9\n", empty(mutable[0])),
@@ -39,9 +39,9 @@ def main():
              (ABORT_STATUS, "", allocation),
              (ABORT_STATUS, "", allocation),
              (0, "7\n8\n8\n9\n", ""),
-             (70, "9\n", f"<std/memory>:{mutable[0]}: runtime error[GTI-R0008]: "
+             (70, "9\n", f"<std/detail/memory_core>:{mutable[0]}: runtime error[GTI-R0008]: "
                            "empty_owner_access in dereference\n"),
-             (70, "9\n", f"<std/memory>:{mutable[0]}: runtime error[GTI-R0008]: "
+             (70, "9\n", f"<std/detail/memory_core>:{mutable[0]}: runtime error[GTI-R0008]: "
                            "empty_owner_access in dereference\n"),
              (ABORT_STATUS, "", allocation),
              (ABORT_STATUS, "", allocation),

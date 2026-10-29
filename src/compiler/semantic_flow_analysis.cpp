@@ -2502,35 +2502,43 @@ auto SemanticVisitor::Impl::programInitializationUnitOrder() const
   }
   std::unordered_set<SourceUnitId> visited;
   const std::function<void(SourceUnitId)> visit = [&](SourceUnitId unit) {
-    if (unit == 0 || !visited.insert(unit).second) {
+    // A logical module is one initialization group. Dependencies used only by
+    // a body must be ready even when an interface initializer calls that body.
+    if (const auto *module =
+            sourceGraph->findModule(sourceGraph->moduleForUnit(unit)))
+      unit = module->interfaceUnit;
+    if (unit == 0 || !visited.insert(unit).second)
       return;
-    }
-    std::vector<const SourceDependency *> dependencies;
-    for (const SourceDependency &dependency : sourceGraph->dependencyEdges()) {
-      if (dependency.source == unit &&
-          dependency.kind != SourceDependencyKind::Prelude) {
-        dependencies.push_back(&dependency);
+    std::vector<SourceUnitId> members{unit};
+    for (const auto &implementation : sourceGraph->moduleImplementations())
+      if (implementation.interfaceUnit == unit)
+        members.push_back(implementation.implementationUnit);
+    for (const auto member : members) {
+      std::vector<const SourceDependency *> dependencies;
+      for (const SourceDependency &dependency :
+           sourceGraph->dependencyEdges()) {
+        if (dependency.source == member &&
+            dependency.kind != SourceDependencyKind::Prelude)
+          dependencies.push_back(&dependency);
       }
-    }
-    std::sort(dependencies.begin(), dependencies.end(),
-              [](const SourceDependency *left, const SourceDependency *right) {
-                if (left->includeOccurrence != right->includeOccurrence) {
-                  return left->includeOccurrence < right->includeOccurrence;
-                }
-                const std::size_t leftStart =
-                    left->directive ? left->directive->start : 0;
-                const std::size_t rightStart =
-                    right->directive ? right->directive->start : 0;
-                return leftStart != rightStart ? leftStart < rightStart
-                                               : left->target < right->target;
-              });
-    std::unordered_set<SourceUnitId> direct;
-    for (const SourceDependency *dependency : dependencies) {
-      if (direct.insert(dependency->target).second) {
+      std::sort(
+          dependencies.begin(), dependencies.end(),
+          [](const SourceDependency *left, const SourceDependency *right) {
+            if (left->includeOccurrence != right->includeOccurrence)
+              return left->includeOccurrence < right->includeOccurrence;
+            const std::size_t leftStart =
+                left->directive ? left->directive->start : 0;
+            const std::size_t rightStart =
+                right->directive ? right->directive->start : 0;
+            return leftStart != rightStart ? leftStart < rightStart
+                                           : left->target < right->target;
+          });
+      for (const SourceDependency *dependency : dependencies)
         visit(dependency->target);
-      }
     }
-    result.push_back(unit);
+    // Module dependency cycles are rejected by source loading. On a valid
+    // graph every external group is complete before these ordered members.
+    result.insert(result.end(), members.begin(), members.end());
   };
   for (const SourceUnitId prelude : sourceGraph->preludeRoots()) {
     visit(prelude);
@@ -5283,7 +5291,7 @@ auto SemanticVisitor::Impl::isMemoryLibraryUnit(SourceUnitId sourceUnit) const
   }
   const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
   return unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
-         unit->standardLibraryName == "std/memory";
+         unit->standardLibraryName == "std/detail/memory_capabilities";
 }
 
 auto SemanticVisitor::Impl::isOptionalLibraryUnit(SourceUnitId sourceUnit) const
@@ -5828,6 +5836,14 @@ auto SemanticVisitor::Impl::recordQualifiedPathUses(
   }
   const std::size_t namespaceSegments =
       finalSegmentIsNamespace ? path.segments.size() : path.segments.size() - 1;
+  NamePath prefix(std::vector<Token>{});
+  for (std::size_t index = 0; index < namespaceSegments; ++index) {
+    prefix.segments.push_back(path.segments[index]);
+    if (index == 0 && resolveTypeParameter(prefix))
+      break; // A lexical generic parameter shadows imported source names.
+    if (reportAmbiguousName(path.segments[index], pathSpelling(prefix)))
+      return;
+  }
   const NamePath namespacePath(std::vector<Token>(
       path.segments.begin(), path.segments.begin() + namespaceSegments));
   const std::vector<ResolvedNamespaceSegment> resolvedSegments =

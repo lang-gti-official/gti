@@ -370,6 +370,41 @@ void registeredPublicModules() {
                        f.root / "dep/private.gti") ==
                  hidden.includeSuggestionInputs.end(),
          "dependency-private files are not probed as public fix candidates");
+  f.write("dep/api.gti",
+          "export module net.http;\nexport import \"implementation.gti\";\n");
+  f.write("dep/implementation.gti",
+          "export module internals;\n"
+          "export int remote() { return 7; }\nint secret() { return 3; }\n");
+  const auto facadeEdits =
+      fixes(f.analyze("int main() { return remote(); }", owners));
+  expect(facadeEdits.size() == 1 &&
+             facadeEdits.front().replacement == "import dep.net.http;\n",
+         "a public facade suggests its registered import for a private-file "
+         "reexport");
+  owners[1].modules.emplace_back("internals",
+                                 f.root / "dep/implementation.gti");
+  const auto precise =
+      fixes(f.analyze("int main() { return remote(); }", owners));
+  expect(precise.size() == 1 &&
+             precise.front().replacement == "import dep.internals;\n",
+         "a direct public import avoids redundant broader facade trials");
+  owners[1].modules.pop_back();
+  expect(fixes(f.analyze("int main() { return secret(); }", owners)).empty(),
+         "facade traversal does not publish private declarations");
+  f.write("dep/api.gti",
+          "export module net.http;\nimport \"implementation.gti\";\n");
+  expect(fixes(f.analyze("int main() { return remote(); }", owners)).empty(),
+         "ordinary private imports are not a facade public surface");
+  f.write("dep/api.gti", "export module net.http;\nexport int remote();\n");
+  f.write("dep/body.gti", "module net.http;\nint remote() { return 7; }\n");
+  owners[1].moduleImplementations.emplace_back(
+      "net.http", std::vector<std::filesystem::path>{f.root / "dep/body.gti"});
+  const auto bodyEdits =
+      fixes(f.analyze("int main() { return remote(); }", owners));
+  expect(bodyEdits.size() == 1 &&
+             bodyEdits.front().replacement == "import dep.net.http;\n",
+         "split function definitions are suggested through their exported "
+         "declaration");
 }
 } // namespace
 

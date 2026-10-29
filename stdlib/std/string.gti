@@ -1,4 +1,7 @@
 export module string;
+import "detail/memory_storage.gti";
+import "detail/memory_capabilities.gti";
+import "detail/charconv_parse.gti";
 
 import std.iterator;
 import std.string_view;

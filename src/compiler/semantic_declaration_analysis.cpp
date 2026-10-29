@@ -2919,7 +2919,6 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         const auto key = signatureClassKey(*classDecl);
         if (key && signatureClassKey(*first.declaration) &&
             first.kind == classDecl->kind() &&
-            samePackageOwnershipDomain(first.sourceUnit, currentSourceUnit) &&
             std::none_of(first.definitionFamilyMembers.begin(),
                          first.definitionFamilyMembers.end(),
                          [&](ClassId member) {
@@ -2930,8 +2929,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
           familyPrimary = existing->second;
         }
         if (const auto profile = classArgumentProfile(*classDecl);
-            profile && first.kind == classDecl->kind() &&
-            samePackageOwnershipDomain(first.sourceUnit, currentSourceUnit)) {
+            profile && first.kind == classDecl->kind()) {
           const auto compatible = [&](ClassId member) {
             const auto other =
                 classArgumentProfile(*classInfo(member).declaration);
@@ -4507,33 +4505,6 @@ auto SemanticVisitor::Impl::isConcreteExactSpecializationType(
                      isConcreteExactSpecializationType);
 }
 
-auto SemanticVisitor::Impl::samePackageOwnershipDomain(SourceUnitId left,
-                                                       SourceUnitId right) const
-    -> bool {
-  if (sourceGraph == nullptr || left == right) {
-    return true;
-  }
-  const SourceUnit *leftUnit = sourceGraph->findUnit(left);
-  const SourceUnit *rightUnit = sourceGraph->findUnit(right);
-  if (leftUnit == nullptr || rightUnit == nullptr) {
-    return false;
-  }
-  if (leftUnit->role == SourceUnitRole::StandardLibrary &&
-      rightUnit->role == SourceUnitRole::StandardLibrary) {
-    return true;
-  }
-  if ((leftUnit->prelude || leftUnit->role == SourceUnitRole::Prelude) &&
-      (rightUnit->prelude || rightUnit->role == SourceUnitRole::Prelude)) {
-    return true;
-  }
-  if (leftUnit->packageIdentity && rightUnit->packageIdentity) {
-    return leftUnit->packageIdentity == rightUnit->packageIdentity;
-  }
-  return leftUnit->role == SourceUnitRole::Application &&
-         rightUnit->role == SourceUnitRole::Application &&
-         !leftUnit->packageIdentity && !rightUnit->packageIdentity;
-}
-
 auto SemanticVisitor::Impl::ownsNominalSpecializationArgument(
     SourceUnitId sourceUnit, const SemanticType &argument) const -> bool {
   const SemanticType canonical = canonicalExactSpecializationType(argument);
@@ -5068,7 +5039,157 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
            "interface owner.");
       continue;
     }
-    ClassInfo &owner = classInfo(*ownerId);
+    const auto &ownerArguments = definition->definitionOwner()->arguments;
+    // Match the declaration's structural owner pattern. Only its formal leaves
+    // introduce aliases; fixed types, access, packs and signature receivers
+    // retain their resolved meaning. This selects a family component before
+    // matching the method, independently of the requester's visibility.
+    const auto bindOwner =
+        [&](ClassId id) -> std::optional<std::vector<GenericParameterInfo>> {
+      auto parameters = classInfo(id).genericParameters;
+      const auto &patterns =
+          classInfo(id).declaration->genericArgumentPatterns();
+      std::unordered_map<std::string, std::size_t> names;
+      for (std::size_t i = 0; i < parameters.size(); ++i)
+        names.emplace(parameters[i].name.lexeme, i);
+      std::vector<std::optional<Token>> bindings(parameters.size());
+      std::unordered_map<std::string, std::size_t> boundNames;
+      const auto bind = [&](std::size_t index, const TypeRef &written) {
+        if (written.name.segments.size() != 1 ||
+            written.name.last().kind != TokenKind::IDENTIFIER ||
+            !written.arguments.empty() || written.qualifiedOwner ||
+            written.genericValueExpression)
+          return false;
+        const Token &name = written.name.last();
+        if (bindings[index])
+          return bindings[index]->lexeme == name.lexeme;
+        if (const auto found = boundNames.find(name.lexeme);
+            found != boundNames.end() && found->second != index)
+          return false;
+        boundNames.emplace(name.lexeme, index);
+        bindings[index] = name;
+        return true;
+      };
+      const auto match = [&](const auto &self, const TypeRef &pattern,
+                             const TypeRef &written) -> bool {
+        if (pattern.reference.has_value() != written.reference.has_value() ||
+            (pattern.reference &&
+             pattern.reference->lexeme != written.reference->lexeme) ||
+            pattern.referenceMutability.has_value() !=
+                written.referenceMutability.has_value() ||
+            pattern.pointers.size() != written.pointers.size() ||
+            pattern.arrayExtents.size() != written.arrayExtents.size() ||
+            pattern.packExpansion.has_value() !=
+                written.packExpansion.has_value() ||
+            pattern.functionSignatureParameterCount !=
+                written.functionSignatureParameterCount ||
+            pattern.nativeFunctionParameterCount !=
+                written.nativeFunctionParameterCount ||
+            pattern.functionSignatureQualifier.has_value() !=
+                written.functionSignatureQualifier.has_value() ||
+            (pattern.functionSignatureQualifier &&
+             pattern.functionSignatureQualifier->lexeme !=
+                 written.functionSignatureQualifier->lexeme) ||
+            bool(pattern.qualifiedOwner) != bool(written.qualifiedOwner) ||
+            pattern.arguments.size() != written.arguments.size())
+          return false;
+        for (std::size_t i = 0; i < pattern.pointers.size(); ++i)
+          if (pattern.pointers[i].pointeeConst.has_value() !=
+              written.pointers[i].pointeeConst.has_value())
+            return false;
+        if (pattern.qualifiedOwner &&
+            !self(self, *pattern.qualifiedOwner, *written.qualifiedOwner))
+          return false;
+        if (!pattern.isFunctionSignature() && !pattern.isNativeFunction() &&
+            pattern.name.segments.size() == 1 && pattern.arguments.empty() &&
+            !pattern.genericValueExpression) {
+          if (const auto formal = names.find(pattern.name.last().lexeme);
+              formal != names.end())
+            return bind(formal->second, written);
+        }
+        for (std::size_t i = 0; i < pattern.arguments.size(); ++i)
+          if (!self(self, pattern.arguments[i], written.arguments[i]))
+            return false;
+        return true;
+      };
+      if (patterns.empty()) {
+        if (ownerArguments.size() != parameters.size())
+          return std::nullopt;
+        for (std::size_t i = 0; i < parameters.size(); ++i) {
+          const auto &written = ownerArguments[i];
+          if (!written.pointers.empty() || written.reference ||
+              !written.arrayExtents.empty() || written.isFunctionSignature() ||
+              written.packExpansion.has_value() != parameters[i].pack ||
+              !bind(i, written))
+            return std::nullopt;
+        }
+      } else {
+        if (patterns.size() != ownerArguments.size())
+          return std::nullopt;
+        for (std::size_t i = 0; i < patterns.size(); ++i)
+          if (!match(match, patterns[i], ownerArguments[i]))
+            return std::nullopt;
+      }
+      for (std::size_t i = 0; i < parameters.size(); ++i) {
+        if (!bindings[i])
+          return std::nullopt;
+        parameters[i].name = *bindings[i];
+      }
+      if (!patterns.empty()) {
+        resolveClassArgumentPatterns(id);
+        const auto expected = classInfo(id).genericArgumentPatterns;
+        const auto namespaceScope = classInfo(id).namespaceScope;
+        beginTypeParameterScope(parameters);
+        bool equal = expected.size() == ownerArguments.size();
+        for (std::size_t i = 0; equal && i < expected.size(); ++i) {
+          const auto actual = typeOf(ownerArguments[i], namespaceScope);
+          equal = actual != SemanticType::Unknown && actual == expected[i];
+        }
+        endTypeParameterScope();
+        if (!equal)
+          return std::nullopt;
+      }
+      return parameters;
+    };
+    auto candidates = classInfo(*ownerId).definitionFamilyMembers;
+    if (candidates.empty())
+      candidates.push_back(*ownerId);
+    ClassId selectedOwner = 0;
+    std::vector<GenericParameterInfo> ownerParameters;
+    // An explicit specialization is a concrete declaration with its own
+    // ownership domain. Resolve it before treating identifier arguments as
+    // renamed formal bindings (a nominal argument can own the specialization).
+    if (std::any_of(
+            exactClassSpecializations.begin(), exactClassSpecializations.end(),
+            [&](const ExactClassSpecialization &specialization) {
+              return std::find(candidates.begin(), candidates.end(),
+                               specialization.primary) != candidates.end();
+            })) {
+      const auto concrete = selectExactClassSpecialization(
+          typeOf(*definition->definitionOwner(), scope));
+      if (concrete.kind == SemanticType::Class &&
+          classInfo(concrete.classId).exactSpecializationPrimary != 0)
+        selectedOwner = concrete.classId;
+    }
+    for (ClassId candidate :
+         selectedOwner != 0 ? std::vector<ClassId>{} : candidates) {
+      if (auto parameters = bindOwner(candidate)) {
+        if (selectedOwner != 0) {
+          selectedOwner = 0;
+          break;
+        }
+        selectedOwner = candidate;
+        ownerParameters = std::move(*parameters);
+      }
+    }
+    if (selectedOwner == 0) {
+      fail("A method owner must match one declared generic owner pattern, "
+           "binding its formal parameters without replacing them with concrete "
+           "arguments.",
+           &classInfo(*ownerId).name);
+      continue;
+    }
+    ClassInfo &owner = classInfo(selectedOwner);
     if (declarationOwner(currentSourceUnit) !=
         declarationOwner(owner.sourceUnit)) {
       fail("A method definition must belong to the module that declares its "
@@ -5076,36 +5197,9 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
            &owner.name);
       continue;
     }
-    const auto &ownerArguments = definition->definitionOwner()->arguments;
-    if (ownerArguments.size() != owner.genericParameters.size()) {
-      fail("An out-of-class generic owner must spell each of its generic "
-           "parameters in declaration order.",
-           &owner.name);
-      continue;
-    }
-    auto ownerParameters = owner.genericParameters;
-    bool ownerPatternValid = true;
     std::unordered_set<std::string> ownerNames;
-    for (std::size_t index = 0; index < ownerArguments.size(); ++index) {
-      const auto &argument = ownerArguments[index];
-      if (argument.name.segments.size() != 1 ||
-          argument.name.last().kind != TokenKind::IDENTIFIER ||
-          !argument.arguments.empty() || !argument.pointers.empty() ||
-          argument.reference || !argument.arrayExtents.empty() ||
-          argument.isFunctionSignature() || argument.qualifiedOwner ||
-          argument.packExpansion.has_value() != ownerParameters[index].pack ||
-          !ownerNames.insert(argument.name.last().lexeme).second) {
-        ownerPatternValid = false;
-        break;
-      }
-      ownerParameters[index].name = argument.name.last();
-    }
-    if (!ownerPatternValid) {
-      fail("A generic method owner binds distinct parameter names (and pack "
-           "expansions) matching its declaration, not concrete arguments.",
-           &owner.name);
-      continue;
-    }
+    for (const auto &parameter : ownerParameters)
+      ownerNames.insert(parameter.name.lexeme);
     if (scope.size() > owner.namespaceScope.size() ||
         !std::equal(scope.begin(), scope.end(), owner.namespaceScope.begin())) {
       fail("An out-of-class definition must be in its owner's enclosing "
@@ -10733,7 +10827,7 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
   // The process allocator's runtime ABI is GTI's own. Its declared contract
   // binds only by trusted declaration identity, never by a public spelling.
   if (unit != nullptr && unit->role == SourceUnitRole::StandardLibrary &&
-      unit->standardLibraryName == "std/memory" &&
+      unit->standardLibraryName == "std/detail/memory_capabilities" &&
       declaration->namespaceScope ==
           std::vector<std::string>{"gti_internal", "runtime"} &&
       declaration->compilerPrivate && function.hasCLinkage() &&

@@ -45,6 +45,16 @@ int main() {
             !partial.canGenerateCode() && !partial.diagnostics.empty(),
         "partial editor snapshots retain load errors and cannot lower or emit");
     const auto unit = partial.sourceGraph.entryUnit();
+    expect(std::any_of(partial.sourceGraph.imports().begin(),
+                       partial.sourceGraph.imports().end(),
+                       [&](const auto &import) {
+                         return import.lookupPath == missing &&
+                                !import.target &&
+                                import.resolution ==
+                                    lang::SourceImportResolution::Unresolved;
+                       }),
+           "missing authorized interfaces retain lookup paths without fake "
+           "targets");
     const auto definition = lang::LanguageQueries().definition(
         partial, unit, source.find("answer"));
     expect(definition && definition->target.source == available.string(),

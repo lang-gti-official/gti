@@ -147,6 +147,10 @@ interfaces activate their bodies; newly imported interfaces extend this
 closure. Implementation bytes, configuration replay and overlays use the same
 source snapshots as other inputs. No backend or LSP filesystem discovery is
 needed.
+After this closure is complete, the loader validates explicit imports with each
+interface and its registered bodies grouped as one module. A dependency cycle
+through different implementation files is rejected with `GTI-I0001`, even when
+ordinary file loading has already finished both interfaces.
 
 For `ReturnType Owner::method(...) { ... }`, the AST records the syntactic owner
 path. Semantics matches one existing member and stores an immutable-syntax

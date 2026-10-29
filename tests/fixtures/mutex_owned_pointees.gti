@@ -1,7 +1,20 @@
 // Unique and shared owners hold mutex-bearing values in their allocation;
 // the mutex keeps its native identity there and is destroyed with the owner.
 import std.memory;
+import std.resource;
 import std.mutex;
+// An ordinary application supplies the raw allocation's cleanup policy.
+class RawLease {
+  mut std::process_resource process;
+  mut std::raw_allocation allocation;
+public:
+  RawLease() : process(std::process_resource()), allocation(std::raw_allocation()) {}
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) mut {
+    unsafe { return this.process.allocate(request); }
+  }
+  unsafe void attach(std::raw_allocation value) mut { this.allocation = value; }
+  ~RawLease() { unsafe { this.process.release(this.allocation); } }
+};
 class Account {
 public:
   mut std::mutex<int32_t> balance;
@@ -16,7 +29,7 @@ int32_t deposit(Account& account, int32_t amount) {
 }
 // Independent raw-lifetime client: no shared-owner policy or intrinsic.
 int raw_lifetime() {
-  mut std::detail::process_lease lease{};
+  mut RawLease lease{};
   unsafe {
     auto result = lease.allocate(std::layout_of<Account>());
     if (!result) { return 5; }

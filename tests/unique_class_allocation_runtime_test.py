@@ -25,7 +25,7 @@ def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
     fixtures = pathlib.Path(__file__).parent / "fixtures"
     source = fixtures / "unique_class_allocation.gti"
-    memory = fixtures.parent.parent / "stdlib/std/memory.gti"
+    memory = fixtures.parent.parent / "stdlib/std/detail/memory_core.gti"
     allocation_site = next(i for i, line in enumerate(memory.read_text().splitlines(), 1)
                            if "return unique_ptr<T>(gti_internal::allocate_unique_owner" in line)
     constructor_site = next(i for i, line in enumerate(source.read_text().splitlines(), 1)
@@ -56,7 +56,7 @@ def main():
             # The enclosing Value destructor runs only after success.
             cases = [([], (0, "2\n6\n5\n4\n3\n1\n", "")),
                      (["oom"], (ABORT_STATUS, "",
-                      f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
+                      f"<std/detail/memory_core>:{allocation_site}: runtime error[GTI-R0011]: "
                       "allocation_failure in unique_owner\n")),
                      (["constructor", "failure"], (70, "5\n4\n2\n3\n1\n",
                       f"{source.name}:{constructor_site}: runtime error[GTI-R0002]: "
@@ -66,10 +66,10 @@ def main():
                        f"{source.name}:{field_site}: runtime error[GTI-R0002]: "
                        "division_by_zero in integer_division\n")),
                      (["secondary", "allocation", "failure"], (ABORT_STATUS, "cleanup\n",
-                      f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
+                      f"<std/detail/memory_core>:{allocation_site}: runtime error[GTI-R0011]: "
                        "allocation_failure in unique_owner\n")),
                      (["implicit"] * 5, (ABORT_STATUS, "",
-                      f"<std/memory>:{allocation_site}: runtime error[GTI-R0011]: "
+                      f"<std/detail/memory_core>:{allocation_site}: runtime error[GTI-R0011]: "
                       "allocation_failure in unique_owner\n")),
                      (["implicit"] * 6, (0, "88\n77\n", ""))]
             for arguments, expected in cases:

@@ -18,13 +18,13 @@ def main():
     element = site("element_failure =")
     body = site("return 17 / zero")
     suffix = site("suffix_failure =")
-    memory = source.parents[2] / "stdlib/std/memory.gti"
+    memory = source.parents[2] / "stdlib/std/detail/memory_storage.gti"
     memory_lines = memory.read_text().splitlines()
     destroy_start = next(i for i, line in enumerate(memory_lines)
                          if "void destroy(uint64_t index) mut" in line)
     destroy_site = next(i + 1 for i in range(destroy_start, len(memory_lines))
                         if "require_live_storage(this.initialized(index))" in memory_lines[i])
-    vector = memory.with_name("vector.gti")
+    vector = memory.parent.parent / "vector.gti"
     vector_lines = vector.read_text().splitlines()
     erase_start = next(i for i, line in enumerate(vector_lines)
                        if "void erase(size_t index) mut" in line)
@@ -68,7 +68,7 @@ def main():
         (70, "2\n1\n9\n", ordinary(element)),  # Vector clear uses pop.
         (70, "2\n1\n9\n", ordinary(element)),  # Sparse clear uses destroy.
         (0, "9\n", ""),  # Public empty pop is a no-op.
-        (70, "2\n1\n9\n", f"<std/memory>:{destroy_site}: runtime error[GTI-R0010]: "
+        (70, "2\n1\n9\n", f"<std/detail/memory_storage>:{destroy_site}: runtime error[GTI-R0010]: "
          "invalid_storage_state in uninitialized_access\n"),
         (0, "2\n4\n3\n1\n9\n", ""),  # Interior erase + append.
         (70, "2\n3\n1\n9\n", ordinary(element)),

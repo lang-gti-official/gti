@@ -1,4 +1,5 @@
 export module unordered_set;
+import "detail/unordered_map_iterators.gti";
 
 import std.unordered_map;
 import std.functional;

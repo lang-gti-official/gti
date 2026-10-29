@@ -2,6 +2,7 @@
 """Ordinary prefix lifetime policy, exact cleanup, relocation and views."""
 
 from pathlib import Path
+import os
 import re
 import subprocess
 import sys
@@ -9,6 +10,7 @@ import tempfile
 
 from lambda_pack_invocation_runtime_test import main as runtime_matrix
 from allocation_abort_runtime_test import ABORT_STATUS
+from internal_module_fixture import private_library, private_source
 
 
 if __name__ == "__main__":
@@ -42,16 +44,20 @@ if __name__ == "__main__":
     payload_secondary = (f"{payload.name}:{payload_secondary_line}: runtime error[GTI-R0014]: "
                          "failure_during_cleanup; primary [GTI-R0002] at "
                          f"{payload.name}:{payload_primary_line}; secondary [GTI-R0002]\n")
-    memory_lines = (fixture.parents[2] / "stdlib/std/memory.gti").read_text().splitlines()
+    memory_lines = (fixture.parents[2] / "stdlib/std/detail/memory_storage.gti").read_text().splitlines()
     allocation_line = next(index for index, text in enumerate(memory_lines, 1)
                            if "require_allocation(false)" in text)
     overflow_line = next(index for index, text in enumerate(memory_lines, 1)
                          if "if (!allocated) { gti_internal::fail_allocation" in text)
-    exhaustion = (f"<std/memory>:{allocation_line}: runtime error[GTI-R0011]: "
+    exhaustion = (f"<std/detail/memory_storage>:{allocation_line}: runtime error[GTI-R0011]: "
                   "allocation_failure in private_storage\n")
-    overflow = (f"<std/memory>:{overflow_line}: runtime error[GTI-R0017]: "
+    overflow = (f"<std/detail/memory_storage>:{overflow_line}: runtime error[GTI-R0017]: "
                 'panic: "Allocation size overflow"\n')
     runtime_matrix(
+        private_modules_by_name={
+            "source_prefix_owner": ("detail.memory_storage",),
+            "source_prefix_drain_failure": ("detail.memory_storage",),
+        },
         names=("source_prefix_owner", "source_prefix_vector", "source_prefix_expected_range",
                "source_prefix_complete_elements", "generic_payload_enum",
                "raw_text_owner_example",
@@ -133,10 +139,16 @@ if __name__ == "__main__":
         # per-element fallback. Check the selected verified lifetime operation.
         for name, bulk in (("source_prefix_vector", True), ("source_prefix_owner", False)):
             source = Path(__file__).parent / "fixtures" / f"{name}.gti"
+            environment = dict(os.environ)
+            if name == "source_prefix_owner":
+                environment["GTI_STDLIB_PATH"] = str(private_library(
+                    fixture.parents[2], Path(temporary) / "stdlib", ("detail.memory_storage",)))
+                source = private_source(source, Path(temporary) / source.name,
+                                        ("detail.memory_storage",))
             artifact = Path(temporary) / f"{name}.mir"
             result = subprocess.run(
                 [str(compiler), str(source), "--emit-mir", "-o", str(artifact),
-                 "--progress", "never"], capture_output=True, text=True, timeout=60)
+                 "--progress", "never"], env=environment, capture_output=True, text=True, timeout=60)
             assert result.returncode == 0, (name, result.stderr)
             lowered = artifact.read_text()
             assert ("intrinsic=object-relocate-range " in lowered) == bulk, name

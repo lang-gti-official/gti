@@ -159,7 +159,10 @@ including dotted logical names; it never scans dependency-private files. The
 loader retains resolved, unresolved, and incomplete import facts with exact
 name spans and a token-derived completion prefix. Hover, definition, and
 references consume those facts and registered implementation membership.
-Unresolved imports have no invented definition target. Protocol ranges convert
+Unresolved imports have no invented definition target. Authorized lookup paths
+remain dependencies even when the interface is absent, so opening an unsaved
+interface or creating it on disk refreshes consumers. Publication checks their
+captured source generations to reject stale creation/deletion results. Protocol ranges convert
 retained byte spans to UTF-16, including comments and non-ASCII text before names.
 Module rename remains conservative; no textual path-rewrite fallback exists.
 
@@ -1101,7 +1104,10 @@ packages without their own search authority, and symlink escapes. Unsaved
 files and dirty overlays participate. Candidates must be explicit module
 interfaces. Dependency fixes use the direct alias and declared module name;
 standard fixes use `std.name`; same-package fixes use a relative quoted import.
-A speculative compile checks registrations and exported declaration visibility.
+Public facades contribute their explicit re-export closure, including declarations
+whose bodies live in registered implementations. Candidate discovery remains a
+syntax filter; a speculative compile validates the selected canonical exported
+symbol and the actual requesting program before offering an edit.
 
 `include_suggestions.cpp` uses the lexer as a cheap candidate filter and the
 existing source loader/parser to discover declaration names. `FrontendPhase::Parsing`

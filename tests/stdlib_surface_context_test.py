@@ -16,17 +16,21 @@ import stdlib_surface_test as surface
 
 
 def frozen_plan(case, compiler, cxx, runtime, repository, scratch):
-    """Independent oracle copied from run_case at 1bd2cb2a."""
+    """Independent oracle; private-module setup is explicitly recorded per case."""
     case_root = scratch / case['id']
     environment = os.environ.copy()
     environment.update({'GTI_STDLIB_PATH': str(repository / 'stdlib'),
                         'GTI_RUNTIME_INCLUDE': str(repository / 'runtime' / 'include'),
                         'GTI_RUNTIME_LIBRARY': str(runtime)})
+    source = repository / case['source']
+    if case.get('private_modules'):
+        source = case_root / source.name
+        environment['GTI_STDLIB_PATH'] = str(case_root / 'stdlib')
     optimizations = case['optimizations'] if case['mode'] == 'run' else [case['optimization']]
     steps = []
     for optimization in optimizations:
         output = case_root / f'program-{optimization}'
-        command = [str(compiler), str(repository / case['source']), '--cxx', str(cxx), f'-{optimization}']
+        command = [str(compiler), str(source), '--cxx', str(cxx), f'-{optimization}']
         if case.get('backend') is not None:
             command += ['--backend', case['backend']]
         if case.get('execution_profile') is not None:
@@ -66,7 +70,8 @@ def equivalent(case, root):
     assert contextual['runtime_environment'] == 'inherited-separately'
     assert contextual['compiler_environment'] == {
         'policy': 'copy-inherited-and-override',
-        'overrides': {'GTI_STDLIB_PATH': '@REPOSITORY/stdlib',
+        'overrides': {'GTI_STDLIB_PATH': (f"@SCRATCH/{case['id']}/stdlib"
+                                        if case.get('private_modules') else '@REPOSITORY/stdlib'),
                       'GTI_RUNTIME_INCLUDE': '@REPOSITORY/runtime/include',
                       'GTI_RUNTIME_LIBRARY': '@RUNTIME_LIBRARY'}}
     assert 'DO_NOT_SERIALIZE_INHERITED' not in json.dumps(contextual)
