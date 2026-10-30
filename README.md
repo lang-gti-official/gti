@@ -193,9 +193,10 @@ cmake --build build --parallel 4
 
 The canonical repository is
 https://github.com/lang-gti-official/gti: source, pull requests, issues and CI live there, and every change reaches
-`main` through its merge queue. Packages and the reference website stay on
-Gitea (`git.internal.howetotech.dev`) for now; the earlier Gitea source
-repository is frozen.
+`main` through its merge queue, and toolchain releases publish to its GitHub
+Releases. Only the `gti add` package registry and the reference website stay on
+Gitea (`git.internal.howetotech.dev`); the earlier Gitea source repository is
+frozen.
 
 Run the test suite with:
 

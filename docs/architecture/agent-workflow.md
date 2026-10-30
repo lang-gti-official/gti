@@ -3,8 +3,9 @@
 Status: Repository automation and the owner's implementation-task contract.
 
 Canonical `origin` is `https://github.com/lang-gti-official/gti.git`. GitHub
-owns branches, PRs, issues and CI; Gitea keeps the reference website and
-packages, and its `gti-lang/gti` `main` is frozen. Gitea-era instructions in
+owns branches, PRs, issues, CI and toolchain releases; Gitea keeps only the
+reference website and the `gti add` package registry, and its `gti-lang/gti`
+`main` is frozen. Gitea-era instructions in
 historical notes or pre-cutover worktrees do not select the current host. For a
 preserved worktree, consult the primary checkout's current `AGENTS.md` and
 skill, and invoke its helper with `--repo <task-worktree>`. Preserve live runs

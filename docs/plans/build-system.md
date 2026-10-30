@@ -1588,9 +1588,9 @@ The build system needs tests at four boundaries:
    by basename outside the repository and discovers runtime/stdlib resources
    beside the installed executable.
 
-Gitea release CI publishes Linux x64. Apple Silicon archives use the manual
-macOS packaging/validation/upload contract; there is no macOS Actions runner.
-Windows publication is not implemented.
+GitHub Actions publishes Linux x64 and Apple Silicon toolchains to GitHub
+Releases (nightly, then the beta/stable train). Linux arm64 awaits a reviewed
+runtime compiler profile; Windows publication is not implemented.
 Applicable host/path behavior needs focused evidence on those supported release
 platforms; Windows publication/execution needs its own implementation and
 validation before claiming support. Filesystem tests must avoid assuming case

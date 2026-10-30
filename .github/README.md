@@ -119,5 +119,16 @@ Set positive `GTI_JOBS` and `GTI_TEST_JOBS` repository variables to override
 the CPU/memory-based budgets. Compiler-object caches are separate for native
 and sanitizer profiles; cache errors never skip builds or validation.
 
+Before its build, the sanitizer job runs `scripts/check_ci_sanitizers.py`: a
+small, race-free ASan/UBSan probe with no GTI code, so a runner that cannot
+execute sanitizer binaries fails in seconds instead of after a long build.
+Hosted jobs configure with `GTI_ENABLE_THREAD_SANITIZER_TESTS=OFF`; dedicated
+ThreadSanitizer CTests then report an explicit skip (return code 77), never a
+pass. A runner meant for TSAN must first pass
+`scripts/check_ci_sanitizers.py --sanitizer thread` in its exact environment.
+If it reports `ThreadSanitizer: unexpected memory mapping`, check the compiler
+runtime, kernel, address-space limits and container seccomp policy rather than
+using a privileged container.
+
 The previous GitHub-era workflows are archived under
 `docs/plans/archive/github-actions-20261024/` and do not run.

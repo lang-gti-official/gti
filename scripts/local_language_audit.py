@@ -698,7 +698,7 @@ def verify_workflow_isolation() -> None:
         "local-language-audit",
     )
     # Whatever host runs the workflows, the optional audit stays out of them.
-    # Gitea owns live workflows; GitHub's former automation is archived.
+    # GitHub owns live workflows; the frozen Gitea release workflow is checked too.
     checked = [REPOSITORY_ROOT / "CMakeLists.txt"]
     for host in (".gitea", ".github"):
         checked.extend(sorted((REPOSITORY_ROOT / host / "workflows").glob("*.yml")))

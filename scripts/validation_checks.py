@@ -197,9 +197,9 @@ def component_body(body, record=None):
 def ci_mode(event, paths):
     pr = event.get("pull_request")
     if pr:
-        # Gitea's WIP title transitions arrive as `edited`, not GitHub's
-        # ready_for_review. Only an identified body-only edit is metadata;
-        # unknown edit payloads stay conservative and title changes reclassify.
+        # CI does not subscribe to `edited`; a caller replaying one gets the
+        # conservative rule: only an identified body-only edit is metadata,
+        # and unknown edit payloads or title changes reclassify.
         changes = event.get("changes")
         if event.get("action") == "edited" and isinstance(changes, dict) and set(changes) == {"body"}:
             return "metadata"
