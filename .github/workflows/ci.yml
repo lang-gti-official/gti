@@ -318,6 +318,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DGTI_BUILD_LSP=OFF
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_TIMEOUT_SCALE=6
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
@@ -325,7 +326,8 @@ jobs:
         run: cmake --build build-sanitized --parallel "${GTI_JOBS}"
       - name: Test compiler and driver libraries
         # Instrumented suites run several times slower than plain ones, so
-        # tests without their own TIMEOUT get an hour. The whole generated-C++
+        # the configure step scales every test's timeout six times (the
+        # 600-second default becomes an hour). The whole generated-C++
         # corpus and the failure-metadata matrix exceed even that under ASan
         # and remain the native integration gates.
         env:
@@ -333,7 +335,7 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: >-
           ctest --test-dir build-sanitized --output-on-failure
-          --parallel "${GTI_TEST_JOBS}" --timeout 3600
+          --parallel "${GTI_TEST_JOBS}"
           -R 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter_(preflight|text|lifecycle|census|corpus_protocol)$|cpp_mir_program_plan|cpp_mir_representation_snapshot'
       - name: Save compiler object cache
         if: always() && steps.cache.outputs.cache-hit != 'true'
