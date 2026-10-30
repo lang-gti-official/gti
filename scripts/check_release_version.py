@@ -10,6 +10,7 @@ import sys
 
 RELEASE_FILES = {
     ".gitea/workflows/release.yml",
+    ".github/workflows/nightly.yml",
     "CMakeLists.txt",
     "LICENSE",
     "VERSION",

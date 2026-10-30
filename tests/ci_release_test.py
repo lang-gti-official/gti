@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Exercise exact release/channel admission and the shared-build GitHub workflow contracts."""
+"""Exercise exact release/channel admission, the GitHub nightly workflow, and the frozen Gitea workflow."""
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import importlib.util
+import json
+import os
 import pathlib
 import re
 import subprocess
@@ -21,11 +25,114 @@ def run(command, cwd, success=True):
     return result.stdout.strip()
 
 
+def jobs(workflow):
+    """Split a workflow's top-level jobs by their two-space-indented keys."""
+    body = workflow.split("\njobs:\n", 1)[1]
+    parts = re.split(r"^  ([A-Za-z0-9_-]+):\n", body, flags=re.MULTILINE)
+    return dict(zip(parts[1::2], parts[2::2]))
+
+
+CONFIGURE_RELEASE = """        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_RELEASE_BUILD=ON
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+"""
+
+
+def nightly_contract(root):
+    nightly = (root / ".github/workflows/nightly.yml").read_text()
+    ci = (root / ".github/workflows/ci.yml").read_text()
+    sections = jobs(nightly)
+    assert list(sections) == ["select", "package", "suite", "release-gate", "publish"], list(sections)
+    header = nightly.split("\njobs:\n", 1)[0]
+    assert '  schedule:\n    - cron: "0 2 * * *"\n  workflow_dispatch:' in header
+    assert "push:" not in header and "pull_request" not in nightly, "nightly runs only on schedule or dispatch"
+    assert "\npermissions:\n  contents: read\n" in header and "concurrency:" not in header
+    # Only the publish job may write, and only it receives id-token/attestations.
+    for name, body in sections.items():
+        writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)
+        expected = ["contents", "id-token", "attestations"] if name == "publish" else []
+        assert writes == expected, (name, writes)
+    assert "actions: read" in sections["select"]
+    assert set(re.findall(r"secrets\.([A-Za-z0-9_]+)", nightly)) <= {"GITHUB_TOKEN"}
+    assert "${{ github.token }}" in nightly
+    # Every action is a full-SHA pin of actions/*, the same pin CI uses for the same action.
+    pins = dict(re.findall(r"^\s*(?:-\s+)?uses:\s*(actions/\S+)@([0-9a-f]{40})\s", ci, re.MULTILINE))
+    used = re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)@(\S+)", nightly, re.MULTILINE)
+    assert used
+    for action, revision in used:
+        assert action.startswith("actions/") and re.fullmatch(r"[0-9a-f]{40}", revision), action
+        if action in pins:
+            assert pins[action] == revision, (action, revision, pins[action])
+    assert "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8" in sections["publish"]
+    # Untrusted dispatch input reaches the selector only through the environment.
+    assert "GTI_REQUESTED_COMMIT: ${{ inputs.commit }}" in sections["select"]
+    assert nightly.count("${{ inputs.") == 1
+    for body in sections.values():
+        for line in body.splitlines():
+            if line.lstrip().startswith(("run:", "python3", "git ", "gh ", "cmake", "ctest")):
+                assert "${{" not in line, line
+    select = sections["select"]
+    assert "if: github.repository == 'lang-gti-official/gti'" in select
+    assert "ref: main" in select and "fetch-depth: 0" in select
+    assert "python3 tests/ci_release_test.py ." in select and "select-nightly" in select
+    assert '--ref "${GTI_REF}"' in select
+    package, suite = sections["package"], sections["suite"]
+    assert "{os: ubuntu-24.04, platform: linux-x64, host: Linux-X64}" in package
+    assert "{os: macos-26, platform: darwin-arm64, host: macOS-ARM64}" in package
+    assert "linux-arm64" not in package.replace("# linux-arm64", ""), "linux-arm64 has no reviewed compiler"
+    for body in (package, suite):
+        assert body.count(CONFIGURE_RELEASE) == 1, "package and suite must configure one release build"
+        assert "bash scripts/configure_ci_toolchain.sh" in body and "brew install" not in body
+        assert "bash scripts/configure_ci_resources.sh" in body and "vars.GTI_TEST_JOBS" in body
+        assert "ref: ${{ needs.select.outputs.sha }}" in body
+        assert "if: needs.select.outputs.build == 'true'" in body
+    assert "--event nightly" in package and 'mktemp -d "${RUNNER_TEMP}/gti-stage.XXXXXXXX"' in package
+    assert package.index("name: Build\n") < package.index("name: Test installed toolchain")
+    assert package.index("name: Test installed toolchain") < package.index("-DGTI_CHANNEL=nightly")
+    for check in ("lsp_smoke_test.py", "cli_smoke_test.py", "project_cli_smoke_test.py",
+                  "process_resource_policy_test.py", "managed_thread_runtime_test.py",
+                  "atomic_runtime_test.py", "installed_library_smoke"):
+        assert check in package, check
+    assert '-DGTI_BUILD_ID="${GTI_NIGHTLY_SHA}"' in package and "-DGTI_EXPECTED_TAG=nightly" in package
+    assert "CMakeFiles/gti_driver.dir/src/driver/build.cpp.o" in package
+    key = ("gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', "
+           "'cmake/**') }}-${{ needs.select.outputs.sha }}-${{ github.run_id }}")
+    assert f"key: {key}" in package and f"key: {key}" in suite, "suite shards reuse the package objects"
+    assert "actions/cache/save@" in package and "actions/cache/save@" not in suite
+    shards = re.findall(r"platform: (linux|darwin), shards: (\d+), index: (\d+)", suite)
+    for platform in ("linux", "darwin"):
+        rows = [(int(count), int(index)) for name, count, index in shards if name == platform]
+        assert rows and sorted(index for _, index in rows) == list(range(rows[0][0])), platform
+        assert all(count == rows[0][0] for count, _ in rows)
+    assert "validation_checks.py shard --build build" in suite
+    gate = sections["release-gate"]
+    assert "needs: [select, suite]" in gate
+    assert 'merge-shards\n          --shard-reports "${RUNNER_TEMP}/shards" --platforms darwin,linux' in gate
+    publish = sections["publish"]
+    assert "needs: [select, package, release-gate]" in publish
+    assert "group: gti-nightly-publication\n      cancel-in-progress: false" in publish
+    assert "GTI_NIGHTLY_PLATFORMS: linux-x64 darwin-arm64" in publish
+    order = ["Verify the complete asset set", "admit-nightly", "attest-build-provenance",
+             "--force-with-lease=refs/tags/nightly:${GTI_NIGHTLY_LEASE}", "gh release create nightly",
+             "--clobber dist/BUILD_ID", "gh release delete-asset nightly"]
+    positions = [publish.index(item) for item in order]
+    assert positions == sorted(positions), "publish must admit, attest, lease the tag, upload, then prune"
+    assert publish.count("if: steps.admission.outputs.publish == 'true'") == 4
+    assert "--force " not in publish and "push --force" not in publish and "+refs/tags" not in publish
+    assert "git tag" not in publish, "the tag moves only through the leased push"
+    assert "--prerelease" in publish and "--verify-tag" in publish and "--latest=false" in publish
+    assert "refusing to prune" in publish and "tar -xOzf" in publish and "shasum -a 256 -c" in publish
+    assert "v${" not in nightly and "GTI_EXPECTED_TAG=v" not in nightly, "stable is not published here"
+    assert "upload_url" not in nightly and "GITEA" not in nightly and "gitea." not in nightly
+
+
 def workflow_contract(root):
     release = (root / ".gitea/workflows/release.yml").read_text()
     ci = (root / ".github/workflows/ci.yml").read_text()
-    # CI runs on GitHub; packages publish only from the Gitea release workflow.
-    assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == ["ci.yml"]
+    # CI and nightly packaging run on GitHub; the frozen Gitea release workflow stays as written.
+    assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == ["ci.yml", "nightly.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"
@@ -38,27 +145,10 @@ def workflow_contract(root):
     stable = release.split("  publish-stable:\n", 1)[1].split("  publish-nightly:\n", 1)[0]
     nightly = release.split("  publish-nightly:\n", 1)[1]
     assert "runs-on: ubuntu-latest" in package and "Linux-X64) platform=linux-x64" in package
-    assert "macos-15" not in package and "macOS-ARM64)" not in package, "macOS is explicitly manual"
+    assert "macos-15" not in package and "macOS-ARM64)" not in package, "the frozen workflow stays Linux-only"
     manual = (root / "docs/architecture/build-and-driver.md").read_text()
-    assert "### Manual macOS release publication" in manual and "host-runtime.json" in manual
-    assert "if: needs.metadata.outputs.stable == 'true'" in stable
-    assert "refs/tags/${GTI_RELEASE_TAG}" in stable and "--force origin refs/tags/" not in stable
-    assert "tag_name: ${{ needs.metadata.outputs.tag }}" in stable
-    assert "target_commitish: ${{ needs.metadata.outputs.sha }}" in stable
-    assert "name: gti-release-package" in stable
-    assert package.index("-DGTI_OUTPUT_DIR=${{ gitea.workspace }}/dist/stable") < package.index("-DGTI_CHANNEL=nightly")
-    assert "path: dist/stable/*" in package and "path: dist/nightly/*" in package
-    assert 'mktemp -d "${GTI_RUNNER_TEMP}/gti-stage.XXXXXXXX"' in package
-    assert package.count("-DGTI_STAGE_DIR=${{ env.GTI_STAGE_DIRECTORY }}") == 2
-    assert "-DGTI_BUILD_ID=${{ needs.metadata.outputs.sha }}" in package
-    assert "group: gti-nightly-publication" in nightly
-    assert "name: gti-nightly-package" in nightly
-    assert nightly.index("Download nightly archive") < nightly.index("admit-nightly") < nightly.index("git tag --force nightly")
-    assert nightly.count("if: steps.admission.outputs.publish == 'true'") == 3
-    assert nightly.index("name: Publish nightly release") < nightly.index("scripts/sync_release_assets.py")
-    assert "prerelease: true" in nightly and "prerelease: false" in stable
-    assert "releases: write" in stable and "releases: write" in nightly and "code: write" in nightly
-    assert "permissions:\n  contents: read" in release
+    assert "### GitHub nightly publication" in manual and "host-runtime.json" in manual
+    assert "Manual macOS release publication" not in manual, "manual macOS publication is retired"
     assert "documentation-index:" not in ci, "documentation must reuse the native compiler"
     assert "build/gti_docgen --stdlib stdlib" in ci
     for profile in ("native", "sanitizers"):
@@ -145,13 +235,148 @@ def source_contract(root):
         run(["git", "init", "--bare", "--quiet", str(remote)], work)
         run(["git", "remote", "add", "origin", str(remote)], work)
         run(["git", "push", "--quiet", "origin", "main"], work)
-        assert query(latest, mode="admit-nightly") == {"publish": "true"}
+        assert query(latest, mode="admit-nightly") == {"publish": "true", "lease": ""}
+        assert query(latest, event="nightly")["stable"] == "false", "nightly never cuts stable"
         run(["git", "checkout", "--quiet", "--detach", advanced], work)
         tags = run(["git", "show-ref", "--tags"], work)
-        assert query(advanced, mode="admit-nightly") == {"publish": "false"}
+        assert query(advanced, mode="admit-nightly") == {"publish": "false", "lease": ""}
         assert run(["git", "show-ref", "--tags"], work) == tags
+
+        # Newer wins: the published nightly blocks itself and anything older, and
+        # admission hands back the exact tag value as the lease for the move.
+        run(["git", "checkout", "--quiet", "main"], work)
+        run(["git", "push", "--quiet", "origin", f"{latest}:refs/tags/nightly"], work)
+        assert query(latest, mode="admit-nightly") == {"publish": "false", "lease": ""}
+        newest = commit("1.2.0", "newest")
+        run(["git", "push", "--quiet", "origin", "main"], work)
+        assert query(newest, mode="admit-nightly") == {"publish": "true", "lease": latest}
+        run(["git", "tag", "-a", "-m", "annotated", "annotated-nightly", latest], work)
+        annotated = run(["git", "rev-parse", "refs/tags/annotated-nightly"], work)
+        run(["git", "push", "--quiet", "--force", "origin", "refs/tags/annotated-nightly:refs/tags/nightly"], work)
+        assert query(newest, mode="admit-nightly") == {"publish": "true", "lease": annotated}
+        run(["git", "checkout", "--quiet", "--detach", advanced], work)
+        stray = commit("1.2.0", "off main")
+        run(["git", "push", "--quiet", "--force", "origin", f"{stray}:refs/tags/nightly"], work)
+        run(["git", "checkout", "--quiet", "main"], work)
+        query(newest, mode="admit-nightly", success=False)
+        selection_contract(script, work, newest, latest, advanced, stray)
         run(["git", "remote", "remove", "origin"], work)
         query(advanced, mode="admit-nightly", success=False)
+
+
+def load_resolver(script):
+    specification = importlib.util.spec_from_file_location("resolve_release_source", script)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+@contextlib.contextmanager
+def working_directory(path):
+    previous = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
+def queue_run(sha, repository="lang-gti-official/gti", **overrides):
+    run_record = {"id": 7, "head_sha": sha, "event": "merge_group",
+                  "path": ".github/workflows/ci.yml",
+                  "head_branch": "gh-readonly-queue/main/pr-12-" + "b" * 40,
+                  "repository": {"full_name": repository},
+                  "head_repository": {"full_name": repository}}
+    run_record.update(overrides)
+    return run_record
+
+
+def gate_job(sha, **overrides):
+    job = {"name": "CI gate", "head_sha": sha, "status": "completed", "conclusion": "success"}
+    job.update(overrides)
+    return job
+
+
+def selection_contract(script, work, head, published, older, stray):
+    resolver = load_resolver(script)
+    repository = "lang-gti-official/gti"
+
+    def evidence(runs, gate_jobs):
+        calls = []
+
+        def request(path):
+            calls.append(path)
+            if "/actions/workflows/ci.yml/runs?" in path:
+                return {"workflow_runs": runs}
+            return {"jobs": gate_jobs}
+        return request, calls
+
+    sha = "c" * 40
+    request, calls = evidence([queue_run(sha)], [gate_job(sha), {"name": "Validation plan"}])
+    assert resolver.queue_evidence(repository, sha, request) == 7
+    assert calls[0] == ("/repos/lang-gti-official/gti/actions/workflows/ci.yml/runs?head_sha="
+                        + sha + "&event=merge_group&per_page=100")
+    assert calls[1] == "/repos/lang-gti-official/gti/actions/runs/7/jobs?filter=latest&per_page=100"
+    rejected = [
+        ([queue_run(sha, event="pull_request")], [gate_job(sha)]),
+        ([queue_run(sha, event="workflow_dispatch")], [gate_job(sha)]),
+        ([queue_run(sha, head_sha="d" * 40)], [gate_job(sha)]),
+        ([queue_run(sha, head_branch="main")], [gate_job(sha)]),
+        ([queue_run(sha, path=".github/workflows/nightly.yml")], [gate_job(sha)]),
+        ([queue_run(sha, head_repository={"full_name": "someone/gti"})], [gate_job(sha)]),
+        ([queue_run(sha)], [gate_job(sha, conclusion="failure")]),
+        ([queue_run(sha)], [gate_job(sha, status="in_progress", conclusion=None)]),
+        ([queue_run(sha)], [gate_job(sha, head_sha="d" * 40)]),
+        ([queue_run(sha)], [gate_job(sha), gate_job(sha)]),
+        ([queue_run(sha)], [{"name": "Fast checks (linux)", "conclusion": "success"}]),
+        ([], []),
+    ]
+    for runs, gate_jobs in rejected:
+        request, _ = evidence(runs, gate_jobs)
+        try:
+            resolver.queue_evidence(repository, sha, request)
+        except ValueError:
+            continue
+        raise AssertionError(("accepted non-queue evidence", runs, gate_jobs))
+    for bad in ("someone", "a/b/c", "a/$(x)"):
+        try:
+            resolver.repository_path(bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad)
+
+    verified = set()
+
+    def evidence_for(repository_name, candidate):
+        if candidate not in verified:
+            raise ValueError("no queue evidence")
+        return 7
+
+    def select(event="schedule", requested="", ref="refs/heads/main"):
+        with working_directory(work):
+            return resolver.select_nightly(repository, event, ref, requested, evidence_for)
+
+    def refused(**arguments):
+        try:
+            select(**arguments)
+        except ValueError:
+            return
+        raise AssertionError(("selection accepted", arguments))
+
+    run(["git", "push", "--quiet", "--force", "origin", f"{published}:refs/tags/nightly"], work)
+    refused()  # head has no merge-queue evidence
+    verified.update({head, published, older})
+    assert select() == {"sha": head, "version": "1.2.0", "build": "true", "head": "true"}
+    refused(ref="refs/heads/feature")
+    refused(requested=published)  # only a dispatch selects a commit
+    assert select("workflow_dispatch", published) == {
+        "sha": published, "version": "1.2.0", "build": "true", "head": "false"}
+    for requested in ("C" * 40, "c" * 39, published[:12], "--all", stray):
+        verified.add(requested)
+        refused(event="workflow_dispatch", requested=requested)
+    run(["git", "push", "--quiet", "--force", "origin", f"{head}:refs/tags/nightly"], work)
+    assert select()["build"] == "false", "an already-published head does not rebuild on schedule"
+    assert select("workflow_dispatch")["build"] == "true"
 
 
 def archive_contract(root, cmake):
@@ -229,6 +454,36 @@ def archive_contract(root, cmake):
         assert not rejected.exists(), "invalid stage/tag produced release assets"
 
 
+def suite_contract(root):
+    """The release gate accepts only complete, same-source shard evidence."""
+    script = root / "scripts/validation_checks.py"
+    head = "e" * 40
+    with tempfile.TemporaryDirectory(prefix="gti-release-shards-") as temporary:
+        reports = pathlib.Path(temporary)
+
+        def write(platform, shards, tests, source=head):
+            inventory = sorted(name for group in tests for name in group)
+            for index, group in enumerate(tests):
+                (reports / f"{platform}-{index}.json").write_text(json.dumps({
+                    "head": source, "tree": "f" * 40, "platform": platform, "build_type": "Release",
+                    "scope": "shard", "shards": shards, "index": index, "inventory": inventory,
+                    "tests": group, "skipped": [], "smoke": ["scalar-O0"] if index == 0 else []}))
+
+        def gate(success):
+            run([sys.executable, str(script), "merge-shards", "--shard-reports", str(reports),
+                 "--platforms", "darwin,linux", "--head", head], root, success)
+
+        write("linux", 2, [["a"], ["b"]])
+        gate(False)  # darwin missing
+        write("darwin", 2, [["a", "b"], []])
+        gate(True)
+        write("darwin", 2, [["a"], ["a"]])
+        gate(False)  # b never ran on darwin
+        write("darwin", 2, [["a", "b"], []], source="d" * 40)
+        write("linux", 2, [["a"], ["b"]], source="d" * 40)
+        gate(False)  # another source
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=pathlib.Path)
@@ -236,10 +491,13 @@ def main():
     args = parser.parse_args()
     root = args.root.resolve()
     workflow_contract(root)
+    nightly_contract(root)
     source_contract(root)
+    suite_contract(root)
     if args.cmake:
         archive_contract(root, args.cmake.resolve())
-    print("Shared release workflow, exact source/version/tag checks, and stale-nightly admission passed")
+    print("GitHub nightly and frozen Gitea workflows, exact source/version/tag checks, "
+          "queue-evidence selection, newer-wins admission and release-suite gate passed")
 
 
 if __name__ == "__main__":

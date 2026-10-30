@@ -289,20 +289,24 @@ one-off implementation-note or redesign files when an existing category fits.
 ## Release Channels And VERSION
 
 Two channels publish this repository, and they answer different questions.
-Toolchain releases are moving to GitHub Releases on `lang-gti-official/gti`.
-The previous workflow (`.gitea/workflows/release.yml`) fired on Gitea `main`,
-which is now frozen, so no toolchain release publishes until the GitHub release
-workflow replaces it; until then the installer keeps downloading the existing
-Gitea release archives. Do not publish new toolchain releases to Gitea, and do
-not promise automatic nightly or macOS assets before that workflow lands. The
-`gti add` package registry stays on Gitea and is unaffected. See the manual
-publication contract in `docs/architecture/build-and-driver.md`.
+Toolchain releases publish to GitHub Releases on `lang-gti-official/gti`.
+`.github/workflows/nightly.yml` packages `linux-x64` and `darwin-arm64` on
+GitHub-hosted runners; `linux-arm64` waits for a reviewed linux-aarch64 runtime
+compiler profile. The Neovim installer downloads from GitHub Releases. The
+frozen Gitea workflow (`.gitea/workflows/release.yml`) no longer runs. Do not
+publish toolchain releases to Gitea. The `gti add` package registry stays
+on Gitea and is unaffected. See "Published Toolchain Channels" in
+`docs/architecture/build-and-driver.md`.
 
-- **Nightly** republishes one rolling `nightly` release per commit on `main`.
-  It is automatic, replaces its own assets, and needs no `VERSION` change.
-  Every merged commit reaches users through this channel.
-- **Stable** publishes `v<VERSION>` when `VERSION` changes. It is the channel
-  someone pins to.
+- **Nightly** republishes one rolling `nightly` prerelease, daily, from the
+  newest `main` commit that passed the merge queue's `CI gate`. It replaces
+  its own assets and needs no `VERSION` change. Every merged commit reaches
+  users through this channel.
+- **Stable** is `v<VERSION>`, the channel someone pins to. Its GitHub
+  publication belongs to the later beta/stable release train and is not
+  automated yet: a `VERSION` advance does not publish a stable release today,
+  and the installer's stable channel reports the missing `v<VERSION>` and
+  points at nightly rather than installing another version.
 
 Pull requests never edit `VERSION` or `CHANGELOG.md`. A change a toolchain user
 would observe (language surface, CLI or driver behavior, diagnostics they would

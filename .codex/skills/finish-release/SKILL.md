@@ -59,13 +59,16 @@ policy below without bypassing that lifecycle.
 
 ## Initiate The Release
 
-Toolchain releases move to GitHub Releases; only the
-`gti add` package registry stays on Gitea. The Gitea release workflow
-(`.gitea/workflows/release.yml`) fired on pushes to Gitea `main`, which is now
-frozen, and no new toolchain release is published to Gitea. Until the GitHub
-release workflow lands, merging a release-bearing PR does not publish
-anything: report the intended version. Never tag a version mismatch or an unvalidated tree by hand, and do
-not push a competing tag.
+Toolchain releases publish to GitHub Releases; only the `gti add`
+package registry stays on Gitea. `.github/workflows/nightly.yml` republishes
+the rolling `nightly` prerelease daily from the newest main commit that passed
+the merge queue, so a merged change reaches nightly users without any release
+step. Stable `v<VERSION>` publication belongs to the later beta/stable release
+train and is not automated yet: merging a release-bearing PR publishes no
+stable release, so report the intended version. The frozen Gitea workflow
+(`.gitea/workflows/release.yml`) no longer runs; never publish to Gitea. Never
+tag a version mismatch or an unvalidated tree by hand, do not push a competing
+tag, and never move the `nightly` tag yourself.
 
 ## Finish After Queueing
 

@@ -1,7 +1,9 @@
 local M = {}
 
-local release_server = "https://git.internal.howetotech.dev"
-local repository = "gti-lang/gti"
+-- Toolchain archives publish to GitHub Releases. Git tags created before the
+-- switch keep their own installer, which downloads from the frozen Gitea host.
+local release_server = "https://github.com"
+local repository = "lang-gti-official/gti"
 
 local function release_url(tag, asset)
   return string.format(
@@ -247,6 +249,7 @@ local function resolve_release(opts, root, platform)
   if channel == "nightly" then
     local build_id = opts.build_id or fetch_nightly_build_id(root)
     return {
+      channel = "nightly",
       tag = "nightly",
       archive_name = string.format("gti-nightly-%s.tar.gz", platform),
       identity = {
@@ -261,6 +264,7 @@ local function resolve_release(opts, root, platform)
   end
   local version = opts.version or trim(read_file(join(root, "VERSION")))
   return {
+    channel = "stable",
     tag = "v" .. version,
     archive_name = string.format("gti-v%s-%s.tar.gz", version, platform),
     identity = {
@@ -270,6 +274,25 @@ local function resolve_release(opts, root, platform)
     },
   }
 end
+
+-- A checkout can name a VERSION whose stable release was never published (the
+-- stable release train is not yet automated on GitHub). Say so, and name the
+-- nightly channel, rather than installing some other version.
+local function stable_unavailable(release, failure)
+  return string.format(
+    "gti: no stable GTI %s toolchain could be downloaded from GitHub Releases "
+      .. "(%s). Stable archives exist only for published v<VERSION> releases; "
+      .. "until %s is published, set vim.g.gti_channel = \"nightly\" (or "
+      .. "GTI_CHANNEL=nightly) and run :Lazy build gti, or build GTI locally "
+      .. "and set GTI_PATH and GTI_LSP_PATH. Cause: %s",
+    release.tag,
+    release_url(release.tag, release.archive_name),
+    release.tag,
+    tostring(failure)
+  )
+end
+
+M.stable_unavailable = stable_unavailable
 
 function M.install(opts)
   opts = opts or {}
@@ -304,7 +327,13 @@ function M.install(opts)
   local ok, result = xpcall(function()
     if not opts.archive_path then
       progress(opts, "Downloading " .. archive_name)
-      download(base_url, archive)
+      local downloaded, failure = pcall(download, base_url, archive)
+      if not downloaded then
+        if release.channel == "stable" then
+          error(stable_unavailable(release, failure), 0)
+        end
+        error(failure, 0)
+      end
     end
     if not opts.checksum_path then
       progress(opts, "Downloading " .. archive_name .. ".sha256")

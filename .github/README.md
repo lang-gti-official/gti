@@ -1,9 +1,8 @@
 # GTI on GitHub
 
 https://github.com/lang-gti-official/gti is canonical for source, branches,
-pull requests, issues, CI and, once its release workflow lands, toolchain
-releases. The reference website and the `gti add` package registry stay on
-Gitea; see [Gitea](../.gitea/README.md).
+pull requests, issues, CI and toolchain releases. The reference website and the
+`gti add` package registry stay on Gitea; see [Gitea](../.gitea/README.md).
 
 ## Integration
 
@@ -36,7 +35,29 @@ does not admit the compiler.
 Contributors run focused checks only; the queue owns the complete suite. A
 queue failure belongs to the change that introduced it.
 
-Actions are pinned to full commit SHAs. Workflows run with a read-only token.
+## Nightly toolchain
+
+`workflows/nightly.yml` runs daily at 02:00 UTC and on manual dispatch (an
+optional exact main commit; only main head publishes). It packages only a main
+commit whose merge-queue `merge_group` run passed `CI gate`, builds a
+`GTI_RELEASE_BUILD=ON` bundled-LLVM toolchain for `linux-x64` (`ubuntu-24.04`)
+and `darwin-arm64` (`macos-26`), runs the installed-toolchain smoke and the
+complete suite on that release configuration in shards, and republishes the
+rolling `nightly` prerelease: one archive and `.sha256` per platform plus
+`BUILD_ID`. Newer wins: a commit that is no longer main head, or not newer than
+the published nightly, does not publish. The publish job alone holds
+`contents: write` (plus provenance attestation scopes), is serialized, and moves
+the `nightly` tag with an explicit lease. `linux-arm64` is not packaged until a
+runtime-safety review admits a linux-aarch64 compiler profile in
+`runtime/src/atomic_lane.h`. Stable `v<VERSION>` releases are not published by
+this workflow; they belong to the later beta/stable release train. See
+[GitHub nightly publication](../docs/architecture/build-and-driver.md#github-nightly-publication).
+
+## Workflow policy
+
+Actions are pinned to full commit SHAs. Workflows run with a read-only token;
+only nightly publication writes, and no workflow uses a secret other than
+`GITHUB_TOKEN`.
 Set positive `GTI_JOBS` and `GTI_TEST_JOBS` repository variables to override
 the CPU/memory-based budgets. Compiler-object caches are separate for native
 and sanitizer profiles; cache errors never skip builds or validation.

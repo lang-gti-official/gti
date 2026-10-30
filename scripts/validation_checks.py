@@ -565,6 +565,10 @@ def main(argv=None):
     gate.add_argument("--event", default="pull_request")
     gate.add_argument("--shard-reports", help="directory of shard reports, required for merge_group full")
     gate.add_argument("--platforms", default="darwin,linux")
+    release = sub.add_parser("merge-shards", help="prove a release suite ran every test once per platform")
+    release.add_argument("--shard-reports", required=True)
+    release.add_argument("--platforms", default="darwin,linux")
+    release.add_argument("--head", required=True)
     shard = sub.add_parser("shard")
     shard.add_argument("--build", required=True)
     shard.add_argument("--shards", type=int, required=True)
@@ -613,6 +617,13 @@ def main(argv=None):
         if args.build:
             names = run_declared(Path(args.build).resolve(), names, args.jobs)
         print("GTI_DECLARED_TESTS=" + json.dumps(names))
+        return
+    if args.command == "merge-shards":
+        reports = [json.loads(path.read_text()) for path in sorted(Path(args.shard_reports).rglob("*.json"))]
+        summary = merge_shards(reports, [p for p in args.platforms.split(",") if p])
+        if {row["head"] for row in summary.values()} != {args.head}:
+            raise ValueError("Release suite shards validated a different source")
+        print("GTI_RELEASE_SUITE_RESULT=" + json.dumps(summary, sort_keys=True))
         return
     if args.command == "shard":
         for path in (args.report, args.log):
