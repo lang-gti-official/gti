@@ -187,8 +187,11 @@ not a C++ wrapper, and neither backend defines its semantics.
   detached run IDs remember their original connection. Do not leave ad hoc
   clones or builds on any runner.
 - Use `scripts/agent_workflow.py` for lifecycle operations. `finish` marks the
-  PR ready and adds it to the merge queue pinned to the verified head; the
-  queue merges asynchronously and `sync` advances local `main` once it lands.
+  PR ready and either labels it for a rollup (phase `rollup`), which the rollup
+  bot combines with other green PRs into one queue entry, or, for Risk-system
+  diffs and `--no-rollup`, adds it to the merge queue alone pinned to the
+  verified head (phase `queued`). Both are completion points; the queue merges
+  asynchronously and `sync` advances local `main` once it lands.
   Reconcile only to resolve conflicts: an advancing `main` does not void
   focused evidence. No direct pushes to `main`, rewritten shared history, or
   administrative bypasses. The owner authorizes the helper's

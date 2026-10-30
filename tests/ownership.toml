@@ -1557,8 +1557,10 @@ consumers = []
 area = "agent-workflow"
 paths = [
   "scripts/agent_workflow.py",
+  "scripts/rollup.py",
   "scripts/validation_batch.py",
   "tests/agent_workflow_test.py",
+  "tests/rollup_test.py",
 ]
 owners = [
   "agent_workflow",

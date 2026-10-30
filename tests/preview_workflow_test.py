@@ -85,7 +85,7 @@ class PreviewTests(unittest.TestCase):
         # Preview failure does not participate in verify/finish or its locks.
         self.flow.protection(True)
         self.flow.verify("task", [[sys.executable, "-c", "pass"]])
-        self.flow.finish("task", "Normal PR despite optional preview failure")
+        self.flow.finish("task", "Normal PR despite optional preview failure", rollup=False)
         self.assertTrue(self.flow.pull(self.flow.load("task"))["merged"])
 
     def test_submission_publishes_and_cleans_only_its_generated_checkout(self):

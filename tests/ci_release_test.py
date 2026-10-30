@@ -131,8 +131,9 @@ def nightly_contract(root):
 def workflow_contract(root):
     release = (root / ".gitea/workflows/release.yml").read_text()
     ci = (root / ".github/workflows/ci.yml").read_text()
-    # CI and nightly packaging run on GitHub; the frozen Gitea release workflow stays as written.
-    assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == ["ci.yml", "nightly.yml"]
+    # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
+    # release workflow stays as written.
+    assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == ["ci.yml", "nightly.yml", "rollup.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     assert "branches:\n      - main" in release and "paths:" not in release
     assert release.count("-DGTI_RELEASE_BUILD=ON") == 1, "channels must share one configure"

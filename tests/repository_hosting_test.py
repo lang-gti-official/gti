@@ -26,6 +26,8 @@ FORBIDDEN = (
 ACTION_USE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)@([^\s#]+)", re.MULTILINE)
 CI = ".github/workflows/ci.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
+ROLLUP = ".github/workflows/rollup.yml"
+ROLLUP_SECRETS = ("GTI_ROLLUP_APP_ID", "GTI_ROLLUP_APP_PRIVATE_KEY")
 RELEASE = ".gitea/workflows/release.yml"
 
 
@@ -53,10 +55,10 @@ def main():
     root = pathlib.Path(sys.argv[1]).resolve()
     tracked = tracked_files(root)
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
-    # CI and nightly toolchain releases run on GitHub. The frozen Gitea release
-    # workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, NIGHTLY, RELEASE}, f"unexpected live workflows: {workflows}")
-    for relative in (CI, NIGHTLY, RELEASE, ".github/README.md", ".gitea/README.md",
+    # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
+    # Gitea release workflow stays as the record of the contract it replaces.
+    expect(set(workflows) == {CI, NIGHTLY, RELEASE, ROLLUP}, f"unexpected live workflows: {workflows}")
+    for relative in (CI, NIGHTLY, RELEASE, ROLLUP, ".github/README.md", ".gitea/README.md",
                      ".gitea/ISSUE_TEMPLATE/bug_report.md",
                      "docs/plans/archive/github-actions-20261024/README.md"):
         text(root, relative)
@@ -158,10 +160,50 @@ def main():
            "release policy must classify its package workflows")
     expect("gti-lang/gti-reference" in text(root, "docs/architecture/reference-documentation.md"),
            "the reference website stays on Gitea")
+    check_rollup(root, ci, text(root, ROLLUP), workflows)
     for skill in (".codex/skills/finish-release/SKILL.md", ".claude/skills/finish-release/SKILL.md"):
         contents = text(root, skill)
         expect("GitHub Releases" in contents and "package registry" in contents,
                f"delivery instructions must send toolchain releases to GitHub and keep the registry on Gitea: {skill}")
+
+
+def check_rollup(root, ci, rollup, workflows):
+    """The rollup bot holds the only secrets and never runs pull-request content."""
+    checkout = re.search(r"uses: (actions/checkout@[0-9a-f]{40})", ci).group(1)
+    actions = ACTION_USE.findall(rollup)
+    expect(actions, "rollup workflow has no auditable actions")
+    for action, revision in actions:
+        expect(action.startswith("actions/") and re.fullmatch(r"[0-9a-f]{40}", revision),
+               f"untrusted/unpinned action: {ROLLUP}: {action}@{revision}")
+        if action == "actions/checkout":
+            expect(f"{action}@{revision}" == checkout, "rollup must pin the checkout revision CI uses")
+    expect("actions/create-github-app-token" in {action for action, _ in actions},
+           "rollup must mint a short-lived App installation token")
+    expect(set(re.findall(r"secrets\.([A-Za-z0-9_]+)", rollup)) == set(ROLLUP_SECRETS),
+           "rollup may reference only its App secrets")
+    writer = rollup.split("\n  rollup:\n", 1)[1]
+    expect(re.findall(r"GH_TOKEN: (.*)", writer) == ["${{ steps.token.outputs.token }}"]
+           and "secrets.GITHUB_TOKEN" not in rollup and "repositories: gti" in rollup,
+           "rollup writes only with its repository-scoped App token, never GITHUB_TOKEN")
+    expect(all(name in rollup.split("Require the rollup GitHub App secrets", 1)[1].split("uses:", 1)[0]
+               for name in (*ROLLUP_SECRETS, ".github/README.md")),
+           "a missing App secret must fail clearly, naming both secrets and the setup section")
+    for workflow in workflows:
+        if workflow != ROLLUP:
+            expect(not any(name in text(root, workflow) for name in ROLLUP_SECRETS),
+                   f"only the rollup workflow may reference its secrets: {workflow}")
+    triggers = rollup.split("\npermissions:", 1)[0]
+    expect("pull_request" not in triggers and "pull_request_target" not in rollup
+           and "workflow_run" not in triggers and "permissions: {}" in rollup
+           and "cancel-in-progress: false" in rollup,
+           "rollup must not run on pull-request events, and runs one at a time without cancellation")
+    steps = rollup.split("uses: actions/checkout@")[1:]
+    expect(steps and all(re.match(r"[0-9a-f]{40} # [^\n]*\n        with:\n(?:          [^\n]*\n)*?"
+                                  r"          ref: main\n", step) for step in steps)
+           and rollup.count("persist-credentials: false") == len(steps),
+           "rollup must check out only main, without persisted credentials")
+    expect(not re.search(r"refs/pull|head_ref|github\.event\.(?:issue|pull_request|comment)\.[a-z_.]*(?:head|sha|ref)", rollup),
+           "rollup must never check out or reference pull-request heads")
 
 
 if __name__ == "__main__":
