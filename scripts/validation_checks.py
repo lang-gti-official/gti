@@ -574,6 +574,48 @@ def run_declared(build, names, jobs=4, log=None):
     return selected
 
 
+# CMake writes each argument either quoted ("...") or as a bracket argument
+# ([=[...]=]), depending on its version; accept both.
+TEST_LINE = re.compile(r'^add_test\((?P<name>"(?:[^"\\]|\\.)*"|\[(?P<level>=*)\[.*?\](?P=level)\]) '
+                       r'(?P<arguments>.*)\)$', re.M)
+QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"|\[(=*)\[(.*?)\]\2\]')
+
+
+def cmake_argument(text):
+    match = QUOTED.fullmatch(text)
+    return match.group(1) if match.group(1) is not None else match.group(3)
+
+
+def test_targets(build, pattern):
+    """The build targets the tests matching `pattern` run, read from a configured tree.
+
+    CTest learns a test's command only once it is built, so this reads the
+    generated CTestTestfile.cmake files instead: every argument (or `key=path`
+    argument) naming a file in the build tree is a target's output. The
+    compiler and runtime are always included. A target this misses makes its
+    test fail as not found, never pass.
+    """
+    build = Path(build).resolve()
+    selected = re.compile(pattern)
+    targets, matched = {"gti", "gti_runtime"}, 0
+    for path in sorted(build.rglob("CTestTestfile.cmake")):
+        for match in TEST_LINE.finditer(path.read_text(encoding="utf-8")):
+            if not selected.search(cmake_argument(match.group("name"))):
+                continue
+            matched += 1
+            for token in QUOTED.finditer(match.group("arguments")):
+                argument = token.group(1) if token.group(1) is not None else token.group(3)
+                for part in argument.split("="):
+                    if part.startswith(str(build) + "/"):
+                        name = Path(part).name
+                        name = name.removeprefix("lib").rsplit(".", 1)[0] if name.startswith("lib") else name
+                        if NAME.fullmatch(name):
+                            targets.add(name)
+    if not matched:
+        raise ValueError("No configured test matches " + pattern)
+    return sorted(targets)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -606,6 +648,9 @@ def main(argv=None):
     smoke_parser = sub.add_parser("smoke", help="run only the native O0/O3 compiler smoke")
     smoke_parser.add_argument("--build", required=True)
     smoke_parser.add_argument("--log")
+    targets = sub.add_parser("test-targets", help="print the build targets the matching tests run")
+    targets.add_argument("--build", required=True)
+    targets.add_argument("--regex", required=True)
     for name in ("focused", "full"):
         run_parser = sub.add_parser(name)
         run_parser.add_argument("--build", required=True)
@@ -646,6 +691,9 @@ def main(argv=None):
         if {row["head"] for row in summary.values()} != {args.head}:
             raise ValueError("Release suite shards validated a different source")
         print("GTI_RELEASE_SUITE_RESULT=" + json.dumps(summary, sort_keys=True))
+        return
+    if args.command == "test-targets":
+        print(" ".join(test_targets(args.build, args.regex)))
         return
     if args.command == "shard":
         for path in (args.report, args.log):
