@@ -298,9 +298,11 @@ jobs:
         env:
           GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
           GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
-          # ASan/UBSan instrumentation needs more memory per compile and test.
+          # ASan/UBSan instrumentation needs more memory per compile and test:
+          # with 4 GiB per test, compiler_pipeline and the body-emitter
+          # lifecycle suite together exhausted the 16 GiB runner (SIGKILL).
           GTI_MEMORY_PER_JOB_MIB: 3072
-          GTI_MEMORY_PER_TEST_MIB: 4096
+          GTI_MEMORY_PER_TEST_MIB: 8192
         run: bash scripts/configure_ci_resources.sh
       - name: Install the reviewed compiler, Ninja and LLVM
         run: bash scripts/configure_ci_toolchain.sh
