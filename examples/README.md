@@ -379,6 +379,7 @@ is a teaching helper, not a production server.
 | `179-weak-ownership.gti` | source-defined weak observation, checked promotion, expiry, and local owning callbacks with thread-affine payloads |
 | `180-compact-source-owners.gti` | general null-guarded pointer owners, compact shared/weak handles and exactly-once moved cleanup; LLVM only |
 | [181-general-object-layout.gti](181-general-object-layout.gti) | General `sizeof(T)` and `alignof(T)` constants, generic storage extents, and native runtime layout agreement (LLVM). |
+| [182-payload-borrow-chains.gti](182-payload-borrow-chains.gti) | Return nested payload references through a parameter and receiver, and copy a sibling before a mutable payload borrow. |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

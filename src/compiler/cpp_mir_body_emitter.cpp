@@ -54555,8 +54555,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const auto &operand = instruction.operands.front();
           const auto *retained = body.findLoan(operand.loan);
           const auto *runtime = body.findPlace(operand.place);
+          // The sealed MIR verifier and program return summary prove the
+          // outer caller-owned source. Text emission only needs to recognize
+          // that this verified Return copies the inner loan's runtime pointer.
+          const auto nestedPayloadSource = [&] {
+            if (retained == nullptr || retained->kind != MirLoanKind::Local ||
+                retained->referenceSelection || retained->parent == 0)
+              return false;
+            std::unordered_set<MirLoanId> seen;
+            const MirLoan *ancestor = body.findLoan(retained->parent);
+            MirPlaceId source = retained->source;
+            while (ancestor != nullptr && seen.insert(ancestor->id).second &&
+                   ancestor->kind == MirLoanKind::Local && !ancestor->entry &&
+                   !ancestor->escapes) {
+              source = ancestor->source;
+              ancestor = body.findLoan(ancestor->parent);
+            }
+            return source == loan->source;
+          }();
           if (!retained || retained->id == loan->id ||
-              retained->source != loan->source ||
+              (retained->source != loan->source && !nestedPayloadSource) ||
               retained->storedDependency != loan->storedDependency ||
               (loan->access == AccessMode::Mutable &&
                retained->access != AccessMode::Mutable) ||

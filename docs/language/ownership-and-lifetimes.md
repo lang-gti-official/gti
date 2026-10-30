@@ -525,6 +525,11 @@ pattern bound inside `this`. A `mut auto&` binding through a `mut T&`
 parameter may be returned as `mut T&`. A pattern over a local copy, a by-value
 parameter or a temporary does not outlive the call and remains rejected:
 
+Nested patterns may relay the same caller-owned referent: a reference binding
+to an outer payload is an alias of that payload, so an inner payload reference
+can be returned when the complete loan ancestry reaches the receiver or a
+reference parameter. An outer binding to a local copy still cannot escape.
+
 ```gti
 enum class Reading { exact(int32_t value), estimate(int32_t value) };
 
