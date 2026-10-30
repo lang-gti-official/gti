@@ -18,6 +18,7 @@ def main():
     repository = Path(sys.argv[2]).resolve()
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     fixture = repository / "tests/fixtures/fresh_array_index.gti"
+    raw_field_fixture = repository / "tests/fixtures/array_field_projections.gti"
     source = """\
 int32_t[3] make(int32_t first) {
   int32_t[3] values = {first, 2, 3};
@@ -37,6 +38,16 @@ int main() { return read(3); }
                             f"-{level}", "--progress", "never", "-o", executable)
                 assert built.returncode == 0, (backend, level, built.stderr)
                 result = run(executable)
+                assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (
+                    backend, level, result)
+
+                # A raw-pointer field array is value-rooted in MIR too. Its
+                # pointer and field prefix must survive array-base emission.
+                raw_field = root / f"raw-field-{backend}-{level}"
+                built = run(compiler, raw_field_fixture, "--backend", backend,
+                            f"-{level}", "--progress", "never", "-o", raw_field)
+                assert built.returncode == 0, (backend, level, built.stderr)
+                result = run(raw_field)
                 assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (
                     backend, level, result)
 
