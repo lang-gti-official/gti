@@ -181,6 +181,7 @@ jobs:
           --parallel "${GTI_TEST_JOBS}" -L feedback-fast
           && ctest --test-dir build --output-on-failure --no-tests=error -R '^compiler_pipeline$'
       - name: Re-run the tests this pull request declares
+        if: github.event_name == 'pull_request'
         # The body is untrusted: the script validates every name and passes
         # them to CTest as an escaped, anchored pattern, never through a shell.
         env:

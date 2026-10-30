@@ -27,6 +27,7 @@ python3 scripts/agent_workflow.py protection
 - On a pull request: lint (formatting, release version, Tree-sitter), the
   workflow regression tests, and a macOS arm64 and Linux x64 build running
   `feedback-fast` and `compiler_pipeline`. Drafts run lint only.
+- On manual dispatch: the same fast checks, without PR-body declarations.
 - In the merge queue: the complete suite on the exact candidate, split into
   cost-balanced shards (`scripts/validation_checks.py shard`, balanced by
   `tests/ci_test_durations.json`) on both platforms, the ASan/UBSan subset, the

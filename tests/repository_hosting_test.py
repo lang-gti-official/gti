@@ -120,6 +120,11 @@ def main():
            and "installed_library_smoke" in ci
            and ci.count("validation_checks.py declared --event") == 2,
            "CI lost its gate, merge-queue suite, Tree-sitter or compiler-owned documentation checks")
+    declared_steps = [step for step in re.split(r"^      - ", ci, flags=re.MULTILINE)
+                      if "validation_checks.py declared --event" in step]
+    expect(len(declared_steps) == 2 and all(
+        "if: github.event_name == 'pull_request'" in step for step in declared_steps),
+        "PR declarations must only run on pull_request; manual CI has no PR body")
     # Every native job takes the one reviewed toolchain; none installs its own.
     expect(ci.count("bash scripts/configure_ci_toolchain.sh") == 3 and "llvm-18" not in ci
            and "brew install" not in ci and "macos-26" in ci and "macos-15" not in ci,
