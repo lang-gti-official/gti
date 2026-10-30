@@ -6,6 +6,13 @@ pull requests, issues, CI and toolchain releases. The reference website and the
 
 ## Integration
 
+Agents can push branches and open draft pull requests before CI passes. Use
+`agent_workflow.py start` to publish the task branch and `checkpoint` after a
+meaningful change to create or update its draft PR. Run focused validation
+before `finish`; only integration into `main` waits for the required checks
+and merge queue. Nightly, beta and stable publication are separate steps and
+do not block contributors from submitting their work.
+
 `main` changes only through the merge queue. The `main` ruleset requires pull
 requests, the merge queue and the `CI gate` status check, denies force pushes
 and deletion, and has no bypass actors. Configure or audit it with:
