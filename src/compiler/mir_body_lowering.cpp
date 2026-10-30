@@ -4462,8 +4462,11 @@ private:
     // copied out of the holder, leaves the compact single-origin loan.
     const auto solePath = solePathDesignation(lowered, loan, binding);
     const auto namedSolePath = [&] {
+      // A newly produced carrier may not be registered in the MIR group
+      // until after its identity is recorded. The binding being initialized
+      // still names its exact sole reference path at this point.
       if (lowered.carriers.empty())
-        return false;
+        return !solePath.empty() && solePath == lowered.designatedFields;
       const auto *carrier = findBinding(lowered.carriers.front());
       const auto path =
           carrier ? soleStoredReferencePath(carrier->info.type) : std::nullopt;
