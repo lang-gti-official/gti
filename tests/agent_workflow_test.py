@@ -1083,9 +1083,13 @@ class ValidationChecks(unittest.TestCase):
             (build / "tests" / "CTestTestfile.cmake").write_text(
                 f'add_test("unit_a" "{build}/gti_unit_a_tests" "--flag")\n'
                 f'add_test("script_b" "/usr/bin/python3" "/src/b.py" "frontend={build}/gti_frontend_tests" "{build}/libgti_runtime.a")\n'
-                f'add_test("other" "{build}/gti_other_tests")\n')
+                f'add_test("other" "{build}/gti_other_tests")\n'
+                f'add_test([=[bracket_c]=] "{build}/gti_bracket_tests" [==[{build}/gti_bracket_arg]==])\n')
             self.assertEqual(validation.test_targets(build, "unit_a|script_b"),
                              ["gti", "gti_frontend_tests", "gti_runtime", "gti_unit_a_tests"])
+            # Older CMake writes bracket arguments for names and arguments.
+            self.assertEqual(validation.test_targets(build, "^bracket_c$"),
+                             ["gti", "gti_bracket_arg", "gti_bracket_tests", "gti_runtime"])
             with self.assertRaises(ValueError):
                 validation.test_targets(build, "^missing$")
 

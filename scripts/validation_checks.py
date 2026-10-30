@@ -463,8 +463,16 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
             "quarantined": sorted(excluded), "skipped": skipped, "smoke": smoke_results}
 
 
-TEST_LINE = re.compile(r'^add_test\("((?:[^"\\]|\\.)*)" (.*)\)$', re.M)
-QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
+# CMake writes each argument either quoted ("...") or as a bracket argument
+# ([=[...]=]), depending on its version; accept both.
+TEST_LINE = re.compile(r'^add_test\((?P<name>"(?:[^"\\]|\\.)*"|\[(?P<level>=*)\[.*?\](?P=level)\]) '
+                       r'(?P<arguments>.*)\)$', re.M)
+QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"|\[(=*)\[(.*?)\]\2\]')
+
+
+def cmake_argument(text):
+    match = QUOTED.fullmatch(text)
+    return match.group(1) if match.group(1) is not None else match.group(3)
 
 
 def test_targets(build, pattern):
@@ -481,10 +489,11 @@ def test_targets(build, pattern):
     targets, matched = {"gti", "gti_runtime"}, 0
     for path in sorted(build.rglob("CTestTestfile.cmake")):
         for match in TEST_LINE.finditer(path.read_text(encoding="utf-8")):
-            if not selected.search(match.group(1)):
+            if not selected.search(cmake_argument(match.group("name"))):
                 continue
             matched += 1
-            for argument in QUOTED.findall(match.group(2)):
+            for token in QUOTED.finditer(match.group("arguments")):
+                argument = token.group(1) if token.group(1) is not None else token.group(3)
                 for part in argument.split("="):
                     if part.startswith(str(build) + "/"):
                         name = Path(part).name
