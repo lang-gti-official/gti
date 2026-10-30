@@ -1510,12 +1510,14 @@ collectSemanticTokens(std::string_view source,
                                ? snapshot->sourceGraph.findUnit(*import.target)
                                : nullptr;
       const std::uint32_t modifiers =
-          standardModule(target) ? DefaultLibrary : 0;
+          standardModule(target) ? static_cast<std::uint32_t>(DefaultLibrary)
+                                 : 0;
       for (const auto &span : import.segmentSpans)
         moduleName(span, modifiers);
     }
     if (unit) {
-      const std::uint32_t modifiers = standardModule(unit) ? DefaultLibrary : 0;
+      const std::uint32_t modifiers =
+          standardModule(unit) ? static_cast<std::uint32_t>(DefaultLibrary) : 0;
       if (unit->moduleDeclarationSpan)
         moduleName(*unit->moduleDeclarationSpan, modifiers | Declaration);
       if (unit->implementationDeclarationSpan)
