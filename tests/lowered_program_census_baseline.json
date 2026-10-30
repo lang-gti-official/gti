@@ -161,8 +161,8 @@
       }
     },
     "012-fixed-arrays.gti": {
-      "declarations": 433,
-      "bodies": 26,
+      "declarations": 449,
+      "bodies": 31,
       "generated_items": 3,
       "generated_kinds": {
         "program_initialization": 0,
@@ -625,18 +625,18 @@
       }
     },
     "041-owner-dependencies.gti": {
-      "declarations": 435,
-      "bodies": 28,
-      "generated_items": 4,
+      "declarations": 1701,
+      "bodies": 183,
+      "generated_items": 102,
       "generated_kinds": {
-        "program_initialization": 0,
+        "program_initialization": 1,
         "hosted_entry": 1,
-        "structural_operator_adapter": 0,
-        "callable_adapter": 0,
-        "lifecycle_cleanup": 0,
+        "structural_operator_adapter": 26,
+        "callable_adapter": 19,
+        "lifecycle_cleanup": 3,
         "native_interop_adapter": 0,
         "thread_task_adapter": 0,
-        "concrete_instance_adapter": 3,
+        "concrete_instance_adapter": 52,
         "thread_local_storage": 0
       }
     },
@@ -1105,8 +1105,8 @@
       }
     },
     "071-fresh-temporary-borrows.gti": {
-      "declarations": 423,
-      "bodies": 19,
+      "declarations": 424,
+      "bodies": 20,
       "generated_items": 1,
       "generated_kinds": {
         "program_initialization": 0,
@@ -1873,8 +1873,8 @@
       }
     },
     "121-programmable-allocators.gti": {
-      "declarations": 1943,
-      "bodies": 336,
+      "declarations": 1944,
+      "bodies": 337,
       "generated_items": 216,
       "generated_kinds": {
         "program_initialization": 1,
@@ -2863,12 +2863,28 @@
         "concrete_instance_adapter": 49,
         "thread_local_storage": 0
       }
+    },
+    "182-payload-borrow-chains.gti": {
+      "declarations": 418,
+      "bodies": 11,
+      "generated_items": 1,
+      "generated_kinds": {
+        "program_initialization": 0,
+        "hosted_entry": 1,
+        "structural_operator_adapter": 0,
+        "callable_adapter": 0,
+        "lifecycle_cleanup": 0,
+        "native_interop_adapter": 0,
+        "thread_task_adapter": 0,
+        "concrete_instance_adapter": 0,
+        "thread_local_storage": 0
+      }
     }
   },
   "totals": {
-    "declarations": 218625,
-    "bodies": 27297,
-    "generated_items": 15997
+    "declarations": 220327,
+    "bodies": 27470,
+    "generated_items": 16096
   },
   "target": "arm64-apple-macos",
   "variants": {
@@ -2940,9 +2956,9 @@
         }
       },
       "totals": {
-        "declarations": 218625,
-        "bodies": 27293,
-        "generated_items": 15993
+        "declarations": 220327,
+        "bodies": 27466,
+        "generated_items": 16092
       }
     }
   }
