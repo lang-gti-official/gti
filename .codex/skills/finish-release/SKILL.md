@@ -24,8 +24,8 @@ policy below without bypassing that lifecycle.
   behavior or packaging adds one [changelog fragment](../../../changes/README.md),
   `changes/<task>.<breaking|feature|fix>.md`, holding its user-facing CHANGELOG
   text. Only a release cut (`scripts/cut_release.py`, committed with its
-  `Release-Cut: <version>` trailer) changes `VERSION`; run one only when the
-  owner asks for a release.
+  `Release-Cut: <version>` trailer) changes `VERSION`; the release train cuts
+  `main` itself, so run one only for a backport or when the owner asks.
 - When a commit touches a file that `scripts/check_release_version.py`
   classifies as shipped but changes nothing a user would observe, either add an
   `internal` fragment or end that commit's message with a
@@ -63,12 +63,22 @@ Toolchain releases publish to GitHub Releases; only the `gti add`
 package registry stays on Gitea. `.github/workflows/nightly.yml` republishes
 the rolling `nightly` prerelease daily from the newest main commit that passed
 the merge queue, so a merged change reaches nightly users without any release
-step. Stable `v<VERSION>` publication belongs to the later beta/stable release
-train and is not automated yet: merging a release-bearing PR publishes no
-stable release, so report the intended version. The frozen Gitea workflow
-(`.gitea/workflows/release.yml`) no longer runs; never publish to Gitea. Never
-tag a version mismatch or an unvalidated tree by hand, do not push a competing
-tag, and never move the `nightly` tag yourself.
+step. The release train publishes versioned releases on its own: every 48
+hours `train.yml` cuts the published nightly into a `Release-Cut:` PR,
+`beta.yml` publishes `v<VERSION>-beta.<K>` once it merges, and promotion
+republishes a soaked beta as stable `v<VERSION>` behind the owner-approved
+`stable` environment. A task therefore never runs a release cut, tags or
+publishes; report the changelog fragment, which the next train cut assembles.
+A fix needed on a beta line is a separate backport PR into
+`beta/<major>.<minor>`, labelled `backport`, made of `git cherry-pick -x` copies
+of its merged main commits (and a final patch release cut when it carries a
+user-visible fragment); open one only when the owner asks. Withdrawing a beta
+or yanking a stable version is the owner's `rollback.yml` dispatch. See
+"GitHub release train" in
+[build-and-driver.md](../../../docs/architecture/build-and-driver.md). The
+frozen Gitea workflow (`.gitea/workflows/release.yml`) no longer runs; never
+publish to Gitea. Never push a `v*` tag or the `release-status` branch by
+hand, and never move the `nightly` tag yourself.
 
 ## Finish After Queueing
 

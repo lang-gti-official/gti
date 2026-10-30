@@ -3364,6 +3364,11 @@ if(Python3_Interpreter_FOUND)
             --cmake "${CMAKE_COMMAND}"
   )
   add_test(
+    NAME release_train
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/release_train_test.py"
+  )
+  add_test(
     NAME native_framework_nonapple
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/native_framework_nonapple_test.py"

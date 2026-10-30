@@ -28,7 +28,8 @@ by the GitHub nightly workflow and stays unchanged as the record of its
 contract; it is never converted to publish to GitHub. Its packaging rules carry
 over: one bundled build per platform with full CTest and installed-toolchain
 validation, and a serialized nightly that skips superseded commits. Its stable
-publication has no GitHub successor until the beta/stable release train lands.
+publication's GitHub successor is the release train (`.github/workflows/train.yml`
+and `beta.yml`).
 Tokens never follow arbitrary redirects in the release synchronization helper.
 
 ## Historical automation

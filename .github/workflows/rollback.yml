@@ -1,0 +1,81 @@
+name: Release rollback
+
+# Owner-only, behind the protected `stable` environment:
+# - withdraw-beta records the beta as withdrawn in the release-status branch
+#   (promotion never selects it) and edits its prerelease's title and notes.
+#   The prerelease and its assets stay as evidence; it is never deleted, and
+#   the tag never moves.
+# - yank-stable records the stable version as yanked in the release-status
+#   branch, which the Neovim installer reads before installing a stable
+#   toolchain, banners the release notes and, when the yanked release was
+#   latest, marks the newest non-yanked stable release latest. Tags, archives
+#   and release assets are immutable and are never moved, replaced or deleted.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to roll back
+        type: choice
+        options: [withdraw-beta, yank-stable]
+        required: true
+      version:
+        description: The beta (0.494.0-beta.2) or stable (0.494.0) version
+        required: true
+        type: string
+      reason:
+        description: One line shown to users in the release notes and the installer
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gti-release-rollback
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Roll back a release
+    if: github.repository == 'lang-gti-official/gti' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: stable
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GTI_GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Validate the request and record it in the release status
+        id: rollback
+        env:
+          GTI_ACTION: ${{ inputs.action }}
+          GTI_TARGET: ${{ inputs.version }}
+          GTI_REASON: ${{ inputs.reason }}
+        run: >-
+          python3 scripts/release_train.py rollback --repository "${GITHUB_REPOSITORY}"
+          --action "${GTI_ACTION}" --target "${GTI_TARGET}" --reason "${GTI_REASON}"
+          --notes "${RUNNER_TEMP}/rollback-notes.md" --output "${GITHUB_OUTPUT}"
+      - name: Banner the release
+        env:
+          GTI_TAG: ${{ steps.rollback.outputs.tag }}
+          GTI_TITLE: ${{ steps.rollback.outputs.title }}
+          GTI_WITHDRAW: ${{ steps.rollback.outputs.withdraw }}
+        run: |
+          options=()
+          if [[ "${GTI_WITHDRAW}" == "true" ]]; then
+            options+=(--prerelease --latest=false)
+          fi
+          gh release edit "${GTI_TAG}" --repo "${GITHUB_REPOSITORY}" --title "${GTI_TITLE}" \
+            --notes-file "${RUNNER_TEMP}/rollback-notes.md" "${options[@]}"
+      - name: Mark the newest non-yanked stable release latest
+        if: steps.rollback.outputs.latest != ''
+        env:
+          GTI_LATEST: ${{ steps.rollback.outputs.latest }}
+        run: gh release edit "${GTI_LATEST}" --repo "${GITHUB_REPOSITORY}" --latest

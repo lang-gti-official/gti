@@ -49,9 +49,87 @@ the published nightly, does not publish. The publish job alone holds
 `contents: write` (plus provenance attestation scopes), is serialized, and moves
 the `nightly` tag with an explicit lease. `linux-arm64` is not packaged until a
 runtime-safety review admits a linux-aarch64 compiler profile in
-`runtime/src/atomic_lane.h`. Stable `v<VERSION>` releases are not published by
-this workflow; they belong to the later beta/stable release train. See
+`runtime/src/atomic_lane.h`. Stable `v<VERSION>` releases come from the release
+train below, which cuts the commit this workflow published. See
 [GitHub nightly publication](../docs/architecture/build-and-driver.md#github-nightly-publication).
+
+## Release train
+
+`scripts/release_train.py` decides; four workflows act. See
+[GitHub release train](../docs/architecture/build-and-driver.md#github-release-train)
+for the full contract.
+
+| Workflow | Trigger | Does |
+| --- | --- | --- |
+| `workflows/train.yml` job `cut` | 04:00 UTC every other day (the daily schedule admits every second UTC day), dispatch | cuts the published nightly once it has been on `main` 24 h and passed the queue; opens and queues a `rollup=never` `Release-Cut:` PR with the App token |
+| `workflows/beta.yml` | `push` to `main` (the queue's merge) or `beta/**` (a merged backport), daily 05:30 fallback, dispatch | builds the release cut (or the line's new tip) with the nightly's packaging and release-suite shards; publishes prerelease `v<VERSION>-beta.<K>` with provenance; creates `beta/<major>.<minor>` |
+| `workflows/backport.yml` | pull requests into `beta/**` | `Backport provenance` (each commit a `cherry-pick -x` of a `main` commit; an optional final patch release cut), the release suite, `Backport gate` |
+| `workflows/train.yml` job `promote` | with the train, dispatch | behind the `stable` environment: republishes the newest beta that soaked 48 h with no open `release-blocker` issue naming its version as `v<VERSION>`, byte for byte, and marks it latest |
+| `workflows/rollback.yml` | dispatch only | behind the `stable` environment: `withdraw-beta` or `yank-stable`, recorded on the `release-status` branch the installer reads |
+
+The cut job is the only train job with a secret (the rollup App's, for the
+PR). Beta publication, promotion and rollback write with `GITHUB_TOKEN`
+(`contents: write`): their tags, releases and status commits need not trigger
+workflows. No train job forces, moves or deletes a tag, branch, release or
+asset. Dispatch overrides (`min_age_hours`, `soak_hours`) exist for the owner's
+bootstrap; neither waives the merge-queue evidence, and a lowered soak is
+written into the stable release notes.
+
+One-time owner setup, in this order:
+
+1. Install the rollup App (section "Rollup bot"); the cut job reuses its
+   `GTI_ROLLUP_APP_ID` and `GTI_ROLLUP_APP_PRIVATE_KEY` secrets and needs no
+   new permission.
+2. Create the label `release-blocker` (Issues, Labels). An open issue with
+   it whose title or body names a version (`0.494.0`, `v0.494.0`,
+   `0.494.0-beta.2`) blocks that version's promotion.
+3. Create the `stable` environment (Settings, Environments, New environment):
+   required reviewer yourself, leave *Prevent self-review* off so you can
+   approve your own dispatches, deployment branches limited to *Selected
+   branches* `main`, and no environment secrets. Promotion and rollback wait
+   for its approval.
+4. Wait for the first `nightly` release to exist, then enable release
+   immutability (Settings, General, Releases, *Enable release immutability*).
+   It applies only to releases published after it is enabled, so the rolling
+   `nightly` release keeps replacing its assets and moving its tag; never
+   delete and recreate the `nightly` release afterwards, or it becomes
+   immutable and stops rolling. Beta and stable releases are published from
+   drafts, so their assets are complete before they lock.
+5. Apply the three proposed rulesets. Review them first:
+
+   ```sh
+   python3 scripts/release_train.py rulesets
+   ```
+
+   It prints a JSON list: `release-tags` (`refs/tags/v*`: no update, force
+   update or deletion; creation stays open so the train can tag), `beta`
+   (`refs/heads/beta/*`: pull requests merged by rebase, linear history, an
+   up-to-date branch with `CI gate` and `Backport gate`, no force or
+   deletion), and `release-status` (no force or deletion). Apply each with:
+
+   ```sh
+   for name in release-tags beta release-status; do
+     python3 scripts/release_train.py rulesets --name "${name}" |
+       gh api -X POST repos/lang-gti-official/gti/rulesets --input -
+   done
+   ```
+
+   If the first beta's final step cannot create `beta/<major>.<minor>` under
+   the `beta` ruleset, create the branch from the published tag
+   (`git push origin v0.N.0-beta.1^{commit}:refs/heads/beta/0.N`) with the
+   ruleset briefly disabled, then re-enable it.
+6. Bootstrap: dispatch `train.yml` with `stage=cut` (and `min_age_hours=0` if
+   the nightly commit is younger than 24 h). After the cut PR merges and
+   `beta.yml` publishes beta 1, dispatch `stage=promote` (with `soak_hours=0`
+   to skip the soak) and approve the `stable` deployment.
+
+To withdraw a beta or yank a stable version, dispatch `workflows/rollback.yml`
+with the action, the version (`0.494.0-beta.2` or `0.494.0`) and a one-line
+reason, and approve the `stable` deployment. A backport is a pull request into
+`beta/<major>.<minor>` labelled `backport` whose commits are
+`git cherry-pick -x <main commit>`; end it with
+`python3 scripts/cut_release.py --title "<title>"` committed with its
+`Release-Cut:` trailer when it carries a user-visible fragment.
 
 ## Rollup bot
 
@@ -113,8 +191,9 @@ secret and deleting the old key.
 ## Workflow policy
 
 Actions are pinned to full commit SHAs. Workflows run with a read-only token.
-Only two jobs write: nightly publication, with `GITHUB_TOKEN`, and the rollup
-bot, with its own App token. No other workflow uses a secret.
+Only these jobs write: nightly publication, beta publication, stable promotion
+and rollback, with `GITHUB_TOKEN`; and the rollup bot and the release cut, with
+the rollup App's token. No other workflow uses a secret.
 Set positive `GTI_JOBS` and `GTI_TEST_JOBS` repository variables to override
 the CPU/memory-based budgets. Compiler-object caches are separate for native
 and sanitizer profiles; cache errors never skip builds or validation.
