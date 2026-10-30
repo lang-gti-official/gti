@@ -9,6 +9,9 @@ the `gti add` package registry (`gti-lang` library packages such as libc); its
 `gti-lang/gti` `main` is frozen and accepts no merges. GitHub
 history carries rewritten commit identities (identical trees, new commit IDs),
 so Gitea-era branches and task records move over by tree identity (`rehost`).
+Every Gitea issue was migrated to GitHub with a new number. An issue or PR
+number cited before 2026-10-29 is a Gitea number: translate it with
+`docs/plans/archive/gitea-issue-map.md`.
 When resuming an old worktree, read the current primary checkout's guidance and
 workflow skill, and use its helper with `--repo <task-worktree>`.
 
