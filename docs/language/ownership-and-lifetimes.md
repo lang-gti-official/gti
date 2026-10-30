@@ -2434,7 +2434,9 @@ and does not make either public class compiler-recognized.
   its elements.
   This includes taking an owner by value and moving that parameter through
   local bindings: the original provider dependency survives until the final
-  owner's cleanup, not merely until the parameter's last source use.
+  owner's cleanup, not merely until the parameter's last source use. A function
+  may also return a new owner constructed from a by-value resource binding;
+  the returned owner retains the same provider borrow through its cleanup.
 - **Borrowing objects in a region.** Element references and iterators borrow
   the owning storage, not merely the resource. They block growth, release,
   clearing and movement of that owner until their last use. Keeping the

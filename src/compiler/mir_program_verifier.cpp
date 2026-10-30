@@ -16730,11 +16730,25 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
           returnedValue = block.terminator.value->value;
         }
       }
+      // A compact Stored result may carry one owner without a field label.
+      // Its function summary names that same owner at an explicit field of
+      // the returned class. The source and returned loan differ only by this
+      // exact result path; the later return-publication proof checks the
+      // source origin and the complete mapping against the returned value.
+      const bool mappedResultField =
+          sourceLoan && !sourceLoan->entry &&
+          sourceLoan->designatedFields.empty() &&
+          sourceLoan->additionalDependencies.empty() && function &&
+          function->returnBorrowFields.size() == 1 &&
+          function->returnBorrowFields.front().resultFields ==
+              loan.designatedFields &&
+          function->returnBorrowFields.front().access == loan.access;
       if (!exactReturnProducer || sourceLoan == nullptr ||
           sourceLoan->kind != MirLoanKind::Stored ||
           !sourceLoan->lifecycleBound || sourceLoan->source != loan.source ||
           sourceLoan->access != loan.access ||
-          sourceLoan->designatedFields != loan.designatedFields ||
+          (sourceLoan->designatedFields != loan.designatedFields &&
+           !mappedResultField) ||
           sourceLoan->additionalDependencies != loan.additionalDependencies ||
           returns != 1) {
         return verificationFailure(
