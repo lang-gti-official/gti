@@ -302,20 +302,25 @@ jobs:
           key: gti-ccache-v1-${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.sha }}
 
   sanitizers:
-    name: Compiler sanitizers (${{ matrix.index }}/2)
+    name: Compiler sanitizers (${{ matrix.partition }})
     if: github.event_name == 'merge_group' && needs.plan.outputs.mode == 'full'
     needs: [plan, automation-tests, formatting, release-version, tree-sitter]
-    # The instrumented subset holds several half-hour suites; two runners
-    # each take every other test (CTest -I stride) and the gate needs both.
+    # Keep the long compiler aggregate separate from driver_pipeline. Their
+    # registration positions are both odd, so alternating tests serialized
+    # both on one runner. The gate requires both exhaustive partitions.
     strategy:
       fail-fast: false
       matrix:
-        index: [1, 2]
+        include:
+          - partition: compiler
+            tests: '^compiler_pipeline$'
+          - partition: libraries
+            tests: 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|optimizer_foundation|raw_pointer_pipeline|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter_(preflight|text|lifecycle|census|corpus_protocol)$|cpp_mir_program_plan|cpp_mir_representation_snapshot'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
       # The curated subset; the build compiles only the targets it runs.
-      GTI_SANITIZER_TESTS: 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline|mir_program_initialization|mir_hosted_startup|mir_backend_first_family$|mir_backend_scalar_cfg$|mir_backend_scalar_direct_call$|mir_backend_class_default_cleanup$|mir_backend_owned_lifecycle$|mir_backend_scalar_failure_callgraph$|cpp_mir_body_emitter_(preflight|text|lifecycle|census|corpus_protocol)$|cpp_mir_program_plan|cpp_mir_representation_snapshot'
+      GTI_SANITIZER_TESTS: ${{ matrix.tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure runner resources
@@ -375,16 +380,16 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: >-
           ctest --test-dir build-sanitized --verbose --output-on-failure --no-tests=error
-          --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.index }}.xml"
+          --output-junit "${RUNNER_TEMP}/sanitizers-${{ matrix.partition }}.xml"
           --parallel "${GTI_TEST_JOBS}"
-          -R "${GTI_SANITIZER_TESTS}" -I "${{ matrix.index }},,2"
+          -R "${GTI_SANITIZER_TESTS}"
       - name: Preserve sanitizer test evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: sanitizers-${{ matrix.index }}
+          name: sanitizers-${{ matrix.partition }}
           path: |
-            ${{ runner.temp }}/sanitizers-${{ matrix.index }}.xml
+            ${{ runner.temp }}/sanitizers-${{ matrix.partition }}.xml
             build-sanitized/Testing/Temporary/LastTest.log
             build-sanitized/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn

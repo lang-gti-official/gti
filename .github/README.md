@@ -34,6 +34,10 @@ python3 scripts/agent_workflow.py protection
   installed-toolchain smoke and deterministic docgen. The gate merges the shard
   reports and fails unless each platform ran its whole inventory exactly once.
 
+Sanitizer jobs run the compiler aggregate separately from the other library
+tests, allowing the long compiler and driver suites to overlap. Both jobs are
+required, and each builds only its selected test targets.
+
 Sanitizer jobs stream verbose CTest output, including the compiler aggregate's
 current suite and per-suite elapsed time, and retain JUnit and CTest logs even
 when a test fails. `compiler_pipeline` contains several suites, so an unchanged
