@@ -4864,9 +4864,16 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
               std::find(ancestor->carriers.begin(), ancestor->carriers.end(),
                         toolingSymbolFor(candidate)) !=
                   ancestor->carriers.end() &&
-              !(ancestor->kind == SemanticLoanKind::StoredValue &&
-                ancestor->place.root != toolingSymbolFor(candidate)))
+              !(ancestor->place.root != toolingSymbolFor(candidate) &&
+                (ancestor->kind == SemanticLoanKind::StoredValue ||
+                 (ancestor->kind == SemanticLoanKind::Reference &&
+                  candidate.type.kind == SemanticType::Reference))))
             return false;
+      // A receiver payload's first checked selection is itself a local loan,
+      // but its place still names storage inside `this`. It has no separate
+      // entry loan to reach, unlike a reference parameter.
+      if (ancestor->parent == 0 && ancestor->place.receiver)
+        return true;
       current = ancestor->parent;
     }
     return false;
