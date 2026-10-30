@@ -319,14 +319,14 @@ int main() {
          "built-in assignment and conditional class values supply exact "
          "call-scoped read borrows");
 
-  for (const std::string &body : {
-           std::string("void change(mut Point& value) { value.x = 9; } "
-                       "int main() { mut Point target = Point(1, 2); "
-                       "Point next = Point(3, 4); change(target = next); "
-                       "return 0; }"),
-           std::string("int main() { mut Point target = Point(1, 2); "
-                       "Point next = Point(3, 4); "
-                       "Point& escaped = target = next; return 0; }")}) {
+  for (const std::string &body :
+       {std::string("void change(mut Point& value) { value.x = 9; } "
+                    "int main() { mut Point target = Point(1, 2); "
+                    "Point next = Point(3, 4); change(target = next); "
+                    "return 0; }"),
+        std::string("int main() { mut Point target = Point(1, 2); "
+                    "Point next = Point(3, 4); "
+                    "Point& escaped = target = next; return 0; }")}) {
     const auto rejected = lang::Frontend().analyze(
         "invalid-fresh-class-argument.gti", declarations + body);
     expect(rejected.syntaxValid && !rejected.canGenerateCode() &&
