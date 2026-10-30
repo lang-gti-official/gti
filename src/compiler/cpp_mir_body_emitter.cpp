@@ -43949,7 +43949,10 @@ private:
     if (access.dereferenceArray) {
       output << "(*";
     }
-    if (array->root == MirPlaceRootKind::Value) {
+    // Only a bare value root names the materialized array SSA value. A
+    // projected value root can be an array field reached through raw memory;
+    // its full place expression retains that pointer and field path.
+    if (array->root == MirPlaceRootKind::Value && array->projections.empty()) {
       output << "__gti_mir_v_" << array->value;
     } else {
       emitStoragePlaceValue(facts, *array);
