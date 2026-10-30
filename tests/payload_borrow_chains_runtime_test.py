@@ -23,6 +23,25 @@ int32_t& bad(Paint& paint) {
 int main() { Paint p = Paint::coat(Shade::plain(3), 2); return bad(p); }
 """
 
+MUTABLE_NESTED = """\
+enum Shade { plain(int32_t level), mixed(int32_t level, int32_t tint) };
+enum Paint { coat(Shade shade, int32_t layers) };
+mut int32_t& level_of(mut Paint& paint) {
+  switch (paint) {
+  case Paint::coat(mut auto& shade, layers):
+    switch (shade) {
+    case Shade::plain(mut auto& level): return level;
+    case Shade::mixed(mut auto& level, tint): return level;
+    }
+  }
+}
+int main() {
+  mut Paint p = Paint::coat(Shade::plain(3), 2);
+  level_of(p) = 5;
+  return level_of(p) - 5;
+}
+"""
+
 
 def main() -> int:
     if len(sys.argv) != 3:
@@ -33,22 +52,28 @@ def main() -> int:
         directory = Path(temp)
         rejected = directory / "local-escape.gti"
         rejected.write_text(LOCAL_ESCAPE, encoding="utf-8")
+        mutable = directory / "mutable-nested.gti"
+        mutable.write_text(MUTABLE_NESTED, encoding="utf-8")
         for backend in ("llvm", "cpp"):
             for optimization in ("-O0", "-O2"):
                 label = f"{backend} {optimization}"
-                executable = directory / f"payload-{backend}-{optimization[2:]}"
-                built = subprocess.run(
-                    [str(compiler), str(example), "--backend", backend,
-                     optimization, "-o", str(executable)],
-                    text=True, capture_output=True, check=False)
-                if built.returncode != 0:
-                    failures.append(f"{label}: build failed\n{built.stdout}{built.stderr}")
-                    continue
-                ran = subprocess.run([str(executable)], text=True,
-                                     capture_output=True, check=False)
-                if ran.returncode != 0 or ran.stdout or ran.stderr:
-                    failures.append(f"{label}: exit {ran.returncode}, "
-                                    f"stdout={ran.stdout!r}, stderr={ran.stderr!r}")
+                for name, source in (("example", example),
+                                     ("mutable", mutable)):
+                    executable = directory / f"{name}-{backend}-{optimization[2:]}"
+                    built = subprocess.run(
+                        [str(compiler), str(source), "--backend", backend,
+                         optimization, "-o", str(executable)],
+                        text=True, capture_output=True, check=False)
+                    if built.returncode != 0:
+                        failures.append(f"{name} {label}: build failed\n"
+                                        f"{built.stdout}{built.stderr}")
+                        continue
+                    ran = subprocess.run([str(executable)], text=True,
+                                         capture_output=True, check=False)
+                    if ran.returncode != 0 or ran.stdout or ran.stderr:
+                        failures.append(f"{name} {label}: exit {ran.returncode}, "
+                                        f"stdout={ran.stdout!r}, "
+                                        f"stderr={ran.stderr!r}")
                 invalid = subprocess.run(
                     [str(compiler), str(rejected), "--backend", backend,
                      optimization, "-o", str(directory / "invalid")],
