@@ -429,7 +429,9 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    `0.494.0-beta.K`; `10.494.0` or `0.494.0.1` do not count). A dispatch's
    `soak_hours` may lower the soak; the stable notes record it. The job waits
    for the protected `stable` environment's approval and then re-admits the
-   beta. It downloads the beta's assets, verifies their checksums, channel
+   beta. That recheck rejects the selected beta if a newer stable release or
+   a newer patch beta on the same line arrived while approval was pending.
+   It downloads the beta's assets, verifies their checksums, channel
    neutrality and the beta workflow's provenance attestation, pushes
    `v<VERSION>` at the beta's commit, uploads the same files to a draft,
    reads the draft's assets back through the API and compares every archive

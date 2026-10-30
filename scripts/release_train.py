@@ -995,6 +995,22 @@ def candidate(repository: str, version: str, tags: dict[str, str], status: dict[
             "soaked": f"{soaked.total_seconds() / 3600:.1f}"}, ""
 
 
+def promotion_supersession(version: str, tags: dict[str, str]) -> str:
+    """Use the same freshness rule before selection and after owner approval."""
+    current = version_tuple(version)
+    stable = stable_versions(tags)
+    # An equal stable tag may belong to a draft being resumed. Admission
+    # separately checks its exact commit and whether it was already published.
+    if stable and version_tuple(stable[-1]) > current:
+        return f"{version} is superseded by newer stable {stable[-1]}"
+    newer = {match.group(1) for name in tags if (match := BETA_TAG.fullmatch(name))
+             and version_tuple(match.group(1))[:2] == current[:2]
+             and version_tuple(match.group(1)) > current}
+    if newer:
+        return f"{version} is superseded by {max(newer, key=version_tuple)} on its line"
+    return ""
+
+
 def select_promotion(repository: str, event: str, soak_input: str, now: datetime,
                      request: Request) -> dict[str, str]:
     """The highest unpromoted version newer than every stable whose newest beta qualifies."""
@@ -1007,11 +1023,9 @@ def select_promotion(repository: str, event: str, soak_input: str, now: datetime
                        and version_tuple(match.group(1)) > floor}, key=version_tuple, reverse=True)
     reasons = []
     for version in versions:
-        newer = [other for other in versions if version_tuple(other)[:2] == version_tuple(version)[:2]
-                 and version_tuple(other) > version_tuple(version)]
-        if newer:
-            # A backport release cut on the same line supersedes this version.
-            reasons.append(f"{version} is superseded by {newer[-1]} on its line")
+        superseded = promotion_supersession(version, tags)
+        if superseded:
+            reasons.append(superseded)
             continue
         chosen, why = candidate(repository, version, tags, status, soak, now, request)
         if chosen:
@@ -1041,6 +1055,9 @@ def admit_promotion(repository: str, event: str, soak_input: str, tag: str, sha:
         record = release_record(repository, target, request)
         if record and not record.get("draft"):
             return skip(f"{target} is already published", record="true", version=version)
+    superseded = promotion_supersession(version, tags)
+    if superseded:
+        raise TrainError(superseded)
     chosen, why = candidate(repository, version, tags, status, soak, now, request)
     if not chosen or chosen["tag"] != tag:
         raise TrainError(why or f"{tag} is no longer the newest beta of {version}")

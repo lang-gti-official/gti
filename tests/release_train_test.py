@@ -563,6 +563,14 @@ def promotion_contract(base):
         assert admitted == {"publish": "true", "record": "true", "push_tag": "true", "version": "0.11.0",
                             "stable_tag": "v0.11.0", "soak": "48", "soaked": "50.0",
                             "override": "false"}, admitted
+        # Approval may wait while a newer patch beta or stable release arrives.
+        repo.push(f"{third}:refs/tags/v0.11.1-beta.1")
+        refused(admit, "v0.11.0-beta.1", first,
+                Releases(dict(everything, **{"v0.11.1-beta.1": fresh})), contains="superseded")
+        repo.git("push", "--quiet", "origin", ":refs/tags/v0.11.1-beta.1")
+        repo.push(f"{third}:refs/tags/v0.13.0")
+        refused(admit, "v0.11.0-beta.1", first, Releases(everything), contains="newer stable")
+        repo.git("push", "--quiet", "origin", ":refs/tags/v0.13.0")
         refused(admit, "v0.11.0-beta.1", second, Releases(everything), contains="no longer names")
         refused(admit, "v0.12.0-beta.2", second, Releases(everything), contains="withdrawn")
         refused(admit, "v0.12.0-beta.1", second, Releases(everything), contains="withdrawn")
