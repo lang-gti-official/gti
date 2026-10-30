@@ -64,6 +64,10 @@ foreach(suite IN LISTS gti_bounded_tests)
   endif()
   math(EXPR gti_scaled_timeout "${gti_declared_timeout} * ${GTI_TEST_TIMEOUT_SCALE}")
   set_tests_properties("${suite}" PROPERTIES TIMEOUT "${gti_scaled_timeout}")
+  # Harnesses scale their own per-compile and per-run bounds to match
+  # (tests/sanitizer_support.py scaled_timeout).
+  set_property(TEST "${suite}" APPEND PROPERTY ENVIRONMENT
+    "GTI_TEST_TIMEOUT_SCALE=${GTI_TEST_TIMEOUT_SCALE}")
 endforeach()
 
 if(Python3_Interpreter_FOUND)

@@ -1,5 +1,74 @@
 {
  "schema": 1,
  "description": "Tests that already fail on main and that the merge queue's complete suite excludes, per platform, until the linked issue is fixed. Every entry names its issue; fixing the test removes the entry in the same change. Editing this file runs the complete suite.",
- "tests": []
+ "tests": [
+  {
+   "name": "cpp_mir_body_emitter_corpus",
+   "platforms": [
+    "darwin",
+    "linux"
+   ],
+   "issue": "https://github.com/lang-gti-official/gti/issues/13",
+   "reason": "181-general-object-layout worker aborts on an uncaught BackendUnsupportedError (general sizeof/alignof)",
+   "since": "2026-10-30"
+  },
+  {
+   "name": "llvm_canonical_host_controls",
+   "platforms": [
+    "darwin",
+    "linux"
+   ],
+   "issue": "https://github.com/lang-gti-official/gti/issues/11",
+   "reason": "stdlib-surface provider inventory hash drifted on main",
+   "since": "2026-10-30"
+  },
+  {
+   "name": "llvm_coverage_evidence",
+   "platforms": [
+    "darwin",
+    "linux"
+   ],
+   "issue": "https://github.com/lang-gti-official/gti/issues/11",
+   "reason": "stdlib-surface provider inventory hash drifted on main",
+   "since": "2026-10-30"
+  },
+  {
+   "name": "llvm_readiness_collection_controls",
+   "platforms": [
+    "darwin",
+    "linux"
+   ],
+   "issue": "https://github.com/lang-gti-official/gti/issues/11",
+   "reason": "stdlib-surface provider inventory hash drifted on main",
+   "since": "2026-10-30"
+  },
+  {
+   "name": "mir_census_regression",
+   "platforms": [
+    "linux"
+   ],
+   "issue": "https://github.com/lang-gti-official/gti/issues/14",
+   "reason": "Linux builds produce one fewer MIR body in four examples",
+   "since": "2026-10-30"
+  },
+  {
+   "name": "mir_cutover_corpus_oracle",
+   "platforms": [
+    "linux"
+   ],
+   "issue": "https://github.com/lang-gti-official/gti/issues/14",
+   "reason": "Linux builds produce one fewer MIR body in four examples",
+   "since": "2026-10-30"
+  },
+  {
+   "name": "package_registry_cli",
+   "platforms": [
+    "darwin",
+    "linux"
+   ],
+   "issue": "https://github.com/lang-gti-official/gti/issues/12",
+   "reason": "LSP publishes no GTI-I0013 legacy-include advisory for a cached package graph",
+   "since": "2026-10-30"
+  }
+ ]
 }
